@@ -120,16 +120,19 @@ class Demonstrator:
         Returns:
         None
         """
-        obs, _ = self.air_hockey.reset()
+        goal_pos = np.array([self.air_hockey.length / 2, 0]) # this is the home base, will be reversed for the alt policy
+        (ego_obs, alt_obs), _ = self.air_hockey.reset(alt_goal_pos=goal_pos, ego_goal_pos=goal_pos, goal_radius_type='home')
         start = time.time()
         for i in range(1000000):
             if i % 1000 == 0:
                 print("fps", 1000 / (time.time() - start))
                 start = time.time()
             action = self.demonstrate()
-            policy_obs = -1 * obs # since policy is on the opposite side now
-            other_action = policy.predict(policy_obs, deterministic=True)[0]
-            (_, obs), _, _, _, _ = self.air_hockey.step(action, other_action)
+            other_action = policy.predict(alt_obs, deterministic=True)[0]
+            # invert other action because it's upside down
+            other_action = np.array([-other_action[0], -other_action[1]])
+            joint_action = (action, other_action)
+            (ego_obs, alt_obs), (ego_rew, alt_rew), is_finished, truncated, info = self.air_hockey.step(joint_action)
             if i % 300 == 0:
                 self.air_hockey.reset()
 

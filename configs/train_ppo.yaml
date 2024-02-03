@@ -15,15 +15,18 @@ air_hockey:
   paddle_radius: 0.4
   render_size: 360
   max_timesteps: 1000
-  gravity: -20
-  reward_type: 'puck_height'
+  gravity: [-1,-30] # if a range, then uniformly sampled
+  reward_type: 'puck_vel' # reward is irrelevant if goal conditioned
 
 # Training Parameters
-n_training_steps: 500000
+n_training_steps: 100000
 model_save_filepath: trained_models/ppo/model
 vec_normalize_save_filepath: trained_models/ppo/vec_normalize.pkl
 tb_log_dir: trained_models/ppo
 tb_log_name: air_hockey_ppo
+
+# this parameter is only used when evaluating demonstrations
+print_reward: false
 
 # None of the below are integrated, but examples of what could be added to the config file
 # num_envs: 16

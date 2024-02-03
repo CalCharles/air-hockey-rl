@@ -9,7 +9,7 @@ air_hockey:
   use_cue: false
   length: 10
   width: 5
-  goal_conditioned: false
+  goal_conditioned: true
   length: 10
   width: 6
   paddle_radius: 0.4
@@ -18,6 +18,6 @@ air_hockey:
   render_size: 360
   max_timesteps: 1000
   gravity: -20
-  reward_type: 'puck_height'
+  reward_type: 'enemy_home'
 
 print_reward: true

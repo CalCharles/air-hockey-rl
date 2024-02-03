@@ -135,6 +135,23 @@ class AirHockeyRenderer:
         """
         self.frame = self.air_hockey_table_img.copy()
         
+        if self.airhockey_sim.goal_conditioned:
+            # get the goal position and radius and draw it
+            def draw_goal(goal, radius, color=(0, 255, 0)):
+                goal_position = goal
+                goal_radius = radius
+                goal_position = np.array((goal_position[1], goal_position[0]))
+                center = np.array(goal_position) + np.array((self.width / 2, self.length / 2))
+                center = np.array((center[1], center[0])) * self.ppm
+                goal_radius = int(goal_radius * self.ppm)
+                cv2.circle(self.frame, center.astype(int), goal_radius, color, 2)
+                
+            green = (0, 255, 0)
+            draw_goal(self.airhockey_sim.ego_goal_pos, self.airhockey_sim.ego_goal_radius, color=green)
+            if self.airhockey_sim.multiagent:
+                blue = (255, 0, 0)
+                draw_goal(self.airhockey_sim.alt_goal_pos, self.airhockey_sim.alt_goal_radius, color=blue)
+        
         for puck_attrs in self.airhockey_sim.pucks.values():
             self.draw_circle_with_image(puck_attrs, circle_type='puck')
         for block_attrs in self.airhockey_sim.blocks.values():
@@ -156,5 +173,5 @@ class AirHockeyRenderer:
         """
         frame = self.get_frame()
         cv2.imshow('Air Hockey 2D', frame)
-        cv2.waitKey(10)
+        cv2.waitKey(5)
 

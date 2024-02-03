@@ -30,7 +30,7 @@ def train_air_hockey_model(air_hockey_cfg):
         return wrapped_env
 
     env = wrap_env(env)
-    model = PPO("MlpPolicy", env, verbose=1, tensorboard_log=air_hockey_cfg['tb_log_dir'])
+    model = PPO("MlpPolicy", env, verbose=1, tensorboard_log=air_hockey_cfg['tb_log_dir'], device="cpu") # cpu is actually faster!
     model.learn(total_timesteps=air_hockey_cfg['n_training_steps'],
                 tb_log_name=air_hockey_cfg['tb_log_name'], 
                 progress_bar=True)
