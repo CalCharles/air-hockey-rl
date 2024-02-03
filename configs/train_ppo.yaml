@@ -1,0 +1,42 @@
+# Air Hockey Table Parameters
+air_hockey:
+  num_paddles: 1
+  num_pucks: 1
+  num_blocks: 0
+  num_obstacles: 0
+  num_targets: 0
+  absorb_target: false
+  use_cue: false
+  goal_conditioned: false
+  length: 10
+  width: 6
+  force_scaling: 200
+  paddle_damping: 10
+  paddle_radius: 0.4
+  render_size: 360
+  max_timesteps: 1000
+  gravity: -20
+  reward_type: 'puck_height'
+
+# Training Parameters
+n_training_steps: 500000
+model_save_filepath: trained_models/ppo/model
+vec_normalize_save_filepath: trained_models/ppo/vec_normalize.pkl
+tb_log_dir: trained_models/ppo
+tb_log_name: air_hockey_ppo
+
+# None of the below are integrated, but examples of what could be added to the config file
+# num_envs: 16
+# num_steps: 2048
+# num_epochs: 10
+# num_minibatches: 32
+# learning_rate: 3e-4
+# gamma: 0.99
+# gae_lambda: 0.95
+# clip_range: 0.2
+# vf_coef: 0.5
+# ent_coef: 0.01
+# max_grad_norm: 0.5
+# value_clip: true
+# log_interval: 10
+# save_interval: 100

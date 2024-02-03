@@ -1,0 +1,23 @@
+# Air Hockey Table Parameters
+air_hockey:
+  num_paddles: 1
+  num_pucks: 1
+  num_blocks: 0
+  num_obstacles: 0
+  num_targets: 0
+  absorb_target: false
+  use_cue: false
+  length: 10
+  width: 5
+  goal_conditioned: false
+  length: 10
+  width: 6
+  paddle_radius: 0.4
+  force_scaling: 200
+  paddle_damping: 10
+  render_size: 360
+  max_timesteps: 1000
+  gravity: -20
+  reward_type: 'puck_height'
+
+print_reward: true
