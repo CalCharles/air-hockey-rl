@@ -2,7 +2,10 @@
 
 This contains an air hockey simulation environment powered by Box2D. It is fast (C++ back-end), capable of self-play, 1v1 play, and easy goal-conditioned reinforcement learning, resulting in a rich testbed for various algorithms.
 
-![1v1 Play](assets/player_vs_ai.gif) ![Goal-Conditioned Capabilities](assets/goal_conditioned.gif)
+
+1v1 Play             |  Goal-Conditioned RL
+:-------------------------:|:-------------------------:
+![](assets/player_vs_ai.gif)  |  ![](assets/goal_conditioned.gif)
 
 ## Requirements:
 - `pip install Box2D`
