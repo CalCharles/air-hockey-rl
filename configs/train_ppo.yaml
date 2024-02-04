@@ -10,11 +10,11 @@ air_hockey:
   length: 10
   width: 6
   force_scaling: 200
-  paddle_damping: 10
+  paddle_damping: 13
   paddle_radius: 0.4
   render_size: 360
   max_timesteps: 500
-  gravity: [-1,-40] # if a range, then uniformly sampled
+  gravity: [-10,-40] # if a range, then uniformly sampled
   reward_type: 'goal'
 
 # Training Parameters

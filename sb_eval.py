@@ -32,8 +32,8 @@ def evaluate_air_hockey_model(air_hockey_cfg):
     env_test = DummyVecEnv([lambda : env_test])
     env_test = VecNormalize.load(air_hockey_cfg['vec_normalize_save_filepath'], env_test)
 
-    env_test.training = False
-    env_test.norm_reward = False
+    # env_test.training = False
+    # env_test.norm_reward = False
     
     log_dir = air_hockey_cfg['tb_log_dir']
     # get log dir ending with highest number

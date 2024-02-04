@@ -52,8 +52,8 @@ class AirHockey2D(Env):
         
         # if goal-conditioned, then we need to add the goal position
         if self.goal_conditioned:
-            self.min_goal_radius = width / 8
-            self.max_goal_radius = width / 3
+            self.min_goal_radius = width / 16
+            self.max_goal_radius = width / 4
             low = np.array([-width/2, -length/2, -width/2, -length/2, -10, -10, -width/2, 0, self.min_goal_radius])
             high = np.array([width/2, length/2, width/2, length/2, 10, 10, width/2, length/2, self.max_goal_radius])
             self.observation_space = Box(low=low, high=high, shape=(9,), dtype=np.float64)
@@ -62,10 +62,7 @@ class AirHockey2D(Env):
         
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
 
-        if self.goal_conditioned:
-            self.reward_type = 'goal'
-        else:
-            self.reward_type = reward_type
+        self.reward_type = reward_type
 
         self.reward_range = Box(low=0, high=1) # need to make sure rewards are between 0 and 1
         self.metadata = {}
@@ -257,7 +254,7 @@ class AirHockey2D(Env):
                         density=10, 
                         vel=None, 
                         pos=None, 
-                        ldamp=0.1, 
+                        ldamp=1, 
                         collidable=True,
                         min_height=-30,
                         max_height=30):
@@ -386,7 +383,7 @@ class AirHockey2D(Env):
         if self.reward_type == 'goal':
             reward = 1 if puck_within_goal else 0
         elif self.reward_type == 'puck_height':
-            reward = self.pucks[self.puck_names[0]][0].position[1]# - self.paddle[1][0].position[1]
+            reward = self.pucks[self.puck_names[0]][0].position[1]
             # min acceptable reward is 0 height and above
             reward = max(reward, 0)
             # let's normalize reward w.r.t. the top half length of the table
@@ -395,11 +392,13 @@ class AirHockey2D(Env):
             min_rew = 0
             reward = (reward - min_rew) / (max_rew - min_rew)
         elif self.reward_type == 'puck_vel':
-        # reward for positive velocity towards the right side of the board
-            reward = self.pucks[self.puck_names[0]][0].linearVelocity[0] / self.max_speed_start
-            min_vel = 0.5
-            reward = max(reward, 0)
-            reward = min(reward, min_vel) if reward > 0 else 0
+        # reward for positive velocity towards the top of the board
+            reward = self.pucks[self.puck_names[0]][0].linearVelocity[1]
+            reward = max(reward, 0) # only reward positive vel
+            max_rew = 10 # estimated max vel
+            min_rew = 2  # min acceptable good velocity
+            reward = 0 if reward < min_rew else reward      
+            reward = (reward - min_rew) / (max_rew - min_rew)
         elif self.reward_type == 'puck_touch':
             reward = 1 if hit_target else 0
         elif self.reward_type == 'alt_home':
@@ -458,7 +457,8 @@ class AirHockey2D(Env):
 
     def single_agent_step(self, action, time_step=0.018):
         force = self.force_scaling * self.paddles['paddle_ego'][0].mass * np.array((action[0], action[1])).astype(float)
-        if self.paddles['paddle_ego'][0].position[1] > self.paddle_max_height: force[1] = min(self.force_scaling * self.paddles['paddle_ego'][0].mass * action[1], 0)
+        if self.paddles['paddle_ego'][0].position[1] > 0: 
+            force[1] = min(self.force_scaling * self.paddles['paddle_ego'][0].mass * action[1], 0)
         if 'paddle_ego' in self.paddles: 
             self.paddles['paddle_ego'][0].ApplyForceToCenter(force, True)
 
@@ -494,8 +494,10 @@ class AirHockey2D(Env):
         force_alt = self.force_scaling * self.paddles['paddle_alt'][0].mass * np.array((action_alt[0], action_alt[1])).astype(float)
         
         # legacy code snippet
-        if self.paddles['paddle_ego'][0].position[1] > 0: force_ego[1] = min(self.force_scaling * self.paddles['paddle_ego'][0].mass * action_ego[1], 0)
-        if self.paddles['paddle_alt'][0].position[1] < 0: force_alt[1] = min(self.force_scaling * self.paddles['paddle_alt'][0].mass * action_alt[1], 0)
+        if self.paddles['paddle_ego'][0].position[1] > 0: 
+            force_ego[1] = min(self.force_scaling * self.paddles['paddle_ego'][0].mass * action_ego[1], 0)
+        if self.paddles['paddle_alt'][0].position[1] < 0: 
+            force_alt[1] = min(self.force_scaling * self.paddles['paddle_alt'][0].mass * action_alt[1], 0)
 
         self.paddles['paddle_ego'][0].ApplyForceToCenter(force_ego, True)
         self.paddles['paddle_alt'][0].ApplyForceToCenter(force_alt, True)
