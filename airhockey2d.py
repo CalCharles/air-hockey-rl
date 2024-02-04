@@ -9,7 +9,7 @@ from gymnasium.spaces import Box
 
 class AirHockey2D(Env):
     def __init__(self, num_paddles, num_pucks, num_blocks, num_obstacles, num_targets, absorb_target, use_cue, length, width,
-                 paddle_radius, reward_type, goal_conditioned,
+                 paddle_radius, reward_type,
                  force_scaling, paddle_damping, render_size, render_masks=False, max_timesteps=1000,  gravity=-5):
         self.gravity = gravity
         if type(self.gravity) == int:
@@ -25,7 +25,7 @@ class AirHockey2D(Env):
         self.num_obstacles = num_obstacles
         self.num_targets = num_targets
         self.absorb_target = absorb_target
-        self.goal_conditioned = goal_conditioned
+        self.goal_conditioned = True if reward_type == 'goal' else False
         self.render_width = int(render_size)
         self.ppm = render_size / self.width
         self.render_length = int(self.ppm * self.length)

@@ -7,19 +7,18 @@ air_hockey:
   num_targets: 0
   absorb_target: false
   use_cue: false
-  goal_conditioned: false
   length: 10
   width: 6
   force_scaling: 200
   paddle_damping: 10
   paddle_radius: 0.4
   render_size: 360
-  max_timesteps: 1000
-  gravity: [-1,-30] # if a range, then uniformly sampled
-  reward_type: 'puck_vel' # reward is irrelevant if goal conditioned
+  max_timesteps: 500
+  gravity: [-1,-40] # if a range, then uniformly sampled
+  reward_type: 'goal'
 
 # Training Parameters
-n_training_steps: 100000
+n_training_steps: 500000
 model_save_filepath: trained_models/ppo/model
 vec_normalize_save_filepath: trained_models/ppo/vec_normalize.pkl
 tb_log_dir: trained_models/ppo

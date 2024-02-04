@@ -9,7 +9,6 @@ air_hockey:
   use_cue: false
   length: 10
   width: 5
-  goal_conditioned: true
   length: 10
   width: 6
   paddle_radius: 0.4
