@@ -9,20 +9,27 @@ air_hockey:
   use_cue: false
   length: 10
   width: 6
-  force_scaling: 200
+  force_scaling: 400
   paddle_damping: 13
   paddle_radius: 0.4
+  max_goal_rew_radius: 1.2 # only relevant for continuous goal reward
   render_size: 360
-  max_timesteps: 500
-  gravity: [-10,-40] # if a range, then uniformly sampled
-  reward_type: 'goal'
+  max_timesteps: 1000
+  gravity: -20
+  # gravity: [-10,-40] # if a range, then uniformly sampled
+  reward_type: 'puck_vel'
+  terminate_on_out_of_bounds: true
+  terminate_on_enemy_goal: true
+  truncate_rew: -1
+  wall_bumping_rew: -0.1
 
 # Training Parameters
-n_training_steps: 500000
+n_training_steps: 200000
 model_save_filepath: trained_models/ppo/model
 vec_normalize_save_filepath: trained_models/ppo/vec_normalize.pkl
 tb_log_dir: trained_models/ppo
 tb_log_name: air_hockey_ppo
+gamma: 0.99
 
 # this parameter is only used when evaluating demonstrations
 print_reward: false

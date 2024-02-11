@@ -97,8 +97,9 @@ def evaluate_air_hockey_model(air_hockey_cfg):
     time.sleep(3) # load plot before game
 
     obs = env_test.reset()
-    
     start = time.time()
+    done = False
+    
     for i in range(1000000):
         if i % 1000 == 0:
             print("fps", 1000 / (time.time() - start))
@@ -106,7 +107,9 @@ def evaluate_air_hockey_model(air_hockey_cfg):
         # Draw the world
         renderer.render()
         action = model.predict(obs, deterministic=True)[0]
-        obs, _, _, _ = env_test.step(action)
+        obs, rew, done, info = env_test.step(action)
+        if done:
+            obs = env_test.reset()
 
     env_test.close()
 

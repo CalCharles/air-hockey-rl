@@ -8,15 +8,18 @@ air_hockey:
   absorb_target: false
   use_cue: false
   length: 10
-  width: 5
-  length: 10
   width: 6
   paddle_radius: 0.4
   force_scaling: 200
-  paddle_damping: 10
+  paddle_damping: 13
+  max_goal_rew_radius: 2
   render_size: 360
   max_timesteps: 1000
   gravity: -20
-  reward_type: 'enemy_home'
+  reward_type: 'goal_discrete'
+  terminate_on_out_of_bounds: true
+  terminate_on_enemy_goal: true
+  truncate_rew: -1
+  wall_bumping_rew: -0.1
 
-print_reward: true
+print_reward: false

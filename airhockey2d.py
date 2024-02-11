@@ -1,73 +1,98 @@
 from Box2D.b2 import world
 from Box2D import (b2CircleShape, b2FixtureDef, b2LoopShape, b2PolygonShape,
-                   b2_dynamicBody, b2_staticBody, b2Filter)
+                   b2_dynamicBody, b2_staticBody, b2Filter, b2Vec2)
 from gymnasium import Env
 import numpy as np
 import random
 from gymnasium.spaces import Box
+from typing import Union
 
 
 class AirHockey2D(Env):
-    def __init__(self, num_paddles, num_pucks, num_blocks, num_obstacles, num_targets, absorb_target, use_cue, length, width,
-                 paddle_radius, reward_type,
-                 force_scaling, paddle_damping, render_size, render_masks=False, max_timesteps=1000,  gravity=-5):
+    def __init__(self, num_paddles, num_pucks, num_blocks, num_obstacles, num_targets, 
+                 absorb_target, use_cue, length, width,
+                 paddle_radius, reward_type, max_goal_rew_radius,
+                 force_scaling, paddle_damping, render_size, wall_bumping_rew,
+                 terminate_on_out_of_bounds, terminate_on_enemy_goal, truncate_rew,
+                 render_masks=False, max_timesteps=1000,  gravity=-5):
+
+        # physics
+        self.force_scaling = force_scaling
+        self.absorb_target = absorb_target
+        self.paddle_damping = paddle_damping
         self.gravity = gravity
+        self.max_vel = 15
         if type(self.gravity) == int:
             self.world = world(gravity=(0, self.gravity), doSleep=True)
-        else: # it's a range
+        else:
             self.world = world(gravity=(0, np.random.uniform(low=self.gravity[0], high=self.gravity[1])), doSleep=True)
+
+        # world params
         self.length, self.width = length, width
-        self.force_scaling = force_scaling
         self.num_paddles = num_paddles
         self.paddle_radius = paddle_radius
         self.num_pucks = num_pucks
         self.num_blocks = num_blocks
         self.num_obstacles = num_obstacles
         self.num_targets = num_targets
-        self.absorb_target = absorb_target
-        self.goal_conditioned = True if reward_type == 'goal' else False
-        self.render_width = int(render_size)
-        self.ppm = render_size / self.width
-        self.render_length = int(self.ppm * self.length)
-        self.render_masks = render_masks
         self.puck_min_height = (-length / 2) + (length / 3)
         self.paddle_max_height = 0
         self.block_min_height = 0
         self.max_speed_start = width
         self.min_speed_start = 0
-        self.paddle_damping = paddle_damping
-        self.terminate_on_out_of_bounds = False
         self.use_cue = use_cue
+        self.max_timesteps = max_timesteps
+        self.current_timestep = 0
+        
+        # termination conditions
+        self.terminate_on_out_of_bounds = terminate_on_out_of_bounds
+        self.terminate_on_enemy_goal = terminate_on_enemy_goal
+        
+        # visualization params (but the visualization is done in the Render file)
+        self.ppm = render_size / self.width
+        self.render_width = int(render_size)
+        self.render_length = int(self.ppm * self.length)
+        self.render_masks = render_masks
+        
+        # reward function
+        self.goal_conditioned = True if 'goal' in reward_type else False
+        self.goal_radius_type = 'random'
+        self.reward_type = reward_type
+        self.max_goal_rew_radius = max_goal_rew_radius
         self.multiagent = num_paddles == 2
+        self.truncate_rew = truncate_rew
+        self.wall_bumping_rew = wall_bumping_rew
+        
+        self.initialize_spaces()
+        
+        self.metadata = {}
+        
+        # creating the ground -- need to only call once!
         self.ground_body = self.world.CreateBody(
             shapes=b2LoopShape(vertices=[(-width/2, -length/2),
                                          (-width/2, length/2), (width/2, length/2),
                                          (width/2, -length/2)]),
         )
-        self.max_timesteps = max_timesteps
-        self.current_timestep = 0
-        
-        low = np.array([-width/2, -length/2, -width/2, -length/2, -10, -10])
-        high = np.array([width/2, length/2, width/2, length/2, 10, 10])
+        self.reset()
+
+    def initialize_spaces(self):
+        # setup observation / action / reward spaces
+        low = np.array([-self.width/2, -self.length/2, -self.width/2, -self.length/2, -self.max_vel, -self.max_vel])
+        high = np.array([self.width/2, self.length/2, self.width/2, self.length/2, self.max_vel, self.max_vel])
         
         # if goal-conditioned, then we need to add the goal position
         if self.goal_conditioned:
-            self.min_goal_radius = width / 16
-            self.max_goal_radius = width / 4
-            low = np.array([-width/2, -length/2, -width/2, -length/2, -10, -10, -width/2, 0, self.min_goal_radius])
-            high = np.array([width/2, length/2, width/2, length/2, 10, 10, width/2, length/2, self.max_goal_radius])
+            self.min_goal_radius = self.width / 16
+            self.max_goal_radius = self.width / 4
+            low = np.array([-self.width/2, -self.length/2, -self.width/2, -self.length/2, 
+                            -self.max_vel, -self.max_vel, -self.width/2, 0, self.min_goal_radius])
+            high = np.array([self.width/2, self.length/2, self.width/2, self.length/2, 
+                             self.max_vel, self.max_vel, self.width/2, self.length/2, self.max_goal_radius])
             self.observation_space = Box(low=low, high=high, shape=(9,), dtype=np.float64)
         else:
             self.observation_space = Box(low=low, high=high, shape=(6,), dtype=np.float64)
-        
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
-
-        self.reward_type = reward_type
-
         self.reward_range = Box(low=0, high=1) # need to make sure rewards are between 0 and 1
-        self.metadata = {}
-        
-        self.reset()
 
     @staticmethod
     def from_dict(state_dict):
@@ -80,22 +105,66 @@ class AirHockey2D(Env):
               object_state_dict=None, 
               type_instance_dict=None, 
               max_count_dict=None):
+
         if seed is None:
             seed = np.random.randint(10e8)
         np.random.seed(seed)
+
         if hasattr(self, "object_dict"):
             for body in self.object_dict.values():
                 self.world.DestroyBody(body)
+
         if type(self.gravity) == list:
             self.world.gravity = (0, np.random.uniform(low=self.gravity[0], high=self.gravity[1]))
+
+        self.current_timestep = 0
+
         self.paddles = dict()
         self.pucks = dict()
         self.blocks = dict()
         self.obstacles = dict()
         self.targets = dict()
+
         self.paddle_attrs = None
         self.target_attrs = None
-        self.current_timestep = 0
+
+        self.set_goals(goal_radius_type, ego_goal_pos, alt_goal_pos)
+
+        self.create_world_objects()
+        
+        # get initial observation
+        return self.get_current_observation(), {}
+        
+    def get_current_observation(self):
+        ego_paddle_x_pos = self.paddles['paddle_ego'][0].position[0]
+        ego_paddle_y_pos = self.paddles['paddle_ego'][0].position[1]
+        puck_x_pos = self.pucks[self.puck_names[0]][0].position[0]
+        puck_y_pos = self.pucks[self.puck_names[0]][0].position[1]
+        puck_x_vel = self.pucks[self.puck_names[0]][0].linearVelocity[0]
+        puck_y_vel = self.pucks[self.puck_names[0]][0].linearVelocity[1]
+
+        if not self.multiagent:
+            if not self.goal_conditioned:
+                obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
+            else:
+                obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel,
+                                self.ego_goal_pos[0], self.ego_goal_pos[1], self.ego_goal_radius])
+        else:
+            alt_paddle_x_pos = self.paddles['paddle_alt'][0].position[0]
+            alt_paddle_y_pos = self.paddles['paddle_alt'][0].position[1]
+            
+            if not self.goal_conditioned:
+                obs_ego = np.array([ego_paddle_x_pos, ego_paddle_y_pos, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
+                obs_alt = np.array([-alt_paddle_x_pos, -alt_paddle_y_pos, -puck_x_pos, -puck_y_pos, -puck_x_vel, -puck_y_vel])
+            else:
+                obs_ego = np.array([ego_paddle_x_pos, ego_paddle_y_pos, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel,
+                                    self.ego_goal_pos[0], self.ego_goal_pos[1], self.ego_goal_radius])
+                obs_alt = np.array([-alt_paddle_x_pos, -alt_paddle_y_pos, -puck_x_pos, -puck_y_pos, -puck_x_vel, -puck_y_vel,
+                                    -self.alt_goal_pos[0], -self.alt_goal_pos[1], self.alt_goal_radius])
+            obs = (obs_ego, obs_alt)
+        return obs
+    
+    def set_goals(self, goal_radius_type, ego_goal_pos=None, alt_goal_pos=None):
         if self.goal_conditioned:
             if goal_radius_type == 'random':
                 ego_goal_radius = np.random.uniform(low=self.min_goal_radius, high=self.max_goal_radius)
@@ -108,11 +177,7 @@ class AirHockey2D(Env):
                 self.ego_goal_radius = 0.16 * self.width
                 if self.multiagent:
                     self.alt_goal_radius = 0.16 * self.width
-            # uniform distribution
             if ego_goal_pos is None:
-                # should fit in the x range [-width/2, width/2] and y range [-length/2, length/2]
-                # however, we also need to take into account radius
-                # -> [-width / 2 + ego_goal_radius, width / 2 - ego_goal_radius] and [-length / 2 + ego_goal_radius, length / 2 - ego_goal_radius
                 min_x = -self.width / 2 + self.ego_goal_radius
                 max_x = self.width / 2 - self.ego_goal_radius
                 min_y = 0 + self.ego_goal_radius
@@ -120,10 +185,17 @@ class AirHockey2D(Env):
                 self.ego_goal_pos = np.random.uniform(low=(min_y, min_x), high=(max_y, max_x))
                 if self.multiagent:
                     self.alt_goal_pos = np.random.uniform(low=(-self.length / 2, -self.width / 2), high=(0, self.width / 2))
-            else: # If they share a goal, this might be a good testbed for human ai coordination
+            else:
                 self.ego_goal_pos = ego_goal_pos
                 if self.multiagent:
                     self.alt_goal_pos = alt_goal_pos
+        else:
+            self.ego_goal_pos = None
+            self.ego_goal_radius = None
+            self.alt_goal_pos = None
+            self.alt_goal_radius = None
+                
+    def create_world_objects(self):
         for i in range(self.num_pucks):
             rad = max(0.25, np.random.rand() * (self.width/ 8))
             name, puck_attrs = self.create_puck(i, radius = rad, min_height=self.puck_min_height)
@@ -151,10 +223,12 @@ class AirHockey2D(Env):
                                              home_paddle=False)
             self.paddles[name_home] = paddle_ego_attrs
             self.paddles[name_other] = paddle_other_attrs
-        
+            
         if self.use_cue:
             self.cue = self.create_puck(-1,name="Cue", radius=0.25, vel=(0,0), pos=(0,0), color=(200,100,0))
-        else: self.cue = ("Cue", None)
+        else: 
+            self.cue = ("Cue", None)
+            
         # names and object dict
         self.puck_names = list(self.pucks.keys())
         self.puck_names.sort()
@@ -172,35 +246,7 @@ class AirHockey2D(Env):
                              **{name: self.targets[name][0] for name in self.targets.keys()},
                              **{name: self.obstacles[name][0] for name in self.obstacles.keys()},
                              }
-        ego_paddle_x_pos = self.paddles['paddle_ego'][0].position[0]
-        ego_paddle_y_pos = self.paddles['paddle_ego'][0].position[1]
-        puck_x_pos = self.pucks[self.puck_names[0]][0].position[0]
-        puck_y_pos = self.pucks[self.puck_names[0]][0].position[1]
-        puck_x_vel = self.pucks[self.puck_names[0]][0].linearVelocity[0]
-        puck_y_vel = self.pucks[self.puck_names[0]][0].linearVelocity[1]
-            
 
-        if not self.multiagent:
-            if not self.goal_conditioned:
-                obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
-            else:
-                obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel,
-                                self.ego_goal_pos[0], self.ego_goal_pos[1], self.ego_goal_radius])
-        else:
-            alt_paddle_x_pos = self.paddles['paddle_alt'][0].position[0]
-            alt_paddle_y_pos = self.paddles['paddle_alt'][0].position[1]
-            
-            if not self.goal_conditioned:
-                obs_ego = np.array([ego_paddle_x_pos, ego_paddle_y_pos, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
-                obs_alt = np.array([-alt_paddle_x_pos, -alt_paddle_y_pos, -puck_x_pos, -puck_y_pos, -puck_x_vel, -puck_y_vel])
-            else:
-                obs_ego = np.array([ego_paddle_x_pos, ego_paddle_y_pos, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel,
-                                    self.ego_goal_pos[0], self.ego_goal_pos[1], self.ego_goal_radius])
-                obs_alt = np.array([-alt_paddle_x_pos, -alt_paddle_y_pos, -puck_x_pos, -puck_y_pos, -puck_x_vel, -puck_y_vel,
-                                    -self.alt_goal_pos[0], -self.alt_goal_pos[1], self.alt_goal_radius])
-            obs = (obs_ego, obs_alt)
-        return obs, {}
-        
     def create_paddle(self, i, 
                         name=None, 
                         color=(127, 127, 127), 
@@ -324,23 +370,6 @@ class AirHockey2D(Env):
         block_name = block_name + str(i)
         return (block_name if name is None else name), (body, color)
 
-    def step(self, action, other_action=None, time_step=0.018):
-        if not self.multiagent:
-            return self.single_agent_step(action, time_step)
-        else:
-            return self.multi_step(action, time_step)
-        
-    def is_within_goal_region(self, point, body, radius):
-        point = np.array([point[1], point[0]])
-        dist = np.linalg.norm(body.position - point)
-        return dist < radius
-
-    def is_within_home_region(self, point, body):
-        # this is for the two base regions of each side of the eboard
-        # TODO: this may need to be tuned :) let's provide a rough estimate of where the goal is
-        # 90 / 560 = 0.16 <- normalized dist in pixels
-        return self.is_within_goal_region(point, body, 0.16 * self.width)
-
     def has_finished(self, multiagent=False):
         truncated = False
         terminated = False
@@ -350,38 +379,71 @@ class AirHockey2D(Env):
         if self.current_timestep > self.max_timesteps:
             terminated = True
         else:
-            if self.terminate_on_out_of_bounds:
-                if self.paddles['paddle_ego'][0].position[1] > 0: 
-                    truncated = True
+            if self.terminate_on_out_of_bounds and self.paddles['paddle_ego'][0].position[1] > 0: 
+                truncated = True
 
         # confusing, but we need to swap x and y for this function
         bottom_center_point = np.array([-self.length / 2, 0])
-        puck_within_home = self.is_within_home_region(bottom_center_point, self.pucks[self.puck_names[0]][0])
-        truncated = truncated or puck_within_home
-
-        # confusing, but we need to swap x and y for this function
         top_center_point = np.array([self.length / 2, 0])
+        puck_within_home = self.is_within_home_region(bottom_center_point, self.pucks[self.puck_names[0]][0])
         puck_within_alt_home = self.is_within_home_region(top_center_point, self.pucks[self.puck_names[0]][0])
+        
+        if self.terminate_on_enemy_goal:
+            if not terminated and puck_within_home:
+                truncated = True
 
-        if self.reward_type == 'alt_home':
-            if not terminated and puck_within_alt_home:
-                terminated = True
         if multiagent:
-            truncated = False
             terminated = terminated or truncated or puck_within_alt_home or puck_within_home
+            truncated = False
+
         puck_within_ego_goal = False
         puck_within_alt_goal = False
+
         if self.goal_conditioned:
             if self.is_within_goal_region(self.ego_goal_pos, self.pucks[self.puck_names[0]][0], self.ego_goal_radius):
                 puck_within_ego_goal = True
-                if multiagent:
-                    if self.is_within_goal_region(self.alt_goal_pos, self.pucks[self.puck_names[0]][0], self.alt_goal_radius):
-                        puck_within_alt_goal = True
+            if multiagent:
+                if self.is_within_goal_region(self.alt_goal_pos, self.pucks[self.puck_names[0]][0], self.alt_goal_radius):
+                    puck_within_alt_goal = True
+
         return terminated, truncated, puck_within_home, puck_within_alt_home, puck_within_ego_goal, puck_within_alt_goal
     
-    def get_reward(self, hit_target, puck_within_home, puck_within_alt_home, puck_within_goal):
-        if self.reward_type == 'goal':
-            reward = 1 if puck_within_goal else 0
+    def get_goal_region_reward(self, point, body, radius, discrete=True) -> float:
+        point = np.array([point[1], point[0]])
+        dist = np.linalg.norm(body.position - point)
+        
+        if discrete:
+            return 1.0 if dist < radius else 0.0
+        # also return float from [0, 1] 0 being far 1 being the point
+        # use sigmoid function because being closer is much more important than being far
+        sigmoid_scale = 0.1
+        reward_raw = 1 - (dist / self.max_goal_rew_radius * radius)
+        reward = 1 / (1 + np.exp(-reward_raw * sigmoid_scale))
+        return reward
+
+    def get_home_region_reward(self, point, body, discrete=True) -> float:
+        # this is for the two base regions of each side of the eboard
+        # TODO: this may need to be tuned :) let's provide a rough estimate of where the goal is
+        # 90 / 560 = 0.16 <- normalized dist in pixels
+        return self.get_goal_region_reward(point, body, 0.16 * self.width, discrete=discrete)
+    
+    def is_within_goal_region(self, point, body, radius) -> bool:
+        point = np.array([point[1], point[0]])
+        dist = np.linalg.norm(body.position - point)
+        return dist < radius
+    
+    def is_within_home_region(self, point, body) -> bool:
+        return self.is_within_goal_region(point, body, 0.16 * self.width)
+
+    def get_reward(self, hit_target, puck_within_home, 
+                       puck_within_alt_home, puck_within_goal,
+                       goal_pos, goal_radius):
+        if self.reward_type == 'goal_discrete':
+            return self.get_goal_region_reward(goal_pos, self.pucks[self.puck_names[0]][0], 
+                                                 goal_radius, discrete=True)
+        elif self.reward_type == 'goal_continuous':
+            return self.get_goal_region_reward(goal_pos, self.pucks[self.puck_names[0]][0], 
+                                                 goal_radius, discrete=False)
         elif self.reward_type == 'puck_height':
             reward = self.pucks[self.puck_names[0]][0].position[1]
             # min acceptable reward is 0 height and above
@@ -391,76 +453,84 @@ class AirHockey2D(Env):
             max_rew = self.length / 2
             min_rew = 0
             reward = (reward - min_rew) / (max_rew - min_rew)
+            return reward
         elif self.reward_type == 'puck_vel':
         # reward for positive velocity towards the top of the board
             reward = self.pucks[self.puck_names[0]][0].linearVelocity[1]
-            reward = max(reward, 0) # only reward positive vel
+            
             max_rew = 10 # estimated max vel
             min_rew = 2  # min acceptable good velocity
-            reward = 0 if reward < min_rew else reward      
+            
+            if reward < min_rew:
+                return 0
+            
+            reward = min(reward, max_rew)
             reward = (reward - min_rew) / (max_rew - min_rew)
+            return reward
         elif self.reward_type == 'puck_touch':
             reward = 1 if hit_target else 0
+            return reward
         elif self.reward_type == 'alt_home':
             reward = 1 if puck_within_alt_home else 0
-        return reward
+            return reward
+        else:
+            raise ValueError("Invalid reward type defined in config.")
     
     def get_joint_reward(self, ego_hit_target, alt_hit_target, 
                          puck_within_ego_home, puck_within_alt_home,
-                         puck_within_ego_goal, puck_within_alt_goal):
-        ego_reward = 0
-        if self.reward_type == 'goal':
-            ego_reward = 1 if puck_within_ego_goal else 0
-        elif self.reward_type == 'puck_height':
-            ego_reward = self.pucks[self.puck_names[0]][0].position[1]# - self.paddle[1][0].position[1]
-            # min acceptable reward is 0 height and above
-            ego_reward = max(ego_reward, 0)
-            # let's normalize reward w.r.t. the top half length of the table
-            # aka within the range [0, self.length / 2]
-            max_rew = self.length / 2
-            min_rew = 0
-            ego_reward = (ego_reward - min_rew) / (max_rew - min_rew)
-        elif self.reward_type == 'puck_vel':
-            # reward for positive velocity towards the right side of the board
-            ego_reward = self.pucks[self.puck_names[0]][0].linearVelocity[0] / self.max_speed_start
-            min_vel = 0.5
-            ego_reward = max(ego_reward, 0)
-            ego_reward = min(ego_reward, min_vel) if ego_reward > 0 else 0
-        elif self.reward_type == 'puck_touch':
-            ego_reward = 1 if ego_hit_target else 0
-        elif self.reward_type == 'alt_home':
-            ego_reward = 1 if puck_within_alt_home else 0
-            
-        alt_reward = 0
-        if self.reward_type == 'goal':
-            alt_reward = 1 if puck_within_alt_goal else 0
-        elif self.reward_type == 'puck_height':
-            alt_reward = - self.pucks[self.puck_names[0]][0].position[1]# - self.paddle[1][0].position[1]
-            # min acceptable reward is 0 height and above
-            alt_reward = max(alt_reward, 0)
-            # let's normalize reward w.r.t. the top half length of the table
-            # aka within the range [0, self.length / 2]
-            max_rew = self.length / 2
-            min_rew = 0
-            alt_reward = (alt_reward - min_rew) / (max_rew - min_rew)
-        elif self.reward_type == 'puck_vel':
-            alt_reward = -self.pucks[self.puck_names[0]][0].linearVelocity[0] / self.max_speed_start
-            min_vel = 0.5
-            alt_reward = max(alt_reward, 0)
-            alt_reward = min(alt_reward, min_vel) if alt_reward > 0 else 0
-        elif self.reward_type == 'puck_touch':
-            alt_reward = 1 if alt_hit_target else 0
-        elif self.reward_type == 'alt_home':
-            alt_reward = 1 if puck_within_ego_home else 0
-
+                         puck_within_ego_goal, puck_within_alt_goal) -> tuple[float, float]:
+        ego_reward = self.get_reward(ego_hit_target, puck_within_ego_home, 
+                                     puck_within_alt_home, puck_within_ego_goal,
+                                     self.ego_goal_pos, self.ego_goal_radius)
+        alt_reward = self.get_reward(alt_hit_target, puck_within_alt_home,
+                                     puck_within_ego_home, puck_within_alt_goal,
+                                     self.alt_goal_pos, self.alt_goal_radius)
         return ego_reward, alt_reward
+    
+    def step(self, action, other_action=None, time_step=0.018):
+        if not self.multiagent:
+            return self.single_agent_step(action, time_step)
+        else:
+            return self.multi_step(action, time_step)
 
-    def single_agent_step(self, action, time_step=0.018):
+    def single_agent_step(self, action, time_step=0.018) -> tuple[np.ndarray, float, bool, bool, dict]:
         force = self.force_scaling * self.paddles['paddle_ego'][0].mass * np.array((action[0], action[1])).astype(float)
         if self.paddles['paddle_ego'][0].position[1] > 0: 
             force[1] = min(self.force_scaling * self.paddles['paddle_ego'][0].mass * action[1], 0)
         if 'paddle_ego' in self.paddles: 
             self.paddles['paddle_ego'][0].ApplyForceToCenter(force, True)
+
+        # momentum transfer
+        vel = np.array([self.paddles['paddle_ego'][0].linearVelocity[0], self.paddles['paddle_ego'][0].linearVelocity[1]])
+        vel_mag = np.linalg.norm(vel)
+        
+        force = np.array(force).astype(float)
+        force_mag = np.linalg.norm(force)
+        if force_mag > 0:
+            force_unit_vec = force / (force_mag + 1e-8)
+            result = force_unit_vec * vel_mag
+            self.paddles['paddle_ego'][0].linearVelocity = b2Vec2(result[0], result[1])
+            
+
+        # keep velocity at a maximum value
+        if vel_mag > self.max_vel:
+            self.paddles['paddle_ego'][0].linearVelocity = b2Vec2(vel[0] / vel_mag * self.max_vel, vel[1] / vel_mag * self.max_vel)
+
+        wall_rew = 0.0
+        # determine if going to bump into wall
+        if self.wall_bumping_rew != 0:
+            if self.paddles['paddle_ego'][0].position[0] > self.width / 2 -self.paddle_radius:
+                if self.paddles['paddle_ego'][0].linearVelocity[0] > 0:
+                    wall_rew = self.wall_bumping_rew
+            elif self.paddles['paddle_ego'][0].position[0] < -self.width / 2 + self.paddle_radius:
+                if self.paddles['paddle_ego'][0].linearVelocity[0] < 0:
+                    wall_rew = self.wall_bumping_rew
+            elif self.paddles['paddle_ego'][0].position[1] > self.length / 2 - self.paddle_radius:
+                if self.paddles['paddle_ego'][0].linearVelocity[1] > 0:
+                    wall_rew = self.wall_bumping_rew
+            elif self.paddles['paddle_ego'][0].position[1] < -self.length / 2 + self.paddle_radius:
+                if self.paddles['paddle_ego'][0].linearVelocity[1] < 0:
+                    wall_rew = self.wall_bumping_rew
 
         self.world.Step(time_step, 10, 10)
         contacts, contact_names = self.get_contacts()
@@ -469,23 +539,15 @@ class AirHockey2D(Env):
         hit_target = np.any(contacts) # check if any are true
         is_finished, truncated, puck_within_home, puck_within_alt_home, puck_within_goal, _ = self.has_finished()
         if not truncated:
-            reward = self.get_reward(hit_target, puck_within_home, puck_within_alt_home, puck_within_goal)
+            reward = self.get_reward(hit_target, puck_within_home, 
+                                     puck_within_alt_home, puck_within_goal,
+                                     self.ego_goal_pos, self.ego_goal_radius)
         else:
-            reward = -0.01
+            reward = self.truncate_rew
+        reward += wall_rew
         self.current_timestep += 1
         
-        ego_paddle_x_pos = self.paddles['paddle_ego'][0].position[0]
-        ego_paddle_y_pos = self.paddles['paddle_ego'][0].position[1]
-        puck_x_pos = self.pucks[self.puck_names[0]][0].position[0]
-        puck_y_pos = self.pucks[self.puck_names[0]][0].position[1]
-        puck_x_vel = self.pucks[self.puck_names[0]][0].linearVelocity[0]
-        puck_y_vel = self.pucks[self.puck_names[0]][0].linearVelocity[1]
-        
-        if not self.goal_conditioned:
-            obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
-        else:
-            obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel,
-                            self.ego_goal_pos[0], self.ego_goal_pos[1], self.ego_goal_radius])
+        obs = self.get_current_observation()
         return obs, reward, is_finished, truncated, {}
     
     def multi_step(self, joint_action, time_step=0.018):
@@ -519,24 +581,7 @@ class AirHockey2D(Env):
                                                        puck_within_ego_goal, puck_within_alt_goal)
         self.current_timestep += 1
 
-        ego_paddle_x_pos = self.paddles['paddle_ego'][0].position[0]
-        ego_paddle_y_pos = self.paddles['paddle_ego'][0].position[1]
-        puck_x_pos = self.pucks[self.puck_names[0]][0].position[0]
-        puck_y_pos = self.pucks[self.puck_names[0]][0].position[1]
-        puck_x_vel = self.pucks[self.puck_names[0]][0].linearVelocity[0]
-        puck_y_vel = self.pucks[self.puck_names[0]][0].linearVelocity[1]
-        
-        alt_paddle_x_pos = self.paddles['paddle_alt'][0].position[0]
-        alt_paddle_y_pos = self.paddles['paddle_alt'][0].position[1]
-        
-        if not self.goal_conditioned:
-            obs_ego = np.array([ego_paddle_x_pos, ego_paddle_y_pos, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
-            obs_alt = np.array([-alt_paddle_x_pos, -alt_paddle_y_pos, -puck_x_pos, -puck_y_pos, -puck_x_vel, -puck_y_vel])
-        else:
-            obs_ego = np.array([ego_paddle_x_pos, ego_paddle_y_pos, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel,
-                                self.ego_goal_pos[0], self.ego_goal_pos[1], self.ego_goal_radius])
-            obs_alt = np.array([-alt_paddle_x_pos, -alt_paddle_y_pos, -puck_x_pos, -puck_y_pos, -puck_x_vel, -puck_y_vel,
-                                -self.alt_goal_pos[0], -self.alt_goal_pos[1], self.alt_goal_radius])
+        obs_ego, obs_alt = self.get_current_observation()
 
         return (obs_ego, obs_alt), (ego_reward, alt_reward), is_finished, truncated, {}
 
