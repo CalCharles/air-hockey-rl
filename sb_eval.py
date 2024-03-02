@@ -1,4 +1,4 @@
-from stable_baselines3 import PPO 
+from stable_baselines3 import PPO, SAC
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from airhockey2d import AirHockey2D
 from render import AirHockeyRenderer
@@ -23,14 +23,20 @@ def evaluate_air_hockey_model(air_hockey_cfg):
     
     air_hockey_params = air_hockey_cfg['air_hockey']
     model_fp = air_hockey_cfg['model_save_filepath']
+    air_hockey_cfg['air_hockey']['max_timesteps'] = 200
     
-    model = PPO.load(model_fp)
     
     env_test = AirHockey2D.from_dict(air_hockey_params)
     renderer = AirHockeyRenderer(env_test)
     
     env_test = DummyVecEnv([lambda : env_test])
     env_test = VecNormalize.load(air_hockey_cfg['vec_normalize_save_filepath'], env_test)
+    
+    # if goal-conditioned use SAC
+    if 'goal' in air_hockey_cfg['air_hockey']['reward_type']:
+        model = SAC.load(model_fp, env=env_test)
+    else:
+        model = PPO.load(model_fp)
 
     # env_test.training = False
     # env_test.norm_reward = False
