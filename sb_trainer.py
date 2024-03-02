@@ -1,10 +1,13 @@
 from stable_baselines3 import PPO 
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3 import HerReplayBuffer, SAC
+from stable_baselines3.common.noise import NormalActionNoise
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.logger import Figure
+from stable_baselines3.common.env_checker import check_env
 from matplotlib import pyplot as plt
-from airhockey2d import AirHockey2D
+from airhockey2d import AirHockey2D# , GoalConditionedAirHockey2D
 import numpy as np
 import argparse
 import yaml
@@ -22,7 +25,9 @@ def train_air_hockey_model(air_hockey_cfg):
     
     air_hockey_params = air_hockey_cfg['air_hockey']
     env = AirHockey2D.from_dict(air_hockey_params)
+    # env = GoalConditionedAirHockey2D.from_dict(air_hockey_params)
 
+    # check_env(env)
     def wrap_env(env):
         wrapped_env = Monitor(env) # needed for extracting eprewmean and eplenmean
         wrapped_env = DummyVecEnv([lambda: wrapped_env]) # Needed for all environments (e.g. used for multi-processing)
@@ -30,10 +35,36 @@ def train_air_hockey_model(air_hockey_cfg):
         return wrapped_env
 
     env = wrap_env(env)
-    model = PPO("MlpPolicy", env, verbose=1, 
+    
+    # if goal-conditioned use SAC
+    if 'goal' in air_hockey_cfg['air_hockey']['reward_type']:
+        # SAC hyperparams:
+        # Create 4 artificial transitions per real transition
+        n_sampled_goal = 4
+
+        # SAC hyperparams:
+        model = SAC(
+            "MultiInputPolicy",
+            env,
+            replay_buffer_class=HerReplayBuffer,
+            replay_buffer_kwargs=dict(
+            n_sampled_goal=n_sampled_goal,
+            goal_selection_strategy="future",
+            ),
+            learning_starts=10000,
+            verbose=1,
+            buffer_size=int(1e6),
+            learning_rate=1e-3,
+            gamma=0.95,
+            batch_size=512,
+            # policy_kwargs=dict(net_arch=[64, 64]),
+        )
+    else:
+        model = PPO("MlpPolicy", env, verbose=1, 
                 tensorboard_log=air_hockey_cfg['tb_log_dir'], 
                 device="cpu", # cpu is actually faster!
                 gamma=air_hockey_cfg['gamma']) 
+    
     model.learn(total_timesteps=air_hockey_cfg['n_training_steps'],
                 tb_log_name=air_hockey_cfg['tb_log_name'], 
                 progress_bar=True)

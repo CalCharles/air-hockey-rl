@@ -77,12 +77,15 @@ class AirHockeyRenderer:
         body, color = body_attrs  # color is unused but kept for compatibility
         for fixture in body.fixtures:
             shape = fixture.shape
+            # center = np.array(body.position) + np.array((self.width / 2, self.length / 2))
             center = np.array(body.position) + np.array((self.width / 2, self.length / 2))
             center = np.array((center[1], center[0])) * self.ppm  # Default horizontal orientation
             radius = int(shape.radius * self.ppm)
-
+            
             # Calculate top-left corner of the image for overlay
             top_left = (center - radius).astype(int)
+            diameter = 2 * radius
+            bottom_right = top_left + diameter
             
             if circle_type == 'puck':
                 if self.current_puck_shape != shape:
@@ -98,15 +101,39 @@ class AirHockeyRenderer:
                     diameter = int(radius * 2)
                     self.paddle_img = cv2.resize(self.paddle_img, (diameter, diameter))
                 resized_img = self.paddle_img
-
+                
+            # w.r.t. image, y_start == 0 if within frame, otherwise top_left is negative
+            if top_left[1] < 0:
+                y_start = max(0, -top_left[1] + 1)
+            else:
+                y_start = 0
+            if top_left[0] < 0:
+                x_start = max(0, -top_left[0] + 1)
+            else:
+                x_start = 0
+                
+            x_start = max(0, -top_left[0])
+            y_start = max(0, -top_left[1])
+            
+            frame_top_left = [max(0, top_left[0]), max(0, top_left[1])]
+            frame_bottom_right = [min(self.frame.shape[1], bottom_right[0]), min(self.frame.shape[0], bottom_right[1])]
+            
+            # w.r.t. image, y_end == resized_img.shape[0] if within frame, otherwise resized_img.shape[0] 
+            y_end_offset = bottom_right[1] - frame_bottom_right[1]
+            x_end_offset = bottom_right[0] - frame_bottom_right[0]
+            y_end = resized_img.shape[0] - y_end_offset
+            x_end = resized_img.shape[1] - x_end_offset
+            
             # Overlay the image
-            for i in range(resized_img.shape[0]):
-                for j in range(resized_img.shape[1]):
-                    if top_left[1]+i >= self.frame.shape[0] or top_left[0]+j >= self.frame.shape[1]:
-                        continue  # Skip pixels outside the frame
-                    alpha = resized_img[i, j, 3] / 255.0  # Assuming the alpha channel is the last
-                    if alpha > 0:  # If pixel is not transparent
-                        self.frame[top_left[1]+i, top_left[0]+j, :3] = (1 - alpha) * self.frame[top_left[1]+i, top_left[0]+j, :3] + alpha * resized_img[i, j, :3]
+            mask = resized_img[y_start:y_end, x_start:x_end, 3] > 0
+            self.frame[frame_top_left[1] : frame_bottom_right[1], frame_top_left[0]: frame_bottom_right[0]][mask] = resized_img[y_start:y_end, x_start:x_end, :3][mask]
+            # for i in range(resized_img.shape[0]):
+            #     for j in range(resized_img.shape[1]):
+            #         if top_left[1]+i >= self.frame.shape[0] or top_left[0]+j >= self.frame.shape[1]:
+            #             continue  # Skip pixels outside the frame
+            #         alpha = resized_img[i, j, 3] / 255.0  # Assuming the alpha channel is the last
+            #         if alpha > 0:  # If pixel is not transparent
+            #             self.frame[top_left[1]+i, top_left[0]+j, :3] = (1 - alpha) * self.frame[top_left[1]+i, top_left[0]+j, :3] + alpha * resized_img[i, j, :3]
 
     def draw_polygon(self, body_attrs):
         """
@@ -173,5 +200,5 @@ class AirHockeyRenderer:
         """
         frame = self.get_frame()
         cv2.imshow('Air Hockey 2D', frame)
-        cv2.waitKey(5)
+        cv2.waitKey(20)
 
