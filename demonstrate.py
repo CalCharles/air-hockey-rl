@@ -43,7 +43,7 @@ class Demonstrator:
         action = np.array([0,0])
         frame = self.renderer.get_frame()
         cv2.imshow('Air Hockey 2D Demonstration',frame)
-        key = cv2.waitKey(5)
+        key = cv2.waitKey(20)
         if self.keyboard_scheme == 'qweasdzxc':
             if key == ord('k'):
                 action = -1

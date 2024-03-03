@@ -48,8 +48,8 @@ def train_air_hockey_model(air_hockey_cfg):
             env,
             replay_buffer_class=HerReplayBuffer,
             replay_buffer_kwargs=dict(
-            n_sampled_goal=n_sampled_goal,
-            goal_selection_strategy="future",
+                n_sampled_goal=n_sampled_goal,
+                goal_selection_strategy="future",
             ),
             learning_starts=10000,
             verbose=1,
@@ -57,6 +57,8 @@ def train_air_hockey_model(air_hockey_cfg):
             learning_rate=1e-3,
             gamma=0.95,
             batch_size=512,
+            # device='cuda',
+            # device="cuda"
             # policy_kwargs=dict(net_arch=[64, 64]),
         )
     else:

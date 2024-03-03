@@ -7,23 +7,37 @@ air_hockey:
   num_targets: 0
   absorb_target: false
   use_cue: false
-  length: 10
-  width: 6
-  force_scaling: 400
-  paddle_damping: 13
-  paddle_radius: 0.4
+
+  max_timesteps: 1000
+
+  length: 1 # between 1.6 and 2.032
+  width: 0.5 # between 0.9 and 1.0922
+
+  puck_radius: 0.0254 # between 0.02286 and 0.02794
+  paddle_radius: 0.0381 # between 0.034925 and 0.041275
+  force_scaling: 200
+  paddle_damping: 28
   render_size: 360
   max_timesteps: 1000
-  gravity: -20
-  # gravity: [-10,-40] # if a range, then uniformly sampled
-  reward_type: 'goal_position_velocity'
+  gravity: -10
+  max_force_timestep: 50 # max force we can apply at one timestep
+
+  render_size: 360
+
+  reward_type: 'alt_home'
+  # reward_type: 'puck_vel'
+  goal_max_x_velocity: 1 # min is -goal_max_x_velocity
+  goal_min_y_velocity: 1
+  goal_max_y_velocity: 5
+
   terminate_on_out_of_bounds: true
   terminate_on_enemy_goal: true
+
   truncate_rew: -0.5
   wall_bumping_rew: -0.1
 
 # Training Parameters
-n_training_steps: 50000
+n_training_steps: 1000000
 model_save_filepath: trained_models/ppo/model
 vec_normalize_save_filepath: trained_models/ppo/vec_normalize.pkl
 tb_log_dir: trained_models/ppo
