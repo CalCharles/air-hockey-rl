@@ -11,7 +11,7 @@ import os
 import matplotlib.pyplot as plt
 from tensorboard.backend.event_processing import event_accumulator
 
-def evaluate_air_hockey_model(air_hockey_cfg):
+def evaluate_air_hockey_model(air_hockey_cfg, log_dir):
     """
     Evaluate the performance of an air hockey model using Stable Baselines.
     Note: This evalutes the latest training directory in the tensorboard log directory. 
@@ -22,15 +22,14 @@ def evaluate_air_hockey_model(air_hockey_cfg):
     """
     
     air_hockey_params = air_hockey_cfg['air_hockey']
-    model_fp = air_hockey_cfg['model_save_filepath']
+    model_fp = os.path.join(log_dir, air_hockey_cfg['model_save_filepath'])
     air_hockey_cfg['air_hockey']['max_timesteps'] = 200
-    
     
     env_test = AirHockey2D.from_dict(air_hockey_params)
     renderer = AirHockeyRenderer(env_test)
     
     env_test = DummyVecEnv([lambda : env_test])
-    env_test = VecNormalize.load(air_hockey_cfg['vec_normalize_save_filepath'], env_test)
+    env_test = VecNormalize.load(os.path.join(log_dir, air_hockey_cfg['vec_normalize_save_filepath']), env_test)
     
     # if goal-conditioned use SAC
     if 'goal' in air_hockey_cfg['air_hockey']['reward_type']:
@@ -40,11 +39,6 @@ def evaluate_air_hockey_model(air_hockey_cfg):
 
     # env_test.training = False
     # env_test.norm_reward = False
-    
-    log_dir = air_hockey_cfg['tb_log_dir']
-    # get log dir ending with highest number
-    subdirs = [x for x in os.listdir(log_dir) if os.path.isdir(os.path.join(log_dir, x))]
-    log_dir = os.path.join(log_dir, sorted(subdirs)[-1])
     
     # Initialize an event accumulator
     ea = event_accumulator.EventAccumulator(log_dir,
@@ -122,6 +116,7 @@ def evaluate_air_hockey_model(air_hockey_cfg):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Demonstrate the air hockey game.')
     parser.add_argument('--cfg', type=str, default=None, help='Path to the configuration file.')
+    parser.add_argument('--log_dir', type=str, default=None, help='Path to the tensorboard log directory.')
     args = parser.parse_args()
     if args.cfg is None:
         dir_path = os.path.dirname(os.path.realpath(__file__))
@@ -130,5 +125,6 @@ if __name__ == '__main__':
         air_hockey_cfg_fp = args.cfg
     with open(air_hockey_cfg_fp, 'r') as f:
         air_hockey_cfg = yaml.safe_load(f)
+    log_dir = args.log_dir
     
-    evaluate_air_hockey_model(air_hockey_cfg)
+    evaluate_air_hockey_model(air_hockey_cfg, log_dir)
