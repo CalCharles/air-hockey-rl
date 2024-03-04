@@ -24,7 +24,7 @@ air_hockey:
 
   render_size: 360
 
-  reward_type: 'alt_home'
+  reward_type: 'goal_position_velocity'
   # reward_type: 'puck_vel'
   goal_max_x_velocity: 1 # min is -goal_max_x_velocity
   goal_min_y_velocity: 1
@@ -37,11 +37,11 @@ air_hockey:
   wall_bumping_rew: -0.1
 
 # Training Parameters
-n_training_steps: 20000
+n_training_steps: 1000000
 model_save_filepath: model # will be saved same dir as tb_log_dir
 vec_normalize_save_filepath: vec_normalize.pkl
-tb_log_dir: trained_models/ppo
-tb_log_name: air_hockey_ppo
+tb_log_dir: trained_models/gcrl
+tb_log_name: air_hockey_gcrl
 gamma: 0.99
 
 # this parameter is only used when evaluating demonstrations

@@ -455,7 +455,7 @@ class AirHockey2D(Env):
         if not self.multiagent:
             # then we want it to start at the top, which is max_height, 0
             if pos is None: 
-                x_pos = np.random.uniform(low=-self.width / 2, high=self.width / 2)
+                x_pos = np.random.uniform(low=-self.width / 3, high=self.width / 3) # doesnt spawn at edges
                 # (np.random.rand() - 0.5) * 2 * (self.width / 2)
                 pos = (x_pos,
                        min(max_height, self.length / 2) - 0.01)
@@ -466,8 +466,14 @@ class AirHockey2D(Env):
         # print(name, pos, min_height, max_height)
         if not self.multiagent:
             if vel is None: 
-                vel = (3 * np.random.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start,
-                       -1)
+                vel = (2 * np.random.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start,
+                       -0.7)
+                # with 1/4th p, add x vel
+                if np.random.rand() < 0.25:
+                    (-1,
+                     2 * np.random.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start)
+                else:
+                    (-1, 0)
         else:
             if vel is None: 
                 vel = (np.random.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start,

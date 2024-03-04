@@ -10,6 +10,9 @@ import yaml
 import os
 import matplotlib.pyplot as plt
 from tensorboard.backend.event_processing import event_accumulator
+import imageio
+import cv2
+import tqdm
 
 def evaluate_air_hockey_model(air_hockey_cfg, log_dir):
     """
@@ -53,8 +56,8 @@ def evaluate_air_hockey_model(air_hockey_cfg, log_dir):
     # Load all events from the directory
     ea.Reload()
 
-    # List all tags in the log file
-    print("Available tags: ", ea.Tags()['scalars'])
+    # uncomment below to see the tags in the tensorboard log file, then you can add them to metrics
+    # print("Available tags: ", ea.Tags()['scalars'])
     
     metrics = [ 
         'rollout/ep_rew_mean', 
@@ -64,7 +67,7 @@ def evaluate_air_hockey_model(air_hockey_cfg, log_dir):
         'train/loss', 
         'train/value_loss']
 
-    def create_plot(metrics):
+    def save_plot(metrics):
         # Create a 2x3 subplot
         fig, axs = plt.subplots(2, 3, figsize=(18, 12))
         fig.suptitle('Air Hockey Training Summary')
@@ -91,40 +94,61 @@ def evaluate_air_hockey_model(air_hockey_cfg, log_dir):
 
         # Adjust layout for better readability
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-        plt.show()
-    thread = threading.Thread(target=create_plot, args=(metrics,))
-    thread.start()
-    time.sleep(3) # load plot before game
+        # let's save in same folder
+        plot_fp = os.path.join(log_dir, 'training_summary.png')
+        plt.savefig(plot_fp)
+        plt.close()
+
+    save_plot(metrics)
 
     obs = env_test.reset()
     start = time.time()
     done = False
     
-    for i in range(1000000):
-        if i % 1000 == 0:
-            print("fps", 1000 / (time.time() - start))
-            start = time.time()
-        # Draw the world
-        renderer.render()
-        action = model.predict(obs, deterministic=True)[0]
-        obs, rew, done, info = env_test.step(action)
-        if done:
+    # first let's create some videos offline into gifs
+    print("Saving gifs...(this will tqdm for EACH gif to save)")
+    n_eps_viz = 10
+    n_gifs = 5
+    for gif_idx in range(n_gifs):
+        frames = []
+        for i in tqdm.tqdm(range(n_eps_viz)):
             obs = env_test.reset()
+            done = False
+            while not done:
+                frame = renderer.get_frame()
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                # decrease width to 160 but keep aspect ratio
+                aspect_ratio = frame.shape[1] / frame.shape[0]
+                frame = cv2.resize(frame, (160, int(160 / aspect_ratio)))
+                frames.append(frame)
+                action = model.predict(obs, deterministic=True)[0]
+                obs, rew, done, info = env_test.step(action)
+        gif_savepath = os.path.join(log_dir, f'eval_{gif_idx}.gif')
+        def fps_to_duration(fps):
+            return int(1000 * 1/fps)
+        imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(30))
+    
+    # print('Running policy live...Ctrl+C twice to stop.')
+    # for i in range(1000000):
+    #     if i % 1000 == 0:
+    #         print("fps", 1000 / (time.time() - start))
+    #         start = time.time()
+    #     # Draw the world
+    #     renderer.render()
+    #     action = model.predict(obs, deterministic=True)[0]
+    #     obs, rew, done, info = env_test.step(action)
+    #     if done:
+    #         obs = env_test.reset()
 
     env_test.close()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Demonstrate the air hockey game.')
-    parser.add_argument('--cfg', type=str, default=None, help='Path to the configuration file.')
     parser.add_argument('--log_dir', type=str, default=None, help='Path to the tensorboard log directory.')
     args = parser.parse_args()
-    if args.cfg is None:
-        dir_path = os.path.dirname(os.path.realpath(__file__))
-        air_hockey_cfg_fp = os.path.join(dir_path, 'configs', 'train_ppo.yaml')
-    else:
-        air_hockey_cfg_fp = args.cfg
+    log_dir = args.log_dir
+    air_hockey_cfg_fp = os.path.join(log_dir, 'model_cfg.yaml')
     with open(air_hockey_cfg_fp, 'r') as f:
         air_hockey_cfg = yaml.safe_load(f)
-    log_dir = args.log_dir
     
     evaluate_air_hockey_model(air_hockey_cfg, log_dir)

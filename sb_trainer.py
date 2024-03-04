@@ -83,7 +83,11 @@ def train_air_hockey_model(air_hockey_cfg):
     # let's save model and vec normalize here too
     model_filepath = os.path.join(log_dir, air_hockey_cfg['model_save_filepath'])
     env_filepath = os.path.join(log_dir, air_hockey_cfg['vec_normalize_save_filepath'])
-    
+    # copy cfg to same folder
+    cfg_filepath = os.path.join(log_dir, 'model_cfg.yaml')
+    with open(cfg_filepath, 'w') as f:
+        yaml.dump(air_hockey_cfg, f)
+
     model.save(model_filepath)
     env.save(env_filepath)
 
