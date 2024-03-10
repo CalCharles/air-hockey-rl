@@ -13,7 +13,7 @@ from typing import Union
 class AirHockey2D(Env):
     def __init__(self, num_paddles, num_pucks, num_blocks, num_obstacles, num_targets, 
                  absorb_target, use_cue, length, width,
-                 paddle_radius, reward_type,
+                 paddle_radius, reward_type, n_training_steps,
                  force_scaling, paddle_damping, render_size, wall_bumping_rew,
                  terminate_on_out_of_bounds, terminate_on_enemy_goal, truncate_rew,
                  render_masks=False, max_timesteps=1000,  gravity=-5):
@@ -45,6 +45,8 @@ class AirHockey2D(Env):
         self.use_cue = use_cue
         self.max_timesteps = max_timesteps
         self.current_timestep = 0
+        self.n_training_steps = n_training_steps
+        self.n_timesteps_so_far = 0
         
         # termination conditions
         self.terminate_on_out_of_bounds = terminate_on_out_of_bounds
@@ -145,6 +147,7 @@ class AirHockey2D(Env):
         if type(self.gravity) == list:
             self.world.gravity = (0, np.random.uniform(low=self.gravity[0], high=self.gravity[1]))
 
+        self.n_timesteps_so_far += self.current_timestep
         self.current_timestep = 0
 
         self.paddles = dict()
@@ -155,6 +158,7 @@ class AirHockey2D(Env):
 
         self.paddle_attrs = None
         self.target_attrs = None
+        
 
         self.set_goals(self.goal_radius_type, ego_goal_pos, alt_goal_pos)
 
@@ -302,7 +306,10 @@ class AirHockey2D(Env):
         if self.goal_conditioned:
             if goal_radius_type == 'fixed':
                 # ego_goal_radius = np.random.uniform(low=self.min_goal_radius, high=self.max_goal_radius)
-                ego_goal_radius = (self.min_goal_radius + self.max_goal_radius) / 2 * (0.75)
+                base_radius = (self.min_goal_radius + self.max_goal_radius) / 2 * (0.75)
+                # linearly decrease radius, should start off at 3*base_radius then decrease to base_radius
+                ratio = 2 * (1 - self.n_timesteps_so_far / self.n_training_steps) + 1
+                ego_goal_radius = ratio * base_radius
                 if self.multiagent:
                     alt_goal_radius = ego_goal_radius      
                 self.ego_goal_radius = ego_goal_radius
