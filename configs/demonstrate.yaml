@@ -7,19 +7,29 @@ air_hockey:
   num_targets: 0
   absorb_target: false
   use_cue: false
-  length: 10
-  width: 6
-  paddle_radius: 0.4
+
+  length: 1 # between 1.6 and 2.032
+  width: 0.5 # between 0.9 and 1.0922
+
+  puck_radius: 0.0254 # between 0.02286 and 0.02794
+  paddle_radius: 0.0381 # between 0.034925 and 0.041275
   force_scaling: 200
-  paddle_damping: 13
-  max_goal_rew_radius: 2
+  paddle_damping: 28
   render_size: 360
   max_timesteps: 1000
-  gravity: -20
-  reward_type: 'goal_discrete'
+  gravity: -10
+  max_force_timestep: 50 # max force we can apply at one timestep
+
   terminate_on_out_of_bounds: true
   terminate_on_enemy_goal: true
-  truncate_rew: -1
+
+  truncate_rew: -0.5
   wall_bumping_rew: -0.1
+
+  reward_type: 'goal_position_velocity'
+  # goal_rew_radius: 2
+  goal_max_x_velocity: 5 # min is -goal_max_x_velocity
+  goal_min_y_velocity: 2
+  goal_max_y_velocity: 50
 
 print_reward: false

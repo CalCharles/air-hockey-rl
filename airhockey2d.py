@@ -13,9 +13,10 @@ from typing import Union
 class AirHockey2D(Env):
     def __init__(self, num_paddles, num_pucks, num_blocks, num_obstacles, num_targets, 
                  absorb_target, use_cue, length, width,
-                 paddle_radius, reward_type, n_training_steps,
+                 puck_radius, paddle_radius, reward_type, max_force_timestep, n_training_steps,
                  force_scaling, paddle_damping, render_size, wall_bumping_rew,
                  terminate_on_out_of_bounds, terminate_on_enemy_goal, truncate_rew,
+                 goal_max_x_velocity, goal_min_y_velocity, goal_max_y_velocity,
                  render_masks=False, max_timesteps=1000,  gravity=-5):
 
         # physics
@@ -23,7 +24,7 @@ class AirHockey2D(Env):
         self.absorb_target = absorb_target
         self.paddle_damping = paddle_damping
         self.gravity = gravity
-        self.max_vel = 15
+        self.max_vel = 1.5
         if type(self.gravity) == int:
             self.world = world(gravity=(0, self.gravity), doSleep=True)
         else:
@@ -33,6 +34,8 @@ class AirHockey2D(Env):
         self.length, self.width = length, width
         self.num_paddles = num_paddles
         self.paddle_radius = paddle_radius
+        self.puck_radius = puck_radius
+        self.max_force_timestep = max_force_timestep
         self.num_pucks = num_pucks
         self.num_blocks = num_blocks
         self.num_obstacles = num_obstacles
@@ -41,7 +44,7 @@ class AirHockey2D(Env):
         self.paddle_max_height = 0
         self.block_min_height = 0
         self.max_speed_start = width
-        self.min_speed_start = 0
+        self.min_speed_start = -width
         self.use_cue = use_cue
         self.max_timesteps = max_timesteps
         self.current_timestep = 0
@@ -61,6 +64,10 @@ class AirHockey2D(Env):
         # reward function
         self.goal_conditioned = True if 'goal' in reward_type else False
         self.goal_radius_type = 'home'
+        self.goal_min_x_velocity = -goal_max_x_velocity
+        self.goal_max_x_velocity = goal_max_x_velocity
+        self.goal_min_y_velocity = goal_min_y_velocity
+        self.goal_max_y_velocity = goal_max_y_velocity
         self.reward_type = reward_type
         self.multiagent = num_paddles == 2
         self.truncate_rew = truncate_rew
@@ -80,7 +87,7 @@ class AirHockey2D(Env):
 
     def initialize_spaces(self):
         # setup observation / action / reward spaces
-        max_puck_vel = 50
+        max_puck_vel = 5.5
         self.max_puck_vel = max_puck_vel
         max_paddle_vel = self.max_vel
         low = np.array([-self.width/2, -self.length/2, -max_paddle_vel, -max_paddle_vel, -self.width/2, -self.length/2, -max_puck_vel, -max_puck_vel])
@@ -216,9 +223,10 @@ class AirHockey2D(Env):
                 # # use sigmoid function because being closer is much more important than being far
                 sigmoid_scale = 2
                 radius = self.ego_goal_radius
-                reward_raw = 1 - (dist / radius)#self.max_goal_rew_radius * radius)
-                reward = 1 / (1 + np.exp(-reward_raw * sigmoid_scale))
+                reward_raw = 1 - (dist / radius) #self.max_goal_rew_radius * radius)
                 reward_mask = dist >= radius
+                reward_raw[reward_mask] = 0 # numerical stability, we will make these 0 later
+                reward = 1 / (1 + np.exp(-reward_raw * sigmoid_scale))
                 reward[reward_mask] = 0
                 # if dist >= self.max_goal_rew_radius, 
                 # reward = reward.astype(float)
@@ -226,7 +234,8 @@ class AirHockey2D(Env):
                 # return euclidean distance between the two points
                 dist = np.linalg.norm(achieved_goal[:, :2] - desired_goal[:, :2], axis=1)
                 # compute angle between velocities
-                vel_cos = np.sum(achieved_goal[:, 2:] * desired_goal[:, 2:], axis=1) / (np.linalg.norm(achieved_goal[:, 2:], axis=1) * np.linalg.norm(desired_goal[:, 2:], axis=1))
+                denom = np.linalg.norm(achieved_goal[:, 2:], axis=1) * np.linalg.norm(desired_goal[:, 2:], axis=1) + 1e-8
+                vel_cos = np.sum(achieved_goal[:, 2:] * desired_goal[:, 2:], axis=1) / denom
                 
                 # numerical stability
                 vel_cos = np.clip(vel_cos, -1, 1)
@@ -234,35 +243,30 @@ class AirHockey2D(Env):
                 # mag difference
                 mag_diff = np.linalg.norm(achieved_goal[:, 2:] - desired_goal[:, 2:], axis=1)
                 
-                # make this way faster?
-                # p = 0.5
-                
-                # reward = -np.power(np.dot(np.abs(achieved_goal - desired_goal), np.array([1, 1]),), p)
-                
-                # print(achieved_goal)
-                # print(desired_goal)
-                
                 # # also return float from [0, 1] 0 being far 1 being the point
                 # # use sigmoid function because being closer is much more important than being far
                 sigmoid_scale = 2
                 radius = self.ego_goal_radius
                 reward_raw = 1 - (dist / radius)#self.max_goal_rew_radius * radius)
+                
+                mask = dist >= radius
+                reward_raw[mask] = 0 # numerical stability, we will make these 0 later
                 reward = 1 / (1 + np.exp(-reward_raw * sigmoid_scale))
                 reward_mask = dist >= radius
                 reward[reward_mask] = 0
                 position_reward = reward
-                
-                vel_reward = 1 - vel_angle / np.pi
-                
+
                 vel_mag_reward = 1 - mag_diff / self.max_vel
                 
                 reward_mask = position_reward == 0
-                vel_reward[reward_mask] = 0
+                norm_cos_sim = (vel_cos + 1) / 2
+                vel_angle_reward = norm_cos_sim
+                vel_angle_reward[reward_mask] = 0
                 vel_mag_reward[reward_mask] = 0
+                vel_reward = (vel_angle_reward + vel_mag_reward) / 2
                 
-                reward = (position_reward + vel_reward + vel_mag_reward) / 3
-                # if dist >= self.max_goal_rew_radius, 
-                # reward = reward.astype(float)
+                # reward = (position_reward + vel_reward + vel_mag_reward) / 3
+                reward = 0.5 * position_reward + vel_reward
             if single:
                 reward = reward[0]
             return reward
@@ -325,7 +329,14 @@ class AirHockey2D(Env):
                 min_y = 0 + self.ego_goal_radius
                 max_y = self.length / 2 - self.ego_goal_radius
                 self.ego_goal_pos = np.random.uniform(low=(min_y, min_x), high=(max_y, max_x))
-                self.ego_goal_vel = np.random.uniform(low=(0, -self.max_puck_vel), high=(self.max_vel, self.max_vel))
+                
+                min_x_vel = self.goal_min_x_velocity
+                max_x_vel = self.goal_max_x_velocity
+                min_y_vel = self.goal_min_y_velocity
+                max_y_vel = self.goal_max_y_velocity
+                
+                self.ego_goal_vel = np.random.uniform(low=(min_x_vel, min_y_vel), high=(max_x_vel, max_y_vel))
+                
                 if self.multiagent:
                     self.alt_goal_pos = np.random.uniform(low=(-self.length / 2, -self.width / 2), high=(0, self.width / 2))
             else:
@@ -341,8 +352,8 @@ class AirHockey2D(Env):
     def create_world_objects(self):
         for i in range(self.num_pucks):
             # rad = max(0.25, np.random.rand() * (self.width/ 8))
-            rad = self.width / 20
-            name, puck_attrs = self.create_puck(i, radius = rad, min_height=self.puck_min_height)
+            # rad = self.width / 20
+            name, puck_attrs = self.create_puck(i, min_height=self.puck_min_height)
             self.pucks[name] = puck_attrs
 
         for i in range(self.num_blocks):
@@ -358,12 +369,12 @@ class AirHockey2D(Env):
             self.targets[name] = target_attrs
         
         if not self.multiagent:
-            name, paddle_attrs = self.create_paddle(i, name="paddle_ego", density=1000, ldamp=self.paddle_damping, color=(0, 255, 0), max_height=self.paddle_max_height)
+            name, paddle_attrs = self.create_paddle(i, name="paddle_ego", density=1, ldamp=self.paddle_damping, color=(0, 255, 0), max_height=self.paddle_max_height)
             self.paddles[name] = paddle_attrs
         else:
-            name_home, paddle_ego_attrs = self.create_paddle(i=i, name="paddle_ego", density=1000, ldamp=self.paddle_damping, color=(0, 255, 0), max_height=self.paddle_max_height, 
+            name_home, paddle_ego_attrs = self.create_paddle(i=i, name="paddle_ego", density=2, ldamp=self.paddle_damping, color=(0, 255, 0), max_height=self.paddle_max_height, 
                                              home_paddle=True)
-            name_other, paddle_other_attrs = self.create_paddle(i=i, name="paddle_alt", density=1000, ldamp=self.paddle_damping, color=(0, 255, 0), max_height=self.paddle_max_height, 
+            name_other, paddle_other_attrs = self.create_paddle(i=i, name="paddle_alt", density=2, ldamp=self.paddle_damping, color=(0, 255, 0), max_height=self.paddle_max_height, 
                                              home_paddle=False)
             self.paddles[name_home] = paddle_ego_attrs
             self.paddles[name_other] = paddle_other_attrs
@@ -444,14 +455,16 @@ class AirHockey2D(Env):
                         density=10, 
                         vel=None, 
                         pos=None, 
-                        ldamp=1, 
+                        ldamp=2, 
                         collidable=True,
                         min_height=-30,
                         max_height=30):
         if not self.multiagent:
             # then we want it to start at the top, which is max_height, 0
             if pos is None: 
-                pos = ((np.random.rand() - 0.5) * 2 * (self.width / 2),
+                x_pos = np.random.uniform(low=-self.width / 3, high=self.width / 3) # doesnt spawn at edges
+                # (np.random.rand() - 0.5) * 2 * (self.width / 2)
+                pos = (x_pos,
                        min(max_height, self.length / 2) - 0.01)
         else: 
             if pos is None: 
@@ -460,19 +473,26 @@ class AirHockey2D(Env):
         # print(name, pos, min_height, max_height)
         if not self.multiagent:
             if vel is None: 
-                vel = (np.random.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start,
-                       30 if random.random() > 0.5 else -30)
+                vel = (2 * np.random.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start,
+                       -0.7)
+                # with 1/4th p, add x vel
+                if np.random.rand() < 0.25:
+                    (-1,
+                     2 * np.random.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start)
+                else:
+                    (-1, 0)
         else:
             if vel is None: 
                 vel = (np.random.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start,
                        10 * np.random.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start)
         if radius < 0: 
             # radius = max(1, np.random.rand() * (self.width/ 2))
-            radius = self.width / 5.325
+            # radius = self.width / 5.325
+            radius = self.puck_radius
         puck = self.world.CreateDynamicBody(
             fixtures=b2FixtureDef(
                 shape=b2CircleShape(radius=radius),
-                density=1.0,
+                density=0.25,
                 restitution = 1.0,
                 filter=b2Filter (maskBits=1,
                                  categoryBits=1 if collidable else 0)),
@@ -605,8 +625,8 @@ class AirHockey2D(Env):
         # reward for positive velocity towards the top of the board
             reward = self.pucks[self.puck_names[0]][0].linearVelocity[1]
             
-            max_rew = 10 # estimated max vel
-            min_rew = 2  # min acceptable good velocity
+            max_rew = 2 # estimated max vel
+            min_rew = 0  # min acceptable good velocity
             
             if reward < min_rew:
                 return 0
@@ -644,8 +664,28 @@ class AirHockey2D(Env):
         else:
             return self.multi_step(action, time_step)
 
-    def single_agent_step(self, action, time_step=0.018) -> tuple[np.ndarray, float, bool, bool, dict]:
-        force = self.force_scaling * self.paddles['paddle_ego'][0].mass * np.array((action[0], action[1])).astype(float)
+    # 20 hz timestep
+    def single_agent_step(self, action, time_step=0.05) -> tuple[np.ndarray, float, bool, bool, dict]:
+        # action is delta position
+        # let's use simple time-optimal control to figure out the force to apply
+        delta_pos = np.array([action[0], action[1]])
+        
+        # first let's determine velocity
+        vel = delta_pos / time_step
+        vel_mag = np.linalg.norm(vel)
+        vel_unit = vel / (vel_mag + 1e-8)
+
+        if vel_mag > self.max_vel:
+            vel = vel_unit * self.max_vel
+
+        force = self.paddles['paddle_ego'][0].mass * vel / time_step
+        force_mag = np.linalg.norm(force)
+        force_unit = force / (force_mag + 1e-8)
+        if force_mag > self.max_force_timestep:
+            force = force_unit * self.max_force_timestep
+            
+        force = force.astype(float)
+        # force = self.force_scaling * self.paddles['paddle_ego'][0].mass * np.array((action[0], action[1])).astype(float)
         if self.paddles['paddle_ego'][0].position[1] > 0: 
             force[1] = min(self.force_scaling * self.paddles['paddle_ego'][0].mass * action[1], 0)
         if 'paddle_ego' in self.paddles: 
@@ -654,15 +694,25 @@ class AirHockey2D(Env):
         # make it easier to turn around
         vel = np.array([self.paddles['paddle_ego'][0].linearVelocity[0], self.paddles['paddle_ego'][0].linearVelocity[1]])
         vel_mag = np.linalg.norm(vel)
+        vel_unit = vel / (vel_mag + 1e-8)
+        
         
         force = np.array(force).astype(float)
         force_mag = np.linalg.norm(force)
-        if force_mag > 0:
-            force_unit_vec = force / (force_mag + 1e-8)
-            result = force_unit_vec * vel_mag / 4 # Don't transfer everything
-            self.paddles['paddle_ego'][0].linearVelocity = b2Vec2(result[0], result[1])
-            
+        force_unit_vec = force / (force_mag + 1e-8)
 
+        # small negative reward for changing direction
+        cosine_sim = np.dot(vel_unit, force_unit_vec) / (np.linalg.norm(vel_unit) * np.linalg.norm(force_unit_vec) + 1e-8)
+        norm_cosine_sim = (cosine_sim + 1) / 2
+        max_change_dir_rew = -0.05
+        direction_rew = max_change_dir_rew * (1 - norm_cosine_sim)
+        
+        
+        # if force_mag > 0:
+        #     force_unit_vec = force / (force_mag + 1e-8)
+        #     result = force_unit_vec * vel_mag / 4 # Don't transfer everything
+        #     self.paddles['paddle_ego'][0].linearVelocity = b2Vec2(result[0], result[1])
+            
         # keep velocity at a maximum value
         if vel_mag > self.max_vel:
             self.paddles['paddle_ego'][0].linearVelocity = b2Vec2(vel[0] / vel_mag * self.max_vel, vel[1] / vel_mag * self.max_vel)
@@ -690,6 +740,7 @@ class AirHockey2D(Env):
         else:
             reward = self.truncate_rew
         reward += wall_rew
+        reward += direction_rew
         self.current_timestep += 1
         
         obs = self.get_current_observation()

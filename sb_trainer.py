@@ -12,6 +12,7 @@ import numpy as np
 import argparse
 import yaml
 import os
+import re
 
 
 def train_air_hockey_model(air_hockey_cfg):
@@ -37,6 +38,8 @@ def train_air_hockey_model(air_hockey_cfg):
 
     env = wrap_env(env)
     
+    tf_log = air_hockey_cfg['tb_log_dir']
+    
     # if goal-conditioned use SAC
     if 'goal' in air_hockey_cfg['air_hockey']['reward_type']:
         # SAC hyperparams:
@@ -49,8 +52,8 @@ def train_air_hockey_model(air_hockey_cfg):
             env,
             replay_buffer_class=HerReplayBuffer,
             replay_buffer_kwargs=dict(
-            n_sampled_goal=n_sampled_goal,
-            goal_selection_strategy="future",
+                n_sampled_goal=n_sampled_goal,
+                goal_selection_strategy="future",
             ),
             learning_starts=10000,
             verbose=1,
@@ -58,6 +61,8 @@ def train_air_hockey_model(air_hockey_cfg):
             learning_rate=1e-3,
             gamma=0.95,
             batch_size=512,
+            # device='cuda',
+            # device="cuda"
             # policy_kwargs=dict(net_arch=[64, 64]),
         )
     else:
@@ -69,8 +74,23 @@ def train_air_hockey_model(air_hockey_cfg):
     model.learn(total_timesteps=air_hockey_cfg['n_training_steps'],
                 tb_log_name=air_hockey_cfg['tb_log_name'], 
                 progress_bar=True)
-    model.save(air_hockey_cfg['model_save_filepath'])
-    env.save(air_hockey_cfg['vec_normalize_save_filepath'])
+    
+    log_dir = air_hockey_cfg['tb_log_dir']
+    # get log dir ending with highest number
+    subdirs = [x for x in os.listdir(log_dir) if os.path.isdir(os.path.join(log_dir, x))]
+    subdirs.sort(key=lambda x: [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', x)])
+    log_dir = os.path.join(log_dir, subdirs[-1])
+    
+    # let's save model and vec normalize here too
+    model_filepath = os.path.join(log_dir, air_hockey_cfg['model_save_filepath'])
+    env_filepath = os.path.join(log_dir, air_hockey_cfg['vec_normalize_save_filepath'])
+    # copy cfg to same folder
+    cfg_filepath = os.path.join(log_dir, 'model_cfg.yaml')
+    with open(cfg_filepath, 'w') as f:
+        yaml.dump(air_hockey_cfg, f)
+
+    model.save(model_filepath)
+    env.save(env_filepath)
 
 
 if __name__ == "__main__":
