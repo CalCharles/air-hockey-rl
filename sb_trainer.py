@@ -61,6 +61,7 @@ def train_air_hockey_model(air_hockey_cfg):
             learning_rate=1e-3,
             gamma=0.95,
             batch_size=512,
+            tensorboard_log=air_hockey_cfg['tb_log_dir']
             # device='cuda',
             # device="cuda"
             # policy_kwargs=dict(net_arch=[64, 64]),
@@ -76,6 +77,7 @@ def train_air_hockey_model(air_hockey_cfg):
                 progress_bar=True)
     
     log_dir = air_hockey_cfg['tb_log_dir']
+    os.makedirs(log_dir, exist_ok=True)
     # get log dir ending with highest number
     subdirs = [x for x in os.listdir(log_dir) if os.path.isdir(os.path.join(log_dir, x))]
     subdirs.sort(key=lambda x: [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', x)])
