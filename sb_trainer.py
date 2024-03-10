@@ -24,6 +24,7 @@ def train_air_hockey_model(air_hockey_cfg):
     """
     
     air_hockey_params = air_hockey_cfg['air_hockey']
+    air_hockey_params['n_training_steps'] = air_hockey_cfg['n_training_steps']
     env = AirHockey2D.from_dict(air_hockey_params)
     # env = GoalConditionedAirHockey2D.from_dict(air_hockey_params)
 
