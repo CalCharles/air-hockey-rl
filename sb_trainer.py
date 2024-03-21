@@ -7,7 +7,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.logger import Figure
 from stable_baselines3.common.env_checker import check_env
 from matplotlib import pyplot as plt
-from airhockey2d import AirHockey2D# , GoalConditionedAirHockey2D
+from airhockey_box2d import AirHockey2D# , GoalConditionedAirHockey2D
 import numpy as np
 import argparse
 import yaml

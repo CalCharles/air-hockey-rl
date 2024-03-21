@@ -6,7 +6,6 @@ air_hockey:
   num_obstacles: 0
   num_targets: 0
   absorb_target: false
-  use_cue: false
 
   max_timesteps: 1000
 
