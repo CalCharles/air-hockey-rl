@@ -107,7 +107,7 @@ def evaluate_air_hockey_model(air_hockey_cfg, log_dir):
     
     # first let's create some videos offline into gifs
     print("Saving gifs...(this will tqdm for EACH gif to save)")
-    n_eps_viz = 10
+    n_eps_viz = 5
     n_gifs = 5
     for gif_idx in range(n_gifs):
         frames = []
