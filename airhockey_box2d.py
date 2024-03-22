@@ -42,6 +42,20 @@ class AirHockey2D(Env):
                  max_paddle_vel=1.5,
                  time_frequency=20):
 
+        # task specific params
+        self.num_pucks = num_pucks
+        self.num_blocks = num_blocks
+        self.num_obstacles = num_obstacles
+        self.num_targets = num_targets
+        
+        self.max_timesteps = max_timesteps
+        self.current_timestep = 0
+        self.n_training_steps = n_training_steps
+        self.n_timesteps_so_far = 0
+        
+        # termination conditions
+        self.terminate_on_out_of_bounds = terminate_on_out_of_bounds
+        self.terminate_on_enemy_goal = terminate_on_enemy_goal
 
         # physics / world params
         self.length, self.width = length, width
@@ -55,6 +69,11 @@ class AirHockey2D(Env):
         self.absorb_target = absorb_target
         self.paddle_damping = paddle_damping
         self.gravity = gravity
+        self.puck_min_height = (-length / 2) + (length / 3)
+        self.paddle_max_height = 0
+        self.block_min_height = 0
+        self.max_speed_start = width
+        self.min_speed_start = -width
         self.paddle_density = paddle_density
         self.puck_density = puck_density
         # these assume 2d, in 3d since we have height it would be higher mass
@@ -76,24 +95,6 @@ class AirHockey2D(Env):
         self.render_width = int(render_size)
         self.render_length = int(self.ppm * self.length)
         self.render_masks = render_masks
-
-        self.num_pucks = num_pucks
-        self.num_blocks = num_blocks
-        self.num_obstacles = num_obstacles
-        self.num_targets = num_targets
-        self.puck_min_height = (-length / 2) + (length / 3)
-        self.paddle_max_height = 0
-        self.block_min_height = 0
-        self.max_speed_start = width
-        self.min_speed_start = -width
-        self.max_timesteps = max_timesteps
-        self.current_timestep = 0
-        self.n_training_steps = n_training_steps
-        self.n_timesteps_so_far = 0
-        
-        # termination conditions
-        self.terminate_on_out_of_bounds = terminate_on_out_of_bounds
-        self.terminate_on_enemy_goal = terminate_on_enemy_goal
         
         # reward function
         self.goal_conditioned = True if 'goal' in reward_type else False
@@ -116,7 +117,7 @@ class AirHockey2D(Env):
         
         self.metadata = {}
         
-        # creating the ground -- need to only call once!
+        # creating the ground -- need to only call once! otherwise it can be laggy
         self.ground_body = self.world.CreateBody(
             shapes=b2LoopShape(vertices=[(self.table_x_min, self.table_y_min),
                                          (self.table_x_min, self.table_y_max), 
@@ -166,7 +167,8 @@ class AirHockey2D(Env):
     def from_dict(state_dict):
         return AirHockey2D(**state_dict)
 
-    def reset(self, seed=None, 
+    def reset(self, 
+              seed=None, 
               ego_goal_pos=None,
               alt_goal_pos=None,
               object_state_dict=None, 
@@ -462,7 +464,7 @@ class AirHockey2D(Env):
         paddle = self.world.CreateDynamicBody(
             fixtures=b2FixtureDef(
                 shape=b2CircleShape(radius=radius),
-                density=100.0,
+                density=self.paddle_density,
                 restitution = 1.0,
                 filter=b2Filter (maskBits=1,
                                  categoryBits=1 if collidable else 0)),
@@ -481,7 +483,6 @@ class AirHockey2D(Env):
                         name=None, 
                         color=(127, 127, 127), 
                         radius=-1,
-                        density=10, 
                         vel=None, 
                         pos=None, 
                         ldamp=2, 
@@ -844,38 +845,3 @@ class AirHockey2D(Env):
                 self.world.DestroyBody(self.object_dict[cn])
                 del self.object_dict[cn]
         return hit_a_puck # TODO: record a destroyed flag
-
-# class GoalConditionedAirHockey2D(AirHockey2D): # This is a wrapper
-#     def __init__(self, num_paddles, num_pucks, num_blocks, num_obstacles, num_targets, 
-#                  absorb_target, use_cue, length, width,
-#                  paddle_radius, reward_type, max_goal_rew_radius,
-#                  force_scaling, paddle_damping, render_size, wall_bumping_rew,
-#                  terminate_on_out_of_bounds, terminate_on_enemy_goal, truncate_rew,
-#                  render_masks=False, max_timesteps=1000,  gravity=-5):
-#         super().__init__(num_paddles, num_pucks, num_blocks, num_obstacles, num_targets, 
-#                          absorb_target, use_cue, length, width,
-#                          paddle_radius, reward_type, max_goal_rew_radius,
-#                          force_scaling, paddle_damping, render_size, wall_bumping_rew,
-#                          terminate_on_out_of_bounds, terminate_on_enemy_goal, truncate_rew,
-#                          render_masks, max_timesteps,  gravity)
-
-#         self.observation_space = spaces.Dict(dict(
-#             observation=Box(low=self.low, high=self.high, shape=(6,), dtype=np.float64),
-#             desired_goal=Box(low=self.low, high=self.high, shape=(6,), dtype=np.float64),
-#             achieved_goal=Box(low=self.low, high=self.high, shape=(6,), dtype=np.float64)
-#         ))
-        
-#     def reset(self, seed=None, 
-#               goal_radius_type='random',
-#               ego_goal_pos=None,
-#               alt_goal_pos=None,
-#               object_state_dict=None, 
-#               type_instance_dict=None, 
-#               max_count_dict=None):
-#         obs, info = super().reset(seed, goal_radius_type, ego_goal_pos, alt_goal_pos, object_state_dict, type_instance_dict, max_count_dict)
-#         return {"observation": obs, "desired_goal": self.ego_goal_pos, "achieved_goal": self.pucks[self.puck_names[0]][0].position}, info
-    
-#     def step(self, action, other_action=None, time_step=0.018):
-#         obs, rew, done, info = super().step(action, other_action, time_step)
-#         return {"observation": obs, "desired_goal": self.ego_goal_pos, "achieved_goal": self.pucks[self.puck_names[0]][0].position}, rew, done, info
-        
