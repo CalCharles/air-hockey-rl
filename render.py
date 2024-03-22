@@ -13,7 +13,7 @@ class AirHockeyRenderer:
         orientation (str, optional): The orientation of the game table. Defaults to 'vertical'.
     """
 
-    def __init__(self, airhockey_sim, orientation='vertical'):
+    def __init__(self, airhockey_env, orientation='vertical'):
         """
         Initializes the AirHockeyRenderer object.
 
@@ -21,7 +21,8 @@ class AirHockeyRenderer:
             airhockey_sim (AirHockeySimulator): The air hockey simulator object.
             orientation (str, optional): The orientation of the game table. Defaults to 'vertical'.
         """
-        self.airhockey_sim = airhockey_sim
+        self.airhockey_env = airhockey_env
+        self.airhockey_sim = airhockey_env.simulator
         self.orientation = orientation
         # Adjust dimensions based on the specified orientation
         self.render_width = self.airhockey_sim.render_width
@@ -162,7 +163,7 @@ class AirHockeyRenderer:
         """
         self.frame = self.air_hockey_table_img.copy()
         
-        if self.airhockey_sim.goal_conditioned:
+        if self.airhockey_env.goal_conditioned:
             # get the goal position and radius and draw it
             def draw_goal(goal, radius, color=(0, 255, 0)):
                 goal_position = goal
@@ -174,10 +175,10 @@ class AirHockeyRenderer:
                 cv2.circle(self.frame, center.astype(int), goal_radius, color, 2)
                 
             green = (0, 255, 0)
-            draw_goal(self.airhockey_sim.ego_goal_pos, self.airhockey_sim.ego_goal_radius, color=green)
-            if self.airhockey_sim.multiagent:
+            draw_goal(self.airhockey_env.ego_goal_pos, self.airhockey_env.ego_goal_radius, color=green)
+            if self.airhockey_env.multiagent:
                 blue = (255, 0, 0)
-                draw_goal(self.airhockey_sim.alt_goal_pos, self.airhockey_sim.alt_goal_radius, color=blue)
+                draw_goal(self.airhockey_env.alt_goal_pos, self.airhockey_env.alt_goal_radius, color=blue)
         
         for puck_attrs in self.airhockey_sim.pucks.values():
             self.draw_circle_with_image(puck_attrs, circle_type='puck')
@@ -189,7 +190,6 @@ class AirHockeyRenderer:
             self.draw_circle_with_image(paddle_attrs, circle_type='paddle')
             
         # if self.airhockey_sim.paddle[1] is not None: self.draw_circle_with_image(self.airhockey_sim.paddle[1], circle_type='paddle')
-        if self.airhockey_sim.cue[1] is not None: self.draw_circle(self.airhockey_sim.cue[1])
         if self.orientation == 'vertical':
             self.frame = cv2.rotate(self.frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
         return self.frame

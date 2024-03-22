@@ -1,6 +1,6 @@
 from stable_baselines3 import PPO, SAC
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
-from airhockey2d import AirHockey2D
+from air_hockey_simulator.airhockey_box2d import AirHockey2D
 from render import AirHockeyRenderer
 from matplotlib import pyplot as plt
 import threading
