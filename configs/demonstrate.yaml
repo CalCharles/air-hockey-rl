@@ -13,17 +13,17 @@ air_hockey:
     paddle_radius: 0.0508
     block_width: 0.0254
     force_scaling: 1000
-    paddle_damping: 10
+    paddle_damping: 5
     puck_damping: 1
-    paddle_density: 1000
+    paddle_density: 2500
     puck_density: 250
     render_size: 360
     gravity: -0.5
-    max_force_timestep: 250 # max force we can apply at one timestep
+    max_force_timestep: 100 # max force we can apply at one timestep
     render_size: 360
 
   simulator: box2d # or robosuite
-  max_timesteps: 1000
+  max_timesteps: 300
   # reward_type: 'goal_position_velocity'
   reward_type: 'puck_vel'
   goal_max_x_velocity: 1 # min is -goal_max_x_velocity
@@ -32,11 +32,12 @@ air_hockey:
 
   terminate_on_out_of_bounds: true
   terminate_on_enemy_goal: true
-  truncate_rew: -0.5
-  wall_bumping_rew: -0.1
+  terminate_on_puck_stop: true
+  truncate_rew: -10
+  wall_bumping_rew: -2
 
 # Training Parameters
-n_training_steps: 50000
+n_training_steps: 100000
 model_save_filepath: model # will be saved same dir as tb_log_dir
 vec_normalize_save_filepath: vec_normalize.pkl
 tb_log_dir: trained_models/gcrl

@@ -23,11 +23,11 @@ class AirHockeyBox2D:
                  puck_damping,
                  render_size, 
                  render_masks=False, 
-                 gravity=-5, 
+                 gravity=-5,
                  paddle_density=1000,
                  puck_density=250,
                  block_density=1000,
-                 max_paddle_vel=20,
+                 max_paddle_vel=2,
                  time_frequency=20):
 
         # task specific params
@@ -286,7 +286,8 @@ class AirHockeyBox2D:
                        -0.7)
                 # with 1/4th p, add x vel
                 if np.random.rand() < 0.25:
-                    vel = (2 * np.random.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start, -1)
+                    # vel = (2 * np.random.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start, -1)
+                    vel = (0, -1)
                 else:
                     vel = (0, -1)
         else:
@@ -356,6 +357,12 @@ class AirHockeyBox2D:
             return self.get_singleagent_transition(action)
 
     def get_singleagent_transition(self, action):
+        
+        # check if out of bounds and correct
+        pos = [self.paddles['paddle_ego'][0].position[0], self.paddles['paddle_ego'][0].position[1]]
+        if pos[1] > 0 - 2 * self.paddle_radius:
+            action[1] = min(action[1], 0)
+        
         # action is delta position
         # let's use simple time-optimal control to figure out the force to apply
         delta_pos = np.array([action[0], action[1]])
@@ -431,6 +438,18 @@ class AirHockeyBox2D:
         # keep velocity at a maximum value
         if vel_mag > self.max_paddle_vel:
             self.paddles['paddle_ego'][0].linearVelocity = b2Vec2(vel[0] / vel_mag * self.max_paddle_vel, vel[1] / vel_mag * self.max_paddle_vel)
+            
+        # check if out of bounds and correct
+        pos = [self.paddles['paddle_ego'][0].position[0], self.paddles['paddle_ego'][0].position[1]]
+        if pos[0] < self.table_x_min:
+            pos[0] = self.table_x_min
+        if pos[0] > self.table_x_max:
+            pos[0] = self.table_x_max
+        if pos[1] > 0:
+            pos[1] = 0
+        if pos[1] > self.table_y_max:
+            pos[1] = self.table_y_max
+        self.paddles['paddle_ego'][0].position = (pos[0], pos[1])
         
         state_info = self.get_current_state()
         return state_info

@@ -22,6 +22,7 @@ class AirHockeyEnv(Env):
                  wall_bumping_rew,
                  terminate_on_out_of_bounds, 
                  terminate_on_enemy_goal, 
+                 terminate_on_puck_stop,
                  truncate_rew,
                  goal_max_x_velocity, 
                  goal_min_y_velocity, 
@@ -46,6 +47,7 @@ class AirHockeyEnv(Env):
         # termination conditions
         self.terminate_on_out_of_bounds = terminate_on_out_of_bounds
         self.terminate_on_enemy_goal = terminate_on_enemy_goal
+        self.terminate_on_puck_stop = terminate_on_puck_stop
         
         # reward function
         self.goal_conditioned = True if 'goal' in reward_type else False
@@ -90,8 +92,8 @@ class AirHockeyEnv(Env):
             
             if self.reward_type == 'goal_position':
                 # y, x
-                goal_low = np.array([0, self.table_x_min])#, -self.max_paddle_vel, self.max_paddle_vel])
-                goal_high = np.array([self.table_y_max, self.table_x_max])#, self.max_paddle_vel, self.max_paddle_vel])
+                goal_low = np.array([self.table_x_top, self.table_y_right])#, -self.max_paddle_vel, self.max_paddle_vel])
+                goal_high = np.array([0, self.table_y_left])#, self.max_paddle_vel, self.max_paddle_vel])
                 
                 self.observation_space = spaces.Dict(dict(
                     observation=Box(low=low, high=high, shape=(8,), dtype=float),
@@ -100,8 +102,8 @@ class AirHockeyEnv(Env):
                 ))
             
             elif self.reward_type == 'goal_position_velocity':
-                goal_low = np.array([0, self.table_x_min, -self.max_puck_vel, -self.max_puck_vel])
-                goal_high = np.array([self.table_y_max, self.table_x_max, self.max_puck_vel, self.max_puck_vel])
+                goal_low = np.array([self.table_x_top, self.table_y_right, -self.max_puck_vel, -self.max_puck_vel])
+                goal_high = np.array([0, self.table_y_left, self.max_puck_vel, self.max_puck_vel])
                 self.observation_space = spaces.Dict(dict(
                     observation=Box(low=low, high=high, shape=(8,), dtype=float),
                     desired_goal=Box(low=goal_low, high=goal_high, shape=(4,), dtype=float),
@@ -111,7 +113,7 @@ class AirHockeyEnv(Env):
             self.min_goal_radius = self.width / 16
             self.max_goal_radius = self.width / 4
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
-        self.reward_range = Box(low=0, high=1) # need to make sure rewards are between 0 and 1
+        self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
 
     @staticmethod
     def from_dict(state_dict):
@@ -293,8 +295,13 @@ class AirHockeyEnv(Env):
         if self.current_timestep > self.max_timesteps:
             terminated = True
         else:
-            if self.terminate_on_out_of_bounds and state_info['paddles']['paddle_ego']['position'][0] < 0: 
-                truncated = True
+            if self.terminate_on_out_of_bounds:
+                # check if we hit any walls or are above the middle of the board
+                if state_info['paddles']['paddle_ego']['position'][0] < 0 + self.paddle_radius or \
+                    state_info['paddles']['paddle_ego']['position'][0] > self.table_x_bot - self.paddle_radius or \
+                    state_info['paddles']['paddle_ego']['position'][1] < self.table_y_right + self.paddle_radius or \
+                    state_info['paddles']['paddle_ego']['position'][1] > self.table_y_left - self.paddle_radius:
+                    truncated = True
 
         # confusing, but we need to swap x and y for this function
         bottom_center_point = np.array([self.table_x_bot, 0])
@@ -309,6 +316,10 @@ class AirHockeyEnv(Env):
         if multiagent:
             terminated = terminated or truncated or puck_within_alt_home or puck_within_home
             truncated = False
+            
+        if self.terminate_on_puck_stop:
+            if not truncated and np.linalg.norm(state_info['pucks'][0]['velocity']) < 0.01:
+                truncated = True
 
         puck_within_ego_goal = False
         puck_within_alt_goal = False
@@ -396,23 +407,23 @@ class AirHockeyEnv(Env):
         additional_rew = 0.0
         
         # small negative reward for changing direction
-        if self.current_timestep > 0:
-            old_vel = self.old_state['paddles']['paddle_ego']['velocity']
-            new_vel = state_info['paddles']['paddle_ego']['velocity']
-            vel_unit = old_vel / (np.linalg.norm(old_vel) + 1e-8)
-            new_vel_unit = new_vel / (np.linalg.norm(new_vel) + 1e-8)
-            cosine_sim = np.dot(vel_unit, new_vel_unit) / (np.linalg.norm(vel_unit) * np.linalg.norm(new_vel_unit) + 1e-8)
-            norm_cosine_sim = (cosine_sim + 1) / 2
-            max_change_dir_rew = -0.05
-            direction_rew = max_change_dir_rew * (1 - norm_cosine_sim)
-            additional_rew += direction_rew
+        # if self.current_timestep > 0:
+        #     old_vel = self.old_state['paddles']['paddle_ego']['velocity']
+        #     new_vel = state_info['paddles']['paddle_ego']['velocity']
+        #     vel_unit = old_vel / (np.linalg.norm(old_vel) + 1e-8)
+        #     new_vel_unit = new_vel / (np.linalg.norm(new_vel) + 1e-8)
+        #     cosine_sim = np.dot(vel_unit, new_vel_unit) / (np.linalg.norm(vel_unit) * np.linalg.norm(new_vel_unit) + 1e-8)
+        #     norm_cosine_sim = (cosine_sim + 1) / 2
+        #     max_change_dir_rew = -0.05
+        #     direction_rew = max_change_dir_rew * (1 - norm_cosine_sim)
+        #     additional_rew += direction_rew
         
         # determine if close to walls
         if self.wall_bumping_rew != 0:
-            bump_right = state_info['paddles']['paddle_ego']['position'][1] < self.table_y_right + 4 * self.paddle_radius
-            bump_left = state_info['paddles']['paddle_ego']['position'][1] > self.table_y_left - 4 * self.paddle_radius
-            bump_top = state_info['paddles']['paddle_ego']['position'][0] > self.table_x_top - 4 * self.paddle_radius
-            bump_bottom = state_info['paddles']['paddle_ego']['position'][0] < self.table_x_bot + 4 * self.paddle_radius
+            bump_right = state_info['paddles']['paddle_ego']['position'][1] < self.table_y_right + 2 * self.paddle_radius
+            bump_left = state_info['paddles']['paddle_ego']['position'][1] > self.table_y_left - 2 * self.paddle_radius
+            bump_top = state_info['paddles']['paddle_ego']['position'][0] > 0 - 2 * self.paddle_radius
+            bump_bottom = state_info['paddles']['paddle_ego']['position'][0] < self.table_x_bot + 2 * self.paddle_radius
             if bump_left or bump_right or bump_top or bump_bottom:
                 additional_rew += self.wall_bumping_rew
         
@@ -446,12 +457,6 @@ class AirHockeyEnv(Env):
             return self.multi_step(action)
 
     def single_agent_step(self, action) -> tuple[np.ndarray, float, bool, bool, dict]:
-        # determine if action is valid
-        if self.current_timestep > 0:
-            old_pos = self.current_state['paddles']['paddle_ego']['position']
-            if old_pos[0] < 0 + self.paddle_radius:
-                action[0] = max(0, action[0])
-        
         next_state = self.simulator.get_transition(action)
         if self.current_timestep > 0:
             self.old_state = self.current_state
@@ -466,11 +471,9 @@ class AirHockeyEnv(Env):
         else:
             reward = self.truncate_rew
         reward += self.get_reward_shaping(next_state)
-        # reward += direction_rew
         self.current_timestep += 1
         
         obs = self.get_observation(next_state)
-        # print(next_state['paddles']['paddle_ego']['velocity'])
         return obs, reward, is_finished, truncated, {}
     
     def multi_step(self, joint_action):
