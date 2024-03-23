@@ -71,15 +71,15 @@ class Demonstrator:
             if key == ord('w'):
                 action = np.array([-1,0])
             elif key == ord('a'):
-                action = np.array([0,-1])
+                action = np.array([0,1])
             elif key == ord('s'):
                 action = np.array([1,0])
             elif key == ord('d'):
-                action = np.array([0,1])
+                action = np.array([0,-1])
         else:
             raise ValueError("Invalid keyboard scheme")
         if self.renderer.orientation == 'vertical':
-            action = np.array([action[1], -action[0]])
+            action = np.array([action[0], action[1]])
         return action
         
     def run(self):

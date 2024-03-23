@@ -23,12 +23,11 @@ class AirHockeyBox2D:
                  puck_damping,
                  render_size, 
                  render_masks=False, 
-                 max_timesteps=1000, 
                  gravity=-5, 
-                 paddle_density=1,
-                 puck_density=0.25,
-                 block_density=2,
-                 max_paddle_vel=1.5,
+                 paddle_density=1000,
+                 puck_density=250,
+                 block_density=1000,
+                 max_paddle_vel=20,
                  time_frequency=20):
 
         # task specific params
@@ -135,8 +134,19 @@ class AirHockeyBox2D:
         state_info = self.get_current_state()
         return state_info
     
-    def convert_coords_out(self, state_info):
-        pass
+    def convert_from_box2d_coords(self, state_info):
+        # traverse through state_info until we find tuple, then correct
+        for key, value in state_info.items():
+            if type(value) == list:
+                for i in range(len(value)):
+                    for key2, value2 in value[i].items():
+                        if type(value2) == tuple:
+                            state_info[key][i][key2] = (-value2[1], -value2[0])
+            else:
+                for key2, value2 in value.items():
+                    for key3, value3 in value2.items():
+                        state_info[key][key2][key3] = (-value3[1], -value3[0])
+        return state_info
 
     def get_current_state(self):
 
@@ -165,7 +175,7 @@ class AirHockeyBox2D:
                                'velocity': (puck_x_vel, puck_y_vel)})
         
         state_info['pucks'] = pucks_info
-        return state_info
+        return self.convert_from_box2d_coords(state_info)
 
     def create_world_objects(self):
         for i in range(self.num_pucks):
@@ -333,22 +343,31 @@ class AirHockeyBox2D:
         block_name = block_name + str(i)
         return (block_name if name is None else name), (body, color)
     
-    # def convert_to_box2d_coords(self, x, y):
-    #     return (x, -y)
+    def convert_to_box2d_coords(self, action):
+        action = np.array((-action[1], -action[0]))
+        return action
 
     # s, a -> s'
     def get_transition(self, action, other_action=None):
         if self.multiagent:
             return self.get_multiagent_transition(action, other_action)
         else:
+            action = self.convert_to_box2d_coords(action)
             return self.get_singleagent_transition(action)
 
     def get_singleagent_transition(self, action):
         # action is delta position
         # let's use simple time-optimal control to figure out the force to apply
         delta_pos = np.array([action[0], action[1]])
+        # if delta_pos[0] == 0 and delta_pos[1] == 0:
+        #     force = np.array([0, 0])
+        # else:
+        current_vel = np.array([self.paddles['paddle_ego'][0].linearVelocity[0], self.paddles['paddle_ego'][0].linearVelocity[1]])
+        accel = [2 * (delta_pos[0] - current_vel[0] * self.time_per_step) / self.time_per_step ** 2,
+                2 * (delta_pos[1] - current_vel[1] * self.time_per_step) / self.time_per_step ** 2]
+        # force = np.array([self.paddles['paddle_ego'][0].mass * accel[0], self.paddles['paddle_ego'][0].mass * accel[1]])
         
-        # first let's determine velocity
+        # # first let's determine velocity
         vel = delta_pos / self.time_per_step
         vel_mag = np.linalg.norm(vel)
         vel_unit = vel / (vel_mag + 1e-8)
@@ -364,18 +383,55 @@ class AirHockeyBox2D:
             
         force = force.astype(float)
         if self.paddles['paddle_ego'][0].position[1] > 0: 
-            force[1] = min(self.force_scaling * self.paddles['paddle_ego'][0].mass * action[1], 0)
+            new_force = self.force_scaling * self.paddles['paddle_ego'][0].mass * action[1]
+            if new_force < -self.max_force_timestep:
+                new_force = -self.max_force_timestep
+            force[1] = min(new_force, 0)
         if 'paddle_ego' in self.paddles:
             self.paddles['paddle_ego'][0].ApplyForceToCenter(force, True)
 
+        # pos = [self.paddles['paddle_ego'][0].position[0], self.paddles['paddle_ego'][0].position[1]]
+        # new_pos = [pos[0] + vel[0] * self.time_per_step, pos[1] + vel[1] * self.time_per_step]
+        # # new_pos should be within the board though
+        # if new_pos[0] < self.table_x_min:
+        #     new_pos[0] = self.table_x_min
+        # if new_pos[0] > self.table_x_max:
+        #     new_pos[0] = self.table_x_max
+        # if new_pos[1] < self.table_y_min:
+        #     new_pos[1] = self.table_y_min
+        # if new_pos[1] > self.table_y_max:
+        #     new_pos[1] = self.table_y_max
+
+        # # calculate what new vel will be after applying force
+        # accel = [force[0] / self.paddles['paddle_ego'][0].mass, force[1] / self.paddles['paddle_ego'][0].mass]
+        # new_vel = [vel[0] + accel[0] * self.time_per_step, vel[1] + accel[1] * self.time_per_step]
+        # new_pos = [pos[0] + vel[0] * self.time_per_step + 0.5 * accel[0] * self.time_per_step ** 2, 
+        #            pos[1] + vel[1] * self.time_per_step + 0.5 * accel[1] * self.time_per_step ** 2]
+        
+        # print('\n')
+        # print('action', action)
+        
+        # print("velocity_before", self.paddles['paddle_ego'][0].linearVelocity)
+        # print('position before', self.paddles['paddle_ego'][0].position)
+
+        self.world.Step(self.time_per_step, 10, 10)
+        
+        # print("velocity after", self.paddles['paddle_ego'][0].linearVelocity)
+        # print('position after', self.paddles['paddle_ego'][0].position)
+        # print('predicted new vel', new_vel)
+        # print('predicted new pos', new_pos)
+
+        
+        # self.paddles['paddle_ego'][0].linearVelocity = b2Vec2(vel[0], vel[1])
+        # self.paddles['paddle_ego'][0].position = (new_pos[0], new_pos[1])
+        
         vel = np.array([self.paddles['paddle_ego'][0].linearVelocity[0], self.paddles['paddle_ego'][0].linearVelocity[1]])
         vel_mag = np.linalg.norm(vel)
-            
+
         # keep velocity at a maximum value
         if vel_mag > self.max_paddle_vel:
             self.paddles['paddle_ego'][0].linearVelocity = b2Vec2(vel[0] / vel_mag * self.max_paddle_vel, vel[1] / vel_mag * self.max_paddle_vel)
-
-        self.world.Step(self.time_per_step, 10, 10)
+        
         state_info = self.get_current_state()
         return state_info
     
@@ -427,13 +483,57 @@ class AirHockeyBox2D:
         vel_mag_ego = np.linalg.norm(vel_ego)
         vel_mag_alt = np.linalg.norm(vel_alt)
         
+        pos_ego = [self.paddles['paddle_ego'][0].position[0], self.paddles['paddle_ego'][0].position[1]]
+        new_pos_ego = [pos_ego[0] + vel_ego[0] * self.time_per_step, pos_ego[1] + vel_ego[1] * self.time_per_step]
+        
+        pos_alt = [self.paddles['paddle_alt'][0].position[0], self.paddles['paddle_alt'][0].position[1]]
+        new_pos_alt = [pos_alt[0] + vel_alt[0] * self.time_per_step, pos_alt[1] + vel_alt[1] * self.time_per_step]
+        
+        # new_pos should be within the board though
+        if pos_ego[0] < self.table_x_min:
+            pos_ego[0] = self.table_x_min
+        if pos_ego[0] > self.table_x_max:
+            pos_ego[0] = self.table_x_max
+        if pos_ego[1] < self.table_y_min:
+            pos_ego[1] = self.table_y_min
+        if pos_ego[1] > self.table_y_max:
+            pos_ego[1] = self.table_y_max
+            
+        if pos_alt[0] < self.table_x_min:
+            pos_alt[0] = self.table_x_min
+        if pos_alt[0] > self.table_x_max:
+            pos_alt[0] = self.table_x_max
+        if pos_alt[1] < self.table_y_min:
+            pos_alt[1] = self.table_y_min
+        if pos_alt[1] > self.table_y_max:
+            pos_alt[1] = self.table_y_max
+        
         # keep velocity at a maximum value
         if vel_mag_ego > self.max_paddle_vel:
-            self.paddles['paddle_ego'][0].linearVelocity = b2Vec2(vel_ego[0] / vel_mag_ego * self.max_paddle_vel, vel_ego[1] / vel_mag_ego * self.max_paddle_vel)
+            vel_ego = [vel_ego[0] / vel_mag_ego * self.max_paddle_vel, vel_ego[1] / vel_mag_ego * self.max_paddle_vel]
+            self.paddles['paddle_ego'][0].linearVelocity = b2Vec2(vel_ego[0], vel_ego[1])
         if vel_mag_alt > self.max_paddle_vel:
-            self.paddles['paddle_alt'][0].linearVelocity = b2Vec2(vel_alt[0] / vel_mag_alt * self.max_paddle_vel, vel_alt[1] / vel_mag_alt * self.max_paddle_vel)
-            
+            vel_alt = [vel_alt[0] / vel_mag_alt * self.max_paddle_vel, vel_alt[1] / vel_mag_alt * self.max_paddle_vel]
+            self.paddles['paddle_alt'][0].linearVelocity = b2Vec2(vel_alt[0], vel_alt[1])
+        
         self.world.Step(self.time_per_step, 10, 10)
+        
+        # why do we do this? Because in the real world we have downward force and it is unlikely a paddle will change pos/vel 
+        # because of hitting a puck
+        self.paddles['paddle_ego'][0].linearVelocity = b2Vec2(vel_ego[0], vel_ego[1])
+        self.paddles['paddle_alt'][0].linearVelocity = b2Vec2(vel_alt[0], vel_alt[1])
+        self.paddles['paddle_ego'][0].position = (new_pos_ego[0], new_pos_ego[1])
+        self.paddles['paddle_alt'][0].position = (new_pos_alt[0], new_pos_alt[1])
+
+        # todo: figure out how to determine if puck was hit by object.
+        # contacts, contact_names = self.get_contacts()
+        # hit_a_puck = self.respond_contacts(contact_names)
+        # # hacky way of determing if puck was hit below TODO: fix later!
+        # hit_a_puck = np.any(contacts) # check if any are true
+        
+        # let's fix. if paddle hits a puck, then let's not change it's position
+        
+        
         state_info = self.get_current_state()
         return state_info
 

@@ -12,13 +12,14 @@ air_hockey:
     puck_radius: 0.03175
     paddle_radius: 0.0508
     block_width: 0.0254
-    force_scaling: 200
-    paddle_damping: 5
-    puck_damping: 0.1
+    force_scaling: 1000
+    paddle_damping: 7
+    puck_damping: 1
+    paddle_density: 1000
+    puck_density: 250
     render_size: 360
-    max_timesteps: 1000
-    gravity: -3
-    max_force_timestep: 50 # max force we can apply at one timestep
+    gravity: -0.5
+    max_force_timestep: 150 # max force we can apply at one timestep
     render_size: 360
 
   simulator: box2d # or robosuite
@@ -35,7 +36,7 @@ air_hockey:
   wall_bumping_rew: -0.1
 
 # Training Parameters
-n_training_steps: 20000
+n_training_steps: 100000
 model_save_filepath: model # will be saved same dir as tb_log_dir
 vec_normalize_save_filepath: vec_normalize.pkl
 tb_log_dir: trained_models/gcrl

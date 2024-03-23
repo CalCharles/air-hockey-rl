@@ -64,10 +64,10 @@ class AirHockeyEnv(Env):
         self.paddle_radius = simulator_params['paddle_radius']
         self.puck_radius = simulator_params['puck_radius']
         
-        self.table_x_min = -self.width / 2
-        self.table_x_max = self.width / 2
-        self.table_y_min = -self.length / 2
-        self.table_y_max = self.length / 2
+        self.table_x_top = -self.length / 2
+        self.table_x_bot = self.length / 2
+        self.table_y_right = -self.width / 2
+        self.table_y_left = self.width / 2
         self.max_paddle_vel = self.simulator.max_paddle_vel
         self.max_puck_vel = self.simulator.max_puck_vel
         
@@ -78,11 +78,11 @@ class AirHockeyEnv(Env):
 
     def initialize_spaces(self):
         # setup observation / action / reward spaces
-        low = np.array([self.table_x_min, self.table_y_min, -self.max_paddle_vel, -self.max_paddle_vel, 
-                        self.table_x_min, self.table_y_min, -self.max_puck_vel, -self.max_puck_vel])
+        low = np.array([self.table_x_top, self.table_y_right, -self.max_paddle_vel, -self.max_paddle_vel, 
+                        self.table_x_top, self.table_y_right, -self.max_puck_vel, -self.max_puck_vel])
 
-        high = np.array([self.table_x_max, self.table_y_max, self.max_paddle_vel, self.max_paddle_vel, 
-                         self.table_x_max, self.table_y_max, self.max_puck_vel, self.max_puck_vel])
+        high = np.array([self.table_x_bot, self.table_y_left, self.max_paddle_vel, self.max_paddle_vel, 
+                         self.table_x_bot, self.table_y_left, self.max_puck_vel, self.max_puck_vel])
         
         if not self.goal_conditioned:
             self.observation_space = Box(low=low, high=high, shape=(8,), dtype=float)
@@ -131,89 +131,89 @@ class AirHockeyEnv(Env):
         else:
             return {"observation": obs, "desired_goal": self.get_desired_goal(), "achieved_goal": self.get_achieved_goal(state_info)}, {}
 
-    def get_achieved_goal(self, state_info):
-        if self.reward_type == 'goal_position':
-            # numpy array containing puck position and vel
-            position = np.array(state_info['pucks'][0]['position'])
-            return position.astype(float)
-        elif self.reward_type == 'goal_position_velocity':
-            position = state_info['pucks'][0]['position']
-            velocity = state_info['pucks'][0]['velocity']
-            return np.array([position[1], position[0], velocity[0], velocity[1]])
-        else:
-            raise ValueError("Invalid reward type for goal conditioned environment. " +
-                             "Should be goal_position or goal_position_velocity.")
+    # def get_achieved_goal(self, state_info):
+    #     if self.reward_type == 'goal_position':
+    #         # numpy array containing puck position and vel
+    #         position = np.array(state_info['pucks'][0]['position'])
+    #         return position.astype(float)
+    #     elif self.reward_type == 'goal_position_velocity':
+    #         position = state_info['pucks'][0]['position']
+    #         velocity = state_info['pucks'][0]['velocity']
+    #         return np.array([position[1], position[0], velocity[0], velocity[1]])
+    #     else:
+    #         raise ValueError("Invalid reward type for goal conditioned environment. " +
+    #                          "Should be goal_position or goal_position_velocity.")
     
-    def get_desired_goal(self):
-        position = self.ego_goal_pos
-        if self.reward_type == 'goal_position':
-            return position.astype(float)
-        elif self.reward_type == 'goal_position_velocity':
-            velocity = self.ego_goal_vel
-            return np.array([position[1], position[0], velocity[0], velocity[1]])
-        else:
-            raise ValueError("Invalid reward type for goal conditioned environment. " +
-                             "Should be goal_position or goal_position_velocity.")
+    # def get_desired_goal(self):
+    #     position = self.ego_goal_pos
+    #     if self.reward_type == 'goal_position':
+    #         return position.astype(float)
+    #     elif self.reward_type == 'goal_position_velocity':
+    #         velocity = self.ego_goal_vel
+    #         return np.array([position[1], position[0], velocity[0], velocity[1]])
+    #     else:
+    #         raise ValueError("Invalid reward type for goal conditioned environment. " +
+    #                          "Should be goal_position or goal_position_velocity.")
     
-    def compute_reward(self, achieved_goal, desired_goal, info):
-        # if not vectorized, convert to vector
-        single = len(achieved_goal.shape) == 1
-        if single:
-            achieved_goal = achieved_goal.reshape(1, -1)
-            desired_goal = desired_goal.reshape(1, -1)
-        if self.goal_conditioned:
-            if achieved_goal.shape[1] == 2:
-                # return euclidean distance between the two points
-                dist = np.linalg.norm(achieved_goal[:, :2] - desired_goal[:, :2], axis=1)
-                sigmoid_scale = 2
-                radius = self.ego_goal_radius
-                reward_raw = 1 - (dist / radius) #self.max_goal_rew_radius * radius)
-                reward_mask = dist >= radius
-                reward_raw[reward_mask] = 0 # numerical stability, we will make these 0 later
-                reward = 1 / (1 + np.exp(-reward_raw * sigmoid_scale))
-                reward[reward_mask] = 0
-            else:
-                # return euclidean distance between the two points
-                dist = np.linalg.norm(achieved_goal[:, :2] - desired_goal[:, :2], axis=1)
-                # compute angle between velocities
-                denom = np.linalg.norm(achieved_goal[:, 2:], axis=1) * np.linalg.norm(desired_goal[:, 2:], axis=1) + 1e-8
-                vel_cos = np.sum(achieved_goal[:, 2:] * desired_goal[:, 2:], axis=1) / denom
+    # def compute_reward(self, achieved_goal, desired_goal, info):
+    #     # if not vectorized, convert to vector
+    #     single = len(achieved_goal.shape) == 1
+    #     if single:
+    #         achieved_goal = achieved_goal.reshape(1, -1)
+    #         desired_goal = desired_goal.reshape(1, -1)
+    #     if self.goal_conditioned:
+    #         if achieved_goal.shape[1] == 2:
+    #             # return euclidean distance between the two points
+    #             dist = np.linalg.norm(achieved_goal[:, :2] - desired_goal[:, :2], axis=1)
+    #             sigmoid_scale = 2
+    #             radius = self.ego_goal_radius
+    #             reward_raw = 1 - (dist / radius) #self.max_goal_rew_radius * radius)
+    #             reward_mask = dist >= radius
+    #             reward_raw[reward_mask] = 0 # numerical stability, we will make these 0 later
+    #             reward = 1 / (1 + np.exp(-reward_raw * sigmoid_scale))
+    #             reward[reward_mask] = 0
+    #         else:
+    #             # return euclidean distance between the two points
+    #             dist = np.linalg.norm(achieved_goal[:, :2] - desired_goal[:, :2], axis=1)
+    #             # compute angle between velocities
+    #             denom = np.linalg.norm(achieved_goal[:, 2:], axis=1) * np.linalg.norm(desired_goal[:, 2:], axis=1) + 1e-8
+    #             vel_cos = np.sum(achieved_goal[:, 2:] * desired_goal[:, 2:], axis=1) / denom
                 
-                # numerical stability
-                vel_cos = np.clip(vel_cos, -1, 1)
-                vel_angle = np.arccos(vel_cos)
-                # mag difference
-                mag_diff = np.linalg.norm(achieved_goal[:, 2:] - desired_goal[:, 2:], axis=1)
+    #             # numerical stability
+    #             vel_cos = np.clip(vel_cos, -1, 1)
+    #             vel_angle = np.arccos(vel_cos)
+    #             # mag difference
+    #             mag_diff = np.linalg.norm(achieved_goal[:, 2:] - desired_goal[:, 2:], axis=1)
                 
-                # # also return float from [0, 1] 0 being far 1 being the point
-                # # use sigmoid function because being closer is much more important than being far
-                sigmoid_scale = 2
-                radius = self.ego_goal_radius
-                reward_raw = 1 - (dist / radius)#self.max_goal_rew_radius * radius)
+    #             # # also return float from [0, 1] 0 being far 1 being the point
+    #             # # use sigmoid function because being closer is much more important than being far
+    #             sigmoid_scale = 2
+    #             radius = self.ego_goal_radius
+    #             reward_raw = 1 - (dist / radius)#self.max_goal_rew_radius * radius)
                 
-                mask = dist >= radius
-                reward_raw[mask] = 0 # numerical stability, we will make these 0 later
-                reward = 1 / (1 + np.exp(-reward_raw * sigmoid_scale))
-                reward_mask = dist >= radius
-                reward[reward_mask] = 0
-                position_reward = reward
+    #             mask = dist >= radius
+    #             reward_raw[mask] = 0 # numerical stability, we will make these 0 later
+    #             reward = 1 / (1 + np.exp(-reward_raw * sigmoid_scale))
+    #             reward_mask = dist >= radius
+    #             reward[reward_mask] = 0
+    #             position_reward = reward
 
-                vel_mag_reward = 1 - mag_diff / self.max_paddle_vel
+    #             vel_mag_reward = 1 - mag_diff / self.max_paddle_vel
                 
-                reward_mask = position_reward == 0
-                norm_cos_sim = (vel_cos + 1) / 2
-                vel_angle_reward = norm_cos_sim
-                vel_angle_reward[reward_mask] = 0
-                vel_mag_reward[reward_mask] = 0
-                vel_reward = (vel_angle_reward + vel_mag_reward) / 2
+    #             reward_mask = position_reward == 0
+    #             norm_cos_sim = (vel_cos + 1) / 2
+    #             vel_angle_reward = norm_cos_sim
+    #             vel_angle_reward[reward_mask] = 0
+    #             vel_mag_reward[reward_mask] = 0
+    #             vel_reward = (vel_angle_reward + vel_mag_reward) / 2
                 
-                # reward = (position_reward + vel_reward + vel_mag_reward) / 3
-                reward = 0.5 * position_reward + vel_reward
-            if single:
-                reward = reward[0]
-            return reward
-        else:
-            return self.get_reward(False, False, False, False, self.ego_goal_pos, self.ego_goal_radius)
+    #             # reward = (position_reward + vel_reward + vel_mag_reward) / 3
+    #             reward = 0.5 * position_reward + vel_reward
+    #         if single:
+    #             reward = reward[0]
+    #         return reward
+    #     else:
+    #         return self.get_reward(False, False, False, False, self.ego_goal_pos, self.ego_goal_radius)
 
     def get_observation(self, state_info):
         ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
@@ -293,12 +293,12 @@ class AirHockeyEnv(Env):
         if self.current_timestep > self.max_timesteps:
             terminated = True
         else:
-            if self.terminate_on_out_of_bounds and state_info['paddles']['paddle_ego']['position'][1] > 0: 
+            if self.terminate_on_out_of_bounds and state_info['paddles']['paddle_ego']['position'][0] < 0: 
                 truncated = True
 
         # confusing, but we need to swap x and y for this function
-        bottom_center_point = np.array([-self.length / 2, 0])
-        top_center_point = np.array([self.length / 2, 0])
+        bottom_center_point = np.array([self.table_x_bot, 0])
+        top_center_point = np.array([self.table_x_top, 0])
         puck_within_home = self.is_within_home_region(bottom_center_point, state_info['pucks'][0]['position'])
         puck_within_alt_home = self.is_within_home_region(top_center_point, state_info['pucks'][0]['position'])
         
@@ -323,7 +323,7 @@ class AirHockeyEnv(Env):
         return terminated, truncated, puck_within_home, puck_within_alt_home, puck_within_ego_goal, puck_within_alt_goal
     
     def get_goal_region_reward(self, point, position, radius, discrete=True) -> float:
-        point = np.array([point[1], point[0]])
+        point = np.array([point[0], point[1]])
         dist = np.linalg.norm(position - point)
         
         if discrete:
@@ -343,7 +343,7 @@ class AirHockeyEnv(Env):
         return self.get_goal_region_reward(point, position, 0.16 * self.width, discrete=discrete)
     
     def is_within_goal_region(self, point, position, radius) -> bool:
-        point = np.array([point[1], point[0]])
+        point = np.array([point[0], point[1]])
         dist = np.linalg.norm(position - point)
         return dist < radius
     
@@ -361,8 +361,7 @@ class AirHockeyEnv(Env):
             #                                      goal_radius, discrete=False)
             return self.compute_reward(self.get_achieved_goal(self.current_state), self.get_desired_goal(), {})
         elif self.reward_type == 'puck_height':
-            reward = state_info['pucks'][0]['position'][1]
-            reward = self.pucks[self.puck_names[0]][0].position[1]
+            reward = -state_info['pucks'][0]['position'][0]
             # min acceptable reward is 0 height and above
             reward = max(reward, 0)
             # let's normalize reward w.r.t. the top half length of the table
@@ -372,8 +371,8 @@ class AirHockeyEnv(Env):
             reward = (reward - min_rew) / (max_rew - min_rew)
             return reward
         elif self.reward_type == 'puck_vel':
-        # reward for positive velocity towards the top of the board
-            reward = state_info['pucks'][0]['velocity'][1]
+            # reward for positive velocity towards the top of the board
+            reward = -state_info['pucks'][0]['velocity'][0]
             
             max_rew = 2 # estimated max vel
             min_rew = 0  # min acceptable good velocity
@@ -394,20 +393,26 @@ class AirHockeyEnv(Env):
             raise ValueError("Invalid reward type defined in config.")
         
     def get_reward_shaping(self, state_info):
-        # # small negative reward for changing direction
-        # cosine_sim = np.dot(vel_unit, force_unit_vec) / (np.linalg.norm(vel_unit) * np.linalg.norm(force_unit_vec) + 1e-8)
-        # norm_cosine_sim = (cosine_sim + 1) / 2
-        # max_change_dir_rew = -0.05
-        # direction_rew = max_change_dir_rew * (1 - norm_cosine_sim)
-        
         additional_rew = 0.0
-
-        # determine if going to bump into wall
+        
+        # small negative reward for changing direction
+        if self.current_timestep > 0:
+            old_vel = self.old_state['paddles']['paddle_ego']['velocity']
+            new_vel = state_info['paddles']['paddle_ego']['velocity']
+            vel_unit = old_vel / (np.linalg.norm(old_vel) + 1e-8)
+            new_vel_unit = new_vel / (np.linalg.norm(new_vel) + 1e-8)
+            cosine_sim = np.dot(vel_unit, new_vel_unit) / (np.linalg.norm(vel_unit) * np.linalg.norm(new_vel_unit) + 1e-8)
+            norm_cosine_sim = (cosine_sim + 1) / 2
+            max_change_dir_rew = -0.05
+            direction_rew = max_change_dir_rew * (1 - norm_cosine_sim)
+            additional_rew += direction_rew
+        
+        # determine if close to walls
         if self.wall_bumping_rew != 0:
-            bump_left = state_info['paddles']['paddle_ego']['position'][0] < self.table_x_min + self.paddle_radius
-            bump_right = state_info['paddles']['paddle_ego']['position'][0] > self.table_x_max - self.paddle_radius
-            bump_top = state_info['paddles']['paddle_ego']['position'][1] > self.length / 2 - self.paddle_radius
-            bump_bottom = state_info['paddles']['paddle_ego']['position'][1] < -self.length / 2 + self.paddle_radius
+            bump_right = state_info['paddles']['paddle_ego']['position'][1] < self.table_y_right + 4 * self.paddle_radius
+            bump_left = state_info['paddles']['paddle_ego']['position'][1] > self.table_y_left - 4 * self.paddle_radius
+            bump_top = state_info['paddles']['paddle_ego']['position'][0] > self.table_x_top - 4 * self.paddle_radius
+            bump_bottom = state_info['paddles']['paddle_ego']['position'][0] < self.table_x_bot + 4 * self.paddle_radius
             if bump_left or bump_right or bump_top or bump_bottom:
                 additional_rew += self.wall_bumping_rew
         
@@ -441,7 +446,15 @@ class AirHockeyEnv(Env):
             return self.multi_step(action)
 
     def single_agent_step(self, action) -> tuple[np.ndarray, float, bool, bool, dict]:
+        # determine if action is valid
+        if self.current_timestep > 0:
+            old_pos = self.current_state['paddles']['paddle_ego']['position']
+            if old_pos[0] < 0 + self.paddle_radius:
+                action[0] = max(0, action[0])
+        
         next_state = self.simulator.get_transition(action)
+        if self.current_timestep > 0:
+            self.old_state = self.current_state
         self.current_state = next_state
 
         hit_a_puck = False
@@ -457,6 +470,7 @@ class AirHockeyEnv(Env):
         self.current_timestep += 1
         
         obs = self.get_observation(next_state)
+        # print(next_state['paddles']['paddle_ego']['velocity'])
         return obs, reward, is_finished, truncated, {}
     
     def multi_step(self, joint_action):

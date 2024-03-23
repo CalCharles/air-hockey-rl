@@ -41,6 +41,7 @@ def train_air_hockey_model(air_hockey_cfg):
         wrapped_env = VecNormalize(wrapped_env) # probably something to try when tuning
         return wrapped_env
 
+    check_env(env)
     env = wrap_env(env)
     
     # if goal-conditioned use SAC
