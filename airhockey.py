@@ -407,16 +407,22 @@ class AirHockeyEnv(Env):
         additional_rew = 0.0
         
         # small negative reward for changing direction
-        # if self.current_timestep > 0:
-        #     old_vel = self.old_state['paddles']['paddle_ego']['velocity']
-        #     new_vel = state_info['paddles']['paddle_ego']['velocity']
-        #     vel_unit = old_vel / (np.linalg.norm(old_vel) + 1e-8)
-        #     new_vel_unit = new_vel / (np.linalg.norm(new_vel) + 1e-8)
-        #     cosine_sim = np.dot(vel_unit, new_vel_unit) / (np.linalg.norm(vel_unit) * np.linalg.norm(new_vel_unit) + 1e-8)
-        #     norm_cosine_sim = (cosine_sim + 1) / 2
-        #     max_change_dir_rew = -0.05
-        #     direction_rew = max_change_dir_rew * (1 - norm_cosine_sim)
-        #     additional_rew += direction_rew
+        if self.current_timestep > 0:
+            old_vel = self.old_state['paddles']['paddle_ego']['velocity']
+            new_vel = state_info['paddles']['paddle_ego']['velocity']
+            vel_unit = old_vel / (np.linalg.norm(old_vel) + 1e-8)
+            new_vel_unit = new_vel / (np.linalg.norm(new_vel) + 1e-8)
+            cosine_sim = np.dot(vel_unit, new_vel_unit) / (np.linalg.norm(vel_unit) * np.linalg.norm(new_vel_unit) + 1e-8)
+            norm_cosine_sim = (cosine_sim + 1) / 2
+            max_change_dir_rew = -0.05
+            direction_rew = max_change_dir_rew * (1 - norm_cosine_sim)
+            additional_rew += direction_rew
+            
+        # small negative reward for moving too fast in horizontal direction
+        max_vel = self.max_paddle_vel
+        max_vel_rew = -0.05
+        normalized_y_vel = state_info['paddles']['paddle_ego']['velocity'][1] / max_vel
+        additional_rew += max_vel_rew * normalized_y_vel
         
         # determine if close to walls
         if self.wall_bumping_rew != 0:
