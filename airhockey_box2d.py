@@ -141,11 +141,11 @@ class AirHockeyBox2D:
                 for i in range(len(value)):
                     for key2, value2 in value[i].items():
                         if type(value2) == tuple:
-                            state_info[key][i][key2] = (-value2[1], -value2[0])
+                            state_info[key][i][key2] = (-value2[1], value2[0])
             else:
                 for key2, value2 in value.items():
                     for key3, value3 in value2.items():
-                        state_info[key][key2][key3] = (-value3[1], -value3[0])
+                        state_info[key][key2][key3] = (-value3[1], value3[0])
         return state_info
 
     def get_current_state(self):
@@ -345,7 +345,7 @@ class AirHockeyBox2D:
         return (block_name if name is None else name), (body, color)
     
     def convert_to_box2d_coords(self, action):
-        action = np.array((-action[1], -action[0]))
+        action = np.array((action[1], -action[0]))
         return action
 
     # s, a -> s'
@@ -360,7 +360,7 @@ class AirHockeyBox2D:
         
         # check if out of bounds and correct
         pos = [self.paddles['paddle_ego'][0].position[0], self.paddles['paddle_ego'][0].position[1]]
-        if pos[1] > 0 - 2 * self.paddle_radius:
+        if pos[1] > 0 - 3 * self.paddle_radius:
             action[1] = min(action[1], 0)
         
         # action is delta position

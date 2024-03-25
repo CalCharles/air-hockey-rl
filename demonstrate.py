@@ -23,6 +23,7 @@ class Demonstrator:
         """
         air_hockey_params = air_hockey_cfg['air_hockey']
         air_hockey_params['n_training_steps'] = air_hockey_cfg['n_training_steps']
+        air_hockey_params['seed'] = air_hockey_cfg['seed']
         self.air_hockey = AirHockeyEnv.from_dict(air_hockey_params)
         self.renderer = AirHockeyRenderer(self.air_hockey)
         self.keyboard_scheme = 'wasd'
@@ -71,11 +72,11 @@ class Demonstrator:
             if key == ord('w'):
                 action = np.array([-1,0])
             elif key == ord('a'):
-                action = np.array([0,1])
+                action = np.array([0,-1])
             elif key == ord('s'):
                 action = np.array([1,0])
             elif key == ord('d'):
-                action = np.array([0,-1])
+                action = np.array([0,1])
         else:
             raise ValueError("Invalid keyboard scheme")
         if self.renderer.orientation == 'vertical':

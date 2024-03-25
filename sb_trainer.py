@@ -32,6 +32,7 @@ def train_air_hockey_model(air_hockey_cfg):
     
     air_hockey_params = air_hockey_cfg['air_hockey']
     air_hockey_params['n_training_steps'] = air_hockey_cfg['n_training_steps']
+    air_hockey_params['seed'] = air_hockey_cfg['seed']
     env = AirHockeyEnv.from_dict(air_hockey_params)
 
     # check_env(env)
@@ -43,9 +44,18 @@ def train_air_hockey_model(air_hockey_cfg):
 
     check_env(env)
     env = wrap_env(env)
+    os.makedirs(air_hockey_cfg['tb_log_dir'], exist_ok=True)
+    log_parent_dir = os.path.join(air_hockey_cfg['tb_log_dir'], air_hockey_cfg['air_hockey']['task'])
+    os.makedirs(log_parent_dir, exist_ok=True)
+    
+    # determine the actual log dir
+    subdirs = [x for x in os.listdir(log_parent_dir) if os.path.isdir(os.path.join(log_parent_dir, x))]
+    subdir_nums = [int(x.split(air_hockey_cfg['tb_log_name'] + '_')[1]) for x in subdirs]
+    next_num = max(subdir_nums) + 1 if subdir_nums else 1
+    log_dir = os.path.join(log_parent_dir, air_hockey_cfg['tb_log_name'] + f'_{next_num}')
     
     # if goal-conditioned use SAC
-    if 'goal' in air_hockey_cfg['air_hockey']['reward_type']:
+    if 'goal' in air_hockey_cfg['air_hockey']['task']:
         # SAC hyperparams:
         # Create 4 artificial transitions per real transitionair_hockey_simulator
         n_sampled_goal = 4
@@ -63,27 +73,28 @@ def train_air_hockey_model(air_hockey_cfg):
             learning_rate=1e-3,
             gamma=0.95,
             batch_size=512,
-            tensorboard_log=air_hockey_cfg['tb_log_dir']
+            tensorboard_log=log_parent_dir,
+            seed=air_hockey_cfg['seed'],
             # device='cuda',
             # device="cuda"
             # policy_kwargs=dict(net_arch=[64, 64]),
         )
     else:
         model = PPO("MlpPolicy", env, verbose=1, 
-                tensorboard_log=air_hockey_cfg['tb_log_dir'], 
+                tensorboard_log=log_parent_dir, 
                 device="cpu", # cpu is actually faster!
+                seed=air_hockey_cfg['seed'],
                 gamma=air_hockey_cfg['gamma']) 
     
     model.learn(total_timesteps=air_hockey_cfg['n_training_steps'],
                 tb_log_name=air_hockey_cfg['tb_log_name'], 
                 progress_bar=True)
     
-    log_dir = air_hockey_cfg['tb_log_dir']
-    os.makedirs(log_dir, exist_ok=True)
+    os.makedirs(log_parent_dir, exist_ok=True)
     # get log dir ending with highest number
-    subdirs = [x for x in os.listdir(log_dir) if os.path.isdir(os.path.join(log_dir, x))]
-    subdirs.sort(key=lambda x: [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', x)])
-    log_dir = os.path.join(log_dir, subdirs[-1])
+    # subdirs = [x for x in os.listdir(log_parent_dir) if os.path.isdir(os.path.join(log_parent_dir, x))]
+    # subdirs.sort(key=lambda x: [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', x)])
+    # log_dir = os.path.join(log_parent_dir, subdirs[-1])
     
     # let's save model and vec normalize here too
     model_filepath = os.path.join(log_dir, air_hockey_cfg['model_save_filepath'])
@@ -108,7 +119,7 @@ def train_air_hockey_model(air_hockey_cfg):
     env_test = VecNormalize.load(os.path.join(log_dir, air_hockey_cfg['vec_normalize_save_filepath']), env_test)
     
     # if goal-conditioned use SAC
-    if 'goal' in air_hockey_cfg['air_hockey']['reward_type']:
+    if 'goal' in air_hockey_cfg['air_hockey']['task']:
         model = SAC.load(model_filepath, env=env_test)
     else:
         model = PPO.load(model_filepath)
