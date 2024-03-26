@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import time
-from airhockey2d import AirHockey2D
+from airhockey import AirHockeyEnv
 from render import AirHockeyRenderer
 import argparse
 import yaml
@@ -21,7 +21,10 @@ class Demonstrator:
         Returns:
         None
         """
-        self.air_hockey = AirHockey2D.from_dict(air_hockey_cfg['air_hockey'])
+        air_hockey_params = air_hockey_cfg['air_hockey']
+        air_hockey_params['n_training_steps'] = air_hockey_cfg['n_training_steps']
+        air_hockey_params['seed'] = air_hockey_cfg['seed']
+        self.air_hockey = AirHockeyEnv.from_dict(air_hockey_params)
         self.renderer = AirHockeyRenderer(self.air_hockey)
         self.keyboard_scheme = 'wasd'
         self.print_reward = air_hockey_cfg['print_reward']
@@ -77,7 +80,7 @@ class Demonstrator:
         else:
             raise ValueError("Invalid keyboard scheme")
         if self.renderer.orientation == 'vertical':
-            action = np.array([action[1], -action[0]])
+            action = np.array([action[0], action[1]])
         return action
         
     def run(self):
