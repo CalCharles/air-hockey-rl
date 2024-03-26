@@ -168,7 +168,7 @@ class AirHockeyRenderer:
             def draw_goal(goal, radius, color=(0, 255, 0)):
                 goal_position = goal
                 goal_radius = radius
-                goal_position = np.array((goal_position[1], goal_position[0]))
+                goal_position = np.array((goal_position[1], -goal_position[0])) # coords -> box2d
                 center = np.array(goal_position) + np.array((self.width / 2, self.length / 2))
                 center = np.array((center[1], center[0])) * self.ppm
                 goal_radius = int(goal_radius * self.ppm)
