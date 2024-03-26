@@ -18,6 +18,17 @@ import torch.nn.functional as F
 import wandb
 from torch.distributions import Normal
 from torch.optim.lr_scheduler import CosineAnnealingLR
+from airhockey import AirHockeyEnv
+from render import AirHockeyRenderer
+from matplotlib import pyplot as plt
+import threading
+import time
+import argparse
+import yaml
+import os
+import tqdm
+import numpy as np
+import matplotlib.pyplot as plt
 
 TensorBatch = List[torch.Tensor]
 
@@ -31,7 +42,7 @@ LOG_STD_MAX = 2.0
 class TrainConfig:
     # Experiment
     device: str = "cuda"
-    env: str = "halfcheetah-medium-expert-v2"  # OpenAI gym environment name
+    env: str = "Airhockey-custom"  # OpenAI gym environment name
     seed: int = 0  # Sets Gym, PyTorch and Numpy seeds
     eval_freq: int = int(5e3)  # How often (time steps) we evaluate
     n_episodes: int = 10  # How many episodes run during evaluation
@@ -46,7 +57,7 @@ class TrainConfig:
     beta: float = 3.0  # Inverse temperature. Small beta -> BC, big beta -> maximizing Q
     iql_tau: float = 0.7  # Coefficient for asymmetric loss
     iql_deterministic: bool = False  # Use deterministic actor
-    normalize: bool = True  # Normalize states
+    normalize: bool = False  # Normalize states
     normalize_reward: bool = False  # Normalize reward
     vf_lr: float = 3e-4  # V function learning rate
     qf_lr: float = 3e-4  # Critic learning rate
@@ -190,15 +201,16 @@ def wandb_init(config: dict) -> None:
 def eval_actor(
     env: gym.Env, actor: nn.Module, device: str, n_episodes: int, seed: int
 ) -> np.ndarray:
-    env.seed(seed)
+    # env.seed(seed)
     actor.eval()
     episode_rewards = []
     for _ in range(n_episodes):
-        state, done = env.reset(), False
+        # import ipdb;ipdb.set_trace()
+        state, done = env.reset()[0], False
         episode_reward = 0.0
         while not done:
             action = actor.act(state, device)
-            state, reward, done, _ = env.step(action)
+            state, reward, done, _, _ = env.step(action)
             episode_reward += reward
         episode_rewards.append(episode_reward)
 
@@ -516,12 +528,20 @@ class ImplicitQLearning:
 
 @pyrallis.wrap()
 def train(config: TrainConfig):
-    env = gym.make(config.env)
 
+    log_dir = 'config/'
+    air_hockey_cfg_fp = os.path.join(log_dir, 'model_cfg.yaml')
+    with open(air_hockey_cfg_fp, 'r') as f:
+        air_hockey_cfg = yaml.safe_load(f)
+    air_hockey_cfg['seed'] = np.random.randint(0, 1000)
+    air_hockey_params = air_hockey_cfg['air_hockey']
+    air_hockey_cfg['air_hockey']['max_timesteps'] = 200
+    
+    env = AirHockeyEnv.from_dict(air_hockey_params)
+
+    # TODO: remove hardcoded spaces
     state_dim = 8
     action_dim = 2
-
-    # dataset = d4rl.qlearning_dataset(env)
     np_dataset = np.load('trajs.npy', allow_pickle=True)
     dataset = {}
     dataset["observations"] = np_dataset[:,:8]
@@ -529,23 +549,10 @@ def train(config: TrainConfig):
     dataset["rewards"] = np_dataset[:,10]
     dataset["next_observations"] = np_dataset[:,11:19]
     dataset["terminals"] = np_dataset[:,19]*0
-    # import ipdb;ipdb.set_trace()
 
     if config.normalize_reward:
         modify_reward(dataset, config.env)
 
-    if config.normalize:
-        state_mean, state_std = compute_mean_std(dataset["observations"], eps=1e-3)
-    else:
-        state_mean, state_std = 0, 1
-
-    dataset["observations"] = normalize_states(
-        dataset["observations"], state_mean, state_std
-    )
-    dataset["next_observations"] = normalize_states(
-        dataset["next_observations"], state_mean, state_std
-    )
-    env = wrap_env(env, state_mean=state_mean, state_std=state_std)
     replay_buffer = ReplayBuffer(
         state_dim,
         action_dim,
@@ -566,7 +573,7 @@ def train(config: TrainConfig):
 
     # Set seeds
     seed = config.seed
-    set_seed(seed, env)
+    # set_seed(seed, env)
 
     q_network = TwinQ(state_dim, action_dim).to(config.device)
     v_network = ValueFunction(state_dim).to(config.device)
@@ -582,7 +589,13 @@ def train(config: TrainConfig):
     v_optimizer = torch.optim.Adam(v_network.parameters(), lr=config.vf_lr)
     q_optimizer = torch.optim.Adam(q_network.parameters(), lr=config.qf_lr)
     actor_optimizer = torch.optim.Adam(actor.parameters(), lr=config.actor_lr)
-
+    eval_scores = eval_actor(
+                env,
+                actor,
+                device=config.device,
+                n_episodes=config.n_episodes,
+                seed=config.seed,
+            )
     kwargs = {
         "max_action": max_action,
         "actor": actor,
@@ -619,36 +632,34 @@ def train(config: TrainConfig):
         batch = replay_buffer.sample(config.batch_size)
         batch = [b.to(config.device) for b in batch]
         log_dict = trainer.train(batch)
-        if t%1000==0:
-            print(log_dict)
-        # wandb.log(log_dict, step=trainer.total_it)
+        wandb.log(log_dict, step=trainer.total_it)
         # Evaluate episode
-        # if (t + 1) % config.eval_freq == 0:
-        #     print(f"Time steps: {t + 1}")
-        #     eval_scores = eval_actor(
-        #         env,
-        #         actor,
-        #         device=config.device,
-        #         n_episodes=config.n_episodes,
-        #         seed=config.seed,
-        #     )
-        #     eval_score = eval_scores.mean()
-        #     normalized_eval_score = env.get_normalized_score(eval_score) * 100.0
-        #     evaluations.append(normalized_eval_score)
-        #     print("---------------------------------------")
-        #     print(
-        #         f"Evaluation over {config.n_episodes} episodes: "
-        #         f"{eval_score:.3f} , D4RL score: {normalized_eval_score:.3f}"
-        #     )
-        #     print("---------------------------------------")
-        #     if config.checkpoints_path is not None:
-        #         torch.save(
-        #             trainer.state_dict(),
-        #             os.path.join(config.checkpoints_path, f"checkpoint_{t}.pt"),
-        #         )
-        #     wandb.log(
-        #         {"d4rl_normalized_score": normalized_eval_score}, step=trainer.total_it
-        #     )
+        if (t + 1) % config.eval_freq == 0:
+            print(f"Time steps: {t + 1}")
+            eval_scores = eval_actor(
+                env,
+                actor,
+                device=config.device,
+                n_episodes=config.n_episodes,
+                seed=config.seed,
+            )
+            eval_score = eval_scores.mean()
+            normalized_eval_score = eval_score
+            evaluations.append(normalized_eval_score)
+            print("---------------------------------------")
+            print(
+                f"Evaluation over {config.n_episodes} episodes: "
+                f"{eval_score:.3f} , D4RL score: {normalized_eval_score:.3f}"
+            )
+            print("---------------------------------------")
+            if config.checkpoints_path is not None:
+                torch.save(
+                    trainer.state_dict(),
+                    os.path.join(config.checkpoints_path, f"checkpoint_{t}.pt"),
+                )
+            wandb.log(
+                {"d4rl_normalized_score": normalized_eval_score}, step=trainer.total_it
+            )
 
 
 if __name__ == "__main__":

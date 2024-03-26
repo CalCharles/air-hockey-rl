@@ -7,6 +7,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+offline_rl_algorithms/wandb/*
+
 # C extensions
 *.so
 
