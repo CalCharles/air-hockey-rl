@@ -1,0 +1,101 @@
+wandb_version: 1
+
+device:
+  desc: null
+  value: cuda
+env:
+  desc: null
+  value: halfcheetah-medium-expert-v2
+seed:
+  desc: null
+  value: 0
+eval_freq:
+  desc: null
+  value: 5000
+n_episodes:
+  desc: null
+  value: 10
+max_timesteps:
+  desc: null
+  value: 1000000
+checkpoints_path:
+  desc: null
+  value: null
+load_model:
+  desc: null
+  value: ''
+buffer_size:
+  desc: null
+  value: 2000000
+batch_size:
+  desc: null
+  value: 256
+discount:
+  desc: null
+  value: 0.99
+tau:
+  desc: null
+  value: 0.005
+beta:
+  desc: null
+  value: 3.0
+iql_tau:
+  desc: null
+  value: 0.7
+iql_deterministic:
+  desc: null
+  value: false
+normalize:
+  desc: null
+  value: true
+normalize_reward:
+  desc: null
+  value: false
+vf_lr:
+  desc: null
+  value: 0.0003
+qf_lr:
+  desc: null
+  value: 0.0003
+actor_lr:
+  desc: null
+  value: 0.0003
+actor_dropout:
+  desc: null
+  value: null
+project:
+  desc: null
+  value: CORL
+group:
+  desc: null
+  value: IQL-D4RL
+name:
+  desc: null
+  value: IQL-halfcheetah-medium-expert-v2-36ff0409
+_wandb:
+  desc: null
+  value:
+    python_version: 3.8.16
+    cli_version: 0.15.5
+    framework: torch
+    is_jupyter_run: false
+    is_kaggle_kernel: false
+    start_time: 1711478556.616301
+    t:
+      1:
+      - 1
+      - 55
+      2:
+      - 1
+      - 55
+      3:
+      - 13
+      - 14
+      - 16
+      - 23
+      4: 3.8.16
+      5: 0.15.5
+      8:
+      - 5
+      10:
+      - 3
