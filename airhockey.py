@@ -41,7 +41,8 @@ class AirHockeyEnv(Env):
             simulator_fn = get_robosuite_simulator_fn()
         else:
             raise ValueError("Invalid simulator type. Must be 'box2d' or 'robosuite'.")
-            
+
+        simulator_params['task'] = task
         self.simulator = simulator_fn.from_dict(simulator_params)
         self.simulator_params = simulator_params
 
@@ -97,33 +98,42 @@ class AirHockeyEnv(Env):
 
         high = np.array([self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel, 
                          self.table_x_bot, self.table_y_right, self.max_puck_vel, self.max_puck_vel])
-        
-        if not self.goal_conditioned:
-            self.observation_space = Box(low=low, high=high, shape=(8,), dtype=float)
+
+        if self.reward_type == 'move_block':
+            low = np.array([self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel,
+                            self.table_x_top, self.table_y_left, -self.max_puck_vel, -self.max_puck_vel,
+                            self.table_x_top, self.table_y_left, self.table_x_top, self.table_y_left])
+            high = np.array([self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel,
+                             self.table_x_bot, self.table_y_right, self.max_puck_vel, self.max_puck_vel,
+                             self.table_x_bot, self.table_y_right, self.table_x_bot, self.table_y_right])
+            self.observation_space = Box(low=low, high=high, shape=(12,), dtype=float)
         else:
-            
-            if self.reward_type == 'goal_position':
-                # y, x
-                goal_low = np.array([self.table_x_top, self.table_y_left])#, -self.max_paddle_vel, self.max_paddle_vel])
-                goal_high = np.array([0, self.table_y_right])#, self.max_paddle_vel, self.max_paddle_vel])
-                
-                self.observation_space = spaces.Dict(dict(
-                    observation=Box(low=low, high=high, shape=(8,), dtype=float),
-                    desired_goal=Box(low=goal_low, high=goal_high, shape=(2,), dtype=float),
-                    achieved_goal=Box(low=goal_low, high=goal_high, shape=(2,), dtype=float)
-                ))
-            
-            elif self.reward_type == 'goal_position_velocity':
-                goal_low = np.array([self.table_x_top, self.table_y_left, -self.max_puck_vel, -self.max_puck_vel])
-                goal_high = np.array([0, self.table_y_right, self.max_puck_vel, self.max_puck_vel])
-                self.observation_space = spaces.Dict(dict(
-                    observation=Box(low=low, high=high, shape=(8,), dtype=float),
-                    desired_goal=Box(low=goal_low, high=goal_high, shape=(4,), dtype=float),
-                    achieved_goal=Box(low=goal_low, high=goal_high, shape=(4,), dtype=float)
-                ))
-            
-            self.min_goal_radius = self.width / 16
-            self.max_goal_radius = self.width / 4
+            if not self.goal_conditioned:
+                self.observation_space = Box(low=low, high=high, shape=(8,), dtype=float)
+            else:
+
+                if self.reward_type == 'goal_position':
+                    # y, x
+                    goal_low = np.array([self.table_x_top, self.table_y_left])#, -self.max_paddle_vel, self.max_paddle_vel])
+                    goal_high = np.array([0, self.table_y_right])#, self.max_paddle_vel, self.max_paddle_vel])
+
+                    self.observation_space = spaces.Dict(dict(
+                        observation=Box(low=low, high=high, shape=(8,), dtype=float),
+                        desired_goal=Box(low=goal_low, high=goal_high, shape=(2,), dtype=float),
+                        achieved_goal=Box(low=goal_low, high=goal_high, shape=(2,), dtype=float)
+                    ))
+
+                elif self.reward_type == 'goal_position_velocity':
+                    goal_low = np.array([self.table_x_top, self.table_y_left, -self.max_puck_vel, -self.max_puck_vel])
+                    goal_high = np.array([0, self.table_y_right, self.max_puck_vel, self.max_puck_vel])
+                    self.observation_space = spaces.Dict(dict(
+                        observation=Box(low=low, high=high, shape=(8,), dtype=float),
+                        desired_goal=Box(low=goal_low, high=goal_high, shape=(4,), dtype=float),
+                        achieved_goal=Box(low=goal_low, high=goal_high, shape=(4,), dtype=float)
+                    ))
+
+                self.min_goal_radius = self.width / 16
+                self.max_goal_radius = self.width / 4
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
 
@@ -241,6 +251,14 @@ class AirHockeyEnv(Env):
         puck_y_pos = state_info['pucks'][0]['position'][1]
         puck_x_vel = state_info['pucks'][0]['velocity'][0]
         puck_y_vel = state_info['pucks'][0]['velocity'][1]
+
+        if self.reward_type == 'move_block':
+            block_x_pos = state_info['blocks'][0]['current_position'][0]
+            block_y_pos = state_info['blocks'][0]['current_position'][1]
+            block_initial_x_pos = state_info['blocks'][0]['initial_position'][0]
+            block_initial_y_pos = state_info['blocks'][0]['initial_position'][1]
+            obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel, block_x_pos, block_y_pos, block_initial_x_pos, block_initial_y_pos])
+            return obs
 
         if not self.multiagent:
             obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
@@ -438,6 +456,14 @@ class AirHockeyEnv(Env):
             return reward
         elif self.reward_type == 'alt_home':
             reward = 1 if puck_within_alt_home else 0
+            return reward
+        elif self.reward_type == 'move_block':
+            # more reward if we move the block away from initial position
+            block_initial_pos = state_info['blocks'][0]['initial_position']
+            block_pos = state_info['blocks'][0]['current_position']
+            dist = np.linalg.norm(np.array(block_pos) - np.array(block_initial_pos))
+            max_euclidean_distance = np.linalg.norm(np.array([self.table_x_bot, self.table_y_right]) - np.array([self.table_x_top, self.table_y_left]))
+            reward = dist / max_euclidean_distance
             return reward
         else:
             raise ValueError("Invalid reward type defined in config.")

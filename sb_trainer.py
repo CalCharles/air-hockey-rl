@@ -151,48 +151,48 @@ def train_air_hockey_model(air_hockey_cfg):
 
         # uncomment below to see the tags in the tensorboard log file, then you can add them to metrics
         # print("Available tags: ", ea.Tags()['scalars'])
-        
-        metrics = [ 
-            'rollout/ep_rew_mean', 
-            'train/approx_kl', 
-            'train/entropy_loss', 
-            'train/learning_rate', 
-            'train/loss', 
-            'train/value_loss']
-
-        def save_plot(metrics):
-            # Create a 2x3 subplot
-            fig, axs = plt.subplots(2, 3, figsize=(18, 12))
-            fig.suptitle('Air Hockey Training Summary')
-
-            # Flatten the axs array for easy iteration
-            axs = axs.flatten()
-
-            for i, metric in enumerate(metrics):
-                if metric in ea.Tags()['scalars']:
-                    # Extract time steps and values for the metric
-                    times, step_nums, values = zip(*ea.Scalars(metric))
-
-                    # Plot on the i-th subplot
-                    axs[i].plot(step_nums, values, label=metric)
-                    axs[i].set_title(metric)
-                    axs[i].set_xlabel("Steps")
-                    axs[i].set_ylabel("Value")
-                    axs[i].legend()
-                else:
-                    print(f"Metric {metric} not found in logs.")
-                    axs[i].set_title(f"{metric} (not found)")
-                    axs[i].set_xlabel("Steps")
-                    axs[i].set_ylabel("Value")
-
-            # Adjust layout for better readability
-            plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-            # let's save in same folder
-            plot_fp = os.path.join(log_dir, 'training_summary.png')
-            plt.savefig(plot_fp)
-            plt.close()
-
-        save_plot(metrics)
+        # 
+        # metrics = [
+        #     'rollout/ep_rew_mean',
+        #     'train/approx_kl',
+        #     'train/entropy_loss',
+        #     'train/learning_rate',
+        #     'train/loss',
+        #     'train/value_loss']
+        #
+        # def save_plot(metrics):
+        #     # Create a 2x3 subplot
+        #     fig, axs = plt.subplots(2, 3, figsize=(18, 12))
+        #     fig.suptitle('Air Hockey Training Summary')
+        #
+        #     # Flatten the axs array for easy iteration
+        #     axs = axs.flatten()
+        #
+        #     for i, metric in enumerate(metrics):
+        #         if metric in ea.Tags()['scalars']:
+        #             # Extract time steps and values for the metric
+        #             times, step_nums, values = zip(*ea.Scalars(metric))
+        #
+        #             # Plot on the i-th subplot
+        #             axs[i].plot(step_nums, values, label=metric)
+        #             axs[i].set_title(metric)
+        #             axs[i].set_xlabel("Steps")
+        #             axs[i].set_ylabel("Value")
+        #             axs[i].legend()
+        #         else:
+        #             print(f"Metric {metric} not found in logs.")
+        #             axs[i].set_title(f"{metric} (not found)")
+        #             axs[i].set_xlabel("Steps")
+        #             axs[i].set_ylabel("Value")
+        #
+        #     # Adjust layout for better readability
+        #     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+        #     # let's save in same folder
+        #     plot_fp = os.path.join(log_dir, 'training_summary.png')
+        #     plt.savefig(plot_fp)
+        #     plt.close()
+        #
+        # save_plot(metrics)
 
         obs = env_test.reset()
         start = time.time()

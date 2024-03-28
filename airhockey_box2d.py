@@ -21,7 +21,8 @@ class AirHockeyBox2D:
                  force_scaling, 
                  paddle_damping, 
                  puck_damping,
-                 render_size, 
+                 render_size,
+                 task='puck_vel',  # we only use task to construct the world
                  render_masks=False, 
                  gravity=-5,
                  paddle_density=1000,
@@ -36,13 +37,34 @@ class AirHockeyBox2D:
         self.num_blocks = num_blocks
         self.num_obstacles = num_obstacles
         self.num_targets = num_targets
-        
+        self.num_paddles = num_paddles
+        self.task = task
+
+        def check_setup(expected_n_pucks=1,
+                        expected_n_blocks=0,
+                        expected_n_obstacles=0,
+                        expected_n_targets=0,
+                        expected_n_paddles=1):
+            assert self.num_pucks == expected_n_pucks
+            assert self.num_blocks == expected_n_blocks
+            assert self.num_obstacles == expected_n_obstacles
+            assert self.num_targets == expected_n_targets
+            assert self.num_paddles == expected_n_paddles
+
+        if task == 'puck_vel' or task == 'puck_height' or task == 'puck_reach':
+            check_setup()
+        elif task == 'move_block':
+            check_setup(expected_n_blocks=1)
+        elif task == 'goal_conditioned_position':
+            check_setup()
+        else:
+            raise ValueError("Task not recognized")
+
         # physics / world params
         self.length, self.width = length, width
-        self.num_paddles = num_paddles
         self.paddle_radius = paddle_radius
         self.puck_radius = puck_radius
-        self.block_width = block_width  
+        self.block_width = block_width
         self.max_force_timestep = max_force_timestep
         self.time_frequency = time_frequency
         self.time_per_step = 1 / self.time_frequency
@@ -78,21 +100,21 @@ class AirHockeyBox2D:
         self.render_width = int(render_size)
         self.render_length = int(self.ppm * self.length)
         self.render_masks = render_masks
-        
+
         self.table_x_min = -self.width / 2
         self.table_x_max = self.width / 2
         self.table_y_min = -self.length / 2
         self.table_y_max = self.length / 2
-        
+
         self.min_goal_radius = self.width / 16
         self.max_goal_radius = self.width / 4
-        
+
         self.metadata = {}
-        
+
         # creating the ground -- need to only call once! otherwise it can be laggy
         self.ground_body = self.world.CreateBody(
             shapes=b2LoopShape(vertices=[(self.table_x_min, self.table_y_min),
-                                         (self.table_x_min, self.table_y_max), 
+                                         (self.table_x_min, self.table_y_max),
                                          (self.table_x_max, self.table_y_max),
                                          (self.table_x_max, self.table_y_min)]),
         )
@@ -158,13 +180,18 @@ class AirHockeyBox2D:
         ego_paddle_y_vel = self.paddles['paddle_ego'][0].linearVelocity[1]
         
         state_info['paddles'] = {'paddle_ego': {'position': (ego_paddle_x_pos, ego_paddle_y_pos),
-                                            'velocity': (ego_paddle_x_vel, ego_paddle_y_vel)}}
+                                                'velocity': (ego_paddle_x_vel, ego_paddle_y_vel)}}
 
-        puck_x_pos = self.pucks[self.puck_names[0]][0].position[0]
-        puck_y_pos = self.pucks[self.puck_names[0]][0].position[1]
-        puck_x_vel = self.pucks[self.puck_names[0]][0].linearVelocity[0]
-        puck_y_vel = self.pucks[self.puck_names[0]][0].linearVelocity[1]
-        
+        if self.task == 'move_block':
+            assert len(self.blocks) == 1
+            block_x_pos = self.blocks['Block0'][0].position[0]
+            block_y_pos = self.blocks['Block0'][0].position[1]
+            initial_x_pos = self.initial_block_pos[0]
+            initial_y_pos = self.initial_block_pos[1]
+
+            state_info['blocks'] = [{'current_position': (block_x_pos, block_y_pos),
+                                    'initial_position': (initial_x_pos, initial_y_pos)}]
+
         pucks_info = []
         for puck_name in self.puck_names:
             puck_x_pos = self.pucks[puck_name][0].position[0]
@@ -181,13 +208,15 @@ class AirHockeyBox2D:
         for i in range(self.num_pucks):
             name, puck_attrs = self.create_puck(i, min_height=self.puck_min_height)
             self.pucks[name] = puck_attrs
+        # need to take into account pucks so far since we do not want to spawn anything directly below them
 
         for i in range(self.num_blocks):
-            name, block_attrs = self.create_block_type(i, name_type = "Block", dynamic=False, min_height = self.block_min_height)
+            name, block_attrs = self.create_block_type(i, name_type="Block", movable=False, min_height=self.block_min_height)
             self.blocks[name] = block_attrs
 
         for i in range(self.num_obstacles): # could replace with arbitary polygons
-            name, obs_attrs = self.create_block_type(i, name_type = "Obstacle", angle=np.random.rand() * np.pi, dynamic = False, color=(0, 127, 127), min_height = self.block_min_height)
+            name, obs_attrs = self.create_block_type(i, name_type = "Obstacle", angle=np.random.rand() * np.pi,
+                                                     movable=False, color=(0, 127, 127), min_height = self.block_min_height)
             self.obstacles[name] = obs_attrs
 
         for i in range(self.num_targets):
@@ -271,10 +300,8 @@ class AirHockeyBox2D:
         if not self.multiagent:
             # then we want it to start at the top, which is max_height, 0
             if pos is None: 
-                x_pos = np.random.uniform(low=-self.width / 3, high=self.width / 3) # doesnt spawn at edges
-                # (np.random.rand() - 0.5) * 2 * (self.table_x_max)
-                pos = (x_pos,
-                       min(max_height, self.length / 2) - 0.01)
+                x_pos = np.random.uniform(low=-self.width / 3, high=self.width / 3)  # doesnt spawn at edges
+                pos = (x_pos, min(max_height, self.length / 2) - 0.01)
         else: 
             if pos is None: 
                 pos = ((np.random.rand() - 0.5) * 2 * (self.table_x_max), 
@@ -314,10 +341,15 @@ class AirHockeyBox2D:
         puck_name = "puck" + str(i)
         return ((puck_name, (puck, color)) if name is None else (name, (puck, color)))
 
-    def create_block_type(self, i, name=None,name_type=None, color=(127, 127, 127), width=-1, height=-1, vel=None, pos=None, dynamic=True, angle=0, angular_vel=0, fixed_rotation=False, collidable=True, min_height=-30):
-        if pos is None: pos = ((np.random.rand() - 0.5) * 2 * (self.table_x_max), min_height + (np.random.rand() * (self.length - (min_height + self.length / 2))))
+    def create_block_type(self, i, name=None,name_type=None, color=(127, 127, 127), width=-1, height=-1, vel=None, pos=None,
+                          movable=True, angle=0, angular_vel=0, fixed_rotation=False, collidable=True, min_height=-30,
+                          max_height=30):
+        # if pos is None: pos = ((np.random.rand() - 0.5) * 2 * (self.table_x_max), min_height + (np.random.rand() * (self.length - (min_height + self.length / 2))))
+        x_pos = np.random.uniform(low=-self.width / 3, high=self.width / 3)  # doesnt spawn at edges
+        pos = (x_pos, min(max_height, self.length / 2) - 0.01)
+        self.initial_block_pos = pos
         if vel is None: vel = ((np.random.rand() - 0.5) * 2 * (self.width),(np.random.rand() - 0.5) * 2 * (self.length))
-        if not dynamic: vel = np.zeros((2,))
+        # if not dynamic: vel = np.zeros((2,))
         if width < 0: width = max(0.75, np.random.rand() * 3)
         if height < 0: height = max(0.5, np.random.rand())
         # TODO: possibly create obstacles of arbitrary shape
@@ -332,7 +364,7 @@ class AirHockeyBox2D:
                                  categoryBits=1 if collidable else 0),
         )
 
-        body = self.world.CreateBody(type=b2_dynamicBody if dynamic else b2_staticBody,
+        body = self.world.CreateBody(type=b2_dynamicBody if movable else b2_staticBody,
                                     position=pos,
                                     linearVelocity=vel,
                                     angularVelocity=angular_vel,
