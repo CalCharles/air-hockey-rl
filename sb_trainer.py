@@ -151,7 +151,7 @@ def train_air_hockey_model(air_hockey_cfg):
 
         # uncomment below to see the tags in the tensorboard log file, then you can add them to metrics
         # print("Available tags: ", ea.Tags()['scalars'])
-        # 
+        #
         # metrics = [
         #     'rollout/ep_rew_mean',
         #     'train/approx_kl',

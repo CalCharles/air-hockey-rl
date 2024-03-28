@@ -38,6 +38,7 @@ class AirHockeyRenderer:
         air_hockey_table_fp = os.path.join(dir_path, 'assets', 'air_hockey_table.png')
         puck_fp = os.path.join(dir_path, 'assets', 'puck.png')
         paddle_fp = os.path.join(dir_path, 'assets', 'paddle.png')
+        block_fp = os.path.join(dir_path, 'assets', 'block.png')
         
         # Load and resize the image
         self.paddle_img = cv2.imread(paddle_fp, cv2.IMREAD_UNCHANGED)  # Ensure the image has an alpha channel
@@ -45,6 +46,9 @@ class AirHockeyRenderer:
         
         self.puck_img = cv2.imread(puck_fp, cv2.IMREAD_UNCHANGED)  # Ensure the image has an alpha channel
         self.current_puck_shape = None
+
+        self.square_img = cv2.imread(block_fp, cv2.IMREAD_UNCHANGED)  # Ensure the image has an alpha channel
+        self.current_square_shape = None
         
         self.air_hockey_table_img = cv2.imread(air_hockey_table_fp)
         # rotate clockwise 90 deg
@@ -136,6 +140,73 @@ class AirHockeyRenderer:
             #         if alpha > 0:  # If pixel is not transparent
             #             self.frame[top_left[1]+i, top_left[0]+j, :3] = (1 - alpha) * self.frame[top_left[1]+i, top_left[0]+j, :3] + alpha * resized_img[i, j, :3]
 
+    def draw_square_with_image(self, body_attrs, square_type='block'):
+        """
+        Draws a circle with an image overlay on the frame.
+
+        Args:
+            body_attrs (tuple): A tuple containing the body and color attributes of the circle.
+            circle_type (str, optional): The type of circle. Defaults to 'puck'.
+        """
+        body, color = body_attrs  # color is unused but kept for compatibility
+        for fixture in body.fixtures:
+            shape = fixture.shape
+            # center = np.array(body.position) + np.array((self.width / 2, self.length / 2))
+            center = np.array(body.position) + np.array((self.width / 2, self.length / 2))
+            center = np.array((center[1], center[0])) * self.ppm  # Default horizontal orientation
+            vertices = shape.vertices
+            # such as [([-width / 2, -height / 2]), ([width / 2, -height / 2]), ([width / 2, height / 2]), ([-width / 2, height / 2])]
+            width = np.abs(-2 * vertices[0][0])
+            width = int(width * self.ppm)
+
+            # Calculate top-left corner of the image for overlay
+            top_left = (center - width / 2).astype(int)
+            bottom_right = top_left + width
+
+            if square_type == 'block':
+                if self.current_puck_shape != shape:
+                    self.current_puck_shape = shape
+                    vertices = shape.vertices
+                    # such as [([-width / 2, -height / 2]), ([width / 2, -height / 2]), ([width / 2, height / 2]), ([-width / 2, height / 2])]
+                    width = np.abs(-2 * vertices[0][0])
+                    width = int(width * self.ppm)
+                    self.square_img = cv2.resize(self.square_img, (width, width))
+                resized_img = self.square_img
+
+            # w.r.t. image, y_start == 0 if within frame, otherwise top_left is negative
+            if top_left[1] < 0:
+                y_start = max(0, -top_left[1] + 1)
+            else:
+                y_start = 0
+            if top_left[0] < 0:
+                x_start = max(0, -top_left[0] + 1)
+            else:
+                x_start = 0
+
+            x_start = max(0, -top_left[0])
+            y_start = max(0, -top_left[1])
+
+            frame_top_left = [max(0, top_left[0]), max(0, top_left[1])]
+            frame_bottom_right = [min(self.frame.shape[1], bottom_right[0]), min(self.frame.shape[0], bottom_right[1])]
+
+            # w.r.t. image, y_end == resized_img.shape[0] if within frame, otherwise resized_img.shape[0]
+            y_end_offset = bottom_right[1] - frame_bottom_right[1]
+            x_end_offset = bottom_right[0] - frame_bottom_right[0]
+            y_end = resized_img.shape[0] - y_end_offset
+            x_end = resized_img.shape[1] - x_end_offset
+
+            # Overlay the image
+            mask = resized_img[y_start:y_end, x_start:x_end, 3] > 0
+            self.frame[frame_top_left[1]: frame_bottom_right[1], frame_top_left[0]: frame_bottom_right[0]][mask] = \
+            resized_img[y_start:y_end, x_start:x_end, :3][mask]
+            # for i in range(resized_img.shape[0]):
+            #     for j in range(resized_img.shape[1]):
+            #         if top_left[1]+i >= self.frame.shape[0] or top_left[0]+j >= self.frame.shape[1]:
+            #             continue  # Skip pixels outside the frame
+            #         alpha = resized_img[i, j, 3] / 255.0  # Assuming the alpha channel is the last
+            #         if alpha > 0:  # If pixel is not transparent
+            #             self.frame[top_left[1]+i, top_left[0]+j, :3] = (1 - alpha) * self.frame[top_left[1]+i, top_left[0]+j, :3] + alpha * resized_img[i, j, :3]
+
     def draw_polygon(self, body_attrs):
         """
         Draws a polygon on the frame.
@@ -183,7 +254,7 @@ class AirHockeyRenderer:
         for puck_attrs in self.airhockey_sim.pucks.values():
             self.draw_circle_with_image(puck_attrs, circle_type='puck')
         for block_attrs in self.airhockey_sim.blocks.values():
-            self.draw_polygon(block_attrs)
+            self.draw_square_with_image(block_attrs, square_type='block')
         for obstacle_attrs in self.airhockey_sim.obstacles.values():
             self.draw_polygon(obstacle_attrs)
         for paddle_attrs in self.airhockey_sim.paddles.values():

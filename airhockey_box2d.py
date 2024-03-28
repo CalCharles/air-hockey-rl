@@ -346,35 +346,34 @@ class AirHockeyBox2D:
                           max_height=30):
         # if pos is None: pos = ((np.random.rand() - 0.5) * 2 * (self.table_x_max), min_height + (np.random.rand() * (self.length - (min_height + self.length / 2))))
         x_pos = np.random.uniform(low=-self.width / 3, high=self.width / 3)  # doesnt spawn at edges
-        pos = (x_pos, min(max_height, self.length / 2) - 0.01)
+        y_pos = np.random.uniform(low=self.length - self.length / 4, high=0 + self.length / 4)
+        pos = (x_pos, y_pos)
         self.initial_block_pos = pos
         if vel is None: vel = ((np.random.rand() - 0.5) * 2 * (self.width),(np.random.rand() - 0.5) * 2 * (self.length))
+        vel = (0, 0)
         # if not dynamic: vel = np.zeros((2,))
         if width < 0: width = max(0.75, np.random.rand() * 3)
         if height < 0: height = max(0.5, np.random.rand())
         # TODO: possibly create obstacles of arbitrary shape
+        height = self.block_width
+        width = self.block_width
         vertices = [([-width / 2, -height / 2]), ([width / 2, -height / 2]), ([width / 2, height / 2]), ([-width / 2, height / 2])]
-        block_name  = name_type # Block, Obstacle, Target
-
-        fixture = b2FixtureDef(
-            shape=b2PolygonShape(vertices=vertices),
-            density=self.block_density,
-            restitution=0.1,
-            filter=b2Filter (maskBits=1,
-                                 categoryBits=1 if collidable else 0),
+        block_name = name_type # Block, Obstacle, Target
+        body = self.world.CreateDynamicBody(
+            fixtures=b2FixtureDef(
+                shape=b2PolygonShape(vertices=vertices),
+                density=self.puck_density * 10,
+                restitution=1.0,
+                filter=b2Filter(maskBits=1, categoryBits=1 if collidable else 0)),
+            bullet=True,
+            position=pos,
+            linearVelocity=vel,
+            linearDamping=self.puck_damping,
         )
-
-        body = self.world.CreateBody(type=b2_dynamicBody if movable else b2_staticBody,
-                                    position=pos,
-                                    linearVelocity=vel,
-                                    angularVelocity=angular_vel,
-                                    angle=angle,
-                                    fixtures=fixture,
-                                    fixedRotation=fixed_rotation,
-                                    )
-        color =  color # randomize color
+        color = color
         block_name = block_name + str(i)
-        return (block_name if name is None else name), (body, color)
+        body.gravityScale = 0
+        return ((block_name, (body, color)) if block_name is None else (block_name, (body, color)))
     
     def convert_to_box2d_coords(self, action):
         action = np.array((action[1], -action[0]))
