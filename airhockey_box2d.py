@@ -346,7 +346,7 @@ class AirHockeyBox2D:
                           max_height=30):
         # if pos is None: pos = ((np.random.rand() - 0.5) * 2 * (self.table_x_max), min_height + (np.random.rand() * (self.length - (min_height + self.length / 2))))
         x_pos = np.random.uniform(low=-self.width / 3, high=self.width / 3)  # doesnt spawn at edges
-        y_pos = np.random.uniform(low=self.length - self.length / 4, high=0 + self.length / 4)
+        y_pos = np.random.uniform(low=self.block_width, high=self.length / 2 - self.block_width)
         pos = (x_pos, y_pos)
         self.initial_block_pos = pos
         if vel is None: vel = ((np.random.rand() - 0.5) * 2 * (self.width),(np.random.rand() - 0.5) * 2 * (self.length))
@@ -362,7 +362,7 @@ class AirHockeyBox2D:
         body = self.world.CreateDynamicBody(
             fixtures=b2FixtureDef(
                 shape=b2PolygonShape(vertices=vertices),
-                density=self.puck_density * 10,
+                density=self.block_density,
                 restitution=1.0,
                 filter=b2Filter(maskBits=1, categoryBits=1 if collidable else 0)),
             bullet=True,
