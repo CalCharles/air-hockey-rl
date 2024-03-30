@@ -388,7 +388,7 @@ class AirHockeyBox2D:
         body = self.world.CreateDynamicBody(
             fixtures=b2FixtureDef(
                 shape=b2PolygonShape(vertices=vertices),
-                density=self.puck_density * 10,
+                density=self.block_density,
                 restitution=1.0,
                 filter=b2Filter(maskBits=1, categoryBits=1 if collidable else 0)),
             bullet=True,
