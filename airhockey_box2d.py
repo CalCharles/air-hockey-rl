@@ -40,19 +40,21 @@ class AirHockeyBox2D:
         self.num_paddles = num_paddles
         self.task = task
 
-        def check_setup(expected_n_pucks=1,
+        def check_setup(expected_num_pucks=1,
                         expected_n_blocks=0,
                         expected_n_obstacles=0,
                         expected_n_targets=0,
                         expected_n_paddles=1):
-            assert self.num_pucks == expected_n_pucks
+            assert self.num_pucks == expected_num_pucks
             assert self.num_blocks == expected_n_blocks
             assert self.num_obstacles == expected_n_obstacles
             assert self.num_targets == expected_n_targets
             assert self.num_paddles == expected_n_paddles
 
-        if task == 'puck_vel' or task == 'puck_height' or task == 'puck_reach':
+        if task == 'puck_vel' or task == 'puck_juggle' or task == 'puck_reach':
             check_setup()
+        elif task == 'multipuck_juggle':
+            assert self.num_pucks > 1
         elif task == 'move_block':
             check_setup(expected_n_blocks=1)
         elif task == 'goal_conditioned_position':
@@ -205,22 +207,29 @@ class AirHockeyBox2D:
         return self.convert_from_box2d_coords(state_info)
 
     def create_world_objects(self):
+        # pucks moving downwards that we want to hit directly
         for i in range(self.num_pucks):
             name, puck_attrs = self.create_puck(i, min_height=self.puck_min_height)
             self.pucks[name] = puck_attrs
-        # need to take into account pucks so far since we do not want to spawn anything directly below them
 
+        # need to take into account pucks so far since we do not want to spawn anything directly below them
+        puck_x_positions = [self.pucks[pn][0].position[0] for pn in self.pucks.keys()]
+        bad_regions = [(x - self.puck_radius, x + self.puck_radius) for x in puck_x_positions]
+        
         for i in range(self.num_blocks):
-            name, block_attrs = self.create_block_type(i, name_type="Block", movable=False, min_height=self.block_min_height)
+            name, block_attrs = self.create_block_type(i, name_type="Block", movable=False, min_height=self.block_min_height,
+                                                       bad_regions=bad_regions)
             self.blocks[name] = block_attrs
 
         for i in range(self.num_obstacles): # could replace with arbitary polygons
             name, obs_attrs = self.create_block_type(i, name_type = "Obstacle", angle=np.random.rand() * np.pi,
-                                                     movable=False, color=(0, 127, 127), min_height = self.block_min_height)
+                                                     movable=False, color=(0, 127, 127), min_height = self.block_min_height,
+                                                     bad_regions=bad_regions)
             self.obstacles[name] = obs_attrs
 
         for i in range(self.num_targets):
-            name, target_attrs = self.create_block_type(i, name_type = "Target", color=(255, 255, 0))
+            name, target_attrs = self.create_block_type(i, name_type = "Target", color=(255, 255, 0),
+                                                        bad_regions=bad_regions)
             self.targets[name] = target_attrs
         
         name, paddle_attrs = self.create_paddle(i, name="paddle_ego", color=(0, 255, 0))
@@ -296,11 +305,21 @@ class AirHockeyBox2D:
                         pos=None, 
                         collidable=True,
                         min_height=-30,
-                        max_height=30):
+                        max_height=30,
+                        bad_regions=None):
         if not self.multiagent:
             # then we want it to start at the top, which is max_height, 0
             if pos is None: 
-                x_pos = np.random.uniform(low=-self.width / 3, high=self.width / 3)  # doesnt spawn at edges
+                x_pos = None
+                # check if x pos is in the bad region
+                if bad_regions is not None:
+                    while x_pos is None:
+                        for region in bad_regions:
+                            proposed_x_pos = np.random.uniform(low=-self.width / 3, high=self.width / 3)  # doesnt spawn at edges
+                            if not (pos[0] > region[0] and pos[0] < region[1]):
+                                x_pos = proposed_x_pos
+                else:
+                    x_pos = np.random.uniform(low=-self.width / 3, high=self.width / 3)
                 pos = (x_pos, min(max_height, self.length / 2) - 0.01)
         else: 
             if pos is None: 
@@ -310,7 +329,7 @@ class AirHockeyBox2D:
         if not self.multiagent:
             if vel is None: 
                 vel = (2 * np.random.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start,
-                       -0.7)
+                        -0.7)
                 # with 1/4th p, add x vel
                 if np.random.rand() < 0.25:
                     # vel = (2 * np.random.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start, -1)
@@ -320,7 +339,7 @@ class AirHockeyBox2D:
         else:
             if vel is None: 
                 vel = (np.random.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start,
-                       10 * np.random.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start)
+                        10 * np.random.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start)
         if radius < 0: 
             # radius = max(1, np.random.rand() * (self.width/ 2))
             # radius = self.width / 5.325
@@ -343,9 +362,16 @@ class AirHockeyBox2D:
 
     def create_block_type(self, i, name=None,name_type=None, color=(127, 127, 127), width=-1, height=-1, vel=None, pos=None,
                           movable=True, angle=0, angular_vel=0, fixed_rotation=False, collidable=True, min_height=-30,
-                          max_height=30):
+                          max_height=30, bad_regions=None):
         # if pos is None: pos = ((np.random.rand() - 0.5) * 2 * (self.table_x_max), min_height + (np.random.rand() * (self.length - (min_height + self.length / 2))))
-        x_pos = np.random.uniform(low=-self.width / 3, high=self.width / 3)  # doesnt spawn at edges
+        x_pos = None
+        # check if x pos is in the bad region
+        if bad_regions is not None:
+            while x_pos is None:
+                for region in bad_regions:
+                    proposed_x_pos = np.random.uniform(low=-self.width / 3, high=self.width / 3)  # doesnt spawn at edges
+                    if not (pos[0] > region[0] and pos[0] < region[1]):
+                        x_pos = proposed_x_pos
         y_pos = np.random.uniform(low=self.length - self.length / 4, high=0 + self.length / 4)
         pos = (x_pos, y_pos)
         self.initial_block_pos = pos

@@ -410,16 +410,45 @@ class AirHockeyEnv(Env):
             # return self.get_goal_region_reward(goal_pos, self.pucks[self.puck_names[0]][0], 
             #                                      goal_radius, discrete=False)
             return self.compute_reward(self.get_achieved_goal(self.current_state), self.get_desired_goal(), {})
-        elif self.reward_type == 'puck_height':
-            reward = -state_info['pucks'][0]['position'][0]
-            # min acceptable reward is 0 height and above
-            reward = max(reward, 0)
-            # let's normalize reward w.r.t. the top half length of the table
-            # aka within the range [0, self.length / 2]
-            max_rew = self.length / 2
-            min_rew = 0
+        elif self.reward_type == 'puck_juggle':
+            reward = 0
+            x_pos = -state_info['pucks'][0]['position'][0]
+            x_max = self.length / 2
+            if x_max / 4 > x_pos > 0:
+                reward += 1
+            elif x_pos > x_max / 4 or x_pos < -x_max / 2:
+                reward -= 0.1
+            return reward
+        elif self.reward_type == 'multipuck_juggle':
+            reward = 0
+            for puck in state_info['pucks']:
+                reward -= puck['position'][0]
+                x_pos = puck['position'][0]
+                x_max = self.length / 2
+                if x_max / 4 > x_pos > 0:
+                    reward += 1
+                elif x_pos > x_max / 4 or x_pos < -x_max / 2:
+                    reward -= 0.1
+            return reward
+        elif self.reward_type == 'strike':
+            # reward for velocity
+            x_vel = state_info['pucks'][0]['velocity'][0]
+            y_vel = state_info['pucks'][0]['velocity'][1]
+            vel_mag = np.linalg.norm(np.array([x_vel, y_vel]))
+            reward = vel_mag
+
+            max_rew = 2 # estimated max vel
+            min_rew = 0  # min acceptable good velocity
+
+            if reward < min_rew:
+                return 0
+            
+            reward = min(reward, max_rew)
             reward = (reward - min_rew) / (max_rew - min_rew)
             return reward
+        elif self.reward_type == 'strike_crownd':
+            # check how much blocks deviate from initial position
+            pass
         elif self.reward_type == 'puck_vel':
             # reward for positive velocity towards the top of the board
             reward = -state_info['pucks'][0]['velocity'][0]
