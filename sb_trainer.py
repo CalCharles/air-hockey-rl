@@ -1,6 +1,6 @@
 from stable_baselines3 import PPO 
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 from stable_baselines3 import HerReplayBuffer, SAC
 from stable_baselines3.common.noise import NormalActionNoise
 from stable_baselines3.common.callbacks import BaseCallback
@@ -19,6 +19,8 @@ import time
 import imageio
 import cv2
 import tqdm
+import random
+import wandb
 
 
 def train_air_hockey_model(air_hockey_cfg):
@@ -42,17 +44,59 @@ def train_air_hockey_model(air_hockey_cfg):
     for seed in seeds:
         air_hockey_cfg['seed'] = seed # since it it used as training seed
         air_hockey_params['seed'] = seed # and environment seed
-        env = AirHockeyEnv.from_dict(air_hockey_params)
+        
+        # wandb_run = wandb.init(
+        #     project="air-hockey",
+        #     config=air_hockey_cfg,
+        #     sync_tensorboard=True,
+        #     save_code=True)
+        
+        if air_hockey_cfg['n_threads'] > 1:
 
-        # check_env(env)
-        def wrap_env(env):
-            wrapped_env = Monitor(env) # needed for extracting eprewmean and eplenmean
-            wrapped_env = DummyVecEnv([lambda: wrapped_env]) # Needed for all environments (e.g. used for multi-processing)
-            wrapped_env = VecNormalize(wrapped_env) # probably something to try when tuning
-            return wrapped_env
+            # set seed for reproducibility
+            seed = air_hockey_params['seed']
+            random.seed(seed)
+            
+            # def get_env():
+            #     # get random seed
+            #     # since previous seed is fixed, this is also fixed too
+            #     curr_seed = random.randint(0, 1e8)
+            #     air_hockey_params['seed'] = curr_seed
+            #     env = AirHockeyEnv.from_dict(air_hockey_params)
+            #     return Monitor(env)
+            
+            def get_env(env_id=None, rank=None, seed=0):
+                """
+                Utility function for multiprocessed env.
 
-        # check_env(env)
-        env = wrap_env(env)
+                :param env_id: (str) the environment ID
+                :param num_env: (int) the number of environments you wish to have in subprocesses
+                :param seed: (int) the inital seed for RNG
+                :param rank: (int) index of the subprocess
+                """
+                def _init():
+                    curr_seed = random.randint(0, int(1e8))
+                    air_hockey_params['seed'] = curr_seed
+                    env = AirHockeyEnv.from_dict(air_hockey_params)
+                    return Monitor(env)
+                # set_global_seeds(seed)
+                return _init()
+            
+            # get number of threads
+            n_threads = air_hockey_cfg['n_threads']
+
+            # check_env(env)
+            env = SubprocVecEnv([get_env for _ in range(n_threads)])
+            env = VecNormalize(env) # probably something to try when tuning
+        else:
+            env = AirHockeyEnv.from_dict(air_hockey_params)
+            def wrap_env(env):
+                wrapped_env = Monitor(env) # needed for extracting eprewmean and eplenmean
+                wrapped_env = DummyVecEnv([lambda: wrapped_env]) # Needed for all environments (e.g. used for multi-processing)
+                wrapped_env = VecNormalize(wrapped_env) # probably something to try when tuning
+                return wrapped_env
+            env = wrap_env(env)
+
         os.makedirs(air_hockey_cfg['tb_log_dir'], exist_ok=True)
         log_parent_dir = os.path.join(air_hockey_cfg['tb_log_dir'], air_hockey_cfg['air_hockey']['task'])
         os.makedirs(log_parent_dir, exist_ok=True)
@@ -84,15 +128,16 @@ def train_air_hockey_model(air_hockey_cfg):
                 batch_size=512,
                 tensorboard_log=log_parent_dir,
                 seed=seed,
-                # device='cuda',
-                # device="cuda"
-                # policy_kwargs=dict(net_arch=[64, 64]),
+                device='cuda',
             )
         else:
+            
             model = PPO("MlpPolicy", env, verbose=1, 
                     tensorboard_log=log_parent_dir, 
-                    device="cpu", # cpu is actually faster!
+                    device="cpu", 
                     seed=seed,
+                    # batch_size=512,
+                    #n_epochs=5,
                     gamma=air_hockey_cfg['gamma']) 
         
         model.learn(total_timesteps=air_hockey_cfg['n_training_steps'],
@@ -152,47 +197,57 @@ def train_air_hockey_model(air_hockey_cfg):
         # uncomment below to see the tags in the tensorboard log file, then you can add them to metrics
         # print("Available tags: ", ea.Tags()['scalars'])
         #
-        # metrics = [
-        #     'rollout/ep_rew_mean',
-        #     'train/approx_kl',
-        #     'train/entropy_loss',
-        #     'train/learning_rate',
-        #     'train/loss',
-        #     'train/value_loss']
-        #
-        # def save_plot(metrics):
-        #     # Create a 2x3 subplot
-        #     fig, axs = plt.subplots(2, 3, figsize=(18, 12))
-        #     fig.suptitle('Air Hockey Training Summary')
-        #
-        #     # Flatten the axs array for easy iteration
-        #     axs = axs.flatten()
-        #
-        #     for i, metric in enumerate(metrics):
-        #         if metric in ea.Tags()['scalars']:
-        #             # Extract time steps and values for the metric
-        #             times, step_nums, values = zip(*ea.Scalars(metric))
-        #
-        #             # Plot on the i-th subplot
-        #             axs[i].plot(step_nums, values, label=metric)
-        #             axs[i].set_title(metric)
-        #             axs[i].set_xlabel("Steps")
-        #             axs[i].set_ylabel("Value")
-        #             axs[i].legend()
-        #         else:
-        #             print(f"Metric {metric} not found in logs.")
-        #             axs[i].set_title(f"{metric} (not found)")
-        #             axs[i].set_xlabel("Steps")
-        #             axs[i].set_ylabel("Value")
-        #
-        #     # Adjust layout for better readability
-        #     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-        #     # let's save in same folder
-        #     plot_fp = os.path.join(log_dir, 'training_summary.png')
-        #     plt.savefig(plot_fp)
-        #     plt.close()
-        #
-        # save_plot(metrics)
+        
+        if 'goal' in air_hockey_cfg['air_hockey']['task']:
+            metrics = [
+                'rollout/ep_rew_mean',
+                'train/actor_loss',
+                'train/ent_coef_loss',
+                'train/learning_rate',
+                'train/critic_loss',
+                'train/ent_coef']
+        else:
+            metrics = [
+                'rollout/ep_rew_mean',
+                'train/approx_kl',
+                'train/entropy_loss',
+                'train/learning_rate',
+                'train/loss',
+                'train/value_loss']
+        
+        def save_plot(metrics):
+            # Create a 2x3 subplot
+            fig, axs = plt.subplots(2, 3, figsize=(18, 12))
+            fig.suptitle('Air Hockey Training Summary')
+        
+            # Flatten the axs array for easy iteration
+            axs = axs.flatten()
+        
+            for i, metric in enumerate(metrics):
+                if metric in ea.Tags()['scalars']:
+                    # Extract time steps and values for the metric
+                    times, step_nums, values = zip(*ea.Scalars(metric))
+        
+                    # Plot on the i-th subplot
+                    axs[i].plot(step_nums, values, label=metric)
+                    axs[i].set_title(metric)
+                    axs[i].set_xlabel("Steps")
+                    axs[i].set_ylabel("Value")
+                    axs[i].legend()
+                else:
+                    print(f"Metric {metric} not found in logs.")
+                    axs[i].set_title(f"{metric} (not found)")
+                    axs[i].set_xlabel("Steps")
+                    axs[i].set_ylabel("Value")
+        
+            # Adjust layout for better readability
+            plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+            # let's save in same folder
+            plot_fp = os.path.join(log_dir, 'training_summary.png')
+            plt.savefig(plot_fp)
+            plt.close()
+        
+        save_plot(metrics)
 
         obs = env_test.reset()
         start = time.time()
@@ -202,6 +257,7 @@ def train_air_hockey_model(air_hockey_cfg):
         print("Saving gifs...(this will tqdm for EACH gif to save)")
         n_eps_viz = 5
         n_gifs = 5
+        env_test.max_timesteps = 200
         for gif_idx in range(n_gifs):
             frames = []
             for i in tqdm.tqdm(range(n_eps_viz)):
@@ -220,20 +276,12 @@ def train_air_hockey_model(air_hockey_cfg):
             def fps_to_duration(fps):
                 return int(1000 * 1/fps)
             imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(30))
+            
+        # upload last gif to wandb
+        # wandb_run.log({"Evaluation Video": wandb.Video(gif_savepath, fps=30)})
         
-        # print('Running policy live...Ctrl+C twice to stop.')
-        # for i in range(1000000):
-        #     if i % 1000 == 0:
-        #         print("fps", 1000 / (time.time() - start))
-        #         start = time.time()
-        #     # Draw the world
-        #     renderer.render()
-        #     action = model.predict(obs, deterministic=True)[0]
-        #     obs, rew, done, info = env_test.step(action)
-        #     if done:
-        #         obs = env_test.reset()
-
         env_test.close()
+        # wandb_run.finish()
 
 
 if __name__ == "__main__":

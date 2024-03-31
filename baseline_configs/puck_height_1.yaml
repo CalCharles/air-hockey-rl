@@ -25,16 +25,16 @@ air_hockey:
   simulator: box2d # or robosuite
   max_timesteps: 300
   # reward_type: 'goal_position_velocity'
-  task: 'puck_juggle'
+  task: 'puck_height'
   goal_max_x_velocity: 1 # min is -goal_max_x_velocity
   goal_min_y_velocity: 1
   goal_max_y_velocity: 5
 
   terminate_on_out_of_bounds: true
-  terminate_on_enemy_goal: false
+  terminate_on_enemy_goal: true
   terminate_on_puck_stop: true
   truncate_rew: -1
-  wall_bumping_rew: -0.25
+  wall_bumping_rew: -1
   direction_change_rew: -0.05
   horizontal_vel_rew: -0.1
   diagonal_motion_rew: -0.1
@@ -47,11 +47,10 @@ vec_normalize_save_filepath: vec_normalize.pkl
 tb_log_dir: baseline_models
 tb_log_name: air_hockey_agent
 gamma: 0.99
-seed: [0, 1, 2, 3, 4]
+seed: 0
 
 # this parameter is only used when evaluating demonstrations
 print_reward: false
-n_threads: 1
 
 # None of the below are integrated, but examples of what could be added to the config file
 # num_envs: 16

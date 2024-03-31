@@ -3,7 +3,7 @@ air_hockey:
   simulator_params:
     num_paddles: 1
     num_pucks: 1
-    num_blocks: 0
+    num_blocks: 1
     num_obstacles: 0
     num_targets: 0
     absorb_target: false
@@ -11,12 +11,13 @@ air_hockey:
     width: 0.8636
     puck_radius: 0.03175
     paddle_radius: 0.0508
-    block_width: 0.0254
+    block_width: 0.1754
     force_scaling: 1000
     paddle_damping: 3
     puck_damping: 0.5
     paddle_density: 2500
     puck_density: 250
+    block_density: 1000
     render_size: 360
     gravity: -0.5
     max_force_timestep: 100 # max force we can apply at one timestep
@@ -25,7 +26,7 @@ air_hockey:
   simulator: box2d # or robosuite
   max_timesteps: 300
   # reward_type: 'goal_position_velocity'
-  task: 'goal_position'
+  task: 'move_block'
   goal_max_x_velocity: 1 # min is -goal_max_x_velocity
   goal_min_y_velocity: 1
   goal_max_y_velocity: 5
@@ -48,6 +49,7 @@ tb_log_dir: baseline_models
 tb_log_name: air_hockey_agent
 gamma: 0.99
 seed: [0, 1, 2, 3, 4]
+n_threads: 1
 
 # this parameter is only used when evaluating demonstrations
 print_reward: false

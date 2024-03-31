@@ -107,6 +107,21 @@ class AirHockeyEnv(Env):
                              self.table_x_bot, self.table_y_right, self.max_puck_vel, self.max_puck_vel,
                              self.table_x_bot, self.table_y_right, self.table_x_bot, self.table_y_right])
             self.observation_space = Box(low=low, high=high, shape=(12,), dtype=float)
+        elif self.reward_type == 'reach':
+            # also include goal position, which will on bottom half of board
+            low = np.array([self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel,
+                            0, self.table_y_left]) 
+            high = np.array([self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel,
+                             self.table_x_bot, self.table_y_right])
+            self.observation_space = Box(low=low, high=high, shape=(6,), dtype=float)
+        elif self.reward_type == 'reach_vel':
+            # also include goal position, which will on bottom half of board
+            low = np.array([self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel,
+                            0, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]) 
+            high = np.array([self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel,
+                             self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel])
+            self.observation_space = Box(low=low, high=high, shape=(8,), dtype=float)
+            
         else:
             if not self.goal_conditioned:
                 self.observation_space = Box(low=low, high=high, shape=(8,), dtype=float)
@@ -157,7 +172,8 @@ class AirHockeyEnv(Env):
             return obs, {}
         else:
             return {"observation": obs, "desired_goal": self.get_desired_goal(), "achieved_goal": self.get_achieved_goal(state_info)}, {}
-
+        
+        
     def get_achieved_goal(self, state_info):
         if self.reward_type == 'goal_position':
             # numpy array containing puck position and vel
@@ -247,10 +263,22 @@ class AirHockeyEnv(Env):
         ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
         ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
         ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
-        puck_x_pos = state_info['pucks'][0]['position'][0]
-        puck_y_pos = state_info['pucks'][0]['position'][1]
-        puck_x_vel = state_info['pucks'][0]['velocity'][0]
-        puck_y_vel = state_info['pucks'][0]['velocity'][1]
+        
+        if self.reward_type == 'reach' or self.reward_type == 'reach_vel':
+            if self.reward_type == 'reach':
+                goal_pos = self.reach_goal_pos
+                obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, goal_pos[0], goal_pos[1]])
+                return obs
+            elif self.reward_type == 'reach_vel':
+                goal_pos = self.reach_goal_pos
+                goal_vel = self.reach_goal_vel
+                obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, goal_pos[0], goal_pos[1], goal_vel[0], goal_vel[1]])
+                return obs
+        else:
+            puck_x_pos = state_info['pucks'][0]['position'][0]
+            puck_y_pos = state_info['pucks'][0]['position'][1]
+            puck_x_vel = state_info['pucks'][0]['velocity'][0]
+            puck_y_vel = state_info['pucks'][0]['velocity'][1]       
 
         if self.reward_type == 'move_block':
             block_x_pos = state_info['blocks'][0]['current_position'][0]
@@ -259,7 +287,6 @@ class AirHockeyEnv(Env):
             block_initial_y_pos = state_info['blocks'][0]['initial_position'][1]
             obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel, block_x_pos, block_y_pos, block_initial_x_pos, block_initial_y_pos])
             return obs
-
         if not self.multiagent:
             obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
         else:
@@ -274,6 +301,25 @@ class AirHockeyEnv(Env):
         return obs
     
     def set_goals(self, goal_radius_type, ego_goal_pos=None, alt_goal_pos=None):
+        
+        if self.reward_type == 'reach':
+            # sample goal position
+            min_y = self.table_y_left
+            max_y = self.table_y_right
+            min_x = 0
+            max_x = self.table_x_bot
+            goal_position = np.random.uniform(low=(min_x, min_y), high=(max_x, max_y))
+            self.reach_goal_pos = goal_position
+        elif self.reward_type == 'reach_vel':
+            # sample goal position
+            min_y = self.table_y_left
+            max_y = self.table_y_right
+            min_x = 0
+            max_x = self.table_x_bot
+            goal_position = np.random.uniform(low=(min_x, min_y), high=(max_x, max_y))
+            goal_velocity = np.random.uniform(low=(-self.max_paddle_vel, -self.max_paddle_vel), high=(self.max_paddle_vel, self.max_paddle_vel))
+            self.reach_goal_pos = goal_position
+            self.reach_goal_vel = goal_velocity
         if self.goal_conditioned:
             if goal_radius_type == 'fixed':
                 # ego_goal_radius = np.random.uniform(low=self.min_goal_radius, high=self.max_goal_radius)
@@ -339,8 +385,13 @@ class AirHockeyEnv(Env):
         # confusing, but we need to swap x and y for this function
         bottom_center_point = np.array([self.table_x_bot, 0])
         top_center_point = np.array([self.table_x_top, 0])
-        puck_within_home = self.is_within_home_region(bottom_center_point, state_info['pucks'][0]['position'])
-        puck_within_alt_home = self.is_within_home_region(top_center_point, state_info['pucks'][0]['position'])
+        
+        if 'reach' not in self.reward_type:
+            puck_within_home = self.is_within_home_region(bottom_center_point, state_info['pucks'][0]['position'])
+            puck_within_alt_home = self.is_within_home_region(top_center_point, state_info['pucks'][0]['position'])
+        else:
+            puck_within_home = False
+            puck_within_alt_home = False
         
         if self.terminate_on_enemy_goal:
             if not terminated and puck_within_home:
@@ -412,23 +463,24 @@ class AirHockeyEnv(Env):
             return self.compute_reward(self.get_achieved_goal(self.current_state), self.get_desired_goal(), {})
         elif self.reward_type == 'puck_juggle':
             reward = 0
-            x_pos = -state_info['pucks'][0]['position'][0]
-            x_max = self.length / 2
-            if x_max / 4 > x_pos > 0:
-                reward += 1
-            elif x_pos > x_max / 4 or x_pos < -x_max / 2:
-                reward -= 0.1
+            x_pos = state_info['pucks'][0]['position'][0]
+            x_higher = self.table_x_top
+            x_lower = self.table_x_bot
+            if x_higher / 4 < x_pos < 0:
+                reward += 15
+            elif x_pos < x_higher / 4:
+                reward -= 1
             return reward
         elif self.reward_type == 'multipuck_juggle':
             reward = 0
             for puck in state_info['pucks']:
-                reward -= puck['position'][0]
-                x_pos = puck['position'][0]
-                x_max = self.length / 2
-                if x_max / 4 > x_pos > 0:
-                    reward += 1
-                elif x_pos > x_max / 4 or x_pos < -x_max / 2:
-                    reward -= 0.1
+                x_pos = puck[0]['position'][0]
+                x_higher = self.table_x_top
+                x_lower = self.table_x_bot
+                if x_higher / 4 < x_pos < 0:
+                    reward += 15
+                elif x_pos < x_higher / 4 or x_pos > x_lower / 2:
+                    reward -= 1
             return reward
         elif self.reward_type == 'strike':
             # reward for velocity
@@ -436,29 +488,30 @@ class AirHockeyEnv(Env):
             y_vel = state_info['pucks'][0]['velocity'][1]
             vel_mag = np.linalg.norm(np.array([x_vel, y_vel]))
             reward = vel_mag
-
             max_rew = 2 # estimated max vel
             min_rew = 0  # min acceptable good velocity
-
             if reward < min_rew:
                 return 0
-            
             reward = min(reward, max_rew)
             reward = (reward - min_rew) / (max_rew - min_rew)
             return reward
-        elif self.reward_type == 'strike_crownd':
+        elif self.reward_type == 'strike_crowd':
             # check how much blocks deviate from initial position
-            pass
+            reward = 0.0
+            for block in state_info['blocks']:
+                initial_pos = block['initial_position']
+                current_pos = block['current_position']
+                dist = np.linalg.norm(np.array(initial_pos) - np.array(current_pos))
+                max_euclidean_distance = np.linalg.norm(np.array([self.table_x_bot, self.table_y_right]) - np.array([self.table_x_top, self.table_y_left]))
+                reward += 10 * dist / max_euclidean_distance
+                return reward
         elif self.reward_type == 'puck_vel':
             # reward for positive velocity towards the top of the board
             reward = -state_info['pucks'][0]['velocity'][0]
-
             max_rew = 2 # estimated max vel
             min_rew = 0  # min acceptable good velocity
-
             if reward < min_rew:
                 return 0
-            
             reward = min(reward, max_rew)
             reward = (reward - min_rew) / (max_rew - min_rew)
             return reward
@@ -471,6 +524,30 @@ class AirHockeyEnv(Env):
             reward = 1 - (dist / max_dist)
             reward = max(reward, 0)
             return reward
+        elif self.reward_type == 'reach':
+            # reward for getting close to target location
+            paddle_position = state_info['paddles']['paddle_ego']['position']
+            goal_position = self.reach_goal_pos
+            dist = np.linalg.norm(np.array(paddle_position) - np.array(goal_position))
+            max_euclidean_distance = np.linalg.norm(np.array([self.table_x_bot, self.table_y_right]) - np.array([self.table_x_top, self.table_y_left]))
+            # reward for closer to goal
+            reward = 1 - (dist / max_euclidean_distance)
+            return reward
+        elif self.reward_type == 'reach_vel':
+            # reward for getting close to target location
+            paddle_position = state_info['paddles']['paddle_ego']['position']
+            goal_position = self.reach_goal_pos
+            dist = np.linalg.norm(np.array(paddle_position) - np.array(goal_position))
+            max_euclidean_distance = np.linalg.norm(np.array([self.table_x_bot, self.table_y_right]) - np.array([self.table_x_top, self.table_y_left]))
+            # reward for closer to goal
+            pos_reward = 1 - (dist / max_euclidean_distance)
+            # vel reward
+            current_vel = state_info['paddles']['paddle_ego']['velocity']
+            goal_vel = self.reach_goal_vel
+            dist = np.linalg.norm(np.array(current_vel) - np.array(goal_vel))
+            max_vel = self.max_paddle_vel
+            vel_reward = 1 - (dist / max_vel)
+            return 0.5 * pos_reward + 0.5 * vel_reward
         elif self.reward_type == 'puck_reach':
             puck_pos = state_info['pucks'][0]['position']
             paddle_pos = state_info['paddles']['paddle_ego']['position']
@@ -492,7 +569,7 @@ class AirHockeyEnv(Env):
             block_pos = state_info['blocks'][0]['current_position']
             dist = np.linalg.norm(np.array(block_pos) - np.array(block_initial_pos))
             max_euclidean_distance = np.linalg.norm(np.array([self.table_x_bot, self.table_y_right]) - np.array([self.table_x_top, self.table_y_left]))
-            reward = dist / max_euclidean_distance
+            reward = 100 * dist / max_euclidean_distance
             return reward
         else:
             raise ValueError("Invalid reward type defined in config.")
