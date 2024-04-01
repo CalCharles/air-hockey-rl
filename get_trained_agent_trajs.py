@@ -54,10 +54,22 @@ def evaluate_air_hockey_model(air_hockey_cfg, log_dir):
         # renderer.render()
         action = model.predict(obs, deterministic=True)[0]
         next_obs, rew, done, info = env_test.step(action)
-        s = obs.flatten()
+        if 'goal' in air_hockey_cfg['air_hockey']['task']:
+            # then it's an ordered dict
+            s = obs['observation']
+            g = obs['desired_goal']
+            s = np.concatenate([s.flatten(), g.flatten()])
+            # acheived goal already part of s
+        else:
+            s = obs.flatten()
         a = action.flatten()
         r = np.array(rew)
-        s_prime = next_obs.flatten()
+        if 'goal' in air_hockey_cfg['air_hockey']['task']:
+            s_prime = next_obs['observation']
+            g_prime = next_obs['desired_goal']
+            s_prime = np.concatenate([s_prime.flatten(), g_prime.flatten()]) # g_prime should be the same
+        else:
+            s_prime = next_obs.flatten()
         t = np.array([timestep])
         
         trajs.append(np.concatenate([s, a, r, s_prime, t]))

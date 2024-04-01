@@ -216,6 +216,11 @@ def eval_actor(
                 aspect_ratio = frame.shape[1] / frame.shape[0]
                 frame = cv2.resize(frame, (160, int(160 / aspect_ratio)))
                 frames.append(frame)
+            # if goal conditioned, add goal to state
+            if env.envs[0].goal_conditioned:
+                s = state['observation'].flatten()
+                g = state['desired_goal'].flatten()
+                state = np.concatenate([s, g])  
             action = [actor.act(state, device)]
             state, reward, done, _ = env.step(action)
             episode_reward += reward
@@ -544,7 +549,7 @@ class ImplicitQLearning:
 @pyrallis.wrap()
 def train(config: TrainConfig):
 
-    log_dir = 'baseline_models/Block/air_hockey_agent_1'
+    log_dir = 'baseline_models/goal_position/air_hockey_agent_1'
     air_hockey_cfg_fp = os.path.join(log_dir, 'model_cfg.yaml')
     with open(air_hockey_cfg_fp, 'r') as f:
         air_hockey_cfg = yaml.safe_load(f)
@@ -559,7 +564,11 @@ def train(config: TrainConfig):
     env = VecNormalize.load(os.path.join(log_dir, air_hockey_cfg['vec_normalize_save_filepath']), env)
 
     # TODO: remove hardcoded spaces
-    state_dim = env.observation_space.shape[0]
+    if env.envs[0].goal_conditioned:
+        state_dim = env.observation_space['observation'].shape[0] + env.observation_space['desired_goal'].shape[0]
+    else:
+        state_dim = env.observation_space.shape[0]
+    
     action_dim = env.action_space.shape[0]
     # np_dataset = np.load('trajs.npy')
     

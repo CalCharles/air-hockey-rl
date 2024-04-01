@@ -45,6 +45,10 @@ def eval_actor(env: gym.Env, actor: nn.Module, dir, device: str, n_episodes: int
                 aspect_ratio = frame.shape[1] / frame.shape[0]
                 frame = cv2.resize(frame, (160, int(160 / aspect_ratio)))
                 frames.append(frame)
+            if env.envs[0].goal_conditioned:
+                s = state['observation'].flatten()
+                g = state['desired_goal'].flatten()
+                state = np.concatenate([s, g])  
             state = torch.tensor(state, dtype=torch.float32).to(device)
             action = actor(state)
             state, reward, done, _, _ = env.step(action)
@@ -89,7 +93,10 @@ if __name__ == "__main__":
 
     env = AirHockeyEnv.from_dict(air_hockey_params)
     renderer = AirHockeyRenderer(env)
-    state_dim = env.observation_space.shape[0]
+    if env.envs[0].goal_conditioned:
+        state_dim = env.observation_space['observation'].shape[0] + env.observation_space['desired_goal'].shape[0]
+    else:
+        state_dim = env.observation_space.shape[0]
     action_dim = env.action_space.shape[0]
 
     dataset_fp = os.path.join(log_dir, 'trajs.npy')
