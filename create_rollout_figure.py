@@ -47,5 +47,5 @@ for i, gif_path in enumerate(gif_filepaths):
 
 # plt.tight_layout()
 plt.subplots_adjust(left=0.03, bottom=0.03, right=0.97, top=0.97, wspace=0.1, hspace=0.1)
-plt.tight_layout(pad=0.1, w_pad=0.1, h_pad=0.1)
+plt.tight_layout(pad=0.1, w_pad=0.2, h_pad=2)
 plt.savefig("box2d_rollout_example.pdf")

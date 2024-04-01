@@ -207,7 +207,7 @@ def eval_actor(
     frames = []
     for _ in range(n_episodes):
         # import ipdb;ipdb.set_trace()
-        state, done = env.reset()[0], False
+        state, done = env.reset(), False
         episode_reward = 0.0
         while not done:
             if renderer is not None:
@@ -549,7 +549,7 @@ class ImplicitQLearning:
 @pyrallis.wrap()
 def train(config: TrainConfig):
 
-    log_dir = 'baseline_models/goal_position/air_hockey_agent_1'
+    log_dir = 'baseline_models/Hit Goal/air_hockey_agent_1'
     air_hockey_cfg_fp = os.path.join(log_dir, 'model_cfg.yaml')
     with open(air_hockey_cfg_fp, 'r') as f:
         air_hockey_cfg = yaml.safe_load(f)

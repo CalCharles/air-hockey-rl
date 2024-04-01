@@ -45,7 +45,7 @@ def eval_actor(env: gym.Env, actor: nn.Module, dir, device: str, n_episodes: int
                 aspect_ratio = frame.shape[1] / frame.shape[0]
                 frame = cv2.resize(frame, (160, int(160 / aspect_ratio)))
                 frames.append(frame)
-            if env.envs[0].goal_conditioned:
+            if env.goal_conditioned:
                 s = state['observation'].flatten()
                 g = state['desired_goal'].flatten()
                 state = np.concatenate([s, g])  
@@ -85,7 +85,7 @@ def train_bc(dataset, actor, optimizer, dir, env, renderer, epochs=10, batch_siz
 
 if __name__ == "__main__":
     # Load dataset and environment configurations
-    log_dir = 'baseline_models/Block/air_hockey_agent_1'
+    log_dir = 'baseline_models/Hit Goal/air_hockey_agent_1'
     air_hockey_cfg_fp = os.path.join(log_dir, 'model_cfg.yaml')
     with open(air_hockey_cfg_fp, 'r') as f:
         air_hockey_cfg = yaml.safe_load(f)
@@ -93,7 +93,7 @@ if __name__ == "__main__":
 
     env = AirHockeyEnv.from_dict(air_hockey_params)
     renderer = AirHockeyRenderer(env)
-    if env.envs[0].goal_conditioned:
+    if env.goal_conditioned:
         state_dim = env.observation_space['observation'].shape[0] + env.observation_space['desired_goal'].shape[0]
     else:
         state_dim = env.observation_space.shape[0]

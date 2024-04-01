@@ -74,6 +74,7 @@ def plot_task_performances(base_dir='baseline_models'):
     plt.ylabel('Normalized Average Reward')
     plt.title('Box2D Task Performance Over Training Steps')
     plt.legend()
+    plt.grid()
     # save for plot in research paper
     # cut off excess space
     plt.savefig('box2d_training_performance.pdf', bbox_inches='tight')
