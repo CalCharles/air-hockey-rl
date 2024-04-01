@@ -471,6 +471,16 @@ class AirHockeyEnv(Env):
             elif x_pos < x_higher / 4:
                 reward -= 1
             return reward
+        elif self.reward_type == 'puck_height':
+            reward = -state_info['pucks'][0]['position'][0]
+            # min acceptable reward is 0 height and above
+            reward = max(reward, 0)
+            # let's normalize reward w.r.t. the top half length of the table
+            # aka within the range [0, self.length / 2]
+            max_rew = self.length / 2
+            min_rew = 0
+            reward = (reward - min_rew) / (max_rew - min_rew)
+            return reward
         elif self.reward_type == 'multipuck_juggle':
             reward = 0
             for puck in state_info['pucks']:

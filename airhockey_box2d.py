@@ -51,7 +51,7 @@ class AirHockeyBox2D:
             assert self.num_targets == expected_n_targets
             assert self.num_paddles == expected_n_paddles
 
-        if task in ['puck_vel', 'puck_juggle', 'puck_reach', 'strike', 'goal_position', 'goal_position_velocity']:
+        if task in ['puck_vel', 'puck_juggle', 'puck_reach', 'strike', 'goal_position', 'goal_position_velocity', 'puck_height']:
             assert self.num_pucks == 1
             assert self.num_blocks == 0
             assert self.num_obstacles == 0
