@@ -6,7 +6,7 @@ import math
 
 
 def get_box2d_simulator_fn():
-    from airhockey_box2d import AirHockeyBox2D
+    from airhockey.sims import AirHockeyBox2D
     return AirHockeyBox2D
     
 def get_robosuite_simulator_fn():
@@ -50,8 +50,7 @@ class AirHockeyEnv(Env):
         self.current_timestep = 0
         self.n_training_steps = n_training_steps
         self.n_timesteps_so_far = 0
-        self.seed = seed
-        np.random.seed(seed)
+        self.rng = np.random.RandomState(seed)
         
         # termination conditions
         self.terminate_on_out_of_bounds = terminate_on_out_of_bounds
@@ -157,9 +156,9 @@ class AirHockeyEnv(Env):
         return AirHockeyEnv(**state_dict)
 
     def reset(self, seed=None):
-        if seed is None:
-            seed = np.random.randint(0, 1e8)
-        np.random.seed(seed)
+        if seed is None: # determine next seed, in a deterministic manner
+            seed = self.rng.randint(0, int(1e8))
+        self.rng = np.random.RandomState(seed)
         state_info = self.simulator.reset()
         # get initial observation
         self.set_goals(self.goal_radius_type)
@@ -309,7 +308,7 @@ class AirHockeyEnv(Env):
             max_y = self.table_y_right
             min_x = 0
             max_x = self.table_x_bot
-            goal_position = np.random.uniform(low=(min_x, min_y), high=(max_x, max_y))
+            goal_position = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
             self.reach_goal_pos = goal_position
         elif self.reward_type == 'reach_vel':
             # sample goal position
@@ -317,13 +316,13 @@ class AirHockeyEnv(Env):
             max_y = self.table_y_right
             min_x = 0
             max_x = self.table_x_bot
-            goal_position = np.random.uniform(low=(min_x, min_y), high=(max_x, max_y))
-            goal_velocity = np.random.uniform(low=(-self.max_paddle_vel, -self.max_paddle_vel), high=(self.max_paddle_vel, self.max_paddle_vel))
+            goal_position = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
+            goal_velocity = self.rng.uniform(low=(-self.max_paddle_vel, -self.max_paddle_vel), high=(self.max_paddle_vel, self.max_paddle_vel))
             self.reach_goal_pos = goal_position
             self.reach_goal_vel = goal_velocity
         if self.goal_conditioned:
             if goal_radius_type == 'fixed':
-                # ego_goal_radius = np.random.uniform(low=self.min_goal_radius, high=self.max_goal_radius)
+                # ego_goal_radius = self.rng.uniform(low=self.min_goal_radius, high=self.max_goal_radius)
                 base_radius = (self.min_goal_radius + self.max_goal_radius) / 2 * (0.75)
                 # linearly decrease radius, should start off at 3*base_radius then decrease to base_radius
                 ratio = 2 * (1 - self.n_timesteps_so_far / self.n_training_steps) + 1
@@ -342,17 +341,17 @@ class AirHockeyEnv(Env):
                 max_y = self.table_y_right - self.ego_goal_radius
                 max_x = 0 - self.ego_goal_radius
                 min_x = self.table_x_top + self.ego_goal_radius
-                self.ego_goal_pos = np.random.uniform(low=(min_x, min_y), high=(max_x, max_y))
+                self.ego_goal_pos = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
                 
                 min_x_vel = self.goal_min_x_velocity
                 max_x_vel = self.goal_max_x_velocity
                 min_y_vel = self.goal_min_y_velocity
                 max_y_vel = self.goal_max_y_velocity
                 
-                self.ego_goal_vel = np.random.uniform(low=(min_x_vel, min_y_vel), high=(max_x_vel, max_y_vel))
+                self.ego_goal_vel = self.rng.uniform(low=(min_x_vel, min_y_vel), high=(max_x_vel, max_y_vel))
                 
                 if self.multiagent:
-                    self.alt_goal_pos = np.random.uniform(low=(0 - self.alt_goal_radius, self.table_y_left), high=(self.table_x_bot + self.alt_goal_radius, self.table_y_right))
+                    self.alt_goal_pos = self.rng.uniform(low=(0 - self.alt_goal_radius, self.table_y_left), high=(self.table_x_bot + self.alt_goal_radius, self.table_y_right))
             else:
                 self.ego_goal_pos = ego_goal_pos
                 if self.multiagent:

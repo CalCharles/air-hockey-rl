@@ -7,7 +7,7 @@ import numpy as np
 from pathlib import Path
 import yaml
 from airhockey import AirHockeyEnv
-from render import AirHockeyRenderer
+from airhockey.renderers.render import AirHockeyRenderer
 import cv2
 import gymnasium as gym
 import tqdm
