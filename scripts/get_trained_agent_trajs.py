@@ -54,10 +54,22 @@ def evaluate_air_hockey_model(air_hockey_cfg, log_dir):
         # renderer.render()
         action = model.predict(obs, deterministic=True)[0]
         next_obs, rew, done, info = env_test.step(action)
-        s = obs.flatten()
+        if 'goal' in air_hockey_cfg['air_hockey']['task']:
+            # then it's an ordered dict
+            s = obs['observation']
+            g = obs['desired_goal']
+            s = np.concatenate([s.flatten(), g.flatten()])
+            # acheived goal already part of s
+        else:
+            s = obs.flatten()
         a = action.flatten()
         r = np.array(rew)
-        s_prime = next_obs.flatten()
+        if 'goal' in air_hockey_cfg['air_hockey']['task']:
+            s_prime = next_obs['observation']
+            g_prime = next_obs['desired_goal']
+            s_prime = np.concatenate([s_prime.flatten(), g_prime.flatten()]) # g_prime should be the same
+        else:
+            s_prime = next_obs.flatten()
         t = np.array([timestep])
         
         trajs.append(np.concatenate([s, a, r, s_prime, t]))
@@ -71,7 +83,7 @@ def evaluate_air_hockey_model(air_hockey_cfg, log_dir):
     trajs = np.array(trajs)
     np.save(os.path.join(log_dir, 'trajs.npy'), trajs)
 
-if __name__ == '__main__':
+if __name__ == '__main__':  
     parser = argparse.ArgumentParser(description='Demonstrate the air hockey game.')
     parser.add_argument('--log_dir', type=str, default=None, help='Path to the tensorboard log directory.')
     args = parser.parse_args()

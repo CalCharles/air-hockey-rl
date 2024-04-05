@@ -7,6 +7,9 @@ This contains an air hockey simulation environment powered by Box2D. It is fast 
 :-------------------------:|:-------------------------:
 ![](assets/player_vs_ai.gif)  |  ![](assets/goal_conditioned.gif)
 
+## Installation:
+- `pip install -e .[train]`
+
 ## Requirements:
 - `pip install Box2D`
 - `pip install opencv-python`
