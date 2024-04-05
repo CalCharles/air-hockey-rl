@@ -35,10 +35,14 @@ class AirHockeyRenderer:
         
         # get directory where this file is
         dir_path = os.path.dirname(os.path.realpath(__file__))
-        air_hockey_table_fp = os.path.join(dir_path, 'assets', 'air_hockey_table.png')
-        puck_fp = os.path.join(dir_path, 'assets', 'puck.png')
-        paddle_fp = os.path.join(dir_path, 'assets', 'paddle.png')
-        block_fp = os.path.join(dir_path, 'assets', 'block.png')
+        # make sure we can find assets folder
+        assets_folder = os.path.abspath(os.path.join(dir_path, '../../assets'))
+        assert os.path.exists(assets_folder), f"Could not find assets folder at {assets_folder}"
+        
+        air_hockey_table_fp = os.path.join(assets_folder, 'air_hockey_table.png')
+        puck_fp = os.path.join(assets_folder, 'puck.png')
+        paddle_fp = os.path.join(assets_folder, 'paddle.png')
+        block_fp = os.path.join(assets_folder, 'block.png')
         
         # Load and resize the image
         self.paddle_img = cv2.imread(paddle_fp, cv2.IMREAD_UNCHANGED)  # Ensure the image has an alpha channel

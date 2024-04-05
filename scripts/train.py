@@ -14,7 +14,24 @@ import os
 import yaml
 from utils import CustomCallback, save_evaluation_gifs
 
+def get_airhockey_env_for_parallel(air_hockey_params):
+    """
+    Utility function for multiprocessed env.
 
+    :param env_id: (str) the environment ID
+    :param num_env: (int) the number of environments you wish to have in subprocesses
+    :param seed: (int) the inital seed for RNG
+    :param rank: (int) index of the subprocess
+    """
+    def _init():
+        curr_seed = random.randint(0, int(1e8))
+        air_hockey_params['seed'] = curr_seed
+        # Note: With this seed, an individual rng is created for each env
+        # It does not affect the global rng!
+        env = AirHockeyEnv.from_dict(air_hockey_params)
+        return Monitor(env)
+    return _init()
+            
 def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu'):
     """
     Train an air hockey paddle model using stable baselines.
@@ -38,6 +55,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu'):
         seeds = [int(s) for s in air_hockey_cfg['seed']]
         del air_hockey_cfg['seed'] # otherwise it will be saved in the model cfg when copied over
         
+    # Train different seeds. If one seed in config, this is just one iteration.
     for seed in seeds:
         air_hockey_cfg['seed'] = seed # since it it used as training seed
         air_hockey_params['seed'] = seed # and environment seed
@@ -56,28 +74,11 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu'):
             seed = air_hockey_params['seed']
             random.seed(seed)
             
-            def get_env(env_id=None, rank=None, seed=0):
-                """
-                Utility function for multiprocessed env.
-
-                :param env_id: (str) the environment ID
-                :param num_env: (int) the number of environments you wish to have in subprocesses
-                :param seed: (int) the inital seed for RNG
-                :param rank: (int) index of the subprocess
-                """
-                def _init():
-                    curr_seed = random.randint(0, int(1e8))
-                    air_hockey_params['seed'] = curr_seed
-                    env = AirHockeyEnv.from_dict(air_hockey_params)
-                    return Monitor(env)
-                # set_global_seeds(seed)
-                return _init()
-            
             # get number of threads
             n_threads = air_hockey_cfg['n_threads']
 
             # check_env(env)
-            env = SubprocVecEnv([get_env for _ in range(n_threads)])
+            env = SubprocVecEnv([get_airhockey_env_for_parallel(air_hockey_params) for _ in range(n_threads)])
             # env = VecNormalize(env) # probably something to try when tuning
         else:
             env = AirHockeyEnv.from_dict(air_hockey_params)
@@ -175,7 +176,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu'):
 
         if use_wandb:
             wandb_run.finish()
-            
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Demonstrate the air hockey game.')
     parser.add_argument('--cfg', type=str, default=None, help='Path to the configuration file.')
@@ -185,7 +186,7 @@ if __name__ == "__main__":
     
     if args.cfg is None:
         dir_path = os.path.dirname(os.path.realpath(__file__))
-        air_hockey_cfg_fp = os.path.join(dir_path, 'configs', 'train_ppo.yaml')
+        air_hockey_cfg_fp = os.path.join(dir_path, '../configs', 'default_train_puck_vel.yaml')
     else:
         air_hockey_cfg_fp = args.cfg
     
