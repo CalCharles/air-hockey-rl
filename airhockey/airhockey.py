@@ -455,12 +455,16 @@ class AirHockeyEnv(Env):
                        puck_within_alt_home, puck_within_goal,
                        goal_pos, goal_radius):
         if self.reward_type == 'goal_discrete':
-            return self.get_goal_region_reward(goal_pos, state_info['pucks'][0]['position'], 
+            reward = self.get_goal_region_reward(goal_pos, state_info['pucks'][0]['position'], 
                                                  goal_radius, discrete=True)
+            success = reward == 1
+            return reward, success
         elif self.reward_type == 'goal_position' or self.reward_type == 'goal_position_velocity':
-            # return self.get_goal_region_reward(goal_pos, self.pucks[self.puck_names[0]][0], 
-            #                                      goal_radius, discrete=False)
-            return self.compute_reward(self.get_achieved_goal(self.current_state), self.get_desired_goal(), {})
+            reward = self.compute_reward(self.get_achieved_goal(state_info), self.get_desired_goal(), {})
+            success = reward > 0.0
+            # numpy bool to bool
+            success = success.item()
+            return reward, success
         elif self.reward_type == 'puck_juggle':
             reward = 0
             x_pos = state_info['pucks'][0]['position'][0]
