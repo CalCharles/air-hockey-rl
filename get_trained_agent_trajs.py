@@ -83,7 +83,7 @@ def evaluate_air_hockey_model(air_hockey_cfg, log_dir):
     trajs = np.array(trajs)
     np.save(os.path.join(log_dir, 'trajs.npy'), trajs)
 
-if __name__ == '__main__':
+if __name__ == '__main__':  
     parser = argparse.ArgumentParser(description='Demonstrate the air hockey game.')
     parser.add_argument('--log_dir', type=str, default=None, help='Path to the tensorboard log directory.')
     args = parser.parse_args()

@@ -456,7 +456,13 @@ class AirHockeyBox2D:
                             x_pos = proposed_x_pos
             else:
                 x_pos = np.random.uniform(low=-self.width / 2 + self.block_width, high=self.width / 2 - self.block_width)
-            y_pos = np.random.uniform(low=self.length - self.length / 4, high=0 + self.length / 4)
+            y_pos = np.random.uniform(low=self.length / 4, high=self.length - self.length / 4)
+            print('xpos', x_pos, 'ypos', y_pos)
+            print('bad regions', bad_regions)
+            print('board width', self.width)
+            print('board length', self.length)
+            print('block width', self.block_width)
+            
             pos = (x_pos, y_pos)
         if vel is None: vel = ((np.random.rand() - 0.5) * 2 * (self.width),(np.random.rand() - 0.5) * 2 * (self.length))
         vel = (0, 0)

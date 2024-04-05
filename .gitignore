@@ -59,6 +59,10 @@ cover/
 *.mo
 *.pot
 
+wandb
+baseline_models
+trained_models
+
 # Django stuff:
 *.log
 local_settings.py

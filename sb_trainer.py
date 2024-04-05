@@ -21,7 +21,85 @@ import cv2
 import tqdm
 import random
 import wandb
+from stable_baselines3.common.callbacks import BaseCallback
 
+
+class CustomCallback(BaseCallback):
+    """
+    A custom callback that derives from ``BaseCallback``.
+
+    :param verbose: Verbosity level: 0 for no output, 1 for info messages, 2 for debug messages
+    """
+    def __init__(self, eval_env, eval_freq=5000, n_eval_eps=30, verbose: int = 0):
+        super().__init__(verbose)
+        self.eval_env = eval_env
+        self.eval_freq = eval_freq
+        self.n_eval_eps = n_eval_eps
+        self.next_eval = 0
+        self.best_success_so_far = 0.0
+    
+    def _eval(self):
+        avg_undiscounted_return = 0.0
+        avg_success_rate = 0.0
+        for _ in range(self.n_eval_eps):
+            obs, info = self.eval_env.reset()
+            done = False
+            undiscounted_return = 0.0
+            success = False
+            while not done:
+                action, _ = self.model.predict(obs)
+                obs, rew, done, truncated, info = self.eval_env.step(action)
+                done = done or truncated
+                undiscounted_return += rew
+                assert 'success' in info
+                assert (info['success'] is True) or (info['success'] is False)
+                if info['success'] is True:
+                    success = True
+            avg_undiscounted_return += undiscounted_return
+            avg_success_rate += 1.0 if success else 0.0
+        avg_undiscounted_return /= self.n_eval_eps
+        avg_success_rate /= self.n_eval_eps
+        return avg_undiscounted_return, avg_success_rate
+
+    def _on_rollout_start(self) -> None:
+        """
+        A rollout is the collection of environment interaction
+        using the current policy.
+        This event is triggered before collecting new samples.
+        """
+        if self.num_timesteps >= self.next_eval:
+            avg_undiscounted_return, avg_success_rate = self._eval()
+            self.logger.record("eval/ep_return", avg_undiscounted_return)
+            self.logger.record("eval/success_rate", avg_success_rate)
+            if avg_success_rate > self.best_success_so_far:
+                self.best_success_so_far = avg_success_rate
+            self.logger.record("eval/best_success_rate", self.best_success_so_far)
+            self.next_eval += self.eval_freq
+
+    def _on_step(self) -> bool:
+        """
+        This method will be called by the model after each call to `env.step()`.
+
+        For child callback (of an `EventCallback`), this will be called
+        when the event is triggered.
+
+        :return: If the callback returns False, training is aborted early.
+        """
+        return True
+
+    # def _on_rollout_end(self) -> None:
+    #     """
+    #     This event is triggered before updating the policy.
+    #     """
+    #     pass
+
+    def _on_training_end(self) -> None:
+        """
+        This event is triggered before exiting the `learn()` method.
+        """
+        avg_undiscounted_return, avg_success_rate = self._eval()
+        self.logger.record("eval/ep_return", avg_undiscounted_return)
+        self.logger.record("eval/success_rate", avg_success_rate)
 
 def train_air_hockey_model(air_hockey_cfg):
     """
@@ -34,6 +112,11 @@ def train_air_hockey_model(air_hockey_cfg):
     
     air_hockey_params = air_hockey_cfg['air_hockey']
     air_hockey_params['n_training_steps'] = air_hockey_cfg['n_training_steps']
+    
+    air_hockey_params_cp = air_hockey_params.copy()
+    air_hockey_params_cp['seed'] = 42
+    air_hockey_params_cp['max_timesteps'] = 200
+    eval_env = AirHockeyEnv.from_dict(air_hockey_params_cp)
     
     if type(air_hockey_cfg['seed']) is not list:
         seeds = [int(air_hockey_cfg['seed'])]
@@ -87,13 +170,13 @@ def train_air_hockey_model(air_hockey_cfg):
 
             # check_env(env)
             env = SubprocVecEnv([get_env for _ in range(n_threads)])
-            env = VecNormalize(env) # probably something to try when tuning
+            # env = VecNormalize(env) # probably something to try when tuning
         else:
             env = AirHockeyEnv.from_dict(air_hockey_params)
             def wrap_env(env):
                 wrapped_env = Monitor(env) # needed for extracting eprewmean and eplenmean
                 wrapped_env = DummyVecEnv([lambda: wrapped_env]) # Needed for all environments (e.g. used for multi-processing)
-                wrapped_env = VecNormalize(wrapped_env) # probably something to try when tuning
+                # wrapped_env = VecNormalize(wrapped_env) # probably something to try when tuning
                 return wrapped_env
             env = wrap_env(env)
 
@@ -106,6 +189,8 @@ def train_air_hockey_model(air_hockey_cfg):
         subdir_nums = [int(x.split(air_hockey_cfg['tb_log_name'] + '_')[1]) for x in subdirs]
         next_num = max(subdir_nums) + 1 if subdir_nums else 1
         log_dir = os.path.join(log_parent_dir, air_hockey_cfg['tb_log_name'] + f'_{next_num}')
+        
+        callback = CustomCallback(eval_env)
         
         # if goal-conditioned use SAC
         if 'goal' in air_hockey_cfg['air_hockey']['task']:
@@ -142,6 +227,7 @@ def train_air_hockey_model(air_hockey_cfg):
         
         model.learn(total_timesteps=air_hockey_cfg['n_training_steps'],
                     tb_log_name=air_hockey_cfg['tb_log_name'], 
+                    callback=callback,
                     progress_bar=True)
         
         os.makedirs(log_parent_dir, exist_ok=True)
@@ -159,7 +245,7 @@ def train_air_hockey_model(air_hockey_cfg):
             yaml.dump(air_hockey_cfg, f)
 
         model.save(model_filepath)
-        env.save(env_filepath)
+        # env.save(env_filepath)
         
         # let's also evaluate the policy and save the results!
         air_hockey_cfg['air_hockey']['max_timesteps'] = 200
@@ -170,7 +256,7 @@ def train_air_hockey_model(air_hockey_cfg):
         renderer = AirHockeyRenderer(env_test)
         
         env_test = DummyVecEnv([lambda : env_test])
-        env_test = VecNormalize.load(os.path.join(log_dir, air_hockey_cfg['vec_normalize_save_filepath']), env_test)
+        # env_test = VecNormalize.load(os.path.join(log_dir, air_hockey_cfg['vec_normalize_save_filepath']), env_test)
         
         # if goal-conditioned use SAC
         if 'goal' in air_hockey_cfg['air_hockey']['task']:
@@ -204,14 +290,14 @@ def train_air_hockey_model(air_hockey_cfg):
                 'train/actor_loss',
                 'train/ent_coef_loss',
                 'train/learning_rate',
-                'train/critic_loss',
-                'train/ent_coef']
+                'eval/ep_return',
+                'eval/success_rate']
         else:
             metrics = [
                 'rollout/ep_rew_mean',
                 'train/approx_kl',
-                'train/entropy_loss',
-                'train/learning_rate',
+                'eval/success_rate',
+                'eval/ep_return',
                 'train/loss',
                 'train/value_loss']
         

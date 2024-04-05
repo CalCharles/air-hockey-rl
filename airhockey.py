@@ -167,11 +167,12 @@ class AirHockeyEnv(Env):
         
         self.n_timesteps_so_far += self.current_timestep
         self.current_timestep = 0
+        self.success_in_ep = False
         
         if not self.goal_conditioned:
-            return obs, {}
+            return obs, {'success': False}
         else:
-            return {"observation": obs, "desired_goal": self.get_desired_goal(), "achieved_goal": self.get_achieved_goal(state_info)}, {}
+            return {"observation": obs, "desired_goal": self.get_desired_goal(), "achieved_goal": self.get_achieved_goal(state_info)}, {'success': False}
         
         
     def get_achieved_goal(self, state_info):
@@ -470,7 +471,8 @@ class AirHockeyEnv(Env):
                 reward += 15
             elif x_pos < x_higher / 4:
                 reward -= 1
-            return reward
+            success = reward > 0 and self.current_timestep > 50
+            return reward, success
         elif self.reward_type == 'puck_height':
             reward = -state_info['pucks'][0]['position'][0]
             # min acceptable reward is 0 height and above
@@ -480,18 +482,21 @@ class AirHockeyEnv(Env):
             max_rew = self.length / 2
             min_rew = 0
             reward = (reward - min_rew) / (max_rew - min_rew)
-            return reward
+            success = reward > 0.5 and self.current_timestep > 25
+            return reward, success
         elif self.reward_type == 'multipuck_juggle':
             reward = 0
+            pos_rew = 15
             for puck in state_info['pucks']:
                 x_pos = puck[0]['position'][0]
                 x_higher = self.table_x_top
                 x_lower = self.table_x_bot
                 if x_higher / 4 < x_pos < 0:
-                    reward += 15
+                    reward += pos_rew
                 elif x_pos < x_higher / 4 or x_pos > x_lower / 2:
                     reward -= 1
-            return reward
+            success = reward >= pos_rew and self.current_timestep > 50
+            return reward, success
         elif self.reward_type == 'strike':
             # reward for velocity
             x_vel = state_info['pucks'][0]['velocity'][0]
@@ -504,7 +509,8 @@ class AirHockeyEnv(Env):
                 return 0
             reward = min(reward, max_rew)
             reward = (reward - min_rew) / (max_rew - min_rew)
-            return reward
+            success = reward > (max_rew / 3)
+            return reward, success
         elif self.reward_type == 'strike_crowd':
             # check how much blocks deviate from initial position
             reward = 0.0
@@ -514,17 +520,19 @@ class AirHockeyEnv(Env):
                 dist = np.linalg.norm(np.array(initial_pos) - np.array(current_pos))
                 max_euclidean_distance = np.linalg.norm(np.array([self.table_x_bot, self.table_y_right]) - np.array([self.table_x_top, self.table_y_left]))
                 reward += 10 * dist / max_euclidean_distance
-                return reward
+            success = reward > 2 and self.current_timestep > 3
+            return reward, success
         elif self.reward_type == 'puck_vel':
             # reward for positive velocity towards the top of the board
             reward = -state_info['pucks'][0]['velocity'][0]
             max_rew = 2 # estimated max vel
             min_rew = 0  # min acceptable good velocity
             if reward < min_rew:
-                return 0
+                return 0, False
             reward = min(reward, max_rew)
             reward = (reward - min_rew) / (max_rew - min_rew)
-            return reward
+            success = reward > 0.5 and self.current_timestep > 25
+            return reward, success
         elif self.reward_type == 'puck_catch':
             # reward for getting close to the puck, but make sure not to displace it
             puck_pos = state_info['pucks'][0]['position']
@@ -533,7 +541,8 @@ class AirHockeyEnv(Env):
             max_dist = 0.16 * self.width
             reward = 1 - (dist / max_dist)
             reward = max(reward, 0)
-            return reward
+            success = reward >= 0.95 and self.current_timestep > 75
+            return reward, success
         elif self.reward_type == 'reach':
             # reward for getting close to target location
             paddle_position = state_info['paddles']['paddle_ego']['position']
@@ -542,7 +551,8 @@ class AirHockeyEnv(Env):
             max_euclidean_distance = np.linalg.norm(np.array([self.table_x_bot, self.table_y_right]) - np.array([self.table_x_top, self.table_y_left]))
             # reward for closer to goal
             reward = 1 - (dist / max_euclidean_distance)
-            return reward
+            success = reward >= 0.9
+            return reward, success
         elif self.reward_type == 'reach_vel':
             # reward for getting close to target location
             paddle_position = state_info['paddles']['paddle_ego']['position']
@@ -557,7 +567,8 @@ class AirHockeyEnv(Env):
             dist = np.linalg.norm(np.array(current_vel) - np.array(goal_vel))
             max_vel = self.max_paddle_vel
             vel_reward = 1 - (dist / max_vel)
-            return 0.5 * pos_reward + 0.5 * vel_reward
+            success = pos_reward >= 0.9 and vel_reward >= 0.9
+            return 0.5 * pos_reward + 0.5 * vel_reward, success
         elif self.reward_type == 'puck_reach':
             puck_pos = state_info['pucks'][0]['position']
             paddle_pos = state_info['paddles']['paddle_ego']['position']
@@ -566,13 +577,16 @@ class AirHockeyEnv(Env):
                 reward = 1
             else:
                 reward = 0
-            return reward
+            success = reward == 1
+            return reward, success
         elif self.reward_type == 'puck_touch':
             reward = 1 if hit_a_puck else 0
-            return reward
+            success = reward == 1
+            return reward, success
         elif self.reward_type == 'alt_home':
             reward = 1 if puck_within_alt_home else 0
-            return reward
+            success = reward == 1
+            return reward, success
         elif self.reward_type == 'move_block':
             # more reward if we move the block away from initial position
             block_initial_pos = state_info['blocks'][0]['initial_position']
@@ -580,7 +594,8 @@ class AirHockeyEnv(Env):
             dist = np.linalg.norm(np.array(block_pos) - np.array(block_initial_pos))
             max_euclidean_distance = np.linalg.norm(np.array([self.table_x_bot, self.table_y_right]) - np.array([self.table_x_top, self.table_y_left]))
             reward = 100 * dist / max_euclidean_distance
-            return reward
+            success = reward > 5 and self.current_timestep > 10
+            return reward, success
         else:
             raise ValueError("Invalid reward type defined in config.")
         
@@ -663,13 +678,19 @@ class AirHockeyEnv(Env):
         if self.current_timestep > 0:
             self.old_state = self.current_state
         self.current_state = next_state
+        success = self.success_in_ep 
+        info = {}
+        info['success'] = success
 
         hit_a_puck = False
         is_finished, truncated, puck_within_home, puck_within_alt_home, puck_within_goal, _ = self.has_finished(next_state)
         if not truncated:
-            reward = self.get_base_reward(next_state, hit_a_puck, puck_within_home, 
+            reward, success = self.get_base_reward(next_state, hit_a_puck, puck_within_home, 
                                      puck_within_alt_home, puck_within_goal,
                                      self.ego_goal_pos, self.ego_goal_radius)
+            if not info['success'] and success:
+                info['success'] = success
+                self.success_in_ep = success
         else:
             reward = self.truncate_rew
         reward += self.get_reward_shaping(next_state)
@@ -680,7 +701,7 @@ class AirHockeyEnv(Env):
         self.current_timestep += 1
         
         obs = self.get_observation(next_state)
-        return obs, reward, is_finished, truncated, {}
+        return obs, reward, is_finished, truncated, info
     
     def multi_step(self, joint_action):
         raise NotImplementedError("Multi-agent step function not implemented yet. But shouldn't take much work, it is mostly copy-pasting. But need to do specific rewards per player")

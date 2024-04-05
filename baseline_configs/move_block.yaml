@@ -11,13 +11,13 @@ air_hockey:
     width: 0.8636
     puck_radius: 0.03175
     paddle_radius: 0.0508
-    block_width: 0.1754
+    block_width: 0.0754
     force_scaling: 1000
     paddle_damping: 3
     puck_damping: 0.5
     paddle_density: 2500
     puck_density: 250
-    block_density: 1000
+    block_density: 500
     render_size: 360
     gravity: -0.5
     max_force_timestep: 100 # max force we can apply at one timestep
