@@ -14,23 +14,6 @@ import os
 import yaml
 from utils import CustomCallback, save_evaluation_gifs
 
-def get_airhockey_env_for_parallel(air_hockey_params):
-    """
-    Utility function for multiprocessed env.
-
-    :param env_id: (str) the environment ID
-    :param num_env: (int) the number of environments you wish to have in subprocesses
-    :param seed: (int) the inital seed for RNG
-    :param rank: (int) index of the subprocess
-    """
-    def _init():
-        curr_seed = random.randint(0, int(1e8))
-        air_hockey_params['seed'] = curr_seed
-        # Note: With this seed, an individual rng is created for each env
-        # It does not affect the global rng!
-        env = AirHockeyEnv.from_dict(air_hockey_params)
-        return Monitor(env)
-    return _init()
             
 def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu'):
     """
@@ -76,10 +59,28 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu'):
             
             # get number of threads
             n_threads = air_hockey_cfg['n_threads']
+            
+            def get_airhockey_env_for_parallel():
+                """
+                Utility function for multiprocessed env.
+
+                :param env_id: (str) the environment ID
+                :param num_env: (int) the number of environments you wish to have in subprocesses
+                :param seed: (int) the inital seed for RNG
+                :param rank: (int) index of the subprocess
+                """
+                def _init():
+                    curr_seed = random.randint(0, int(1e8))
+                    air_hockey_params['seed'] = curr_seed
+                    # Note: With this seed, an individual rng is created for each env
+                    # It does not affect the global rng!
+                    env = AirHockeyEnv.from_dict(air_hockey_params)
+                    return Monitor(env)
+                return _init()
 
             # check_env(env)
-            env = SubprocVecEnv([get_airhockey_env_for_parallel(air_hockey_params) for _ in range(n_threads)])
-            # env = VecNormalize(env) # probably something to try when tuning
+            env = SubprocVecEnv([get_airhockey_env_for_parallel for _ in range(n_threads)])
+            env = VecNormalize(env) # probably something to try when tuning
         else:
             env = AirHockeyEnv.from_dict(air_hockey_params)
             def wrap_env(env):
