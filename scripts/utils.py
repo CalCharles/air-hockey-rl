@@ -101,7 +101,7 @@ def save_evaluation_gifs(n_eps_viz, n_gifs, env_test, model, renderer, log_dir, 
     if use_wandb:
         wandb_run.log({"Evaluation Video": wandb.Video(gif_savepath, fps=20)})
 
-class CustomCallback(BaseCallback):
+class EvalCallback(BaseCallback):
     """
     A custom callback that derives from ``BaseCallback``.
 

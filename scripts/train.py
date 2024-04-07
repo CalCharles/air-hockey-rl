@@ -12,8 +12,8 @@ import wandb
 import argparse
 import os
 import yaml
-from utils import CustomCallback, save_evaluation_gifs
-
+from utils import EvalCallback, save_evaluation_gifs
+from curriculum.classifier_curriculum import CurriculumCallback
             
 def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu'):
     """
@@ -100,7 +100,8 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu'):
         next_num = max(subdir_nums) + 1 if subdir_nums else 1
         log_dir = os.path.join(log_parent_dir, air_hockey_cfg['tb_log_name'] + f'_{next_num}')
         
-        callback = CustomCallback(eval_env)
+        if len(air_hockey_cfg['curriculum']['model']) > 0:
+            callback = CurriculumCallback(eval_env, curriculum_config=air_hockey_cfg['curriculum'],)
         
         # if goal-conditioned use SAC
         if 'goal' in air_hockey_cfg['air_hockey']['task']:
@@ -137,7 +138,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu'):
         model.learn(total_timesteps=air_hockey_cfg['n_training_steps'],
                     tb_log_name=air_hockey_cfg['tb_log_name'], 
                     callback=callback,
-                    progress_bar=True)
+                    progress_bar=False)
         
         os.makedirs(log_parent_dir, exist_ok=True)
         

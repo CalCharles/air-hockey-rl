@@ -342,7 +342,6 @@ class AirHockeyEnv(Env):
                 max_x = 0 - self.ego_goal_radius
                 min_x = self.table_x_top + self.ego_goal_radius
                 self.ego_goal_pos = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
-                
                 min_x_vel = self.goal_min_x_velocity
                 max_x_vel = self.goal_max_x_velocity
                 min_y_vel = self.goal_min_y_velocity
@@ -460,6 +459,7 @@ class AirHockeyEnv(Env):
             success = reward == 1
             return reward, success
         elif self.reward_type == 'goal_position' or self.reward_type == 'goal_position_velocity':
+            
             reward = self.compute_reward(self.get_achieved_goal(state_info), self.get_desired_goal(), {})
             success = reward > 0.0
             # numpy bool to bool
