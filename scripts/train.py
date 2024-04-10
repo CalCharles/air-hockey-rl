@@ -12,7 +12,7 @@ import wandb
 import argparse
 import os
 import yaml
-from utils import CustomCallback, save_evaluation_gifs
+from utils import CustomCallback, save_evaluation_gifs, save_tensorboard_plots
 
             
 def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu'):
@@ -172,6 +172,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu'):
         # first let's create some videos offline into gifs
         print("Saving gifs...(this will tqdm for EACH gif to save)")
         save_evaluation_gifs(5, 3, env_test, model, renderer, log_dir, use_wandb, wandb_run)
+        save_tensorboard_plots(log_dir, air_hockey_cfg)
         
         env_test.close()
 
@@ -193,6 +194,9 @@ if __name__ == "__main__":
     
     with open(air_hockey_cfg_fp, 'r') as f:
         air_hockey_cfg = yaml.safe_load(f)
+        
+    assert 'n_threads' in air_hockey_cfg, "Please specify the number of threads to use for training."
+    assert 'algorithm' in air_hockey_cfg, "Please specify the algorithm to use for training."
     
     use_wandb = args.wandb
     device = args.device

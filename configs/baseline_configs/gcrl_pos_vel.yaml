@@ -48,7 +48,8 @@ tb_log_dir: baseline_models
 tb_log_name: air_hockey_agent
 gamma: 0.99
 seed: [0, 1, 2, 3, 4]
-n_threads: 1
+n_threads: 4
+algorithm: sac
 
 # this parameter is only used when evaluating demonstrations
 print_reward: false

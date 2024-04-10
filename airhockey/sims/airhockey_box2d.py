@@ -40,17 +40,6 @@ class AirHockeyBox2D:
         self.num_paddles = num_paddles
         self.task = task
 
-        def check_setup(expected_num_pucks=1,
-                        expected_n_blocks=0,
-                        expected_n_obstacles=0,
-                        expected_n_targets=0,
-                        expected_n_paddles=1):
-            assert self.num_pucks == expected_num_pucks
-            assert self.num_blocks == expected_n_blocks
-            assert self.num_obstacles == expected_n_obstacles
-            assert self.num_targets == expected_n_targets
-            assert self.num_paddles == expected_n_paddles
-
         if task in ['puck_vel', 'puck_juggle', 'puck_reach', 'strike', 'goal_position', 'goal_position_velocity', 'puck_height']:
             assert self.num_pucks == 1
             assert self.num_blocks == 0
@@ -280,7 +269,6 @@ class AirHockeyBox2D:
                 puck_y = 0 - self.length / 5
                 name, puck_attrs = self.create_puck(i, min_height=self.puck_min_height, vel=(0, 0), pos=(puck_x, puck_y))
                 self.pucks[name] = puck_attrs
-                
         else:
             if self.task != 'strike':
                 # pucks moving downwards that we want to hit directly
@@ -451,17 +439,19 @@ class AirHockeyBox2D:
             if bad_regions is not None:
                 while x_pos is None:
                     for region in bad_regions:
-                        proposed_x_pos = np.random.uniform(low=-self.width / 2 + self.block_width, high=self.width / 2 - self.block_width)  # doesnt spawn at edges
-                        if not (proposed_x_pos > region[0] and proposed_x_pos < region[1]):
+                        proposed_x_pos = np.random.uniform(low=self.table_x_min + self.block_width, high=self.table_x_max - self.block_width)  # doesnt spawn at edges
+                        region_with_margin = (region[0] - self.block_width, region[1] + self.block_width)
+                        if (proposed_x_pos < region_with_margin[0] or proposed_x_pos > region_with_margin[1]):
                             x_pos = proposed_x_pos
             else:
-                x_pos = np.random.uniform(low=-self.width / 2 + self.block_width, high=self.width / 2 - self.block_width)
-            y_pos = np.random.uniform(low=self.length / 4, high=self.length - self.length / 4)
-            print('xpos', x_pos, 'ypos', y_pos)
-            print('bad regions', bad_regions)
-            print('board width', self.width)
-            print('board length', self.length)
-            print('block width', self.block_width)
+                x_pos = np.random.uniform(low=self.table_x_min + self.block_width, high=self.table_x_max - self.block_width)
+            y_pos = np.random.uniform(low=self.table_y_max / 4, high=self.table_y_max - self.table_y_max / 4)
+            # print('xpos', x_pos, 'ypos', y_pos)
+            # print('bad regions', bad_regions)
+            # print('min board x', self.table_x_min)
+            # print('max board x', self.table_x_max)
+            # print('min board y', self.table_y_min)
+            # print('max board y', self.table_y_max)
             
             pos = (x_pos, y_pos)
         if vel is None: vel = ((np.random.rand() - 0.5) * 2 * (self.width),(np.random.rand() - 0.5) * 2 * (self.length))
