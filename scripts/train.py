@@ -12,8 +12,8 @@ import wandb
 import argparse
 import os
 import yaml
-from utils import CustomCallback, save_evaluation_gifs, save_tensorboard_plots
-
+from utils import EvalCallback, save_evaluation_gifs, save_tensorboard_plots
+from curriculum.classifier_curriculum import CurriculumCallback
             
 def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu'):
     """
@@ -100,7 +100,17 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu'):
         next_num = max(subdir_nums) + 1 if subdir_nums else 1
         log_dir = os.path.join(log_parent_dir, air_hockey_cfg['tb_log_name'] + f'_{next_num}')
         
-        callback = CustomCallback(eval_env)
+        if 'curriculum' in air_hockey_cfg.keys() and len(air_hockey_cfg['curriculum']['model']) > 0:
+            callback = CurriculumCallback(eval_env, 
+                                          curriculum_config=air_hockey_cfg['curriculum'], 
+                                          log_dir=log_dir, 
+                                          n_eval_eps=air_hockey_cfg['n_eval_eps'], 
+                                          eval_freq=air_hockey_cfg['eval_freq'])
+        else:
+            callback = EvalCallback(eval_env, 
+                                    log_dir=log_dir, 
+                                    n_eval_eps=air_hockey_cfg['n_eval_eps'], 
+                                    eval_freq=air_hockey_cfg['eval_freq'])
         
         # if goal-conditioned use SAC
         if 'goal' in air_hockey_cfg['air_hockey']['task']:

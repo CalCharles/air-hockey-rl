@@ -84,7 +84,7 @@ class AirHockeyEnv(Env):
         self.table_y_left = -self.width / 2
         self.max_paddle_vel = self.simulator.max_paddle_vel
         self.max_puck_vel = self.simulator.max_puck_vel
-        
+        self.goal_set = None
         self.initialize_spaces()
         
         self.metadata = {}
@@ -155,7 +155,7 @@ class AirHockeyEnv(Env):
     def from_dict(state_dict):
         return AirHockeyEnv(**state_dict)
 
-    def reset(self, seed=None):
+    def reset(self, seed=None, **kwargs):
         if seed is None: # determine next seed, in a deterministic manner
             seed = self.rng.randint(0, int(1e8))
         self.rng = np.random.RandomState(seed)
@@ -305,8 +305,8 @@ class AirHockeyEnv(Env):
             obs = (obs_ego, obs_alt)
         return obs
     
-    def set_goals(self, goal_radius_type, ego_goal_pos=None, alt_goal_pos=None):
-        
+    def set_goals(self, goal_radius_type, ego_goal_pos=None, alt_goal_pos=None, goal_set=None):
+        self.goal_set = goal_set
         if self.reward_type == 'reach':
             # sample goal position
             min_y = self.table_y_left
@@ -347,13 +347,12 @@ class AirHockeyEnv(Env):
                 self.ego_goal_radius = 0.16 * self.width
                 if self.multiagent:
                     self.alt_goal_radius = 0.16 * self.width
-            if ego_goal_pos is None:
+            if ego_goal_pos is None and goal_set is None:
                 min_y = self.table_y_left + self.ego_goal_radius
                 max_y = self.table_y_right - self.ego_goal_radius
                 max_x = 0 - self.ego_goal_radius
                 min_x = self.table_x_top + self.ego_goal_radius
                 self.ego_goal_pos = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
-                
                 min_x_vel = self.goal_min_x_velocity
                 max_x_vel = self.goal_max_x_velocity
                 min_y_vel = self.goal_min_y_velocity
@@ -364,7 +363,7 @@ class AirHockeyEnv(Env):
                 if self.multiagent:
                     self.alt_goal_pos = self.rng.uniform(low=(0 - self.alt_goal_radius, self.table_y_left), high=(self.table_x_bot + self.alt_goal_radius, self.table_y_right))
             else:
-                self.ego_goal_pos = ego_goal_pos
+                self.ego_goal_pos = ego_goal_pos if self.goal_set is None else self.goal_set[0]
                 if self.multiagent:
                     self.alt_goal_pos = alt_goal_pos
         else:
@@ -464,6 +463,7 @@ class AirHockeyEnv(Env):
             success = reward == 1
             return reward, success
         elif self.reward_type == 'goal_position' or self.reward_type == 'goal_position_velocity':
+            
             reward = self.compute_reward(self.get_achieved_goal(state_info), self.get_desired_goal(), {})
             success = reward > 0.0
             # numpy bool to bool
@@ -715,6 +715,9 @@ class AirHockeyEnv(Env):
                 return {"observation": obs, "desired_goal": self.get_desired_goal(), "achieved_goal": self.get_achieved_goal(self.current_state)}, reward, is_finished, truncated, info
         else:
             return self.multi_step(action)
+        
+    def set_goal_set(self, goal_set):
+        self.goal_set = goal_set
 
     def single_agent_step(self, action) -> tuple[np.ndarray, float, bool, bool, dict]:
         next_state = self.simulator.get_transition(action)

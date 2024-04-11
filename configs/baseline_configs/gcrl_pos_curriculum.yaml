@@ -40,6 +40,9 @@ air_hockey:
   diagonal_motion_rew: -0.1
   stand_still_rew: 0.01
 
+curriculum: 
+  model: 'classifier'
+
 # Training Parameters
 n_training_steps: 1000000
 model_save_filepath: model # will be saved same dir as tb_log_dir
