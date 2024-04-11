@@ -16,6 +16,7 @@ setup(
         'mujoco-py',
         'box2d-py',
         'gymnasium',
+        'gym==0.25.1'
         'box2d-py==2.3.8',
         'tqdm',
         'h5py',

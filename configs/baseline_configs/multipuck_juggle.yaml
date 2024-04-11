@@ -48,6 +48,8 @@ tb_log_dir: baseline_models
 tb_log_name: air_hockey_agent
 gamma: 0.99
 seed: 0
+n_threads: 1
+algorithm: ppo
 
 # this parameter is only used when evaluating demonstrations
 print_reward: false

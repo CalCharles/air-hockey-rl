@@ -32,19 +32,19 @@ def save_tensorboard_plots(log_dir, air_hockey_cfg):
     if 'goal' in air_hockey_cfg['air_hockey']['task']:
         metrics = [
             'rollout/ep_rew_mean',
-            'train/actor_loss',
-            'train/ent_coef_loss',
-            'train/learning_rate',
             'eval/ep_return',
-            'eval/success_rate']
+            'eval/success_rate',
+            'eval/best_success_rate',
+            'eval/max_reward',
+            'eval/min_reward']
     else:
         metrics = [
             'rollout/ep_rew_mean',
-            'train/approx_kl',
-            'eval/success_rate',
             'eval/ep_return',
-            'train/loss',
-            'train/value_loss']
+            'eval/success_rate',
+            'eval/best_success_rate',
+            'eval/max_reward',
+            'eval/min_reward']
     
     # Create a 2x3 subplot
     fig, axs = plt.subplots(2, 3, figsize=(18, 12))
@@ -96,7 +96,8 @@ def save_evaluation_gifs(n_eps_viz, n_gifs, env_test, model, renderer, log_dir, 
         gif_savepath = os.path.join(log_dir, f'eval_{gif_idx}.gif')
         def fps_to_duration(fps):
             return int(1000 * 1/fps)
-        imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(20))
+        fps = 30 # slightly faster than 20 fps (simulation time), but makes rendering smooth
+        imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(fps))
     # upload last gif to wandb
     if use_wandb:
         wandb_run.log({"Evaluation Video": wandb.Video(gif_savepath, fps=20)})
@@ -122,6 +123,8 @@ class EvalCallback(BaseCallback):
     def _eval(self):
         avg_undiscounted_return = 0.0
         avg_success_rate = 0.0
+        avg_max_reward = 0.0
+        avg_min_reward = 0.0
         for _ in range(self.n_eval_eps):
             obs, info = self.eval_env.reset()
             done = False
@@ -133,14 +136,20 @@ class EvalCallback(BaseCallback):
                 done = done or truncated
                 undiscounted_return += rew
                 assert 'success' in info
-                assert (info['success'] is True) or (info['success'] is False)
+                assert (info['success'] == True) or (info['success'] == False)
                 if info['success'] is True:
                     success = True
+                max_reward = info['max_reward']
+                min_reward = info['min_reward']
             avg_undiscounted_return += undiscounted_return
             avg_success_rate += 1.0 if success else 0.0
+            avg_max_reward += max_reward
+            avg_min_reward += min_reward
         avg_undiscounted_return /= self.n_eval_eps
         avg_success_rate /= self.n_eval_eps
-        return avg_undiscounted_return, avg_success_rate
+        avg_max_reward /= self.n_eval_eps
+        avg_min_reward /= self.n_eval_eps
+        return avg_undiscounted_return, avg_success_rate, avg_max_reward, avg_min_reward
 
     def _on_rollout_start(self) -> None:
         """
@@ -149,12 +158,14 @@ class EvalCallback(BaseCallback):
         This event is triggered before collecting new samples.
         """
         if self.num_timesteps >= self.next_eval:
-            avg_undiscounted_return, avg_success_rate = self._eval()
+            avg_undiscounted_return, avg_success_rate, avg_max_reward, avg_min_reward = self._eval()
             self.logger.record("eval/ep_return", avg_undiscounted_return)
             self.logger.record("eval/success_rate", avg_success_rate)
             if avg_success_rate > self.best_success_so_far:
                 self.best_success_so_far = avg_success_rate
             self.logger.record("eval/best_success_rate", self.best_success_so_far)
+            self.logger.record("eval/max_reward", avg_max_reward)
+            self.logger.record("eval/min_reward", avg_min_reward)
             self.next_eval += self.eval_freq
             
         if self.num_timesteps >= self.next_save:
@@ -182,6 +193,11 @@ class EvalCallback(BaseCallback):
         """
         This event is triggered before exiting the `learn()` method.
         """
-        avg_undiscounted_return, avg_success_rate = self._eval()
+        avg_undiscounted_return, avg_success_rate, avg_max_reward, avg_min_reward = self._eval()
         self.logger.record("eval/ep_return", avg_undiscounted_return)
         self.logger.record("eval/success_rate", avg_success_rate)
+        if avg_success_rate > self.best_success_so_far:
+            self.best_success_so_far = avg_success_rate
+        self.logger.record("eval/best_success_rate", self.best_success_so_far)
+        self.logger.record("eval/max_reward", avg_max_reward)
+        self.logger.record("eval/min_reward", avg_min_reward)
