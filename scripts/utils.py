@@ -96,7 +96,8 @@ def save_evaluation_gifs(n_eps_viz, n_gifs, env_test, model, renderer, log_dir, 
         gif_savepath = os.path.join(log_dir, f'eval_{gif_idx}.gif')
         def fps_to_duration(fps):
             return int(1000 * 1/fps)
-        imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(20))
+        fps = 30 # slightly faster than 20 fps (simulation time), but makes rendering smooth
+        imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(fps))
     # upload last gif to wandb
     if use_wandb:
         wandb_run.log({"Evaluation Video": wandb.Video(gif_savepath, fps=20)})
