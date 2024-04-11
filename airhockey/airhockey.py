@@ -505,29 +505,27 @@ class AirHockeyEnv(Env):
             success = reward >= pos_rew and self.current_timestep > 50
             return reward, success
         elif self.reward_type == 'strike':
-            # alternative
-            # let's check difference from initial position
+            # reward for velocity
+            x_vel = state_info['pucks'][0]['velocity'][0]
+            y_vel = state_info['pucks'][0]['velocity'][1]
+            vel_mag = np.linalg.norm(np.array([x_vel, y_vel]))
+            reward = vel_mag
+            max_rew = 2 # estimated max vel
+            min_rew = 0  # min acceptable good velocity
+            
             initial_pos = self.puck_initial_position
             current_pos = state_info['pucks'][0]['position']
             dist = np.linalg.norm(np.array(initial_pos) - np.array(current_pos))
-            max_euclidean_distance = np.linalg.norm(np.array([self.table_x_bot, self.table_y_right]) - np.array([self.table_x_top, self.table_y_left]))
-            reward = 10 * dist / max_euclidean_distance
-            success = reward > 2 and self.current_timestep > 3
-            return reward, success
+            has_moved = dist > 0.01
             
-            # # reward for velocity
-            # x_vel = state_info['pucks'][0]['velocity'][0]
-            # y_vel = state_info['pucks'][0]['velocity'][1]
-            # vel_mag = np.linalg.norm(np.array([x_vel, y_vel]))
-            # reward = vel_mag
-            # max_rew = 2 # estimated max vel
-            # min_rew = 0  # min acceptable good velocity
-            # if reward <= min_rew:
-            #     return -5, False # negative rew for standing still
-            # reward = min(reward, max_rew)
-            # reward = (reward - min_rew) / (max_rew - min_rew)
-            # success = reward > (0.3) # means the puck is moving at acceptable vel
-            # return reward, success
+            if reward <= min_rew and not has_moved:
+                return -5, False # negative rew for standing still and hasn't moved
+            reward = min(reward, max_rew)
+            reward = (reward - min_rew) / (max_rew - min_rew)
+            success = reward > (0.1) # means the puck is moving
+            if reward > 0:
+                reward *= 10
+            return reward, success
         elif self.reward_type == 'strike_crowd':
             # check how much blocks deviate from initial position
             reward = 0.0
@@ -574,11 +572,13 @@ class AirHockeyEnv(Env):
             # let's also make sure puck does not deviate from initial position
             puck_initial_position = self.puck_initial_position
             puck_current_position = state_info['pucks'][0]['position']
-            dist = np.linalg.norm(np.array(puck_initial_position) - np.array(puck_current_position))
+            delta = np.linalg.norm(np.array(puck_initial_position) - np.array(puck_current_position))
             epsilon = 0.01
-            if dist >= epsilon:
+            if delta >= epsilon:
                 reward -= 1
             success = reward >= 0.9 and dist < epsilon
+            if reward > 0:
+                reward *= 20 # make it more significant
             return reward, success
         elif self.reward_type == 'reach':
             # reward for getting close to target location
@@ -647,14 +647,24 @@ class AirHockeyEnv(Env):
             success = reward == 1
             return reward, success
         elif self.reward_type == 'move_block':
+            # also reward hitting puck! some shaping here :)
+            vel_reward = -state_info['pucks'][0]['velocity'][0]
+            max_rew = 2 # estimated max vel
+            min_rew = 0  # min acceptable good velocity
+            if vel_reward <= min_rew:
+                vel_reward = 0
+            else:
+                vel_reward = min(vel_reward, max_rew)
+                vel_reward = (vel_reward - min_rew) / (vel_reward - min_rew)
+            
             # more reward if we move the block away from initial position
             block_initial_pos = state_info['blocks'][0]['initial_position']
             block_pos = state_info['blocks'][0]['current_position']
             dist = np.linalg.norm(np.array(block_pos) - np.array(block_initial_pos))
             max_euclidean_distance = np.linalg.norm(np.array([self.table_x_bot, self.table_y_right]) - np.array([self.table_x_top, self.table_y_left]))
-            reward = 500 * dist / max_euclidean_distance
-            success = reward > 1 and self.current_timestep > 10
-            return reward, success
+            reward = 5000 * dist / max_euclidean_distance # big reward since its sparse!
+            success = reward > 1 and self.current_timestep > 5
+            return vel_reward + reward, success
         else:
             raise ValueError("Invalid reward type defined in config.")
         
@@ -672,7 +682,7 @@ class AirHockeyEnv(Env):
             max_change_dir_rew = self.direction_change_rew
             direction_rew = max_change_dir_rew * (1 - norm_cosine_sim)
             additional_rew += direction_rew
-            
+
         # small negative reward for moving too fast in horizontal direction
         max_vel = self.max_paddle_vel
         max_vel_rew = self.horizontal_vel_rew

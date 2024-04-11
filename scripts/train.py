@@ -10,12 +10,13 @@ import os
 import random
 import wandb
 import argparse
+import shutil
 import os
 import yaml
 from utils import EvalCallback, save_evaluation_gifs, save_tensorboard_plots
 from curriculum.classifier_curriculum import CurriculumCallback
             
-def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu'):
+def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_prior_task_results=False):
     """
     Train an air hockey paddle model using stable baselines.
 
@@ -92,6 +93,8 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu'):
 
         os.makedirs(air_hockey_cfg['tb_log_dir'], exist_ok=True)
         log_parent_dir = os.path.join(air_hockey_cfg['tb_log_dir'], air_hockey_cfg['air_hockey']['task'])
+        if clear_prior_task_results and os.path.exists(log_parent_dir):
+            shutil.rmtree(log_parent_dir)
         os.makedirs(log_parent_dir, exist_ok=True)
         
         # determine the actual log dir
@@ -194,6 +197,10 @@ if __name__ == "__main__":
     parser.add_argument('--cfg', type=str, default=None, help='Path to the configuration file.')
     parser.add_argument('--wandb', action='store_true', help='Use wandb for logging.')
     parser.add_argument('--device', type=str, default='cpu', help='Device to use for training.')
+    
+    # Note: You probably don't want this argument, only if you are retraining frequently
+    # and task folder is getting too big
+    parser.add_argument('--clear', action='store_true', help='Removes prior folders for the task.')
     args = parser.parse_args()
     
     if args.cfg is None:
@@ -210,5 +217,6 @@ if __name__ == "__main__":
     
     use_wandb = args.wandb
     device = args.device
+    clear_prior_task_results = args.clear
     
-    train_air_hockey_model(air_hockey_cfg, use_wandb, device)
+    train_air_hockey_model(air_hockey_cfg, use_wandb, device, clear_prior_task_results)
