@@ -315,15 +315,16 @@ class AirHockeyEnv(Env):
             self.reach_goal_pos = goal_position
         elif self.reward_type == 'reach_vel':
             # sample goal position
-            min_y = self.table_y_left
-            max_y = self.table_y_right
-            min_x = 0
-            max_x = self.table_x_bot
+            min_y = self.table_y_left + 2 * self.paddle_radius # Not too close to the wall
+            max_y = self.table_y_right - 2 * self.paddle_radius # Not too close to the wall
+            min_x = 0 - self.paddle_radius # some buffer space from halfway point
+            max_x = self.table_x_bot + 2 * self.paddle_radius # Not too close to the wall
             goal_position = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
             goal_velocity = self.rng.uniform(low=(-self.max_paddle_vel, -self.max_paddle_vel), high=(self.max_paddle_vel, self.max_paddle_vel))
             # x vel shouldn't vary much
-            y_vel = self.rng.uniform(low=-self.max_paddle_vel / 4, high=self.max_paddle_vel / 4)
-            x_vel = self.rng.uniform(low=-self.max_paddle_vel / 2, high=0)
+            # "minimum" is upward at max speed, "maximum" is slightly upwards, otherwise can't reach goal
+            x_vel = self.rng.uniform(low=-self.max_paddle_vel, high=-self.max_paddle_vel / 8) # only upwards
+            y_vel = self.rng.uniform(low=-self.max_paddle_vel / 2, high=self.max_paddle_vel / 2)
             goal_velocity = np.array([x_vel, y_vel])
             # y vel should be positive
             self.reach_goal_pos = goal_position
@@ -572,7 +573,8 @@ class AirHockeyEnv(Env):
             mag_current = np.linalg.norm(current_vel)
             mag_goal = np.linalg.norm(goal_vel)
             mag_diff = np.abs(mag_current - mag_goal)
-            vel_mag_reward = 1 - mag_diff / self.max_paddle_vel
+            maximum_mag_diff = np.abs(np.linalg.norm(np.array([self.max_paddle_vel, self.max_paddle_vel]) - np.array([0, 0])))
+            vel_mag_reward = 1 - mag_diff / maximum_mag_diff
 
             dist = np.linalg.norm(current_vel - goal_vel)
             # compute angle between velocities
@@ -585,12 +587,6 @@ class AirHockeyEnv(Env):
 
             norm_cos_sim = (vel_cos + 1) / 2
             vel_angle_reward = norm_cos_sim
-            print('Mag Diff: ', mag_diff)
-            print('Max Mag: ', self.max_paddle_vel)
-            print('Current Vel Mag: ', mag_current)
-            print('Goal Vel Mag: ', mag_goal)
-            assert vel_angle_reward >= 0 and vel_angle_reward <= 1
-            assert vel_mag_reward >= 0 and vel_mag_reward <= 1
             vel_reward = (vel_angle_reward + vel_mag_reward) / 2
             
             # # let's try old vel rew lol
@@ -598,7 +594,7 @@ class AirHockeyEnv(Env):
             # max_vel_distance = np.linalg.norm(np.array([self.max_paddle_vel, self.max_paddle_vel]))
             # vel_reward = 1 - (vel_distance / max_vel_distance)
             
-            success = pos_reward >= 0.8 and vel_reward >= 0.7 # a little easier for both since it's harder to do both in general
+            success = pos_reward >= 0.9 and vel_reward >= 0.8 # a little easier for both since it's harder to do both in general
             return 0.5 * pos_reward + 0.5 * vel_reward, success.item()
         elif self.reward_type == 'puck_reach':
             puck_pos = state_info['pucks'][0]['position']
