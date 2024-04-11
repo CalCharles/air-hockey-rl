@@ -159,7 +159,7 @@ class AirHockeyEnv(Env):
         if seed is None: # determine next seed, in a deterministic manner
             seed = self.rng.randint(0, int(1e8))
         self.rng = np.random.RandomState(seed)
-        state_info = self.simulator.reset()
+        state_info = self.simulator.reset(seed)
         # get initial observation
         self.set_goals(self.goal_radius_type)
         obs = self.get_observation(state_info)
