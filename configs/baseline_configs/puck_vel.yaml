@@ -45,3 +45,6 @@ algorithm: ppo
 tb_log_dir: baseline_models
 tb_log_name: air_hockey_agent
 vec_normalize_save_filepath: vec_normalize.pkl
+
+n_eval_eps: 30
+eval_freq: 5000

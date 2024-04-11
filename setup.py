@@ -29,6 +29,7 @@ setup(
             'stable-baselines3==2.2.1',
             'pyrallis',
             'torch',
+            'scikit-learn',
         ],
     },
 )

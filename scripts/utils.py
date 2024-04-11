@@ -6,6 +6,7 @@ import tqdm
 from tensorboard.backend.event_processing import event_accumulator
 import matplotlib.pyplot as plt
 import wandb
+from airhockey.renderers.render import AirHockeyRenderer
 
 
 def save_tensorboard_plots(log_dir, air_hockey_cfg):
@@ -102,15 +103,13 @@ def save_evaluation_gifs(n_eps_viz, n_gifs, env_test, model, renderer, log_dir, 
     if use_wandb:
         wandb_run.log({"Evaluation Video": wandb.Video(gif_savepath, fps=20)})
 
-class Save
-
 class EvalCallback(BaseCallback):
     """
     A custom callback that derives from ``BaseCallback``.
 
     :param verbose: Verbosity level: 0 for no output, 1 for info messages, 2 for debug messages
     """
-    def __init__(self, eval_env, eval_freq=5000, n_eval_eps=30, verbose: int = 0):
+    def __init__(self, eval_env, log_dir, eval_freq=5000, n_eval_eps=30, verbose: int = 0):
         super().__init__(verbose)
         self.eval_env = eval_env
         self.eval_freq = eval_freq
@@ -119,18 +118,30 @@ class EvalCallback(BaseCallback):
         self.n_eval_eps = n_eval_eps
         self.next_eval = 0
         self.best_success_so_far = 0.0
+        self.log_dir = log_dir
+        self.renderer = AirHockeyRenderer(eval_env)
     
-    def _eval(self):
+    def _eval(self, include_frames=False):
         avg_undiscounted_return = 0.0
         avg_success_rate = 0.0
         avg_max_reward = 0.0
         avg_min_reward = 0.0
-        for _ in range(self.n_eval_eps):
+        # also save first 5 eps into gif
+        n_eps_viz = 5
+        frames = []
+        for ep_idx in range(self.n_eval_eps):
             obs, info = self.eval_env.reset()
             done = False
             undiscounted_return = 0.0
             success = False
             while not done:
+                if include_frames and ep_idx < n_eps_viz:
+                    frame = self.renderer.get_frame()
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    # decrease width to 160 but keep aspect ratio
+                    aspect_ratio = frame.shape[1] / frame.shape[0]
+                    frame = cv2.resize(frame, (160, int(160 / aspect_ratio)))
+                    frames.append(frame)
                 action, _ = self.model.predict(obs)
                 obs, rew, done, truncated, info = self.eval_env.step(action)
                 done = done or truncated
@@ -149,7 +160,7 @@ class EvalCallback(BaseCallback):
         avg_success_rate /= self.n_eval_eps
         avg_max_reward /= self.n_eval_eps
         avg_min_reward /= self.n_eval_eps
-        return avg_undiscounted_return, avg_success_rate, avg_max_reward, avg_min_reward
+        return avg_undiscounted_return, avg_success_rate, avg_max_reward, avg_min_reward, frames
 
     def _on_rollout_start(self) -> None:
         """
@@ -157,8 +168,11 @@ class EvalCallback(BaseCallback):
         using the current policy.
         This event is triggered before collecting new samples.
         """
+        save_progress = self.num_timesteps >= self.next_save
+        frames = []
+        
         if self.num_timesteps >= self.next_eval:
-            avg_undiscounted_return, avg_success_rate, avg_max_reward, avg_min_reward = self._eval()
+            avg_undiscounted_return, avg_success_rate, avg_max_reward, avg_min_reward, frames = self._eval(include_frames=save_progress)
             self.logger.record("eval/ep_return", avg_undiscounted_return)
             self.logger.record("eval/success_rate", avg_success_rate)
             if avg_success_rate > self.best_success_so_far:
@@ -168,8 +182,21 @@ class EvalCallback(BaseCallback):
             self.logger.record("eval/min_reward", avg_min_reward)
             self.next_eval += self.eval_freq
             
-        if self.num_timesteps >= self.next_save:
-            self.model.save(self.save_path)
+        if save_progress:
+            # make a subfolder in log dir for latest progress
+            progress_dir = os.path.join(self.log_dir, f'progress_{self.num_timesteps}')
+            os.makedirs(progress_dir, exist_ok=True)
+            
+            # save gif
+            assert len(frames) > 0
+            gif_savepath = os.path.join(progress_dir, f'eval.gif')
+            def fps_to_duration(fps):
+                return int(1000 * 1/fps)
+            fps = 30 # slightly faster than 20 fps (simulation time), but makes rendering smooth
+            imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(fps))
+
+            model_fp = os.path.join(progress_dir, 'model.zip')
+            self.model.save(model_fp)
             self.next_save += self.save_freq
 
     def _on_step(self) -> bool:
