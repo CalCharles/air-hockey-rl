@@ -44,7 +44,7 @@ curriculum:
   model: 'classifier'
 
 # Training Parameters
-n_training_steps: 15000
+n_training_steps: 1000000
 model_save_filepath: model # will be saved same dir as tb_log_dir
 vec_normalize_save_filepath: vec_normalize.pkl
 tb_log_dir: baseline_models

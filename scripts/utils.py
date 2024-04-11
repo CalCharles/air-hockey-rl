@@ -101,6 +101,8 @@ def save_evaluation_gifs(n_eps_viz, n_gifs, env_test, model, renderer, log_dir, 
     if use_wandb:
         wandb_run.log({"Evaluation Video": wandb.Video(gif_savepath, fps=20)})
 
+class Save
+
 class EvalCallback(BaseCallback):
     """
     A custom callback that derives from ``BaseCallback``.
@@ -111,6 +113,8 @@ class EvalCallback(BaseCallback):
         super().__init__(verbose)
         self.eval_env = eval_env
         self.eval_freq = eval_freq
+        self.save_freq = eval_freq * 10
+        self.next_save = 0
         self.n_eval_eps = n_eval_eps
         self.next_eval = 0
         self.best_success_so_far = 0.0
@@ -152,6 +156,10 @@ class EvalCallback(BaseCallback):
                 self.best_success_so_far = avg_success_rate
             self.logger.record("eval/best_success_rate", self.best_success_so_far)
             self.next_eval += self.eval_freq
+            
+        if self.num_timesteps >= self.next_save:
+            self.model.save(self.save_path)
+            self.next_save += self.save_freq
 
     def _on_step(self) -> bool:
         """

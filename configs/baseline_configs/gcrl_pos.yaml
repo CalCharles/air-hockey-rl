@@ -41,14 +41,14 @@ air_hockey:
   stand_still_rew: 0.01
 
 # Training Parameters
-n_training_steps: 15000
+n_training_steps: 1000000
 model_save_filepath: model # will be saved same dir as tb_log_dir
 vec_normalize_save_filepath: vec_normalize.pkl
 tb_log_dir: baseline_models
 tb_log_name: air_hockey_agent
 gamma: 0.99
 seed: [0, 1, 2, 3, 4]
-n_threads: 1
+n_threads: 4
 
 # this parameter is only used when evaluating demonstrations
 print_reward: false
