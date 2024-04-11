@@ -170,6 +170,8 @@ class AirHockeyEnv(Env):
         self.max_reward_in_single_step = -np.inf
         self.min_reward_in_single_step = np.inf
         
+        self.puck_initial_position = state_info['pucks'][0]['position']
+        
         if not self.goal_conditioned:
             return obs, {'success': False}
         else:
@@ -503,19 +505,29 @@ class AirHockeyEnv(Env):
             success = reward >= pos_rew and self.current_timestep > 50
             return reward, success
         elif self.reward_type == 'strike':
-            # reward for velocity
-            x_vel = state_info['pucks'][0]['velocity'][0]
-            y_vel = state_info['pucks'][0]['velocity'][1]
-            vel_mag = np.linalg.norm(np.array([x_vel, y_vel]))
-            reward = vel_mag
-            max_rew = 2 # estimated max vel
-            min_rew = 0  # min acceptable good velocity
-            if reward < min_rew:
-                return 0
-            reward = min(reward, max_rew)
-            reward = (reward - min_rew) / (max_rew - min_rew)
-            success = reward > (max_rew / 3)
+            # alternative
+            # let's check difference from initial position
+            initial_pos = self.puck_initial_position
+            current_pos = state_info['pucks'][0]['position']
+            dist = np.linalg.norm(np.array(initial_pos) - np.array(current_pos))
+            max_euclidean_distance = np.linalg.norm(np.array([self.table_x_bot, self.table_y_right]) - np.array([self.table_x_top, self.table_y_left]))
+            reward = 10 * dist / max_euclidean_distance
+            success = reward > 2 and self.current_timestep > 3
             return reward, success
+            
+            # # reward for velocity
+            # x_vel = state_info['pucks'][0]['velocity'][0]
+            # y_vel = state_info['pucks'][0]['velocity'][1]
+            # vel_mag = np.linalg.norm(np.array([x_vel, y_vel]))
+            # reward = vel_mag
+            # max_rew = 2 # estimated max vel
+            # min_rew = 0  # min acceptable good velocity
+            # if reward <= min_rew:
+            #     return -5, False # negative rew for standing still
+            # reward = min(reward, max_rew)
+            # reward = (reward - min_rew) / (max_rew - min_rew)
+            # success = reward > (0.3) # means the puck is moving at acceptable vel
+            # return reward, success
         elif self.reward_type == 'strike_crowd':
             # check how much blocks deviate from initial position
             reward = 0.0
@@ -544,9 +556,29 @@ class AirHockeyEnv(Env):
             paddle_pos = state_info['paddles']['paddle_ego']['position']
             dist = np.linalg.norm(np.array(puck_pos) - np.array(paddle_pos))
             max_dist = 0.16 * self.width
-            reward = 1 - (dist / max_dist)
+            min_dist = self.paddle_radius + self.puck_radius
+            reward = 1 - ((dist - min_dist) / (max_dist - min_dist))
             reward = max(reward, 0)
-            success = reward >= 0.95 and self.current_timestep > 75
+            success = reward >= 0.9 and self.current_timestep > 75
+            return reward, success
+        elif self.reward_type == 'puck_touch':
+            # reward for getting close to the puck, but make sure not to displace it
+            puck_pos = state_info['pucks'][0]['position']
+            paddle_pos = state_info['paddles']['paddle_ego']['position']
+            min_dist = self.paddle_radius + self.puck_radius
+            dist = np.linalg.norm(np.array(puck_pos) - np.array(paddle_pos))
+            max_dist = 0.16 * self.width
+            reward = 1 - ((dist - min_dist) / (max_dist - min_dist))
+            reward = max(reward, 0)
+            
+            # let's also make sure puck does not deviate from initial position
+            puck_initial_position = self.puck_initial_position
+            puck_current_position = state_info['pucks'][0]['position']
+            dist = np.linalg.norm(np.array(puck_initial_position) - np.array(puck_current_position))
+            epsilon = 0.01
+            if dist >= epsilon:
+                reward -= 1
+            success = reward >= 0.9 and dist < epsilon
             return reward, success
         elif self.reward_type == 'reach':
             # reward for getting close to target location

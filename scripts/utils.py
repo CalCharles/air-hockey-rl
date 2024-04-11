@@ -132,7 +132,7 @@ class CustomCallback(BaseCallback):
                 done = done or truncated
                 undiscounted_return += rew
                 assert 'success' in info
-                assert (info['success'] is True) or (info['success'] is False)
+                assert (info['success'] == True) or (info['success'] == False)
                 if info['success'] is True:
                     success = True
                 max_reward = info['max_reward']

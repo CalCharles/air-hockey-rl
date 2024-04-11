@@ -80,7 +80,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu'):
 
             # check_env(env)
             env = SubprocVecEnv([get_airhockey_env_for_parallel for _ in range(n_threads)])
-            env = VecNormalize(env) # probably something to try when tuning
+            # env = VecNormalize(env) # probably something to try when tuning
         else:
             env = AirHockeyEnv.from_dict(air_hockey_params)
             def wrap_env(env):

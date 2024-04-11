@@ -40,7 +40,7 @@ class AirHockeyBox2D:
         self.num_paddles = num_paddles
         self.task = task
 
-        if task in ['puck_vel', 'puck_juggle', 'puck_reach', 'strike', 'goal_position', 'goal_position_velocity', 'puck_height']:
+        if task in ['puck_vel', 'puck_juggle', 'puck_catch', 'puck_touch', 'puck_reach', 'strike', 'goal_position', 'goal_position_velocity', 'puck_height']:
             assert self.num_pucks == 1
             assert self.num_blocks == 0
             assert self.num_obstacles == 0
@@ -148,9 +148,9 @@ class AirHockeyBox2D:
 
         if seed is None:
             if not hasattr(self, "rng"):
-                seed = np.random.randint(10e8)
+                seed = np.random.randint(0, int(1e8))
             else:
-                seed = self.rng.randint(10e8)
+                seed = self.rng.randint(0, int(1e8))
         self.rng = np.random.RandomState(seed)
 
         self.timestep = 0
@@ -299,16 +299,22 @@ class AirHockeyBox2D:
                 name, puck_attrs = self.create_puck(i, min_height=self.puck_min_height, vel=(0, 0), pos=(puck_x, puck_y))
                 self.pucks[name] = puck_attrs
         else:
-            if self.task != 'strike':
-                # pucks moving downwards that we want to hit directly
+            if self.task != 'strike' and self.task != 'puck_touch':
                 for i in range(self.num_pucks):
                     name, puck_attrs = self.create_puck(i, min_height=self.puck_min_height)
                     self.pucks[name] = puck_attrs
             else:
-                puck_x = 0
-                puck_y = 0 - self.length / 5
+                puck_x_low = -self.width / 2 + self.puck_radius
+                puck_x_high = self.width / 2 - self.puck_radius
+                puck_y_low = -self.length / 3
+                puck_y_high = -self.length / 5
+                puck_x = self.rng.uniform(low=puck_x_low, high=puck_x_high)
+                puck_y = self.rng.uniform(low=puck_y_low, high=puck_y_high)
                 name, puck_attrs = self.create_puck(0, min_height=self.puck_min_height, vel=(0, 0), pos=(puck_x, puck_y))
                 self.pucks[name] = puck_attrs
+                body = self.pucks[name][0]
+                body.gravityScale = 0
+                body.velocity = (0, 0)
 
             # need to take into account pucks so far since we do not want to spawn anything directly below them
             puck_x_positions = [self.pucks[pn][0].position[0] for pn in self.pucks.keys()]
