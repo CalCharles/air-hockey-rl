@@ -58,7 +58,7 @@ class AirHockeyEnv(Env):
         self.terminate_on_puck_stop = terminate_on_puck_stop
         
         # reward function
-        self.goal_conditioned = True if 'goal' in task else False
+        self.goal_conditioned = True if ('goal' in task) and not ('dense'  in task) else False
         self.goal_radius_type = 'home'
         self.goal_min_x_velocity = -goal_max_x_velocity
         self.goal_max_x_velocity = goal_max_x_velocity
@@ -120,6 +120,19 @@ class AirHockeyEnv(Env):
             high = np.array([self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel,
                              self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel])
             self.observation_space = Box(low=low, high=high, shape=(8,), dtype=float)
+        elif self.reward_type == 'goal_position_dense':
+            # y, x
+            goal_low = np.array([self.table_x_top, self.table_y_left])
+            goal_high = np.array([0, self.table_y_right])
+            low = np.concatenate([low, goal_low])
+            high = np.concatenate([high, goal_high])
+            self.observation_space = Box(low=low, high=high, shape=(10,), dtype=float)
+        elif self.reward_type == 'goal_position_velocity_dense':
+            goal_low = np.array([self.table_x_top, self.table_y_left, -self.max_puck_vel, -self.max_puck_vel])
+            goal_high = np.array([0, self.table_y_right, self.max_puck_vel, self.max_puck_vel])
+            low = np.concatenate([low, goal_low])
+            high = np.concatenate([high, goal_high])
+            self.observation_space = Box(low=low, high=high, shape=(14,), dtype=float)
             
         else:
             if not self.goal_conditioned:
@@ -464,6 +477,10 @@ class AirHockeyEnv(Env):
             success = reward > 0.0
             # numpy bool to bool
             success = success.item()
+            return reward, success
+        elif self.reward_type == 'goal_position_dense' or self.reward_type == 'goal_position_velocity_dense':
+            reward = 69
+            success = 1
             return reward, success
         elif self.reward_type == 'puck_juggle':
             reward = 0

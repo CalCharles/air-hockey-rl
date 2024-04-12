@@ -16,7 +16,7 @@ from utils import EvalCallback, save_evaluation_gifs
 from curriculum.classifier_curriculum import CurriculumCallback
 # from utils import EvalCallback
             
-def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu'):
+def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', progress_bar=False):
     """
     Train an air hockey paddle model using stable baselines.
 
@@ -107,7 +107,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu'):
             callback = EvalCallback(eval_env)
         
         # if goal-conditioned use SAC
-        if 'goal' in air_hockey_cfg['air_hockey']['task']:
+        if 'goal' in air_hockey_cfg['air_hockey']['task'] and not ('dense' in air_hockey_cfg['air_hockey']['task']):
             # SAC hyperparams:
             # Create 4 artificial transitions per real transitionair_hockey_simulator
             n_sampled_goal = 4
@@ -141,7 +141,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu'):
         model.learn(total_timesteps=air_hockey_cfg['n_training_steps'],
                     tb_log_name=air_hockey_cfg['tb_log_name'], 
                     callback=callback,
-                    progress_bar=True)
+                    progress_bar=progress_bar)
         
         os.makedirs(log_parent_dir, exist_ok=True)
         
@@ -187,6 +187,7 @@ if __name__ == "__main__":
     parser.add_argument('--cfg', type=str, default=None, help='Path to the configuration file.')
     parser.add_argument('--wandb', action='store_true', help='Use wandb for logging.')
     parser.add_argument('--device', type=str, default='cpu', help='Device to use for training.')
+    parser.add_argument('--progress_bar', action='store_true', help='Show progress bar during training.')
     args = parser.parse_args()
     
     if args.cfg is None:
@@ -200,5 +201,5 @@ if __name__ == "__main__":
     
     use_wandb = args.wandb
     device = args.device
-    
-    train_air_hockey_model(air_hockey_cfg, use_wandb, device)
+    progress_bar = args.progress_bar
+    train_air_hockey_model(air_hockey_cfg, use_wandb, device, progress_bar)

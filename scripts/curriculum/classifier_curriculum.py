@@ -18,6 +18,9 @@ class CurriculumCallback(EvalCallback):
         self.successes = np.array(())
         self.classifier = LogisticRegression()
         self.ego_goals = []
+        self.start_goal_gen = 200 # number of trajectories after which we start generating new goals
+        self.eval_env = eval_env
+        self.update_goal_gen_freq = 10
         
 
     def _on_rollout_start(self) -> None:
@@ -27,42 +30,37 @@ class CurriculumCallback(EvalCallback):
         This event is triggered before collecting new samples.
         """
         super()._on_rollout_start()
-        # import pdb; pdb.set_trace()
-        
         
         if self.training_env.envs[0].unwrapped.current_timestep == 0:
             self.traj_num += 1
-            self.traj_start.append(self.training_env.envs[0].unwrapped.n_timesteps_so_far)            
-            self.on_trajectory_start()
+            self.traj_start.append(self.training_env.envs[0].unwrapped.n_timesteps_so_far)     
+            if self.traj_num > self.start_goal_gen and self.traj_num % self.update_goal_gen_freq == 0:       
+                self._update_goal_belief()
             
-    def on_trajectory_start(self) -> None:
-        """
-        This event is triggered before the start of a new trajectory.
-        """
-        if self.traj_num > 200:
-            # Create a logistic regression classifier
-            self.successes = np.array(self.tot_success_per_traj) > 0
-            
-            N = 200
-            N_most_recent_successes = self.successes[-N:]
-            N_most_recent_ego_goals = self.ego_goals[-N:]
-            X_train, X_test, y_train, y_test = train_test_split(N_most_recent_ego_goals, N_most_recent_successes, test_size=0.2, random_state=42)
-            # import pdb; pdb.set_trace()
-            self.classifier.fit(X_train, y_train)
-            # Predict on the test set
-            predictions = self.classifier.predict(X_test)
+    def _update_goal_belief(self):
+        # Create a logistic regression classifier
+        self.successes = np.array(self.tot_success_per_traj) > 0
+        
+        N = 200
+        N_most_recent_successes = self.successes[-N:]
+        N_most_recent_ego_goals = self.ego_goals[-N:]
+        X_train, X_test, y_train, y_test = train_test_split(N_most_recent_ego_goals, N_most_recent_successes, test_size=0.2, random_state=42)
+        # import pdb; pdb.set_trace()
+        self.classifier.fit(X_train, y_train)
+        # Predict on the test set
+        predictions = self.classifier.predict(X_test)
 
-            # Evaluate the classifier
-            accuracy = accuracy_score(y_test, predictions)
-            print(f"Accuracy: {accuracy}")
-            self._goal_selector()
+        # Evaluate the classifier
+        accuracy = accuracy_score(y_test, predictions)
+        print(f"Accuracy: {accuracy}")
+        # self._goal_selector()
+        
             
     def _goal_selector(self):
         """
         Selects the goal based on the current goal success rate
         """
 
-        test_goal_set = np.array([[-0.69, 0.0]])
         
         for env in self.training_env.envs:
             env.set_goals('home', goal_set = test_goal_set)
@@ -91,11 +89,12 @@ class CurriculumCallback(EvalCallback):
         if self.training_env.envs[0].unwrapped.current_timestep == 0 and len(self.traj_start) > 1:
             ag = obs['achieved_goal'][self.traj_start[-1]:total_timesteps].squeeze()
             dg = obs['desired_goal'][self.traj_start[-1]:total_timesteps].squeeze()
-            rewards = np.random.random(size=(3,)) - 0.5 # self.training_env.envs[0].get_wrapper_attr('compute_reward')(ag, dg, {})
+            rewards = self.eval_env.unwrapped.compute_reward(ag, dg, {}) #self.training_env.envs[0].get_wrapper_attr('compute_reward')(ag, dg, {})
             self.tot_success_per_traj.append(np.sum(rewards > 0.0))
             self.tot_return_per_traj.append(np.sum(rewards))
             self.ego_goals.append(self.training_env.envs[0].unwrapped.ego_goal_pos)
-        
+            # import pdb; pdb.set_trace()
+            
 
     def _on_training_end(self) -> None:
         """
