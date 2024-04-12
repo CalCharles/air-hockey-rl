@@ -41,6 +41,10 @@ n_training_steps: 1000000
 print_reward: false
 seed: [0, 1, 2, 3, 4]
 n_threads: 1
+algorithm: ppo
 tb_log_dir: baseline_models
 tb_log_name: air_hockey_agent
 vec_normalize_save_filepath: vec_normalize.pkl
+
+n_eval_eps: 30
+eval_freq: 5000

@@ -7,8 +7,12 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 
 class CurriculumCallback(EvalCallback):
-    def __init__(self, eval_env, curriculum_config=None, eval_freq=5000, n_eval_eps=30, verbose: int = 0):
-        super().__init__(eval_env, eval_freq, n_eval_eps, verbose)
+    def __init__(self, eval_env, curriculum_config=None, log_dir=None, eval_freq=5000, n_eval_eps=30, verbose: int = 0):
+        super().__init__(eval_env=eval_env, 
+                         log_dir=log_dir, 
+                         eval_freq=eval_freq, 
+                         n_eval_eps=n_eval_eps, 
+                         verbose=verbose)
         self.curriculum_config = curriculum_config
         self.traj_num = -1
         self.traj_id = [] # np.zeros((self.model.replay_buffer_size, )) - 1

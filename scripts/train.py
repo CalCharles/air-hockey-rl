@@ -12,9 +12,8 @@ import wandb
 import argparse
 import os
 import yaml
-from utils import EvalCallback, save_evaluation_gifs
+from utils import EvalCallback, save_evaluation_gifs, save_tensorboard_plots
 from curriculum.classifier_curriculum import CurriculumCallback
-# from utils import EvalCallback
             
 def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', progress_bar=False):
     """
@@ -81,7 +80,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', progre
 
             # check_env(env)
             env = SubprocVecEnv([get_airhockey_env_for_parallel for _ in range(n_threads)])
-            env = VecNormalize(env) # probably something to try when tuning
+            # env = VecNormalize(env) # probably something to try when tuning
         else:
             env = AirHockeyEnv.from_dict(air_hockey_params)
             def wrap_env(env):
@@ -102,9 +101,16 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', progre
         log_dir = os.path.join(log_parent_dir, air_hockey_cfg['tb_log_name'] + f'_{next_num}')
         
         if 'curriculum' in air_hockey_cfg.keys() and len(air_hockey_cfg['curriculum']['model']) > 0:
-            callback = CurriculumCallback(eval_env, curriculum_config=air_hockey_cfg['curriculum'],)
+            callback = CurriculumCallback(eval_env, 
+                                          curriculum_config=air_hockey_cfg['curriculum'], 
+                                          log_dir=log_dir, 
+                                          n_eval_eps=air_hockey_cfg['n_eval_eps'], 
+                                          eval_freq=air_hockey_cfg['eval_freq'])
         else:
-            callback = EvalCallback(eval_env)
+            callback = EvalCallback(eval_env, 
+                                    log_dir=log_dir, 
+                                    n_eval_eps=air_hockey_cfg['n_eval_eps'], 
+                                    eval_freq=air_hockey_cfg['eval_freq'])
         
         # if goal-conditioned use SAC
         if 'goal' in air_hockey_cfg['air_hockey']['task'] and not ('dense' in air_hockey_cfg['air_hockey']['task']):
@@ -176,6 +182,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', progre
         # first let's create some videos offline into gifs
         print("Saving gifs...(this will tqdm for EACH gif to save)")
         save_evaluation_gifs(5, 3, env_test, model, renderer, log_dir, use_wandb, wandb_run)
+        save_tensorboard_plots(log_dir, air_hockey_cfg)
         
         env_test.close()
 
@@ -198,6 +205,9 @@ if __name__ == "__main__":
     
     with open(air_hockey_cfg_fp, 'r') as f:
         air_hockey_cfg = yaml.safe_load(f)
+        
+    assert 'n_threads' in air_hockey_cfg, "Please specify the number of threads to use for training."
+    assert 'algorithm' in air_hockey_cfg, "Please specify the algorithm to use for training."
     
     use_wandb = args.wandb
     device = args.device

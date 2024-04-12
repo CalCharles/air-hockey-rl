@@ -40,18 +40,7 @@ class AirHockeyBox2D:
         self.num_paddles = num_paddles
         self.task = task
 
-        def check_setup(expected_num_pucks=1,
-                        expected_n_blocks=0,
-                        expected_n_obstacles=0,
-                        expected_n_targets=0,
-                        expected_n_paddles=1):
-            assert self.num_pucks == expected_num_pucks
-            assert self.num_blocks == expected_n_blocks
-            assert self.num_obstacles == expected_n_obstacles
-            assert self.num_targets == expected_n_targets
-            assert self.num_paddles == expected_n_paddles
-
-        if task in ['puck_vel', 'puck_juggle', 'puck_reach', 'strike', 'goal_position', 'goal_position_velocity', 'puck_height']:
+        if task in ['puck_vel', 'puck_juggle', 'puck_catch', 'puck_touch', 'puck_reach', 'strike', 'goal_position', 'goal_position_velocity', 'puck_height']:
             assert self.num_pucks == 1
             assert self.num_blocks == 0
             assert self.num_obstacles == 0
@@ -158,15 +147,20 @@ class AirHockeyBox2D:
               max_count_dict=None):
 
         if seed is None:
-            seed = np.random.randint(10e8)
-        np.random.seed(seed)
+            if not hasattr(self, "rng"):
+                seed = np.random.randint(0, int(1e8))
+            else:
+                seed = self.rng.randint(0, int(1e8))
+        self.rng = np.random.RandomState(seed)
+
+        self.timestep = 0
 
         if hasattr(self, "object_dict"):
             for body in self.object_dict.values():
                 self.world.DestroyBody(body)
 
         if type(self.gravity) == list:
-            self.world.gravity = (0, np.random.uniform(low=self.gravity[0], high=self.gravity[1]))
+            self.world.gravity = (0, self.rng.uniform(low=self.gravity[0], high=self.gravity[1]))
 
         self.paddles = dict()
         self.pucks = dict()
@@ -234,11 +228,15 @@ class AirHockeyBox2D:
         if self.task == 'strike_crowd': # then we use predefined positions, which puck cannot spawn at
             # let's redo puck creation, it should actually be at the edges somewhat
             
+            center_x = self.rng.uniform(-0.15, 0.15)  # todo: determine dynamically
+            
             # pucks moving downwards that we want to hit directly
             for i in range(self.num_pucks):
                 # compute the region for the blocks
-                margin = 0 #self.block_width / 10
+                margin = 0.008 #self.block_width / 10
                 # starts at center
+                prev_row_x_min = None
+                prev_row_x_max = None
                 
                 # let's spawn all the blocks
                 # start with 5 blocks
@@ -246,30 +244,50 @@ class AirHockeyBox2D:
                 block_space = self.block_width + margin
                 n_rows = 5
                 row_y_positions = [y - block_space * i for i in range(5)]
+                # 0: center_x
+                # 1: center_x - block_space
+                # 2: center_x + block_space
+                # 3: center_x - 2 * block_space
+                # 4: center_x + 2 * block_space
+                col_x_positions = [center_x, center_x - block_space, center_x + block_space, 
+                                   center_x - 2 * block_space, center_x + 2 * block_space]  
                 
-                x_min = float('inf')
-                x_max = float('-inf')
+                # for row 0, shift none
+                # for row 1, shift to the right by ((prev_x_max - prev_x_min) - (curr_x_max - curr_x_min)) /2
+                
+                x_min = center_x - 2 * block_space - self.block_width / 2
+                x_max = center_x + 2 * block_space + self.block_width / 2
                 
                 block_idx = 0
                 for i in range(n_rows):
                     y = row_y_positions[i]
-                    col_size = 5 - i
-                    for j in range(col_size):
-                        # if j == 0, then center of board
-                        # if j == 1, then 1 block_space to the right
-                        # if j == 2, then 1 block_space to the left
-                        # ...
-                        x = 0
-                        x += block_space * j * (1 if j % 2 == 0 else -1)
-                        x_min = min(x_min, x - self.block_width / 2)
-                        x_max = max(x_max, x + self.block_width / 2)
+                    row_size = 5 - i
+                    row_block_names = []
+                    curr_row_x_min = float('inf')
+                    curr_row_x_max = float('-inf')
+                    for j in range(row_size):
+                        x = col_x_positions[j]
+                        curr_row_x_min = min(curr_row_x_min, x - self.block_width / 2)
+                        curr_row_x_max = max(curr_row_x_max, x + self.block_width / 2)
                         # x = min_x + block_space * j
                         name, block_attrs = self.create_block_type(block_idx, pos=(x, y), name_type="Block", movable=False)
                         self.blocks[name] = block_attrs
-                        # block = block_attrs[0]
-                        #block.position = (x, y)
-                        # self.block_initial_positions[name] = (x, y)
+                        block = block_attrs[0]
+                        block.position = (x, y)
+                        self.block_initial_positions[name] = (x, y)
+                        row_block_names.append(name)
                         block_idx += 1
+                    if i % 2 == 0:
+                        prev_row_x_min = curr_row_x_min
+                        prev_row_x_max = curr_row_x_max
+                        continue
+                    shift_amount = ((prev_row_x_max - prev_row_x_min) - (curr_row_x_max - curr_row_x_min)) / 2
+                    for block_name in row_block_names:
+                        block = self.blocks[block_name][0]
+                        block.position = (block.position[0] + shift_amount, block.position[1])
+                        self.block_initial_positions[block_name] = (block.position[0], block.position[1])
+                    prev_row_x_min = curr_row_x_min
+                    prev_row_x_max = curr_row_x_max
                         
                 assert x_min > self.table_x_min
                 assert x_max < self.table_x_max
@@ -280,18 +298,23 @@ class AirHockeyBox2D:
                 puck_y = 0 - self.length / 5
                 name, puck_attrs = self.create_puck(i, min_height=self.puck_min_height, vel=(0, 0), pos=(puck_x, puck_y))
                 self.pucks[name] = puck_attrs
-                
         else:
-            if self.task != 'strike':
-                # pucks moving downwards that we want to hit directly
+            if self.task != 'strike' and self.task != 'puck_touch':
                 for i in range(self.num_pucks):
                     name, puck_attrs = self.create_puck(i, min_height=self.puck_min_height)
                     self.pucks[name] = puck_attrs
             else:
-                puck_x = 0
-                puck_y = 0 - self.length / 5
+                puck_x_low = -self.width / 2 + self.puck_radius
+                puck_x_high = self.width / 2 - self.puck_radius
+                puck_y_low = -self.length / 3
+                puck_y_high = -self.length / 5
+                puck_x = self.rng.uniform(low=puck_x_low, high=puck_x_high)
+                puck_y = self.rng.uniform(low=puck_y_low, high=puck_y_high)
                 name, puck_attrs = self.create_puck(0, min_height=self.puck_min_height, vel=(0, 0), pos=(puck_x, puck_y))
                 self.pucks[name] = puck_attrs
+                body = self.pucks[name][0]
+                body.gravityScale = 0
+                body.velocity = (0, 0)
 
             # need to take into account pucks so far since we do not want to spawn anything directly below them
             puck_x_positions = [self.pucks[pn][0].position[0] for pn in self.pucks.keys()]
@@ -303,7 +326,7 @@ class AirHockeyBox2D:
                 self.blocks[name] = block_attrs
 
         for i in range(self.num_obstacles): # could replace with arbitary polygons
-            name, obs_attrs = self.create_block_type(i, name_type = "Obstacle", angle=np.random.rand() * np.pi,
+            name, obs_attrs = self.create_block_type(i, name_type = "Obstacle", angle=self.rng.rand() * np.pi,
                                                      movable=False, color=(0, 127, 127), min_height = self.block_min_height,
                                                      bad_regions=bad_regions)
             self.obstacles[name] = obs_attrs
@@ -348,8 +371,8 @@ class AirHockeyBox2D:
             if pos is None:
                 pos = (0, -self.length / 2 + 0.01) # start at home region
             # below code is for a random position
-            # if pos is None: pos = ((np.random.rand() - 0.5) * 2 * (self.table_x_max), 
-            #                        max(min_height,-self.length / 2) + (np.random.rand() * ((min(max_height,self.length / 2)) - (max(min_height,-self.length / 2)))))
+            # if pos is None: pos = ((self.rng.rand() - 0.5) * 2 * (self.table_x_max), 
+            #                        max(min_height,-self.length / 2) + (self.rng.rand() * ((min(max_height,self.length / 2)) - (max(min_height,-self.length / 2)))))
         else:
             if pos is None: 
                 if home_paddle:
@@ -358,8 +381,8 @@ class AirHockeyBox2D:
                     pos = (0, self.length / 2 - 0.01)
                     
         if vel is None: 
-            vel = (np.random.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start,
-                   np.random.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start)
+            vel = (self.rng.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start,
+                   self.rng.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start)
         radius = self.paddle_radius
         paddle = self.world.CreateDynamicBody(
             fixtures=b2FixtureDef(
@@ -396,33 +419,33 @@ class AirHockeyBox2D:
                 if bad_regions is not None:
                     while x_pos is None:
                         for region in bad_regions:
-                            proposed_x_pos = np.random.uniform(low=-self.width / 3, high=self.width / 3)  # doesnt spawn at edges
+                            proposed_x_pos = self.rng.uniform(low=-self.width / 3, high=self.width / 3)  # doesnt spawn at edges
                             if not (proposed_x_pos > region[0] and proposed_x_pos < region[1]):
                                 x_pos = proposed_x_pos
                 else:
-                    x_pos = np.random.uniform(low=-self.width / 3, high=self.width / 3)
+                    x_pos = self.rng.uniform(low=-self.width / 3, high=self.width / 3)
                 pos = (x_pos, min(max_height, self.length / 2) - 0.01)
         else: 
             if pos is None: 
-                pos = ((np.random.rand() - 0.5) * 2 * (self.table_x_max), 
-                       max(min_height,-self.length / 2) + (np.random.rand() * ((min(max_height,self.length / 2)) - (max(min_height,-self.length / 2)))))
+                pos = ((self.rng.rand() - 0.5) * 2 * (self.table_x_max), 
+                       max(min_height,-self.length / 2) + (self.rng.rand() * ((min(max_height,self.length / 2)) - (max(min_height,-self.length / 2)))))
         # print(name, pos, min_height, max_height)
         if not self.multiagent:
             if vel is None: 
-                vel = (2 * np.random.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start,
+                vel = (2 * self.rng.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start,
                         -0.7)
                 # with 1/4th p, add x vel
-                if np.random.rand() < 0.25:
-                    # vel = (2 * np.random.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start, -1)
+                if self.rng.rand() < 0.25:
+                    # vel = (2 * self.rng.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start, -1)
                     vel = (0, -1)
                 else:
                     vel = (0, -1)
         else:
             if vel is None: 
-                vel = (np.random.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start,
-                        10 * np.random.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start)
+                vel = (self.rng.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start,
+                        10 * self.rng.rand() * (self.max_speed_start - self.min_speed_start) + self.min_speed_start)
         if radius < 0: 
-            # radius = max(1, np.random.rand() * (self.width/ 2))
+            # radius = max(1, self.rng.rand() * (self.width/ 2))
             # radius = self.width / 5.325
             radius = self.puck_radius
         puck = self.world.CreateDynamicBody(
@@ -445,30 +468,32 @@ class AirHockeyBox2D:
                           movable=True, angle=0, angular_vel=0, fixed_rotation=False, collidable=True, min_height=-30,
                           max_height=30, bad_regions=None):
         if pos is None:
-            # if pos is None: pos = ((np.random.rand() - 0.5) * 2 * (self.table_x_max), min_height + (np.random.rand() * (self.length - (min_height + self.length / 2))))
+            # if pos is None: pos = ((self.rng.rand() - 0.5) * 2 * (self.table_x_max), min_height + (self.rng.rand() * (self.length - (min_height + self.length / 2))))
             x_pos = None
             # check if x pos is in the bad region
             if bad_regions is not None:
                 while x_pos is None:
                     for region in bad_regions:
-                        proposed_x_pos = np.random.uniform(low=-self.width / 2 + self.block_width, high=self.width / 2 - self.block_width)  # doesnt spawn at edges
-                        if not (proposed_x_pos > region[0] and proposed_x_pos < region[1]):
+                        proposed_x_pos = self.rng.uniform(low=self.table_x_min + self.block_width, high=self.table_x_max - self.block_width)  # doesnt spawn at edges
+                        region_with_margin = (region[0] - self.block_width, region[1] + self.block_width)
+                        if (proposed_x_pos < region_with_margin[0] or proposed_x_pos > region_with_margin[1]):
                             x_pos = proposed_x_pos
             else:
-                x_pos = np.random.uniform(low=-self.width / 2 + self.block_width, high=self.width / 2 - self.block_width)
-            y_pos = np.random.uniform(low=self.length / 4, high=self.length - self.length / 4)
-            print('xpos', x_pos, 'ypos', y_pos)
-            print('bad regions', bad_regions)
-            print('board width', self.width)
-            print('board length', self.length)
-            print('block width', self.block_width)
+                x_pos = self.rng.uniform(low=self.table_x_min + self.block_width, high=self.table_x_max - self.block_width)
+            y_pos = self.rng.uniform(low=self.table_y_max / 4, high=self.table_y_max - self.table_y_max / 4)
+            # print('xpos', x_pos, 'ypos', y_pos)
+            # print('bad regions', bad_regions)
+            # print('min board x', self.table_x_min)
+            # print('max board x', self.table_x_max)
+            # print('min board y', self.table_y_min)
+            # print('max board y', self.table_y_max)
             
             pos = (x_pos, y_pos)
-        if vel is None: vel = ((np.random.rand() - 0.5) * 2 * (self.width),(np.random.rand() - 0.5) * 2 * (self.length))
+        if vel is None: vel = ((self.rng.rand() - 0.5) * 2 * (self.width),(self.rng.rand() - 0.5) * 2 * (self.length))
         vel = (0, 0)
         # if not dynamic: vel = np.zeros((2,))
-        if width < 0: width = max(0.75, np.random.rand() * 3)
-        if height < 0: height = max(0.5, np.random.rand())
+        if width < 0: width = max(0.75, self.rng.rand() * 3)
+        if height < 0: height = max(0.5, self.rng.rand())
         # TODO: possibly create obstacles of arbitrary shape
         height = self.block_width
         width = self.block_width
@@ -567,8 +592,24 @@ class AirHockeyBox2D:
         
         # print("velocity_before", self.paddles['paddle_ego'][0].linearVelocity)
         # print('position before', self.paddles['paddle_ego'][0].position)
+        
+        # correct blocks for t=0
+        if self.timestep == 0 and self.task == 'strike_crowd':
+            for block_name in self.blocks:
+                block = self.blocks[block_name][0]
+                x, y = self.block_initial_positions[block_name]
+                block.position = (x, y)
+                block.velocity = (0, 0)
 
         self.world.Step(self.time_per_step, 10, 10)
+        
+        # correct blocks for t=0
+        if self.timestep == 0 and self.task == 'strike_crowd':
+            for block_name in self.blocks:
+                block = self.blocks[block_name][0]
+                x, y = self.block_initial_positions[block_name]
+                block.position = (x, y)
+                block.velocity = (0, 0)
         
         # print("velocity after", self.paddles['paddle_ego'][0].linearVelocity)
         # print('position after', self.paddles['paddle_ego'][0].position)
@@ -599,6 +640,7 @@ class AirHockeyBox2D:
         self.paddles['paddle_ego'][0].position = (pos[0], pos[1])
         
         state_info = self.get_current_state()
+        self.timestep += 1
         return state_info
     
     def get_multiagent_transition(self, joint_action):

@@ -50,9 +50,13 @@ tb_log_name: air_hockey_agent
 gamma: 0.99
 seed: [0, 1, 2, 3, 4]
 n_threads: 1
+algorithm: ppo
 
 # this parameter is only used when evaluating demonstrations
 print_reward: false
+
+n_eval_eps: 30
+eval_freq: 5000
 
 # None of the below are integrated, but examples of what could be added to the config file
 # num_envs: 16
