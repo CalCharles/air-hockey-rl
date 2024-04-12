@@ -113,7 +113,7 @@ class EvalCallback(BaseCallback):
         super().__init__(verbose)
         self.eval_env = eval_env
         self.eval_freq = eval_freq
-        self.save_freq = eval_freq * 10
+        self.save_freq = eval_freq * 20 # TODO: this should be a parameter in cfg
         self.next_save = 0
         self.n_eval_eps = n_eval_eps
         self.next_eval = 0
@@ -220,7 +220,7 @@ class EvalCallback(BaseCallback):
         """
         This event is triggered before exiting the `learn()` method.
         """
-        avg_undiscounted_return, avg_success_rate, avg_max_reward, avg_min_reward = self._eval()
+        avg_undiscounted_return, avg_success_rate, avg_max_reward, avg_min_reward, _ = self._eval()
         self.logger.record("eval/ep_return", avg_undiscounted_return)
         self.logger.record("eval/success_rate", avg_success_rate)
         if avg_success_rate > self.best_success_so_far:
