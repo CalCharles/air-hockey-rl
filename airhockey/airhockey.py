@@ -538,7 +538,7 @@ class AirHockeyEnv(Env):
                 dist = np.linalg.norm(np.array(initial_pos) - np.array(current_pos))
                 max_euclidean_distance = np.linalg.norm(np.array([self.table_x_bot, self.table_y_right]) - np.array([self.table_x_top, self.table_y_left]))
                 reward += 10 * dist / max_euclidean_distance
-            success = reward > 2 and self.current_timestep > 3
+            success = reward > 1 and self.current_timestep > 3
             return reward, success
         elif self.reward_type == 'puck_vel':
             # reward for positive velocity towards the top of the board
