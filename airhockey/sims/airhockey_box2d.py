@@ -2,6 +2,7 @@ from Box2D.b2 import world
 from Box2D import (b2CircleShape, b2FixtureDef, b2LoopShape, b2PolygonShape,
                    b2_dynamicBody, b2_staticBody, b2Filter, b2Vec2)
 import numpy as np
+from airhockey.sims import AirHockeySim
 
 
 class AirHockeyBox2D:
@@ -188,7 +189,7 @@ class AirHockeyBox2D:
                     for key3, value3 in value2.items():
                         state_info[key][key2][key3] = (-value3[1], value3[0])
         return state_info
-
+    
     def get_current_state(self):
 
         state_info = {}
@@ -222,6 +223,8 @@ class AirHockeyBox2D:
         
         state_info['pucks'] = pucks_info
         return self.convert_from_box2d_coords(state_info)
+    
+    def 
 
     def create_world_objects(self):        
         self.block_initial_positions = {}
