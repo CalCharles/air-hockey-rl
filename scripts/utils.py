@@ -4,6 +4,8 @@ import cv2
 import os
 import tqdm
 from tensorboard.backend.event_processing import event_accumulator
+import matplotlib 
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import wandb
 from airhockey.renderers.render import AirHockeyRenderer

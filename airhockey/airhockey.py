@@ -170,7 +170,10 @@ class AirHockeyEnv(Env):
         self.max_reward_in_single_step = -np.inf
         self.min_reward_in_single_step = np.inf
         
-        self.puck_initial_position = state_info['pucks'][0]['position']
+        if len(state_info['pucks']) > 0:
+            self.puck_initial_position = state_info['pucks'][0]['position']
+        else:
+            self.puck_initial_position = None
         
         if not self.goal_conditioned:
             return obs, {'success': False}
