@@ -16,23 +16,24 @@ def get_robosuite_simulator_fn():
 
 class AirHockeyEnv(Env):
     def __init__(self,
-                 simulator, # box2d or robosuite
-                 simulator_params,
-                 task, 
-                 n_training_steps,
-                 wall_bumping_rew,
-                 direction_change_rew,
-                 horizontal_vel_rew,
-                 diagonal_motion_rew,
-                 stand_still_rew,
-                 terminate_on_out_of_bounds, 
-                 terminate_on_enemy_goal, 
-                 terminate_on_puck_stop,
-                 truncate_rew,
-                 goal_max_x_velocity, 
-                 goal_min_y_velocity, 
-                 goal_max_y_velocity,
-                 seed,
+                 simulator=None, # box2d or robosuite
+                 simulator_params=None,
+                 task=None, 
+                 n_training_steps=None,
+                 wall_bumping_rew=None,
+                 direction_change_rew=None,
+                 horizontal_vel_rew=None,
+                 diagonal_motion_rew=None,
+                 stand_still_rew=None,
+                 terminate_on_out_of_bounds=None, 
+                 terminate_on_enemy_goal=None, 
+                 terminate_on_puck_stop=None,
+                 terminate_on_goal_success=None,
+                 truncate_rew=None,
+                 goal_max_x_velocity=None, 
+                 goal_min_y_velocity=None, 
+                 goal_max_y_velocity=None,
+                 seed=None,
                  max_timesteps=1000):
         
         if simulator == 'box2d':
@@ -56,9 +57,11 @@ class AirHockeyEnv(Env):
         self.terminate_on_out_of_bounds = terminate_on_out_of_bounds
         self.terminate_on_enemy_goal = terminate_on_enemy_goal
         self.terminate_on_puck_stop = terminate_on_puck_stop
+        self.terminate_on_goal_success = terminate_on_goal_success
         
         # reward function
-        self.goal_conditioned = True if ('goal' in task) and not ('dense'  in task) else False
+        self.goal_conditioned = True if ('goal' in task) else False
+        self.use_her = True if ('goal' in task) and not ('dense'  in task) else False
         self.goal_radius_type = 'home'
         self.goal_min_x_velocity = -goal_max_x_velocity
         self.goal_max_x_velocity = goal_max_x_velocity
@@ -177,6 +180,7 @@ class AirHockeyEnv(Env):
         self.set_goals(self.goal_radius_type)
         obs = self.get_observation(state_info)
         
+        
         self.n_timesteps_so_far += self.current_timestep
         self.current_timestep = 0
         self.success_in_ep = False
@@ -185,17 +189,17 @@ class AirHockeyEnv(Env):
         
         self.puck_initial_position = state_info['pucks'][0]['position']
         
-        if not self.goal_conditioned:
+        if not self.use_her:
             return obs, {'success': False}
         else:
             return {"observation": obs, "desired_goal": self.get_desired_goal(), "achieved_goal": self.get_achieved_goal(state_info)}, {'success': False}
         
     def get_achieved_goal(self, state_info):
-        if self.reward_type == 'goal_position':
+        if self.reward_type == 'goal_position' or self.reward_type == 'goal_position_dense':
             # numpy array containing puck position and vel
             position = np.array(state_info['pucks'][0]['position'])
             return position.astype(float)
-        elif self.reward_type == 'goal_position_velocity':
+        elif self.reward_type == 'goal_position_velocity' or self.reward_type == 'goal_position_velocity_dense':
             position = state_info['pucks'][0]['position']
             velocity = state_info['pucks'][0]['velocity']
             return np.array([position[0], position[1], velocity[0], velocity[1]])
@@ -205,9 +209,9 @@ class AirHockeyEnv(Env):
     
     def get_desired_goal(self):
         position = self.ego_goal_pos
-        if self.reward_type == 'goal_position':
+        if self.reward_type == 'goal_position' or self.reward_type == 'goal_position_dense':
             return position.astype(float)
-        elif self.reward_type == 'goal_position_velocity':
+        elif self.reward_type == 'goal_position_velocity' or self.reward_type == 'goal_position_velocity_dense':
             velocity = self.ego_goal_vel
             return np.array([position[0], position[1], velocity[0], velocity[1]])
         else:
@@ -231,6 +235,11 @@ class AirHockeyEnv(Env):
                 reward_raw[reward_mask] = 0 # numerical stability, we will make these 0 later
                 reward = 1 / (1 + np.exp(-reward_raw * sigmoid_scale))
                 reward[reward_mask] = 0
+                
+                if 'dense' in self.reward_type:
+                    bonus = 10
+                    reward = -dist  + (bonus if dist < radius else 0)
+                    
             else:
                 # return euclidean distance between the two points
                 dist = np.linalg.norm(achieved_goal[:, :2] - desired_goal[:, :2], axis=1)
@@ -306,7 +315,13 @@ class AirHockeyEnv(Env):
             obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel, block_x_pos, block_y_pos, block_initial_x_pos, block_initial_y_pos])
             return obs
         if not self.multiagent:
-            obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
+            if 'dense' in self.reward_type:
+                
+                obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
+                obs = np.concatenate([obs, self.get_desired_goal()])
+            else:
+                obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
+                
         else:
             alt_paddle_x_pos = state_info['paddles']['paddle_alt']['position'][0]
             alt_paddle_y_pos = state_info['paddles']['paddle_alt']['position'][1]
@@ -426,10 +441,17 @@ class AirHockeyEnv(Env):
 
         puck_within_ego_goal = False
         puck_within_alt_goal = False
-
+        # print(state_info['pucks'][0]['velocity'])
         if self.goal_conditioned:
             if self.is_within_goal_region(self.ego_goal_pos, state_info['pucks'][0]['position'], self.ego_goal_radius):
-                puck_within_ego_goal = True
+                puck_velcoity_vertical = state_info['pucks'][0]['velocity'][0] < -1e-5 # numerical stability
+                # print(puck_velcoity_vertical)
+                if puck_velcoity_vertical:
+                    puck_within_ego_goal = True
+                    
+                if self.terminate_on_goal_success and puck_velcoity_vertical:
+                    terminated = True
+                    
             if multiagent:
                 if self.is_within_goal_region(self.alt_goal_pos, state_info['pucks'][0]['position'], self.alt_goal_radius):
                     puck_within_alt_goal = True
@@ -483,8 +505,11 @@ class AirHockeyEnv(Env):
             success = success.item()
             return reward, success
         elif self.reward_type == 'goal_position_dense' or self.reward_type == 'goal_position_velocity_dense':
-            reward = 69
-            success = 1
+            reward = self.compute_reward(self.get_achieved_goal(state_info), self.get_desired_goal(), {})
+            success = self.is_within_goal_region(goal_pos, state_info['pucks'][0]['position'], goal_radius) * 1.0
+            if success: 
+                print('success')
+                print(success)
             return reward, success
         elif self.reward_type == 'puck_juggle':
             reward = 0
@@ -726,7 +751,7 @@ class AirHockeyEnv(Env):
     def step(self, action):
         if not self.multiagent:
             obs, reward, is_finished, truncated, info = self.single_agent_step(action)
-            if not self.goal_conditioned:
+            if not self.use_her:
                 return obs, reward, is_finished, truncated, info
             else:
                 return {"observation": obs, "desired_goal": self.get_desired_goal(), "achieved_goal": self.get_achieved_goal(self.current_state)}, reward, is_finished, truncated, info

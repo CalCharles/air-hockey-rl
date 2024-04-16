@@ -144,12 +144,14 @@ class EvalCallback(BaseCallback):
                     frames.append(frame)
                 action, _ = self.model.predict(obs)
                 obs, rew, done, truncated, info = self.eval_env.step(action)
+                import pdb; pdb.set_trace()
                 done = done or truncated
                 undiscounted_return += rew
                 assert 'success' in info
                 assert (info['success'] == True) or (info['success'] == False)
                 if info['success'] is True:
                     success = True
+                    print('SUCECSS')
                 max_reward = info['max_reward']
                 min_reward = info['min_reward']
             avg_undiscounted_return += undiscounted_return
