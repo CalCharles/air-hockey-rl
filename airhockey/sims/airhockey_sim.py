@@ -7,17 +7,17 @@ class AirHockeySim(ABC):
         pass
 
     @abstractmethod
-    def spawn_puck(self, x, y, x_vel, y_vel, affected_by_gravity=False):
+    def spawn_puck(self, pos, vel, name, affected_by_gravity=False):
         pass
 
     @abstractmethod
-    def spawn_paddle(selfx, y, x_vel, y_vel, affected_by_gravity=False):
+    def spawn_paddle(self, pos, vel, name, affected_by_gravity=False):
         pass
 
     @abstractmethod
-    def spawn_block(selfx, y, x_vel, y_vel, affected_by_gravity=False):
+    def spawn_block(self, pos, vel, name, affected_by_gravity=False):
         pass
 
     @abstractmethod
-    def reset(self):
+    def reset(self, seed):
         pass

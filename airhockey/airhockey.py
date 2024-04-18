@@ -69,7 +69,7 @@ class AirHockeyEnv(Env):
         self.goal_max_x_velocity = goal_max_x_velocity
         self.goal_min_y_velocity = goal_min_y_velocity
         self.goal_max_y_velocity = goal_max_y_velocity
-        self.reward_type = task
+        self.task = task
         self.multiagent = self.simulator_params['num_paddles'] == 2
         self.truncate_rew = truncate_rew
         self.wall_bumping_rew = wall_bumping_rew
@@ -155,31 +155,31 @@ class AirHockeyEnv(Env):
         reach_vel_low = [-self.max_paddle_vel, -self.max_paddle_vel]
         reach_vel_high = [self.max_paddle_vel, self.max_paddle_vel]
 
-        if self.reward_type == 'move_block':
+        if self.task == 'move_block':
             low = paddle_obs_low + puck_obs_low + block_obs_low
             high = paddle_obs_high + puck_obs_high + block_obs_high
-        elif self.reward_type == 'reach':
+        elif self.task == 'reach':
             low = paddle_obs_low + reach_pos_low
             high = paddle_obs_high + reach_pos_high
-        elif self.reward_type == 'reach_vel':
+        elif self.task == 'reach_vel':
             low = paddle_obs_low + reach_pos_low + reach_vel_low
             high = paddle_obs_high + reach_pos_high + reach_vel_high
-        elif self.reward_type == 'puck_vel':
+        elif self.task == 'puck_vel':
             low = paddle_obs_low + puck_obs_low
             high = paddle_obs_high + puck_obs_high
-        elif self.reward_type == 'puck_juggle':
+        elif self.task == 'puck_juggle':
             low = paddle_obs_low + puck_obs_low
             high = paddle_obs_high + puck_obs_high
-        elif self.reward_type == 'puck_height':
+        elif self.task == 'puck_height':
             low = paddle_obs_low + puck_obs_low
             high = paddle_obs_high + puck_obs_high
-        elif self.reward_type == 'puck_touch':
+        elif self.task == 'puck_touch':
             low = paddle_obs_low + puck_obs_low
             high = paddle_obs_high + puck_obs_high
-        elif self.reward_type == 'strike':
+        elif self.task == 'strike':
             low = paddle_obs_low + puck_obs_low
             high = paddle_obs_high + puck_obs_high
-        elif self.reward_type == 'strike_crowd':
+        elif self.task == 'strike_crowd':
             low = paddle_obs_low + puck_obs_low + [block_obs_low[0], block_obs_low[1]] * self.num_blocks
             high = paddle_obs_high + puck_obs_high + [block_obs_high[0], block_obs_high[1]] * self.num_blocks
         else:
@@ -187,7 +187,7 @@ class AirHockeyEnv(Env):
         self.observation_space = self.get_obs_space(low, high)
 
         if self.goal_conditioned:
-            if self.reward_type == 'goal_position':
+            if self.task == 'goal_position':
                 goal_low = np.array([self.table_x_top, self.table_y_left])#, -self.max_paddle_vel, self.max_paddle_vel])
                 goal_high = np.array([0, self.table_y_right])#, self.max_paddle_vel, self.max_paddle_vel])
 
@@ -197,7 +197,7 @@ class AirHockeyEnv(Env):
                     achieved_goal=Box(low=goal_low, high=goal_high, shape=(2,), dtype=float)
                 ))
 
-            elif self.reward_type == 'goal_position_velocity':
+            elif self.task == 'goal_position_velocity':
                 goal_low = np.array([self.table_x_top, self.table_y_left, -self.max_puck_vel, -self.max_puck_vel])
                 goal_high = np.array([0, self.table_y_right, self.max_puck_vel, self.max_puck_vel])
                 self.observation_space = spaces.Dict(dict(
@@ -219,7 +219,9 @@ class AirHockeyEnv(Env):
         if seed is None: # determine next seed, in a deterministic manner
             seed = self.rng.randint(0, int(1e8))
         self.rng = np.random.RandomState(seed)
-        state_info = self.simulator.reset(seed)
+        sim_seed = self.rng.randint(0, int(1e8))
+        state_info = self.simulator.reset(sim_seed)
+        self.create_world_objects()
         # get initial observation
         self.set_goals(self.goal_radius_type)
         obs = self.get_observation(state_info)
@@ -234,18 +236,156 @@ class AirHockeyEnv(Env):
             self.puck_initial_position = state_info['pucks'][0]['position']
         else:
             self.puck_initial_position = None
-        
+            
         if not self.goal_conditioned:
             return obs, {'success': False}
         else:
             return {"observation": obs, "desired_goal": self.get_desired_goal(), "achieved_goal": self.get_achieved_goal(state_info)}, {'success': False}
         
+    def create_world_objects(self):
+            self.block_initial_positions = {}
+            if self.task == 'strike_crowd': # then we use predefined positions, which puck cannot spawn at
+                # let's redo puck creation, it should actually be at the edges somewhat
+                
+                center_x = self.rng.uniform(-0.15, 0.15)  # todo: determine dynamically
+                
+                # pucks moving downwards that we want to hit directly
+                for i in range(self.num_pucks):
+                    # compute the region for the blocks
+                    margin = 0.008 #self.block_width / 10
+                    # starts at center
+                    prev_row_x_min = None
+                    prev_row_x_max = None
+                    
+                    # let's spawn all the blocks
+                    # start with 5 blocks
+                    y = self.length / 4
+                    block_space = self.block_width + margin
+                    n_rows = 5
+                    row_y_positions = [y - block_space * i for i in range(5)]
+                    # 0: center_x
+                    # 1: center_x - block_space
+                    # 2: center_x + block_space
+                    # 3: center_x - 2 * block_space
+                    # 4: center_x + 2 * block_space
+                    col_x_positions = [center_x, center_x - block_space, center_x + block_space, 
+                                    center_x - 2 * block_space, center_x + 2 * block_space]  
+                    
+                    # for row 0, shift none
+                    # for row 1, shift to the right by ((prev_x_max - prev_x_min) - (curr_x_max - curr_x_min)) /2
+                    
+                    x_min = center_x - 2 * block_space - self.block_width / 2
+                    x_max = center_x + 2 * block_space + self.block_width / 2
+                    
+                    block_idx = 0
+                    for i in range(n_rows):
+                        y = row_y_positions[i]
+                        row_size = 5 - i
+                        row_block_names = []
+                        curr_row_x_min = float('inf')
+                        curr_row_x_max = float('-inf')
+                        for j in range(row_size):
+                            x = col_x_positions[j]
+                            curr_row_x_min = min(curr_row_x_min, x - self.block_width / 2)
+                            curr_row_x_max = max(curr_row_x_max, x + self.block_width / 2)
+                            # x = min_x + block_space * j
+                            name, block_attrs = self.create_block_type(block_idx, pos=(x, y), name_type="Block", movable=False)
+                            self.blocks[name] = block_attrs
+                            block = block_attrs[0]
+                            block.position = (x, y)
+                            self.block_initial_positions[name] = (x, y)
+                            row_block_names.append(name)
+                            block_idx += 1
+                        if i % 2 == 0:
+                            prev_row_x_min = curr_row_x_min
+                            prev_row_x_max = curr_row_x_max
+                            continue
+                        shift_amount = ((prev_row_x_max - prev_row_x_min) - (curr_row_x_max - curr_row_x_min)) / 2
+                        for block_name in row_block_names:
+                            block = self.blocks[block_name][0]
+                            block.position = (block.position[0] + shift_amount, block.position[1])
+                            self.block_initial_positions[block_name] = (block.position[0], block.position[1])
+                        prev_row_x_min = curr_row_x_min
+                        prev_row_x_max = curr_row_x_max
+                            
+                    assert x_min > self.table_x_min
+                    assert x_max < self.table_x_max
+                    # clearance space
+                    x_min -= self.block_width
+                    x_max += self.block_width
+                    puck_x = 0
+                    puck_y = 0 - self.length / 5
+                    name, puck_attrs = self.create_puck(i, min_height=self.puck_min_height, vel=(0, 0), pos=(puck_x, puck_y))
+                    self.pucks[name] = puck_attrs
+            else:
+                if self.task != 'strike' and self.task != 'puck_touch':
+                    for i in range(self.num_pucks):
+                        name, puck_attrs = self.create_puck(i, min_height=self.puck_min_height)
+                        self.pucks[name] = puck_attrs
+                else:
+                    puck_x_low = -self.width / 2 + self.puck_radius
+                    puck_x_high = self.width / 2 - self.puck_radius
+                    puck_y_low = -self.length / 3
+                    puck_y_high = -self.length / 5
+                    puck_x = self.rng.uniform(low=puck_x_low, high=puck_x_high)
+                    puck_y = self.rng.uniform(low=puck_y_low, high=puck_y_high)
+                    name, puck_attrs = self.create_puck(0, min_height=self.puck_min_height, vel=(0, 0), pos=(puck_x, puck_y))
+                    self.pucks[name] = puck_attrs
+                    body = self.pucks[name][0]
+                    body.gravityScale = 0
+                    body.velocity = (0, 0)
+
+                # need to take into account pucks so far since we do not want to spawn anything directly below them
+                puck_x_positions = [self.pucks[pn][0].position[0] for pn in self.pucks.keys()]
+                bad_regions = [(x - self.puck_radius, x + self.puck_radius) for x in puck_x_positions]
+                
+                for i in range(self.num_blocks):
+                    name, block_attrs = self.create_block_type(i, name_type="Block", movable=False, min_height=self.block_min_height,
+                                                            bad_regions=bad_regions)
+                    self.blocks[name] = block_attrs
+
+            for i in range(self.num_obstacles): # could replace with arbitary polygons
+                name, obs_attrs = self.create_block_type(i, name_type = "Obstacle", angle=self.rng.rand() * np.pi,
+                                                        movable=False, color=(0, 127, 127), min_height = self.block_min_height,
+                                                        bad_regions=bad_regions)
+                self.obstacles[name] = obs_attrs
+
+            for i in range(self.num_targets):
+                name, target_attrs = self.create_block_type(i, name_type = "Target", color=(255, 255, 0),
+                                                            bad_regions=bad_regions)
+                self.targets[name] = target_attrs
+            
+            name, paddle_attrs = self.create_paddle(0, name="paddle_ego", color=(0, 255, 0))
+            self.paddles[name] = paddle_attrs
+
+            if self.multiagent:
+                name_alt, paddle_alt_attrs = self.create_paddle(i=i, name="paddle_alt", color=(0, 255, 0), home_paddle=False)
+                self.paddles[name_alt] = paddle_alt_attrs
+
+            # names and object dict
+            self.puck_names = list(self.pucks.keys())
+            self.puck_names.sort()
+            self.paddle_names = list(self.paddles.keys())
+            self.block_names = list(self.blocks.keys())
+            self.block_names.sort()
+            self.obstacle_names = list(self.obstacles.keys())
+            self.obstacle_names.sort()
+            self.target_names = list(self.targets.keys())
+            self.target_names.sort()
+            self.object_dict = {**{name: self.pucks[name][0] for name in self.pucks.keys()},
+                                **{name: self.paddles[name][0] for name in self.paddles.keys()},
+                                **{name: self.blocks[name][0] for name in self.blocks.keys()},
+                                **{name: self.targets[name][0] for name in self.targets.keys()},
+                                **{name: self.obstacles[name][0] for name in self.obstacles.keys()},
+                                }
+
+        
     def get_achieved_goal(self, state_info):
-        if self.reward_type == 'goal_position':
+        if self.task == 'goal_position':
             # numpy array containing puck position and vel
             position = np.array(state_info['pucks'][0]['position'])
             return position.astype(float)
-        elif self.reward_type == 'goal_position_velocity':
+        elif self.task == 'goal_position_velocity':
             position = state_info['pucks'][0]['position']
             velocity = state_info['pucks'][0]['velocity']
             return np.array([position[0], position[1], velocity[0], velocity[1]])
@@ -255,9 +395,9 @@ class AirHockeyEnv(Env):
     
     def get_desired_goal(self):
         position = self.ego_goal_pos
-        if self.reward_type == 'goal_position':
+        if self.task == 'goal_position':
             return position.astype(float)
-        elif self.reward_type == 'goal_position_velocity':
+        elif self.task == 'goal_position_velocity':
             velocity = self.ego_goal_vel
             return np.array([position[0], position[1], velocity[0], velocity[1]])
         else:
@@ -332,12 +472,12 @@ class AirHockeyEnv(Env):
         ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
         ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
         
-        if self.reward_type == 'reach' or self.reward_type == 'reach_vel':
-            if self.reward_type == 'reach':
+        if self.task == 'reach' or self.task == 'reach_vel':
+            if self.task == 'reach':
                 goal_pos = self.reach_goal_pos
                 obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, goal_pos[0], goal_pos[1]])
                 return obs
-            elif self.reward_type == 'reach_vel':
+            elif self.task == 'reach_vel':
                 goal_pos = self.reach_goal_pos
                 goal_vel = self.reach_goal_vel
                 obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, goal_pos[0], goal_pos[1], goal_vel[0], goal_vel[1]])
@@ -348,7 +488,7 @@ class AirHockeyEnv(Env):
             puck_x_vel = state_info['pucks'][0]['velocity'][0]
             puck_y_vel = state_info['pucks'][0]['velocity'][1]       
 
-        if self.reward_type == 'move_block':
+        if self.task == 'move_block':
             block_x_pos = state_info['blocks'][0]['current_position'][0]
             block_y_pos = state_info['blocks'][0]['current_position'][1]
             block_initial_x_pos = state_info['blocks'][0]['initial_position'][0]
@@ -370,7 +510,7 @@ class AirHockeyEnv(Env):
     
     def set_goals(self, goal_radius_type, ego_goal_pos=None, alt_goal_pos=None, goal_set=None):
         self.goal_set = goal_set
-        if self.reward_type == 'reach':
+        if self.task == 'reach':
             # sample goal position
             min_y = self.table_y_left
             max_y = self.table_y_right
@@ -378,7 +518,7 @@ class AirHockeyEnv(Env):
             max_x = self.table_x_bot
             goal_position = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
             self.reach_goal_pos = goal_position
-        elif self.reward_type == 'reach_vel':
+        elif self.task == 'reach_vel':
             # sample goal position
             min_y = self.table_y_left + 2 * self.paddle_radius # Not too close to the wall
             max_y = self.table_y_right - 2 * self.paddle_radius # Not too close to the wall
@@ -455,7 +595,7 @@ class AirHockeyEnv(Env):
         bottom_center_point = np.array([self.table_x_bot, 0])
         top_center_point = np.array([self.table_x_top, 0])
         
-        if 'reach' not in self.reward_type:
+        if 'reach' not in self.task:
             puck_within_home = self.is_within_home_region(bottom_center_point, state_info['pucks'][0]['position'])
             puck_within_alt_home = self.is_within_home_region(top_center_point, state_info['pucks'][0]['position'])
         else:
@@ -520,19 +660,19 @@ class AirHockeyEnv(Env):
     def get_base_reward(self, state_info, hit_a_puck, puck_within_home, 
                        puck_within_alt_home, puck_within_goal,
                        goal_pos, goal_radius):
-        if self.reward_type == 'goal_discrete':
+        if self.task == 'goal_discrete':
             reward = self.get_goal_region_reward(goal_pos, state_info['pucks'][0]['position'], 
                                                  goal_radius, discrete=True)
             success = reward == 1
             return reward, success
-        elif self.reward_type == 'goal_position' or self.reward_type == 'goal_position_velocity':
+        elif self.task == 'goal_position' or self.task == 'goal_position_velocity':
             
             reward = self.compute_reward(self.get_achieved_goal(state_info), self.get_desired_goal(), {})
             success = reward > 0.0
             # numpy bool to bool
             success = success.item()
             return reward, success
-        elif self.reward_type == 'puck_juggle':
+        elif self.task == 'puck_juggle':
             reward = 0
             x_pos = state_info['pucks'][0]['position'][0]
             x_higher = self.table_x_top
@@ -543,7 +683,7 @@ class AirHockeyEnv(Env):
                 reward -= 1
             success = reward > 0 and self.current_timestep > 50
             return reward, success
-        elif self.reward_type == 'puck_height':
+        elif self.task == 'puck_height':
             reward = -state_info['pucks'][0]['position'][0]
             # min acceptable reward is 0 height and above
             reward = max(reward, 0)
@@ -554,7 +694,7 @@ class AirHockeyEnv(Env):
             reward = (reward - min_rew) / (max_rew - min_rew)
             success = reward > 0.5 and self.current_timestep > 25
             return reward, success
-        elif self.reward_type == 'multipuck_juggle':
+        elif self.task == 'multipuck_juggle':
             reward = 0
             pos_rew = 15
             for puck in state_info['pucks']:
@@ -567,7 +707,7 @@ class AirHockeyEnv(Env):
                     reward -= 1
             success = reward >= pos_rew and self.current_timestep > 50
             return reward, success
-        elif self.reward_type == 'strike':
+        elif self.task == 'strike':
             # reward for velocity
             x_vel = state_info['pucks'][0]['velocity'][0]
             y_vel = state_info['pucks'][0]['velocity'][1]
@@ -589,7 +729,7 @@ class AirHockeyEnv(Env):
             if reward > 0:
                 reward *= 10
             return reward, success
-        elif self.reward_type == 'strike_crowd':
+        elif self.task == 'strike_crowd':
             # check how much blocks deviate from initial position
             reward = 0.0
             for block in state_info['blocks']:
@@ -600,7 +740,7 @@ class AirHockeyEnv(Env):
                 reward += 10 * dist / max_euclidean_distance
             success = reward > 1 and self.current_timestep > 3
             return reward, success
-        elif self.reward_type == 'puck_vel':
+        elif self.task == 'puck_vel':
             # reward for positive velocity towards the top of the board
             reward = -state_info['pucks'][0]['velocity'][0]
             max_rew = 2 # estimated max vel
@@ -611,7 +751,7 @@ class AirHockeyEnv(Env):
             reward = (reward - min_rew) / (max_rew - min_rew)
             success = reward > 0.5 and self.current_timestep > 25
             return reward, success
-        elif self.reward_type == 'puck_catch':
+        elif self.task == 'puck_catch':
             # reward for getting close to the puck, but make sure not to displace it
             puck_pos = state_info['pucks'][0]['position']
             paddle_pos = state_info['paddles']['paddle_ego']['position']
@@ -622,7 +762,7 @@ class AirHockeyEnv(Env):
             reward = max(reward, 0)
             success = reward >= 0.9 and self.current_timestep > 75
             return reward, success
-        elif self.reward_type == 'puck_touch':
+        elif self.task == 'puck_touch':
             # reward for getting close to the puck, but make sure not to displace it
             puck_pos = state_info['pucks'][0]['position']
             paddle_pos = state_info['paddles']['paddle_ego']['position']
@@ -643,7 +783,7 @@ class AirHockeyEnv(Env):
             if reward > 0:
                 reward *= 20 # make it more significant
             return reward, success
-        elif self.reward_type == 'reach':
+        elif self.task == 'reach':
             # reward for getting close to target location
             paddle_position = state_info['paddles']['paddle_ego']['position']
             goal_position = self.reach_goal_pos
@@ -653,7 +793,7 @@ class AirHockeyEnv(Env):
             reward = 1 - (dist / max_euclidean_distance)
             success = reward >= 0.9
             return reward, success.item()
-        elif self.reward_type == 'reach_vel':
+        elif self.task == 'reach_vel':
             # reward for getting close to target location
             paddle_position = state_info['paddles']['paddle_ego']['position']
             goal_position = self.reach_goal_pos
@@ -691,7 +831,7 @@ class AirHockeyEnv(Env):
             
             success = pos_reward >= 0.9 and vel_reward >= 0.8 # a little easier for both since it's harder to do both in general
             return 0.5 * pos_reward + 0.5 * vel_reward, success.item()
-        elif self.reward_type == 'puck_reach':
+        elif self.task == 'puck_reach':
             puck_pos = state_info['pucks'][0]['position']
             paddle_pos = state_info['paddles']['paddle_ego']['position']
             dist = np.linalg.norm(np.array(puck_pos) - np.array(paddle_pos))
@@ -701,15 +841,15 @@ class AirHockeyEnv(Env):
                 reward = 0
             success = reward == 1
             return reward, success
-        elif self.reward_type == 'puck_touch':
+        elif self.task == 'puck_touch':
             reward = 1 if hit_a_puck else 0
             success = reward == 1
             return reward, success
-        elif self.reward_type == 'alt_home':
+        elif self.task == 'alt_home':
             reward = 1 if puck_within_alt_home else 0
             success = reward == 1
             return reward, success
-        elif self.reward_type == 'move_block':
+        elif self.task == 'move_block':
             # also reward hitting puck! some shaping here :)
             vel_reward = -state_info['pucks'][0]['velocity'][0]
             max_rew = 2 # estimated max vel
@@ -813,7 +953,7 @@ class AirHockeyEnv(Env):
         else:
             reward = self.truncate_rew
         reward += self.get_reward_shaping(next_state)
-        if self.reward_type == 'puck_reach':
+        if self.task == 'puck_reach':
             puck_reached_successfully = self.puck_reached(next_state)
             if not is_finished and puck_reached_successfully:
                 is_finished = True
