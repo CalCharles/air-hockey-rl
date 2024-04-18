@@ -33,6 +33,8 @@ class AirHockeyEnv(Env):
                  goal_max_x_velocity=None, 
                  goal_min_y_velocity=None, 
                  goal_max_y_velocity=None,
+                 goal_radius_type='home',
+                 goal_selector='stationary',
                  seed=None,
                  max_timesteps=1000):
         
@@ -62,7 +64,7 @@ class AirHockeyEnv(Env):
         # reward function
         self.goal_conditioned = True if ('goal' in task) else False
         self.use_her = True if ('goal' in task) and not ('dense'  in task) else False
-        self.goal_radius_type = 'home'
+        self.goal_radius_type = goal_radius_type
         self.goal_min_x_velocity = -goal_max_x_velocity
         self.goal_max_x_velocity = goal_max_x_velocity
         self.goal_min_y_velocity = goal_min_y_velocity
@@ -88,6 +90,7 @@ class AirHockeyEnv(Env):
         self.max_paddle_vel = self.simulator.max_paddle_vel
         self.max_puck_vel = self.simulator.max_puck_vel
         self.goal_set = None
+        self.goal_selector = goal_selector
         self.initialize_spaces()
         
         self.metadata = {}
@@ -372,10 +375,11 @@ class AirHockeyEnv(Env):
                 if self.multiagent:
                     self.alt_goal_radius = alt_goal_radius
             elif goal_radius_type == 'home':
-                self.ego_goal_radius = 0.16 * self.width
+                self.ego_goal_radius =  0.16 * self.width
                 if self.multiagent:
                     self.alt_goal_radius = 0.16 * self.width
-            if ego_goal_pos is None and goal_set is None:
+                    
+            if ego_goal_pos is None and self.goal_set is None:
                 min_y = self.table_y_left + self.ego_goal_radius
                 max_y = self.table_y_right - self.ego_goal_radius
                 max_x = 0 - self.ego_goal_radius
@@ -390,10 +394,15 @@ class AirHockeyEnv(Env):
                 
                 if self.multiagent:
                     self.alt_goal_pos = self.rng.uniform(low=(0 - self.alt_goal_radius, self.table_y_left), high=(self.table_x_bot + self.alt_goal_radius, self.table_y_right))
-            else:
-                self.ego_goal_pos = ego_goal_pos if self.goal_set is None else self.goal_set[0]
-                if self.multiagent:
-                    self.alt_goal_pos = alt_goal_pos
+
+            if self.goal_selector == 'dynamic':
+                # self.ego_goal_pos = ego_goal_pos if self.goal_set is None else self.goal_set[0]
+                self.ego_goal_radius  = 0.2
+            # elif self.goal_radius_type == 'dynamic':
+            #     self.ego_goal_radius = 
+
+            #     if self.multiagent:
+            #         self.alt_goal_pos = alt_goal_pos
         else:
             self.ego_goal_pos = None
             self.ego_goal_radius = None
@@ -450,7 +459,7 @@ class AirHockeyEnv(Env):
                     puck_within_ego_goal = True
                     
                 if self.terminate_on_goal_success and puck_velcoity_vertical:
-                    terminated = True
+                    truncated = True
                     
             if multiagent:
                 if self.is_within_goal_region(self.alt_goal_pos, state_info['pucks'][0]['position'], self.alt_goal_radius):
@@ -506,10 +515,10 @@ class AirHockeyEnv(Env):
             return reward, success
         elif self.reward_type == 'goal_position_dense' or self.reward_type == 'goal_position_velocity_dense':
             reward = self.compute_reward(self.get_achieved_goal(state_info), self.get_desired_goal(), {})
-            success = self.is_within_goal_region(goal_pos, state_info['pucks'][0]['position'], goal_radius) * 1.0
+            success = self.is_within_goal_region(goal_pos, state_info['pucks'][0]['position'], goal_radius)
             if success: 
-                print('success')
-                print(success)
+                # import pdb; pdb.set_trace()
+                pass
             return reward, success
         elif self.reward_type == 'puck_juggle':
             reward = 0

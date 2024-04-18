@@ -120,6 +120,8 @@ class EvalCallback(BaseCallback):
         self.best_success_so_far = 0.0
         self.log_dir = log_dir
         self.renderer = AirHockeyRenderer(eval_env)
+        self.classifier_acc = None
+        self.goal_predictions = None
     
     def _eval(self, include_frames=False):
         avg_undiscounted_return = 0.0
@@ -144,26 +146,28 @@ class EvalCallback(BaseCallback):
                     frames.append(frame)
                 action, _ = self.model.predict(obs)
                 obs, rew, done, truncated, info = self.eval_env.step(action)
-                import pdb; pdb.set_trace()
                 done = done or truncated
                 undiscounted_return += rew
                 assert 'success' in info
                 assert (info['success'] == True) or (info['success'] == False)
-                if info['success'] is True:
+                if info['success'] is True or info['success'] > 0:
                     success = True
-                    print('SUCECSS')
+                    # print('SUCECSS')
                 max_reward = info['max_reward']
                 min_reward = info['min_reward']
             avg_undiscounted_return += undiscounted_return
-            avg_success_rate += 1.0 if success else 0.0
+            # avg_success_rate += 1.0 if success  else 0.0
+            avg_success_rate += success
             avg_max_reward += max_reward
             avg_min_reward += min_reward
         avg_undiscounted_return /= self.n_eval_eps
         avg_success_rate /= self.n_eval_eps
+        # import pdb; pdb.set_trace()
+        # print('succes rate', avg_success_rate)
         avg_max_reward /= self.n_eval_eps
         avg_min_reward /= self.n_eval_eps
         return avg_undiscounted_return, avg_success_rate, avg_max_reward, avg_min_reward, frames
-
+    
     def _on_rollout_start(self) -> None:
         """
         A rollout is the collection of environment interaction
@@ -182,6 +186,8 @@ class EvalCallback(BaseCallback):
             self.logger.record("eval/best_success_rate", self.best_success_so_far)
             self.logger.record("eval/max_reward", avg_max_reward)
             self.logger.record("eval/min_reward", avg_min_reward)
+            if self.classifier_acc is not None:
+                self.logger.record("eval/classifier_acc", self.classifier_acc)
             self.next_eval += self.eval_freq
             
         if save_progress:
@@ -200,6 +206,8 @@ class EvalCallback(BaseCallback):
             model_fp = os.path.join(progress_dir, 'model.zip')
             self.model.save(model_fp)
             self.next_save += self.save_freq
+            if self.goal_predictions is not None:
+                plt.imsave( os.path.join(progress_dir, 'goal_predictions.png'), self.goal_predictions)
 
     def _on_step(self) -> bool:
         """
