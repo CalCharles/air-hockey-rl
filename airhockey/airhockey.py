@@ -92,7 +92,7 @@ class AirHockeyEnv(Env):
         self.goal_set = None
         self.goal_selector = goal_selector
         self.initialize_spaces()
-        
+        self.falling_time = 25
         self.metadata = {}
         self.reset()
 
@@ -240,7 +240,7 @@ class AirHockeyEnv(Env):
                 reward[reward_mask] = 0
                 
                 if 'dense' in self.reward_type:
-                    bonus = 10
+                    bonus = 10 if self.current_timestep > self.falling_time else 0 # this prevents the falling initiliazwed puck from triggering a success
                     reward = -dist  + (bonus if dist < radius else 0)
                     
             else:
@@ -397,7 +397,7 @@ class AirHockeyEnv(Env):
 
             if self.goal_selector == 'dynamic':
                 # self.ego_goal_pos = ego_goal_pos if self.goal_set is None else self.goal_set[0]
-                self.ego_goal_radius  = 0.2
+                self.ego_goal_radius  = 0.16
             # elif self.goal_radius_type == 'dynamic':
             #     self.ego_goal_radius = 
 
@@ -458,8 +458,9 @@ class AirHockeyEnv(Env):
                 if puck_velcoity_vertical:
                     puck_within_ego_goal = True
                     
-                if self.terminate_on_goal_success and puck_velcoity_vertical:
-                    truncated = True
+                if self.terminate_on_goal_success and self.current_timestep > self.falling_time:
+                    terminated = True
+                    
                     
             if multiagent:
                 if self.is_within_goal_region(self.alt_goal_pos, state_info['pucks'][0]['position'], self.alt_goal_radius):
@@ -515,7 +516,8 @@ class AirHockeyEnv(Env):
             return reward, success
         elif self.reward_type == 'goal_position_dense' or self.reward_type == 'goal_position_velocity_dense':
             reward = self.compute_reward(self.get_achieved_goal(state_info), self.get_desired_goal(), {})
-            success = self.is_within_goal_region(goal_pos, state_info['pucks'][0]['position'], goal_radius)
+            # success = self.is_within_goal_region(goal_pos, state_info['pucks'][0]['position'], goal_radius)
+            success = reward > 0.0
             if success: 
                 # import pdb; pdb.set_trace()
                 pass
@@ -801,7 +803,7 @@ class AirHockeyEnv(Env):
         
         info['max_reward'] = self.max_reward_in_single_step
         info['min_reward'] = self.min_reward_in_single_step
-
+        info['ego_goal'] = self.ego_goal_pos
         self.current_timestep += 1
         
         obs = self.get_observation(next_state)

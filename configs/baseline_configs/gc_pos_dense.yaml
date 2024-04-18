@@ -30,9 +30,9 @@ air_hockey:
   goal_min_y_velocity: 1
   goal_max_y_velocity: 5
 
-  terminate_on_out_of_bounds: False
-  terminate_on_enemy_goal: False
-  terminate_on_puck_stop: False
+  terminate_on_out_of_bounds: True
+  terminate_on_enemy_goal: True
+  terminate_on_puck_stop: True
   terminate_on_goal_success: true
   goal_selector: 'dynamic'
   truncate_rew: -1
