@@ -247,97 +247,95 @@ class AirHockeyEnv(Env):
             if self.task == 'strike_crowd': # then we use predefined positions, which puck cannot spawn at
                 # let's redo puck creation, it should actually be at the edges somewhat
                 
-                center_x = self.rng.uniform(-0.15, 0.15)  # todo: determine dynamically
+                center_y = self.rng.uniform(-0.15, 0.15)  # todo: determine dynamically
                 
                 # pucks moving downwards that we want to hit directly
                 for i in range(self.num_pucks):
                     # compute the region for the blocks
                     margin = 0.008 #self.block_width / 10
                     # starts at center
-                    prev_row_x_min = None
-                    prev_row_x_max = None
+                    prev_row_y_min = None
+                    prev_row_y_max = None
                     
                     # let's spawn all the blocks
                     # start with 5 blocks
-                    y = self.length / 4
+                    x = self.length / 4
                     block_space = self.block_width + margin
                     n_rows = 5
-                    row_y_positions = [y - block_space * i for i in range(5)]
+                    row_x_positions = [x - block_space * i for i in range(5)]
                     # 0: center_x
                     # 1: center_x - block_space
                     # 2: center_x + block_space
                     # 3: center_x - 2 * block_space
                     # 4: center_x + 2 * block_space
-                    col_x_positions = [center_x, center_x - block_space, center_x + block_space, 
-                                    center_x - 2 * block_space, center_x + 2 * block_space]  
+                    col_y_positions = [center_y, center_y - block_space, center_y + block_space, 
+                                    center_y - 2 * block_space, center_y + 2 * block_space]  
                     
                     # for row 0, shift none
                     # for row 1, shift to the right by ((prev_x_max - prev_x_min) - (curr_x_max - curr_x_min)) /2
                     
-                    x_min = center_x - 2 * block_space - self.block_width / 2
-                    x_max = center_x + 2 * block_space + self.block_width / 2
+                    y_min = center_y - 2 * block_space - self.block_width / 2
+                    y_max = center_y + 2 * block_space + self.block_width / 2
                     
                     block_idx = 0
                     for i in range(n_rows):
-                        y = row_y_positions[i]
+                        x = row_x_positions[i]
                         row_size = 5 - i
                         row_block_names = []
-                        curr_row_x_min = float('inf')
-                        curr_row_x_max = float('-inf')
+                        curr_row_y_min = float('inf')
+                        curr_row_y_max = float('-inf')
+                        block_positions = []
                         for j in range(row_size):
-                            x = col_x_positions[j]
-                            curr_row_x_min = min(curr_row_x_min, x - self.block_width / 2)
-                            curr_row_x_max = max(curr_row_x_max, x + self.block_width / 2)
+                            y = col_y_positions[j]
+                            curr_row_y_min = min(curr_row_y_min, y - self.block_width / 2)
+                            curr_row_y_max = max(curr_row_y_max, y + self.block_width / 2)
                             # x = min_x + block_space * j
-                            name, block_attrs = self.create_block_type(block_idx, pos=(x, y), name_type="Block", movable=False)
-                            self.blocks[name] = block_attrs
-                            block = block_attrs[0]
-                            block.position = (x, y)
-                            self.block_initial_positions[name] = (x, y)
-                            row_block_names.append(name)
+                            block_positions.append((x, y))
                             block_idx += 1
                         if i % 2 == 0:
-                            prev_row_x_min = curr_row_x_min
-                            prev_row_x_max = curr_row_x_max
+                            prev_row_y_min = curr_row_y_min
+                            prev_row_y_max = curr_row_y_max
                             continue
-                        shift_amount = ((prev_row_x_max - prev_row_x_min) - (curr_row_x_max - curr_row_x_min)) / 2
+                        shift_amount = ((prev_row_y_max - prev_row_y_min) - (curr_row_y_max - curr_row_y_min)) / 2
                         for block_name in row_block_names:
                             block = self.blocks[block_name][0]
                             block.position = (block.position[0] + shift_amount, block.position[1])
                             self.block_initial_positions[block_name] = (block.position[0], block.position[1])
-                        prev_row_x_min = curr_row_x_min
-                        prev_row_x_max = curr_row_x_max
+                        prev_row_y_min = curr_row_y_min
+                        prev_row_y_max = curr_row_y_max
                             
-                    assert x_min > self.table_x_min
-                    assert x_max < self.table_x_max
+                    assert y_min > self.table_y_min
+                    assert y_max < self.table_y_max
                     # clearance space
-                    x_min -= self.block_width
-                    x_max += self.block_width
-                    puck_x = 0
-                    puck_y = 0 - self.length / 5
-                    name, puck_attrs = self.create_puck(i, min_height=self.puck_min_height, vel=(0, 0), pos=(puck_x, puck_y))
-                    self.pucks[name] = puck_attrs
+                    y_min -= self.block_width
+                    y_max += self.block_width
+                    
+                    puck_x = 0 - self.length / 5
+                    puck_y = 0
+                    pos = (puck_x, puck_y)
+                    vel = (0, 0)
+                    name = 'puck_{}'.format(0)
+                    self.simulator.spawn_puck(pos, vel, name, affected_by_gravity=False)
             else:
                 if self.task != 'strike' and self.task != 'puck_touch':
-                    for i in range(self.num_pucks):
-                        name, puck_attrs = self.create_puck(i, min_height=self.puck_min_height)
-                        self.pucks[name] = puck_attrs
+                    name = 'puck_{}'.format(0)
+                    pos, vel = self.get_puck_configuration(name)
+                    self.simulator.spawn_puck(pos, vel, name)
                 else:
-                    puck_x_low = -self.width / 2 + self.puck_radius
-                    puck_x_high = self.width / 2 - self.puck_radius
-                    puck_y_low = -self.length / 3
-                    puck_y_high = -self.length / 5
+                    puck_x_low = -self.length / 3
+                    puck_x_high = -self.length / 5
+                    puck_y_low = -self.width / 2 + self.puck_radius
+                    puck_y_high = self.width / 2 - self.puck_radius
                     puck_x = self.rng.uniform(low=puck_x_low, high=puck_x_high)
                     puck_y = self.rng.uniform(low=puck_y_low, high=puck_y_high)
-                    name, puck_attrs = self.create_puck(0, min_height=self.puck_min_height, vel=(0, 0), pos=(puck_x, puck_y))
-                    self.pucks[name] = puck_attrs
-                    body = self.pucks[name][0]
-                    body.gravityScale = 0
-                    body.velocity = (0, 0)
+                    name = 'puck_{}'.format(0)
+                    pos = (puck_x, puck_y)
+                    vel = (0, 0)
+                    self.simulator.spawn_puck(pos, vel, name, affected_by_gravity=False)
 
                 # need to take into account pucks so far since we do not want to spawn anything directly below them
-                puck_x_positions = [self.pucks[pn][0].position[0] for pn in self.pucks.keys()]
-                bad_regions = [(x - self.puck_radius, x + self.puck_radius) for x in puck_x_positions]
+                puck_y_positions = [self.pucks[pn][0].position[1] for pn in self.pucks.keys()]
+                bad_regions = [(y - self.puck_radius, y + self.puck_radius) for y in puck_y_positions]
                 
                 for i in range(self.num_blocks):
                     name, block_attrs = self.create_block_type(i, name_type="Block", movable=False, min_height=self.block_min_height,
@@ -378,6 +376,23 @@ class AirHockeyEnv(Env):
                                 **{name: self.targets[name][0] for name in self.targets.keys()},
                                 **{name: self.obstacles[name][0] for name in self.obstacles.keys()},
                                 }
+            
+    def get_puck_configuration(self, name, bad_regions=None):
+        y_pos = None
+        if bad_regions is not None:
+            while y_pos is None:
+                for region in bad_regions:
+                    proposed_y_pos = self.rng.uniform(low=-self.width / 3, high=self.width / 3)  # doesnt spawn at edges
+                    if not (proposed_y_pos > region[0] and proposed_y_pos < region[1]):
+                        x_pos = proposed_y_pos
+        else:
+            y_pos = self.rng.uniform(low=-self.width / 3, high=self.width / 3)
+        pos = (self.length / 2 - 0.01, x_pos)
+        vel = (-1, 0)
+        return pos, vel
+    
+    
+        
 
         
     def get_achieved_goal(self, state_info):
