@@ -12,6 +12,7 @@ import robosuite
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import airhockey.sims.controllers
 from robosuite.controllers import load_controller_config
 from robosuite.wrappers import GymWrapper
 from torch.distributions.normal import Normal

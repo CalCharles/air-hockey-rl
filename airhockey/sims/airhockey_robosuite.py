@@ -15,6 +15,27 @@ import xmltodict
 import time
 import datetime
 
+from airhockey import ASSETS_ROOT
+import os
+
+def custom_xml_path_completion(xml_path):
+    """
+    Takes in a local xml path and returns a full path.
+        if @xml_path is absolute, do nothing
+        if @xml_path is not absolute, load xml that is shipped by the package
+
+    Args:
+        xml_path (str): local xml path
+
+    Returns:
+        str: Full (absolute) xml path
+    """
+    if xml_path.startswith("/"):
+        full_path = xml_path
+    else:
+        full_path = os.path.join(ASSETS_ROOT, xml_path)
+    return full_path
+
 class AirHockey(SingleArmEnv):
     """
     This class corresponds to the lifting task for a single robot arm.
@@ -500,8 +521,10 @@ class AirHockey(SingleArmEnv):
         table_width = sim_params['width']
         puck_radius = sim_params['puck_radius']
         puck_damping = sim_params['puck_damping']
+        
+        xml_fp = custom_xml_path_completion("arenas/air_hockey_table.xml")
 
-        with open("robosuite/models/assets/arenas/air_hockey_table.xml", "r") as file:
+        with open(xml_fp, "r") as file:
             xml_config = xmltodict.parse(file.read())
 
         # table config
