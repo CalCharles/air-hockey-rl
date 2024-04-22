@@ -1,11 +1,6 @@
 # Air Hockey Table Parameters
 air_hockey:
   simulator_params:
-    num_paddles: 1
-    num_pucks: 0
-    num_blocks: 0
-    num_obstacles: 0
-    num_targets: 0
     absorb_target: false
     length: 1.9304
     width: 0.8636
@@ -24,6 +19,11 @@ air_hockey:
     render_size: 360
 
   simulator: box2d # or robosuite
+  num_paddles: 1
+  num_pucks: 0
+  num_blocks: 0
+  num_obstacles: 0
+  num_targets: 0
   max_timesteps: 300
   # reward_type: 'goal_position_velocity'
   task: 'reach_vel'
