@@ -1,0 +1,16 @@
+# Air Hockey Table Parameters
+air_hockey:
+  num_paddles: 2
+  num_pucks: 1
+  num_blocks: 0
+  num_obstacles: 0
+  num_targets: 0
+  absorb_target: false
+  use_cue: false
+  length: 10
+  width: 5
+  force_scaling: 200
+  paddle_damping: 4
+  render_size: 360
+  max_timesteps: 1000
+  gravity: -20

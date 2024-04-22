@@ -1,0 +1,1 @@
+python train.py --cfg ../configs/baseline_configs/gcrl_pos_curriculum.yaml --wandb
