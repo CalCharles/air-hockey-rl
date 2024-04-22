@@ -67,7 +67,8 @@ class AirHockeyRenderer:
         Args:
             body_attrs (tuple): A tuple containing the body and color attributes of the circle.
         """
-        body, color = body_attrs
+        color = (0, 255, 0)
+        body = body_attrs
         for fixture in body.fixtures:
             shape = fixture.shape
             center = np.array(body.position) + np.array((self.width / 2, self.length / 2))
@@ -83,7 +84,7 @@ class AirHockeyRenderer:
             body_attrs (tuple): A tuple containing the body and color attributes of the circle.
             circle_type (str, optional): The type of circle. Defaults to 'puck'.
         """
-        body, color = body_attrs  # color is unused but kept for compatibility
+        body = body_attrs  # color is unused but kept for compatibility
         for fixture in body.fixtures:
             shape = fixture.shape
             # center = np.array(body.position) + np.array((self.width / 2, self.length / 2))
@@ -152,7 +153,8 @@ class AirHockeyRenderer:
             body_attrs (tuple): A tuple containing the body and color attributes of the circle.
             circle_type (str, optional): The type of circle. Defaults to 'puck'.
         """
-        body, color = body_attrs  # color is unused but kept for compatibility
+        color = (0, 0, 255)
+        body = body_attrs  # color is unused but kept for compatibility
         for fixture in body.fixtures:
             shape = fixture.shape
             # center = np.array(body.position) + np.array((self.width / 2, self.length / 2))
@@ -218,7 +220,8 @@ class AirHockeyRenderer:
         Args:
             body_attrs (tuple): A tuple containing the body and color attributes of the polygon.
         """
-        body, color = body_attrs
+        color = (0, 0, 0)
+        body = body_attrs
         for fixture in body.fixtures:
             shape = fixture.shape
             rotation = np.stack([body.transform.R.x_axis, body.transform.R.y_axis], axis = 1)

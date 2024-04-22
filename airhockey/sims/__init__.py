@@ -1,2 +1,1 @@
 from airhockey.sims.airhockey_box2d import AirHockeyBox2D
-from airhockey.sims.airhockey_sim import AirHockeySim

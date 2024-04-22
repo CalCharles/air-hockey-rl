@@ -1,11 +1,6 @@
 # Air Hockey Table Parameters
 air_hockey:
   simulator_params:
-    num_paddles: 1
-    num_pucks: 1
-    num_blocks: 0
-    num_obstacles: 0
-    num_targets: 0
     absorb_target: false
     length: 1.9304
     width: 0.8636
@@ -17,12 +12,18 @@ air_hockey:
     puck_damping: 0.5
     paddle_density: 2500
     puck_density: 250
+    block_density: 500
     render_size: 360
     gravity: -0.5
     max_force_timestep: 100 # max force we can apply at one timestep
     render_size: 360
 
   simulator: box2d # or robosuite
+  num_paddles: 1
+  num_pucks: 1
+  num_blocks: 0
+  num_obstacles: 0
+  num_targets: 0
   max_timesteps: 300
   # reward_type: 'goal_position_velocity'
   task: 'goal_position'
