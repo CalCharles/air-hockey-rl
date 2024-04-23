@@ -1,16 +1,6 @@
-import copy
 import os
-from collections import OrderedDict
-
-import numpy as np
-
-import robosuite.utils.transform_utils as T
 from robosuite.controllers import load_controller_config
-from airhockey.sims.controllers import custom_controller_factory
-from robosuite.models.grippers import gripper_factory
-from robosuite.robots.manipulator import Manipulator
-from robosuite.utils.buffers import DeltaBuffer, RingBuffer
-from robosuite.utils.observables import Observable, sensor
+from airhockey.sims.controllers.custom_controller_factory import custom_controller_factory
 from robosuite.robots import SingleArm
 
 
@@ -91,4 +81,4 @@ class AirHockeySingleArm(SingleArm):
         self.controller_config["ndim"] = len(self.robot_joints)
 
         # Instantiate the relevant controller
-        self.controller = controller_factory(self.controller_config["type"], self.controller_config)
+        self.controller = custom_controller_factory(self.controller_config["type"], self.controller_config)

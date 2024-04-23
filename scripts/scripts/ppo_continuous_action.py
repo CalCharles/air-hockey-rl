@@ -121,7 +121,7 @@ def make_robosuite_env(idx, capture_video, run_name, gamma, task):
         # fp = 
         # controller_config = load_controller_config(default_controller="AIR_HOCKEY_OSC_POSITION")
         config = {'env_name': 'AirHockeyRobosuite',
-            'robots': ['UR5e'], 
+            'robots': ['AirHockeyUR5e'], 
             'controller_configs': 
                     {'type': 'AIR_HOCKEY_OSC_POSITION', 
                     'interpolation': None, 
@@ -143,7 +143,7 @@ def make_robosuite_env(idx, capture_video, run_name, gamma, task):
                             'robot0_joint_vel',
                             'robot0_eef_pos',
                             'puck_pos',
-                            'puck_goal_dist'
+                            'puck_goal_dist',
                             'goal_pos',
                         ])
 

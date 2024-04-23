@@ -36,3 +36,7 @@ class RoundGripper(GripperModel):
 
     def format_action(self, action):
         return action
+    
+    @property
+    def init_qpos(self):
+        return None

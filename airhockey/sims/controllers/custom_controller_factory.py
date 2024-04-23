@@ -1,11 +1,7 @@
 """
 Set of functions that streamline controller initialization process
 """
-import json
-import os
 from copy import deepcopy
-
-import numpy as np
 
 from robosuite.controllers.interpolators.linear_interpolator import LinearInterpolator
 from robosuite.controllers.joint_pos import JointPositionController

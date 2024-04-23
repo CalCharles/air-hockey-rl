@@ -63,9 +63,7 @@ class AirHockeyTableArena(Arena):
         has_legs=True,
         xml="arenas/air_hockey_table.xml",
     ):
-        print(xml)
         arena_fp = robosuite_xml_path_completion(xml)
-        print(arena_fp)
         super().__init__(arena_fp)
         self.center_pos = self.bottom_pos + np.array([0, 0, 0.0]) + table_offset
         self.table_body = self.worldbody.find("./body[@name='table']")
