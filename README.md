@@ -1,4 +1,4 @@
-# 2D Air Hockey Simulator (Box2D Engine)
+# Air Hockey Reinforcement Learning Environment
 
 This contains an air hockey simulation environment powered by Box2D. It is fast (C++ back-end), capable of self-play, 1v1 play, and easy goal-conditioned reinforcement learning, resulting in a rich testbed for various algorithms.
 
@@ -9,6 +9,11 @@ Policy Trained for Upward Puck Velocity |  Goal-Conditioned RL
 
 ## Installation (if you also want to run training scripts):
 - `pip install -e .[train]`
+
+#### Having this issue?
+AttributeError: 'MjRenderContextOffscreen' object has no attribute 'con'
+`echo 'export MUJOCO_GL="glx"' >> ~/.bashrc`
+`source ~/.bashrc`
 
 ## How to Run
 Most of the files use a configuration file (--cfg cmd argument), but is defaulted to one from `configs/`. Please see there to tune parameters for various scripts.
