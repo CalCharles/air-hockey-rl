@@ -20,6 +20,8 @@ setup(
         'box2d-py==2.3.8',
         'tqdm',
         'h5py',
+        'xmltodict',
+        'robosuite',
     ],
     extras_require={
         'train': [

@@ -10,8 +10,8 @@ def get_box2d_simulator_fn():
     return AirHockeyBox2D
     
 def get_robosuite_simulator_fn():
-    from air_hockey_challenge_robosuite.robosuite.wrappers.gym_wrapper import GymWrapper
-    return GymWrapper
+    from airhockey.sims import AirHockeyRobosuite
+    return AirHockeyRobosuite
 
 
 class AirHockeyEnv(Env):
@@ -232,6 +232,7 @@ class AirHockeyEnv(Env):
         sim_seed = self.rng.randint(0, int(1e8))
         self.simulator.reset(sim_seed) # no point in getting state since no spawning
         self.create_world_objects()
+        self.simulator.instantiate_objects()
         state_info = self.simulator.get_current_state()
         # get initial observation
         self.set_goals(self.goal_radius_type)

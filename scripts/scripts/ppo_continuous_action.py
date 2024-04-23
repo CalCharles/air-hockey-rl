@@ -120,7 +120,7 @@ def make_robosuite_env(idx, capture_video, run_name, gamma, task):
     def thunk():
         # fp = 
         # controller_config = load_controller_config(default_controller="AIR_HOCKEY_OSC_POSITION")
-        config = {'env_name': 'AirHockey',
+        config = {'env_name': 'AirHockeyRobosuite',
             'robots': ['UR5e'], 
             'controller_configs': 
                     {'type': 'AIR_HOCKEY_OSC_POSITION', 

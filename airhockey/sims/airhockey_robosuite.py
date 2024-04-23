@@ -1,7 +1,7 @@
 import numpy as np
 import math
 from robosuite.environments.manipulation.single_arm_env import SingleArmEnv
-from robosuite.models.arenas import AirHockeyTableArena
+# from airhockey.sims import AirHockeySim
 from robosuite.models.objects import BoxObject, CylinderObject
 from robosuite.models.tasks import ManipulationTask
 from robosuite.utils.mjcf_utils import CustomMaterial
@@ -10,13 +10,16 @@ from robosuite.utils.placement_samplers import UniformRandomSampler
 import robosuite.utils.transform_utils as T
 from robosuite.utils.transform_utils import convert_quat
 from robosuite.utils.mjmod import DynamicsModder
+from robosuite.utils.mjcf_utils import xml_path_completion as robosuite_xml_path_completion
 import yaml
 import xmltodict
 import time
 import datetime
 
-from airhockey import ASSETS_ROOT
 import os
+
+import numpy as np
+from robosuite.models.arenas import Arena
 
 def custom_xml_path_completion(xml_path):
     """
@@ -30,13 +33,56 @@ def custom_xml_path_completion(xml_path):
     Returns:
         str: Full (absolute) xml path
     """
+    from airhockey import ASSETS_ROOT
     if xml_path.startswith("/"):
         full_path = xml_path
     else:
         full_path = os.path.join(ASSETS_ROOT, xml_path)
     return full_path
 
-class AirHockey(SingleArmEnv):
+
+class AirHockeyTableArena(Arena):
+    """
+    Workspace that contains an empty table.
+
+
+    Args:
+        table_full_size (3-tuple): (L,W,H) full dimensions of the table
+        table_friction (3-tuple): (sliding, torsional, rolling) friction parameters of the table
+        table_offset (3-tuple): (x,y,z) offset from center of arena when placing table.
+            Note that the z value sets the upper limit of the table
+        has_legs (bool): whether the table has legs or not
+        xml (str): xml file to load arena
+    """
+
+    def __init__(
+        self,
+        table_full_size=(0.8, 0.8, 0.05),
+        table_friction=(1, 0.005, 0.0001),
+        table_offset=(0, 0, 0.8),
+        has_legs=True,
+        xml="arenas/air_hockey_table.xml",
+    ):
+        print(xml)
+        arena_fp = robosuite_xml_path_completion(xml)
+        print(arena_fp)
+        super().__init__(arena_fp)
+        self.center_pos = self.bottom_pos + np.array([0, 0, 0.0]) + table_offset
+        self.table_body = self.worldbody.find("./body[@name='table']")
+        # self.table_collision = self.table_body.find("./geom[@name='table_collision']")
+        # self.table_visual = self.table_body.find("./geom[@name='table_visual']")
+        # self.table_top = self.table_body.find("./site[@name='table_top']")
+        
+        # print("self.floor: ", self.floor)
+        # print("self.table_body: ", self.table_body)
+        self.configure_location()
+        # pass
+
+    def configure_location(self):
+        """Configures correct locations for this arena"""
+        # print("table_body pos: ", self.table_body.get("pos"))
+
+class AirHockeyRobosuite(SingleArmEnv):
     """
     This class corresponds to the lifting task for a single robot arm.
 
@@ -237,7 +283,6 @@ class AirHockey(SingleArmEnv):
             controller_configs=controller_configs,
             mount_types="default",
             gripper_types=gripper_types,
-            initial_qpos=initial_qpos,
             initialization_noise=initialization_noise,
             use_camera_obs=use_camera_obs,
             has_renderer=has_renderer,
@@ -510,7 +555,7 @@ class AirHockey(SingleArmEnv):
         Loads an xml model, puts it in self.model
         """
         super()._load_model()
-        YAML_PATH = "test.yaml"
+        YAML_PATH = custom_xml_path_completion("test.yaml") # little hacky for now!
         
         # Load yaml model - make this an arg later
         with open(YAML_PATH, 'r') as file:
@@ -522,7 +567,7 @@ class AirHockey(SingleArmEnv):
         puck_radius = sim_params['puck_radius']
         puck_damping = sim_params['puck_damping']
         
-        xml_fp = custom_xml_path_completion("arenas/air_hockey_table.xml")
+        xml_fp = robosuite_xml_path_completion("arenas/air_hockey_table.xml")
 
         with open(xml_fp, "r") as file:
             xml_config = xmltodict.parse(file.read())
@@ -545,9 +590,9 @@ class AirHockey(SingleArmEnv):
         formatted_time = current_time.strftime('%Y%m%d_%H%M%S')
         
         # Make new filebame
-        filename = f"air_hockey_table_{formatted_time}.xml"
+        tmp_xml_fp = robosuite_xml_path_completion(f"arenas/air_hockey_table_{formatted_time}.xml")
         
-        with open("robosuite/models/assets/arenas/" + filename, 'w') as file:
+        with open(tmp_xml_fp, 'w') as file:
             file.write(xmltodict.unparse(xml_config, pretty=True))
 
         # Adjust base pose accordingly
@@ -561,8 +606,11 @@ class AirHockey(SingleArmEnv):
             table_full_size=self.table_full_size,
             table_friction=self.table_friction,
             table_offset=self.table_offset,
-            xml=f"arenas/{filename}"
+            xml=tmp_xml_fp,
         )
+        
+        # remove tmp file
+        os.remove(tmp_xml_fp)
 
         # Arena always gets set to zero origin
         mujoco_arena.set_origin([0, 0, 0])

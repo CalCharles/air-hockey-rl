@@ -2,7 +2,6 @@
 Null Gripper (if we don't want to attach gripper to robot eef).
 """
 from robosuite.models.grippers.gripper_model import GripperModel
-from airhockey import ASSETS_ROOT
 import os
 
 def custom_xml_path_completion(xml_path):
@@ -17,6 +16,7 @@ def custom_xml_path_completion(xml_path):
     Returns:
         str: Full (absolute) xml path
     """
+    from airhockey import ASSETS_ROOT
     if xml_path.startswith("/"):
         full_path = xml_path
     else:

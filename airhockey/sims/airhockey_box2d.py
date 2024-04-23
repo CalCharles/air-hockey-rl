@@ -181,6 +181,8 @@ class AirHockeyBox2D:
         
         return self.convert_from_box2d_coords(state_info)
     
+    def instantiate_objects(self):
+        pass # we don't need to do anything here
     
     def spawn_paddle(self, pos, vel, name, affected_by_gravity=False, movable=True):
         assert name == 'paddle_ego' or name == 'paddle_alt'
