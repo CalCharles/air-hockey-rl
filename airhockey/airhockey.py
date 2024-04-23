@@ -16,7 +16,7 @@ def get_robosuite_simulator_fn():
 
 class AirHockeyEnv(Env):
     def __init__(self,
-                 simulator, # box2d or robosuite
+                 simulator, # real, box2d or robosuite
                  simulator_params,
                  task, 
                  num_pucks,
@@ -38,7 +38,10 @@ class AirHockeyEnv(Env):
                  goal_min_y_velocity, 
                  goal_max_y_velocity,
                  seed,
-                 max_timesteps=1000):
+                 compute_online_rewards = True,
+                 max_timesteps=1000,
+                 mixed_reality_sim="" # box2d or robosuite
+                 ):
         
         if simulator == 'box2d':
             simulator_fn = get_box2d_simulator_fn()
@@ -46,6 +49,15 @@ class AirHockeyEnv(Env):
             simulator_fn = get_robosuite_simulator_fn()
         else:
             raise ValueError("Invalid simulator type. Must be 'box2d' or 'robosuite'.")
+
+        self.mixed_simulator = None
+        if not mixed_reality_sim:
+            if simulator == 'box2d':
+                mixed_simulator_fn = get_box2d_simulator_fn()
+            elif simulator == 'robosuite':
+                mixed_simulator_fn = get_robosuite_simulator_fn()
+
+            self.mixed_simulator = mixed_simulator_fn.from_dict(simulator_params)
 
         simulator_params['seed'] = seed
         self.simulator = simulator_fn.from_dict(simulator_params)
@@ -63,6 +75,7 @@ class AirHockeyEnv(Env):
         self.terminate_on_puck_stop = terminate_on_puck_stop
         
         # reward function
+        self.compute_online_rewards = compute_online_rewards
         self.goal_conditioned = True if 'goal' in task else False
         self.goal_radius_type = 'home'
         self.goal_min_x_velocity = -goal_max_x_velocity
@@ -231,9 +244,14 @@ class AirHockeyEnv(Env):
         self.rng = np.random.RandomState(seed)
         sim_seed = self.rng.randint(0, int(1e8))
         self.simulator.reset(sim_seed) # no point in getting state since no spawning
-        self.create_world_objects()
+        self.create_world_objects(self.simulator)
         self.simulator.instantiate_objects()
         state_info = self.simulator.get_current_state()
+        if self.mixed_simulator is not None:
+            self.create_world_objects(self.mixed_simulator)
+            self.mixed_simulator.instantiate_objects()
+
+
         # get initial observation
         self.set_goals(self.goal_radius_type)
         obs = self.get_observation(state_info)
@@ -254,7 +272,7 @@ class AirHockeyEnv(Env):
         else:
             return {"observation": obs, "desired_goal": self.get_desired_goal(), "achieved_goal": self.get_achieved_goal(state_info)}, {'success': False}
         
-    def create_world_objects(self):
+    def create_world_objects(self, simulator):
         self.block_initial_positions = {}
         if self.task == 'strike_crowd': # then we use predefined positions, which puck cannot spawn at
             # let's redo puck creation, it should actually be at the edges somewhat
@@ -309,7 +327,7 @@ class AirHockeyEnv(Env):
                         pos = (pos[0], pos[1] + shift_amount)
                         self.block_initial_positions[block_name] = pos
                         vel = (0, 0)
-                        self.simulator.spawn_block(pos, vel, block_name, affected_by_gravity=False)
+                        simulator.spawn_block(pos, vel, block_name, affected_by_gravity=False)
                     prev_row_y_min = curr_row_y_min
                     prev_row_y_max = curr_row_y_max
                         
@@ -324,11 +342,11 @@ class AirHockeyEnv(Env):
                 pos = (puck_x, puck_y)
                 vel = (0, 0)
                 name = 'puck_{}'.format(0)
-                self.simulator.spawn_puck(pos, vel, name, affected_by_gravity=False)
+                simulator.spawn_puck(pos, vel, name, affected_by_gravity=False)
         elif self.task in ['puck_vel', 'puck_height', 'puck_juggle', 'puck_catch', 'puck_reach', 'goal_position', 'goal_position_velocity']:
             name = 'puck_{}'.format(0)
             pos, vel = self.get_puck_configuration()
-            self.simulator.spawn_puck(pos, vel, name)
+            simulator.spawn_puck(pos, vel, name)
         elif self.task in ['strike', 'puck_touch']:
             puck_x_low = self.length / 5
             puck_x_high = self.length / 3
@@ -339,12 +357,12 @@ class AirHockeyEnv(Env):
             name = 'puck_{}'.format(0)
             pos = (puck_x, puck_y)
             vel = (0, 0)
-            self.simulator.spawn_puck(pos, vel, name, affected_by_gravity=False)
+            simulator.spawn_puck(pos, vel, name, affected_by_gravity=False)
         elif self.task == 'move_block':
             pucks_positions = []
             name = 'puck_{}'.format(0)
             pos, vel = self.get_puck_configuration()
-            self.simulator.spawn_puck(pos, vel, name)
+            simulator.spawn_puck(pos, vel, name)
             pucks_positions = [pos]
 
             # need to take into account pucks so far since we do not want to spawn anything directly below them
@@ -354,26 +372,26 @@ class AirHockeyEnv(Env):
             for i in range(self.num_blocks):
                 block_name = 'block_{}'.format(i)
                 pos, vel = self.get_block_configuration(bad_regions)
-                self.simulator.spawn_block(pos, vel, block_name, affected_by_gravity=False)
+                simulator.spawn_block(pos, vel, block_name, affected_by_gravity=False)
 
         # for i in range(self.num_obstacles): # could replace with arbitary polygons
         #     block_name = 'obstacle_{}'.format(i)
         #     pos, vel = self.get_block_configuration(bad_regions)
-        #     self.simulator.spawn_block(pos, vel, block_name, affected_by_gravity=False, movable=False) # note: currently movable does nothing. need to fix.
+        #     simulator.spawn_block(pos, vel, block_name, affected_by_gravity=False, movable=False) # note: currently movable does nothing. need to fix.
 
         # for i in range(self.num_targets):
         #     block_name = 'target_{}'.format(i)
         #     pos, vel = self.get_block_configuration(bad_regions)
-        #     self.simulator.spawn_block(pos, vel, block_name, affected_by_gravity=False, movable=False) # note: currently movable does nothing. need to fix.
+        #     simulator.spawn_block(pos, vel, block_name, affected_by_gravity=False, movable=False) # note: currently movable does nothing. need to fix.
         
         name = 'paddle_ego'
         pos, vel = self.get_paddle_configuration(name)
-        self.simulator.spawn_paddle(pos, vel, name)
+        simulator.spawn_paddle(pos, vel, name)
 
         if self.multiagent:
             name = 'paddle_alt'
             pos, vel = self.get_paddle_configuration(name)
-            self.simulator.spawn_paddle(pos, vel, name)
+            simulator.spawn_paddle(pos, vel, name)
 
         # # names and object dict
         # self.puck_names = list(self.pucks.keys())
@@ -994,6 +1012,7 @@ class AirHockeyEnv(Env):
 
     def single_agent_step(self, action) -> tuple[np.ndarray, float, bool, bool, dict]:
         next_state = self.simulator.get_transition(action)
+        if self.mixed_simulator: next_state = self.set_mixed_state(next_state)
         if self.current_timestep > 0:
             self.old_state = self.current_state
         self.current_state = next_state
@@ -1001,33 +1020,42 @@ class AirHockeyEnv(Env):
         info = {}
         info['success'] = success
 
-        hit_a_puck = False
-        is_finished, truncated, puck_within_home, puck_within_alt_home, puck_within_goal, _ = self.has_finished(next_state)
-        if not truncated:
-            reward, success = self.get_base_reward(next_state, hit_a_puck, puck_within_home, 
-                                     puck_within_alt_home, puck_within_goal,
-                                     self.ego_goal_pos, self.ego_goal_radius)
-            if not info['success'] and success:
-                info['success'] = success
-                self.success_in_ep = success
+        if self.compute_online_rewards:
+            hit_a_puck = False
+            is_finished, truncated, puck_within_home, puck_within_alt_home, puck_within_goal, _ = self.has_finished(next_state)
+            if not truncated:
+                reward, success = self.get_base_reward(next_state, hit_a_puck, puck_within_home, 
+                                        puck_within_alt_home, puck_within_goal,
+                                        self.ego_goal_pos, self.ego_goal_radius)
+                if not info['success'] and success:
+                    info['success'] = success
+                    self.success_in_ep = success
+            else:
+                reward = self.truncate_rew
+            reward += self.get_reward_shaping(next_state)
+            if self.task == 'puck_reach':
+                puck_reached_successfully = self.puck_reached(next_state)
+                if not is_finished and puck_reached_successfully:
+                    is_finished = True
+            
+            self.max_reward_in_single_step = max(self.max_reward_in_single_step, reward)
+            self.min_reward_in_single_step = min(self.min_reward_in_single_step, reward)        
+            
+            info['max_reward'] = self.max_reward_in_single_step
+            info['min_reward'] = self.min_reward_in_single_step
         else:
-            reward = self.truncate_rew
-        reward += self.get_reward_shaping(next_state)
-        if self.task == 'puck_reach':
-            puck_reached_successfully = self.puck_reached(next_state)
-            if not is_finished and puck_reached_successfully:
-                is_finished = True
-        
-        self.max_reward_in_single_step = max(self.max_reward_in_single_step, reward)
-        self.min_reward_in_single_step = min(self.min_reward_in_single_step, reward)        
-        
-        info['max_reward'] = self.max_reward_in_single_step
-        info['min_reward'] = self.min_reward_in_single_step
+            reward, is_finished, truncated = 0.0, False, False
 
         self.current_timestep += 1
         
         obs = self.get_observation(next_state)
         return obs, reward, is_finished, truncated, info
+    
+    def compute_state_reward(self, action, next_state):
+        raise NotImplementedError("should combine has_finished and get_base_reward to compute reward, called in single_agent_step and any offline reward computation")
+
+    def set_mixed_state(self, next_state):
+        raise NotImplementedError("Should set the mixed_simulator state using the simulator state")
     
     def multi_step(self, joint_action):
         raise NotImplementedError("Multi-agent step function not implemented yet. But shouldn't take much work, it is mostly copy-pasting. But need to do specific rewards per player")
