@@ -240,7 +240,6 @@ class AirHockeyOperationalSpaceController(OperationalSpaceController):
 
         # Call super to avoid compatibility issues
         super().run_controller()
-
         self.update()
 
         msg = dict()

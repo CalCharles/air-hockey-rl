@@ -6,6 +6,7 @@ import airhockey.sims # this registers the air hockey robosuite env
 import airhockey.sims.controllers # this registers the custom controllers!
 import airhockey.sims.robots # this registers the custom robot!
 import airhockey.sims.grippers # this registers the roundgripper!
+import airhockey.sims.utils.RobosuiteTransforms # this registers the transformations utility!
 
 ASSETS_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../assets"))
 
