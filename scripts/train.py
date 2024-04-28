@@ -31,7 +31,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
     air_hockey_params_cp = air_hockey_params.copy()
     air_hockey_params_cp['seed'] = 42
     air_hockey_params_cp['max_timesteps'] = 200
-    eval_env = AirHockeyEnv.from_dict(air_hockey_params_cp)
+    eval_env = AirHockeyEnv(air_hockey_params_cp)
     
     if type(air_hockey_cfg['seed']) is not list:
         seeds = [int(air_hockey_cfg['seed'])]
@@ -75,7 +75,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
                     air_hockey_params['seed'] = curr_seed
                     # Note: With this seed, an individual rng is created for each env
                     # It does not affect the global rng!
-                    env = AirHockeyEnv.from_dict(air_hockey_params)
+                    env = AirHockeyEnv(air_hockey_params)
                     return Monitor(env)
                 return _init()
 
@@ -83,7 +83,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
             env = SubprocVecEnv([get_airhockey_env_for_parallel for _ in range(n_threads)])
             # env = VecNormalize(env) # probably something to try when tuning
         else:
-            env = AirHockeyEnv.from_dict(air_hockey_params)
+            env = AirHockeyEnv(air_hockey_params)
             def wrap_env(env):
                 wrapped_env = Monitor(env) # needed for extracting eprewmean and eplenmean
                 wrapped_env = DummyVecEnv([lambda: wrapped_env]) # Needed for all environments (e.g. used for multi-processing)
@@ -170,7 +170,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
         
         air_hockey_params = air_hockey_cfg['air_hockey']
         air_hockey_params['n_training_steps'] = air_hockey_cfg['n_training_steps']
-        env_test = AirHockeyEnv.from_dict(air_hockey_params)
+        env_test = AirHockeyEnv(air_hockey_params)
         renderer = AirHockeyRenderer(env_test)
         
         env_test = DummyVecEnv([lambda : env_test])

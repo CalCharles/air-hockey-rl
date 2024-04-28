@@ -18,6 +18,10 @@ class AirHockeyPuckVelEnv(AirHockeyBaseEnv):
         self.observation_space = self.get_obs_space(low, high)
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
+        
+    @staticmethod
+    def from_dict(state_dict):
+        return AirHockeyPuckVelEnv(**state_dict)
 
     def create_world_objects(self):
         name = 'puck_{}'.format(0)
@@ -49,9 +53,7 @@ class AirHockeyPuckVelEnv(AirHockeyBaseEnv):
         obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
         return obs
 
-    def get_base_reward(self, state_info, hit_a_puck, puck_within_home, 
-                       puck_within_alt_home, puck_within_goal,
-                       goal_pos, goal_radius):
+    def get_base_reward(self, state_info):
         # reward for positive velocity towards the top of the board
         reward = -state_info['pucks'][0]['velocity'][0]
         max_rew = 2 # estimated max vel
@@ -79,6 +81,10 @@ class AirHockeyPuckHeightEnv(AirHockeyBaseEnv):
         self.observation_space = self.get_obs_space(low, high)
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
+        
+    @staticmethod
+    def from_dict(state_dict):
+        return AirHockeyPuckHeightEnv(**state_dict)
 
     def create_world_objects(self):
         name = 'puck_{}'.format(0)
@@ -110,9 +116,7 @@ class AirHockeyPuckHeightEnv(AirHockeyBaseEnv):
         obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
         return obs
 
-    def get_base_reward(self, state_info, hit_a_puck, puck_within_home, 
-                       puck_within_alt_home, puck_within_goal,
-                       goal_pos, goal_radius):
+    def get_base_reward(self, state_info):
         reward = -state_info['pucks'][0]['position'][0]
         # min acceptable reward is 0 height and above
         reward = max(reward, 0)
@@ -140,6 +144,10 @@ class AirHockeyPuckCatchEnv(AirHockeyBaseEnv):
         self.observation_space = self.get_obs_space(low, high)
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
+        
+    @staticmethod
+    def from_dict(state_dict):
+        return AirHockeyPuckCatchEnv(**state_dict)
 
     def create_world_objects(self):
         name = 'puck_{}'.format(0)
@@ -171,9 +179,7 @@ class AirHockeyPuckCatchEnv(AirHockeyBaseEnv):
         obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
         return obs
 
-    def get_base_reward(self, state_info, hit_a_puck, puck_within_home, 
-                       puck_within_alt_home, puck_within_goal,
-                       goal_pos, goal_radius):
+    def get_base_reward(self, state_info):
         # reward for getting close to the puck, but make sure not to displace it
         puck_pos = state_info['pucks'][0]['position']
         paddle_pos = state_info['paddles']['paddle_ego']['position']
@@ -201,6 +207,10 @@ class AirHockeyPuckJuggleEnv(AirHockeyBaseEnv):
         self.observation_space = self.get_obs_space(low, high)
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
+        
+    @staticmethod
+    def from_dict(state_dict):
+        return AirHockeyPuckJuggleEnv(**state_dict)
 
     def create_world_objects(self):
         name = 'puck_{}'.format(0)
@@ -232,9 +242,7 @@ class AirHockeyPuckJuggleEnv(AirHockeyBaseEnv):
         obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
         return obs
 
-    def get_base_reward(self, state_info, hit_a_puck, puck_within_home, 
-                       puck_within_alt_home, puck_within_goal,
-                       goal_pos, goal_radius):
+    def get_base_reward(self, state_info):
         reward = 0
         x_pos = state_info['pucks'][0]['position'][0]
         x_higher = self.table_x_top
@@ -262,6 +270,10 @@ class AirHockeyPuckStrikeEnv(AirHockeyBaseEnv):
         self.observation_space = self.get_obs_space(low, high)
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
+        
+    @staticmethod
+    def from_dict(state_dict):
+        return AirHockeyPuckStrikeEnv(**state_dict)
 
     def create_world_objects(self):
         puck_x_low = self.length / 5
@@ -300,9 +312,7 @@ class AirHockeyPuckStrikeEnv(AirHockeyBaseEnv):
         obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
         return obs
 
-    def get_base_reward(self, state_info, hit_a_puck, puck_within_home, 
-                       puck_within_alt_home, puck_within_goal,
-                       goal_pos, goal_radius):
+    def get_base_reward(self, state_info):
         x_vel = state_info['pucks'][0]['velocity'][0]
         y_vel = state_info['pucks'][0]['velocity'][1]
         vel_mag = np.linalg.norm(np.array([x_vel, y_vel]))
@@ -340,6 +350,10 @@ class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
         self.observation_space = self.get_obs_space(low, high)
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
+        
+    @staticmethod
+    def from_dict(state_dict):
+        return AirHockeyPuckTouchEnv(**state_dict)
 
     def create_world_objects(self):
         puck_x_low = self.length / 5
@@ -378,9 +392,7 @@ class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
         obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
         return obs
 
-    def get_base_reward(self, state_info, hit_a_puck, puck_within_home, 
-                       puck_within_alt_home, puck_within_goal,
-                       goal_pos, goal_radius):
+    def get_base_reward(self, state_info):
         # reward for getting close to the puck, but make sure not to displace it
         puck_pos = state_info['pucks'][0]['position']
         paddle_pos = state_info['paddles']['paddle_ego']['position']

@@ -21,6 +21,10 @@ class AirHockeyMoveBlockEnv(AirHockeyBaseEnv):
         self.observation_space = self.get_obs_space(low, high)
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
+        
+    @staticmethod
+    def from_dict(state_dict):
+        return AirHockeyMoveBlockEnv(**state_dict)
 
     def create_world_objects(self):
         pucks_positions = []
@@ -67,9 +71,7 @@ class AirHockeyMoveBlockEnv(AirHockeyBaseEnv):
         obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel, block_x_pos, block_y_pos, block_initial_x_pos, block_initial_y_pos])
         return obs
 
-    def get_base_reward(self, state_info, hit_a_puck, puck_within_home, 
-                       puck_within_alt_home, puck_within_goal,
-                       goal_pos, goal_radius):
+    def get_base_reward(self, state_info):
         # also reward hitting puck! some shaping here :)
         vel_reward = -state_info['pucks'][0]['velocity'][0]
         max_rew = 2 # estimated max vel
@@ -107,8 +109,13 @@ class AirHockeyStrikeCrowdEnv(AirHockeyBaseEnv):
         self.observation_space = self.get_obs_space(low, high)
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
+        
+    @staticmethod
+    def from_dict(state_dict):
+        return AirHockeyStrikeCrowdEnv(**state_dict)
 
     def create_world_objects(self):
+        self.block_initial_positions = {}
         center_y = self.rng.uniform(-0.15, 0.15)  # todo: determine dynamically
         
         # pucks moving downwards that we want to hit directly
@@ -206,9 +213,7 @@ class AirHockeyStrikeCrowdEnv(AirHockeyBaseEnv):
         obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel] + block_initial_positions.tolist())
         return obs
 
-    def get_base_reward(self, state_info, hit_a_puck, puck_within_home, 
-                       puck_within_alt_home, puck_within_goal,
-                       goal_pos, goal_radius):
+    def get_base_reward(self, state_info):
         # check how much blocks deviate from initial position
         reward = 0.0
         for block in state_info['blocks']:

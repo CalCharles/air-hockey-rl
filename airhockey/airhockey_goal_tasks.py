@@ -39,9 +39,11 @@ class AirHockeyGoalEnv(AirHockeyBaseEnv, ABC):
         pass
     
     @abstractmethod
-    def get_base_reward(self, state_info, hit_a_puck, puck_within_home, 
-                       puck_within_alt_home, puck_within_goal,
-                       goal_pos, goal_radius):
+    def from_dict(state_dict):
+        pass
+    
+    @abstractmethod
+    def get_base_reward(self, state_info):
         pass
         
     def get_goal_obs_space(self, low: list, high: list, goal_low: list, goal_high: list):
@@ -51,9 +53,16 @@ class AirHockeyGoalEnv(AirHockeyBaseEnv, ABC):
             achieved_goal=Box(low=np.array(goal_low), high=np.array(goal_high), dtype=float)
         ))
         
+    def reset(self, seed=None):
+        self.set_goals(self.goal_radius_type)
+        return super().reset(seed)
+        
     def set_goal_set(self, goal_set):
         self.goal_set = goal_set
-
+        
+    def step(self, action):
+        obs, reward, is_finished, truncated, info = super().step(action)
+        return {"observation": obs, "desired_goal": self.get_desired_goal(), "achieved_goal": self.get_achieved_goal(self.current_state)}, reward, is_finished, truncated, info
 
 class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
     def initialize_spaces(self):
@@ -72,8 +81,15 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
         goal_high = np.array([0, self.table_y_right])#, self.max_paddle_vel, self.max_paddle_vel])
         self.observation_space = self.get_goal_obs_space(low, high, goal_low, goal_high)
 
+        self.min_goal_radius = self.width / 16
+        self.max_goal_radius = self.width / 4
+
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
+        
+    @staticmethod
+    def from_dict(state_dict):
+        return AirHockeyPuckGoalPositionEnv(**state_dict)
         
     def create_world_objects(self):
         name = 'puck_{}'.format(0)
@@ -155,9 +171,7 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
     def set_goal_set(self, goal_set):
         self.goal_set = goal_set
     
-    def get_base_reward(self, state_info, hit_a_puck, puck_within_home, 
-                       puck_within_alt_home, puck_within_goal,
-                       goal_pos, goal_radius):
+    def get_base_reward(self, state_info):
         reward = self.compute_reward(self.get_achieved_goal(state_info), self.get_desired_goal(), {})
         success = reward > 0.0
         success = success.item()
@@ -183,6 +197,10 @@ class AirHockeyPuckGoalPositionVelocityEnv(AirHockeyGoalEnv):
         self.max_goal_radius = self.width / 4
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
+        
+    @staticmethod
+    def from_dict(state_dict):
+        return AirHockeyPuckGoalPositionVelocityEnv(**state_dict)
     
     def validate_configuration(self):
         assert self.num_pucks == 1
@@ -300,9 +318,7 @@ class AirHockeyPuckGoalPositionVelocityEnv(AirHockeyGoalEnv):
     def set_goal_set(self, goal_set):
         self.goal_set = goal_set
     
-    def get_base_reward(self, state_info, hit_a_puck, puck_within_home, 
-                    puck_within_alt_home, puck_within_goal,
-                    goal_pos, goal_radius):
+    def get_base_reward(self, state_info):
         reward = self.compute_reward(self.get_achieved_goal(state_info), self.get_desired_goal(), {})
         success = reward > 0.0
         success = success.item()
@@ -324,6 +340,10 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
 
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
+        
+    @staticmethod
+    def from_dict(state_dict):
+        return AirHockeyPaddleReachPositionEnv(**state_dict)
         
     def create_world_objects(self):
         name = 'paddle_ego'
@@ -395,9 +415,7 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
         else:
             self.ego_goal_pos = ego_goal_pos if self.goal_set is None else self.goal_set[0]
         
-    def get_base_reward(self, state_info, hit_a_puck, puck_within_home, 
-                    puck_within_alt_home, puck_within_goal,
-                    goal_pos, goal_radius):
+    def get_base_reward(self, state_info):
         reward = self.compute_reward(self.get_achieved_goal(state_info), self.get_desired_goal(), {})
         success = reward > 0.9
         success = success.item()
@@ -419,6 +437,10 @@ class AirHockeyPaddleReachPositionVelocityEnv(AirHockeyGoalEnv):
 
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
+        
+    @staticmethod
+    def from_dict(state_dict):
+        return AirHockeyPaddleReachPositionVelocityEnv(**state_dict)
         
     def create_world_objects(self):
         name = 'paddle_ego'
@@ -522,9 +544,7 @@ class AirHockeyPaddleReachPositionVelocityEnv(AirHockeyGoalEnv):
         else:
             self.ego_goal_pos = ego_goal_pos if self.goal_set is None else self.goal_set[0]
         
-    def get_base_reward(self, state_info, hit_a_puck, puck_within_home, 
-                    puck_within_alt_home, puck_within_goal,
-                    goal_pos, goal_radius):
+    def get_base_reward(self, state_info):
         reward = self.compute_reward(self.get_achieved_goal(state_info), self.get_desired_goal(), {})
         success = self.latest_pos_reward >= 0.9 and self.latest_vel_reward >= 0.8
         success = success.item()

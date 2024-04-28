@@ -65,7 +65,7 @@ class AirHockeyBaseEnv(ABC, Env):
         
         # reward function
         self.goal_conditioned = True if 'goal' in task else False
-        self.goal_radius_type = 'home'
+        self.goal_radius_type = 'fixed'
         self.goal_min_x_velocity = -goal_max_x_velocity
         self.goal_max_x_velocity = goal_max_x_velocity
         self.goal_min_y_velocity = goal_min_y_velocity
@@ -110,9 +110,9 @@ class AirHockeyBaseEnv(ABC, Env):
         self.metadata = {}
         self.reset()
 
-    @staticmethod
+    @abstractmethod
     def from_dict(state_dict):
-        return AirHockeyBaseEnv(**state_dict)
+        pass
 
     @abstractmethod
     def initialize_spaces(self):
@@ -127,9 +127,7 @@ class AirHockeyBaseEnv(ABC, Env):
         pass
     
     @abstractmethod
-    def get_base_reward(self, state_info, hit_a_puck, puck_within_home, 
-                       puck_within_alt_home, puck_within_goal,
-                       goal_pos, goal_radius):
+    def get_base_reward(self, state_info):
         pass
 
     @abstractmethod
@@ -148,8 +146,6 @@ class AirHockeyBaseEnv(ABC, Env):
         self.create_world_objects()
         self.simulator.instantiate_objects()
         state_info = self.simulator.get_current_state()
-        # get initial observation
-        self.set_goals(self.goal_radius_type)
         obs = self.get_observation(state_info)
         
         self.n_timesteps_so_far += self.current_timestep
@@ -160,8 +156,6 @@ class AirHockeyBaseEnv(ABC, Env):
         
         if 'pucks' in state_info and len(state_info['pucks']) > 0:
             self.puck_initial_position = state_info['pucks'][0]['position']
-        else:
-            self.puck_initial_position = None
             
         if not self.goal_conditioned:
             return obs, {'success': False}
@@ -228,8 +222,8 @@ class AirHockeyBaseEnv(ABC, Env):
         bottom_center_point = np.array([self.table_x_bot, 0])
         top_center_point = np.array([self.table_x_top, 0])
         
-        puck_within_home = self.is_within_home_region(bottom_center_point, state_info['pucks'][0]['position'])
-        puck_within_alt_home = self.is_within_home_region(top_center_point, state_info['pucks'][0]['position'])
+        puck_within_home = False
+        puck_within_alt_home = False
         
         if self.terminate_on_enemy_goal:
             if not terminated and puck_within_home:
@@ -261,8 +255,6 @@ class AirHockeyBaseEnv(ABC, Env):
             norm_cosine_sim = (cosine_sim + 1) / 2
             max_change_dir_rew = self.direction_change_rew
             direction_rew = max_change_dir_rew * (1 - norm_cosine_sim)
-            additional_rew += direction_rew
-
         # small negative reward for moving too fast in horizontal direction
         max_vel = self.max_paddle_vel
         max_vel_rew = self.horizontal_vel_rew
@@ -315,9 +307,7 @@ class AirHockeyBaseEnv(ABC, Env):
         hit_a_puck = False
         is_finished, truncated, puck_within_home, puck_within_alt_home, puck_within_goal, _ = self.has_finished(next_state)
         if not truncated:
-            reward, success = self.get_base_reward(next_state, hit_a_puck, puck_within_home, 
-                                     puck_within_alt_home, puck_within_goal,
-                                     self.ego_goal_pos, self.ego_goal_radius)
+            reward, success = self.get_base_reward(next_state)
             if not info['success'] and success:
                 info['success'] = success
                 self.success_in_ep = success

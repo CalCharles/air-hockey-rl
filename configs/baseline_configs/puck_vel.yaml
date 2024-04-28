@@ -25,7 +25,7 @@ air_hockey:
     render_size: 360
     width: 0.8636
   stand_still_rew: 0.01
-  task: puck_vel
+  task: puck_velocity
   num_blocks: 0
   num_obstacles: 0
   num_paddles: 1
