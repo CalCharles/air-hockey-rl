@@ -183,40 +183,41 @@ class AirHockeyRobosuite(SingleArmEnv):
     """
 
     def __init__(
-            self,
-            robots,
-            env_configuration="default",
-            controller_configs=None,
-            gripper_types="default",
-            initialization_noise="default",
-            table_full_size=(0.8, 0.8, 0.05),
-            table_friction=(1.0, 5e-3, 1e-4),
-            use_camera_obs=True,
-            use_object_obs=True,
-            reward_scale=1.0,
-            reward_shaping=False,
-            placement_initializer=None,
-            has_renderer=False,
-            has_offscreen_renderer=True,
-            render_camera="frontview",
-            render_collision_mesh=False,
-            render_visual_mesh=True,
-            render_gpu_device_id=-1,
-            control_freq=20,
-            horizon=400,
-            ignore_done=False,
-            hard_reset=True,
-            camera_names="agentview",
-            camera_heights=256,
-            camera_widths=256,
-            camera_depths=False,
-            camera_segmentations=None,  # {None, instance, class, element}
-            renderer="mujoco",
-            renderer_config=None,
-            initial_qpos=[-0.265276, -1.383369, 2.326823, -2.601113, -1.547214, -3.405865],
-            task="JUGGLE_PUCK"
+        self,
+        robots,
+        env_configuration="default",
+        controller_configs=None,
+        gripper_types="default",
+        initialization_noise="default",
+        table_full_size=(1.064, 0.609, 0.0505),
+        table_friction=(1.0, 5e-3, 1e-4),
+        use_camera_obs=True,
+        use_object_obs=True,
+        reward_scale=1.0,
+        reward_shaping=False,
+        placement_initializer=None,
+        has_renderer=False,
+        has_offscreen_renderer=True,
+        render_camera="frontview",
+        render_collision_mesh=False,
+        render_visual_mesh=True,
+        render_gpu_device_id=-1,
+        control_freq=20,
+        horizon=400,
+        ignore_done=False,
+        hard_reset=True,
+        camera_names="agentview",
+        camera_heights=256,
+        camera_widths=256,
+        camera_depths=False,
+        camera_segmentations=None,  # {None, instance, class, element}
+        renderer="mujoco",
+        renderer_config=None,
+        task="JUGGLE_PUCK",
+        puck_radius=0.03165,
+        puck_damping=0.8,
+        puck_density=3530,
     ):
-        initial_qpos =  (math.pi / 180 * np.array([-11.4, -63.2, 82.1, -113.2, -88.92, -101.25]))
         # settings for table top
         self.table_full_size = table_full_size
         self.table_friction = table_friction
@@ -255,6 +256,20 @@ class AirHockeyRobosuite(SingleArmEnv):
         self.task = task
 
         self.prev_puck_goal_dist = None
+
+        self.initial_puck_vels = dict()
+
+        xml_fp = custom_xml_path_completion("arenas/air_hockey_table.xml")
+        
+        with open(xml_fp, "r") as file:
+            self.xml_config = xmltodict.parse(file.read())
+
+        # update table config
+        self.xml_config['mujoco']['worldbody']['body'][0]['body'][0]['geom']['@size'] = f"{self.table_full_size[0]} {self.table_full_size[1]} {self.table_full_size[2]}"
+
+        self.puck_radius = puck_radius
+        self.puck_damping = puck_damping
+        self.puck_density = puck_density
 
         super().__init__(
             robots=robots,
@@ -413,7 +428,106 @@ class AirHockeyRobosuite(SingleArmEnv):
             return 0
 
         return reward
+    
+    def instantiate_objects(self):
+        
+        # set puck velocities
+        for name in self.initial_puck_vels.keys():
+            self.sim.set_body_xpos(name, self.initial_puck_vels[name])
 
+        # Get current timestamp
+        current_time = datetime.datetime.fromtimestamp(time.time())
+        formatted_time = current_time.strftime('%Y%m%d_%H%M%S')
+        
+        # Make new filename
+        tmp_xml_fp = robosuite_xml_path_completion(f"arenas/air_hockey_table_{formatted_time}.xml")
+        
+        with open(tmp_xml_fp, 'w') as file:
+            file.write(xmltodict.unparse(self.xml_config, pretty=True))
+
+        # Adjust base pose accordingly
+        xpos = self.robots[0].robot_model.base_xpos_offset["table"](self.table_full_size[0])
+        
+        xpos = (-0.48, 0, 0)
+        self.robots[0].robot_model.set_base_xpos(xpos)
+        
+        # load model for table top workspace
+        mujoco_arena = AirHockeyTableArena(
+            table_full_size=self.table_full_size,
+            table_friction=self.table_friction,
+            table_offset=self.table_offset,
+            xml=tmp_xml_fp,
+        )
+        
+        # remove tmp file
+        os.remove(tmp_xml_fp)
+
+        # Arena always gets set to zero origin
+        mujoco_arena.set_origin([0, 0, 0])
+
+        # task includes arena, robot, and objects of interest
+        self.model = ManipulationTask(
+            mujoco_arena=mujoco_arena,
+            mujoco_robots=[robot.robot_model for robot in self.robots],
+        )
+
+    def spawn_puck(self, pos, vel, name, affected_by_gravity=False, movable=True):
+        
+        # create puck object to add
+        puck_mass = self.puck_density * math.pi * (self.puck_radius ** 2) * 0.009
+        puck_dict = {
+            "@name": name,
+            "@pos": f"{pos[0]} {pos[1]} {pos[2]}",
+            "@axisangle": "0 1 0 -0.09",
+            "joint": [
+                {
+                    "@name": f"{name}_x",
+                    "@type": "slide",
+                    "@axis": "1 0 0",
+                    "@damping": f"{self.puck_damping}",
+                    "@limited": "false",
+                },
+                {
+                    "@name": f"{name}_x",
+                    "@type": "slide",
+                    "@axis": "0 1 0",
+                    "@damping": f"{self.puck_damping}",
+                    "@limited": "false",
+                },
+                {
+                    "@name": f"{name}_x",
+                    "@type": "hinge",
+                    "@axis": "0 0 1",
+                    "@damping": "2e-6",
+                    "@limited": "false",
+                },
+            ],
+            "body": {
+                "@name": f"{name}_body",
+                "geom": [
+                    {
+                        "@pos": "0 0 -0.2", # believe this is relative to the base
+                        "@name": f"{name}_geom",
+                        "@type": "cylinder",
+                        "@material": "red",
+                        "@size": f"{self.puck_radius} 0.009",
+                        "@condim": "4",
+                        "@priority": "0",
+                        "@group": "1",
+                    }
+                ],
+                "inertial": {
+                    "@pos": "0 0 0", # believe this is relative to the base
+                    "@mass": f"{puck_mass}",
+                    "@diaginertia": "2.5e-6 2.5e-6 5e-6",
+                },
+            }
+        }
+
+        # add new puck
+        self.xml_config['mujoco']['worldbody']['body'].append(puck_dict)
+        self.initial_puck_vels[name] = vel
+    
     def get_transition(self, action):
         """
         Takes a step in simulation with control command @action and returns the resulting transition.
@@ -568,7 +682,7 @@ class AirHockeyRobosuite(SingleArmEnv):
         current_time = datetime.datetime.fromtimestamp(time.time())
         formatted_time = current_time.strftime('%Y%m%d_%H%M%S')
         
-        # Make new filebame
+        # Make new filename
         tmp_xml_fp = robosuite_xml_path_completion(f"arenas/air_hockey_table_{formatted_time}.xml")
         
         with open(tmp_xml_fp, 'w') as file:

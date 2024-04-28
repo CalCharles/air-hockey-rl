@@ -20,9 +20,9 @@ air_hockey:
     paddle_damping: 3 # uh
     #97: <joint name="puck_x" type="slide" axis="1 0 0" damping="0.01" limited="false"/>
     #98: <joint name="puck_y" type="slide" axis="0 1 0" damping="0.01" limited="false"/>
-    puck_damping: 0.08
+    puck_damping: 0.01
     paddle_density: 2500 # HUH
-    puck_density: 250 # WHAT NOW
+    puck_density: 3530
     render_size: 360 # how customize this
     gravity: -0.5 # hmmm not sure where this is configured
     max_force_timestep: 100 # max force we can apply at one timestep
