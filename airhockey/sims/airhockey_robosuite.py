@@ -433,7 +433,10 @@ class AirHockeyRobosuite(SingleArmEnv):
         
         # set puck velocities
         for name in self.initial_puck_vels.keys():
-            self.sim.set_body_xpos(name, self.initial_puck_vels[name])
+            joint_key  = self.sim.model.get_joint_qpos_addr(name + "_x")
+            self.sim.data.qvel[joint_key] = self.initial_puck_vels[name][0]
+            joint_key  = self.sim.model.get_joint_qpos_addr(name + "_y")
+            self.sim.data.qvel[joint_key] = self.initial_puck_vels[name][1]
 
         # Get current timestamp
         current_time = datetime.datetime.fromtimestamp(time.time())
