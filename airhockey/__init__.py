@@ -64,9 +64,9 @@ def AirHockeyEnv(cfg):
         task_env = AirHockeyPuckGoalPositionEnv
     elif task == "puck_goal_position_velocity":
         task_env = AirHockeyPuckGoalPositionVelocityEnv
-    elif task == "paddle_reach_position":
+    elif task == "paddle_goal_position":
         task_env = AirHockeyPaddleReachPositionEnv
-    elif task == "paddle_reach_position_velocity":
+    elif task == "paddle_goal_position_velocity":
         task_env = AirHockeyPaddleReachPositionVelocityEnv
     else:
         raise ValueError("Task {} not recognized".format(task))

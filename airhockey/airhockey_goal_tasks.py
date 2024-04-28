@@ -31,7 +31,7 @@ class AirHockeyGoalEnv(AirHockeyBaseEnv, ABC):
         pass
     
     @abstractmethod
-    def set_goals(self, goal_radius_type, ego_goal_pos=None, alt_goal_pos=None, goal_set=None):
+    def set_goals(self, goal_radius_type, goal_pos=None, alt_goal_pos=None, goal_set=None):
         pass
     
     @abstractmethod
@@ -105,7 +105,7 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
         return position.astype(float)
     
     def get_desired_goal(self):
-        position = self.ego_goal_pos
+        position = self.goal_pos
         return position.astype(float)
     
     def validate_configuration(self):
@@ -124,7 +124,7 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
         # return euclidean distance between the two points
         dist = np.linalg.norm(achieved_goal[:, :2] - desired_goal[:, :2], axis=1)
         sigmoid_scale = 2
-        radius = self.ego_goal_radius
+        radius = self.goal_radius
         reward_raw = 1 - (dist / radius) #self.max_goal_rew_radius * radius)
         reward_mask = dist >= radius
         reward_raw[reward_mask] = 0 # numerical stability, we will make these 0 later
@@ -149,24 +149,24 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
         obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
         return obs
     
-    def set_goals(self, goal_radius_type, ego_goal_pos=None, alt_goal_pos=None, goal_set=None):
+    def set_goals(self, goal_radius_type, goal_pos=None, alt_goal_pos=None, goal_set=None):
         self.goal_set = goal_set
         if goal_radius_type == 'fixed':
-            # ego_goal_radius = self.rng.uniform(low=self.min_goal_radius, high=self.max_goal_radius)
+            # goal_radius = self.rng.uniform(low=self.min_goal_radius, high=self.max_goal_radius)
             base_radius = (self.min_goal_radius + self.max_goal_radius) / 2 * (0.75)
             # linearly decrease radius, should start off at 3*base_radius then decrease to base_radius
             ratio = 2 * (1 - self.n_timesteps_so_far / self.n_training_steps) + 1
-            ego_goal_radius = ratio * base_radius
-            self.ego_goal_radius = ego_goal_radius
+            goal_radius = ratio * base_radius
+            self.goal_radius = goal_radius
 
-        if ego_goal_pos is None and goal_set is None:
-            min_y = self.table_y_left + self.ego_goal_radius
-            max_y = self.table_y_right - self.ego_goal_radius
-            max_x = 0 - self.ego_goal_radius
-            min_x = self.table_x_top + self.ego_goal_radius
-            self.ego_goal_pos = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
+        if goal_pos is None and goal_set is None:
+            min_y = self.table_y_left + self.goal_radius
+            max_y = self.table_y_right - self.goal_radius
+            max_x = 0 - self.goal_radius
+            min_x = self.table_x_top + self.goal_radius
+            self.goal_pos = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
         else:
-            self.ego_goal_pos = ego_goal_pos if self.goal_set is None else self.goal_set[0]
+            self.goal_pos = goal_pos if self.goal_set is None else self.goal_set[0]
         
     def set_goal_set(self, goal_set):
         self.goal_set = goal_set
@@ -224,8 +224,8 @@ class AirHockeyPuckGoalPositionVelocityEnv(AirHockeyGoalEnv):
         return np.array([position[0], position[1], velocity[0], velocity[1]])
     
     def get_desired_goal(self):
-        position = self.ego_goal_pos
-        velocity = self.ego_goal_vel
+        position = self.goal_pos
+        velocity = self.goal_vel
         return np.array([position[0], position[1], velocity[0], velocity[1]])
     
     def compute_reward(self, achieved_goal, desired_goal, info):
@@ -251,7 +251,7 @@ class AirHockeyPuckGoalPositionVelocityEnv(AirHockeyGoalEnv):
         # # also return float from [0, 1] 0 being far 1 being the point
         # # use sigmoid function because being closer is much more important than being far
         sigmoid_scale = 2
-        radius = self.ego_goal_radius
+        radius = self.goal_radius
         reward_raw = 1 - (dist / radius)#self.max_goal_rew_radius * radius)
         
         mask = dist >= radius
@@ -291,29 +291,30 @@ class AirHockeyPuckGoalPositionVelocityEnv(AirHockeyGoalEnv):
         obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
         return obs
     
-    def set_goals(self, goal_radius_type, ego_goal_pos=None, alt_goal_pos=None, goal_set=None):
+    def set_goals(self, goal_radius_type, goal_pos=None, alt_goal_pos=None, goal_set=None):
         self.goal_set = goal_set
         if goal_radius_type == 'fixed':
-            # ego_goal_radius = self.rng.uniform(low=self.min_goal_radius, high=self.max_goal_radius)
+            # goal_radius = self.rng.uniform(low=self.min_goal_radius, high=self.max_goal_radius)
             base_radius = (self.min_goal_radius + self.max_goal_radius) / 2 * (0.75)
             # linearly decrease radius, should start off at 3*base_radius then decrease to base_radius
             ratio = 2 * (1 - self.n_timesteps_so_far / self.n_training_steps) + 1
-            ego_goal_radius = ratio * base_radius
-            self.ego_goal_radius = ego_goal_radius
+            goal_radius = ratio * base_radius
+            self.goal_radius = goal_radius
 
-        if ego_goal_pos is None and goal_set is None:
-            min_y = self.table_y_left + self.ego_goal_radius
-            max_y = self.table_y_right - self.ego_goal_radius
-            max_x = 0 - self.ego_goal_radius
-            min_x = self.table_x_top + self.ego_goal_radius
-            self.ego_goal_pos = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
+        if goal_pos is None and goal_set is None:
+            min_y = self.table_y_left + self.goal_radius
+            max_y = self.table_y_right - self.goal_radius
+            max_x = 0 - self.goal_radius
+            min_x = self.table_x_top + self.goal_radius
+            self.goal_pos = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
             min_x_vel = self.goal_min_x_velocity
             max_x_vel = self.goal_max_x_velocity
             min_y_vel = self.goal_min_y_velocity
             max_y_vel = self.goal_max_y_velocity
-            self.ego_goal_vel = self.rng.uniform(low=(min_x_vel, min_y_vel), high=(max_x_vel, max_y_vel))
+            self.goal_vel = self.rng.uniform(low=(min_x_vel, min_y_vel), high=(max_x_vel, max_y_vel))
         else:
-            self.ego_goal_pos = ego_goal_pos if self.goal_set is None else self.goal_set[0]
+            self.goal_pos = goal_pos if self.goal_set is None else self.goal_set[0, :2]
+            self.goal_vel = self.goal_vel if self.goal_set is None else self.goal_set[0, 2:]
         
     def set_goal_set(self, goal_set):
         self.goal_set = goal_set
@@ -337,6 +338,9 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
         goal_high = np.array([self.table_x_bot, self.table_y_right])
 
         self.observation_space = self.get_goal_obs_space(low, high, goal_low, goal_high)
+        
+        self.min_goal_radius = self.width / 16
+        self.max_goal_radius = self.width / 4
 
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
@@ -362,9 +366,8 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
         return np.array([position[0], position[1]])
     
     def get_desired_goal(self):
-        position = self.ego_goal_pos
-        velocity = self.ego_goal_vel
-        return np.array([position[0], position[1], velocity[0], velocity[1]])
+        position = self.goal_pos
+        return np.array([position[0], position[1]])
     
     def compute_reward(self, achieved_goal, desired_goal, info):
         # if not vectorized, convert to vector
@@ -391,29 +394,16 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
         obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel])
         return obs
     
-    def set_goals(self, goal_radius_type, ego_goal_pos=None, alt_goal_pos=None, goal_set=None):
+    def set_goals(self, goal_radius_type, goal_pos=None, alt_goal_pos=None, goal_set=None):
         self.goal_set = goal_set
-        if goal_radius_type == 'fixed':
-            # ego_goal_radius = self.rng.uniform(low=self.min_goal_radius, high=self.max_goal_radius)
-            base_radius = (self.min_goal_radius + self.max_goal_radius) / 2 * (0.75)
-            # linearly decrease radius, should start off at 3*base_radius then decrease to base_radius
-            ratio = 2 * (1 - self.n_timesteps_so_far / self.n_training_steps) + 1
-            ego_goal_radius = ratio * base_radius
-            self.ego_goal_radius = ego_goal_radius
-
-        if ego_goal_pos is None and goal_set is None:
-            min_y = self.table_y_left + self.ego_goal_radius
-            max_y = self.table_y_right - self.ego_goal_radius
-            max_x = 0 - self.ego_goal_radius
-            min_x = self.table_x_top + self.ego_goal_radius
-            self.ego_goal_pos = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
-            min_x_vel = self.goal_min_x_velocity
-            max_x_vel = self.goal_max_x_velocity
-            min_y_vel = self.goal_min_y_velocity
-            max_y_vel = self.goal_max_y_velocity
-            self.ego_goal_vel = self.rng.uniform(low=(min_x_vel, min_y_vel), high=(max_x_vel, max_y_vel))
-        else:
-            self.ego_goal_pos = ego_goal_pos if self.goal_set is None else self.goal_set[0]
+        # sample goal position
+        min_y = self.table_y_left
+        max_y = self.table_y_right
+        min_x = 0
+        max_x = self.table_x_bot
+        goal_position = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
+        self.goal_radius = self.min_goal_radius # not too important
+        self.goal_pos = goal_position if self.goal_set is None else self.goal_set[0, :2]
         
     def get_base_reward(self, state_info):
         reward = self.compute_reward(self.get_achieved_goal(state_info), self.get_desired_goal(), {})
@@ -434,6 +424,9 @@ class AirHockeyPaddleReachPositionVelocityEnv(AirHockeyGoalEnv):
         goal_high = np.array([self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel])
 
         self.observation_space = self.get_goal_obs_space(low, high, goal_low, goal_high)
+
+        self.min_goal_radius = self.width / 16
+        self.max_goal_radius = self.width / 4
 
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
@@ -460,8 +453,8 @@ class AirHockeyPaddleReachPositionVelocityEnv(AirHockeyGoalEnv):
         return np.array([position[0], position[1], velocity[0], velocity[1]])
     
     def get_desired_goal(self):
-        position = self.ego_goal_pos
-        velocity = self.ego_goal_vel
+        position = self.goal_pos
+        velocity = self.goal_vel
         return np.array([position[0], position[1], velocity[0], velocity[1]])
     
     def compute_reward(self, achieved_goal, desired_goal, info):
@@ -520,29 +513,24 @@ class AirHockeyPaddleReachPositionVelocityEnv(AirHockeyGoalEnv):
         obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel])
         return obs
     
-    def set_goals(self, goal_radius_type, ego_goal_pos=None, alt_goal_pos=None, goal_set=None):
+    def set_goals(self, goal_radius_type, goal_pos=None, alt_goal_pos=None, goal_set=None):
         self.goal_set = goal_set
-        if goal_radius_type == 'fixed':
-            # ego_goal_radius = self.rng.uniform(low=self.min_goal_radius, high=self.max_goal_radius)
-            base_radius = (self.min_goal_radius + self.max_goal_radius) / 2 * (0.75)
-            # linearly decrease radius, should start off at 3*base_radius then decrease to base_radius
-            ratio = 2 * (1 - self.n_timesteps_so_far / self.n_training_steps) + 1
-            ego_goal_radius = ratio * base_radius
-            self.ego_goal_radius = ego_goal_radius
-
-        if ego_goal_pos is None and goal_set is None:
-            min_y = self.table_y_left + self.ego_goal_radius
-            max_y = self.table_y_right - self.ego_goal_radius
-            max_x = 0 - self.ego_goal_radius
-            min_x = self.table_x_top + self.ego_goal_radius
-            self.ego_goal_pos = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
-            min_x_vel = self.goal_min_x_velocity
-            max_x_vel = self.goal_max_x_velocity
-            min_y_vel = self.goal_min_y_velocity
-            max_y_vel = self.goal_max_y_velocity
-            self.ego_goal_vel = self.rng.uniform(low=(min_x_vel, min_y_vel), high=(max_x_vel, max_y_vel))
-        else:
-            self.ego_goal_pos = ego_goal_pos if self.goal_set is None else self.goal_set[0]
+        # sample goal position
+        min_y = self.table_y_left + 2 * self.paddle_radius # Not too close to the wall
+        max_y = self.table_y_right - 2 * self.paddle_radius # Not too close to the wall
+        min_x = 0 - self.paddle_radius # some buffer space from halfway point
+        max_x = self.table_x_bot + 2 * self.paddle_radius # Not too close to the wall
+        goal_position = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
+        goal_velocity = self.rng.uniform(low=(-self.max_paddle_vel, -self.max_paddle_vel), high=(self.max_paddle_vel, self.max_paddle_vel))
+        # x vel shouldn't vary much
+        # "minimum" is upward at max speed, "maximum" is slightly upwards, otherwise can't reach goal
+        x_vel = self.rng.uniform(low=-self.max_paddle_vel, high=-self.max_paddle_vel / 8) # only upwards
+        y_vel = self.rng.uniform(low=-self.max_paddle_vel / 2, high=self.max_paddle_vel / 2)
+        goal_velocity = np.array([x_vel, y_vel])
+        # y vel should be positive
+        self.goal_radius = self.min_goal_radius # not too important
+        self.goal_pos = goal_position if self.goal_set is None else self.goal_set[0, :2]
+        self.goal_vel = goal_velocity if self.goal_set is None else self.goal_set[0, 2:]
         
     def get_base_reward(self, state_info):
         reward = self.compute_reward(self.get_achieved_goal(state_info), self.get_desired_goal(), {})
