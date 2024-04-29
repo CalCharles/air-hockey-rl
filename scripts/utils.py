@@ -9,6 +9,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import wandb
 from airhockey.renderers.render import AirHockeyRenderer
+import numpy as np
 
 
 def save_tensorboard_plots(log_dir, air_hockey_cfg):
@@ -122,6 +123,10 @@ class EvalCallback(BaseCallback):
         self.best_success_so_far = 0.0
         self.log_dir = log_dir
         self.renderer = AirHockeyRenderer(eval_env)
+        self.classifier_acc = None
+        self.goal_predictions = None
+        self.eval_ego_goals = []
+        self.eval_ego_goals_succ = []
     
     def _eval(self, include_frames=False):
         avg_undiscounted_return = 0.0
@@ -131,6 +136,8 @@ class EvalCallback(BaseCallback):
         # also save first 5 eps into gif
         n_eps_viz = 5
         frames = []
+        self.eval_ego_goals = []
+        self.eval_ego_goals_succ = []
         for ep_idx in range(self.n_eval_eps):
             obs, info = self.eval_env.reset()
             done = False
@@ -150,20 +157,28 @@ class EvalCallback(BaseCallback):
                 undiscounted_return += rew
                 assert 'success' in info
                 assert (info['success'] == True) or (info['success'] == False)
-                if info['success'] is True:
+                if info['success'] == True:
+                    # print(rew, info['success'])
+                    # import pdb; pdb.set_trace()
                     success = True
+                    # print('SUCECSS')
                 max_reward = info['max_reward']
                 min_reward = info['min_reward']
+            self.eval_ego_goals.append(info['ego_goal'])
+            self.eval_ego_goals_succ.append(success)
             avg_undiscounted_return += undiscounted_return
-            avg_success_rate += 1.0 if success else 0.0
+            # avg_success_rate += 1.0 if success  else 0.0
+            avg_success_rate += success
             avg_max_reward += max_reward
             avg_min_reward += min_reward
         avg_undiscounted_return /= self.n_eval_eps
         avg_success_rate /= self.n_eval_eps
+        # import pdb; pdb.set_trace()
+        # print('succes rate', avg_success_rate)
         avg_max_reward /= self.n_eval_eps
         avg_min_reward /= self.n_eval_eps
         return avg_undiscounted_return, avg_success_rate, avg_max_reward, avg_min_reward, frames
-
+    
     def _on_rollout_start(self) -> None:
         """
         A rollout is the collection of environment interaction
@@ -182,6 +197,8 @@ class EvalCallback(BaseCallback):
             self.logger.record("eval/best_success_rate", self.best_success_so_far)
             self.logger.record("eval/max_reward", avg_max_reward)
             self.logger.record("eval/min_reward", avg_min_reward)
+            if self.classifier_acc is not None:
+                self.logger.record("eval/classifier_acc", self.classifier_acc)
             self.next_eval += self.eval_freq
             
         if save_progress:
@@ -200,7 +217,18 @@ class EvalCallback(BaseCallback):
             model_fp = os.path.join(progress_dir, 'model.zip')
             self.model.save(model_fp)
             self.next_save += self.save_freq
+            if self.goal_predictions is not None:
+                plt.imsave( os.path.join(progress_dir, 'goal_predictions.png'), self.goal_predictions)
 
+            plt.clf()
+            eeg = np.array(self.eval_ego_goals)
+            succ_mask = np.array(self.eval_ego_goals_succ)
+            # plt.plot(self.eval_ego_goals, c=self.eval_ego_goals_succ, marker='o')
+            plt.plot(eeg[succ_mask, 0], eeg[succ_mask, 1], c='g', marker='o', linestyle='None')
+            plt.plot(eeg[~succ_mask, 0], eeg[~succ_mask, 1], c='r', marker='o', linestyle='None')
+            
+            plt.savefig(os.path.join(progress_dir, 'ego_goal_predictions.png'))
+            
     def _on_step(self) -> bool:
         """
         This method will be called by the model after each call to `env.step()`.

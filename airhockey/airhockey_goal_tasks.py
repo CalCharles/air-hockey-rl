@@ -69,6 +69,7 @@ class AirHockeyGoalEnv(AirHockeyBaseEnv, ABC):
 
     def step(self, action):
         obs, reward, is_finished, truncated, info = super().step(action)
+        info['ego_goal'] = self.goal_pos
         achieved_goal = self.get_achieved_goal(self.current_state)
         desired_goal = self.get_desired_goal()
         if self.return_goal_obs:
@@ -148,6 +149,10 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
         reward = 1 / (1 + np.exp(-reward_raw * sigmoid_scale))
         reward[reward_mask] = 0
 
+        if self.dense_goal:
+            bonus = 10 if self.current_timestep > self.falling_time else 0 # this prevents the falling initiliazwed puck from triggering a success
+            reward = -dist  + (bonus if dist < radius else 0)
+
         if single:
             reward = reward[0]
         return reward
@@ -175,6 +180,9 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
             ratio = 2 * (1 - self.n_timesteps_so_far / self.n_training_steps) + 1
             goal_radius = ratio * base_radius
             self.goal_radius = goal_radius
+            
+        if self.goal_selector == 'dynamic':
+            self.goal_radius = 0.16
 
         if goal_pos is None and goal_set is None:
             min_y = self.table_y_left + self.goal_radius
@@ -324,6 +332,9 @@ class AirHockeyPuckGoalPositionVelocityEnv(AirHockeyGoalEnv):
             ratio = 2 * (1 - self.n_timesteps_so_far / self.n_training_steps) + 1
             goal_radius = ratio * base_radius
             self.goal_radius = goal_radius
+            
+        if self.goal_selector == 'dynamic':
+            self.goal_radius = 0.16
 
         if goal_pos is None and goal_set is None:
             min_y = self.table_y_left + self.goal_radius

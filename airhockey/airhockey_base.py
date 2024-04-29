@@ -40,6 +40,8 @@ class AirHockeyBaseEnv(ABC, Env):
                  goal_max_y_velocity,
                  return_goal_obs,
                  seed,
+                 dense_goal=True,
+                 goal_selector='stationary',
                  max_timesteps=1000):
         
         if simulator == 'box2d':
@@ -72,6 +74,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.goal_min_y_velocity = goal_min_y_velocity
         self.goal_max_y_velocity = goal_max_y_velocity
         self.return_goal_obs = return_goal_obs
+        self.dense_goal = dense_goal
         self.task = task
         self.multiagent = num_paddles == 2
         self.truncate_rew = truncate_rew
@@ -108,7 +111,9 @@ class AirHockeyBaseEnv(ABC, Env):
         
         self.validate_configuration()
 
+        self.goal_selector = goal_selector
         self.initialize_spaces()
+        self.falling_time = 25
         self.metadata = {}
         self.reset()
 
