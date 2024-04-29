@@ -452,14 +452,14 @@ class AirHockeyRobosuite(AirHockeySim):
                     "@limited": "false",
                 },
                 {
-                    "@name": f"{name}_x",
+                    "@name": f"{name}_y",
                     "@type": "slide",
                     "@axis": "0 1 0",
                     "@damping": f"{self.puck_damping}",
                     "@limited": "false",
                 },
                 {
-                    "@name": f"{name}_x",
+                    "@name": f"{name}_z",
                     "@type": "hinge",
                     "@axis": "0 0 1",
                     "@damping": "2e-6",
