@@ -28,9 +28,18 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
     air_hockey_params = air_hockey_cfg['air_hockey']
     air_hockey_params['n_training_steps'] = air_hockey_cfg['n_training_steps']
     
+    if 'sac' == air_hockey_cfg['algorithm']:
+        if 'goal' in air_hockey_cfg['air_hockey']['task']:
+            air_hockey_cfg['air_hockey']['return_goal_obs'] = True
+        else:
+            air_hockey_cfg['air_hockey']['return_goal_obs'] = False
+    else:
+        air_hockey_cfg['air_hockey']['return_goal_obs'] = False
+    
     air_hockey_params_cp = air_hockey_params.copy()
     air_hockey_params_cp['seed'] = 42
     air_hockey_params_cp['max_timesteps'] = 200
+    
     eval_env = AirHockeyEnv(air_hockey_params_cp)
     
     if type(air_hockey_cfg['seed']) is not list:
@@ -116,7 +125,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
                                     eval_freq=air_hockey_cfg['eval_freq'])
         
         # if goal-conditioned use SAC
-        if 'goal' in air_hockey_cfg['air_hockey']['task']:
+        if 'sac' == air_hockey_cfg['algorithm']:
             # SAC hyperparams:
             # Create 4 artificial transitions per real transitionair_hockey_simulator
             n_sampled_goal = 4

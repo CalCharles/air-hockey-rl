@@ -38,6 +38,7 @@ class AirHockeyBaseEnv(ABC, Env):
                  goal_max_x_velocity, 
                  goal_min_y_velocity, 
                  goal_max_y_velocity,
+                 return_goal_obs,
                  seed,
                  max_timesteps=1000):
         
@@ -70,6 +71,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.goal_max_x_velocity = goal_max_x_velocity
         self.goal_min_y_velocity = goal_min_y_velocity
         self.goal_max_y_velocity = goal_max_y_velocity
+        self.return_goal_obs = return_goal_obs
         self.task = task
         self.multiagent = num_paddles == 2
         self.truncate_rew = truncate_rew
@@ -146,6 +148,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.create_world_objects()
         self.simulator.instantiate_objects()
         state_info = self.simulator.get_current_state()
+        self.current_state = state_info
         obs = self.get_observation(state_info)
         
         self.n_timesteps_so_far += self.current_timestep
@@ -157,10 +160,7 @@ class AirHockeyBaseEnv(ABC, Env):
         if 'pucks' in state_info and len(state_info['pucks']) > 0:
             self.puck_initial_position = state_info['pucks'][0]['position']
             
-        if not self.goal_conditioned:
-            return obs, {'success': False}
-        else:
-            return {"observation": obs, "desired_goal": self.get_desired_goal(), "achieved_goal": self.get_achieved_goal(state_info)}, {'success': False}
+        return obs, {'success': False}
             
     def get_puck_configuration(self, bad_regions=None):
         y_pos = None

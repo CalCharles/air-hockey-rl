@@ -55,14 +55,27 @@ class AirHockeyGoalEnv(AirHockeyBaseEnv, ABC):
         
     def reset(self, seed=None):
         self.set_goals(self.goal_radius_type)
-        return super().reset(seed)
+        obs, success = super().reset(seed)
+        achieved_goal = self.get_achieved_goal(self.current_state)
+        desired_goal = self.get_desired_goal()
+        if self.return_goal_obs:
+            return {"observation": obs, "desired_goal": desired_goal, "achieved_goal": achieved_goal}, success
+        else:
+            obs = np.concatenate([obs, desired_goal])
+            return obs, success
         
     def set_goal_set(self, goal_set):
         self.goal_set = goal_set
-        
+
     def step(self, action):
         obs, reward, is_finished, truncated, info = super().step(action)
-        return {"observation": obs, "desired_goal": self.get_desired_goal(), "achieved_goal": self.get_achieved_goal(self.current_state)}, reward, is_finished, truncated, info
+        achieved_goal = self.get_achieved_goal(self.current_state)
+        desired_goal = self.get_desired_goal()
+        if self.return_goal_obs:
+            return {"observation": obs, "desired_goal": desired_goal, "achieved_goal": achieved_goal}, reward, is_finished, truncated, info
+        else:
+            obs = np.concatenate([obs, desired_goal])
+            return obs, reward, is_finished, truncated, info
 
 class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
     def initialize_spaces(self):
@@ -73,13 +86,17 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
         puck_obs_low = [self.table_x_top, self.table_y_left, -self.max_puck_vel, -self.max_puck_vel]
         puck_obs_high = [self.table_x_bot, self.table_y_right, self.max_puck_vel, self.max_puck_vel]
 
-        low = paddle_obs_low + puck_obs_low
-        high = paddle_obs_high + puck_obs_high
-        self.observation_space = self.get_obs_space(low, high)
-
-        goal_low = np.array([self.table_x_top, self.table_y_left])#, -self.max_paddle_vel, self.max_paddle_vel])
-        goal_high = np.array([0, self.table_y_right])#, self.max_paddle_vel, self.max_paddle_vel])
-        self.observation_space = self.get_goal_obs_space(low, high, goal_low, goal_high)
+        goal_low = [self.table_x_top, self.table_y_left]        
+        goal_high = [0, self.table_y_right]
+        
+        if self.return_goal_obs:
+            low = paddle_obs_low + puck_obs_low
+            high = paddle_obs_high + puck_obs_high
+            self.observation_space = self.get_goal_obs_space(low, high, goal_low, goal_high)
+        else:
+            low = paddle_obs_low + puck_obs_low + goal_low
+            high = paddle_obs_high + puck_obs_high + goal_high
+            self.observation_space = self.get_obs_space(low, high)
 
         self.min_goal_radius = self.width / 16
         self.max_goal_radius = self.width / 4
@@ -188,10 +205,17 @@ class AirHockeyPuckGoalPositionVelocityEnv(AirHockeyGoalEnv):
 
         low = paddle_obs_low + puck_obs_low
         high = paddle_obs_high + puck_obs_high
-
-        goal_low = np.array([self.table_x_top, self.table_y_left, -self.max_puck_vel, -self.max_puck_vel])
-        goal_high = np.array([0, self.table_y_right, self.max_puck_vel, self.max_puck_vel])
-        self.observation_space = self.get_goal_obs_space(low, high, goal_low, goal_high)
+        goal_low = [self.table_x_top, self.table_y_left, -self.max_puck_vel, -self.max_puck_vel]
+        goal_high = [0, self.table_y_right, self.max_puck_vel, self.max_puck_vel]
+        
+        if self.return_goal_obs:
+            low = paddle_obs_low + puck_obs_low
+            high = paddle_obs_high + puck_obs_high
+            self.observation_space = self.get_goal_obs_space(low, high, goal_low, goal_high)
+        else:
+            low = paddle_obs_low + puck_obs_low + goal_low
+            high = paddle_obs_high + puck_obs_high + goal_high
+            self.observation_space = self.get_obs_space(low, high)
 
         self.min_goal_radius = self.width / 16
         self.max_goal_radius = self.width / 4
@@ -334,10 +358,17 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
         low = paddle_obs_low
         high = paddle_obs_high
 
-        goal_low = np.array([0, self.table_y_left])
-        goal_high = np.array([self.table_x_bot, self.table_y_right])
+        goal_low = [0, self.table_y_left]
+        goal_high = [self.table_x_bot, self.table_y_right]
 
-        self.observation_space = self.get_goal_obs_space(low, high, goal_low, goal_high)
+        if self.return_goal_obs:
+            low = paddle_obs_low
+            high = paddle_obs_high
+            self.observation_space = self.get_goal_obs_space(low, high, goal_low, goal_high)
+        else:
+            low = paddle_obs_low + goal_low
+            high = paddle_obs_high + goal_high
+            self.observation_space = self.get_obs_space(low, high)
         
         self.min_goal_radius = self.width / 16
         self.max_goal_radius = self.width / 4
@@ -420,10 +451,17 @@ class AirHockeyPaddleReachPositionVelocityEnv(AirHockeyGoalEnv):
         low = paddle_obs_low
         high = paddle_obs_high
 
-        goal_low = np.array([0, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel])
-        goal_high = np.array([self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel])
+        goal_low = [0, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
+        goal_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
 
-        self.observation_space = self.get_goal_obs_space(low, high, goal_low, goal_high)
+        if self.return_goal_obs:
+            low = paddle_obs_low
+            high = paddle_obs_high
+            self.observation_space = self.get_goal_obs_space(low, high, goal_low, goal_high)
+        else:
+            low = paddle_obs_low + goal_low
+            high = paddle_obs_high + goal_high
+            self.observation_space = self.get_obs_space(low, high)
 
         self.min_goal_radius = self.width / 16
         self.max_goal_radius = self.width / 4
@@ -531,7 +569,7 @@ class AirHockeyPaddleReachPositionVelocityEnv(AirHockeyGoalEnv):
         self.goal_radius = self.min_goal_radius # not too important
         self.goal_pos = goal_position if self.goal_set is None else self.goal_set[0, :2]
         self.goal_vel = goal_velocity if self.goal_set is None else self.goal_set[0, 2:]
-        
+
     def get_base_reward(self, state_info):
         reward = self.compute_reward(self.get_achieved_goal(state_info), self.get_desired_goal(), {})
         success = self.latest_pos_reward >= 0.9 and self.latest_vel_reward >= 0.8
