@@ -253,10 +253,7 @@ class AirHockeyRenderer:
                 cv2.circle(self.frame, center.astype(int), goal_radius, color, 2)
                 
             green = (0, 255, 0)
-            draw_goal(self.airhockey_env.ego_goal_pos, self.airhockey_env.ego_goal_radius, color=green)
-            if self.airhockey_env.multiagent:
-                blue = (255, 0, 0)
-                draw_goal(self.airhockey_env.alt_goal_pos, self.airhockey_env.alt_goal_radius, color=blue)
+            draw_goal(self.airhockey_env.goal_pos, self.airhockey_env.goal_radius, color=green)
         
         for puck_attrs in self.airhockey_sim.pucks.values():
             self.draw_circle_with_image(puck_attrs, circle_type='puck')

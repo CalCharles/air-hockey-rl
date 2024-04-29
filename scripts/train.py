@@ -16,7 +16,7 @@ import yaml
 from utils import EvalCallback, save_evaluation_gifs, save_tensorboard_plots
 from curriculum.classifier_curriculum import CurriculumCallback
             
-def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_prior_task_results=False):
+def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_prior_task_results=False, progress_bar=False):
     """
     Train an air hockey paddle model using stable baselines.
 
@@ -28,10 +28,19 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
     air_hockey_params = air_hockey_cfg['air_hockey']
     air_hockey_params['n_training_steps'] = air_hockey_cfg['n_training_steps']
     
+    if 'sac' == air_hockey_cfg['algorithm']:
+        if 'goal' in air_hockey_cfg['air_hockey']['task']:
+            air_hockey_cfg['air_hockey']['return_goal_obs'] = True
+        else:
+            air_hockey_cfg['air_hockey']['return_goal_obs'] = False
+    else:
+        air_hockey_cfg['air_hockey']['return_goal_obs'] = False
+    
     air_hockey_params_cp = air_hockey_params.copy()
     air_hockey_params_cp['seed'] = 42
     air_hockey_params_cp['max_timesteps'] = 200
-    eval_env = AirHockeyEnv.from_dict(air_hockey_params_cp)
+    
+    eval_env = AirHockeyEnv(air_hockey_params_cp)
     
     if type(air_hockey_cfg['seed']) is not list:
         seeds = [int(air_hockey_cfg['seed'])]
@@ -75,7 +84,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
                     air_hockey_params['seed'] = curr_seed
                     # Note: With this seed, an individual rng is created for each env
                     # It does not affect the global rng!
-                    env = AirHockeyEnv.from_dict(air_hockey_params)
+                    env = AirHockeyEnv(air_hockey_params)
                     return Monitor(env)
                 return _init()
 
@@ -83,7 +92,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
             env = SubprocVecEnv([get_airhockey_env_for_parallel for _ in range(n_threads)])
             # env = VecNormalize(env) # probably something to try when tuning
         else:
-            env = AirHockeyEnv.from_dict(air_hockey_params)
+            env = AirHockeyEnv(air_hockey_params)
             def wrap_env(env):
                 wrapped_env = Monitor(env) # needed for extracting eprewmean and eplenmean
                 wrapped_env = DummyVecEnv([lambda: wrapped_env]) # Needed for all environments (e.g. used for multi-processing)
@@ -116,7 +125,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
                                     eval_freq=air_hockey_cfg['eval_freq'])
         
         # if goal-conditioned use SAC
-        if 'goal' in air_hockey_cfg['air_hockey']['task']:
+        if 'sac' == air_hockey_cfg['algorithm']:
             # SAC hyperparams:
             # Create 4 artificial transitions per real transitionair_hockey_simulator
             n_sampled_goal = 4
@@ -150,7 +159,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
         model.learn(total_timesteps=air_hockey_cfg['n_training_steps'],
                     tb_log_name=air_hockey_cfg['tb_log_name'], 
                     callback=callback,
-                    progress_bar=True)
+                    progress_bar=progress_bar)
         
         os.makedirs(log_parent_dir, exist_ok=True)
         
@@ -170,7 +179,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
         
         air_hockey_params = air_hockey_cfg['air_hockey']
         air_hockey_params['n_training_steps'] = air_hockey_cfg['n_training_steps']
-        env_test = AirHockeyEnv.from_dict(air_hockey_params)
+        env_test = AirHockeyEnv(air_hockey_params)
         renderer = AirHockeyRenderer(env_test)
         
         env_test = DummyVecEnv([lambda : env_test])
@@ -197,7 +206,7 @@ if __name__ == "__main__":
     parser.add_argument('--cfg', type=str, default=None, help='Path to the configuration file.')
     parser.add_argument('--wandb', action='store_true', help='Use wandb for logging.')
     parser.add_argument('--device', type=str, default='cpu', help='Device to use for training.')
-    
+    parser.add_argument('--progress_bar', action='store_true', help='Show progress bar during training.')
     # Note: You probably don't want this argument, only if you are retraining frequently
     # and task folder is getting too big
     parser.add_argument('--clear', action='store_true', help='Removes prior folders for the task.')
@@ -218,5 +227,5 @@ if __name__ == "__main__":
     use_wandb = args.wandb
     device = args.device
     clear_prior_task_results = args.clear
-    
-    train_air_hockey_model(air_hockey_cfg, use_wandb, device, clear_prior_task_results)
+    progress_bar = args.progress_bar
+    train_air_hockey_model(air_hockey_cfg, use_wandb, device, clear_prior_task_results, progress_bar)
