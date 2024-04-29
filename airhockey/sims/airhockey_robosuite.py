@@ -1,7 +1,7 @@
 import numpy as np
 import math
 from robosuite.environments.manipulation.single_arm_env import SingleArmEnv
-# from airhockey.sims import AirHockeySim
+from .airhockey_sim import AirHockeySim
 from robosuite.models.objects import BoxObject, CylinderObject
 from robosuite.models.tasks import ManipulationTask
 from robosuite.utils.mjcf_utils import CustomMaterial
@@ -11,10 +11,12 @@ import robosuite.utils.transform_utils as T
 from robosuite.utils.transform_utils import convert_quat
 from robosuite.utils.mjmod import DynamicsModder
 from robosuite.utils.mjcf_utils import xml_path_completion as robosuite_xml_path_completion
+from robosuite.robots import ROBOT_CLASS_MAPPING
 import yaml
 import xmltodict
 import time
 import datetime
+from collections import namedtuple
 
 import os
 
@@ -22,46 +24,8 @@ import numpy as np
 from robosuite.models.arenas import Arena
 from airhockey.sims.utils import custom_xml_path_completion
 
-class AirHockeyTableArena(Arena):
-    """
-    Workspace that contains an empty table.
 
-
-    Args:
-        table_full_size (3-tuple): (L,W,H) full dimensions of the table
-        table_friction (3-tuple): (sliding, torsional, rolling) friction parameters of the table
-        table_offset (3-tuple): (x,y,z) offset from center of arena when placing table.
-            Note that the z value sets the upper limit of the table
-        has_legs (bool): whether the table has legs or not
-        xml (str): xml file to load arena
-    """
-
-    def __init__(
-        self,
-        table_full_size=(0.8, 0.8, 0.05),
-        table_friction=(1, 0.005, 0.0001),
-        table_offset=(0, 0, 0.8),
-        has_legs=True,
-        xml="arenas/air_hockey_table.xml",
-    ):
-        arena_fp = robosuite_xml_path_completion(xml)
-        super().__init__(arena_fp)
-        self.center_pos = self.bottom_pos + np.array([0, 0, 0.0]) + table_offset
-        self.table_body = self.worldbody.find("./body[@name='table']")
-        # self.table_collision = self.table_body.find("./geom[@name='table_collision']")
-        # self.table_visual = self.table_body.find("./geom[@name='table_visual']")
-        # self.table_top = self.table_body.find("./site[@name='table_top']")
-        
-        # print("self.floor: ", self.floor)
-        # print("self.table_body: ", self.table_body)
-        self.configure_location()
-        # pass
-
-    def configure_location(self):
-        """Configures correct locations for this arena"""
-        # print("table_body pos: ", self.table_body.get("pos"))
-
-class AirHockeyRobosuite(SingleArmEnv):
+class AirHockeyRobosuite(AirHockeySim):
     """
     This class corresponds to the lifting task for a single robot arm.
 
@@ -284,33 +248,14 @@ class AirHockeyRobosuite(SingleArmEnv):
         self.max_paddle_vel = max_paddle_vel
         self.max_puck_vel = max_puck_vel
         
-
-        super().__init__(
-            robots=robots,
-            env_configuration=env_configuration,
-            controller_configs=controller_configs,
-            mount_types="default",
-            gripper_types=gripper_types,
-            initialization_noise=initialization_noise,
-            use_camera_obs=use_camera_obs,
-            has_renderer=has_renderer,
-            has_offscreen_renderer=has_offscreen_renderer,
-            render_camera=render_camera,
-            render_collision_mesh=render_collision_mesh,
-            render_visual_mesh=render_visual_mesh,
-            render_gpu_device_id=render_gpu_device_id,
-            control_freq=control_freq,
-            horizon=horizon,
-            ignore_done=ignore_done,
-            hard_reset=hard_reset,
-            camera_names=camera_names,
-            camera_heights=camera_heights,
-            camera_widths=camera_widths,
-            camera_depths=camera_depths,
-            camera_segmentations=camera_segmentations,
-            renderer=renderer,
-            renderer_config=renderer_config,
-        )
+        self.robosuite_env = None
+        self.robosuite_env_cfg = {'robots': robots, 'env_configuration': env_configuration, 'controller_configs': controller_configs,
+                              'mount_types': "default", 'gripper_types': gripper_types, 'initialization_noise': initialization_noise,
+                              'use_camera_obs': use_camera_obs, 'has_renderer': has_renderer, 'has_offscreen_renderer': has_offscreen_renderer,
+                              'render_camera': render_camera, 'render_collision_mesh': render_collision_mesh, 'render_visual_mesh': render_visual_mesh,
+                              'render_gpu_device_id': render_gpu_device_id, 'control_freq': control_freq, 'horizon': horizon, 'ignore_done': ignore_done,
+                              'hard_reset': hard_reset, 'camera_names': camera_names, 'camera_heights': camera_heights, 'camera_widths': camera_widths,
+                              'camera_depths': camera_depths, 'camera_segmentations': camera_segmentations, 'renderer': renderer, 'renderer_config': renderer_config}
 
         if "GOAL_REGION" in task or task == "REACHING":
             self.randomize_goal_location(reaching=task=="REACHING")
@@ -369,8 +314,11 @@ class AirHockeyRobosuite(SingleArmEnv):
     def randomize_positive_regions(self):
         self.positive_regions = np.random.choice([0, 1], size=10, p=[0.5, 0.5])
 
-    def reset(self, sim_seed):
-        obs = super().reset()
+    def reset(self, seed=None):
+        if self.robosuite_env is not None:
+            obs = self.robosuite_env.reset()
+        else:
+            obs = None
         if "GOAL_REGION" in self.task or self.task == "REACHING":
             self.randomize_goal_location(reaching=self.task == "REACHING")
 
@@ -400,7 +348,7 @@ class AirHockeyRobosuite(SingleArmEnv):
 
         puck_pos = np.dot(self.table_transform, self.sim.data.get_body_xpos("puck"))
         puck_vel = np.dot(self.table_transform, self.sim.data.get_body_xvelp("puck"))
-        gripper_pos = np.dot(self.table_transform, self.sim.data.site_xpos[self.robots[0].eef_site_id])
+        gripper_pos = np.dot(self.table_transform, self.sim.data.site_xpos[self.robosuite_env.robots[0].eef_site_id])
         gripper_vel = self.sim.data.get_body_xvelp("gripper0_eef")
         reward = 0
         if self.task == "TOUCHING_PUCK":
@@ -453,7 +401,7 @@ class AirHockeyRobosuite(SingleArmEnv):
         return reward
     
     def instantiate_objects(self):
-        super()._load_model()
+        
         # Get current timestamp
         current_time = datetime.datetime.fromtimestamp(time.time())
         formatted_time = current_time.strftime('%Y%m%d_%H%M%S')
@@ -463,32 +411,18 @@ class AirHockeyRobosuite(SingleArmEnv):
         
         with open(tmp_xml_fp, 'w') as file:
             file.write(xmltodict.unparse(self.xml_config, pretty=True))
-
+            
+        self.robosuite_env = RobosuiteEnv(xml_fp=tmp_xml_fp, 
+                                          table_full_size=self.table_full_size,
+                                          table_friction=self.table_friction,
+                                          table_offset=self.table_offset,
+                                          robosuite_env_params=self.robosuite_env_cfg)
+                                          
         # Adjust base pose accordingly
-        xpos = self.robots[0].robot_model.base_xpos_offset["table"](self.table_full_size[0])
+        xpos = self.robosuite_env.robots[0].robot_model.base_xpos_offset["table"](self.table_full_size[0])
         
         xpos = (-0.48, 0, 0)
-        self.robots[0].robot_model.set_base_xpos(xpos)
-        
-        # load model for table top workspace
-        mujoco_arena = AirHockeyTableArena(
-            table_full_size=self.table_full_size,
-            table_friction=self.table_friction,
-            table_offset=self.table_offset,
-            xml=tmp_xml_fp,
-        )
-        
-        # remove tmp file
-        # os.remove(tmp_xml_fp)
-
-        # Arena always gets set to zero origin
-        mujoco_arena.set_origin([0, 0, 0])
-
-        # task includes arena, robot, and objects of interest
-        self.model = ManipulationTask(
-            mujoco_arena=mujoco_arena,
-            mujoco_robots=[robot.robot_model for robot in self.robots],
-        )
+        self.robosuite_env.robots[0].robot_model.set_base_xpos(xpos)
 
         # set puck velocities
         for name in self.initial_puck_vels.keys():
@@ -496,6 +430,9 @@ class AirHockeyRobosuite(SingleArmEnv):
             self.sim.data.qvel[joint_key] = self.initial_puck_vels[name][0]
             joint_key  = self.sim.model.get_joint_qpos_addr(name + "_y")
             self.sim.data.qvel[joint_key] = self.initial_puck_vels[name][1]
+        
+    def spawn_block(self, pos, vel, name, affected_by_gravity=False, movable=True):
+        pass
 
     def spawn_puck(self, pos, vel, name, affected_by_gravity=False, movable=True):
         
@@ -622,7 +559,7 @@ class AirHockeyRobosuite(SingleArmEnv):
         """
 
         # Prematurely terminate if contacting the table with the arm
-        if self.check_contact(self.robots[0].robot_model):
+        if self.check_contact(self.robosuite_env.robots[0].robot_model):
             reward = self.arm_limit_collision_penalty
             print("arm collision happens")
             info["terminated_reason"] = "arm_hit_table"
@@ -635,7 +572,7 @@ class AirHockeyRobosuite(SingleArmEnv):
             done = True
 
 
-        if self.robots[0].check_q_limits():
+        if self.robosuite_env.robots[0].check_q_limits():
             reward = self.arm_limit_collision_penalty
             print("reach joint limits")
             print("reach joint limits")
@@ -651,7 +588,7 @@ class AirHockeyRobosuite(SingleArmEnv):
             done = True
 
         puck_pos = self.sim.data.get_body_xpos("puck")
-        gripper_pos = self.sim.data.site_xpos[self.robots[0].eef_site_id]
+        gripper_pos = self.sim.data.site_xpos[self.robosuite_env.robots[0].eef_site_id]
         if np.allclose(puck_pos[0:2], gripper_pos[0:2], atol=0.05) and gripper_pos[2] <= puck_pos[2] - 0.2:
             reward = self.arm_limit_collision_penalty
             info["terminated_reason"] = "paddle_on_puck"
@@ -719,10 +656,10 @@ class AirHockeyRobosuite(SingleArmEnv):
             file.write(xmltodict.unparse(xml_config, pretty=True))
 
         # Adjust base pose accordingly
-        xpos = self.robots[0].robot_model.base_xpos_offset["table"](self.table_full_size[0])
+        xpos = self.robosuite_env.robots[0].robot_model.base_xpos_offset["table"](self.table_full_size[0])
         
         xpos = (-0.48, 0, 0)
-        self.robots[0].robot_model.set_base_xpos(xpos)
+        self.robosuite_env.robots[0].robot_model.set_base_xpos(xpos)
         
         # load model for table top workspace
         mujoco_arena = AirHockeyTableArena(
@@ -741,7 +678,7 @@ class AirHockeyRobosuite(SingleArmEnv):
         # task includes arena, robot, and objects of interest
         self.model = ManipulationTask(
             mujoco_arena=mujoco_arena,
-            mujoco_robots=[robot.robot_model for robot in self.robots],
+            mujoco_robots=[robot.robot_model for robot in self.robosuite_env.robots],
         )
 
     def _setup_references(self):
@@ -764,7 +701,7 @@ class AirHockeyRobosuite(SingleArmEnv):
         # low-level object information
         if self.use_object_obs:
             # Get robot prefix and define observables modality
-            pf = self.robots[0].robot_model.naming_prefix
+            pf = self.robosuite_env.robots[0].robot_model.naming_prefix
             modality = "object"
 
 
@@ -867,7 +804,7 @@ class AirHockeyRobosuite(SingleArmEnv):
         
         puck_pos = np.dot(self.table_transform, self.sim.data.get_body_xpos("puck"))
         puck_vel = np.dot(self.table_transform, self.sim.data.get_body_xvelp("puck"))
-        gripper_pos = np.dot(self.table_transform, self.sim.data.site_xpos[self.robots[0].eef_site_id])
+        gripper_pos = np.dot(self.table_transform, self.sim.data.site_xpos[self.robosuite_env.robots[0].eef_site_id])
 
         if self.task == "TOUCHING_PUCK":
             return True if np.linalg.norm(puck_pos[:2] - gripper_pos[:2]) < 0.1 else False
@@ -915,3 +852,120 @@ class AirHockeyRobosuite(SingleArmEnv):
             return np.zeros(3)
 
         return (quat[:3] * 2.0 * math.acos(quat[3])) / den
+    
+
+class AirHockeyTableArena(Arena):
+    """
+    Workspace that contains an empty table.
+
+
+    Args:
+        table_full_size (3-tuple): (L,W,H) full dimensions of the table
+        table_friction (3-tuple): (sliding, torsional, rolling) friction parameters of the table
+        table_offset (3-tuple): (x,y,z) offset from center of arena when placing table.
+            Note that the z value sets the upper limit of the table
+        has_legs (bool): whether the table has legs or not
+        xml (str): xml file to load arena
+    """
+
+    def __init__(
+        self,
+        table_full_size=(0.8, 0.8, 0.05),
+        table_friction=(1, 0.005, 0.0001),
+        table_offset=(0, 0, 0.8),
+        has_legs=True,
+        xml="arenas/air_hockey_table.xml",
+    ):
+        arena_fp = robosuite_xml_path_completion(xml)
+        super().__init__(arena_fp)
+        self.center_pos = self.bottom_pos + np.array([0, 0, 0.0]) + table_offset
+        self.table_body = self.worldbody.find("./body[@name='table']")
+        # self.table_collision = self.table_body.find("./geom[@name='table_collision']")
+        # self.table_visual = self.table_body.find("./geom[@name='table_visual']")
+        # self.table_top = self.table_body.find("./site[@name='table_top']")
+        
+        # print("self.floor: ", self.floor)
+        # print("self.table_body: ", self.table_body)
+        self.configure_location()
+        # pass
+
+    def configure_location(self):
+        """Configures correct locations for this arena"""
+        # print("table_body pos: ", self.table_body.get("pos"))
+
+def input2list(inp, length):
+    """
+    Helper function that converts an input that is either a single value or a list into a list
+
+    Args:
+        inp (None or str or list): Input value to be converted to list
+        length (int): Length of list to broadcast input to
+
+    Returns:
+        list: input @inp converted into a list of length @length
+    """
+    # convert to list if necessary
+    return list(inp) if type(inp) is list or type(inp) is tuple else [inp for _ in range(length)]
+    
+class RobosuiteEnv(SingleArmEnv):
+    def __init__(self, xml_fp, table_full_size, table_friction, table_offset, robosuite_env_params):
+        # load model for table top workspace
+        mujoco_arena = AirHockeyTableArena(
+            table_full_size=table_full_size,
+            table_friction=table_friction,
+            table_offset=table_offset,
+            xml=xml_fp,
+        )
+        
+        # Arena always gets set to zero origin
+        mujoco_arena.set_origin([0, 0, 0])
+        
+        robots = robosuite_env_params['robots']
+        robots = list(robots) if type(robots) is list or type(robots) is tuple else [robots]
+        self.num_robots = len(robots)
+        robot_names = input2list(robots, self.num_robots)
+        
+        controller_configs = input2list(robosuite_env_params['controller_configs'], self.num_robots)
+        mount_types = input2list(robosuite_env_params['mount_types'], self.num_robots)
+        initialization_noise = input2list(robosuite_env_params['initialization_noise'], self.num_robots)
+        control_freq = input2list(robosuite_env_params['control_freq'], self.num_robots)
+        robot_configs = self.load_robots_configs(robot_names, controller_configs, mount_types, initialization_noise, control_freq)
+        robots = self.load_robots(robot_names, robot_configs)
+
+        # task includes arena, robot, and objects of interest
+        self.task_model = ManipulationTask(mujoco_arena=mujoco_arena, mujoco_robots=[robot.robot_model for robot in robots])
+        super().__init__(**robosuite_env_params)
+    
+    def load_robots(self, robot_names, robot_configs):
+        """
+        Instantiates robots and stores them within the self.robots attribute
+        """
+        # Loop through robots and instantiate Robot object for each
+        robots_out = [None for _ in range(len(robot_names))]
+        for idx, (name, config) in enumerate(zip(robot_names, robot_configs)):
+            # Create the robot instance
+            robots_out[idx] = ROBOT_CLASS_MAPPING[name](robot_type=name, idn=idx, **config)
+            # Now, load the robot models
+            robots_out[idx].load_model()
+        return robots_out
+    
+    def _load_model(self):
+        self.model = self.task_model # Prevents the super call from making this None lol
+            
+    def load_robots_configs(self, robot_names, controller_configs, mount_types, initialization_noise, control_freq, robot_configs=None):
+        num_robots = len(robot_names)
+        if robot_configs is None:
+            robot_configs = [{} for _ in range(num_robots)]
+        self.robot_configs = [
+            dict(
+                **{
+                    "controller_config": controller_configs[idx],
+                    "mount_type": mount_types[idx],
+                    "initialization_noise": initialization_noise[idx],
+                    "control_freq": control_freq,
+                },
+                **robot_config,
+            )
+            for idx, robot_config in enumerate(robot_configs)
+        ]
+        return robot_configs
