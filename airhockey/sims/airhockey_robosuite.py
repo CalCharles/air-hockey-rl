@@ -184,7 +184,11 @@ class AirHockeyRobosuite(SingleArmEnv):
 
     def __init__(
         self,
-        robots,
+        paddle_radius,
+        block_width,
+        max_paddle_vel,
+        max_puck_vel,
+        robots=['AirHockeyUR5e'],
         env_configuration="default",
         controller_configs=None,
         gripper_types="default",
@@ -217,7 +221,9 @@ class AirHockeyRobosuite(SingleArmEnv):
         puck_radius=0.03165,
         puck_damping=0.8,
         puck_density=3530,
+        seed=0
     ):
+        
         # settings for table top
         self.table_full_size = table_full_size
         self.table_friction = table_friction
@@ -271,6 +277,14 @@ class AirHockeyRobosuite(SingleArmEnv):
         self.puck_damping = puck_damping
         self.puck_density = puck_density
 
+        # FIXME make these parameters do something, right now it's a placeholder to make calls to robosuite work
+        self.seed = seed
+        self.paddle_radius = paddle_radius
+        self.block_width = block_width
+        self.max_paddle_vel = max_paddle_vel
+        self.max_puck_vel = max_puck_vel
+        
+
         super().__init__(
             robots=robots,
             env_configuration=env_configuration,
@@ -306,6 +320,15 @@ class AirHockeyRobosuite(SingleArmEnv):
 
         if task == "POSITIVE_REGION":
             self.randomize_positive_regions()
+
+    @staticmethod
+    def from_dict(state_dict):
+        state_dict_copy = state_dict.copy()
+        state_dict_copy['table_full_size'] = (state_dict['length'], state_dict['width'], state_dict['depth'])
+        del state_dict_copy['length']
+        del state_dict_copy['width']
+        del state_dict_copy['depth']
+        return AirHockeyRobosuite(**state_dict_copy)
 
     def randomize_goal_location(self, reaching=False):
         site = self.sim.model.site_name2id("goal_region")
@@ -346,7 +369,7 @@ class AirHockeyRobosuite(SingleArmEnv):
     def randomize_positive_regions(self):
         self.positive_regions = np.random.choice([0, 1], size=10, p=[0.5, 0.5])
 
-    def reset(self, ):
+    def reset(self, sim_seed):
         obs = super().reset()
         if "GOAL_REGION" in self.task or self.task == "REACHING":
             self.randomize_goal_location(reaching=self.task == "REACHING")
@@ -430,20 +453,13 @@ class AirHockeyRobosuite(SingleArmEnv):
         return reward
     
     def instantiate_objects(self):
-        
-        # set puck velocities
-        for name in self.initial_puck_vels.keys():
-            joint_key  = self.sim.model.get_joint_qpos_addr(name + "_x")
-            self.sim.data.qvel[joint_key] = self.initial_puck_vels[name][0]
-            joint_key  = self.sim.model.get_joint_qpos_addr(name + "_y")
-            self.sim.data.qvel[joint_key] = self.initial_puck_vels[name][1]
-
+        super()._load_model()
         # Get current timestamp
         current_time = datetime.datetime.fromtimestamp(time.time())
         formatted_time = current_time.strftime('%Y%m%d_%H%M%S')
         
         # Make new filename
-        tmp_xml_fp = robosuite_xml_path_completion(f"arenas/air_hockey_table_{formatted_time}.xml")
+        tmp_xml_fp = custom_xml_path_completion(f"arenas/air_hockey_table_{formatted_time}.xml")
         
         with open(tmp_xml_fp, 'w') as file:
             file.write(xmltodict.unparse(self.xml_config, pretty=True))
@@ -463,7 +479,7 @@ class AirHockeyRobosuite(SingleArmEnv):
         )
         
         # remove tmp file
-        os.remove(tmp_xml_fp)
+        # os.remove(tmp_xml_fp)
 
         # Arena always gets set to zero origin
         mujoco_arena.set_origin([0, 0, 0])
@@ -474,13 +490,21 @@ class AirHockeyRobosuite(SingleArmEnv):
             mujoco_robots=[robot.robot_model for robot in self.robots],
         )
 
+        # set puck velocities
+        for name in self.initial_puck_vels.keys():
+            joint_key  = self.sim.model.get_joint_qpos_addr(name + "_x")
+            self.sim.data.qvel[joint_key] = self.initial_puck_vels[name][0]
+            joint_key  = self.sim.model.get_joint_qpos_addr(name + "_y")
+            self.sim.data.qvel[joint_key] = self.initial_puck_vels[name][1]
+
     def spawn_puck(self, pos, vel, name, affected_by_gravity=False, movable=True):
         
         # create puck object to add
         puck_mass = self.puck_density * math.pi * (self.puck_radius ** 2) * 0.009
+        z_pos = self.transform_z(pos[0])
         puck_dict = {
             "@name": name,
-            "@pos": f"{pos[0]} {pos[1]} {pos[2]}",
+            "@pos": f"{pos[0]} {pos[1]} {z_pos}",
             "@axisangle": "0 1 0 -0.09",
             "joint": [
                 {
@@ -531,6 +555,9 @@ class AirHockeyRobosuite(SingleArmEnv):
         self.xml_config['mujoco']['worldbody']['body'].append(puck_dict)
         self.initial_puck_vels[name] = vel
     
+    def spawn_paddle(self, pos, vel, name):
+        pass
+
     def get_transition(self, action):
         """
         Takes a step in simulation with control command @action and returns the resulting transition.
@@ -673,13 +700,13 @@ class AirHockeyRobosuite(SingleArmEnv):
         xml_config['mujoco']['worldbody']['body'][0]['body'][0]['geom']['@size'] = f"{table_length} {table_width} {table_size.split()[2]}"
 
         # puck config
-        puck_size = xml_config['mujoco']['worldbody']['body'][1]['body']['geom'][0]['@size']
+        # puck_size = xml_config['mujoco']['worldbody']['body'][1]['body']['geom'][0]['@size']
 
-        xml_config['mujoco']['worldbody']['body'][1]['body']['geom'][0]['@size'] = f"{puck_radius} {puck_size.split()[1]}"
-        # puck damping x
-        xml_config['mujoco']['worldbody']['body'][1]['joint'][0]['@damping'] = f"{puck_damping}"
-        # puck damping y
-        xml_config['mujoco']['worldbody']['body'][1]['joint'][1]['@damping'] = f"{puck_damping}"
+        # xml_config['mujoco']['worldbody']['body'][1]['body']['geom'][0]['@size'] = f"{puck_radius} {puck_size.split()[1]}"
+        # # puck damping x
+        # xml_config['mujoco']['worldbody']['body'][1]['joint'][0]['@damping'] = f"{puck_damping}"
+        # # puck damping y
+        # xml_config['mujoco']['worldbody']['body'][1]['joint'][1]['@damping'] = f"{puck_damping}"
         
         # Get current timestamp
         current_time = datetime.datetime.fromtimestamp(time.time())

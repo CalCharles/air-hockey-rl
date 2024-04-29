@@ -1,28 +1,34 @@
 # Air Hockey Table Parameters
 air_hockey:
   simulator_params:
+    num_paddles: 1 # How would we add multiple paddles, do I need to change # of robots?
+    num_pucks: 1 # More pucks needed? Need to figure out where puck reset happens
+    num_blocks: 0 # Who?
+    num_obstacles: 0 # Who?
+    num_targets: 0 # Who?
+    absorb_target: false # Why?
+
     # 57: <geom name="surface" type="box" material="white" size="length width 0.0505" pos="0 0 -0.0505"
     length: 1.064
     width: 0.609
-    depth: 0.505
     # 102: <geom pos="0 0 -0.2" name="puck" type="cylinder" material="red" size="puck_radius 0.009" condim="4" priority="0" group="1"/>
     puck_radius: 0.03175
+    # round_gripper.py: ask michael, this is likely an issue
     paddle_radius: 0.0508
     block_width: 0.0254 # who?
+    force_scaling: 1000 # what?
+    paddle_damping: 3 # uh
     #97: <joint name="puck_x" type="slide" axis="1 0 0" damping="0.01" limited="false"/>
     #98: <joint name="puck_y" type="slide" axis="0 1 0" damping="0.01" limited="false"/>
     puck_damping: 0.01
+    paddle_density: 2500 # HUH
     puck_density: 3530
-    max_paddle_vel: 0101
-    max_puck_vel: 0
-  
-  num_paddles: 1 # How would we add multiple paddles, do I need to change # of robots?
-  num_pucks: 1 # More pucks needed? Need to figure out where puck reset happens
-  num_blocks: 0 # Who?
-  num_obstacles: 0 # Who?
-  num_targets: 0 # Who?
+    render_size: 360 # how customize this
+    gravity: -0.5 # hmmm not sure where this is configured
+    max_force_timestep: 100 # max force we can apply at one timestep
+    render_size: 360 # smh repeated smh
 
-  simulator: robosuite
+  simulator: box2d # or robosuite
   max_timesteps: 300
   # reward_type: 'goal_position_velocity'
   task: 'puck_touch'
