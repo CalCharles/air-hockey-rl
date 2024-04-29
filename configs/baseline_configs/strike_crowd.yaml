@@ -1,11 +1,6 @@
 # Air Hockey Table Parameters
 air_hockey:
   simulator_params:
-    num_paddles: 1
-    num_pucks: 1
-    num_blocks: 15
-    num_obstacles: 0
-    num_targets: 0
     absorb_target: false
     length: 1.9304
     width: 0.8636
@@ -33,13 +28,19 @@ air_hockey:
 
   terminate_on_out_of_bounds: true
   terminate_on_enemy_goal: true
-  terminate_on_puck_stop: true
+  terminate_on_puck_stop: false
   truncate_rew: -1
   wall_bumping_rew: -1
   direction_change_rew: -0.05
   horizontal_vel_rew: -0.1
   diagonal_motion_rew: -0.1
   stand_still_rew: 0.01
+
+  num_paddles: 1
+  num_pucks: 1
+  num_blocks: 15
+  num_obstacles: 0
+  num_targets: 0
 
 # Training Parameters
 n_training_steps: 1000000

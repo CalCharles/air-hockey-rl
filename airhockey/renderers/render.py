@@ -67,7 +67,8 @@ class AirHockeyRenderer:
         Args:
             body_attrs (tuple): A tuple containing the body and color attributes of the circle.
         """
-        body, color = body_attrs
+        color = (0, 255, 0)
+        body = body_attrs
         for fixture in body.fixtures:
             shape = fixture.shape
             center = np.array(body.position) + np.array((self.width / 2, self.length / 2))
@@ -83,7 +84,7 @@ class AirHockeyRenderer:
             body_attrs (tuple): A tuple containing the body and color attributes of the circle.
             circle_type (str, optional): The type of circle. Defaults to 'puck'.
         """
-        body, color = body_attrs  # color is unused but kept for compatibility
+        body = body_attrs  # color is unused but kept for compatibility
         for fixture in body.fixtures:
             shape = fixture.shape
             # center = np.array(body.position) + np.array((self.width / 2, self.length / 2))
@@ -152,7 +153,8 @@ class AirHockeyRenderer:
             body_attrs (tuple): A tuple containing the body and color attributes of the circle.
             circle_type (str, optional): The type of circle. Defaults to 'puck'.
         """
-        body, color = body_attrs  # color is unused but kept for compatibility
+        color = (0, 0, 255)
+        body = body_attrs  # color is unused but kept for compatibility
         for fixture in body.fixtures:
             shape = fixture.shape
             # center = np.array(body.position) + np.array((self.width / 2, self.length / 2))
@@ -218,7 +220,8 @@ class AirHockeyRenderer:
         Args:
             body_attrs (tuple): A tuple containing the body and color attributes of the polygon.
         """
-        body, color = body_attrs
+        color = (0, 0, 0)
+        body = body_attrs
         for fixture in body.fixtures:
             shape = fixture.shape
             rotation = np.stack([body.transform.R.x_axis, body.transform.R.y_axis], axis = 1)
@@ -250,10 +253,7 @@ class AirHockeyRenderer:
                 cv2.circle(self.frame, center.astype(int), goal_radius, color, 2)
                 
             green = (0, 255, 0)
-            draw_goal(self.airhockey_env.ego_goal_pos, self.airhockey_env.ego_goal_radius, color=green)
-            if self.airhockey_env.multiagent:
-                blue = (255, 0, 0)
-                draw_goal(self.airhockey_env.alt_goal_pos, self.airhockey_env.alt_goal_radius, color=blue)
+            draw_goal(self.airhockey_env.goal_pos, self.airhockey_env.goal_radius, color=green)
         
         for puck_attrs in self.airhockey_sim.pucks.values():
             self.draw_circle_with_image(puck_attrs, circle_type='puck')
