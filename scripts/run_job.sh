@@ -1,1 +1,1 @@
-python train.py --cfg ../configs/baseline_configs/gcrl_pos_curriculum.yaml --wandb
+python train.py --cfg ../configs/baseline_configs/gc_pos_dense.yaml --wandb #--progress_bar
