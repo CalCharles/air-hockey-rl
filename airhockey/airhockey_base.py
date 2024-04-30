@@ -53,6 +53,11 @@ class AirHockeyBaseEnv(ABC, Env):
 
         simulator_params['seed'] = seed
         self.simulator = simulator_fn.from_dict(simulator_params)
+        self.render_length = self.simulator.render_length
+        self.render_width = self.simulator.render_width
+        self.render_masks = self.simulator.render_masks
+        self.ppm = self.simulator.ppm
+        
         self.simulator_params = simulator_params
 
         self.max_timesteps = max_timesteps
