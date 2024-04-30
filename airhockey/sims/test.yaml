@@ -15,6 +15,7 @@ air_hockey:
     puck_density: 3530
     max_paddle_vel: 0101
     max_puck_vel: 0
+    render_size: 360
   
   num_paddles: 1 # How would we add multiple paddles, do I need to change # of robots?
   num_pucks: 1 # More pucks needed? Need to figure out where puck reset happens
@@ -25,7 +26,7 @@ air_hockey:
   simulator: robosuite
   max_timesteps: 300
   # reward_type: 'goal_position_velocity'
-  task: 'puck_touch'
+  task: 'puck_vel'
   goal_max_x_velocity: 1 # min is -goal_max_x_velocity
   goal_min_y_velocity: 1
   goal_max_y_velocity: 5

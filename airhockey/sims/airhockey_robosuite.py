@@ -72,6 +72,7 @@ class AirHockeyRobosuite(AirHockeySim):
 
         use_object_obs (bool): if True, include object (puck) information in
             the observation.
+        # Get robot prefix and define observables modality
 
         reward_scale (None or float): Scales the normalized reward function by the amount specified.
             If None, environment reward remains unnormalized
@@ -152,6 +153,9 @@ class AirHockeyRobosuite(AirHockeySim):
         block_width,
         max_paddle_vel,
         max_puck_vel,
+        length, 
+        width,
+        render_size,
         robots=['AirHockeyUR5e'],
         env_configuration="default",
         controller_configs=None,
@@ -192,6 +196,12 @@ class AirHockeyRobosuite(AirHockeySim):
         self.table_full_size = table_full_size
         self.table_friction = table_friction
         self.table_offset = np.array((0, 0, 0.8))
+        
+        self.length = length
+        self.width = width
+        self.ppm = render_size / self.width
+        self.render_width = int(render_size)
+        self.render_length = int(self.ppm * self.length)
 
         # reward configuration
         self.reward_scale = reward_scale
@@ -235,7 +245,13 @@ class AirHockeyRobosuite(AirHockeySim):
             self.xml_config = xmltodict.parse(file.read())
 
         # update table config
-        self.xml_config['mujoco']['worldbody']['body'][0]['body'][0]['geom']['@size'] = f"{self.table_full_size[0]} {self.table_full_size[1]} {self.table_full_size[2]}"
+        table_idx = None
+        for i, body in enumerate(self.xml_config['mujoco']['worldbody']['body']['body']):
+            if body['@name'] == 'table_surface':
+                table_idx = i
+                break
+        self.xml_config['mujoco']['worldbody']['body']['body'][table_idx]['geom']['@size'] = f"{self.table_full_size[0]} {self.table_full_size[1]} {self.table_full_size[2]}"
+        # self.xml_config['mujoco']['worldbody']['body'][0]['body'][0]['geom']['@size'] = f"{self.table_full_size[0]} {self.table_full_size[1]} {self.table_full_size[2]}"
 
         self.puck_radius = puck_radius
         self.puck_damping = puck_damping
@@ -256,168 +272,70 @@ class AirHockeyRobosuite(AirHockeySim):
                               'render_gpu_device_id': render_gpu_device_id, 'control_freq': control_freq, 'horizon': horizon, 'ignore_done': ignore_done,
                               'hard_reset': hard_reset, 'camera_names': camera_names, 'camera_heights': camera_heights, 'camera_widths': camera_widths,
                               'camera_depths': camera_depths, 'camera_segmentations': camera_segmentations, 'renderer': renderer, 'renderer_config': renderer_config}
-
-        if "GOAL_REGION" in task or task == "REACHING":
-            self.randomize_goal_location(reaching=task=="REACHING")
-
-        if task == "GOAL_REGION_DESIRED_VELOCITY":
-            self.randomize_goal_vel()
-
-        if task == "POSITIVE_REGION":
-            self.randomize_positive_regions()
+        
+        self.initialized_objects = False
+        current_time = datetime.datetime.fromtimestamp(time.time())
+        formatted_time = current_time.strftime('%Y%m%d_%H%M%S')
+        self.tmp_xml_fp = robosuite_xml_path_completion(f"arenas/air_hockey_table_{formatted_time}.xml")
+        
+    # deconstructor
+    def __del__(self):
+        if self.robosuite_env is not None:
+            self.robosuite_env.close()
+        if self.initialized_objects:
+            os.remove(self.tmp_xml_fp)
+        
 
     @staticmethod
     def from_dict(state_dict):
         state_dict_copy = state_dict.copy()
         state_dict_copy['table_full_size'] = (state_dict['length'], state_dict['width'], state_dict['depth'])
-        del state_dict_copy['length']
-        del state_dict_copy['width']
         del state_dict_copy['depth']
         return AirHockeyRobosuite(**state_dict_copy)
-
-    def randomize_goal_location(self, reaching=False):
-        site = self.sim.model.site_name2id("goal_region")
-
-        if reaching:
-            spawn_pos_min = np.array([0.1, -0.3])
-            spawn_pos_max = np.array([0.25, 0.3])
-        else:
-            spawn_pos_min = np.array([0.4, -0.3])
-            spawn_pos_max = np.array([0.6, 0.3])
-
-        spawn_pos = np.random.uniform(spawn_pos_min, spawn_pos_max)
-        spawn_pos = np.array([spawn_pos[0], spawn_pos[1], self.transform_z(spawn_pos[0])])
-        self.goal_region_world = np.array([spawn_pos[0] + 0.025, spawn_pos[1], self.transform_z(spawn_pos[0] + 0.025)])
-
-        self.sim.model.site_pos[site] = spawn_pos.tolist()
-        self.sim.model.site_rgba[site] = [1, 0, 0, 0.3]
-
-        self.goal_region = np.dot(self.table_transform, spawn_pos)
-
-    def randomize_goal_vel(self):
-        site = self.sim.model.site_name2id("desired_vel")
-
-        vel_min = np.array([0, -0.5])
-        vel_max = np.array([2, 0.5])
-
-        vel = np.random.uniform(vel_min, vel_max)
-        self.goal_vel = np.array([vel[0] * np.cos(vel[1]), vel[0] * np.sin(vel[1]), 0])
-
-        self.sim.model.site_rgba[site] = [0, 0, 1, 0.3]
-
-        quat = T.axisangle2quat(1.480796326794896 * np.array([np.sin(vel[1]), np.cos(vel[1]), 0]))
-        self.sim.model.site_quat[site][0] = quat[3]
-        self.sim.model.site_quat[site][1:] = quat[:3]
-
-        self.sim.model.site_pos[site] = self.goal_region_world
-
-    def randomize_positive_regions(self):
-        self.positive_regions = np.random.choice([0, 1], size=10, p=[0.5, 0.5])
 
     def reset(self, seed=None):
         if self.robosuite_env is not None:
             obs = self.robosuite_env.reset()
         else:
             obs = None
-        if "GOAL_REGION" in self.task or self.task == "REACHING":
-            self.randomize_goal_location(reaching=self.task == "REACHING")
+            
+        self.puck_names = {}
+        self.block_names = {}
 
-        if self.task == "GOAL_REGION_DESIRED_VELOCITY":
-            self.randomize_goal_vel()
+        xml_fp = custom_xml_path_completion("arenas/air_hockey_table.xml")
+        
+        with open(xml_fp, "r") as file:
+            self.xml_config = xmltodict.parse(file.read())
 
-        if self.task == "POSITIVE_REGION":
-            self.randomize_positive_regions()
-
-        if self.task == "GOAL_X":
-            self.goal_x = 1.4
+        # update table config
+        table_idx = None
+        for i, body in enumerate(self.xml_config['mujoco']['worldbody']['body']['body']):
+            if body['@name'] == 'table_surface':
+                table_idx = i
+                break
+        self.xml_config['mujoco']['worldbody']['body']['body'][table_idx]['geom']['@size'] = f"{self.table_full_size[0]} {self.table_full_size[1]} {self.table_full_size[2]}"
+        # self.xml_config['mujoco']['worldbody']['body'][0]['body'][0]['geom']['@size'] = f"{self.table_full_size[0]} {self.table_full_size[1]} {self.table_full_size[2]}"
 
         return obs
 
-    def reward(self, action=None):
-        """
-        Reward function for the tasks.
-
-        Each reward is customized based on the specifics of the task.
-
-        Args:
-            action (np array): [NOT USED]
-
-        Returns:
-            float: reward value
-        """
-
-        puck_pos = np.dot(self.table_transform, self.sim.data.get_body_xpos("puck"))
-        puck_vel = np.dot(self.table_transform, self.sim.data.get_body_xvelp("puck"))
-        gripper_pos = np.dot(self.table_transform, self.sim.data.site_xpos[self.robosuite_env.robots[0].eef_site_id])
-        gripper_vel = self.sim.data.get_body_xvelp("gripper0_eef")
-        reward = 0
-        if self.task == "TOUCHING_PUCK":
-            reward = 10 if np.linalg.norm(puck_pos[:2] - gripper_pos[:2]) < 0.1 and gripper_vel[0] > 0.02 else 0
-        elif self.task == "REACHING":
-            reward = 20 if np.linalg.norm((gripper_pos - self.goal_region)[:2]) <= 0.05 and gripper_vel[0] > 0.02 else 0
-        elif self.task == "MIN_UPWARD_VELOCITY":
-            reward = 20 if puck_vel[0] > 2 else -1
-        elif self.task == "GOAL_REGION":
-            reward = 20 if np.linalg.norm((puck_pos - self.goal_region)[:2]) <= 0.05 else -np.linalg.norm((puck_pos - self.goal_region)[:2])
-        elif self.task == "GOAL_X":
-            if puck_pos[0] > self.goal_x:
-                reward = 10
-            else:
-                if puck_vel[0] > 0:
-                    reward = puck_vel[0] * 10
-                else:
-                    reward = puck_vel[0]
-
-                reward -= 0.1 * abs(puck_pos[0] - self.goal_x)
-
-            self.prev_puck_goal_dist = abs(puck_pos[0] - self.goal_x)
-
-        elif self.task == "GOAL_REGION_DESIRED_VELOCITY":
-            condition = (np.linalg.norm(
-                (puck_pos - self.goal_region)[:2]) <= 0.05 and  # Checks if the puck is in the correct region
-                         np.abs(np.linalg.norm(puck_vel[:2]) - np.linalg.norm(
-                             self.goal_vel[:2])) < 0.3  # Checks if puck velocity has similar magnitude
-                         and np.dot(puck_vel[:2], self.goal_vel[
-                                                  :2]) /  
-                         (np.linalg.norm(puck_vel[:2]) * np.linalg.norm(self.goal_vel[:2])) >= 0.8)
-
-            return 30 if condition else -np.linalg.norm((puck_pos - self.goal_region)[:2]) + np.dot(puck_vel[:2], self.goal_vel[:2]) / (np.linalg.norm(puck_vel[:2]) * np.linalg.norm(self.goal_vel[:2]))
-        elif self.task == "JUGGLE_PUCK":
-            if puck_vel[0] > 0:
-                reward = puck_vel[0] * 10
-            else:
-                reward = puck_vel[0]               
-        elif self.task == "POSITIVE_REGION":
-            reward = 0
-
-        elif self.task == "HITTING":
-            if puck_vel[0] > 0:
-                reward = puck_vel[0] * 10
-            else:
-                reward = puck_vel[0]
-        else:
-            return 0
-
-        return reward
-    
     def instantiate_objects(self):
-        
-        # Get current timestamp
-        current_time = datetime.datetime.fromtimestamp(time.time())
-        formatted_time = current_time.strftime('%Y%m%d_%H%M%S')
-        
-        # Make new filename
-        tmp_xml_fp = custom_xml_path_completion(f"arenas/air_hockey_table_{formatted_time}.xml")
-        
-        with open(tmp_xml_fp, 'w') as file:
+        with open(self.tmp_xml_fp, 'w') as file:
             file.write(xmltodict.unparse(self.xml_config, pretty=True))
-            
-        self.robosuite_env = RobosuiteEnv(xml_fp=tmp_xml_fp, 
+        self.robosuite_env = RobosuiteEnv(xml_fp=self.tmp_xml_fp, 
                                           table_full_size=self.table_full_size,
                                           table_friction=self.table_friction,
                                           table_offset=self.table_offset,
+                                          puck_names=self.puck_names,
+                                          block_names=self.block_names,
                                           robosuite_env_params=self.robosuite_env_cfg)
-                                          
+        
+        self.render_masks = False
+
+        self.table_x_min = -self.width / 2
+        self.table_x_max = self.width / 2
+        self.table_y_min = -self.length / 2
+        self.table_y_max = self.length / 2
+        
         # Adjust base pose accordingly
         xpos = self.robosuite_env.robots[0].robot_model.base_xpos_offset["table"](self.table_full_size[0])
         
@@ -426,21 +344,25 @@ class AirHockeyRobosuite(AirHockeySim):
 
         # set puck velocities
         for name in self.initial_puck_vels.keys():
-            joint_key  = self.sim.model.get_joint_qpos_addr(name + "_x")
-            self.sim.data.qvel[joint_key] = self.initial_puck_vels[name][0]
-            joint_key  = self.sim.model.get_joint_qpos_addr(name + "_y")
-            self.sim.data.qvel[joint_key] = self.initial_puck_vels[name][1]
+            joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_x")
+            self.robosuite_env.sim.data.qvel[joint_key] = self.initial_puck_vels[name][0]
+            joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_y")
+            self.robosuite_env.sim.data.qvel[joint_key] = self.initial_puck_vels[name][1]
+            
+        self.initialize_objects = True
+        
         
     def spawn_block(self, pos, vel, name, affected_by_gravity=False, movable=True):
         pass
 
     def spawn_puck(self, pos, vel, name, affected_by_gravity=False, movable=True):
-        
+        self.initial_puck_vels[name] = vel
         # create puck object to add
         puck_mass = self.puck_density * math.pi * (self.puck_radius ** 2) * 0.009
         z_pos = self.transform_z(pos[0])
+        self.puck_names[name] = name
         puck_dict = {
-            "@name": name,
+            "@name": "base",
             "@pos": f"{pos[0]} {pos[1]} {z_pos}",
             "@axisangle": "0 1 0 -0.09",
             "joint": [
@@ -452,14 +374,14 @@ class AirHockeyRobosuite(AirHockeySim):
                     "@limited": "false",
                 },
                 {
-                    "@name": f"{name}_x",
+                    "@name": f"{name}_y",
                     "@type": "slide",
                     "@axis": "0 1 0",
                     "@damping": f"{self.puck_damping}",
                     "@limited": "false",
                 },
                 {
-                    "@name": f"{name}_x",
+                    "@name": f"{name}_yaw",
                     "@type": "hinge",
                     "@axis": "0 0 1",
                     "@damping": "2e-6",
@@ -467,16 +389,18 @@ class AirHockeyRobosuite(AirHockeySim):
                 },
             ],
             "body": {
-                "@name": f"{name}_body",
+                "@name": f"{name}",
                 "geom": [
                     {
                         "@pos": "0 0 -0.2", # believe this is relative to the base
-                        "@name": f"{name}_geom",
+                        "@name": f"{name}",
                         "@type": "cylinder",
                         "@material": "red",
                         "@size": f"{self.puck_radius} 0.009",
                         "@condim": "4",
-                        "@priority": "0",
+                        # "@priority": "0",
+                        "@contype": "0",
+                        "@conaffinity": "0",
                         "@group": "1",
                     }
                 ],
@@ -487,11 +411,32 @@ class AirHockeyRobosuite(AirHockeySim):
                 },
             }
         }
+        
+        if isinstance(self.xml_config['mujoco']['worldbody']['body'], list):
+            self.xml_config['mujoco']['worldbody']['body'].append(puck_dict)
+        else:
+            self.xml_config['mujoco']['worldbody']['body'] = [self.xml_config['mujoco']['worldbody']['body'], puck_dict]
+            
+        # add contact
+        if 'contact' in self.xml_config['mujoco']:
+            if 'exclude' in self.xml_config['mujoco']['contact']:
+                self.xml_config['mujoco']['contact']['exclude'].append({
+                    "@body1": f"{name}",
+                    "@body2": f"table_surface"
+                })
+            else:
+                self.xml_config['mujoco']['contact']['exclude'] = {
+                    "@body1": f"{name}",
+                    "@body2": f"table_surface"
+                }
+        else:
+            self.xml_config['mujoco']['contact'] = {
+                "exclude": [{
+                    "@body1": f"{name}",
+                    "@body2": f"table_surface"
+                }]
+            }
 
-        # add new puck
-        self.xml_config['mujoco']['worldbody']['body'].append(puck_dict)
-        self.initial_puck_vels[name] = vel
-    
     def spawn_paddle(self, pos, vel, name):
         pass
 
@@ -517,270 +462,54 @@ class AirHockeyRobosuite(AirHockeySim):
         # Loop through the simulation at the model timestep rate until we're ready to take the next policy step
         # (as defined by the control frequency specified at the environment level)
         for i in range(int(self.control_timestep / self.model_timestep)):
-            self.sim.forward()
-            self._pre_action(action, policy_step)
-            self.sim.step()
-            self._update_observables()
+            self.robosuite_env.sim.forward()
+            self.robosuite_env._pre_action(action, policy_step)
+            self.robosuite_env.sim.step()
+            self.robosuite_env._update_observables()
             policy_step = False
 
         # Note: this is done all at once to avoid floating point inaccuracies
-        self.cur_time += self.control_timestep
+        self.robosuite_env.cur_time += self.control_timestep
 
-        if self.viewer is not None and self.renderer != "mujoco":
-            self.viewer.update()
+        if self.robosuite_env.viewer is not None and self.renderer != "mujoco":
+            self.robosuite_env.viewer.update()
 
-        observations = self.viewer._get_observations() if self.viewer_get_obs else self._get_observations()
+        observations = self.robosuite_env.viewer._get_observations() if self.robosuite_env.viewer_get_obs else self.robosuite_env._get_observations()
         return observations
-
-    def _post_action(self, action):
+    
+    def get_current_state(self):
         """
-        In addition to super method, add additional info if requested
-        Args:
-            action (np.array): Action to execute within the environment
-        Returns:
-            3-tuple:
-                - (float) reward from the environment
-                - (bool) whether the current episode is completed or not
-                - (dict) info about current env step
+        Returns the current state of the environment
         """
-        reward, done, info = super()._post_action(action)
-
-        done, reward = self._check_terminated(done, reward, info)
-        return reward, done, info
-
-    def _check_terminated(self, done, reward, info):
-        """
-        Check if the task has completed one way or another. The following conditions lead to termination:
-            - Collision
-            - Task completion (pushing succeeded)
-            - Joint Limit reached
-        Returns:
-            bool: True if episode is terminated
-        """
-
-        # Prematurely terminate if contacting the table with the arm
-        if self.check_contact(self.robosuite_env.robots[0].robot_model):
-            reward = self.arm_limit_collision_penalty
-            print("arm collision happens")
-            info["terminated_reason"] = "arm_hit_table"
-            done = True
-        if self.check_contact("gripper0_hand_collision"):
-            reward = self.arm_limit_collision_penalty
-            print("gripper hand collision happens")
-            print("gripper hand collision happens")
-            info["terminated_reason"] = "gripper_hit_table"
-            done = True
-
-
-        if self.robosuite_env.robots[0].check_q_limits():
-            reward = self.arm_limit_collision_penalty
-            print("reach joint limits")
-            print("reach joint limits")
-            info["terminated_reason"] = "arm_limit"
-            done = True
-
-        # if self.sim.data.get_body_xpos("puck")[0] < -0.1:
-        if self.sim.data.get_body_xpos("puck")[0] < 0.12:
-            reward = self.arm_limit_collision_penalty
-            print("puck out of table")
-            print("puck out of table")
-            info["terminated_reason"] = "puck_out_of_table"
-            done = True
-
-        puck_pos = self.sim.data.get_body_xpos("puck")
-        gripper_pos = self.sim.data.site_xpos[self.robosuite_env.robots[0].eef_site_id]
-        if np.allclose(puck_pos[0:2], gripper_pos[0:2], atol=0.05) and gripper_pos[2] <= puck_pos[2] - 0.2:
-            reward = self.arm_limit_collision_penalty
-            info["terminated_reason"] = "paddle_on_puck"
-            print("paddle on puck")
-            done = True
-
-        puck_vel = np.linalg.norm(np.dot(self.table_transform, self.sim.data.get_body_xvelp("puck")))
-        gripper_vel = np.linalg.norm(self.sim.data.get_body_xvelp("gripper0_eef"))
-
-        if puck_vel <= 0.01 and gripper_vel <= 0.01:
-            reward = self.arm_limit_collision_penalty
-            info["terminated_reason"] = "puck_stopped"
-            print("puck stopped")
-            done = True
-
-        if self._check_success():
-            
-            info["terminated_reason"] = "success"
-            done = True
-        return done, reward
-
-    def _load_model(self):
-        """
-        Loads an xml model, puts it in self.model
-        """
-        super()._load_model()
-        YAML_PATH = custom_xml_path_completion("test.yaml") # little hacky for now!
+        obs = self.robosuite_env.viewer._get_observations() if self.robosuite_env.viewer_get_obs else self.robosuite_env._get_observations()
+        # TODO: from the obs, structure it into a dictionary that is formatted like the Box2D state representations
         
-        # Load yaml model - make this an arg later
-        with open(YAML_PATH, 'r') as file:
-            yaml_config = yaml.safe_load(file)
+        state_info = {}
+        # eef position and vel become paddle position and vel
+        ego_paddle_x_pos = obs['gripper_eef_pos'][0]
+        ego_paddle_y_pos = obs['gripper_eef_pos'][1]
+        ego_paddle_x_vel = obs['gripper_eef_vel'][0]
+        ego_paddle_y_vel = obs['gripper_eef_vel'][1]
         
-        sim_params = yaml_config['air_hockey']['simulator_params']
-        table_length = sim_params['length']
-        table_width = sim_params['width']
-        puck_radius = sim_params['puck_radius']
-        puck_damping = sim_params['puck_damping']
-        
-        xml_fp = robosuite_xml_path_completion("arenas/air_hockey_table.xml")
+        state_info['paddles'] = {'paddle_ego': {'position': (ego_paddle_x_pos, ego_paddle_y_pos),
+                                                'velocity': (ego_paddle_x_vel, ego_paddle_y_vel)}}
+        if len(self.puck_names) > 0:
+            state_info['pucks'] = []
+            for puck_name in self.puck_names:
+                puck_x_pos = obs[puck_name + '_pos'][0]
+                puck_y_pos = obs[puck_name + '_pos'][1]
+                puck_x_vel = obs[puck_name + '_vel'][0]
+                puck_y_vel = obs[puck_name + '_vel'][1]
+                state_info['pucks'].append({'position': (puck_x_pos, puck_y_pos), 
+                                'velocity': (puck_x_vel, puck_y_vel)})
 
-        with open(xml_fp, "r") as file:
-            xml_config = xmltodict.parse(file.read())
-
-        # table config
-        table_size = xml_config['mujoco']['worldbody']['body'][0]['body'][0]['geom']['@size']
-        xml_config['mujoco']['worldbody']['body'][0]['body'][0]['geom']['@size'] = f"{table_length} {table_width} {table_size.split()[2]}"
-
-        # puck config
-        # puck_size = xml_config['mujoco']['worldbody']['body'][1]['body']['geom'][0]['@size']
-
-        # xml_config['mujoco']['worldbody']['body'][1]['body']['geom'][0]['@size'] = f"{puck_radius} {puck_size.split()[1]}"
-        # # puck damping x
-        # xml_config['mujoco']['worldbody']['body'][1]['joint'][0]['@damping'] = f"{puck_damping}"
-        # # puck damping y
-        # xml_config['mujoco']['worldbody']['body'][1]['joint'][1]['@damping'] = f"{puck_damping}"
-        
-        # Get current timestamp
-        current_time = datetime.datetime.fromtimestamp(time.time())
-        formatted_time = current_time.strftime('%Y%m%d_%H%M%S')
-        
-        # Make new filename
-        tmp_xml_fp = robosuite_xml_path_completion(f"arenas/air_hockey_table_{formatted_time}.xml")
-        
-        with open(tmp_xml_fp, 'w') as file:
-            file.write(xmltodict.unparse(xml_config, pretty=True))
-
-        # Adjust base pose accordingly
-        xpos = self.robosuite_env.robots[0].robot_model.base_xpos_offset["table"](self.table_full_size[0])
-        
-        xpos = (-0.48, 0, 0)
-        self.robosuite_env.robots[0].robot_model.set_base_xpos(xpos)
-        
-        # load model for table top workspace
-        mujoco_arena = AirHockeyTableArena(
-            table_full_size=self.table_full_size,
-            table_friction=self.table_friction,
-            table_offset=self.table_offset,
-            xml=tmp_xml_fp,
-        )
-        
-        # remove tmp file
-        os.remove(tmp_xml_fp)
-
-        # Arena always gets set to zero origin
-        mujoco_arena.set_origin([0, 0, 0])
-
-        # task includes arena, robot, and objects of interest
-        self.model = ManipulationTask(
-            mujoco_arena=mujoco_arena,
-            mujoco_robots=[robot.robot_model for robot in self.robosuite_env.robots],
-        )
-
-    def _setup_references(self):
-        """
-        Sets up references to important components. A reference is typically an
-        index or a list of indices that point to the corresponding elements
-        in a flatten array, which is how MuJoCo stores physical simulation data.
-        """
-        super()._setup_references()
-
-    def _setup_observables(self):
-        """
-        Sets up observables to be used for this environment. Creates object-based observables if enabled
-
-        Returns:
-            OrderedDict: Dictionary mapping observable names to its corresponding Observable object
-        """
-        observables = super()._setup_observables()
-
-        # low-level object information
-        if self.use_object_obs:
-            # Get robot prefix and define observables modality
-            pf = self.robosuite_env.robots[0].robot_model.naming_prefix
-            modality = "object"
-
-
-            # @sensor(modality=modality)
-            # def gripper_to_puck_pos(obs_cache):
-            #     return (
-            #         obs_cache[f"{pf}eef_pos"] - obs_cache["goal_pos"]
-            #         if f"{pf}eef_pos" in obs_cache and "goal_pos" in obs_cache
-            #         else np.zeros(3)
-            #     )
-
-            @sensor(modality=modality)
-            def puck_pos(obs_cache):
-                return self.sim.data.get_body_xpos("puck")
-            
-            @sensor(modality=modality)
-            def puck_goal_dist(obs_cache):
-                if not hasattr(self, 'goal_x'):
-                    return np.array([np.linalg.norm(self.sim.data.get_body_xpos("puck")[0] - 0)])
-                else:
-                    return np.array([np.linalg.norm(self.sim.data.get_body_xpos("puck")[0] - self.goal_x)]) / 1.4
-
-            @sensor(modality=modality)
-            def puck_velo(obs_cache):
-                return self.sim.data.get_body_xvelp("puck")
-
-            @sensor(modality=modality)
-            def goal_pos(obs_cache):
-                if not hasattr(self, 'goal_x'):
-                    return np.array([0,0])
-                else:
-                    return self.goal_region[:2]
-
-            @sensor(modality=modality)
-            def goal_vel(obs_cache):
-                return self.goal_vel
-            
-            @sensor(modality=modality)
-            def eef_vel(obs_cache):
-                return self.sim.data.get_body_xvelp("gripper0_eef")[:2]
-
-            sensors = [puck_pos, 
-                    #    gripper_to_puck_pos, 
-                       eef_vel, 
-                       puck_goal_dist,
-                       puck_velo]
-
-            if "GOAL_REGION" in self.task or self.task == "REACHING":
-                sensors.append(goal_pos)
-
-            if self.task == "GOAL_REGION_DESIRED_VELOCITY":
-                sensors.append(goal_vel)
-
-            if self.task == "GOAL_X" or self.task == "GOAL_REGION":
-                sensors.append(puck_goal_dist)
-
-            names = [s.__name__ for s in sensors]
-
-            # Create observables
-            for name, s in zip(names, sensors):
-                observables[name] = Observable(
-                    name=name,
-                    sensor=s,
-                    sampling_rate=self.control_freq,
-                )
-
-        return observables
-
-    def _reset_internal(self):
-        """
-        Resets simulation internal configurations.
-        """
-        super()._reset_internal()
-
-        # Reset all object positions using initializer sampler if we're not directly loading from an xml
-        if not self.deterministic_reset:
-            self.modder = DynamicsModder(sim=self.sim)
-            self.modder.mod_position("base", [0.8, np.random.uniform(-0.3, 0.3), 1.2])
-            self.modder.update()
+        if len(self.block_names) > 0:
+            state_info['blocks'] = []
+            for block_name in self.block_names:
+                block_x_pos = obs[block_name + '_pos'][0]
+                block_y_pos = obs[block_name + '_pos'][1]
+                state_info['blocks'].append({'position': (block_x_pos, block_y_pos)})
+        return state_info
 
     def visualize(self, vis_settings):
         """
@@ -793,40 +522,6 @@ class AirHockeyRobosuite(AirHockeySim):
         """
         # Run superclass method first
         super().visualize(vis_settings=vis_settings)
-
-    def _check_success(self):
-        """
-        Check if the task is complete.
-
-        Returns:
-            bool: True if the task has been completed.
-        """
-        
-        puck_pos = np.dot(self.table_transform, self.sim.data.get_body_xpos("puck"))
-        puck_vel = np.dot(self.table_transform, self.sim.data.get_body_xvelp("puck"))
-        gripper_pos = np.dot(self.table_transform, self.sim.data.site_xpos[self.robosuite_env.robots[0].eef_site_id])
-
-        if self.task == "TOUCHING_PUCK":
-            return True if np.linalg.norm(puck_pos[:2] - gripper_pos[:2]) < 0.1 else False
-        elif self.task == "HITTING":
-            return True if puck_vel[0] > 0.04 else False
-        elif self.task == "REACHING":
-            return np.linalg.norm((gripper_pos - self.goal_region)[:2]) <= 0.04
-        elif self.task == "MIN_UPWARD_VELOCITY":
-            return False
-        elif self.task == "GOAL_REGION":
-            return np.linalg.norm((puck_pos - self.goal_region)[:2]) <= 0.04 and puck_vel[0] >= 0
-        elif self.task == "GOAL_REGION_DESIRED_VELOCITY":
-            return (np.linalg.norm((puck_pos - self.goal_region)[:2]) <= 0.05 and
-                    np.abs(np.linalg.norm(puck_vel[:2]) - np.linalg.norm(self.goal_vel[:2])) < 0.3
-                    and np.dot(puck_vel[:2], self.goal_vel[:2]) /
-                    (np.linalg.norm(puck_vel[:2]) * np.linalg.norm(self.goal_vel[:2])) >= 0.8)
-        elif self.task == "GOAL_X":
-            return puck_pos[0] > self.goal_x
-        elif self.task == "JUGGLE_PUCK":
-            return self.timestep >= self.horizon - 2
-        else:
-            return True
 
     def quat2axisangle(self, quat):
         """
@@ -908,7 +603,7 @@ def input2list(inp, length):
     return list(inp) if type(inp) is list or type(inp) is tuple else [inp for _ in range(length)]
     
 class RobosuiteEnv(SingleArmEnv):
-    def __init__(self, xml_fp, table_full_size, table_friction, table_offset, robosuite_env_params):
+    def __init__(self, xml_fp, table_full_size, table_friction, table_offset, puck_names, block_names, robosuite_env_params):
         # load model for table top workspace
         mujoco_arena = AirHockeyTableArena(
             table_full_size=table_full_size,
@@ -916,6 +611,9 @@ class RobosuiteEnv(SingleArmEnv):
             table_offset=table_offset,
             xml=xml_fp,
         )
+        
+        self.puck_names = puck_names
+        self.block_names = block_names
         
         # Arena always gets set to zero origin
         mujoco_arena.set_origin([0, 0, 0])
@@ -930,13 +628,13 @@ class RobosuiteEnv(SingleArmEnv):
         initialization_noise = input2list(robosuite_env_params['initialization_noise'], self.num_robots)
         control_freq = input2list(robosuite_env_params['control_freq'], self.num_robots)
         robot_configs = self.load_robots_configs(robot_names, controller_configs, mount_types, initialization_noise, control_freq)
-        robots = self.load_robots(robot_names, robot_configs)
+        self.robots = self.get_robots(robot_names, robot_configs)
 
         # task includes arena, robot, and objects of interest
-        self.task_model = ManipulationTask(mujoco_arena=mujoco_arena, mujoco_robots=[robot.robot_model for robot in robots])
+        self.task_model = ManipulationTask(mujoco_arena=mujoco_arena, mujoco_robots=[robot.robot_model for robot in self.robots])
         super().__init__(**robosuite_env_params)
     
-    def load_robots(self, robot_names, robot_configs):
+    def get_robots(self, robot_names, robot_configs):
         """
         Instantiates robots and stores them within the self.robots attribute
         """
@@ -950,6 +648,7 @@ class RobosuiteEnv(SingleArmEnv):
         return robots_out
     
     def _load_model(self):
+        super()._load_model()
         self.model = self.task_model # Prevents the super call from making this None lol
             
     def load_robots_configs(self, robot_names, controller_configs, mount_types, initialization_noise, control_freq, robot_configs=None):
@@ -969,3 +668,147 @@ class RobosuiteEnv(SingleArmEnv):
             for idx, robot_config in enumerate(robot_configs)
         ]
         return robot_configs
+    
+    def _setup_observables(self):
+        """
+        Sets up observables to be used for this environment. Creates object-based observables if enabled
+
+        Returns:
+            OrderedDict: Dictionary mapping observable names to its corresponding Observable object
+        """
+        observables = super()._setup_observables()
+
+        # low-level object information
+        pf = self.robots[0].robot_model.naming_prefix
+        modality = "object"
+
+        from functools import partial
+        def obj_pos(obs_cache, obj_name):
+            return self.sim.data.get_body_xpos(obj_name)
+        
+        def obj_vel(obs_cache, obj_name):
+            return self.sim.data.get_body_xvelp(obj_name)
+
+        def gripper_eef_vel(obs_cache):
+            return self.sim.data.get_body_xvelp("gripper0_eef")[:2]
+        
+        def gripper_eef_pos(obs_cache):
+            return self.sim.data.get_body_xpos("gripper0_eef")[:2]
+        
+        
+        gripper_eef_vel.__modality__ = modality
+        gripper_eef_pos.__modality__ = modality
+
+        sensors = [gripper_eef_vel,
+                   gripper_eef_pos]
+        
+        def add_sensor(name, sensors):
+            pos_fn = partial(obj_pos, obj_name=name)
+            pos_fn.__name__ = f"{name}_pos"
+            pos_fn.__modality__ = modality
+            vel_fn = partial(obj_vel, obj_name=name)
+            vel_fn.__name__ = f"{name}_vel"
+            vel_fn.__modality__ = modality
+            sensors.append(pos_fn)
+            sensors.append(vel_fn)
+        
+        for name in self.puck_names:
+            add_sensor(name, sensors)
+        for name in self.block_names:
+            add_sensor(name, sensors)
+
+        names = [s.__name__ for s in sensors]
+
+        # Create observables
+        for name, s in zip(names, sensors):
+            observables[name] = Observable(
+                name=name,
+                sensor=s,
+                sampling_rate=self.control_freq,
+            )
+
+        return observables
+    
+    # def _reset_internal(self):
+    #     """
+    #     Resets simulation internal configurations.
+    #     """
+    #     super()._reset_internal()
+
+    #     # Reset all object positions using initializer sampler if we're not directly loading from an xml
+    #     if not self.deterministic_reset:
+    #         self.modder = DynamicsModder(sim=self.robosuite_env.sim)
+    #         self.modder.mod_position("base", [0.8, np.random.uniform(-0.3, 0.3), 1.2])
+    #         self.modder.update()
+    
+
+    # def _load_model(self):
+    #     """
+    #     Loads an xml model, puts it in self.model
+    #     """
+    #     super()._load_model()
+    #     YAML_PATH = custom_xml_path_completion("test.yaml") # little hacky for now!
+        
+    #     # Load yaml model - make this an arg later
+    #     with open(YAML_PATH, 'r') as file:
+    #         yaml_config = yaml.safe_load(file)
+        
+    #     sim_params = yaml_config['air_hockey']['simulator_params']
+    #     table_length = sim_params['length']
+    #     table_width = sim_params['width']
+    #     puck_radius = sim_params['puck_radius']
+    #     puck_damping = sim_params['puck_damping']
+        
+    #     xml_fp = robosuite_xml_path_completion("arenas/air_hockey_table.xml")
+
+    #     with open(xml_fp, "r") as file:
+    #         xml_config = xmltodict.parse(file.read())
+
+    #     # table config
+    #     table_size = xml_config['mujoco']['worldbody']['body'][0]['body'][0]['geom']['@size']
+    #     xml_config['mujoco']['worldbody']['body'][0]['body'][0]['geom']['@size'] = f"{table_length} {table_width} {table_size.split()[2]}"
+
+    #     # puck config
+    #     puck_size = xml_config['mujoco']['worldbody']['body']['base']['body']['geom'][0]['@size']
+
+    #     xml_config['mujoco']['worldbody']['body']['base']['body']['geom'][0]['@size'] = f"{puck_radius} {puck_size.split()[1]}"
+    #     # puck damping x
+    #     xml_config['mujoco']['worldbody']['body']['base']['joint'][0]['@damping'] = f"{puck_damping}"
+    #     # puck damping y
+    #     xml_config['mujoco']['worldbody']['body']['base']['joint'][1]['@damping'] = f"{puck_damping}"
+        
+    #     # Get current timestamp
+    #     current_time = datetime.datetime.fromtimestamp(time.time())
+    #     formatted_time = current_time.strftime('%Y%m%d_%H%M%S')
+        
+    #     # Make new filename
+    #     tmp_xml_fp = robosuite_xml_path_completion(f"arenas/air_hockey_table_{formatted_time}.xml")
+        
+    #     with open(tmp_xml_fp, 'w') as file:
+    #         file.write(xmltodict.unparse(xml_config, pretty=True))
+
+    #     # Adjust base pose accordingly
+    #     xpos = self.robosuite_env.robots[0].robot_model.base_xpos_offset["table"](self.table_full_size[0])
+        
+    #     xpos = (-0.48, 0, 0)
+    #     self.robosuite_env.robots[0].robot_model.set_base_xpos(xpos)
+        
+    #     # load model for table top workspace
+    #     mujoco_arena = AirHockeyTableArena(
+    #         table_full_size=self.table_full_size,
+    #         table_friction=self.table_friction,
+    #         table_offset=self.table_offset,
+    #         xml=tmp_xml_fp,
+    #     )
+        
+    #     # remove tmp file
+    #     # os.remove(tmp_xml_fp)
+
+    #     # Arena always gets set to zero origin
+    #     mujoco_arena.set_origin([0, 0, 0])
+
+    #     # task includes arena, robot, and objects of interest
+    #     self.model = ManipulationTask(
+    #         mujoco_arena=mujoco_arena,
+    #         mujoco_robots=[robot.robot_model for robot in self.robosuite_env.robots],
+    #     )
