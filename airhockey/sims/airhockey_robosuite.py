@@ -202,6 +202,7 @@ class AirHockeyRobosuite(AirHockeySim):
         self.ppm = render_size / self.width
         self.render_width = int(render_size)
         self.render_length = int(self.ppm * self.length)
+        self.render_masks = False
 
         # reward configuration
         self.reward_scale = reward_scale
@@ -301,6 +302,7 @@ class AirHockeyRobosuite(AirHockeySim):
             
         self.puck_names = {}
         self.block_names = {}
+        self.timestep = 0
 
         xml_fp = custom_xml_path_completion("arenas/air_hockey_table.xml")
         
@@ -315,8 +317,8 @@ class AirHockeyRobosuite(AirHockeySim):
                 break
         self.xml_config['mujoco']['worldbody']['body']['body'][table_idx]['geom']['@size'] = f"{self.table_full_size[0]} {self.table_full_size[1]} {self.table_full_size[2]}"
         # self.xml_config['mujoco']['worldbody']['body'][0]['body'][0]['geom']['@size'] = f"{self.table_full_size[0]} {self.table_full_size[1]} {self.table_full_size[2]}"
+        return {}
 
-        return obs
 
     def instantiate_objects(self):
         with open(self.tmp_xml_fp, 'w') as file:
@@ -439,6 +441,12 @@ class AirHockeyRobosuite(AirHockeySim):
 
     def spawn_paddle(self, pos, vel, name):
         pass
+    
+    def get_6d_action(self, action):
+        """
+        Converts 2D action to 6D robot action
+        """
+        return np.array([0, 0, 0, action[0], action[1], 0])
 
     def get_transition(self, action):
         """
@@ -451,7 +459,7 @@ class AirHockeyRobosuite(AirHockeySim):
         Raises:
             ValueError: [Steps past episode termination]
         """
-        self.timestep += 1
+        action = self.get_6d_action(action)
 
         # Since the env.step frequency is slower than the mjsim timestep frequency, the internal controller will output
         # multiple torque commands in between new high level action commands. Therefore, we need to denote via
@@ -461,7 +469,7 @@ class AirHockeyRobosuite(AirHockeySim):
 
         # Loop through the simulation at the model timestep rate until we're ready to take the next policy step
         # (as defined by the control frequency specified at the environment level)
-        for i in range(int(self.control_timestep / self.model_timestep)):
+        for i in range(int(self.robosuite_env.control_timestep / self.robosuite_env.model_timestep)):
             self.robosuite_env.sim.forward()
             self.robosuite_env._pre_action(action, policy_step)
             self.robosuite_env.sim.step()
@@ -469,45 +477,61 @@ class AirHockeyRobosuite(AirHockeySim):
             policy_step = False
 
         # Note: this is done all at once to avoid floating point inaccuracies
-        self.robosuite_env.cur_time += self.control_timestep
+        self.robosuite_env.cur_time += self.robosuite_env.control_timestep
+        self.timestep += 1
 
         if self.robosuite_env.viewer is not None and self.renderer != "mujoco":
             self.robosuite_env.viewer.update()
 
-        observations = self.robosuite_env.viewer._get_observations() if self.robosuite_env.viewer_get_obs else self.robosuite_env._get_observations()
-        return observations
+        return self.get_current_state()
+
+    def get_2d_location(self, location: np.array, table_angle: float) -> np.array:
+        """
+        Converts 3D location to 2D location
+        """
+        location = np.array(location)
+        location = np.matmul(self.table_transform, location)
+        return np.array([-location[1], location[0]])
     
     def get_current_state(self):
         """
         Returns the current state of the environment
         """
         obs = self.robosuite_env.viewer._get_observations() if self.robosuite_env.viewer_get_obs else self.robosuite_env._get_observations()
-        # TODO: from the obs, structure it into a dictionary that is formatted like the Box2D state representations
-        
         state_info = {}
         # eef position and vel become paddle position and vel
-        ego_paddle_x_pos = obs['gripper_eef_pos'][0]
-        ego_paddle_y_pos = obs['gripper_eef_pos'][1]
-        ego_paddle_x_vel = obs['gripper_eef_vel'][0]
-        ego_paddle_y_vel = obs['gripper_eef_vel'][1]
+        ego_paddle_pos = obs['gripper_eef_pos']
+        ego_paddle_pos = self.get_2d_location(ego_paddle_pos, self.table_tilt)
+        ego_paddle_vel = obs['gripper_eef_vel']
+        ego_paddle_vel = self.get_2d_location(ego_paddle_vel, self.table_tilt)
+        ego_paddle_x_pos = ego_paddle_pos[0]
+        ego_paddle_y_pos = ego_paddle_pos[1]
+        ego_paddle_x_vel = ego_paddle_vel[0]
+        ego_paddle_y_vel = ego_paddle_vel[1]
         
         state_info['paddles'] = {'paddle_ego': {'position': (ego_paddle_x_pos, ego_paddle_y_pos),
                                                 'velocity': (ego_paddle_x_vel, ego_paddle_y_vel)}}
         if len(self.puck_names) > 0:
             state_info['pucks'] = []
             for puck_name in self.puck_names:
-                puck_x_pos = obs[puck_name + '_pos'][0]
-                puck_y_pos = obs[puck_name + '_pos'][1]
-                puck_x_vel = obs[puck_name + '_vel'][0]
-                puck_y_vel = obs[puck_name + '_vel'][1]
+                puck_pos = obs[puck_name + '_pos']
+                puck_pos = self.get_2d_location(puck_pos, self.table_tilt)
+                puck_vel = obs[puck_name + '_vel']
+                puck_vel = self.get_2d_location(puck_vel, self.table_tilt)
+                puck_x_pos = puck_pos[0]
+                puck_y_pos = puck_pos[1]
+                puck_x_vel = puck_vel[0]
+                puck_y_vel = puck_vel[1]
                 state_info['pucks'].append({'position': (puck_x_pos, puck_y_pos), 
                                 'velocity': (puck_x_vel, puck_y_vel)})
 
         if len(self.block_names) > 0:
             state_info['blocks'] = []
             for block_name in self.block_names:
-                block_x_pos = obs[block_name + '_pos'][0]
-                block_y_pos = obs[block_name + '_pos'][1]
+                block_pos = obs[block_name + '_pos']
+                block_pos = self.get_2d_location(block_pos, self.table_tilt)
+                block_x_pos = block_pos[0]
+                block_y_pos = block_pos[1]
                 state_info['blocks'].append({'position': (block_x_pos, block_y_pos)})
         return state_info
 
@@ -690,10 +714,10 @@ class RobosuiteEnv(SingleArmEnv):
             return self.sim.data.get_body_xvelp(obj_name)
 
         def gripper_eef_vel(obs_cache):
-            return self.sim.data.get_body_xvelp("gripper0_eef")[:2]
+            return self.sim.data.get_body_xvelp("gripper0_eef")
         
         def gripper_eef_pos(obs_cache):
-            return self.sim.data.get_body_xpos("gripper0_eef")[:2]
+            return self.sim.data.get_body_xpos("gripper0_eef")
         
         
         gripper_eef_vel.__modality__ = modality

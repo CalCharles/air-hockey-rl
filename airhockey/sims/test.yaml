@@ -26,7 +26,7 @@ air_hockey:
   simulator: robosuite
   max_timesteps: 300
   # reward_type: 'goal_position_velocity'
-  task: 'puck_vel'
+  task: 'puck_velocity'
   goal_max_x_velocity: 1 # min is -goal_max_x_velocity
   goal_min_y_velocity: 1
   goal_max_y_velocity: 5
