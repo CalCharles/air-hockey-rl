@@ -4,7 +4,7 @@ air_hockey:
     # 57: <geom name="surface" type="box" material="white" size="length width 0.0505" pos="0 0 -0.0505"
     length: 1.064
     width: 0.609
-    depth: 0.505
+    depth: 0.0505
     # 102: <geom pos="0 0 -0.2" name="puck" type="cylinder" material="red" size="puck_radius 0.009" condim="4" priority="0" group="1"/>
     puck_radius: 0.03175
     paddle_radius: 0.0508
@@ -16,6 +16,7 @@ air_hockey:
     max_paddle_vel: 0101
     max_puck_vel: 0
     render_size: 360
+    has_renderer: true
   
   num_paddles: 1 # How would we add multiple paddles, do I need to change # of robots?
   num_pucks: 1 # More pucks needed? Need to figure out where puck reset happens

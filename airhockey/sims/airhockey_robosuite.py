@@ -178,9 +178,9 @@ class AirHockeyRobosuite(AirHockeySim):
         horizon=400,
         ignore_done=False,
         hard_reset=True,
-        camera_names="agentview",
-        camera_heights=256,
-        camera_widths=256,
+        camera_names="birdview",
+        camera_heights=512,
+        camera_widths=512,
         camera_depths=False,
         camera_segmentations=None,  # {None, instance, class, element}
         renderer="mujoco",
@@ -188,7 +188,7 @@ class AirHockeyRobosuite(AirHockeySim):
         task="JUGGLE_PUCK",
         puck_radius=0.03165,
         puck_damping=0.8,
-        puck_density=3530,
+        puck_density=30,
         seed=0
     ):
         
@@ -231,14 +231,14 @@ class AirHockeyRobosuite(AirHockeySim):
 
         table_q = T.axisangle2quat(np.array([0, self.table_tilt, 0]))
         self.table_transform = T.quat2mat(table_q)
-
-        assert task in ["TOUCHING_PUCK", "REACHING", "MIN_UPWARD_VELOCITY", "GOAL_REGION", "GOAL_X",
-                        "GOAL_REGION_DESIRED_VELOCITY", "JUGGLE_PUCK", "POSITIVE_REGION", "HITTING"]
-        self.task = task
+        
+        # map x and y onto table
+        self.inv_table_transform = np.linalg.inv(self.table_transform)
 
         self.prev_puck_goal_dist = None
 
         self.initial_puck_vels = dict()
+        self.initial_block_positions = dict()
 
         xml_fp = custom_xml_path_completion("arenas/air_hockey_table.xml")
         
@@ -286,7 +286,6 @@ class AirHockeyRobosuite(AirHockeySim):
         if self.initialized_objects:
             os.remove(self.tmp_xml_fp)
         
-
     @staticmethod
     def from_dict(state_dict):
         state_dict_copy = state_dict.copy()
@@ -299,28 +298,47 @@ class AirHockeyRobosuite(AirHockeySim):
             obs = self.robosuite_env.reset()
         else:
             obs = None
-            
-        self.puck_names = {}
-        self.block_names = {}
-        self.timestep = 0
-
-        xml_fp = custom_xml_path_completion("arenas/air_hockey_table.xml")
         
-        with open(xml_fp, "r") as file:
-            self.xml_config = xmltodict.parse(file.read())
+        self.timestep = 0
+        
+        if not self.initialized_objects:
+            self.puck_names = {}
+            self.block_names = {}
+            self.initial_obj_configurations = {'paddles': {}, 'pucks': {}, 'blocks': {}}
+            xml_fp = custom_xml_path_completion("arenas/air_hockey_table.xml")
+            
+            with open(xml_fp, "r") as file:
+                self.xml_config = xmltodict.parse(file.read())
 
-        # update table config
-        table_idx = None
-        for i, body in enumerate(self.xml_config['mujoco']['worldbody']['body']['body']):
-            if body['@name'] == 'table_surface':
-                table_idx = i
-                break
-        self.xml_config['mujoco']['worldbody']['body']['body'][table_idx]['geom']['@size'] = f"{self.table_full_size[0]} {self.table_full_size[1]} {self.table_full_size[2]}"
-        # self.xml_config['mujoco']['worldbody']['body'][0]['body'][0]['geom']['@size'] = f"{self.table_full_size[0]} {self.table_full_size[1]} {self.table_full_size[2]}"
+            # update table config
+            table_idx = None
+            for i, body in enumerate(self.xml_config['mujoco']['worldbody']['body']['body']):
+                if body['@name'] == 'table_surface':
+                    table_idx = i
+                    break
+            self.xml_config['mujoco']['worldbody']['body']['body'][table_idx]['geom']['@size'] = f"{self.table_full_size[0]} {self.table_full_size[1]} {self.table_full_size[2]}"
         return {}
-
+    
+    def set_obj_configs(self):
+        for name in self.initial_obj_configurations['pucks'].keys():
+            joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_x")
+            self.robosuite_env.sim.data.qvel[joint_key] = self.initial_obj_configurations['pucks'][name]['velocity'][0]
+            self.robosuite_env.sim.data.qpos[joint_key] = self.initial_obj_configurations['pucks'][name]['position'][0]
+            joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_y")
+            self.robosuite_env.sim.data.qvel[joint_key] = self.initial_obj_configurations['pucks'][name]['velocity'][1]
+            self.robosuite_env.sim.data.qpos[joint_key] = self.initial_obj_configurations['pucks'][name]['position'][1]
+        for name in self.initial_block_positions.keys():
+            joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_x")
+            self.robosuite_env.sim.data.qpos[joint_key] = self.initial_block_positions[name][0]
+            joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_y")
+            self.robosuite_env.sim.data.qpos[joint_key] = self.initial_block_positions[name][1]
 
     def instantiate_objects(self):
+        if self.initialized_objects:
+            self.set_obj_configs()
+            return
+        
+        # this is only for the first time
         with open(self.tmp_xml_fp, 'w') as file:
             file.write(xmltodict.unparse(self.xml_config, pretty=True))
         self.robosuite_env = RobosuiteEnv(xml_fp=self.tmp_xml_fp, 
@@ -330,39 +348,27 @@ class AirHockeyRobosuite(AirHockeySim):
                                           puck_names=self.puck_names,
                                           block_names=self.block_names,
                                           robosuite_env_params=self.robosuite_env_cfg)
-        
-        self.render_masks = False
 
-        self.table_x_min = -self.width / 2
-        self.table_x_max = self.width / 2
-        self.table_y_min = -self.length / 2
-        self.table_y_max = self.length / 2
-        
         # Adjust base pose accordingly
-        xpos = self.robosuite_env.robots[0].robot_model.base_xpos_offset["table"](self.table_full_size[0])
+        # xpos = self.robosuite_env.robots[0].robot_model.base_xpos_offset["table"](self.table_full_size[0])
         
-        xpos = (-0.48, 0, 0)
-        self.robosuite_env.robots[0].robot_model.set_base_xpos(xpos)
-
-        # set puck velocities
-        for name in self.initial_puck_vels.keys():
-            joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_x")
-            self.robosuite_env.sim.data.qvel[joint_key] = self.initial_puck_vels[name][0]
-            joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_y")
-            self.robosuite_env.sim.data.qvel[joint_key] = self.initial_puck_vels[name][1]
-            
-        self.initialize_objects = True
+        # xpos = (-0.48, 0, 0)
+        # self.robosuite_env.robots[0].robot_model.set_base_xpos(xpos)
+        self.set_obj_configs()
+        
+        self.initialized_objects = True
         
         
     def spawn_block(self, pos, vel, name, affected_by_gravity=False, movable=True):
-        pass
-
-    def spawn_puck(self, pos, vel, name, affected_by_gravity=False, movable=True):
-        self.initial_puck_vels[name] = vel
+        self.initial_block_positions[name] = pos
+        self.initial_obj_configurations['blocks'][name] = {'position': pos}
+        if self.initialized_objects:
+            return
+        
         # create puck object to add
         puck_mass = self.puck_density * math.pi * (self.puck_radius ** 2) * 0.009
         z_pos = self.transform_z(pos[0])
-        self.puck_names[name] = name
+        self.block_names[name] = name
         puck_dict = {
             "@name": "base",
             "@pos": f"{pos[0]} {pos[1]} {z_pos}",
@@ -439,14 +445,104 @@ class AirHockeyRobosuite(AirHockeySim):
                 }]
             }
 
+    def spawn_puck(self, pos, vel, name, affected_by_gravity=False, movable=True):
+        pos = np.array([0.8, -0.3, self.transform_z(pos[0])]) # DEBUG
+        self.initial_puck_vels[name] = vel
+        self.initial_obj_configurations['pucks'][name] = {'position': pos, 'velocity': vel}
+        if self.initialized_objects:
+            return
+        
+        # create puck object to add
+        puck_mass = self.puck_density * math.pi * (self.puck_radius ** 2) * 0.009
+        z_pos = self.transform_z(pos[0])
+        self.puck_names[name] = name
+        puck_dict = {
+            "@name": "base",
+            "@pos": f"{pos[0]} {pos[1]} {z_pos}",
+            "@axisangle": "0 1 0 -0.09",
+            "joint": [
+                {
+                    "@name": f"{name}_x",
+                    "@type": "slide",
+                    "@axis": "1 0 0",
+                    "@damping": f"{self.puck_damping}",
+                    "@limited": "false",
+                },
+                {
+                    "@name": f"{name}_y",
+                    "@type": "slide",
+                    "@axis": "0 1 0",
+                    "@damping": f"{self.puck_damping}",
+                    "@limited": "false",
+                },
+                {
+                    "@name": f"{name}_yaw",
+                    "@type": "hinge",
+                    "@axis": "0 0 1",
+                    "@damping": "2e-6",
+                    "@limited": "false",
+                },
+            ],
+            "body": {
+                "@name": f"{name}",
+                "geom": [
+                    {
+                        "@pos": "0 0 0.00262116", # believe this is relative to the base
+                        "@name": f"{name}",
+                        "@type": "cylinder",
+                        "@material": "red",
+                        "@size": f"{self.puck_radius} 0.009",
+                        "@condim": "4",
+                        "@priority": "0",
+                        # "@contype": "0",
+                        # "@conaffinity": "0",
+                        "@group": "1",
+                    }
+                ],
+                "inertial": {
+                    "@pos": "0 0 0", # believe this is relative to the base
+                    "@mass": f"{puck_mass}",
+                    "@diaginertia": "2.5e-6 2.5e-6 5e-6",
+                },
+            }
+        }
+        
+        if isinstance(self.xml_config['mujoco']['worldbody']['body'], list):
+            self.xml_config['mujoco']['worldbody']['body'].append(puck_dict)
+        else:
+            self.xml_config['mujoco']['worldbody']['body'] = [self.xml_config['mujoco']['worldbody']['body'], puck_dict]
+            
+        # add contact
+        if 'contact' in self.xml_config['mujoco']:
+            if 'exclude' in self.xml_config['mujoco']['contact']:
+                self.xml_config['mujoco']['contact']['exclude'].append({
+                    "@body1": f"{name}",
+                    "@body2": f"table_surface"
+                })
+            else:
+                self.xml_config['mujoco']['contact']['exclude'] = {
+                    "@body1": f"{name}",
+                    "@body2": f"table_surface"
+                }
+        else:
+            self.xml_config['mujoco']['contact'] = {
+                "exclude": [{
+                    "@body1": f"{name}",
+                    "@body2": f"table_surface"
+                }]
+            }
+
     def spawn_paddle(self, pos, vel, name):
-        pass
+        # put the eef in pos
+        self.initial_obj_configurations['paddles'][name] = {'position': pos, 'velocity': vel}
     
     def get_6d_action(self, action):
         """
         Converts 2D action to 6D robot action
         """
-        return np.array([0, 0, 0, action[0], action[1], 0])
+        delta_pos = np.array([action[0], action[1], 0])
+        delta_pos = self.inv_table_transform @ delta_pos
+        return np.array([delta_pos[0], delta_pos[1], delta_pos[2], 0, 0, 0])
 
     def get_transition(self, action):
         """
@@ -480,30 +576,28 @@ class AirHockeyRobosuite(AirHockeySim):
         self.robosuite_env.cur_time += self.robosuite_env.control_timestep
         self.timestep += 1
 
-        if self.robosuite_env.viewer is not None and self.renderer != "mujoco":
-            self.robosuite_env.viewer.update()
-
         return self.get_current_state()
 
-    def get_2d_location(self, location: np.array, table_angle: float) -> np.array:
+    def get_2d_location(self, location: np.array) -> np.array:
         """
         Converts 3D location to 2D location
         """
         location = np.array(location)
-        location = np.matmul(self.table_transform, location)
-        return np.array([-location[1], location[0]])
+        location = self.table_transform @ location
+        location = location[:2]
+        return np.array([-location[0], location[1]])
     
     def get_current_state(self):
         """
         Returns the current state of the environment
         """
-        obs = self.robosuite_env.viewer._get_observations() if self.robosuite_env.viewer_get_obs else self.robosuite_env._get_observations()
+        obs = self.robosuite_env._get_observations()
         state_info = {}
         # eef position and vel become paddle position and vel
         ego_paddle_pos = obs['gripper_eef_pos']
-        ego_paddle_pos = self.get_2d_location(ego_paddle_pos, self.table_tilt)
+        ego_paddle_pos = self.get_2d_location(ego_paddle_pos)
         ego_paddle_vel = obs['gripper_eef_vel']
-        ego_paddle_vel = self.get_2d_location(ego_paddle_vel, self.table_tilt)
+        ego_paddle_vel = self.get_2d_location(ego_paddle_vel)
         ego_paddle_x_pos = ego_paddle_pos[0]
         ego_paddle_y_pos = ego_paddle_pos[1]
         ego_paddle_x_vel = ego_paddle_vel[0]
@@ -515,9 +609,9 @@ class AirHockeyRobosuite(AirHockeySim):
             state_info['pucks'] = []
             for puck_name in self.puck_names:
                 puck_pos = obs[puck_name + '_pos']
-                puck_pos = self.get_2d_location(puck_pos, self.table_tilt)
+                puck_pos = self.get_2d_location(puck_pos)
                 puck_vel = obs[puck_name + '_vel']
-                puck_vel = self.get_2d_location(puck_vel, self.table_tilt)
+                puck_vel = self.get_2d_location(puck_vel)
                 puck_x_pos = puck_pos[0]
                 puck_y_pos = puck_pos[1]
                 puck_x_vel = puck_vel[0]
@@ -529,23 +623,15 @@ class AirHockeyRobosuite(AirHockeySim):
             state_info['blocks'] = []
             for block_name in self.block_names:
                 block_pos = obs[block_name + '_pos']
-                block_pos = self.get_2d_location(block_pos, self.table_tilt)
+                block_pos = self.get_2d_location(block_pos)
                 block_x_pos = block_pos[0]
                 block_y_pos = block_pos[1]
                 state_info['blocks'].append({'position': (block_x_pos, block_y_pos)})
+                
+        for key in obs.keys():
+            if 'image' in key:
+                state_info['image'] = obs[key]
         return state_info
-
-    def visualize(self, vis_settings):
-        """
-        Super call to visualize.
-
-        Args:
-            vis_settings (dict): Visualization keywords mapped to T/F, determining whether that specific
-                component should be visualized. Should have "grippers" keyword as well as any other relevant
-                options specified.
-        """
-        # Run superclass method first
-        super().visualize(vis_settings=vis_settings)
 
     def quat2axisangle(self, quat):
         """
@@ -753,6 +839,18 @@ class RobosuiteEnv(SingleArmEnv):
 
         return observables
     
+    def visualize(self, vis_settings):
+        """
+        Super call to visualize.
+
+        Args:
+            vis_settings (dict): Visualization keywords mapped to T/F, determining whether that specific
+                component should be visualized. Should have "grippers" keyword as well as any other relevant
+                options specified.
+        """
+        # Run superclass method first
+        super().visualize(vis_settings=vis_settings)
+    
     # def _reset_internal(self):
     #     """
     #     Resets simulation internal configurations.
@@ -765,74 +863,3 @@ class RobosuiteEnv(SingleArmEnv):
     #         self.modder.mod_position("base", [0.8, np.random.uniform(-0.3, 0.3), 1.2])
     #         self.modder.update()
     
-
-    # def _load_model(self):
-    #     """
-    #     Loads an xml model, puts it in self.model
-    #     """
-    #     super()._load_model()
-    #     YAML_PATH = custom_xml_path_completion("test.yaml") # little hacky for now!
-        
-    #     # Load yaml model - make this an arg later
-    #     with open(YAML_PATH, 'r') as file:
-    #         yaml_config = yaml.safe_load(file)
-        
-    #     sim_params = yaml_config['air_hockey']['simulator_params']
-    #     table_length = sim_params['length']
-    #     table_width = sim_params['width']
-    #     puck_radius = sim_params['puck_radius']
-    #     puck_damping = sim_params['puck_damping']
-        
-    #     xml_fp = robosuite_xml_path_completion("arenas/air_hockey_table.xml")
-
-    #     with open(xml_fp, "r") as file:
-    #         xml_config = xmltodict.parse(file.read())
-
-    #     # table config
-    #     table_size = xml_config['mujoco']['worldbody']['body'][0]['body'][0]['geom']['@size']
-    #     xml_config['mujoco']['worldbody']['body'][0]['body'][0]['geom']['@size'] = f"{table_length} {table_width} {table_size.split()[2]}"
-
-    #     # puck config
-    #     puck_size = xml_config['mujoco']['worldbody']['body']['base']['body']['geom'][0]['@size']
-
-    #     xml_config['mujoco']['worldbody']['body']['base']['body']['geom'][0]['@size'] = f"{puck_radius} {puck_size.split()[1]}"
-    #     # puck damping x
-    #     xml_config['mujoco']['worldbody']['body']['base']['joint'][0]['@damping'] = f"{puck_damping}"
-    #     # puck damping y
-    #     xml_config['mujoco']['worldbody']['body']['base']['joint'][1]['@damping'] = f"{puck_damping}"
-        
-    #     # Get current timestamp
-    #     current_time = datetime.datetime.fromtimestamp(time.time())
-    #     formatted_time = current_time.strftime('%Y%m%d_%H%M%S')
-        
-    #     # Make new filename
-    #     tmp_xml_fp = robosuite_xml_path_completion(f"arenas/air_hockey_table_{formatted_time}.xml")
-        
-    #     with open(tmp_xml_fp, 'w') as file:
-    #         file.write(xmltodict.unparse(xml_config, pretty=True))
-
-    #     # Adjust base pose accordingly
-    #     xpos = self.robosuite_env.robots[0].robot_model.base_xpos_offset["table"](self.table_full_size[0])
-        
-    #     xpos = (-0.48, 0, 0)
-    #     self.robosuite_env.robots[0].robot_model.set_base_xpos(xpos)
-        
-    #     # load model for table top workspace
-    #     mujoco_arena = AirHockeyTableArena(
-    #         table_full_size=self.table_full_size,
-    #         table_friction=self.table_friction,
-    #         table_offset=self.table_offset,
-    #         xml=tmp_xml_fp,
-    #     )
-        
-    #     # remove tmp file
-    #     # os.remove(tmp_xml_fp)
-
-    #     # Arena always gets set to zero origin
-    #     mujoco_arena.set_origin([0, 0, 0])
-
-    #     # task includes arena, robot, and objects of interest
-    #     self.model = ManipulationTask(
-    #         mujoco_arena=mujoco_arena,
-    #         mujoco_robots=[robot.robot_model for robot in self.robosuite_env.robots],
-    #     )

@@ -52,6 +52,7 @@ class AirHockeyBaseEnv(ABC, Env):
             raise ValueError("Invalid simulator type. Must be 'box2d' or 'robosuite'.")
 
         simulator_params['seed'] = seed
+        self.simulator_name = simulator
         self.simulator = simulator_fn.from_dict(simulator_params)
         self.render_length = self.simulator.render_length
         self.render_width = self.simulator.render_width
@@ -152,6 +153,7 @@ class AirHockeyBaseEnv(ABC, Env):
     def reset(self, seed=None, **kwargs):
         if seed is None: # determine next seed, in a deterministic manner
             seed = self.rng.randint(0, int(1e8))
+
         self.rng = np.random.RandomState(seed)
         sim_seed = self.rng.randint(0, int(1e8))
         self.simulator.reset(sim_seed) # no point in getting state since no spawning

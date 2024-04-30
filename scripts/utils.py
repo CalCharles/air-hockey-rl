@@ -136,21 +136,29 @@ class EvalCallback(BaseCallback):
         # also save first 5 eps into gif
         n_eps_viz = 5
         frames = []
+        robosuite_frames = []
         # self.eval_ego_goals = []
         # self.eval_ego_goals_succ = []
         for ep_idx in range(self.n_eval_eps):
+            print('resetting')
             obs, info = self.eval_env.reset()
             done = False
             undiscounted_return = 0.0
             success = False
             while not done:
                 if include_frames and ep_idx < n_eps_viz:
-                    frame = self.renderer.get_frame()
-                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    # decrease width to 160 but keep aspect ratio
-                    aspect_ratio = frame.shape[1] / frame.shape[0]
-                    frame = cv2.resize(frame, (160, int(160 / aspect_ratio)))
+                    # # frame = self.renderer.get_frame()
+                    # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    # # decrease width to 160 but keep aspect ratio
+                    # aspect_ratio = frame.shape[1] / frame.shape[0]
+                    # frame = cv2.resize(frame, (160, int(160 / aspect_ratio)))
+                    frame = np.zeros(shape=(256, 256)) # black img
                     frames.append(frame)
+                    if self.eval_env.simulator_name == 'robosuite':
+                        current_img = self.eval_env.current_state['image']
+                        # flip upside down
+                        # current_img = cv2.flip(current_img, 0)
+                        robosuite_frames.append(current_img)
                 action, _ = self.model.predict(obs)
                 obs, rew, done, truncated, info = self.eval_env.step(action)
                 done = done or truncated
@@ -177,7 +185,7 @@ class EvalCallback(BaseCallback):
         # print('succes rate', avg_success_rate)
         avg_max_reward /= self.n_eval_eps
         avg_min_reward /= self.n_eval_eps
-        return avg_undiscounted_return, avg_success_rate, avg_max_reward, avg_min_reward, frames
+        return avg_undiscounted_return, avg_success_rate, avg_max_reward, avg_min_reward, (frames, robosuite_frames)
     
     def _on_rollout_start(self) -> None:
         """
@@ -189,7 +197,19 @@ class EvalCallback(BaseCallback):
         frames = []
         
         if self.num_timesteps >= self.next_eval:
-            avg_undiscounted_return, avg_success_rate, avg_max_reward, avg_min_reward, frames = self._eval(include_frames=save_progress)
+            # print('hello...')
+            # from cProfile import Profile
+            # from pstats import SortKey, Stats
+            # profiler = Profile()
+            # profiler.enable()  # Start profiling
+
+            avg_undiscounted_return, avg_success_rate, avg_max_reward, avg_min_reward, (frames, robosuite_frames) = self._eval(include_frames=save_progress)
+
+            # profiler.disable()  # Stop profiling
+            # profiler.print_stats(sort='time')  # Print the statistics sorted by time
+            
+            # print(5 / 0)
+            
             self.logger.record("eval/ep_return", avg_undiscounted_return)
             self.logger.record("eval/success_rate", avg_success_rate)
             if avg_success_rate > self.best_success_so_far:
@@ -213,6 +233,9 @@ class EvalCallback(BaseCallback):
                 return int(1000 * 1/fps)
             fps = 30 # slightly faster than 20 fps (simulation time), but makes rendering smooth
             imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(fps))
+            if len(robosuite_frames) > 0:
+                gif_savepath = os.path.join(progress_dir, f'eval_robosuite.gif')
+                imageio.mimsave(gif_savepath, robosuite_frames, format='GIF', loop=0, duration=fps_to_duration(fps))
 
             model_fp = os.path.join(progress_dir, 'model.zip')
             self.model.save(model_fp)
