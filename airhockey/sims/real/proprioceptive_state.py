@@ -1,3 +1,5 @@
+import numpy as np
+
 DATA_RANGES = [[0,1], [1,2], [2,3], [3,4], [4,5],[5,10], [11,16], [17,22], [23,25], [26,32]]
 DATA_NAMES = ["cur_time", "tidx", "i", "pose", "speed", "force", "acc", "desired_pose", "estop", "safety"]
 def slicer(val):

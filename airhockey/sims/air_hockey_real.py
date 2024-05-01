@@ -1,5 +1,19 @@
 from abc import ABC, abstractmethod
 from sims.airhockey_box2d import AirHockeyBox2D
+import time
+from rtde_control import RTDEControlInterface as RTDEControl
+from rtde_receive import RTDEReceiveInterface as RTDEReceive
+from collections import deque
+import numpy as np
+from sims.real.multiprocessing import ProtectedArray, NonBlockingConsole
+from sims.real.control_parameters import camera_callback, save_callback, mimic_control, save_collect
+from sims.real.trajectory_merging import merge_trajectory, clear_images, write_trajectory
+from sims.real.robot_control import MotionPrimitive, apply_negative_z_force, filter_update
+from sims.real.coordinate_transform import compute_rect, compute_pol
+from sims.real.proprioceptive_state import get_state_array
+import multiprocessing
+import cv2
+
 
 class AirHockeySim(ABC):
     def __init__(self,
@@ -74,6 +88,7 @@ class AirHockeySim(ABC):
 
         self.metadata = {}
 
+        self.transition_start = time.time()
         rtde_frequency = 500.0
         self.control_mode = 'mouse' # mouse, mimic, keyboard, RL, BC, IQL, rnet, reach
         self.control_type = 'rect' # rect, pol or prim
@@ -89,8 +104,8 @@ class AirHockeySim(ABC):
         teleoperation_modes = ['mouse', 'mimic', 'keyboard']
         autonomous_modes = ['BC', 'RL', 'IQL', 'rnet', 'reach']
         autonomous_model = None
-        if control_mode in autonomous_modes:
-            autonomous_model = initialize_agent(control_mode, load_path, additional_args=additional_args)
+        # if control_mode in autonomous_modes:
+        #     autonomous_model = initialize_agent(control_mode, load_path, additional_args=additional_args)
         # control_mode = 'mouse' # 'mimic'
         # control_mode = 'mimic'
 
@@ -104,12 +119,12 @@ class AirHockeySim(ABC):
         self.protected_img_check = ProtectedArray(shared_image_check)
         self.cap, self.camera_process, self.mimic_process = None, None, None
         if self.control_mode == 'mouse':
-            self.camera_process = multiprocessing.Process(target=camera_callback, args=(protected_mouse_pos,protected_img_check))
+            self.camera_process = multiprocessing.Process(target=camera_callback, args=(self.protected_mouse_pos,self.protected_img_check))
             self.camera_process.start()
         elif self.control_mode == 'mimic':
-            self.mimic_process = multiprocessing.Process(target=mimic_control, args=(protected_mouse_pos,))
+            self.mimic_process = multiprocessing.Process(target=mimic_control, args=(self.protected_mouse_pos,))
             self.mimic_process.start()
-            self.camera_process = multiprocessing.Process(target=save_callback, args=(protected_img_check,))
+            self.camera_process = multiprocessing.Process(target=save_callback, args=(self.protected_img_check,))
             self.camera_process.start()
         else:
             self.cap = cv2.VideoCapture(1)
@@ -118,9 +133,9 @@ class AirHockeySim(ABC):
 
         self.images = list() # image data of the trajectory
         self.vals = list() # proprioceptive data of the trajectory
-        self.save_path = save_path
-        self.tidx = get_tidx(save_path)
-        self.num_trajectories = num_trajectories
+        # self.save_path = save_path
+        # self.tidx = get_tidx(save_path)
+        # self.num_trajectories = num_trajectories
         self.vel = 0.8 # velocity limit
         self.acc = 0.8 # acceleration limit 
 
@@ -153,7 +168,7 @@ class AirHockeySim(ABC):
 
         # if z is used to compute angles
         self.zslope = 0.02577
-        self.computez = lambda x: zslope * (x + 0.310) - 0.310
+        self.computez = lambda x: self.zslope * (x + 0.310) - 0.310
 
         # homography offsets
         self.offset_constants = np.array((2100, 500))
@@ -268,14 +283,14 @@ class AirHockeySim(ABC):
 
 
 
-    def reset(self, seed):
+    def reset(self, seed, write_traj=False):
         imgs, vals = merge_trajectory(self.image_path, self.images, self.vals)
         clear_images(folder=self.image_path)
-        write_trajectory(self.save_path, self.tidx, imgs, vals)
+        if write_traj: write_trajectory(self.save_path, self.tidx, imgs, vals) # TODO: not necessarily the best place to do writing
         self.images = list()
         self.vals = list()
         self.timestep = 0
-        self.pose_hist, self.dpose_hist = deque(maxlen=hist_len), deque(maxlen=hist_len)
+        self.pose_hist, self.dpose_hist = deque(maxlen=self.hist_len), deque(maxlen=self.hist_len)
         self.puck_history = [(-2,0,0) for i in range(5)] # pretend that the puck starts at the other end of the table, but is occluded, for 5 frames
         self.total = time.time()
         self.runtime = 0.0
@@ -296,7 +311,6 @@ class AirHockeySim(ABC):
         self.object_dict = {}
         state_info = self.get_current_state()
         with NonBlockingConsole() as nbc:
-            tidx = tstart
 
             # Setting a reset pose for the robot
             reset_success = self.ctrl.moveL(self.reset_pose[0], self.reset_pose[1], self.reset_pose[2], False)
@@ -330,10 +344,11 @@ class AirHockeySim(ABC):
     
     def get_transition(self, action):
         # TODO: change self.block_time if additional computation happens outside of get_transition
+        runtime = time.time() - self.transition_start 
         time.sleep(max(0,self.block_time - runtime))
-        print(time.time() - total, runtime)
+        print(time.time() - self.total, runtime)
         self.total = time.time()
-        start = time.time()
+        self.transition_start = time.time()
         # ret, image = cap.read()
         # cv2.imshow('image',image)
         # cv2.setMouseCallback('image', move_event)
@@ -351,7 +366,7 @@ class AirHockeySim(ABC):
         # get image data
         if self.cap is not None:
             image, save_img = save_collect(self.cap)
-            images.append(save_img)
+            self.images.append(save_img)
         
         # acquire useful statistics
         true_pose = self.rcv.getTargetTCPPose()
@@ -360,12 +375,12 @@ class AirHockeySim(ABC):
         measured_acc = self.rcv.getActualToolAccelerometer()
         
         if self.control_mode in ["mouse", "mimic"]:
-            x, y = (pixel_coord - offset_constants) * 0.001
+            x, y = (pixel_coord - self.offset_constants) * 0.001
             y= -y
         else:
             x,y, puck = self.take_action(action, true_pose, true_speed, true_force, measured_acc, self.rcv.isProtectiveStopped(), image, self.images, self.puck_history, self.lims, self.move_lims) # TODO: add image handling
             print("puck", puck)
-            puck_history.append(puck)
+            self.puck_history.append(puck)
         ###### servoL #####
         if self.control_type == "pol":
             polx, poly = compute_pol(x, y, true_pose, self.lims, self.move_lims)
@@ -385,7 +400,7 @@ class AirHockeySim(ABC):
         self.dpose_hist.append(srvpose[0])
         srvpose[0] = filter_update(true_speed, self.pose_hist, self.dpose_hist)
         safety_check = self.ctrl.isPoseWithinSafetyLimits(srvpose[0])
-        values = get_state_array(time.time(), self.tidx, self.timestep, true_pose, true_speed, true_force, measured_acc, srvpose, rcv.isProtectiveStopped(), safety_check)
+        values = get_state_array(time.time(), self.tidx, self.timestep, true_pose, true_speed, true_force, measured_acc, srvpose, self.rcv.isProtectiveStopped(), safety_check)
         self.measured_values.append(values), #frames.append(np.array(protected_img[:]).reshape(640,480,3))
 
         print("servl", true_speed[:2], srvpose[0][:2], x,y, safety_check)# srvpose[0][:2], x,y, true_pose[:2], rcv.isProtectiveStopped())# , true_speed, true_force, measured_acc, )
@@ -396,7 +411,7 @@ class AirHockeySim(ABC):
         # print("servl", np.abs(polx - true_pose[0]), np.abs(poly - true_pose[1]), pixel_coord, srvpose[0], rcv.isProtectiveStopped())# , true_speed, true_force, measured_acc, )
         # print("time", time.time() - start)
         self.timestep += 1
-        self.runtime = time.time() - start
+        self.runtime = time.time() - self.transition_start
         return self._compute_state(srvpose[0], true_speed, self.timestep, self.puck_history) # TODO: populate this with the names of objects
 
     @abstractmethod
