@@ -15,6 +15,17 @@ def apply_negative_z_force(ctrl, rcv=None):
 
     ctrl.forceMode(task_frame, selection_vector, wrench_down, ctrl_type, limits)
 
+def filter_update(vel, pose_hist, dpose_hist):
+    pose_vel = np.array(dpose_hist[-1]) - np.array(pose_hist[-1])
+    transform_vel = pose_vel
+    if len(dpose_hist) > 1:
+        pose_vels = [np.array(dpose_hist[i]) - np.array(pose_hist[i]) for i in range(len(dpose_hist))]
+
+        # last_pose_vel = np.array(dpose_hist[-2]) - np.array(pose_hist[-2])
+        transform_vel = np.mean(pose_vels, axis=0)
+    desired_pose = transform_vel + pose_hist[-1]
+    return desired_pose
+
 class MotionPrimitive:
     def __init__(self):
         self.is_strike = False
