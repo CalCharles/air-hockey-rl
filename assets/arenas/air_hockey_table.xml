@@ -48,7 +48,7 @@
 
         <!-- <site name="p_region_1" type="box" pos="1.71 -0.47 1.2" size="0.05 0.05 0.005" rgba="1 0 0 1" axisangle="0 1 0 -0.09"/> -->
         
-        <body name="table" pos="0.8 0 1.0" axisangle="0 1 0 -0.09">
+        <body name="table" pos="0.8 0 0.0" axisangle="0 1 0 -0.09">
             <body name="table_surface">
                 <!-- <geom name="surface" type="box" material="white" size="1.064 0.609 0.0505" pos="0 0 -0.0505"
                       condim="4" friction="0.08 0.08 0.0" priority="1"

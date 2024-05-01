@@ -136,11 +136,10 @@ class EvalCallback(BaseCallback):
         # also save first 5 eps into gif
         n_eps_viz = 5
         frames = []
-        robosuite_frames = []
+        robosuite_frames = {}
         # self.eval_ego_goals = []
         # self.eval_ego_goals_succ = []
         for ep_idx in range(self.n_eval_eps):
-            print('resetting')
             obs, info = self.eval_env.reset()
             done = False
             undiscounted_return = 0.0
@@ -155,10 +154,16 @@ class EvalCallback(BaseCallback):
                     frame = np.zeros(shape=(256, 256)) # black img
                     frames.append(frame)
                     if self.eval_env.simulator_name == 'robosuite':
-                        current_img = self.eval_env.current_state['image']
-                        # flip upside down
-                        # current_img = cv2.flip(current_img, 0)
-                        robosuite_frames.append(current_img)
+                        for key in self.eval_env.current_state:
+                            if 'image' not in key:
+                                continue
+                            current_img = self.eval_env.current_state[key]
+                            # flip upside down
+                            current_img = cv2.flip(current_img, 0)
+                            if key not in robosuite_frames:
+                                robosuite_frames[key] = [current_img]
+                            else:
+                                robosuite_frames[key].append(current_img)
                 action, _ = self.model.predict(obs)
                 obs, rew, done, truncated, info = self.eval_env.step(action)
                 done = done or truncated
@@ -233,8 +238,10 @@ class EvalCallback(BaseCallback):
             fps = 30 # slightly faster than 20 fps (simulation time), but makes rendering smooth
             imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(fps))
             if len(robosuite_frames) > 0:
-                gif_savepath = os.path.join(progress_dir, f'eval_robosuite.gif')
-                imageio.mimsave(gif_savepath, robosuite_frames, format='GIF', loop=0, duration=fps_to_duration(fps))
+                for key in robosuite_frames:
+                    frames = robosuite_frames[key]
+                    gif_savepath = os.path.join(progress_dir, f'feval_robosuite_{key}.gif')
+                    imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(fps))
             import sys
             sys.exit()
 

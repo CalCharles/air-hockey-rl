@@ -178,7 +178,7 @@ class AirHockeyRobosuite(AirHockeySim):
         horizon=400,
         ignore_done=False,
         hard_reset=True,
-        camera_names="birdview",
+        camera_names=["birdview","sideview","agentview"],
         camera_heights=512,
         camera_widths=512,
         camera_depths=False,
@@ -630,7 +630,7 @@ class AirHockeyRobosuite(AirHockeySim):
                 
         for key in obs.keys():
             if 'image' in key:
-                state_info['image'] = obs[key]
+                state_info[key] = obs[key]
         return state_info
 
     def quat2axisangle(self, quat):
