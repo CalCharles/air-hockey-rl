@@ -60,7 +60,6 @@ class AirHockeyRenderer:
         
     def convert_to_render_coords_sys(self, pos):
         return np.array((pos[1], -pos[0]))  # coords -> box2d
-        
             
     def draw_circle_with_image(self, pos, circle_radius, circle_type='puck'):
         """
@@ -104,7 +103,7 @@ class AirHockeyRenderer:
             x_start = max(0, -top_left[0] + 1)
         else:
             x_start = 0
-            
+
         x_start = max(0, -top_left[0])
         y_start = max(0, -top_left[1])
         

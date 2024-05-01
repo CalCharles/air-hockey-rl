@@ -406,9 +406,9 @@ class AirHockeyRobosuite(AirHockeySim):
                         "@material": "red",
                         "@size": f"{self.puck_radius} 0.009",
                         "@condim": "4",
-                        # "@priority": "0",
-                        "@contype": "0",
-                        "@conaffinity": "0",
+                        "@priority": "0",
+                        # "@contype": "0",
+                        # "@conaffinity": "0",
                         "@group": "1",
                     }
                 ],
@@ -446,7 +446,7 @@ class AirHockeyRobosuite(AirHockeySim):
             }
 
     def spawn_puck(self, pos, vel, name, affected_by_gravity=False, movable=True):
-        pos = np.array([0.8, -0.3, self.transform_z(pos[0])]) # DEBUG
+        pos = np.array([0.0, 0.0, 1.4]) # DEBUG
         self.initial_puck_vels[name] = vel
         self.initial_obj_configurations['pucks'][name] = {'position': pos, 'velocity': vel}
         if self.initialized_objects:

@@ -208,7 +208,6 @@ class EvalCallback(BaseCallback):
             # profiler.disable()  # Stop profiling
             # profiler.print_stats(sort='time')  # Print the statistics sorted by time
             
-            # print(5 / 0)
             
             self.logger.record("eval/ep_return", avg_undiscounted_return)
             self.logger.record("eval/success_rate", avg_success_rate)
@@ -236,6 +235,8 @@ class EvalCallback(BaseCallback):
             if len(robosuite_frames) > 0:
                 gif_savepath = os.path.join(progress_dir, f'eval_robosuite.gif')
                 imageio.mimsave(gif_savepath, robosuite_frames, format='GIF', loop=0, duration=fps_to_duration(fps))
+            import sys
+            sys.exit()
 
             model_fp = os.path.join(progress_dir, 'model.zip')
             self.model.save(model_fp)
