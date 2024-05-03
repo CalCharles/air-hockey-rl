@@ -155,13 +155,14 @@ class AirHockeyRobosuite(AirHockeySim):
         max_puck_vel,
         length, 
         width,
+        depth,
+        rim_width,
         render_size,
         robots=['AirHockeyUR5e'],
         env_configuration="default",
         controller_configs=None,
-        gripper_types="default",
+        gripper_types="RoundGripper",
         initialization_noise="default",
-        table_full_size=(1.064, 0.609, 0.0505),
         table_friction=(1.0, 5e-3, 1e-4),
         use_camera_obs=True,
         use_object_obs=True,
@@ -178,7 +179,7 @@ class AirHockeyRobosuite(AirHockeySim):
         horizon=400,
         ignore_done=False,
         hard_reset=True,
-        camera_names=["birdview","sideview","agentview"],
+        camera_names=["birdview","sideview"],
         camera_heights=512,
         camera_widths=512,
         camera_depths=False,
@@ -193,6 +194,7 @@ class AirHockeyRobosuite(AirHockeySim):
     ):
         
         # settings for table top
+        table_full_size = (length / 2, width / 2, depth / 2)
         self.table_full_size = table_full_size
         self.table_friction = table_friction
         self.table_offset = np.array((0, 0, 0.8))
@@ -225,9 +227,22 @@ class AirHockeyRobosuite(AirHockeySim):
         self.positive_regions = None
 
         self.table_tilt = 0.09
-        self.table_elevation = 1
+        self.table_elevation = 0.8
         self.table_x_start = 0.8
         self.transform_z = lambda x: self.table_tilt * (x - self.table_x_start) + self.table_elevation
+        
+        self.high_level_table_x_top = -self.length / 2
+        self.high_level_table_x_bot = self.length / 2
+        self.high_level_table_y_right = self.width / 2
+        self.high_level_table_y_left = -self.width / 2
+        
+        self.table_x_offset = rim_width
+        self.table_y_offset = rim_width
+        
+        self.table_x_top = self.length - self.table_x_offset
+        self.table_x_bot = self.table_x_offset
+        self.table_y_right = -self.width / 2 + self.table_y_offset
+        self.table_y_left = self.width / 2 - self.table_y_offset
 
         table_q = T.axisangle2quat(np.array([0, self.table_tilt, 0]))
         self.table_transform = T.quat2mat(table_q)
@@ -283,14 +298,12 @@ class AirHockeyRobosuite(AirHockeySim):
     def __del__(self):
         if self.robosuite_env is not None:
             self.robosuite_env.close()
-        if self.initialized_objects:
+        if self.initialized_objects and os.path.exists(self.tmp_xml_fp):
             os.remove(self.tmp_xml_fp)
         
     @staticmethod
     def from_dict(state_dict):
         state_dict_copy = state_dict.copy()
-        state_dict_copy['table_full_size'] = (state_dict['length'], state_dict['width'], state_dict['depth'])
-        del state_dict_copy['depth']
         return AirHockeyRobosuite(**state_dict_copy)
 
     def reset(self, seed=None):
@@ -358,6 +371,48 @@ class AirHockeyRobosuite(AirHockeySim):
         
         self.initialized_objects = True
         
+    def high_level_to_robosuite_coords(self, pos, object_type):
+        # uses high_level_table_x_top, high_level_table_x_bot, high_level_table_y_right, high_level_table_y_left
+        # and table_x_top, table_x_bot, table_y_right, table_y_left
+        x = (pos[0] - self.high_level_table_x_top) / (self.high_level_table_x_bot - self.high_level_table_x_top) * (self.table_x_bot - self.table_x_top) + self.table_x_top
+        y = (pos[1] - self.high_level_table_y_left) / (self.high_level_table_y_right - self.high_level_table_y_left) * (self.table_y_right - self.table_y_left) + self.table_y_left
+        if object_type == 'puck':
+            x -= self.puck_radius
+            y -= self.puck_radius
+        elif object_type == 'block':
+            x -= self.block_width / 2
+            y -= self.block_width / 2
+        elif object_type == 'paddle':
+            x -= 0 # self.paddle_radius
+            y -= 0 # self.paddle_radius
+        else:
+            raise ValueError("Invalid object type")
+        
+        return np.array([x, y])
+    
+    def robosuite_to_high_level_coords(self, pos, object_type):
+        # uses high_level_table_x_top, high_level_table_x_bot, high_level_table_y_right, high_level_table_y_left
+        # and table_x_top, table_x_bot, table_y_right, table_y_left
+        x = (pos[0] - self.table_x_top) / (self.table_x_bot - self.table_x_top) * (self.high_level_table_x_bot - self.high_level_table_x_top) + self.high_level_table_x_top
+        y = (pos[1] - self.table_y_left) / (self.table_y_right - self.table_y_left) * (self.high_level_table_y_right - self.high_level_table_y_left) + self.high_level_table_y_left
+        if object_type == 'puck':
+            x += self.puck_radius
+            y += self.puck_radius
+        elif object_type == 'block':
+            x += self.block_width / 2
+            y += self.block_width / 2
+        elif object_type == 'paddle':
+            x += 0 # self.paddle_radius
+            y += 0 # self.paddle_radius
+        else:
+            raise ValueError("Invalid object type")
+        return np.array([x, y])
+    
+    def high_level_to_robosuite_vel(self, vel, object_type):
+        return np.array([-vel[0], -vel[1]])
+
+    def robosuite_to_high_level_vel(self, vel, object_type):
+        return np.array([-vel[0], -vel[1]])
         
     def spawn_block(self, pos, vel, name, affected_by_gravity=False, movable=True):
         self.initial_block_positions[name] = pos
@@ -446,7 +501,8 @@ class AirHockeyRobosuite(AirHockeySim):
             }
 
     def spawn_puck(self, pos, vel, name, affected_by_gravity=False, movable=True):
-        pos = np.array([0.0, 0.0, 1.4]) # DEBUG
+        pos = self.high_level_to_robosuite_coords(pos, object_type='puck')
+        vel = self.high_level_to_robosuite_vel(vel, object_type='puck')
         self.initial_puck_vels[name] = vel
         self.initial_obj_configurations['pucks'][name] = {'position': pos, 'velocity': vel}
         if self.initialized_objects:
@@ -494,8 +550,6 @@ class AirHockeyRobosuite(AirHockeySim):
                         "@size": f"{self.puck_radius} 0.009",
                         "@condim": "4",
                         "@priority": "0",
-                        # "@contype": "0",
-                        # "@conaffinity": "0",
                         "@group": "1",
                     }
                 ],
@@ -578,15 +632,6 @@ class AirHockeyRobosuite(AirHockeySim):
 
         return self.get_current_state()
 
-    def get_2d_location(self, location: np.array) -> np.array:
-        """
-        Converts 3D location to 2D location
-        """
-        location = np.array(location)
-        location = self.table_transform @ location
-        location = location[:2]
-        return np.array([-location[0], location[1]])
-    
     def get_current_state(self):
         """
         Returns the current state of the environment
@@ -595,9 +640,9 @@ class AirHockeyRobosuite(AirHockeySim):
         state_info = {}
         # eef position and vel become paddle position and vel
         ego_paddle_pos = obs['gripper_eef_pos']
-        ego_paddle_pos = self.get_2d_location(ego_paddle_pos)
+        ego_paddle_pos = self.robosuite_to_high_level_coords(ego_paddle_pos, object_type='paddle')
         ego_paddle_vel = obs['gripper_eef_vel']
-        ego_paddle_vel = self.get_2d_location(ego_paddle_vel)
+        ego_paddle_vel = self.robosuite_to_high_level_vel(ego_paddle_vel, object_type='paddle')
         ego_paddle_x_pos = ego_paddle_pos[0]
         ego_paddle_y_pos = ego_paddle_pos[1]
         ego_paddle_x_vel = ego_paddle_vel[0]
@@ -609,9 +654,9 @@ class AirHockeyRobosuite(AirHockeySim):
             state_info['pucks'] = []
             for puck_name in self.puck_names:
                 puck_pos = obs[puck_name + '_pos']
-                puck_pos = self.get_2d_location(puck_pos)
+                puck_pos = self.robosuite_to_high_level_coords(puck_pos, object_type='puck')
                 puck_vel = obs[puck_name + '_vel']
-                puck_vel = self.get_2d_location(puck_vel)
+                puck_vel = self.robosuite_to_high_level_vel(puck_vel, object_type='puck')
                 puck_x_pos = puck_pos[0]
                 puck_y_pos = puck_pos[1]
                 puck_x_vel = puck_vel[0]
@@ -623,7 +668,7 @@ class AirHockeyRobosuite(AirHockeySim):
             state_info['blocks'] = []
             for block_name in self.block_names:
                 block_pos = obs[block_name + '_pos']
-                block_pos = self.get_2d_location(block_pos)
+                block_pos = self.robosuite_to_high_level_coords(block_pos, object_type='block')
                 block_x_pos = block_pos[0]
                 block_y_pos = block_pos[1]
                 state_info['blocks'].append({'position': (block_x_pos, block_y_pos)})

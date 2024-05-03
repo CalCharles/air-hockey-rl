@@ -230,6 +230,8 @@ class AirHockeyBaseEnv(ABC, Env):
                     state_info['paddles']['paddle_ego']['position'][1] > self.table_y_right - self.paddle_radius or \
                     state_info['paddles']['paddle_ego']['position'][1] < self.table_y_left + self.paddle_radius:
                     truncated = True
+                    print("paddle out of bounds with position: ", state_info['paddles']['paddle_ego']['position'])
+                    print("X_min, X_max, Y_min, Y_max: ", 0 + self.paddle_radius, self.table_x_bot - self.paddle_radius, self.table_y_left + self.paddle_radius, self.table_y_right - self.paddle_radius)
 
         bottom_center_point = np.array([self.table_x_bot, 0])
         top_center_point = np.array([self.table_x_top, 0])
@@ -333,7 +335,9 @@ class AirHockeyBaseEnv(ABC, Env):
         info['max_reward'] = self.max_reward_in_single_step
         info['min_reward'] = self.min_reward_in_single_step
 
+        print(self.current_timestep)
         self.current_timestep += 1
+        
         
         obs = self.get_observation(next_state)
         return obs, reward, is_finished, truncated, info

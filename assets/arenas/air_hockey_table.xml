@@ -40,15 +40,7 @@
     </default>
 
     <worldbody>
-        <!-- <body name="table" axisangle="0 1 0 -0.3925" pos="0.15 0 0.3"> -->
-        <!-- <body name="table" axisangle="0 1 0 -0.3925" pos="1 0 1"> -->
-
-        <site name="goal_region" type="cylinder" pos="0.05 0.3 1" size="0.05" rgba="1 0 0 0" axisangle="0 1 0 -0.09"/>
-        <site name="desired_vel" type="cylinder" pos="0.3 0 1" size="0.005 0.05" rgba="0 0 1 0" axisangle="1 1 0 1.480796326794896"/>
-
-        <!-- <site name="p_region_1" type="box" pos="1.71 -0.47 1.2" size="0.05 0.05 0.005" rgba="1 0 0 1" axisangle="0 1 0 -0.09"/> -->
-        
-        <body name="table" pos="0.8 0 0.0" axisangle="0 1 0 -0.09">
+        <body name="table" pos="1.064 0 0.8" axisangle="0 1 0 -0.09">
             <body name="table_surface">
                 <!-- <geom name="surface" type="box" material="white" size="1.064 0.609 0.0505" pos="0 0 -0.0505"
                       condim="4" friction="0.08 0.08 0.0" priority="1"
@@ -103,8 +95,8 @@
             </body> 
         </body> -->
 
-        <site name="puck_vis" type="ellipsoid" size="0.03165 0.03165 0.004" pos="0 0 -0.05"/>
-        <site name="puck_vis_rot" type="cylinder" size="0.0045 0.006" rgba="1 0 0 1" pos="0 0 -0.05"/>
+        <!-- <site name="puck_vis" type="ellipsoid" size="0.03165 0.03165 0.004" pos="0 0 -0.05"/>
+        <site name="puck_vis_rot" type="cylinder" size="0.0045 0.006" rgba="1 0 0 1" pos="0 0 -0.05"/> -->
 
         <!-- front view -->
         <camera mode="fixed" name="frontview" pos="1 0 1.45" quat="0.56 0.43 0.43 0.56"/>
@@ -113,7 +105,7 @@
         <!-- agent view -->
         <camera mode="fixed" name="agentview" pos="0.5 0 3" quat="0.7071 0 0 0.7071"/>
         <!-- side view -->
-        <camera mode="fixed" name="sideview" pos="0.75 1.85 1.6" quat="0.009905065491771751 0.006877963156909582 0.5912228352893879 0.806418094001364" />
+        <camera mode="fixed" name="sideview" pos="1.0 2.85 1.6" quat="0.009905065491771751 0.006877963156909582 0.5912228352893879 0.806418094001364" />
 
         <light pos="0 0 3" dir="0 0 -1" directional="true"/>
         <geom pos="0 0 -0.1" name="floor" size="0 0 0.05" type="plane" material="floorplane" group="1" />
