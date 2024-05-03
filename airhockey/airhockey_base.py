@@ -53,7 +53,8 @@ class AirHockeyBaseEnv(ABC, Env):
                  reward_normalized_radius_max=0.1,
                  reward_velocity_limits_min=[0,0],
                  reward_velocity_limits_max=[0,0],
-                 reward_movement_types=[]):
+                 reward_movement_types=[],
+                 compute_online_rewards=True):
         
         if simulator == 'box2d':
             simulator_fn = get_box2d_simulator_fn()
@@ -86,6 +87,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.terminate_on_puck_stop = terminate_on_puck_stop
         
         # reward function
+        self.compute_online_rewards = compute_online_rewards
         self.goal_conditioned = True if 'goal' in task else False
         self.goal_radius_type = 'fixed'
         self.goal_min_x_velocity = -goal_max_x_velocity
