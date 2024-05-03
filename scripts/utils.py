@@ -160,6 +160,9 @@ class EvalCallback(BaseCallback):
                             current_img = self.eval_env.current_state[key]
                             # flip upside down
                             current_img = cv2.flip(current_img, 0)
+                            # let's also concat frame and this img
+                            current_img = cv2.resize(current_img, (160, int(160 / aspect_ratio)))
+                            current_img = np.concatenate([frame, current_img], axis=1)
                             if key not in robosuite_frames:
                                 robosuite_frames[key] = [current_img]
                             else:

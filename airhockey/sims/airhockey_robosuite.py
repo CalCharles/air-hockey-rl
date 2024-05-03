@@ -199,7 +199,7 @@ class AirHockeyRobosuite(AirHockeySim):
         table_full_size = (length / 2, width / 2, depth / 2)
         self.table_full_size = table_full_size
         self.table_friction = table_friction
-        self.table_offset = np.array((0, 0, 0.8))
+        self.table_offset = np.array((0, 0, table_elevation))
         
         self.length = length
         self.width = width
@@ -220,16 +220,7 @@ class AirHockeyRobosuite(AirHockeySim):
 
         gripper_types = "RoundGripper"
 
-        self.arm_limit_collision_penalty = -20
-        self.success_reward = 50
-        self.old_puck_pos = None
-        self.goal_region_world = None
-        self.goal_region = None
-        self.goal_vel = None
-        self.positive_regions = None
-
         self.table_tilt = table_tilt
-        # self.table_tilt_rad = math.radians(table_tilt) I believe it is already in radians
         self.table_elevation = table_elevation
         self.transform_z = lambda x: math.sin(self.table_tilt) * x + self.table_elevation
         
@@ -251,8 +242,6 @@ class AirHockeyRobosuite(AirHockeySim):
         
         # map x and y onto table
         self.inv_table_transform = np.linalg.inv(self.table_transform)
-
-        self.prev_puck_goal_dist = None
 
         self.initial_puck_vels = dict()
         self.initial_block_positions = dict()
