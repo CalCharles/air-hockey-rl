@@ -2,11 +2,11 @@ import cv2
 import imageio
 import time
 import numpy as np
-from sims.real import find_red_hockey_paddle
+from airhockey.sims.real.image_detection import find_red_hockey_paddle
 
 
 mousepos = (0,0,1)
-Mimg = np.load('Mimg.npy')
+Mimg = np.load('assets/Mimg.npy')
 
 upscale_constant = 3
 original_size = np.array([640, 480])

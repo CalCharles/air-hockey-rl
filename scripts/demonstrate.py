@@ -48,6 +48,7 @@ class Demonstrator:
         action (numpy.array): The action to be taken in the game.
         """
         action = np.array([0,0])
+        return action
         frame = self.renderer.get_frame()
         cv2.imshow('Air Hockey 2D Demonstration',frame)
         key = cv2.waitKey(20)

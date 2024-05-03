@@ -14,6 +14,10 @@ def get_robosuite_simulator_fn():
     from airhockey.sims import AirHockeyRobosuite
     return AirHockeyRobosuite
 
+def get_real_simulator_fn():
+    from airhockey.sims import AirHockeyReal
+    return AirHockeyReal
+
 
 class AirHockeyBaseEnv(ABC, Env):
     def __init__(self,
@@ -60,6 +64,8 @@ class AirHockeyBaseEnv(ABC, Env):
             simulator_fn = get_box2d_simulator_fn()
         elif simulator == 'robosuite':
             simulator_fn = get_robosuite_simulator_fn()
+        elif simulator == 'real':
+            simulator_fn = get_real_simulator_fn()
         else:
             raise ValueError("Invalid simulator type. Must be 'box2d' or 'robosuite'.")
 

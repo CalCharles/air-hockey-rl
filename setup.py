@@ -14,10 +14,10 @@ setup(
     install_requires=[
         'mujoco',
         'mujoco-py',
+        'swig',
         'box2d-py',
         'gymnasium',
         'gym==0.25.1',
-        'swig',
         # errors installing box2d?
         # sudo apt install gcc python3-dev python3-pip libxml2-dev libxslt1-dev zlib1g-dev g++
         'box2d-py==2.3.8',

@@ -87,7 +87,7 @@ def find_red_hockey_paddle(image):
 
 
 MIN_DETECT = 25
-Mimg = np.load('Mimg.npy')
+Mimg = np.load('assets/Mimg.npy')
 upscale_constant = 3
 original_size = np.array([640, 480])
 visual_downscale_constant = 2
