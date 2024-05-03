@@ -167,10 +167,6 @@ class AirHockeyRobosuite(AirHockeySim):
         initialization_noise="default",
         table_friction=(1.0, 5e-3, 1e-4),
         use_camera_obs=True,
-        use_object_obs=True,
-        reward_scale=1.0,
-        reward_shaping=False,
-        placement_initializer=None,
         has_renderer=False,
         has_offscreen_renderer=True,
         render_camera="frontview",
@@ -189,12 +185,12 @@ class AirHockeyRobosuite(AirHockeySim):
         renderer="mujoco",
         renderer_config=None,
         task="JUGGLE_PUCK",
+        table_xml="arenas/air_hockey_table.xml", # relative to assets dir
         puck_radius=0.03165,
         puck_damping=0.8,
         puck_density=30,
         seed=0
     ):
-        
         # settings for table top
         table_full_size = (length / 2, width / 2, depth / 2)
         self.table_full_size = table_full_size
@@ -208,21 +204,12 @@ class AirHockeyRobosuite(AirHockeySim):
         self.render_length = int(self.ppm * self.length)
         self.render_masks = False
 
-        # reward configuration
-        self.reward_scale = reward_scale
-        self.reward_shaping = reward_shaping
-
-        # whether to use ground-truth object states
-        self.use_object_obs = use_object_obs
-
-        # object placement initializer
-        self.placement_initializer = placement_initializer
-
-        gripper_types = "RoundGripper"
+        self.gripper_types = gripper_types
 
         self.table_tilt = table_tilt
         self.table_elevation = table_elevation
-        self.transform_z = lambda x: math.sin(self.table_tilt) * x + self.table_elevation
+        self.table_depth = depth
+        self.transform_z = lambda x: math.sin(self.table_tilt) * x + self.table_elevation - depth / 2
         
         self.high_level_table_x_top = -self.length / 2
         self.high_level_table_x_bot = self.length / 2
@@ -232,6 +219,7 @@ class AirHockeyRobosuite(AirHockeySim):
         self.table_x_offset = rim_width
         self.table_y_offset = rim_width
         
+        # where the playable area starts
         self.table_x_top = self.length - self.table_x_offset
         self.table_x_bot = self.table_x_offset
         self.table_y_right = -self.width / 2 + self.table_y_offset
@@ -239,31 +227,18 @@ class AirHockeyRobosuite(AirHockeySim):
 
         table_q = T.axisangle2quat(np.array([0, self.table_tilt, 0]))
         self.table_transform = T.quat2mat(table_q)
-        
-        # map x and y onto table
         self.inv_table_transform = np.linalg.inv(self.table_transform)
 
         self.initial_puck_vels = dict()
         self.initial_block_positions = dict()
-
-        xml_fp = custom_xml_path_completion("arenas/air_hockey_table.xml")
-        
-        with open(xml_fp, "r") as file:
-            self.xml_config = xmltodict.parse(file.read())
-
-        # update table config
-        table_idx = None
-        for i, body in enumerate(self.xml_config['mujoco']['worldbody']['body']['body']):
-            if body['@name'] == 'table_surface':
-                table_idx = i
-                break
-        self.xml_config['mujoco']['worldbody']['body']['body'][table_idx]['geom']['@size'] = f"{self.table_full_size[0]} {self.table_full_size[1]} {self.table_full_size[2]}"
-        # self.xml_config['mujoco']['worldbody']['body'][0]['body'][0]['geom']['@size'] = f"{self.table_full_size[0]} {self.table_full_size[1]} {self.table_full_size[2]}"
+        self.table_xml = table_xml
 
         self.puck_radius = puck_radius
         self.puck_damping = puck_damping
         self.puck_density = puck_density
-
+        self.puck_height = 0.009
+        self.puck_z_offset = math.sin(self.table_tilt) * self.puck_radius
+        print(self.puck_z_offset)
         # FIXME make these parameters do something, right now it's a placeholder to make calls to robosuite work
         self.seed = seed
         self.paddle_radius = paddle_radius
@@ -283,9 +258,8 @@ class AirHockeyRobosuite(AirHockeySim):
         self.initialized_objects = False
         current_time = datetime.datetime.fromtimestamp(time.time())
         formatted_time = current_time.strftime('%Y%m%d_%H%M%S')
-        self.tmp_xml_fp = robosuite_xml_path_completion(f"arenas/air_hockey_table_{formatted_time}.xml")
+        self.tmp_xml_fp = robosuite_xml_path_completion(self.table_xml + f"_{formatted_time}.xml")
         
-    # deconstructor
     def __del__(self):
         if self.robosuite_env is not None:
             self.robosuite_env.close()
@@ -299,9 +273,7 @@ class AirHockeyRobosuite(AirHockeySim):
 
     def reset(self, seed=None):
         if self.robosuite_env is not None:
-            obs = self.robosuite_env.reset()
-        else:
-            obs = None
+            self.robosuite_env.reset()
         
         self.timestep = 0
         
@@ -309,18 +281,22 @@ class AirHockeyRobosuite(AirHockeySim):
             self.puck_names = {}
             self.block_names = {}
             self.initial_obj_configurations = {'paddles': {}, 'pucks': {}, 'blocks': {}}
-            xml_fp = custom_xml_path_completion("arenas/air_hockey_table.xml")
+            xml_fp = custom_xml_path_completion(self.table_xml)
             
             with open(xml_fp, "r") as file:
                 self.xml_config = xmltodict.parse(file.read())
 
             # update table config
-            table_idx = None
+            assert self.xml_config['mujoco']['worldbody']['body']['@name'] == 'table'
+            self.xml_config['mujoco']['worldbody']['body']['@pos'] = f"{self.table_full_size[0]} 0 {self.table_elevation}"
+
+            # update table surface config
+            table_surface_idx = None
             for i, body in enumerate(self.xml_config['mujoco']['worldbody']['body']['body']):
                 if body['@name'] == 'table_surface':
-                    table_idx = i
+                    table_surface_idx = i
                     break
-            self.xml_config['mujoco']['worldbody']['body']['body'][table_idx]['geom']['@size'] = f"{self.table_full_size[0]} {self.table_full_size[1]} {self.table_full_size[2]}"
+            self.xml_config['mujoco']['worldbody']['body']['body'][table_surface_idx]['geom']['@size'] = f"{self.table_full_size[0]} {self.table_full_size[1]} {self.table_full_size[2]}"
         return {}
     
     def set_obj_configs(self):
@@ -354,22 +330,25 @@ class AirHockeyRobosuite(AirHockeySim):
                                           robosuite_env_params=self.robosuite_env_cfg)
 
         # Adjust base pose accordingly
+        # TODO: uncomment and use this code, it is currently done in the xml
         # xpos = self.robosuite_env.robots[0].robot_model.base_xpos_offset["table"](self.table_full_size[0])
-        
         # xpos = (-0.48, 0, 0)
         # self.robosuite_env.robots[0].robot_model.set_base_xpos(xpos)
+
         self.set_obj_configs()
-        
         self.initialized_objects = True
         
     def high_level_to_robosuite_coords(self, pos, object_type):
         # uses high_level_table_x_top, high_level_table_x_bot, high_level_table_y_right, high_level_table_y_left
         # and table_x_top, table_x_bot, table_y_right, table_y_left
+        # first convert both to negative
+        # pos = -pos
+        
         x = (pos[0] - self.high_level_table_x_top) / (self.high_level_table_x_bot - self.high_level_table_x_top) * (self.table_x_bot - self.table_x_top) + self.table_x_top
         y = (pos[1] - self.high_level_table_y_left) / (self.high_level_table_y_right - self.high_level_table_y_left) * (self.table_y_right - self.table_y_left) + self.table_y_left
         if object_type == 'puck':
-            x -= self.puck_radius
-            y -= self.puck_radius
+            x -= 0 # self.puck_radius
+            y -= 0 # self.puck_radius
         elif object_type == 'block':
             x -= self.block_width / 2
             y -= self.block_width / 2
@@ -404,7 +383,7 @@ class AirHockeyRobosuite(AirHockeySim):
 
     def robosuite_to_high_level_vel(self, vel, object_type):
         return np.array([-vel[0], -vel[1]])
-        
+
     def spawn_block(self, pos, vel, name, affected_by_gravity=False, movable=True):
         self.initial_block_positions[name] = pos
         self.initial_obj_configurations['blocks'][name] = {'position': pos}
@@ -493,6 +472,8 @@ class AirHockeyRobosuite(AirHockeySim):
 
     def spawn_puck(self, pos, vel, name, affected_by_gravity=False, movable=True):
         pos = self.high_level_to_robosuite_coords(pos, object_type='puck')
+        assert pos[0] >= self.table_x_bot and pos[0] <= self.table_x_top, f"pos[0]: {pos[0]}, table_x_bot: {self.table_x_bot}, table_x_top: {self.table_x_top}"
+        assert pos[1] <= self.table_y_left and pos[1] >= self.table_y_right, f"pos[1]: {pos[1]}, table_y_left: {self.table_y_left}, table_y_right: {self.table_y_right}"
         vel = self.high_level_to_robosuite_vel(vel, object_type='puck')
         self.initial_puck_vels[name] = vel
         self.initial_obj_configurations['pucks'][name] = {'position': pos, 'velocity': vel}
@@ -500,13 +481,13 @@ class AirHockeyRobosuite(AirHockeySim):
             return
         
         # create puck object to add
-        puck_mass = self.puck_density * math.pi * (self.puck_radius ** 2) * 0.009
-        z_pos = self.transform_z(pos[0])
+        puck_mass = self.puck_density * math.pi * (self.puck_radius ** 2) * self.puck_height
+        z_pos = self.transform_z(pos[0]) - self.puck_z_offset
         self.puck_names[name] = name
         puck_dict = {
             "@name": "base",
             "@pos": f"{pos[0]} {pos[1]} {z_pos}",
-            "@axisangle": "0 1 0 -0.09",
+            "@axisangle": f"0 1 0 {self.table_tilt}",
             "joint": [
                 {
                     "@name": f"{name}_x",
@@ -534,18 +515,18 @@ class AirHockeyRobosuite(AirHockeySim):
                 "@name": f"{name}",
                 "geom": [
                     {
-                        "@pos": "0 0 0.00262116", # believe this is relative to the base
+                        "@pos": f"0 0 {self.puck_z_offset}",
                         "@name": f"{name}",
                         "@type": "cylinder",
                         "@material": "red",
-                        "@size": f"{self.puck_radius} 0.009",
+                        "@size": f"{self.puck_radius} {self.puck_height}",
                         "@condim": "4",
                         "@priority": "0",
                         "@group": "1",
                     }
                 ],
                 "inertial": {
-                    "@pos": "0 0 0", # believe this is relative to the base
+                    "@pos": "0 0 0",
                     "@mass": f"{puck_mass}",
                     "@diaginertia": "2.5e-6 2.5e-6 5e-6",
                 },
@@ -558,24 +539,24 @@ class AirHockeyRobosuite(AirHockeySim):
             self.xml_config['mujoco']['worldbody']['body'] = [self.xml_config['mujoco']['worldbody']['body'], puck_dict]
             
         # add contact
-        if 'contact' in self.xml_config['mujoco']:
-            if 'exclude' in self.xml_config['mujoco']['contact']:
-                self.xml_config['mujoco']['contact']['exclude'].append({
-                    "@body1": f"{name}",
-                    "@body2": f"table_surface"
-                })
-            else:
-                self.xml_config['mujoco']['contact']['exclude'] = {
-                    "@body1": f"{name}",
-                    "@body2": f"table_surface"
-                }
-        else:
-            self.xml_config['mujoco']['contact'] = {
-                "exclude": [{
-                    "@body1": f"{name}",
-                    "@body2": f"table_surface"
-                }]
-            }
+        # if 'contact' in self.xml_config['mujoco']:
+        #     if 'exclude' in self.xml_config['mujoco']['contact']:
+        #         self.xml_config['mujoco']['contact']['exclude'].append({
+        #             "@body1": f"{name}",
+        #             "@body2": f"table_surface"
+        #         })
+        #     else:
+        #         self.xml_config['mujoco']['contact']['exclude'] = {
+        #             "@body1": f"{name}",
+        #             "@body2": f"table_surface"
+        #         }
+        # else:
+        #     self.xml_config['mujoco']['contact'] = {
+        #         "exclude": [{
+        #             "@body1": f"{name}",
+        #             "@body2": f"table_surface"
+        #         }]
+        #     }
 
     def spawn_paddle(self, pos, vel, name):
         # put the eef in pos
@@ -709,51 +690,22 @@ class AirHockeyTableArena(Arena):
         xml (str): xml file to load arena
     """
 
-    def __init__(
-        self,
-        table_full_size=(0.8, 0.8, 0.05),
-        table_friction=(1, 0.005, 0.0001),
-        table_offset=(0, 0, 0.8),
-        has_legs=True,
-        xml="arenas/air_hockey_table.xml",
-    ):
+    def __init__(self, table_offset, xml):
         arena_fp = robosuite_xml_path_completion(xml)
         super().__init__(arena_fp)
         self.center_pos = self.bottom_pos + np.array([0, 0, 0.0]) + table_offset
         self.table_body = self.worldbody.find("./body[@name='table']")
-        # self.table_collision = self.table_body.find("./geom[@name='table_collision']")
-        # self.table_visual = self.table_body.find("./geom[@name='table_visual']")
-        # self.table_top = self.table_body.find("./site[@name='table_top']")
-        
-        # print("self.floor: ", self.floor)
-        # print("self.table_body: ", self.table_body)
         self.configure_location()
         # pass
 
     def configure_location(self):
         """Configures correct locations for this arena"""
-        # print("table_body pos: ", self.table_body.get("pos"))
-
-def input2list(inp, length):
-    """
-    Helper function that converts an input that is either a single value or a list into a list
-
-    Args:
-        inp (None or str or list): Input value to be converted to list
-        length (int): Length of list to broadcast input to
-
-    Returns:
-        list: input @inp converted into a list of length @length
-    """
-    # convert to list if necessary
-    return list(inp) if type(inp) is list or type(inp) is tuple else [inp for _ in range(length)]
+        pass
     
 class RobosuiteEnv(SingleArmEnv):
     def __init__(self, xml_fp, table_full_size, table_friction, table_offset, puck_names, block_names, robosuite_env_params):
         # load model for table top workspace
         mujoco_arena = AirHockeyTableArena(
-            table_full_size=table_full_size,
-            table_friction=table_friction,
             table_offset=table_offset,
             xml=xml_fp,
         )
@@ -767,12 +719,11 @@ class RobosuiteEnv(SingleArmEnv):
         robots = robosuite_env_params['robots']
         robots = list(robots) if type(robots) is list or type(robots) is tuple else [robots]
         self.num_robots = len(robots)
-        robot_names = input2list(robots, self.num_robots)
-        
-        controller_configs = input2list(robosuite_env_params['controller_configs'], self.num_robots)
-        mount_types = input2list(robosuite_env_params['mount_types'], self.num_robots)
-        initialization_noise = input2list(robosuite_env_params['initialization_noise'], self.num_robots)
-        control_freq = input2list(robosuite_env_params['control_freq'], self.num_robots)
+        robot_names = self.input2list(robots, self.num_robots)
+        controller_configs = self.input2list(robosuite_env_params['controller_configs'], self.num_robots)
+        mount_types = self.input2list(robosuite_env_params['mount_types'], self.num_robots)
+        initialization_noise = self.input2list(robosuite_env_params['initialization_noise'], self.num_robots)
+        control_freq = self.input2list(robosuite_env_params['control_freq'], self.num_robots)
         robot_configs = self.load_robots_configs(robot_names, controller_configs, mount_types, initialization_noise, control_freq)
         self.robots = self.get_robots(robot_names, robot_configs)
 
@@ -841,7 +792,6 @@ class RobosuiteEnv(SingleArmEnv):
         def gripper_eef_pos(obs_cache):
             return self.sim.data.get_body_xpos("gripper0_eef")
         
-        
         gripper_eef_vel.__modality__ = modality
         gripper_eef_pos.__modality__ = modality
 
@@ -874,6 +824,20 @@ class RobosuiteEnv(SingleArmEnv):
             )
 
         return observables
+    
+    def input2list(self, inp, length):
+        """
+        Helper function that converts an input that is either a single value or a list into a list
+
+        Args:
+            inp (None or str or list): Input value to be converted to list
+            length (int): Length of list to broadcast input to
+
+        Returns:
+            list: input @inp converted into a list of length @length
+        """
+        # convert to list if necessary
+        return list(inp) if type(inp) is list or type(inp) is tuple else [inp for _ in range(length)]
     
     def visualize(self, vis_settings):
         """
