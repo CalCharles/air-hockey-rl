@@ -9,8 +9,8 @@ import airhockey.sims.utils.RobosuiteTransforms # this registers the transformat
 from airhockey.airhockey_simple_tasks import AirHockeyPuckVelEnv, AirHockeyPuckHeightEnv, AirHockeyPuckCatchEnv 
 from airhockey.airhockey_simple_tasks import AirHockeyPuckJuggleEnv, AirHockeyPuckStrikeEnv, AirHockeyPuckTouchEnv
 from airhockey.airhockey_hierarchical_tasks  import AirHockeyMoveBlockEnv, AirHockeyStrikeCrowdEnv
-from airhockey.airhockey_goal_tasks import AirHockeyPuckGoalPositionEnv, AirHockeyPuckGoalPositionVelocityEnv
-from airhockey.airhockey_goal_tasks import AirHockeyPaddleReachPositionEnv, AirHockeyPaddleReachPositionVelocityEnv
+from airhockey.airhockey_goal_tasks import AirHockeyPuckGoalPositionEnv, AirHockeyPuckGoalPositionVelocityEnv, AirHockeyPuckReachPositionDynamicNegRegionsEnv
+from airhockey.airhockey_goal_tasks import AirHockeyPaddleReachPositionEnv, AirHockeyPaddleReachPositionVelocityEnv, AirHockeyPaddleReachPositionNegRegionsEnv
 
 ASSETS_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../assets"))
 
@@ -69,6 +69,10 @@ def AirHockeyEnv(cfg):
         task_env = AirHockeyPaddleReachPositionEnv
     elif task == "paddle_goal_position_velocity":
         task_env = AirHockeyPaddleReachPositionVelocityEnv
+    elif task == "paddle_goal_position_neg":
+        task_env = AirHockeyPaddleReachPositionNegRegionsEnv
+    elif task == "puck_goal_position_dynamic_neg":
+        task_env = AirHockeyPuckReachPositionDynamicNegRegionsEnv
     else:
         raise ValueError("Task {} not recognized".format(task))
     return task_env.from_dict(cfg)

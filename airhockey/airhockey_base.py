@@ -42,7 +42,18 @@ class AirHockeyBaseEnv(ABC, Env):
                  seed,
                  dense_goal=True,
                  goal_selector='stationary',
-                 max_timesteps=1000):
+                 max_timesteps=1000,
+                 num_positive_reward_regions=0,
+                 positive_reward_range=[1,1],
+                 num_negative_reward_regions=0,
+                 negative_reward_range=[-1,-1],
+                 reward_region_shapes=[],
+                 reward_region_scale_range=[0,0],
+                 reward_normalized_radius_min=0.1,
+                 reward_normalized_radius_max=0.1,
+                 reward_velocity_limits_min=[0,0],
+                 reward_velocity_limits_max=[0,0],
+                 reward_movement_types=[]):
         
         if simulator == 'box2d':
             simulator_fn = get_box2d_simulator_fn()
@@ -66,6 +77,8 @@ class AirHockeyBaseEnv(ABC, Env):
         self.n_training_steps = n_training_steps
         self.n_timesteps_so_far = 0
         self.rng = np.random.RandomState(seed)
+        self.dynamic_virtual_objects = list() # if the environment has these, put them in at subclass initialization
+        self.reward_regions = list()
         
         # termination conditions
         self.terminate_on_out_of_bounds = terminate_on_out_of_bounds
@@ -306,8 +319,15 @@ class AirHockeyBaseEnv(ABC, Env):
             return obs, reward, is_finished, truncated, info
         else:
             return self.multi_step(action)
+    
+    def single_step_dynamic_virtual(self, action):
+        # step any dynamic virtual objects to update their state
+        for dvo in self.dynamic_virtual_objects:
+            dvo.step(self.current_state, action)
+        
 
     def single_agent_step(self, action) -> tuple[np.ndarray, float, bool, bool, dict]:
+
         next_state = self.simulator.get_transition(action)
         if self.current_timestep > 0:
             self.old_state = self.current_state
