@@ -1,7 +1,7 @@
 import numpy as np
 
 from robosuite.models.robots.manipulators.manipulator_model import ManipulatorModel
-from airhockey.sims.utils import custom_xml_path_completion
+from robosuite.utils.mjcf_utils import xml_path_completion as robosuite_xml_path_completion
 
 
 class AirHockeyUR5e(ManipulatorModel):
@@ -14,7 +14,7 @@ class AirHockeyUR5e(ManipulatorModel):
     """
 
     def __init__(self, idn=0):
-        super().__init__(custom_xml_path_completion("robots/ur5e/robot.xml"), idn=idn)
+        super().__init__(robosuite_xml_path_completion("robots/custom_ur5e/custom_robot.xml"), idn=idn)
 
     @property
     def default_mount(self):

@@ -11,6 +11,8 @@ from airhockey.airhockey_simple_tasks import AirHockeyPuckJuggleEnv, AirHockeyPu
 from airhockey.airhockey_hierarchical_tasks  import AirHockeyMoveBlockEnv, AirHockeyStrikeCrowdEnv
 from airhockey.airhockey_goal_tasks import AirHockeyPuckGoalPositionEnv, AirHockeyPuckGoalPositionVelocityEnv
 from airhockey.airhockey_goal_tasks import AirHockeyPaddleReachPositionEnv, AirHockeyPaddleReachPositionVelocityEnv
+from robosuite.utils.mjcf_utils import xml_path_completion as robosuite_xml_path_completion
+
 
 ASSETS_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../assets"))
 
@@ -72,4 +74,12 @@ def AirHockeyEnv(cfg):
     else:
         raise ValueError("Task {} not recognized".format(task))
     return task_env.from_dict(cfg)
+
+robosuite_robot_assets_fp = robosuite_xml_path_completion(os.path.join('robots', 'ur5e'))
+robot_xml_fp = custom_xml_path_completion(os.path.join('robots', 'ur5e', 'robot.xml'))
+new_folder_fp = robosuite_xml_path_completion(os.path.join('robots', 'custom_ur5e'))
+out_robot_xml_fp = robosuite_xml_path_completion(os.path.join(new_folder_fp, 'custom_robot.xml'))
+if not os.path.exists(new_folder_fp):
+    shutil.copytree(robosuite_robot_assets_fp, new_folder_fp)
+shutil.copy(robot_xml_fp, out_robot_xml_fp)
 
