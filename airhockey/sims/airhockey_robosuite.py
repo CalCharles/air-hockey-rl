@@ -156,6 +156,8 @@ class AirHockeyRobosuite(AirHockeySim):
         length, 
         width,
         depth,
+        table_tilt,
+        table_elevation,
         rim_width,
         render_size,
         robots=['AirHockeyUR5e'],
@@ -226,10 +228,10 @@ class AirHockeyRobosuite(AirHockeySim):
         self.goal_vel = None
         self.positive_regions = None
 
-        self.table_tilt = 0.09
-        self.table_elevation = 0.8
-        self.table_x_start = 0.8
-        self.transform_z = lambda x: self.table_tilt * (x - self.table_x_start) + self.table_elevation
+        self.table_tilt = table_tilt
+        # self.table_tilt_rad = math.radians(table_tilt) I believe it is already in radians
+        self.table_elevation = table_elevation
+        self.transform_z = lambda x: math.sin(self.table_tilt) * x + self.table_elevation
         
         self.high_level_table_x_top = -self.length / 2
         self.high_level_table_x_bot = self.length / 2

@@ -146,12 +146,12 @@ class EvalCallback(BaseCallback):
             success = False
             while not done:
                 if include_frames and ep_idx < n_eps_viz:
-                    # # frame = self.renderer.get_frame()
-                    # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    # # decrease width to 160 but keep aspect ratio
-                    # aspect_ratio = frame.shape[1] / frame.shape[0]
-                    # frame = cv2.resize(frame, (160, int(160 / aspect_ratio)))
-                    frame = np.zeros(shape=(256, 256)) # black img
+                    frame = self.renderer.get_frame()
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    # decrease width to 160 but keep aspect ratio
+                    aspect_ratio = frame.shape[1] / frame.shape[0]
+                    frame = cv2.resize(frame, (160, int(160 / aspect_ratio)))
+                    # frame = np.zeros(shape=(256, 256)) # black img
                     frames.append(frame)
                     if self.eval_env.simulator_name == 'robosuite':
                         for key in self.eval_env.current_state:

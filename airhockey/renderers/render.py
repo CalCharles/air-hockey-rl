@@ -118,7 +118,7 @@ class AirHockeyRenderer:
         
         # Overlay the image
         # check if circle is within the image
-        if frame_top_left[0] < self.render_masks[0] or frame_top_left[1] < self.render_masks[1] or frame_bottom_right[0] > self.render_masks[2] or frame_bottom_right[1] > self.render_masks[3]:
+        if y_start >= resized_img.shape[0] or x_start >= resized_img.shape[1] or y_end <= 0 or x_end <= 0:
             print("Circle (puck) is out of bounds. Not rendering...")
             return
         mask = resized_img[y_start:y_end, x_start:x_end, 3] > 0
@@ -182,7 +182,7 @@ class AirHockeyRenderer:
         y_end = resized_img.shape[0] - y_end_offset
         x_end = resized_img.shape[1] - x_end_offset
         
-        if frame_top_left[0] < self.render_masks[0] or frame_top_left[1] < self.render_masks[1] or frame_bottom_right[0] > self.render_masks[2] or frame_bottom_right[1] > self.render_masks[3]:
+        if y_start >= resized_img.shape[0] or x_start >= resized_img.shape[1] or y_end <= 0 or x_end <= 0:
             print("Square (block) is out of bounds. Not rendering...")
             return
 
@@ -239,21 +239,21 @@ class AirHockeyRenderer:
         if 'pucks' in state_info:
             for i in range(len(state_info['pucks'])):
                 pos = state_info['pucks'][i]['position']
-                self.check_position(pos, self.length, self.width)
+                # self.check_position(pos, self.length, self.width)
                 pos = self.convert_to_render_coords_sys(pos)
                 radius = self.airhockey_env.puck_radius
                 self.draw_circle_with_image(pos, radius, circle_type='puck')
         if 'blocks' in state_info:
             for i in range(len(state_info['blocks'])):
                 pos = state_info['blocks'][i]['current_position']
-                self.check_position(pos, self.length, self.width)
+                # self.check_position(pos, self.length, self.width)
                 pos = self.convert_to_render_coords_sys(pos)
                 width = self.airhockey_env.block_width
                 self.draw_square_with_image(pos, width, square_type='block')
         if 'paddles' in state_info:
             for paddle_name in state_info['paddles']:
                 pos = state_info['paddles'][paddle_name]['position']
-                self.check_position(pos, self.length, self.width)
+                # self.check_position(pos, self.length, self.width)
                 pos = self.convert_to_render_coords_sys(pos)
                 radius = self.airhockey_env.paddle_radius
                 self.draw_circle_with_image(pos, radius, circle_type='paddle')
