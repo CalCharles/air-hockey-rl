@@ -117,6 +117,10 @@ class AirHockeyRenderer:
         x_end = resized_img.shape[1] - x_end_offset
         
         # Overlay the image
+        # check if circle is within the image
+        if frame_top_left[0] < self.render_masks[0] or frame_top_left[1] < self.render_masks[1] or frame_bottom_right[0] > self.render_masks[2] or frame_bottom_right[1] > self.render_masks[3]:
+            print("Circle (puck) is out of bounds. Not rendering...")
+            return
         mask = resized_img[y_start:y_end, x_start:x_end, 3] > 0
         self.frame[frame_top_left[1] : frame_bottom_right[1], frame_top_left[0]: frame_bottom_right[0]][mask] = resized_img[y_start:y_end, x_start:x_end, :3][mask]
 
@@ -177,6 +181,10 @@ class AirHockeyRenderer:
         x_end_offset = bottom_right[0] - frame_bottom_right[0]
         y_end = resized_img.shape[0] - y_end_offset
         x_end = resized_img.shape[1] - x_end_offset
+        
+        if frame_top_left[0] < self.render_masks[0] or frame_top_left[1] < self.render_masks[1] or frame_bottom_right[0] > self.render_masks[2] or frame_bottom_right[1] > self.render_masks[3]:
+            print("Square (block) is out of bounds. Not rendering...")
+            return
 
         # Overlay the image
         mask = resized_img[y_start:y_end, x_start:x_end, 3] > 0
