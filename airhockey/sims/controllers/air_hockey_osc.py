@@ -137,7 +137,7 @@ class AirHockeyOperationalSpaceController(OperationalSpaceController):
             uncouple_pos_ori=False,
             logger=None,
             table_tilt=0.09,
-            table_elevation=1.0,
+            table_elevation=0.7874,
             table_x_start=0.8,
             z_offset=0.008,
             **kwargs,  # does nothing; used so no error raised when dict is passed with extra terms used previously

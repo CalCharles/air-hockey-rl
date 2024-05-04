@@ -22,7 +22,7 @@ class AirHockeyUR5e(ManipulatorModel):
 
     @property
     def default_gripper(self):
-        return "Robotiq85Gripper"
+        return "RoundGripper"
 
     @property
     def default_controller_config(self):

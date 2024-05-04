@@ -209,7 +209,12 @@ class AirHockeyRobosuite(AirHockeySim):
         self.table_tilt = table_tilt
         self.table_elevation = table_elevation
         self.table_depth = depth
-        self.transform_z = lambda x: math.sin(self.table_tilt) * x + self.table_elevation - depth / 2
+        self.x_to_x_prime_ratio = math.cos(self.table_tilt)
+        self.x_prime_to_x_ratio = 1 / self.x_to_x_prime_ratio
+        self.x_to_z_ratio = math.sin(self.table_tilt)
+        self.transform_z = lambda x: self.x_to_z_ratio * x + self.table_elevation - depth
+        self.transform_x = lambda x: self.x_to_x_prime_ratio * x
+        self.inverse_transform_x = lambda x: self.x_prime_to_x_ratio * x
         
         self.high_level_table_x_top = -self.length / 2
         self.high_level_table_x_bot = self.length / 2
@@ -225,8 +230,8 @@ class AirHockeyRobosuite(AirHockeySim):
         self.table_y_right = -self.width / 2 + self.table_y_offset
         self.table_y_left = self.width / 2 - self.table_y_offset
 
-        table_q = T.axisangle2quat(np.array([0, self.table_tilt, 0]))
-        self.table_transform = T.quat2mat(table_q)
+        self.table_q = T.axisangle2quat(np.array([0, self.table_tilt, 0]))
+        self.table_transform = T.quat2mat(self.table_q)
         self.inv_table_transform = np.linalg.inv(self.table_transform)
 
         self.initial_puck_vels = dict()
@@ -301,18 +306,38 @@ class AirHockeyRobosuite(AirHockeySim):
     
     def set_obj_configs(self):
         for name in self.initial_obj_configurations['pucks'].keys():
+            body_id = self.robosuite_env.sim.model.body_name2id(name)
+            
+            xpos = self.robosuite_env.sim.data.body_xpos[body_id]
+            pos = self.initial_obj_configurations['pucks'][name]['position']
+            desired_qpos = pos - xpos
+            
+            xvel = self.robosuite_env.sim.data.get_body_xvelp(name)[:2]
+            vel = self.initial_obj_configurations['pucks'][name]['velocity']
+            desired_qvel = vel - xvel
+            
             joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_x")
-            self.robosuite_env.sim.data.qvel[joint_key] = self.initial_obj_configurations['pucks'][name]['velocity'][0]
-            self.robosuite_env.sim.data.qpos[joint_key] = self.initial_obj_configurations['pucks'][name]['position'][0]
+            self.robosuite_env.sim.data.qpos[joint_key] = desired_qpos[0]
+            self.robosuite_env.sim.data.qvel[joint_key] = desired_qvel[0]
             joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_y")
-            self.robosuite_env.sim.data.qvel[joint_key] = self.initial_obj_configurations['pucks'][name]['velocity'][1]
-            self.robosuite_env.sim.data.qpos[joint_key] = self.initial_obj_configurations['pucks'][name]['position'][1]
+            self.robosuite_env.sim.data.qpos[joint_key] = desired_qpos[1]
+            self.robosuite_env.sim.data.qvel[joint_key] = desired_qvel[1]
+            joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_yaw")
+            self.robosuite_env.sim.data.qpos[joint_key] = desired_qpos[2]
         for name in self.initial_block_positions.keys():
+            xpos = self.robosuite_env.sim.data.body_xpos[self.robosuite_env.sim.model.body_name2id(name)]
+            
+            pos = self.initial_block_positions[name]
+            desired_qpos = pos - xpos
+            
             joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_x")
-            self.robosuite_env.sim.data.qpos[joint_key] = self.initial_block_positions[name][0]
+            self.robosuite_env.sim.data.qpos[joint_key] = desired_qpos[0]
             joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_y")
-            self.robosuite_env.sim.data.qpos[joint_key] = self.initial_block_positions[name][1]
-
+            self.robosuite_env.sim.data.qpos[joint_key] = desired_qpos[1]
+            joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_yaw")
+            self.robosuite_env.sim.data.qpos[joint_key] = desired_qpos[2]
+        self.robosuite_env.sim.step()
+        
     def instantiate_objects(self):
         if self.initialized_objects:
             self.set_obj_configs()
@@ -347,8 +372,8 @@ class AirHockeyRobosuite(AirHockeySim):
         x = (pos[0] - self.high_level_table_x_top) / (self.high_level_table_x_bot - self.high_level_table_x_top) * (self.table_x_bot - self.table_x_top) + self.table_x_top
         y = (pos[1] - self.high_level_table_y_left) / (self.high_level_table_y_right - self.high_level_table_y_left) * (self.table_y_right - self.table_y_left) + self.table_y_left
         if object_type == 'puck':
-            x -= 0 # self.puck_radius
-            y -= 0 # self.puck_radius
+            x -= self.puck_radius
+            y -= self.puck_radius
         elif object_type == 'block':
             x -= self.block_width / 2
             y -= self.block_width / 2
@@ -357,6 +382,7 @@ class AirHockeyRobosuite(AirHockeySim):
             y -= 0 # self.paddle_radius
         else:
             raise ValueError("Invalid object type")
+        x = self.inverse_transform_x(x)
         
         return np.array([x, y])
     
@@ -393,10 +419,12 @@ class AirHockeyRobosuite(AirHockeySim):
         # create puck object to add
         puck_mass = self.puck_density * math.pi * (self.puck_radius ** 2) * 0.009
         z_pos = self.transform_z(pos[0])
+        x_pos = self.transform_x(pos[0])
+        y_pos = pos[1]
         self.block_names[name] = name
         puck_dict = {
             "@name": "base",
-            "@pos": f"{pos[0]} {pos[1]} {z_pos}",
+            "@pos": f"{x_pos} {y_pos} {z_pos}",
             "@axisangle": "0 1 0 -0.09",
             "joint": [
                 {
@@ -475,25 +503,29 @@ class AirHockeyRobosuite(AirHockeySim):
         assert pos[0] >= self.table_x_bot and pos[0] <= self.table_x_top, f"pos[0]: {pos[0]}, table_x_bot: {self.table_x_bot}, table_x_top: {self.table_x_top}"
         assert pos[1] <= self.table_y_left and pos[1] >= self.table_y_right, f"pos[1]: {pos[1]}, table_y_left: {self.table_y_left}, table_y_right: {self.table_y_right}"
         vel = self.high_level_to_robosuite_vel(vel, object_type='puck')
-        self.initial_puck_vels[name] = vel
+        
+        puck_mass = self.puck_density * math.pi * (self.puck_radius ** 2) * self.puck_height
+        z_pos = self.transform_z(pos[0]) + 0.025
+        x_pos = self.transform_x(pos[0])
+        y_pos = pos[1]
+        pos = np.array([x_pos, y_pos, z_pos])
         self.initial_obj_configurations['pucks'][name] = {'position': pos, 'velocity': vel}
+        self.initial_puck_vels[name] = vel
+        self.puck_names[name] = name
         if self.initialized_objects:
             return
         
-        # create puck object to add
-        puck_mass = self.puck_density * math.pi * (self.puck_radius ** 2) * self.puck_height
-        z_pos = self.transform_z(pos[0]) - self.puck_z_offset
-        self.puck_names[name] = name
         puck_dict = {
             "@name": "base",
-            "@pos": f"{pos[0]} {pos[1]} {z_pos}",
-            "@axisangle": f"0 1 0 {self.table_tilt}",
+            "@pos": f"{x_pos} {y_pos} {z_pos}",
+            "@axisangle": f"0 1 0 {-self.table_tilt}",
             "joint": [
                 {
                     "@name": f"{name}_x",
                     "@type": "slide",
                     "@axis": "1 0 0",
                     "@damping": f"{self.puck_damping}",
+                    "@damping": "0.01",
                     "@limited": "false",
                 },
                 {
@@ -515,7 +547,7 @@ class AirHockeyRobosuite(AirHockeySim):
                 "@name": f"{name}",
                 "geom": [
                     {
-                        "@pos": f"0 0 {self.puck_z_offset}",
+                        "@pos": f"0 0 -{self.puck_z_offset}",
                         "@name": f"{name}",
                         "@type": "cylinder",
                         "@material": "red",
@@ -527,7 +559,8 @@ class AirHockeyRobosuite(AirHockeySim):
                 ],
                 "inertial": {
                     "@pos": "0 0 0",
-                    "@mass": f"{puck_mass}",
+                    # "@mass": f"{puck_mass}",
+                    "@mass": 0.01,
                     "@diaginertia": "2.5e-6 2.5e-6 5e-6",
                 },
             }
@@ -566,8 +599,10 @@ class AirHockeyRobosuite(AirHockeySim):
         """
         Converts 2D action to 6D robot action
         """
-        delta_pos = np.array([action[0], action[1], 0])
-        delta_pos = self.inv_table_transform @ delta_pos
+        delta_pos_x = action[0] * self.x_to_x_prime_ratio
+        delta_pos_y = action[1]
+        delta_pos_z = action[0] * self.x_to_z_ratio
+        delta_pos = np.array([delta_pos_x, delta_pos_y, delta_pos_z])
         return np.array([delta_pos[0], delta_pos[1], delta_pos[2], 0, 0, 0])
 
     def get_transition(self, action):

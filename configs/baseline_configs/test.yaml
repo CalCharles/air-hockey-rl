@@ -2,12 +2,12 @@
 air_hockey:
   simulator_params:
     # 57: <geom name="surface" type="box" material="white" size="length width 0.0505" pos="0 0 -0.0505"
-    length: 2.128
-    width: 1.218
+    length: 2.1104
+    width: 1.0436
     depth: 0.101
-    rim_width: 0.09
+    rim_width: 0.045
     table_tilt: 0.09
-    table_elevation: 0.8
+    table_elevation: 0.7874
     # 102: <geom pos="0 0 -0.2" name="puck" type="cylinder" material="red" size="puck_radius 0.009" condim="4" priority="0" group="1"/>
     puck_radius: 0.03175
     paddle_radius: 0.0508
@@ -16,8 +16,8 @@ air_hockey:
     #98: <joint name="puck_y" type="slide" axis="0 1 0" damping="0.01" limited="false"/>
     puck_damping: 0.01
     puck_density: 3530
-    max_paddle_vel: 0101
-    max_puck_vel: 0
+    max_paddle_vel: 2
+    max_puck_vel: 2
     render_size: 360
     has_renderer: true
   

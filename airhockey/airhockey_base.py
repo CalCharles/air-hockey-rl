@@ -337,7 +337,7 @@ class AirHockeyBaseEnv(ABC, Env):
 
         print(self.current_timestep)
         self.current_timestep += 1
-        
+        # is_finished = True
         
         obs = self.get_observation(next_state)
         return obs, reward, is_finished, truncated, info
