@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import time
 from airhockey import AirHockeyEnv
-from render import AirHockeyRenderer
+from airhockey.renderers import AirHockeyRenderer
 import argparse
 import yaml
 import os
@@ -24,7 +24,11 @@ class Demonstrator:
         air_hockey_params = air_hockey_cfg['air_hockey']
         air_hockey_params['n_training_steps'] = air_hockey_cfg['n_training_steps']
         air_hockey_params['seed'] = air_hockey_cfg['seed']
-        self.air_hockey = AirHockeyEnv.from_dict(air_hockey_params)
+        if 'goal' in air_hockey_cfg['air_hockey']['task']:
+            air_hockey_params['return_goal_obs'] = True
+        else:
+            air_hockey_params['return_goal_obs'] = False
+        self.air_hockey = AirHockeyEnv(air_hockey_params)
         self.renderer = AirHockeyRenderer(self.air_hockey)
         self.keyboard_scheme = 'wasd'
         self.print_reward = air_hockey_cfg['print_reward']
@@ -70,13 +74,13 @@ class Demonstrator:
                 action = np.array([1,1])
         elif self.keyboard_scheme == 'wasd':
             if key == ord('w'):
-                action = np.array([-1,0])
+                action = np.array([-0.001,0])
             elif key == ord('a'):
-                action = np.array([0,-1])
+                action = np.array([0,-0.001])
             elif key == ord('s'):
-                action = np.array([1,0])
+                action = np.array([0.001,0])
             elif key == ord('d'):
-                action = np.array([0,1])
+                action = np.array([0,0.001])
         else:
             raise ValueError("Invalid keyboard scheme")
         if self.renderer.orientation == 'vertical':
@@ -104,9 +108,9 @@ class Demonstrator:
                 start = time.time()
             action = self.demonstrate()
             _, rew, _, _, _ = self.air_hockey.step(action)
-            if self.print_reward:
-                print("reward: ", rew)
-            if i % 300 == 0:
+            # if self.print_reward:
+            print("reward: ", rew)
+            if i % 2000 == 0:
                 self.air_hockey.reset()
                 
     def play_against_agent(self, policy):
@@ -146,7 +150,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.cfg is None:
         # Then our default path is demonstrate.yaml in the config file
-        dir_path = os.path.dirname(os.path.realpath(__file__))
+        # dir_path = os.path.dirname(os.path.realpath(__file__) + "../")
+        dir_path = "./"
         air_hockey_cfg_fp = os.path.join(dir_path, 'configs', 'demonstrate.yaml')
     else:
         air_hockey_cfg_fp = args.cfg

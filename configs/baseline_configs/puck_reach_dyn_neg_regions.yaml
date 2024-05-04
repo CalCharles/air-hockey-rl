@@ -1,38 +1,40 @@
 # Air Hockey Table Parameters
 air_hockey:
   simulator_params:
-    absorb_target: false
-    block_width: 0.0254
-    force_scaling: 1000
-    gravity: -0.5
-    length: 1.9304
-    max_force_timestep: 100
-    paddle_damping: 3
-    paddle_density: 2500
-    paddle_radius: 0.0508
+    # 57: <geom name="surface" type="box" material="white" size="length width 0.0505" pos="0 0 -0.0505"
+    length: 1.064
+    width: 0.609
+    depth: 0.0505
+    # 102: <geom pos="0 0 -0.2" name="puck" type="cylinder" material="red" size="puck_radius 0.009" condim="4" priority="0" group="1"/>
     puck_radius: 0.03175
-    puck_damping: 0.5
-    puck_density: 250
-    block_density: 500
+    paddle_radius: 0.0508
+    block_width: 0.0254 # who?
+    #97: <joint name="puck_x" type="slide" axis="1 0 0" damping="0.01" limited="false"/>
+    #98: <joint name="puck_y" type="slide" axis="0 1 0" damping="0.01" limited="false"/>
+    puck_damping: 0.01
+    puck_density: 3530
+    max_paddle_vel: 0101
+    max_puck_vel: 0
     render_size: 360
-    width: 0.8636
+    has_renderer: true
   
   num_paddles: 1 # How would we add multiple paddles, do I need to change # of robots?
   num_pucks: 1 # More pucks needed? Need to figure out where puck reset happens
   num_blocks: 0 # Who?
   num_obstacles: 0 # Who?
   num_targets: 0 # Who?
-  simulator: box2d # or robosuite
+
+  simulator: robosuite
   max_timesteps: 300
   # reward_type: 'goal_position_velocity'
-  task: 'puck_height'
+  task: 'paddle_goal_position_neg'
   goal_max_x_velocity: 1 # min is -goal_max_x_velocity
   goal_min_y_velocity: 1
   goal_max_y_velocity: 5
 
   terminate_on_out_of_bounds: true
   terminate_on_enemy_goal: true
-  terminate_on_puck_stop: true
+  terminate_on_puck_stop: false
   truncate_rew: -1
   wall_bumping_rew: -1
   direction_change_rew: -0.05
@@ -40,14 +42,29 @@ air_hockey:
   diagonal_motion_rew: -0.1
   stand_still_rew: 0.01
 
+  # Reward region parameters
+  num_negative_reward_regions: 5
+  negative_reward_range: [-1,-1]
+  reward_region_shapes: ["rectangle", "ellipse", "circle"]
+  reward_region_scale_range: [0,0]
+  reward_normalized_radius_min: [0.05,0.05]
+  reward_normalized_radius_max: [0.15,0.15]  
+  reward_velocity_limits_min: [-1,0]
+  reward_velocity_limits_max: [1,0]
+  reward_movement_types: ["bounce"]
 # Training Parameters
-n_training_steps: 500000
+n_training_steps: 1000000
 model_save_filepath: model # will be saved same dir as tb_log_dir
 vec_normalize_save_filepath: vec_normalize.pkl
-tb_log_dir: trained_models
+tb_log_dir: baseline_models
 tb_log_name: air_hockey_agent
 gamma: 0.99
-seed: 0
+seed: [0, 1, 2, 3, 4]
+n_threads: 1
+algorithm: ppo
+
+n_eval_eps: 30
+eval_freq: 5000
 
 # this parameter is only used when evaluating demonstrations
 print_reward: false
