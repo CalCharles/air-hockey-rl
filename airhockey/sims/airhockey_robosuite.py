@@ -216,8 +216,8 @@ class AirHockeyRobosuite(AirHockeySim):
         self.high_level_table_y_right = self.width / 2
         self.high_level_table_y_left = -self.width / 2
         
-        self.table_x_offset = rim_width
-        self.table_y_offset = rim_width
+        self.table_x_offset = 2 * rim_width
+        self.table_y_offset = 2 * rim_width
         
         # where the playable area starts
         self.table_x_top = self.length - self.table_x_offset
@@ -238,7 +238,7 @@ class AirHockeyRobosuite(AirHockeySim):
         self.puck_density = puck_density
         self.puck_height = 0.009
         self.puck_z_offset = math.sin(self.table_tilt) * self.puck_radius
-        print(self.puck_z_offset)
+
         # FIXME make these parameters do something, right now it's a placeholder to make calls to robosuite work
         self.seed = seed
         self.paddle_radius = paddle_radius
@@ -265,7 +265,7 @@ class AirHockeyRobosuite(AirHockeySim):
             self.robosuite_env.close()
         if self.initialized_objects and os.path.exists(self.tmp_xml_fp):
             os.remove(self.tmp_xml_fp)
-        
+
     @staticmethod
     def from_dict(state_dict):
         state_dict_copy = state_dict.copy()
