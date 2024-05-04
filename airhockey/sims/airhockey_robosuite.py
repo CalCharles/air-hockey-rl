@@ -550,7 +550,7 @@ class AirHockeyRobosuite(AirHockeySim):
                         "@pos": f"0 0 -{self.puck_z_offset}",
                         "@name": f"{name}",
                         "@type": "cylinder",
-                        "@material": "red",
+                        "@material": "green",
                         "@size": f"{self.puck_radius} {self.puck_height}",
                         "@condim": "4",
                         "@priority": "0",

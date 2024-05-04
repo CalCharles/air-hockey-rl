@@ -245,8 +245,8 @@ class EvalCallback(BaseCallback):
                     frames = robosuite_frames[key]
                     gif_savepath = os.path.join(progress_dir, f'feval_robosuite_{key}.gif')
                     imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(fps))
-            import sys
-            sys.exit()
+            # import sys
+            # sys.exit()
 
             model_fp = os.path.join(progress_dir, 'model.zip')
             self.model.save(model_fp)
@@ -262,7 +262,7 @@ class EvalCallback(BaseCallback):
             # plt.plot(eeg[~succ_mask, 0], eeg[~succ_mask, 1], c='r', marker='o', linestyle='None')
             
             # plt.savefig(os.path.join(progress_dir, 'ego_goal_predictions.png'))
-            
+
     def _on_step(self) -> bool:
         """
         This method will be called by the model after each call to `env.step()`.

@@ -357,7 +357,6 @@ class AirHockeyBaseEnv(ABC, Env):
         info['max_reward'] = self.max_reward_in_single_step
         info['min_reward'] = self.min_reward_in_single_step
 
-        print(self.current_timestep)
         self.current_timestep += 1
         # is_finished = True
         

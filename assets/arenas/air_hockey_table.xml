@@ -6,6 +6,7 @@
         <material name="grey" specular="0.5" shininess="0.25" rgba="0.8 0.8 0.8 1"/>
         <material name="white" specular="0.5" shininess="0.25" rgba="1.0 1.0 1.0 1"/>
         <material name="red" specular="0.5" shininess="0.25" rgba="1.0 0.0 0.0 1"/>
+        <material name="green" specular="0.5" shininess="0.25" rgba="0.0 1.0 0.0 1"/>
         <material name="blue" specular="0.5" shininess="0.25" rgba="0.0 0.0 1.0 1"/>
         <material name="transparent" specular="0.5" shininess="0.25" rgba="0.0 0.0 1.0 0"/>
         <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512"
