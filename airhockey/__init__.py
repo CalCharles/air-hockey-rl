@@ -5,11 +5,14 @@ import airhockey.sims # this registers the air hockey robosuite env
 import airhockey.sims.controllers # this registers the custom controllers!
 import airhockey.sims.robots # this registers the custom robot!
 import airhockey.sims.grippers # this registers the roundgripper!
+import airhockey.sims.utils.RobosuiteTransforms # this registers the transformations utility!
 from airhockey.airhockey_simple_tasks import AirHockeyPuckVelEnv, AirHockeyPuckHeightEnv, AirHockeyPuckCatchEnv 
 from airhockey.airhockey_simple_tasks import AirHockeyPuckJuggleEnv, AirHockeyPuckStrikeEnv, AirHockeyPuckTouchEnv
 from airhockey.airhockey_hierarchical_tasks  import AirHockeyMoveBlockEnv, AirHockeyStrikeCrowdEnv
-from airhockey.airhockey_goal_tasks import AirHockeyPuckGoalPositionEnv, AirHockeyPuckGoalPositionVelocityEnv
-from airhockey.airhockey_goal_tasks import AirHockeyPaddleReachPositionEnv, AirHockeyPaddleReachPositionVelocityEnv
+from robosuite.utils.mjcf_utils import xml_path_completion as robosuite_xml_path_completion
+from airhockey.airhockey_goal_tasks import AirHockeyPuckGoalPositionEnv, AirHockeyPuckGoalPositionVelocityEnv, AirHockeyPuckReachPositionDynamicNegRegionsEnv
+from airhockey.airhockey_goal_tasks import AirHockeyPaddleReachPositionEnv, AirHockeyPaddleReachPositionVelocityEnv, AirHockeyPaddleReachPositionNegRegionsEnv
+
 
 ASSETS_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../assets"))
 
@@ -68,7 +71,19 @@ def AirHockeyEnv(cfg):
         task_env = AirHockeyPaddleReachPositionEnv
     elif task == "paddle_goal_position_velocity":
         task_env = AirHockeyPaddleReachPositionVelocityEnv
+    elif task == "paddle_goal_position_neg":
+        task_env = AirHockeyPaddleReachPositionNegRegionsEnv
+    elif task == "puck_goal_position_dynamic_neg":
+        task_env = AirHockeyPuckReachPositionDynamicNegRegionsEnv
     else:
         raise ValueError("Task {} not recognized".format(task))
     return task_env.from_dict(cfg)
+
+robosuite_robot_assets_fp = robosuite_xml_path_completion(os.path.join('robots', 'ur5e'))
+robot_xml_fp = custom_xml_path_completion(os.path.join('robots', 'ur5e', 'robot.xml'))
+new_folder_fp = robosuite_xml_path_completion(os.path.join('robots', 'custom_ur5e'))
+out_robot_xml_fp = robosuite_xml_path_completion(os.path.join(new_folder_fp, 'custom_robot.xml'))
+if not os.path.exists(new_folder_fp):
+    shutil.copytree(robosuite_robot_assets_fp, new_folder_fp)
+shutil.copy(robot_xml_fp, out_robot_xml_fp)
 

@@ -6,3 +6,5 @@ register_robot(AirHockeyUR5e)
 from robosuite.robots import ROBOT_CLASS_MAPPING
 from airhockey.sims.robots.custom_single_arm import AirHockeySingleArm
 ROBOT_CLASS_MAPPING["AirHockeyUR5e"] = AirHockeySingleArm
+
+from robosuite.utils.mjcf_utils import xml_path_completion as robosuite_xml_path_completion

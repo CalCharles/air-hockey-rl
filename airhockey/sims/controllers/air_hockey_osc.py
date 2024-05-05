@@ -137,7 +137,7 @@ class AirHockeyOperationalSpaceController(OperationalSpaceController):
             uncouple_pos_ori=False,
             logger=None,
             table_tilt=0.09,
-            table_elevation=1.0,
+            table_elevation=0.7874,
             table_x_start=0.8,
             z_offset=0.008,
             **kwargs,  # does nothing; used so no error raised when dict is passed with extra terms used previously
@@ -173,46 +173,27 @@ class AirHockeyOperationalSpaceController(OperationalSpaceController):
         self.table_elevation = table_elevation
         self.table_x_start = table_x_start
 
-        # calculate x_offset to push controller into table orthogonal to table tilt
-        self.z_offset = z_offset
-        self.x_offset = self.z_offset / np.tan(self.table_tilt)
+        self.z_offset =  0.101
 
         # fixed orientation for our air hockey controller
         self.fixed_ori = trans.euler2mat(np.array([0, math.pi - self.table_tilt, 0]))
         self.goal_ori = np.array(self.fixed_ori)
 
-
     def transform_z(self, x):
-        """
-        Calculates the correct z value for the Air Hockey table given the x location.
-
-        Args:
-            x (int): The x location to determine the correct z for
-        """
-        return self.table_tilt * (x - self.table_x_start) + self.table_elevation + 0.02 - self.z_offset
+        return math.sin(self.table_tilt) * x + self.table_elevation - self.z_offset
+    
+    def transform_x(self, x):
+        return math.cos(self.table_tilt) * x
+    
+    def inverse_transform_x(self, x):
+        return x / math.cos(self.table_tilt)
 
     def set_goal(self, action, set_pos=None, set_ori=None):
-        """
-        Sets goal based on input @action. If self.impedance_mode is not "fixed", then the input will be parsed into the
-        delta values to update the goal position / pose and the kp and/or damping_ratio values to be immediately updated
-        internally before executing the proceeding control loop.
-
-        Note that @action expected to be in the following format, based on impedance mode!
-
-            :Mode `'fixed'`: [joint pos command]
-            :Mode `'variable'`: [damping_ratio values, kp values, joint pos command]
-            :Mode `'variable_kp'`: [kp values, joint pos command]
-
-        Args:
-            action (Iterable): Desired relative joint position goal state
-            set_pos (Iterable): If set, overrides @action and sets the desired absolute eef position goal state
-            set_ori (Iterable): IF set, overrides @action and sets the desired absolute eef orientation goal state
-        """
-        
         super().set_goal(action)
         
         self.goal_ori = self.fixed_ori
         self.goal_pos[2] = self.transform_z(self.goal_pos[0])
+        self.goal_pos[0] = self.transform_x(self.goal_pos[0])
 
         if self.interpolator_pos is not None:
             self.interpolator_pos.set_goal(self.goal_pos)
@@ -240,7 +221,6 @@ class AirHockeyOperationalSpaceController(OperationalSpaceController):
 
         # Call super to avoid compatibility issues
         super().run_controller()
-
         self.update()
 
         msg = dict()
@@ -258,6 +238,7 @@ class AirHockeyOperationalSpaceController(OperationalSpaceController):
             desired_pos = np.array(self.goal_pos)
 
         desired_pos[2] = self.transform_z(desired_pos[0])
+        desired_pos[0] = self.transform_x(desired_pos[0])
 
         if self.interpolator_ori is not None:
             # relative orientation based on difference between current ori and ref
@@ -314,7 +295,7 @@ class AirHockeyOperationalSpaceController(OperationalSpaceController):
         # Decouples desired positional control from orientation control
         if self.uncoupling:
             decoupled_force = np.dot(lambda_pos, desired_force)
-            decoupled_torque = np.dot(lambda_ori, desired_torque)
+            decoupled_torque = np.dot(lambda_ori, desired_torque)   
             decoupled_wrench = np.concatenate([decoupled_force, decoupled_torque])
         else:
             desired_wrench = np.concatenate([desired_force, desired_torque])
@@ -341,6 +322,7 @@ class AirHockeyOperationalSpaceController(OperationalSpaceController):
         self.goal_pos = np.array(self.ee_pos)
 
         self.goal_pos[2] = self.transform_z(self.goal_pos[0])
+        self.goal_pos[0] = self.transform_x(self.goal_pos[0])
 
         # Also reset interpolators if required
 
@@ -361,3 +343,4 @@ class AirHockeyOperationalSpaceController(OperationalSpaceController):
     @property
     def name(self):
         return "AIR_HOCKEY_OSC_" + self.name_suffix
+        

@@ -8,9 +8,10 @@ import numpy as np
 import robosuite as suite
 from robosuite.wrappers.visualization_wrapper import VisualizationWrapper
 from robosuite.utils.camera_utils import get_camera_extrinsic_matrix, get_camera_intrinsic_matrix
-from robosuite.utils.RobosuiteTransforms import RobosuiteTransforms
+from airhockey.sims.utils import RobosuiteTransforms
 from robosuite.wrappers import GymWrapper
-
+import airhockey
+import airhockey.sims.controllers
 import cv2
 import argparse
 
@@ -75,8 +76,8 @@ if __name__ == '__main__':
         from air_hockey_challenge_robosuite.foxglove_logging import Logger
         logger = Logger()
 
-    config = {'env_name': 'AirHockey',
-              'robots': ['UR5e'],
+    config = {'env_name': 'AirHockeyRobosuite',
+              'robots': ['AirHockeyUR5e'],
 
               'controller_configs':
                   {'type': 'AIR_HOCKEY_OSC_POSE',
@@ -88,7 +89,7 @@ if __name__ == '__main__':
                    "ramp_ratio": 1,
                    "kp_limits": (0, 10000000),
                    "uncouple_pos_ori": False,
-                   "logger": logger if args.foxglove_log else None
+                #    "logger": logger if args.foxglove_log else None
                    },
               'gripper_types': 'Robotiq85Gripper', }
 
@@ -204,8 +205,9 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         print("Keyboard Interrupt")
     finally:
-        if args.folglove_log:
-            logger.stop()
+        # if args.folglove_log:
+        #     logger.stop()
+        pass
 
     timestamp = datetime.now().strftime("%m%d%Y%H%M%S")
     if args.collect_data:

@@ -15,6 +15,7 @@ import os
 import yaml
 from utils import EvalCallback, save_evaluation_gifs, save_tensorboard_plots
 from curriculum.classifier_curriculum import CurriculumCallback
+
             
 def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_prior_task_results=False, progress_bar=False):
     """
@@ -156,6 +157,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
                     #n_epochs=5,
                     gamma=air_hockey_cfg['gamma']) 
         
+
         model.learn(total_timesteps=air_hockey_cfg['n_training_steps'],
                     tb_log_name=air_hockey_cfg['tb_log_name'], 
                     callback=callback,

@@ -136,6 +136,7 @@ class EvalCallback(BaseCallback):
         # also save first 5 eps into gif
         n_eps_viz = 5
         frames = []
+        robosuite_frames = {}
         # self.eval_ego_goals = []
         # self.eval_ego_goals_succ = []
         for ep_idx in range(self.n_eval_eps):
@@ -150,7 +151,22 @@ class EvalCallback(BaseCallback):
                     # decrease width to 160 but keep aspect ratio
                     aspect_ratio = frame.shape[1] / frame.shape[0]
                     frame = cv2.resize(frame, (160, int(160 / aspect_ratio)))
+                    # frame = np.zeros(shape=(256, 256)) # black img
                     frames.append(frame)
+                    if self.eval_env.simulator_name == 'robosuite':
+                        for key in self.eval_env.current_state:
+                            if 'image' not in key:
+                                continue
+                            current_img = self.eval_env.current_state[key]
+                            # flip upside down
+                            current_img = cv2.flip(current_img, 0)
+                            # concatenate with frame
+                            current_img = cv2.resize(current_img, (160, int(160 / aspect_ratio)))
+                            current_img = np.concatenate([frame, current_img], axis=1)
+                            if key not in robosuite_frames:
+                                robosuite_frames[key] = [current_img]
+                            else:
+                                robosuite_frames[key].append(current_img)
                 action, _ = self.model.predict(obs)
                 obs, rew, done, truncated, info = self.eval_env.step(action)
                 done = done or truncated
@@ -177,7 +193,7 @@ class EvalCallback(BaseCallback):
         # print('succes rate', avg_success_rate)
         avg_max_reward /= self.n_eval_eps
         avg_min_reward /= self.n_eval_eps
-        return avg_undiscounted_return, avg_success_rate, avg_max_reward, avg_min_reward, frames
+        return avg_undiscounted_return, avg_success_rate, avg_max_reward, avg_min_reward, (frames, robosuite_frames)
     
     def _on_rollout_start(self) -> None:
         """
@@ -189,7 +205,18 @@ class EvalCallback(BaseCallback):
         frames = []
         
         if self.num_timesteps >= self.next_eval:
-            avg_undiscounted_return, avg_success_rate, avg_max_reward, avg_min_reward, frames = self._eval(include_frames=save_progress)
+            # print('hello...')
+            # from cProfile import Profile
+            # from pstats import SortKey, Stats
+            # profiler = Profile()
+            # profiler.enable()  # Start profiling
+
+            avg_undiscounted_return, avg_success_rate, avg_max_reward, avg_min_reward, (frames, robosuite_frames) = self._eval(include_frames=save_progress)
+
+            # profiler.disable()  # Stop profiling
+            # profiler.print_stats(sort='time')  # Print the statistics sorted by time
+            
+            
             self.logger.record("eval/ep_return", avg_undiscounted_return)
             self.logger.record("eval/success_rate", avg_success_rate)
             if avg_success_rate > self.best_success_so_far:
@@ -213,6 +240,13 @@ class EvalCallback(BaseCallback):
                 return int(1000 * 1/fps)
             fps = 30 # slightly faster than 20 fps (simulation time), but makes rendering smooth
             imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(fps))
+            if len(robosuite_frames) > 0:
+                for key in robosuite_frames:
+                    frames = robosuite_frames[key]
+                    gif_savepath = os.path.join(progress_dir, f'feval_robosuite_{key}.gif')
+                    imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(fps))
+            # import sys
+            # sys.exit()
 
             model_fp = os.path.join(progress_dir, 'model.zip')
             self.model.save(model_fp)
@@ -228,7 +262,7 @@ class EvalCallback(BaseCallback):
             # plt.plot(eeg[~succ_mask, 0], eeg[~succ_mask, 1], c='r', marker='o', linestyle='None')
             
             # plt.savefig(os.path.join(progress_dir, 'ego_goal_predictions.png'))
-            
+
     def _on_step(self) -> bool:
         """
         This method will be called by the model after each call to `env.step()`.

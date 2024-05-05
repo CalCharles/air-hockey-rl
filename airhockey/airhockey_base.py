@@ -42,7 +42,19 @@ class AirHockeyBaseEnv(ABC, Env):
                  seed,
                  dense_goal=True,
                  goal_selector='stationary',
-                 max_timesteps=1000):
+                 max_timesteps=1000,
+                 num_positive_reward_regions=0,
+                 positive_reward_range=[1,1],
+                 num_negative_reward_regions=0,
+                 negative_reward_range=[-1,-1],
+                 reward_region_shapes=[],
+                 reward_region_scale_range=[0,0],
+                 reward_normalized_radius_min=0.1,
+                 reward_normalized_radius_max=0.1,
+                 reward_velocity_limits_min=[0,0],
+                 reward_velocity_limits_max=[0,0],
+                 reward_movement_types=[],
+                 compute_online_rewards=True):
         
         if simulator == 'box2d':
             simulator_fn = get_box2d_simulator_fn()
@@ -52,6 +64,7 @@ class AirHockeyBaseEnv(ABC, Env):
             raise ValueError("Invalid simulator type. Must be 'box2d' or 'robosuite'.")
 
         simulator_params['seed'] = seed
+        self.simulator_name = simulator
         self.simulator = simulator_fn.from_dict(simulator_params)
         self.render_length = self.simulator.render_length
         self.render_width = self.simulator.render_width
@@ -65,6 +78,8 @@ class AirHockeyBaseEnv(ABC, Env):
         self.n_training_steps = n_training_steps
         self.n_timesteps_so_far = 0
         self.rng = np.random.RandomState(seed)
+        self.dynamic_virtual_objects = list() # if the environment has these, put them in at subclass initialization
+        self.reward_regions = list()
         
         # termination conditions
         self.terminate_on_out_of_bounds = terminate_on_out_of_bounds
@@ -72,6 +87,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.terminate_on_puck_stop = terminate_on_puck_stop
         
         # reward function
+        self.compute_online_rewards = compute_online_rewards
         self.goal_conditioned = True if 'goal' in task else False
         self.goal_radius_type = 'fixed'
         self.goal_min_x_velocity = -goal_max_x_velocity
@@ -152,6 +168,7 @@ class AirHockeyBaseEnv(ABC, Env):
     def reset(self, seed=None, **kwargs):
         if seed is None: # determine next seed, in a deterministic manner
             seed = self.rng.randint(0, int(1e8))
+
         self.rng = np.random.RandomState(seed)
         sim_seed = self.rng.randint(0, int(1e8))
         self.simulator.reset(sim_seed) # no point in getting state since no spawning
@@ -228,6 +245,8 @@ class AirHockeyBaseEnv(ABC, Env):
                     state_info['paddles']['paddle_ego']['position'][1] > self.table_y_right - self.paddle_radius or \
                     state_info['paddles']['paddle_ego']['position'][1] < self.table_y_left + self.paddle_radius:
                     truncated = True
+                    print("paddle out of bounds with position: ", state_info['paddles']['paddle_ego']['position'])
+                    print("X_min, X_max, Y_min, Y_max: ", 0 + self.paddle_radius, self.table_x_bot - self.paddle_radius, self.table_y_left + self.paddle_radius, self.table_y_right - self.paddle_radius)
 
         bottom_center_point = np.array([self.table_x_bot, 0])
         top_center_point = np.array([self.table_x_top, 0])
@@ -304,8 +323,15 @@ class AirHockeyBaseEnv(ABC, Env):
             return obs, reward, is_finished, truncated, info
         else:
             return self.multi_step(action)
+    
+    def single_step_dynamic_virtual(self, action):
+        # step any dynamic virtual objects to update their state
+        for dvo in self.dynamic_virtual_objects:
+            dvo.step(self.current_state, action)
+        
 
     def single_agent_step(self, action) -> tuple[np.ndarray, float, bool, bool, dict]:
+
         next_state = self.simulator.get_transition(action)
         if self.current_timestep > 0:
             self.old_state = self.current_state
@@ -332,6 +358,7 @@ class AirHockeyBaseEnv(ABC, Env):
         info['min_reward'] = self.min_reward_in_single_step
 
         self.current_timestep += 1
+        # is_finished = True
         
         obs = self.get_observation(next_state)
         return obs, reward, is_finished, truncated, info
