@@ -358,7 +358,13 @@ class AirHockeyBaseEnv(ABC, Env):
         info['min_reward'] = self.min_reward_in_single_step
 
         self.current_timestep += 1
-        # is_finished = True
+        
+        # # DEBUG STATEMENETS 4 LINES BELOW!
+        # is_finished = False
+        # truncated = False
+        # # only end if timesteps
+        # if self.current_timestep >= self.max_timesteps:
+        #     is_finished = True
         
         obs = self.get_observation(next_state)
         return obs, reward, is_finished, truncated, info

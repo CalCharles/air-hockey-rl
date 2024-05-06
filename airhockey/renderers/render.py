@@ -1,7 +1,10 @@
 import numpy as np
 import cv2
 import os
-from collections import Iterable
+try:
+    from collections.abc import Iterable
+except ImportError:
+    from collections import Iterable
 
 TARGET_FPS = 60
 
