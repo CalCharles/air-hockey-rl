@@ -21,6 +21,7 @@ class RewardRegion():
         self.shape_idx = np.random.randint(len(self.shapes))
         self.shape = self.shapes[self.shape_idx]
         self.radius = np.random.rand(*self.rad_limits[1].shape) * (self.rad_limits[1] - self.rad_limits[0]) + self.rad_limits[0]
+
         if (self.shape == "circle" or self.shape == "square") and len(self.rad_limits[0]) > 1: self.radius = self.radius[0]
 
     def get_state(self):
@@ -37,7 +38,6 @@ class RewardRegion():
             norm_dist = np.sum(np.abs(obj_state - self.state) / self.radius)
         elif self.shape == "rect" or self.shape == "rectangle" or self.shape == "square":
             norm_dist = np.max(np.abs(obj_state - self.state) / self.radius)
-
         return float(norm_dist <= 1) * np.exp(-self.scale * norm_dist) * self.reward_value
 
 

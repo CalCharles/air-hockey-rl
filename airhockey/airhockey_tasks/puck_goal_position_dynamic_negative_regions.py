@@ -161,10 +161,14 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
 
         if self.dense_goal:
             bonus = 10 if self.current_timestep > self.falling_time else 0 # this prevents the falling initiliazwed puck from triggering a success
-            reward = -dist  + (bonus if dist < radius else 0)
+            reward = -dist  + (bonus if dist < radius else 0) # add bonus if within radius
 
         if single:
             reward = reward[0]
+            
+        for nrr in self.reward_regions:
+            reward += nrr.check_reward(achieved_goal)
+            
         return reward
 
     def get_observation(self, state_info):
@@ -172,7 +176,7 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
         ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
         ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
         ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
-        
+        self.ego_pos = np.array([ego_paddle_x_pos, ego_paddle_y_pos])
         puck_x_pos = state_info['pucks'][0]['position'][0]
         puck_y_pos = state_info['pucks'][0]['position'][1]
         puck_x_vel = state_info['pucks'][0]['velocity'][0]
