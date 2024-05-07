@@ -1,11 +1,14 @@
 import airhockey.renderers as renderers
 import airhockey.sims as sims
 import os
-import airhockey.sims # this registers the air hockey robosuite env
-import airhockey.sims.controllers # this registers the custom controllers!
-import airhockey.sims.robots # this registers the custom robot!
-import airhockey.sims.grippers # this registers the roundgripper!
-import airhockey.sims.utils.RobosuiteTransforms # this registers the transformations utility!
+# import airhockey.sims # this registers the air hockey robosuite env
+try:
+    import airhockey.sims.controllers # this registers the custom controllers!
+    import airhockey.sims.robots # this registers the custom robot!
+    import airhockey.sims.grippers # this registers the roundgripper!
+    import airhockey.sims.utils.RobosuiteTransforms # this registers the transformations utility!
+except:
+    print('Some air hockey shit not installed. Does not work on Apple Silicon')
 from airhockey.airhockey_simple_tasks import AirHockeyPuckVelEnv, AirHockeyPuckHeightEnv, AirHockeyPuckCatchEnv 
 from airhockey.airhockey_simple_tasks import AirHockeyPuckJuggleEnv, AirHockeyPuckStrikeEnv, AirHockeyPuckTouchEnv
 from airhockey.airhockey_hierarchical_tasks  import AirHockeyMoveBlockEnv, AirHockeyStrikeCrowdEnv

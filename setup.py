@@ -25,6 +25,7 @@ setup(
         'h5py',
         'xmltodict',
         'robosuite',
+        'pyyaml',
     ],
     extras_require={
         'train': [

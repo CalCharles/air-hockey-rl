@@ -587,6 +587,8 @@ class AirHockeyPaddleReachPositionVelocityEnv(AirHockeyGoalEnv):
         success = self.latest_pos_reward >= 0.9 and self.latest_vel_reward >= 0.8
         success = success.item()
         return reward, success
+    
+
 
 class RewardRegion():
     def __init__(self, reward_value_range, scale_range, limits, rad_limits, shapes, reset=True):
@@ -618,13 +620,13 @@ class RewardRegion():
     def check_reward(self, obj_state):
         if self.shape == "circle" or self.shape == "ellipse":
             norm_dist = np.sum(np.square(obj_state - self.state) / np.square(self.radius))
-            # print(np.linalg.norm(obj_state - self.state), self.radius, norm_dist)
         elif self.shape == "diamond":
             norm_dist = np.sum(np.abs(obj_state - self.state) / self.radius)
-        elif self.shape == "rect" or self.shape == "square":
+        elif self.shape == "rect" or self.shape == "rectangle" or self.shape == "square":
             norm_dist = np.max(np.abs(obj_state - self.state) / self.radius)
-        # print("region reward", float(norm_dist <= 1) * np.exp(-self.scale * norm_dist) * self.reward_value)
+
         return float(norm_dist <= 1) * np.exp(-self.scale * norm_dist) * self.reward_value
+
 
 class DynamicRewardRegion(RewardRegion):
     def __init__(self, reward_value_range, scale_range, limits, rad_limits, shapes, movement_patterns, velocity_limits, use_reset=True):
@@ -637,12 +639,13 @@ class DynamicRewardRegion(RewardRegion):
 
     def reset(self):
         super().reset()
-        self.velocity = np.random.rand(self.velocity_limits[0].shape) * self.velocity_limit_range + self.velocity_limits[0]
+        self.velocity = np.random.rand(self.velocity_limits[0].shape[0]) * self.velocity_limit_range + self.velocity_limits[0]
         self.movement_idx = np.random.randint(len(self.movement_patterns))
         self.movement = self.movement_patterns[self.movement_idx]
 
     def get_state(self):
-        return np.concatenate([self.state, self.velocity, [self.scale], [self.reward_value], [self.radius], self.shape_onehot_helper[self.shape_idx], self.movement_onehot_helper[self.movement_idx]])
+        radius_obs = [self.radius] if not isinstance(self.radius, Iterable) else self.radius
+        return np.concatenate([self.state, self.velocity, [self.scale], [self.reward_value], radius_obs, self.shape_onehot_helper[self.shape_idx], self.movement_onehot_helper[self.movement_idx]])
 
     def step(self, env_state, action):
         next_state = self.state + self.velocity
@@ -807,6 +810,7 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
     
     def compute_reward(self, achieved_goal, desired_goal, info):
         # if not vectorized, convert to vector
+        # import pdb; pdb.set_trace()
         single = len(achieved_goal.shape) == 1
         if single:
             achieved_goal = achieved_goal.reshape(1, -1)
@@ -1066,6 +1070,12 @@ class AirHockeyPuckReachPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
         success = reward > 0.0
         success = success.item()
         return reward, success
+    
+    def step(self, action):
+        obs, reward, is_finished, truncated, info = super().step(action)
+        for nrr in self.reward_regions:
+            nrr.step(obs[:2], action)
+        return obs, reward, is_finished, truncated, info
     
     def reset(self, seed=None):
         for nrr in self.reward_regions:
