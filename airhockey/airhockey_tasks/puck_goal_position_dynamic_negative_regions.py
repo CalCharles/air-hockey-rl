@@ -81,7 +81,7 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
 
     @staticmethod
     def from_dict(state_dict):
-        return AirHockeyPuckReachPositionDynamicNegRegionsEnv(**state_dict)
+        return AirHockeyPuckGoalPositionDynamicNegRegionsEnv(**state_dict)
 
     def initialize_spaces(self):
         # setup observation / action / reward spaces
@@ -216,8 +216,9 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
     
     def step(self, action):
         obs, reward, is_finished, truncated, info = super().step(action)
+        # import pdb; pdb.set_trace()
         for nrr in self.reward_regions:
-            nrr.step(obs[:2], action)
+            nrr.step()
         return obs, reward, is_finished, truncated, info
     
     def reset(self, seed=None):

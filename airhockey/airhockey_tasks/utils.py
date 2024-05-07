@@ -1,5 +1,8 @@
 import numpy as np
-
+try:
+    from collections.abc import Iterable
+except ImportError:
+    from collections import Iterable
 class RewardRegion():
     def __init__(self, reward_value_range, scale_range, limits, rad_limits, shapes, reset=True):
         self.reward_value_range = reward_value_range
@@ -57,13 +60,14 @@ class DynamicRewardRegion(RewardRegion):
         radius_obs = [self.radius] if not isinstance(self.radius, Iterable) else self.radius
         return np.concatenate([self.state, self.velocity, [self.scale], [self.reward_value], radius_obs, self.shape_onehot_helper[self.shape_idx], self.movement_onehot_helper[self.movement_idx]])
 
-    def step(self, env_state, action):
+    def step(self, env_state=None, action=None):
         next_state = self.state + self.velocity
         hit_top_lim = next_state[1] > self.limits[1][1]
         hit_bot_lim = next_state[1] < self.limits[0][1]
         hit_right_lim = next_state[0] > self.limits[1][0]
         hit_left_lim = next_state[0] < self.limits[0][0]
-        hit = hit_top_lim and hit_bot_lim and hit_right_lim and hit_left_lim
+        hit = hit_top_lim or hit_bot_lim or hit_right_lim or hit_left_lim
+        
         if hit:
             if self.movement == "bounce":
                 if hit_top_lim or hit_bot_lim:
