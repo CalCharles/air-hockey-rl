@@ -281,9 +281,13 @@ class AirHockeyOperationalSpaceController(OperationalSpaceController):
         desired_force = np.dot(np.dot(base_in_table[:3, :3], np.eye(3)), position_error_in_table[:3, 3]) * self.kp[:3]
         desired_force += np.dot(np.dot(base_in_table[:3, :3], np.eye(3)), velocity_error_in_table) * self.kd[:3]
 
+        desired_force *= 0
+
         desired_torque = np.multiply(np.array(ori_error), np.array(self.kp[3:6])) + np.multiply(
             vel_ori_error, self.kd[3:6]
         )
+
+        desired_torque *= 0
 
         msg["desired_force"] = desired_force.tolist()
         msg["desired_torque"] = desired_torque.tolist()

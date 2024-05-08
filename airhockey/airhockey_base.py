@@ -5,6 +5,8 @@ from gymnasium import spaces
 from abc import ABC, abstractmethod
 import math
 
+from typing import Tuple
+
 
 def get_box2d_simulator_fn():
     from airhockey.sims import AirHockeyBox2D
@@ -330,7 +332,7 @@ class AirHockeyBaseEnv(ABC, Env):
             dvo.step(self.current_state, action)
         
 
-    def single_agent_step(self, action) -> tuple[np.ndarray, float, bool, bool, dict]:
+    def single_agent_step(self, action) -> Tuple[np.ndarray, float, bool, bool, dict]:
 
         next_state = self.simulator.get_transition(action)
         if self.current_timestep > 0:
