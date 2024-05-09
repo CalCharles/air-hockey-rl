@@ -30,7 +30,7 @@ class AirHockeyUR5e(ManipulatorModel):
 
     @property
     def init_qpos(self):
-        return np.array([-0.470, -1.735, 2.480, -2.275, -1.590, -1.991]) # TODO: update this, right now it is initializes too high up
+        return np.array([-0.470, -1.2, 2.3, -2.6, -1.590, -1.991]) # TODO: update this, right now it is initializes too high up
 
     @property
     def base_xpos_offset(self):
