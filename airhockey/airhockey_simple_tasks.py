@@ -278,8 +278,10 @@ class AirHockeyPuckStrikeEnv(AirHockeyBaseEnv):
     def create_world_objects(self):
         puck_x_low = self.length / 5
         puck_x_high = self.length / 3
-        puck_y_low = -self.width / 2 + self.puck_radius
-        puck_y_high = self.width / 2 - self.puck_radius
+        # puck_y_low = -self.width / 2 + self.puck_radius
+        # puck_y_high = self.width / 2 - self.puck_radius
+        puck_y_low = -self.width / 2 + self.simulator.table_y_offset + self.simulator.puck_radius
+        puck_y_high = self.width / 2 - self.simulator.table_y_offset - self.simulator.puck_radius
         puck_x = self.rng.uniform(low=puck_x_low, high=puck_x_high)
         puck_y = self.rng.uniform(low=puck_y_low, high=puck_y_high)
         name = 'puck_{}'.format(0)
@@ -358,8 +360,10 @@ class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
     def create_world_objects(self):
         puck_x_low = self.length / 5
         puck_x_high = self.length / 3
-        puck_y_low = -self.width / 2 + self.puck_radius
-        puck_y_high = self.width / 2 - self.puck_radius
+        # puck_y_low = -self.width / 2 + self.puck_radius
+        # puck_y_high = self.width / 2 - self.puck_radius
+        puck_y_low = -self.width / 2 + self.simulator.table_y_offset + self.simulator.puck_radius
+        puck_y_high = self.width / 2 - self.simulator.table_y_offset - self.simulator.puck_radius
         puck_x = self.rng.uniform(low=puck_x_low, high=puck_x_high)
         puck_y = self.rng.uniform(low=puck_y_low, high=puck_y_high)
         name = 'puck_{}'.format(0)
