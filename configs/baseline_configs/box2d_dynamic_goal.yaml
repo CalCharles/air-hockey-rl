@@ -48,7 +48,7 @@ air_hockey:
   stand_still_rew: 0.01
 
   # Reward region parameters
-  num_negative_reward_regions: 5
+  num_negative_reward_regions: 0
   negative_reward_range: [-1,-1]
   reward_region_shapes: ["circle"] #["rectangle", "ellipse", "circle"]
   reward_region_scale_range: [0,0]
@@ -57,6 +57,12 @@ air_hockey:
   reward_velocity_limits_min: [-0.001,-0.001]
   reward_velocity_limits_max: [0.001,0.001]
   reward_movement_types: ["bounce"]
+
+  # dynamic goal 
+  goal_type: dynamic
+  velocity_of_goal_min: [-0.001, 0.001]
+  velocity_of_goal_max: [0.001,0.001]
+
 # Training Parameters
 n_training_steps: 1000000
 model_save_filepath: model # will be saved same dir as tb_log_dir

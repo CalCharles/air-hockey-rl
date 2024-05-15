@@ -2,7 +2,7 @@ import numpy as np
 from gymnasium.spaces import Box
 from gymnasium import spaces
 from .abstract_airhockey_goal_task import AirHockeyGoalEnv
-from airhockey.airhockey_tasks.utils import DynamicRewardRegion
+from airhockey.airhockey_tasks.utils import DynamicRewardRegion, DynamicGoalRegion
 
 class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
     def __init__(self,
@@ -31,6 +31,9 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
                  seed,
                  dense_goal=True,
                  goal_selector='stationary',
+                 goal_type='static',
+                 velocity_of_goal_min=[0,0],
+                 velocity_of_goal_max=[0,0],
                  max_timesteps=1000,
                  num_positive_reward_regions=0,
                  positive_reward_range=[1,1],
@@ -51,6 +54,9 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
         self.reward_normalized_radius_max = reward_normalized_radius_max
         self.reward_velocity_limits_min = reward_velocity_limits_min
         self.reward_velocity_limits_max = reward_velocity_limits_max
+        self.goal_type = goal_type
+        self.velocity_of_goal_min = velocity_of_goal_min
+        self.velocity_of_goal_max = velocity_of_goal_max
         self.reward_movement_types = reward_movement_types
         super().__init__(simulator, # box2d or robosuite
                  simulator_params,
@@ -116,8 +122,10 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
                                                      [np.array([0, self.table_y_left]), np.array([self.table_x_bot,self.table_y_right])],
                                                      radius_range, shapes=self.reward_region_shapes, movement_patterns=self.reward_movement_types, 
                                                      velocity_limits=(np.array(self.reward_velocity_limits_min), np.array(self.reward_velocity_limits_max))) for _ in range(self.num_negative_reward_regions)]
-
-        self.dynamic_virtual_objects = self.reward_regions
+        if self.goal_type == 'dynamic':
+            self.dynamic_goal_region = DynamicGoalRegion([np.array([0, self.table_y_left]), np.array([self.table_x_bot,self.table_y_right])],
+                                                         movement_patterns=self.reward_movement_types, 
+                                                         velocity_limits=(np.array(self.velocity_of_goal_min), np.array(self.velocity_of_goal_max))) 
         
     def create_world_objects(self):
         name = 'puck_{}'.format(0)
@@ -133,6 +141,11 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
         return position.astype(float)
     
     def get_desired_goal(self):
+        # import pdb; pdb.set_trace()
+        if self.goal_type == 'dynamic':
+            dgr = self.dynamic_goal_region.get_pose()
+            return self.dynamic_goal_region.get_pose()
+        
         position = self.goal_pos
         return position.astype(float)
     
@@ -188,6 +201,12 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
         return np.concatenate([obs] + reward_regions_states)
     
     def set_goals(self, goal_radius_type, goal_pos=None, alt_goal_pos=None, goal_set=None):
+        if self.goal_type == 'dynamic':
+            self.dynamic_goal_region.reset()
+            self.goal_pos = self.dynamic_goal_region.get_pose()
+            self.goal_radius = 0.05
+            return
+        
         self.goal_set = goal_set
         if goal_radius_type == 'fixed':
             # goal_radius = self.rng.uniform(low=self.min_goal_radius, high=self.max_goal_radius)
@@ -209,6 +228,7 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
         else:
             self.goal_pos = goal_pos if self.goal_set is None else self.goal_set[0]
         
+        
     def set_goal_set(self, goal_set):
         self.goal_set = goal_set
     
@@ -223,9 +243,16 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
         # import pdb; pdb.set_trace()
         for nrr in self.reward_regions:
             nrr.step()
+        if self.goal_type == 'dynamic':
+            self.dynamic_goal_region.step()
+            self.goal_pos = self.dynamic_goal_region.get_pose()
+            
         return obs, reward, is_finished, truncated, info
     
     def reset(self, seed=None):
         for nrr in self.reward_regions:
             nrr.reset()
+        if self.goal_type == 'dynamic':
+            self.dynamic_goal_region.reset()
+            self.goal_pos = self.dynamic_goal_region.get_pose()
         return super().reset(seed)
