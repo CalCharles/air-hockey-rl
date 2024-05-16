@@ -1,17 +1,27 @@
 import airhockey.renderers as renderers
 import airhockey.sims as sims
 import os
-import airhockey.sims # this registers the air hockey robosuite env
-import airhockey.sims.controllers # this registers the custom controllers!
-import airhockey.sims.robots # this registers the custom robot!
-import airhockey.sims.grippers # this registers the roundgripper!
-import airhockey.sims.utils.RobosuiteTransforms # this registers the transformations utility!
+# import airhockey.sims # this registers the air hockey robosuite env
+try:
+    import airhockey.sims.controllers # this registers the custom controllers!
+    import airhockey.sims.robots # this registers the custom robot!
+    import airhockey.sims.grippers # this registers the roundgripper!
+    import airhockey.sims.utils.RobosuiteTransforms # this registers the transformations utility!
+except:
+    print('Some air hockey shit not installed. Does not work on Apple Silicon')
 from airhockey.airhockey_simple_tasks import AirHockeyPuckVelEnv, AirHockeyPuckHeightEnv, AirHockeyPuckCatchEnv 
 from airhockey.airhockey_simple_tasks import AirHockeyPuckJuggleEnv, AirHockeyPuckStrikeEnv, AirHockeyPuckTouchEnv
 from airhockey.airhockey_hierarchical_tasks  import AirHockeyMoveBlockEnv, AirHockeyStrikeCrowdEnv
 from robosuite.utils.mjcf_utils import xml_path_completion as robosuite_xml_path_completion
-from airhockey.airhockey_goal_tasks import AirHockeyPuckGoalPositionEnv, AirHockeyPuckGoalPositionVelocityEnv, AirHockeyPuckReachPositionDynamicNegRegionsEnv
-from airhockey.airhockey_goal_tasks import AirHockeyPaddleReachPositionEnv, AirHockeyPaddleReachPositionVelocityEnv, AirHockeyPaddleReachPositionNegRegionsEnv
+# from airhockey.airhockey_goal_tasks import AirHockeyPuckGoalPositionEnv, AirHockeyPuckGoalPositionVelocityEnv, AirHockeyPuckReachPositionDynamicNegRegionsEnv
+# from airhockey.airhockey_goal_tasks import AirHockeyPaddleReachPositionEnv, AirHockeyPaddleReachPositionVelocityEnv, AirHockeyPaddleReachPositionNegRegionsEnv
+from airhockey.airhockey_tasks.paddle_reach_position import AirHockeyPaddleReachPositionEnv
+from airhockey.airhockey_tasks.puck_goal_position import AirHockeyPuckGoalPositionEnv
+from airhockey.airhockey_tasks.paddle_reach_position_velocity import AirHockeyPaddleReachPositionVelocityEnv
+from airhockey.airhockey_tasks.puck_goal_position_velocity import AirHockeyPuckGoalPositionVelocityEnv
+from airhockey.airhockey_tasks.paddle_reach_position_negative_regions import AirHockeyPaddleReachPositionNegRegionsEnv
+from airhockey.airhockey_tasks.puck_goal_position_dynamic_negative_regions import AirHockeyPuckGoalPositionDynamicNegRegionsEnv
+
 
 
 ASSETS_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../assets"))
@@ -74,7 +84,7 @@ def AirHockeyEnv(cfg):
     elif task == "paddle_goal_position_neg":
         task_env = AirHockeyPaddleReachPositionNegRegionsEnv
     elif task == "puck_goal_position_dynamic_neg":
-        task_env = AirHockeyPuckReachPositionDynamicNegRegionsEnv
+        task_env = AirHockeyPuckGoalPositionDynamicNegRegionsEnv
     else:
         raise ValueError("Task {} not recognized".format(task))
     return task_env.from_dict(cfg)
