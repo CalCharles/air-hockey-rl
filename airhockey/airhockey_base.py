@@ -42,6 +42,7 @@ class AirHockeyBaseEnv(ABC, Env):
                  goal_max_y_velocity,
                  return_goal_obs,
                  seed,
+                 terminate_on_puck_hit_bottom=False,  # TODO Specify this parameter in the yaml config
                  dense_goal=True,
                  goal_selector='stationary',
                  max_timesteps=1000,
@@ -87,6 +88,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.terminate_on_out_of_bounds = terminate_on_out_of_bounds
         self.terminate_on_enemy_goal = terminate_on_enemy_goal
         self.terminate_on_puck_stop = terminate_on_puck_stop
+        self.terminate_on_puck_hit_bottom = terminate_on_puck_hit_bottom
         
         # reward function
         self.compute_online_rewards = compute_online_rewards
@@ -255,7 +257,12 @@ class AirHockeyBaseEnv(ABC, Env):
         
         puck_within_home = False
         puck_within_alt_home = False
-        
+
+        if self.terminate_on_puck_hit_bottom:
+            puck_pos = state_info['pucks'][0]['position']
+            if abs(puck_pos[0] - self.table_x_bot) < self.puck_radius + 0.03:
+                terminated = True
+
         if self.terminate_on_enemy_goal:
             if not terminated and puck_within_home:
                 truncated = True
