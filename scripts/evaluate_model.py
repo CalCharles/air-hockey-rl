@@ -27,7 +27,7 @@ if __name__ == '__main__':
     air_hockey_params['n_training_steps'] = model_cfg['n_training_steps']
 
 
-    # Set the return_goal_obs parameter
+    # Set the return_goal_obs parameter for sac
     model_cfg['air_hockey']['return_goal_obs'] = 'goal' in model_cfg['air_hockey']['task'] and 'sac' == model_cfg['algorithm']
     
     model_cfg['air_hockey']['max_timesteps'] = 200
