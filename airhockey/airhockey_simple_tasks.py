@@ -352,8 +352,15 @@ class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
     @staticmethod
     def from_dict(state_dict):
         return AirHockeyPuckTouchEnv(**state_dict)
-
     def create_world_objects(self):
+        puck_x_low = self.length / 5
+        puck_x_high = self.length / 3
+        # puck_y_low = -self.width / 2 + self.puck_radius
+        # puck_y_high = self.width / 2 - self.puck_radius
+        puck_y_low = -self.width / 2 + self.simulator.table_y_offset + self.simulator.puck_radius
+        puck_y_high = self.width / 2 - self.simulator.table_y_offset - self.simulator.puck_radius
+        puck_x = self.rng.uniform(low=puck_x_low, high=puck_x_high)
+        puck_y = self.rng.uniform(low=puck_y_low, high=puck_y_high)
         name = 'puck_{}'.format(0)
         pos, vel = self.get_puck_configuration()
         self.simulator.spawn_puck(pos, vel, name)
@@ -376,6 +383,7 @@ class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
         puck_y_pos = state_info['pucks'][0]['position'][1]
         puck_x_vel = state_info['pucks'][0]['velocity'][0]
         puck_y_vel = state_info['pucks'][0]['velocity'][1]
+        puck_y_vel = state_info['pucks'][0]['velocity'][1]
         obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
         return obs
     def get_base_reward(self, state_info):
@@ -391,6 +399,15 @@ class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
         puck_initial_position = self.puck_initial_position
         puck_current_position = state_info['pucks'][0]['position']
         delta = np.linalg.norm(np.array(puck_initial_position) - np.array(puck_current_position))
+        epsilon = 0.01 + min_dist
+        # if delta >= epsilon:
+        #     reward -= 1
+        # success = reward >= 0.9 and dist < epsilon
+        success = dist < epsilon
+        # print("dist: ", dist)
+        # print("dist < epsilon: ", dist < epsilon)
+        # print("reward: ", reward)
+        # print("===========================================")
         epsilon = 0.01 + min_dist
         # if delta >= epsilon:
         #     reward -= 1

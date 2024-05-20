@@ -275,6 +275,10 @@ class AirHockeyBaseEnv(ABC, Env):
             if not truncated and np.linalg.norm(state_info['pucks'][0]['velocity']) < 0.01:
                 truncated = True
 
+        # puck passed the our paddle
+        if state_info['pucks'][0]['position'][0] > (state_info['paddles']['paddle_ego']['position'][0] + self.paddle_radius):
+            truncated = True
+        
         puck_within_ego_goal = False
         puck_within_alt_goal = False
                     

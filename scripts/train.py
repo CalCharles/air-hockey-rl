@@ -128,7 +128,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
         # if goal-conditioned use SAC
         if 'sac' == air_hockey_cfg['algorithm']:
             # SAC hyperparams:
-            # Create 4 artificial transitions per real transitionair_hockey_simulator
+            # Create 4 artificial transitions per real transition air_hockey_simulator
             n_sampled_goal = 4
             model = SAC(
                 "MultiInputPolicy",
