@@ -3,7 +3,7 @@ from Box2D import (b2CircleShape, b2FixtureDef, b2LoopShape, b2PolygonShape,
                    b2_dynamicBody, b2_staticBody, b2Filter, b2Vec2)
 import numpy as np
 from airhockey.sims.airhockey_sim import AirHockeySim
-
+import inspect
 
 class AirHockeyBox2D:
     def __init__(self,
@@ -90,7 +90,10 @@ class AirHockeyBox2D:
 
     @staticmethod
     def from_dict(state_dict):
-        return AirHockeyBox2D(**state_dict)
+        # create a dictionary of only the relevant parameters
+        init_params = inspect.signature(AirHockeyBox2D).parameters
+        relevant_params = {k: v for k, v in state_dict.items() if k in init_params}
+        return AirHockeyBox2D(**relevant_params)
 
     def reset(self, seed):
         self.rng = np.random.RandomState(seed)

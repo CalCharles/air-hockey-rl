@@ -18,7 +18,7 @@ import time
 import datetime
 from collections import namedtuple
 from robosuite.utils.control_utils import trans
-
+import inspect
 import os
 
 import numpy as np
@@ -274,8 +274,10 @@ class AirHockeyRobosuite(AirHockeySim):
 
     @staticmethod
     def from_dict(state_dict):
-        state_dict_copy = state_dict.copy()
-        return AirHockeyRobosuite(**state_dict_copy)
+        # create a dictionary of only the relevant parameters
+        init_params = inspect.signature(AirHockeyRobosuite).parameters
+        relevant_params = {k: v for k, v in state_dict.items() if k in init_params}
+        return AirHockeyRobosuite(**relevant_params)
 
     def reset(self, seed=None):
         if self.robosuite_env is not None:
