@@ -50,8 +50,8 @@ def get_frames(renderer, env, model, n_eps_viz, n_eval_eps, cfg):
 # Takes in a folder with a model zip and the config for the model, and uses it to generate evaluation gifs.
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Save an evaluation gif of a trained model.')
-    parser.add_argument('--model', type=str, default=None, help='Folder that contains model and model_cfg.')
-    parser.add_argument('--save-dir', type=str, default=None, help='Path to save the evaluation gifs to.')
+    parser.add_argument('--model', type=str, default="", help='Folder that contains model and model_cfg.')
+    parser.add_argument('--save-dir', type=str, default="", help='Path to save the evaluation gifs to.')
     parser.add_argument('--seed', type=int, default=0, help='The random seed for the environment')
     args = parser.parse_args()
 
