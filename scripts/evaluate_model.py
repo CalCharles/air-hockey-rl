@@ -27,7 +27,7 @@ def get_frames(renderer, env, model, n_eps_viz, n_eval_eps, cfg):
                     aspect_ratio = frame.shape[1] / frame.shape[0]
                     frame = cv2.resize(frame, (160, int(160 / aspect_ratio)))
                     frames.append(frame)
-                    if model_cfg['air_hockey']['simulator'] == 'robosuite':
+                    if cfg['air_hockey']['simulator'] == 'robosuite':
                         for key in env.current_state:
                             if 'image' not in key:
                                 continue
