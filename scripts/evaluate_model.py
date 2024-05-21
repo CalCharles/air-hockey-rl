@@ -13,6 +13,13 @@ from utils import save_evaluation_gifs
 
 
 def get_frames(renderer, env, model, n_eps_viz, n_eval_eps, cfg):
+        
+        dataset = {}
+        observations = []
+        actions = []
+        rewards = []
+        dones = []
+
         frames = []
         robosuite_frames = {}
         env = env_test.envs[0]
@@ -41,11 +48,22 @@ def get_frames(renderer, env, model, n_eps_viz, n_eval_eps, cfg):
                                 robosuite_frames[key] = [current_img]
                             else:
                                 robosuite_frames[key].append(current_img)
+                observations.append(obs)
                 action, _ = model.predict(obs)
+                actions.append(action)
                 obs, rew, done, info = env_test.step(action)
+                rewards.append(rew)
+                dones.append(done[0] or info[0]['TimeLimit.truncated'])
                 done = done[0] or info[0]['TimeLimit.truncated']
         
-        return frames, robosuite_frames
+        dataset['observations'] = np.array(observations)
+        dataset['actions'] = np.array(actions)
+        dataset['rewards'] = np.array(rewards)
+        dataset['dones'] = np.array(dones)
+
+        # import pdb; pdb.set_trace()
+
+        return frames, robosuite_frames, dataset
 
 # Takes in a folder with a model zip and the config for the model, and uses it to generate evaluation gifs.
 if __name__ == '__main__':
@@ -82,7 +100,11 @@ if __name__ == '__main__':
     else:
         model = PPO.load(os.path.join(args.model, "model.zip"))
 
-    frames, robosuite_frames = get_frames(renderer, env_test, model, 5, 3, model_cfg)
+    frames, robosuite_frames, dataset = get_frames(renderer=renderer, env=env_test, model=model, n_eps_viz=5, n_eval_eps=3, cfg=model_cfg)
+
+    # save dataset to disk
+    dataset_savepath = os.path.join(args.save_dir, f'eval_dataset.npz')
+    np.savez(dataset_savepath, **dataset)
 
     # make a subfolder in log dir for latest progress
     os.makedirs(args.save_dir, exist_ok=True)
