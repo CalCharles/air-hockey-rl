@@ -78,9 +78,9 @@ if __name__ == '__main__':
 
     # Load the correct model based on the algorithm specified in the config
     if model_cfg['algorithm'] == 'sac':
-        model = SAC.load(os.path.join(args.model, "model.zip"), env=env_test)
+        model = SAC.load(os.path.join(args.model, "model.zip"))
     else:
-        model = PPO.load(os.path.join(args.model, "model.zip"), env=env_test)
+        model = PPO.load(os.path.join(args.model, "model.zip"))
 
     frames, robosuite_frames = get_frames(renderer, env_test, model, 5, 3, model_cfg)
 
