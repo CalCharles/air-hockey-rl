@@ -278,8 +278,10 @@ class AirHockeyPuckStrikeEnv(AirHockeyBaseEnv):
     def create_world_objects(self):
         puck_x_low = self.length / 5
         puck_x_high = self.length / 3
-        puck_y_low = -self.width / 2 + self.puck_radius
-        puck_y_high = self.width / 2 - self.puck_radius
+        # puck_y_low = -self.width / 2 + self.puck_radius
+        # puck_y_high = self.width / 2 - self.puck_radius
+        puck_y_low = -self.width / 2 + self.simulator.table_y_offset + self.simulator.puck_radius
+        puck_y_high = self.width / 2 - self.simulator.table_y_offset - self.simulator.puck_radius
         puck_x = self.rng.uniform(low=puck_x_low, high=puck_x_high)
         puck_y = self.rng.uniform(low=puck_y_low, high=puck_y_high)
         name = 'puck_{}'.format(0)
@@ -340,58 +342,60 @@ class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
         # setup observation / action / reward spaces
         paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
         paddle_obs_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
-        
         puck_obs_low = [self.table_x_top, self.table_y_left, -self.max_puck_vel, -self.max_puck_vel]
         puck_obs_high = [self.table_x_bot, self.table_y_right, self.max_puck_vel, self.max_puck_vel]
-
         low = paddle_obs_low + puck_obs_low
         high = paddle_obs_high + puck_obs_high
-
         self.observation_space = self.get_obs_space(low, high)
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
-        
     @staticmethod
     def from_dict(state_dict):
         return AirHockeyPuckTouchEnv(**state_dict)
-
     def create_world_objects(self):
         puck_x_low = self.length / 5
         puck_x_high = self.length / 3
-        puck_y_low = -self.width / 2 + self.puck_radius
-        puck_y_high = self.width / 2 - self.puck_radius
-        puck_x = self.rng.uniform(low=puck_x_low, high=puck_x_high)
-        puck_y = self.rng.uniform(low=puck_y_low, high=puck_y_high)
+        # puck_y_low = -self.width / 2 + self.puck_radius
+        # puck_y_high = self.width / 2 - self.puck_radius
+        # puck_y_low = -self.width / 2 + self.simulator.table_y_offset + self.simulator.puck_radius
+        # puck_y_high = self.width / 2 - self.simulator.table_y_offset - self.simulator.puck_radius
+        # puck_x = self.rng.uniform(low=puck_x_low, high=puck_x_high)
+        # puck_y = self.rng.uniform(low=puck_y_low, high=puck_y_high)
         name = 'puck_{}'.format(0)
-        pos = (puck_x, puck_y)
-        vel = (0, 0)
-        self.simulator.spawn_puck(pos, vel, name, affected_by_gravity=False)
-        
+        pos, vel = self.get_puck_configuration()
+        self.simulator.spawn_puck(pos, vel, name)
+
         name = 'paddle_ego'
         pos, vel = self.get_paddle_configuration(name)
         self.simulator.spawn_paddle(pos, vel, name)
     
+    def create_world_objects_from_state(self, state_vector):
+        name = 'puck_{}'.format(0)
+        puck_pos, puck_vel = state_vector[:2], state_vector[2:4]
+        self.simulator.spawn_puck(puck_pos, puck_vel, name)
+
+        name = 'paddle_ego'
+        paddle_pos, paddle_vel = state_vector[4:6], state_vector[6:]
+        self.simulator.spawn_paddle(paddle_pos, paddle_vel, name)
+
     def validate_configuration(self):
         assert self.num_pucks == 1
         assert self.num_blocks == 0
         assert self.num_obstacles == 0
         assert self.num_targets == 0
         assert self.num_paddles == 1
-    
     def get_observation(self, state_info):
         ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
         ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
         ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
         ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
-        
         puck_x_pos = state_info['pucks'][0]['position'][0]
         puck_y_pos = state_info['pucks'][0]['position'][1]
         puck_x_vel = state_info['pucks'][0]['velocity'][0]
-        puck_y_vel = state_info['pucks'][0]['velocity'][1]       
+        puck_y_vel = state_info['pucks'][0]['velocity'][1]
 
         obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
         return obs
-
     def get_base_reward(self, state_info):
         # reward for getting close to the puck, but make sure not to displace it
         puck_pos = state_info['pucks'][0]['position']
@@ -401,15 +405,28 @@ class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
         max_dist = 0.16 * self.width
         reward = 1 - ((dist - min_dist) / (max_dist - min_dist))
         reward = max(reward, 0)
-        
         # let's also make sure puck does not deviate from initial position
         puck_initial_position = self.puck_initial_position
         puck_current_position = state_info['pucks'][0]['position']
         delta = np.linalg.norm(np.array(puck_initial_position) - np.array(puck_current_position))
-        epsilon = 0.01
-        if delta >= epsilon:
-            reward -= 1
-        success = reward >= 0.9 and dist < epsilon
+        epsilon = 0.01 + min_dist
+        # if delta >= epsilon:
+        #     reward -= 1
+        # success = reward >= 0.9 and dist < epsilon
+        success = dist < epsilon
+        # print("dist: ", dist)
+        # print("dist < epsilon: ", dist < epsilon)
+        # print("reward: ", reward)
+        # print("===========================================")
+        epsilon = 0.01 + min_dist
+        # if delta >= epsilon:
+        #     reward -= 1
+        # success = reward >= 0.9 and dist < epsilon
+        success = dist < epsilon
+        # print("dist: ", dist)
+        # print("dist < epsilon: ", dist < epsilon)
+        # print("reward: ", reward)
+        # print("===========================================")
         if reward > 0:
             reward *= 20 # make it more significant
         return reward, success

@@ -2,7 +2,7 @@
     <worldbody>
         <body name="round_gripper" pos="0 0 0">
             <site name="ft_frame" pos="0 0 0" size="0.01 0.01 0.01" rgba="1 0 0 1" type="sphere" group="1"/>
-            <inertial pos="0 0 0" mass="3e-1" diaginertia="1e-2 1e-2 1e-2" />
+            <inertial pos="0 0 0" mass="2" diaginertia="1e-2 1e-2 1e-2" />
             <!-- This site was added for visualization. -->
             <body name="eef" pos="0 0 0" quat="0.707105 0 0 -0.707105">
 <!--                <site name="marker" pos="0 0.2 0" size=".01" rgba="1 0 0 0.5" type="sphere" group="1"/>-->

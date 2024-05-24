@@ -17,6 +17,7 @@ import xmltodict
 import time
 import datetime
 from collections import namedtuple
+from robosuite.utils.control_utils import trans
 
 import os
 
@@ -595,15 +596,14 @@ class AirHockeyRobosuite(AirHockeySim):
         # put the eef in pos
         self.initial_obj_configurations['paddles'][name] = {'position': pos, 'velocity': vel}
     
-    def get_6d_action(self, action):
+    def translate_action(self, action):
         """
-        Converts 2D action to 6D robot action
+        Converts 2D action to 3D robot action
         """
-        delta_pos_x = action[0] * self.x_to_x_prime_ratio
+        delta_pos_x = -action[0] * self.x_to_x_prime_ratio
         delta_pos_y = action[1]
-        delta_pos_z = action[0] * self.x_to_z_ratio
-        delta_pos = np.array([delta_pos_x, delta_pos_y, delta_pos_z])
-        return np.array([delta_pos[0], delta_pos[1], delta_pos[2], 0, 0, 0])
+        delta_pos_z = -action[0] * self.x_to_z_ratio
+        return np.array([delta_pos_x, delta_pos_y, delta_pos_z])
 
     def get_transition(self, action):
         """
@@ -616,7 +616,7 @@ class AirHockeyRobosuite(AirHockeySim):
         Raises:
             ValueError: [Steps past episode termination]
         """
-        action = self.get_6d_action(action)
+        action = self.translate_action(action)
 
         # Since the env.step frequency is slower than the mjsim timestep frequency, the internal controller will output
         # multiple torque commands in between new high level action commands. Therefore, we need to denote via
