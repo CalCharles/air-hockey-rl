@@ -192,7 +192,21 @@ class AirHockeyBaseEnv(ABC, Env):
             self.puck_initial_position = state_info['pucks'][0]['position']
             
         return obs, {'success': False}
-            
+
+    def reset_from_state(self, state_vector, seed=None):
+        if seed is None: # determine next seed, in a deterministic manner
+            seed = self.rng.randint(0, int(1e8))
+
+        self.rng = np.random.RandomState(seed)
+        sim_seed = self.rng.randint(0, int(1e8))
+        self.simulator.reset(sim_seed) # no point in getting state since no spawning
+        self.create_world_objects_from_state(state_vector)
+        self.simulator.instantiate_objects()
+        state_info = self.simulator.get_current_state()
+        self.current_state = state_info
+        obs = self.get_observation(state_info)
+        return obs, {'success': False}
+
     def get_puck_configuration(self, bad_regions=None):
         y_pos = None
         if bad_regions is not None:
@@ -280,9 +294,9 @@ class AirHockeyBaseEnv(ABC, Env):
             truncated = True
 
         # puck touched our paddle
-        if np.linalg.norm(state_info['pucks'][0]['position'][0] - state_info['paddles']['paddle_ego']['position'][0]) <= (self.paddle_radius + self.puck_radius + 0.1):
-            puck_within_home = True
-            terminated = True
+        # if np.linalg.norm(state_info['pucks'][0]['position'][0] - state_info['paddles']['paddle_ego']['position'][0]) <= (self.paddle_radius + self.puck_radius + 0.1):
+            # puck_within_home = True
+            # terminated = True
         
         puck_within_ego_goal = False
         puck_within_alt_goal = False

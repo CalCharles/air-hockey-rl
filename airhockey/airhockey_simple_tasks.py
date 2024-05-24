@@ -368,6 +368,16 @@ class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
         name = 'paddle_ego'
         pos, vel = self.get_paddle_configuration(name)
         self.simulator.spawn_paddle(pos, vel, name)
+    
+    def create_world_objects_from_state(self, state_vector):
+        name = 'puck_{}'.format(0)
+        puck_pos, puck_vel = state_vector[:2], state_vector[2:4]
+        self.simulator.spawn_puck(puck_pos, puck_vel, name)
+
+        name = 'paddle_ego'
+        paddle_pos, paddle_vel = state_vector[4:6], state_vector[6:]
+        self.simulator.spawn_paddle(paddle_pos, paddle_vel, name)
+
     def validate_configuration(self):
         assert self.num_pucks == 1
         assert self.num_blocks == 0
