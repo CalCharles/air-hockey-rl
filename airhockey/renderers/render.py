@@ -1,7 +1,10 @@
 import numpy as np
 import cv2
 import os
-from collections import Iterable
+try:
+    from collections.abc import Iterable
+except ImportError:
+    from collections import Iterable
 
 TARGET_FPS = 60
 
@@ -247,7 +250,6 @@ class AirHockeyRenderer:
         
         if self.airhockey_env.goal_conditioned:
             # get the goal position and radius and draw it
-                
             green = (0, 255, 0)
             self.draw_region(self.airhockey_env.goal_pos, self.airhockey_env.goal_radius, color=green)
             if self.airhockey_env.multiagent:

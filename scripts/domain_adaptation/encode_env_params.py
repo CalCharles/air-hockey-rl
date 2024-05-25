@@ -21,6 +21,6 @@ def assign_values(param_vector, param_names, config):
                 at += 1
         else:
             # TODO: handle booleans and ints gracefully
-            new_config["simulator_params"][name] = param_vector 
+            new_config["simulator_params"][name] = param_vector[at]
             at += 1
     return new_config

@@ -3,7 +3,10 @@ from gymnasium.spaces import Box
 from gymnasium import spaces
 from .airhockey_base import AirHockeyBaseEnv
 from abc import ABC, abstractmethod
-from collections import Iterable
+try:
+    from collections.abc import Iterable
+except ImportError:
+    from collections import Iterable
 
 
 class AirHockeyGoalEnv(AirHockeyBaseEnv, ABC):        
