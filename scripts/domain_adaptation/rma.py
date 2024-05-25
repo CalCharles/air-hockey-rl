@@ -507,24 +507,24 @@ def train(envs):
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-    if args.save_model:
-        model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
-        torch.save(agent.state_dict(), model_path)
-        print(f"model saved to {model_path}")
-        from cleanrl_utils.evals.ppo_eval import evaluate
+    # if args.save_model:
+    #     model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
+    #     torch.save(agent.state_dict(), model_path)
+    #     print(f"model saved to {model_path}")
+    #     from cleanrl_utils.evals.ppo_eval import evaluate
 
-        episodic_returns = evaluate(
-            model_path,
-            make_env,
-            args.env_id,
-            eval_episodes=10,
-            run_name=f"{run_name}-eval",
-            Model=Agent,
-            device=device,
-            gamma=args.gamma,
-        )
-        for idx, episodic_return in enumerate(episodic_returns):
-            writer.add_scalar("eval/episodic_return", episodic_return, idx)
+    #     episodic_returns = evaluate(
+    #         model_path,
+    #         make_env,
+    #         args.env_id,
+    #         eval_episodes=10,
+    #         run_name=f"{run_name}-eval",
+    #         Model=Agent,
+    #         device=device,
+    #         gamma=args.gamma,
+    #     )
+    #     for idx, episodic_return in enumerate(episodic_returns):
+    #         writer.add_scalar("eval/episodic_return", episodic_return, idx)
 
     #     if args.upload_model:
     #         from cleanrl_utils.huggingface import push_to_hub
