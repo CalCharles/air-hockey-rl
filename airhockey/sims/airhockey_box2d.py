@@ -112,6 +112,7 @@ class AirHockeyBox2D:
         
         self.multiagent = False
 
+        self.puck_history = [(-2,0,0) for i in range(5)]
         self.paddle_attrs = None
         self.target_attrs = None
 
@@ -334,6 +335,8 @@ class AirHockeyBox2D:
         self.paddles['paddle_ego'].position = (pos[0], pos[1])
         
         state_info = self.get_current_state()
+        self.puck_history.append(list(state_info['pucks'][0]["position"]) + [1])
+
         self.timestep += 1
         return state_info
     

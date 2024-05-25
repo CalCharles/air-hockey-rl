@@ -52,8 +52,10 @@ def clear_images(folder='./temp/images/'):
         except Exception as e:
             print('Failed to delete %s. Reason: %s' % (file_path, e))
 
-def write_trajectory(pth, tidx, imgs, vals):
-    with h5py.File(os.path.join(pth, 'trajectory_data' + str(tidx) + '.hdf5'), 'w') as hf:
+def write_trajectory(pth, tidx, imgs, vals, filename=""):
+    if len(filename) <= 0: filename = os.path.join(pth, 'trajectory_data' + str(tidx) + '.hdf5') # filename replaces tidx if nonzero
+    else: filename = os.path.join(pth, filename)
+    with h5py.File(filename, 'w') as hf:
         hf.create_dataset("train_img",
                         shape=imgs.shape,
                         compression="gzip",

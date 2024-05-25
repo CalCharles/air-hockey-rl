@@ -370,3 +370,27 @@ class AirHockeyBaseEnv(ABC, Env):
                          puck_within_ego_home, puck_within_alt_home,
                          puck_within_ego_goal, puck_within_alt_goal):
         NotImplementedError("Joint reward function not implemented yet.")
+
+def get_observation_by_type(state_info, obs_type='vel', **kwargs):
+    # TODO: once other code is merged, replace get_obs with this code to remove redundancy and increase functionality
+    if obs_type == 'vel':
+        ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
+        ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
+        ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
+        ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
+        
+        puck_x_pos = state_info['pucks'][0]['position'][0]
+        puck_y_pos = state_info['pucks'][0]['position'][1]
+        puck_x_vel = state_info['pucks'][0]['velocity'][0]
+        puck_y_vel = state_info['pucks'][0]['velocity'][1] 
+        obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
+        return obs
+    elif obs_type == "history":
+        ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
+        ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
+        ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
+        ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
+        
+        puck_hist = np.array(kwargs["puck_hist"][-5:]).flatten().tolist()
+        obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel] + puck_hist)
+        return obs

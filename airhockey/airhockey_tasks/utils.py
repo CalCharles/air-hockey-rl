@@ -3,6 +3,7 @@ try:
     from collections.abc import Iterable
 except ImportError:
     from collections import Iterable
+
 class RewardRegion():
     def __init__(self, reward_value_range, scale_range, limits, rad_limits, shapes, reset=True):
         self.reward_value_range = reward_value_range

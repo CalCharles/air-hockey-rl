@@ -281,6 +281,7 @@ class AirHockeyRobosuite(AirHockeySim):
             self.robosuite_env.reset()
         
         self.timestep = 0
+        self.puck_history = [(-2,0,0) for i in range(5)]
         
         if not self.initialized_objects:
             self.puck_names = {}
@@ -302,7 +303,7 @@ class AirHockeyRobosuite(AirHockeySim):
                     table_surface_idx = i
                     break
             self.xml_config['mujoco']['worldbody']['body']['body'][table_surface_idx]['geom']['@size'] = f"{self.table_full_size[0]} {self.table_full_size[1]} {self.table_full_size[2]}"
-        return {}
+            return {}
     
     def set_obj_configs(self):
         for name in self.initial_obj_configurations['pucks'].keys():
@@ -637,7 +638,9 @@ class AirHockeyRobosuite(AirHockeySim):
         self.robosuite_env.cur_time += self.robosuite_env.control_timestep
         self.timestep += 1
 
-        return self.get_current_state()
+        current_state = self.get_current_state()
+        self.puck_history.append(list(current_state['pucks'][0]["position"]) + [1])
+        return current_state
 
     def get_current_state(self):
         """
