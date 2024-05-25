@@ -17,7 +17,7 @@ from utils import EvalCallback, save_evaluation_gifs, save_tensorboard_plots
 from curriculum.classifier_curriculum import CurriculumCallback
 
             
-def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_prior_task_results=False, progress_bar=False):
+def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_prior_task_results=False, progress_bar=True):
     """
     Train an air hockey paddle model using stable baselines.
 
@@ -208,7 +208,6 @@ if __name__ == "__main__":
     parser.add_argument('--cfg', type=str, default=None, help='Path to the configuration file.')
     parser.add_argument('--wandb', action='store_true', help='Use wandb for logging.')
     parser.add_argument('--device', type=str, default='cpu', help='Device to use for training.')
-    parser.add_argument('--progress_bar', action='store_true', help='Show progress bar during training.')
     # Note: You probably don't want this argument, only if you are retraining frequently
     # and task folder is getting too big
     parser.add_argument('--clear', action='store_true', help='Removes prior folders for the task.')
@@ -229,5 +228,4 @@ if __name__ == "__main__":
     use_wandb = args.wandb
     device = args.device
     clear_prior_task_results = args.clear
-    progress_bar = args.progress_bar
-    train_air_hockey_model(air_hockey_cfg, use_wandb, device, clear_prior_task_results, progress_bar)
+    train_air_hockey_model(air_hockey_cfg, use_wandb, device, clear_prior_task_results)
