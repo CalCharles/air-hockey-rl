@@ -105,7 +105,7 @@ def init_inverse_model(n_observations, n_actions):
     return InverseKinematicsCNN(n_observations, n_actions)
 
 class GroundedActionTransformation():
-    def __init__(self, args, data, sim_env, real_env):
+    def __init__(self, args, data, sim_env, real_env, log_dir):
 
         self.sim_env = sim_env
         self.real_env = real_env
@@ -132,9 +132,10 @@ class GroundedActionTransformation():
         # for the current RL training code
         self.real_buffer = init_real_buffer()
         self.sim_buffer = init_sim_buffer()
-
+        self.log_dir = log_dir
         # before we have trained anything, don't use the grounded transform
         self.first = True
+        
 
 
     def grounded_transform(self, state, action):
@@ -177,7 +178,7 @@ class GroundedActionTransformation():
             model = PPO.load(self.policy, env=self.sim_env) # env: the new environment to run the loaded model on
             
         model.learn(num_iters)
-        self.policy = "optimized_policy" + str(i) # self.policy stores the current model name
+        self.policy = self.log_dir + "/optimized_policy" + str(i) # self.policy stores the current model name
         model.save(self.policy)
 
 
@@ -295,5 +296,6 @@ if __name__ == '__main__':
     # TODO: write a loader for the dataset, which should load into a list of dicts with three keys: states, actions, dones
     # sorting is: trajectory->key->data
     data = load_dataset(args.dataset_pth) 
-    best_params, mean_params = train_GAT(args, data, sim_air_hockey_cfg, real_air_hockey_cfg)
+    log_dir = 'gat_log/'
+    best_params, mean_params = train_GAT(args, data, sim_air_hockey_cfg, real_air_hockey_cfg, log_dir)
 # python scripts/grounded_action_transformation.py --sim-cfg configs/gat/puck_height.yaml --real-cfg configs/gat/puch_height2.yaml --dataset_pth baseline_models/puck_height/air_hockey_agent_13/trajectory_data0.hdf5
