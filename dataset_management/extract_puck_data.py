@@ -6,6 +6,10 @@ import h5py
 import sys
 import numpy
 numpy.set_printoptions(threshold=sys.maxsize)
+import sys
+sys.path.append('../')
+sys.path.append('../..')
+print(sys.path)
 
 def create_video_from_frames(frame_array, output_path, fps=30):
     """
@@ -100,26 +104,29 @@ save_downscale_constant = 1
 offset_constants = np.array((2100, 500))
 
 
-def homography_transform(image, get_save=False):
-    # image = cv2.rotate(image, cv2.ROTATE_180)
-    save_image = None
-    if get_save:
-        save_image = cv2.resize(image, (int(640/save_downscale_constant), int(480/save_downscale_constant)))
-    image = cv2.resize(image, (int(640*upscale_constant), int(480*upscale_constant)), 
-                interpolation = cv2.INTER_LINEAR)
-    dst = cv2.warpPerspective(image,Mimg,original_size * upscale_constant)
-    dst = cv2.rotate(dst, cv2.ROTATE_90_CLOCKWISE)
-    showdst = cv2.resize(dst, (int(480*upscale_constant / visual_downscale_constant), int(640*upscale_constant / visual_downscale_constant)), 
-                interpolation = cv2.INTER_LINEAR)
-    return showdst, save_image
+# def homography_transform(image, get_save=False, Mimg=None):
+#     # image = cv2.rotate(image, cv2.ROTATE_180)
+#     save_image = None
+#     if get_save:
+#         save_image = cv2.resize(image, (int(640/save_downscale_constant), int(480/save_downscale_constant)))
+#     image = cv2.resize(image, (int(640*upscale_constant), int(480*upscale_constant)), 
+#                 interpolation = cv2.INTER_LINEAR)
+#     dst = cv2.warpPerspective(image,Mimg,original_size * upscale_constant)
+#     dst = cv2.rotate(dst, cv2.ROTATE_90_CLOCKWISE)
+#     showdst = cv2.resize(dst, (int(480*upscale_constant / visual_downscale_constant), int(640*upscale_constant / visual_downscale_constant)), 
+#                 interpolation = cv2.INTER_LINEAR)
+#     return showdst, save_image
 
-def find_hsv_puck(image, color_hsv=None,apply_mask=False, color_alt=None, glare=False):
+def find_hsv_puck(image, color_hsv=None,apply_mask=False, color_alt=None, glare=False, remove_region_around_table=False):
     
     hsv_low, hsv_high = color_hsv[0], color_hsv[1]
     h, w, _ = image.shape
 
     hsv_image = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
-
+    # if remove_region_around_table:
+    #     remove_table_edges_mask = np.zeros((h,w), dtype=np.uint8)
+    #     remove_table_edges_mask[0:175, 30:290] = 1
+    #     hsv_image[:,:,2] *= remove_table_edges_mask
     # We'll lower the saturation and value thresholds to possibly capture a darker green
     refined_lower = np.array(hsv_low)  # Lower saturation and value
     refined_upper = np.array(hsv_high)
@@ -149,7 +156,7 @@ def find_hsv_puck(image, color_hsv=None,apply_mask=False, color_alt=None, glare=
 # Function to recursively save dictionary contents to HDF5 file
 def save_dict_to_hdf5(dic, hdf5_file, path='/'):
     for key, item in dic.items():
-        if isinstance(item, (np.ndarray, list)):  # Save datasets
+        if isinstance(item, (np.ndarray, list, np.int64)):  # Save datasets
             hdf5_file.create_dataset(path + key, data=item)
         elif isinstance(item, dict):  # Create a group and recurse
             group = hdf5_file.create_group(path + key)
@@ -203,7 +210,7 @@ def pixel2loc(xs,ys):
 def homography_transform(image, get_save=False):
     # image = cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
     mousepos = (0,0,1)
-    Mimg = np.load('../Mimg.npy')
+    Mimg = np.load('assets/real/Mimg.npy')
     
     upscale_constant = 3
     image = cv2.resize(image, (640, 480))
@@ -225,66 +232,80 @@ def homography_transform(image, get_save=False):
 # try:
 plt.rcParams['figure.figsize'] = [10, 10]
 true_if_red = True
-for traj in range(153, 158):
-    try:
-        path = f'/datastor1/calebc/public/data/mouse/cleaned/trajectory_data{traj}.hdf5'
-        dataset_dict = {}
-        dataset_dict = load_hdf5_to_dict(path)
-        xs,ys = [], []
-        create_video_from_frames(dataset_dict['train_img'], f'traj_videos/traj_video{traj}.mp4')
-        imgs = dataset_dict['train_img']#[150:160]
-        for i, img in enumerate(imgs):
-            train_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-            dst, save_img = homography_transform(train_img)
+for traj in range(433, 1000):
+    # try:
+    path = f'/datastor1/calebc/public/data/mouse/cleaned_all/trajectory_data{traj}.hdf5'
+    dataset_dict = {}
+    dataset_dict = load_hdf5_to_dict(path)
+    xs,ys = [], []
+    # create_video_from_frames(dataset_dict['train_img'], f'traj_videos/traj_video{traj}.mp4')
+    imgs = dataset_dict['train_img']#[150:160]
+    for i, img in enumerate(imgs):
+        train_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        dst, save_img = homography_transform(train_img)
 
-            green_hsv = [[40,100,50], [80,255,255]]
-            red_hsv = [[0,100,50], [50,255,255]]
+        green_hsv = [[40,100,50], [80,255,255]]
+        red_hsv = [[0,100,50], [50,255,255]]
+        # red_hsv = [[0,100,50], [0,255,255]]
+        
 
-            if true_if_red:
-                refined_img, idx,mask = find_hsv_puck(dst, color_hsv=red_hsv, apply_mask=True, glare=True )
-            else:
-                alternate_color = [[40,70,50], [80,255,255]]
-                refined_img, idx,mask = find_hsv_puck(dst, color_hsv=green_hsv, apply_mask=True, color_alt=alternate_color)
+        if true_if_red:
+            refined_img, idx,mask = find_hsv_puck(dst, color_hsv=red_hsv, apply_mask=True, glare=False )
+        else:
+            alternate_color = [[40,70,50], [80,255,255]]
+            refined_img, idx,mask = find_hsv_puck(dst, color_hsv=green_hsv, apply_mask=True, color_alt=alternate_color)
 
-            x,y = np.median(idx[0]), np.median(idx[1])
+        x,y = np.median(idx[0]), np.median(idx[1])
 
+        
+        MIN_PTS_CUTOFF = 500 if true_if_red else 200
+        if len(idx[0]) < MIN_PTS_CUTOFF:
+            xs.append(np.NaN)
+            ys.append(np.NaN)
+        else:
+            xs.append(x)
+            ys.append(y)
             
-            MIN_PTS_CUTOFF = 500 if true_if_red else 200
-            if len(idx[0]) < MIN_PTS_CUTOFF:
-                xs.append(np.NaN)
-                ys.append(np.NaN)
-            else:
-                xs.append(x)
-                ys.append(y)
-                
-            if i == 0:
-                img_puck_traj = dst 
-                total_mask = mask
-            else:
-                total_mask = (total_mask | mask)
-                img_puck_traj[:,:,0] = np.minimum(img_puck_traj[:,:,0], dst[:,:,0])
-                img_puck_traj[:,:,1] = np.minimum(img_puck_traj[:,:,1], dst[:,:,1])
-                img_puck_traj[:,:,2] = np.minimum(img_puck_traj[:,:,2], dst[:,:,2])
-        
-        xy_robot_frame = pixel2loc(xs, ys) #
-        
-        plt.figure()
-        plt.subplot(2,2,1)
-        plt.imshow(dst)
-        plt.subplot(2,2,2)
-        plt.plot(xy_robot_frame[1], xy_robot_frame[0])
+        if i == 0:
+            img_puck_traj = dst 
+            total_mask = mask
+        else:
+            total_mask = (total_mask | mask)
+            img_puck_traj[:,:,0] = np.minimum(img_puck_traj[:,:,0], dst[:,:,0])
+            img_puck_traj[:,:,1] = np.minimum(img_puck_traj[:,:,1], dst[:,:,1])
+            img_puck_traj[:,:,2] = np.minimum(img_puck_traj[:,:,2], dst[:,:,2])
+    
+    xy_robot_frame = pixel2loc(xs, ys) #
+    
+    plt.figure()
+    plt.subplot(2,2,1)
+    plt.imshow(dst)
+    plt.subplot(2,2,2)
+    plt.plot(xy_robot_frame[1], xy_robot_frame[0])
 
-        ax = plt.gca()  # Get current axes
+    ax = plt.gca()  # Get current axes
 
-        ax.set_aspect(aspect='equal', adjustable='box')
-        # ax.invert_yaxis()
+    ax.set_aspect(aspect='equal', adjustable='box')
+    # ax.invert_yaxis()
+    
+    plt.subplot(2,2,3)
+    plt.imshow(img_puck_traj)
+    plt.subplot(2,2,4)
+    plt.imshow(total_mask)
+    plt.savefig(f'traj_videos/traj_plot{traj}.png')
+    # plt.show()
+    # Create a new HDF5 file
+    save_dir = 'testt/'
+    
+    save_path = save_dir + f'state_trajectory_data{traj}.hdf5'
+    dataset_dict['puck_state'] = xy_robot_frame
+    dataset_dict['puck_state_nan_mask'] = np.isnan(xy_robot_frame)
+    # import pdb; pdb.set_trace()
+    with h5py.File(save_path, 'w') as hdf5_file:
+        print(dataset_dict.keys())
+        save_dict_to_hdf5(dataset_dict, hdf5_file)
         
-        plt.subplot(2,2,3)
-        plt.imshow(img_puck_traj)
-        plt.subplot(2,2,4)
-        plt.imshow(total_mask)
-        plt.savefig(f'traj_videos/traj_plot{traj}.png')
-        plt.show()
-    except Exception as e:
-        print("doesn't work, you fuck")
-        print(e)
+    print(f'finished traj {traj}')
+    # except Exception as e:
+    #     print("doesn't work, you fuck")
+    #     print(e)
