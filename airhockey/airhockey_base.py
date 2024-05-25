@@ -5,6 +5,8 @@ from gymnasium import spaces
 from abc import ABC, abstractmethod
 import math
 
+from typing import Tuple
+
 
 def get_box2d_simulator_fn():
     from airhockey.sims import AirHockeyBox2D
@@ -40,6 +42,7 @@ class AirHockeyBaseEnv(ABC, Env):
                  goal_max_y_velocity,
                  return_goal_obs,
                  seed,
+                 terminate_on_puck_hit_bottom=False,  # TODO Specify this parameter in the yaml config
                  dense_goal=True,
                  goal_selector='stationary',
                  max_timesteps=1000,
@@ -85,6 +88,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.terminate_on_out_of_bounds = terminate_on_out_of_bounds
         self.terminate_on_enemy_goal = terminate_on_enemy_goal
         self.terminate_on_puck_stop = terminate_on_puck_stop
+        self.terminate_on_puck_hit_bottom = terminate_on_puck_hit_bottom
         
         # reward function
         self.compute_online_rewards = compute_online_rewards
@@ -188,7 +192,21 @@ class AirHockeyBaseEnv(ABC, Env):
             self.puck_initial_position = state_info['pucks'][0]['position']
             
         return obs, {'success': False}
-            
+
+    def reset_from_state(self, state_vector, seed=None):
+        if seed is None: # determine next seed, in a deterministic manner
+            seed = self.rng.randint(0, int(1e8))
+
+        self.rng = np.random.RandomState(seed)
+        sim_seed = self.rng.randint(0, int(1e8))
+        self.simulator.reset(sim_seed) # no point in getting state since no spawning
+        self.create_world_objects_from_state(state_vector)
+        self.simulator.instantiate_objects()
+        state_info = self.simulator.get_current_state()
+        self.current_state = state_info
+        obs = self.get_observation(state_info)
+        return obs, {'success': False}
+
     def get_puck_configuration(self, bad_regions=None):
         y_pos = None
         if bad_regions is not None:
@@ -253,7 +271,12 @@ class AirHockeyBaseEnv(ABC, Env):
         
         puck_within_home = False
         puck_within_alt_home = False
-        
+
+        if self.terminate_on_puck_hit_bottom:
+            puck_pos = state_info['pucks'][0]['position']
+            if abs(puck_pos[0] - self.table_x_bot) < self.puck_radius + 0.03:
+                terminated = True
+
         if self.terminate_on_enemy_goal:
             if not terminated and puck_within_home:
                 truncated = True
@@ -266,6 +289,15 @@ class AirHockeyBaseEnv(ABC, Env):
             if not truncated and np.linalg.norm(state_info['pucks'][0]['velocity']) < 0.01:
                 truncated = True
 
+        # puck passed the our paddle
+        if state_info['pucks'][0]['position'][0] > (state_info['paddles']['paddle_ego']['position'][0] + self.paddle_radius):
+            truncated = True
+
+        # puck touched our paddle
+        # if np.linalg.norm(state_info['pucks'][0]['position'][0] - state_info['paddles']['paddle_ego']['position'][0]) <= (self.paddle_radius + self.puck_radius + 0.1):
+            # puck_within_home = True
+            # terminated = True
+        
         puck_within_ego_goal = False
         puck_within_alt_goal = False
                     
@@ -330,7 +362,7 @@ class AirHockeyBaseEnv(ABC, Env):
             dvo.step(self.current_state, action)
         
 
-    def single_agent_step(self, action) -> tuple[np.ndarray, float, bool, bool, dict]:
+    def single_agent_step(self, action) -> Tuple[np.ndarray, float, bool, bool, dict]:
 
         next_state = self.simulator.get_transition(action)
         if self.current_timestep > 0:
@@ -358,7 +390,13 @@ class AirHockeyBaseEnv(ABC, Env):
         info['min_reward'] = self.min_reward_in_single_step
 
         self.current_timestep += 1
-        # is_finished = True
+        
+        # # DEBUG STATEMENETS 4 LINES BELOW!
+        # is_finished = False
+        # truncated = False
+        # # only end if timesteps
+        # if self.current_timestep >= self.max_timesteps:
+        #     is_finished = True
         
         obs = self.get_observation(next_state)
         return obs, reward, is_finished, truncated, info

@@ -168,6 +168,9 @@ class EvalCallback(BaseCallback):
                             else:
                                 robosuite_frames[key].append(current_img)
                 action, _ = self.model.predict(obs)
+                # action = np.array([-1, -1]) # debugging!
+                state = self.eval_env.simulator.get_current_state()                
+
                 obs, rew, done, truncated, info = self.eval_env.step(action)
                 done = done or truncated
                 undiscounted_return += rew

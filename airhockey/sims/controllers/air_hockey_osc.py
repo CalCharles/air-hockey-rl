@@ -128,7 +128,7 @@ class AirHockeyOperationalSpaceController(OperationalSpaceController):
             kp_limits=(0, 300),
             damping_ratio_limits=(0, 100),
             policy_freq=20,
-            position_limits=[[-0.1, -0.4, -10], [0.26, 0.4, 0]],
+            position_limits=None,
             orientation_limits=None,
             interpolator_pos=None,
             interpolator_ori=None,
@@ -136,13 +136,27 @@ class AirHockeyOperationalSpaceController(OperationalSpaceController):
             control_delta=True,
             uncouple_pos_ori=False,
             logger=None,
+            # TODO: replace harded coded values below, they should be determined by the config
             table_tilt=0.09,
             table_elevation=0.7874,
-            table_x_start=0.8,
-            z_offset=0.008,
+            table_length=2.1104,
+            table_width=1.0436,
+            table_depth=0.101,
+            rim_width=0.045,
             **kwargs,  # does nothing; used so no error raised when dict is passed with extra terms used previously
     ):
-
+        self.logger = logger
+        self.table_tilt = table_tilt
+        self.table_elevation = table_elevation
+        self.z_offset = table_depth
+        
+        self.table_x_offset = 2 * rim_width
+        self.table_y_offset = 2 * rim_width
+        
+        # TODO: position should be confined to a reachable area on the table
+        # FIXME: make these numbers relative/config-specified
+        position_limits = [[-0.1, -0.4, -10], [0.4, 0.4, 0]]
+        
         super().__init__(
             sim,
             eef_name,
@@ -167,14 +181,6 @@ class AirHockeyOperationalSpaceController(OperationalSpaceController):
             uncouple_pos_ori,
         )
 
-        self.logger = logger
-
-        self.table_tilt = table_tilt
-        self.table_elevation = table_elevation
-        self.table_x_start = table_x_start
-
-        self.z_offset =  0.101
-
         # fixed orientation for our air hockey controller
         self.fixed_ori = trans.euler2mat(np.array([0, math.pi - self.table_tilt, 0]))
         self.goal_ori = np.array(self.fixed_ori)
@@ -190,7 +196,6 @@ class AirHockeyOperationalSpaceController(OperationalSpaceController):
 
     def set_goal(self, action, set_pos=None, set_ori=None):
         super().set_goal(action)
-        
         self.goal_ori = self.fixed_ori
         self.goal_pos[2] = self.transform_z(self.goal_pos[0])
         self.goal_pos[0] = self.transform_x(self.goal_pos[0])
@@ -275,7 +280,7 @@ class AirHockeyOperationalSpaceController(OperationalSpaceController):
 
         desired_force = np.dot(np.dot(base_in_table[:3, :3], np.eye(3)), position_error_in_table[:3, 3]) * self.kp[:3]
         desired_force += np.dot(np.dot(base_in_table[:3, :3], np.eye(3)), velocity_error_in_table) * self.kd[:3]
-
+        
         desired_torque = np.multiply(np.array(ori_error), np.array(self.kp[3:6])) + np.multiply(
             vel_ori_error, self.kd[3:6]
         )
