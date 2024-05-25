@@ -259,10 +259,10 @@ class AirHockeyBaseEnv(ABC, Env):
         else:
             if self.terminate_on_out_of_bounds:
                 # check if we hit any walls or are above the middle of the board
-                if state_info['paddles']['paddle_ego']['position'][0] < 0 + self.paddle_radius or \
-                    state_info['paddles']['paddle_ego']['position'][0] > self.table_x_bot - self.paddle_radius or \
-                    state_info['paddles']['paddle_ego']['position'][1] > self.table_y_right - self.paddle_radius or \
-                    state_info['paddles']['paddle_ego']['position'][1] < self.table_y_left + self.paddle_radius:
+                if state_info['paddles']['paddle_ego']['position'][0] < 0 or \
+                    state_info['paddles']['paddle_ego']['position'][0] > self.table_x_bot or \
+                    state_info['paddles']['paddle_ego']['position'][1] > self.table_y_right or \
+                    state_info['paddles']['paddle_ego']['position'][1] < self.table_y_left:
                     truncated = True
                     print("paddle out of bounds with position: ", state_info['paddles']['paddle_ego']['position'])
                     print("X_min, X_max, Y_min, Y_max: ", 0 + self.paddle_radius, self.table_x_bot - self.paddle_radius, self.table_y_left + self.paddle_radius, self.table_y_right - self.paddle_radius)
