@@ -190,7 +190,15 @@ class AirHockeyRobosuite(AirHockeySim):
         puck_radius=0.03165,
         puck_damping=0.8,
         puck_density=30,
-        seed=0
+        seed=0,
+        # TODO: box2d specific config values not yet implemente
+        absorb_target = False,
+        force_scaling = 1000,
+        paddle_damping = 1,
+        paddle_density = 1,
+        block_density = 1,
+        gravity = 1,
+        max_force_timestep=1,
     ):
         # settings for table top
         table_full_size = (length / 2, width / 2, depth / 2)
@@ -282,7 +290,7 @@ class AirHockeyRobosuite(AirHockeySim):
             self.robosuite_env.reset()
         
         self.timestep = 0
-        self.puck_history = [(-2,0,0) for i in range(5)]
+        self.puck_history = [(-1,0,0) for i in range(5)]
         
         if not self.initialized_objects:
             self.puck_names = {}
@@ -639,7 +647,8 @@ class AirHockeyRobosuite(AirHockeySim):
         self.timestep += 1
 
         current_state = self.get_current_state()
-        self.puck_history.append(list(current_state['pucks'][0]["position"]) + [1])
+        if 'pucks' in current_state: self.puck_history.append(list(current_state['pucks'][0]["position"]) + [1])
+        else: self.puck_history.append([-2,0,0])
         return current_state
 
     def get_current_state(self):

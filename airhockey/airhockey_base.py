@@ -57,7 +57,8 @@ class AirHockeyBaseEnv(ABC, Env):
                  reward_velocity_limits_min=[0,0],
                  reward_velocity_limits_max=[0,0],
                  reward_movement_types=[],
-                 compute_online_rewards=True):
+                 compute_online_rewards=True,
+                 initialization_description_pth=""):
         
         if simulator == 'box2d':
             simulator_fn = get_box2d_simulator_fn()
@@ -290,7 +291,7 @@ class AirHockeyBaseEnv(ABC, Env):
                 truncated = True
 
         # puck passed the our paddle
-        if state_info['pucks'][0]['position'][0] > (state_info['paddles']['paddle_ego']['position'][0] + self.paddle_radius):
+        if 'pucks' in state_info and (state_info['pucks'][0]['position'][0] > (state_info['paddles']['paddle_ego']['position'][0] + self.paddle_radius)):
             truncated = True
 
         # puck touched our paddle
@@ -432,3 +433,50 @@ def get_observation_by_type(state_info, obs_type='vel', **kwargs):
         puck_hist = np.array(kwargs["puck_hist"][-5:]).flatten().tolist()
         obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel] + puck_hist)
         return obs
+
+def populate_state_info(paddles, pucks, blocks):
+        # populates a state infor dictionary based on the components
+        # takes in paddles, pucks and blocks as lists
+        # TODO: might need to handle NRRs
+        state_info = {}
+        
+        if len(paddles) > 0:
+            ego_paddle_x_pos = paddles[0][0]
+            ego_paddle_y_pos = paddles[0][1]
+            ego_paddle_x_vel = paddles[0][0]
+            ego_paddle_y_vel = paddles[0][1]
+            
+            state_info['paddles'] = {'paddle_ego': {'position': (ego_paddle_x_pos, ego_paddle_y_pos),
+                                                    'velocity': (ego_paddle_x_vel, ego_paddle_y_vel)}}
+            
+        if len(paddles) > 1:
+            alt_paddle_x_pos = paddles[1][0]
+            alt_paddle_y_pos = paddles[1][1]
+            alt_paddle_x_vel = paddles[1][0]
+            alt_paddle_y_vel = paddles[1][1]
+            
+            state_info['paddles']["paddle_alt"] = {'position': (alt_paddle_x_pos, alt_paddle_y_pos),
+                                                   'velocity': (alt_paddle_x_vel, alt_paddle_y_vel)}
+
+        if len(blocks) > 0:
+            state_info['blocks'] = []
+            for b in blocks:
+                # block initial positions come as index 2,3
+                block_x_pos = b[0]
+                block_y_pos = b[1]
+                initial_x_pos = b[2]
+                initial_y_pos = b[3]
+
+                state_info['blocks'].append({'current_position': (block_x_pos, block_y_pos),
+                                        'initial_position': (initial_x_pos, initial_y_pos)})
+
+        if len(pucks) > 0:
+            state_info['pucks'] = []
+            for p in pucks:
+                puck_x_pos = p[0]
+                puck_y_pos = p[1]
+                puck_x_vel = p[0]
+                puck_y_vel = p[1]
+                state_info['pucks'].append({'position': (puck_x_pos, puck_y_pos), 
+                                'velocity': (puck_x_vel, puck_y_vel)})
+        return state_info

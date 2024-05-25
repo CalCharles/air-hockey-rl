@@ -6,17 +6,22 @@ import numpy as np
 
 
 
-def homography_transform(image, get_save=True, rotate=False):
+def homography_transform(image, from_save = False, get_save=True, rotate=False, Mimg = None):
     mousepos = (0,0,1)
-    Mimg = np.load('../../assets/real/Mimg.npy')
+    if Mimg is None: Mimg = np.load('assets/real/Mimg.npy')
+
 
     upscale_constant = 3
     original_size = np.array([640, 480])
     visual_downscale_constant = 2
     save_downscale_constant = 2
     offset_constants = np.array((2100, 500))
+
     image = cv2.rotate(image, cv2.ROTATE_180)
     save_image = None
+    if from_save:
+        image = cv2.rotate(image, cv2.ROTATE_180)
+        image = cv2.resize(image, (int(640 * save_downscale_constant), int(480 *save_downscale_constant)))
     if get_save:
         save_image = cv2.resize(image, (int(640/save_downscale_constant), int(480/save_downscale_constant)))
     image = cv2.resize(image, (int(640*upscale_constant), int(480*upscale_constant)), 

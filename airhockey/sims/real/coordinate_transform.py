@@ -46,7 +46,7 @@ def smoothen(history_pos, history_vel, relative, limits):
 
 def compute_pol(x,y,true_pose, lims, move_lims):
     rmax_x, rmax_y = move_lims
-    relx, rely = (x - true_pose[0]), (-y-true_pose[1])
+    relx, rely = (x - true_pose[0]), (y-true_pose[1])
     rad = lambda x,y: np.sqrt(x ** 2 + y ** 2)
     dist = rad(relx, rely)
     polx, poly = min(dist, rmax_x) * relx / dist + true_pose[0], min(dist, rmax_y) * rely / dist + true_pose[1] # Project to circle

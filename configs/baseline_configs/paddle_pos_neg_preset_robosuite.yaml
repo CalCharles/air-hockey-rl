@@ -13,14 +13,33 @@ air_hockey:
     paddle_density: 2500
     puck_density: 250
     block_density: 1000
-    render_size: 360
     gravity: -0.5
     max_force_timestep: 100 # max force we can apply at one timestep
-  
-  simulator: box2d # or robosuite
+    render_size: 240
+    length: 2.1104
+    width: 1.0436
+    depth: 0.101
+    rim_width: 0.045
+    table_tilt: 0.09
+    table_elevation: 0.7874
+    # 102: <geom pos="0 0 -0.2" name="puck" type="cylinder" material="red" size="puck_radius 0.009" condim="4" priority="0" group="1"/>
+    puck_radius: 0.03175
+    paddle_radius: 0.0508
+    block_width: 0.0254 # who?
+    #97: <joint name="puck_x" type="slide" axis="1 0 0" damping="0.01" limited="false"/>
+    #98: <joint name="puck_y" type="slide" axis="0 1 0" damping="0.01" limited="false"/>
+    puck_damping: 0.01
+    puck_density: 3530
+    max_paddle_vel: 2
+    max_puck_vel: 2
+    render_size: 360
+    has_renderer: true
+
+  simulator: robosuite # or robosuite
   max_timesteps: 300
   # reward_type: 'goal_position_velocity'
   task: 'paddle_goal_position_neg'
+  initialization_description_pth: 'assets/preset_init/paddle_reach_small.txt'
   num_paddles: 1
   num_pucks: 0
   num_blocks: 0
@@ -34,7 +53,7 @@ air_hockey:
   terminate_on_enemy_goal: false
   terminate_on_puck_stop: false
   truncate_rew: -1
-  wall_bumping_rew: -1
+  wall_bumping_rew: 0
   direction_change_rew: -0.05
   horizontal_vel_rew: -0.1
   diagonal_motion_rew: -0.1
@@ -43,10 +62,11 @@ air_hockey:
   # Reward region parameters
   num_negative_reward_regions: 10
   negative_reward_range: [-1,-1]
-  reward_region_shapes: ["circle", "rect", "ellipse"]
+  # reward_region_shapes: ["circle", "rect", "ellipse"]
+  reward_region_shapes: ["ellipse"]
   reward_region_scale_range: [0,0]
-  reward_normalized_radius_min: [0.05,0.05]
-  reward_normalized_radius_max: [0.25,0.25]  
+  reward_normalized_radius_min: [1.00,1.00]
+  reward_normalized_radius_max: [1.00,1.00]  
   # reward_velocity_limits
   # reward_movement_types
 # Training Parameters

@@ -53,8 +53,11 @@ def repair_old_real_data(data_dir, target_dir):
 # repair_old_real_data("/datastor1/calebc/public/data/mouse/cleaned/", "/datastor1/calebc/public/data/mouse/updated_old/")
 # after this, move from updated_old to cleaned_all
 
-def read_new_real_data(data_dir):
-    trajectories = list()
+def read_new_real_data(data_dir, num_load=-1):
+    values = list()
+    images = list()
+    dones = list()
+    itr = 0
     for file in os.listdir(data_dir):
         traj = list()
         print(file)
@@ -63,24 +66,23 @@ def read_new_real_data(data_dir):
                 data_dict = dict()
                 dat_imgs = np.array(f['train_img'])
                 measured_vals = np.array(f['train_vals'])
-                for mv in measured_vals:
+                for im, mv in zip(dat_imgs, measured_vals):
                     # print(mv, len(mv))
                     updating_dict = slicer(mv)
-                    if updating_dict["safety"][0] != 1: print(updating_dict)
-                    traj.append(flatten(updating_dict))
+                    values.append(updating_dict)
+                    images.append(im)
+                    dones.append(0)
+                    
+                dones.pop(-1)
+                dones.append(1)
 
             except Exception as e:
                 print('Error in file:', file, e)
                 continue
             print("added trajectory ", file)
-        if len(traj) > 0:
-            vals = np.stack(traj, axis=0)
-            imgs = dat_imgs
-
-            trajectories.append(traj)
-        else:
-            print("SKIP", file)
-    return trajectories
+        itr += 1
+        if itr > num_load and num_load > 0: break
+    return values, images, dones
 # read_new_real_data("/datastor1/calebc/public/data/mouse/cleaned_new/")
 
 '''
@@ -152,4 +154,4 @@ def collect_new_state_data(data_dir, state_dir, target_dir):
             print("SKIP", file)
     return trajectories
 
-collect_new_state_data("/datastor1/calebc/public/data/mouse/cleaned_all/", "/datastor1/calebc/public/data/mouse/clean_state_trajectories", "/datastor1/calebc/public/data/mouse/state_data_all")
+# collect_new_state_data("/datastor1/calebc/public/data/mouse/cleaned_all/", "/datastor1/calebc/public/data/mouse/clean_state_trajectories", "/datastor1/calebc/public/data/mouse/state_data_all")

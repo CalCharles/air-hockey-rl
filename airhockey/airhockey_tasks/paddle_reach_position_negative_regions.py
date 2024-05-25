@@ -1,3 +1,4 @@
+import copy
 import numpy as np
 from gymnasium.spaces import Box
 from gymnasium import spaces
@@ -43,8 +44,8 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
                  reward_velocity_limits_min=[0,0],
                  reward_velocity_limits_max=[0,0],
                  reward_movement_types=[],
-                 initialization_description=dict()):
-        
+                 initialization_description_pth=""):
+        self.init_dict = self.load_initialization(initialization_description_pth)
         self.num_negative_reward_regions = num_negative_reward_regions
         self.negative_reward_range = negative_reward_range
         self.reward_region_shapes = reward_region_shapes
@@ -84,6 +85,42 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
     def from_dict(state_dict):
         return AirHockeyPaddleReachPositionNegRegionsEnv(**state_dict)
 
+    def load_initialization(self, pth):
+        '''
+        We can initialize preset arrangements as a n x m grid with the hashes:
+        s: paddle
+        x: negative reward region
+        a: allowed to initialize a negative region here
+        o: nothing
+        g: goal
+        TODO: we could also look at all the files in the path and use all of them as initializations
+        '''
+        lines = list()
+        # TODO: we only specify a single paddle/goal pos for now, but we could do multiple
+        self.init_paddle_pos = None 
+        self.init_goal_pos = None
+        self.init_negative_pos = list()
+        self.init_allowed_negative_pos = list()
+        if len(pth):
+            with open(pth, 'r') as file:
+                line = file.readline()
+                line_counter = 0
+                while line:
+                    for col, v in enumerate(line):
+                        if v == 's':
+                            self.init_paddle_pos = [line_counter, col]
+                        elif v == 'x':
+                            self.init_negative_pos.append([line_counter, col])
+                        elif v == 'a':
+                            self.init_allowed_negative_pos.append([line_counter, col])
+                        elif v == 'g':
+                            self.init_goal_pos = [line_counter, col]
+                    line_counter += 1
+                    lines.append(line)
+                    line = file.readline()
+            self.grid_dims = [len(lines), len(lines[0])]
+        else: # initialize these values to -1, but probably unnecessary
+            self.grid_dims = [-1,-1]
 
     def initialize_spaces(self):
         # setup observation / action / reward spaces
@@ -111,15 +148,42 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
 
-        radius_range = np.array((self.table_x_bot/ 2 * np.array(self.reward_normalized_radius_min), (self.table_y_right - self.table_y_left) * np.array(self.reward_normalized_radius_max) / 2))
-        self.reward_regions = [RewardRegion(self.negative_reward_range, 
+        if self.grid_dims is not None:
+            self.grid_lengths = np.array([(self.table_x_bot - 0) / self.grid_dims[0], 
+                                 (self.table_y_right - self.table_y_left) / self.grid_dims[1]])
+            self.grid_midpoints = list()
+            for i in np.arange(self.grid_dims[0]):
+                midpoint_row = list()
+                for j in np.arange(self.grid_dims[1]):
+                    midpoint_row.append(np.array([0, self.table_y_left]) + np.array([i + 0.5,j + 1.0]) * self.grid_lengths)
+                self.grid_midpoints.append(midpoint_row)
+            self.grid_midpoints = np.array(self.grid_midpoints)
+
+        if len(self.init_negative_pos):
+            # TODO: ignores the num_negative_reward_region, could have those initialized randomly
+            for pos in self.init_negative_pos:
+                radius_range = [np.array(self.grid_lengths) / 2, np.array(self.grid_lengths) / 2]
+                pos = copy.deepcopy(self.grid_midpoints[pos[0], pos[1]])
+                self.reward_regions.append(RewardRegion(self.negative_reward_range, 
+                                                            self.reward_region_scale_range, 
+                                                            [np.array(pos), np.array(pos)],
+                                                            radius_range, shapes=self.reward_region_shapes, object_radius = self.paddle_radius))
+        # TODO: implement the allowed regions code
+        # elif len(self.init_allowed_negative_pos.keys()):
+        else:
+            radius_range = np.array((self.table_x_bot/ 2 * np.array(self.reward_normalized_radius_min), (self.table_y_right - self.table_y_left) * np.array(self.reward_normalized_radius_max) / 2))
+            self.reward_regions = [RewardRegion(self.negative_reward_range, 
                                                      self.reward_region_scale_range, 
                                                      [np.array([0, self.table_y_left]), np.array([self.table_x_bot,self.table_y_right])],
-                                                     radius_range, shapes=self.reward_region_shapes) for _ in range(self.num_negative_reward_regions)]
+                                                     radius_range, shapes=self.reward_region_shapes, object_radius = self.paddle_radius) for _ in range(self.num_negative_reward_regions)]
 
     def create_world_objects(self):
         name = 'paddle_ego'
-        pos, vel = self.get_paddle_configuration(name)
+        if self.init_paddle_pos is None: pos, vel = self.get_paddle_configuration(name)
+        else: 
+            pos = copy.deepcopy(self.grid_midpoints[self.init_paddle_pos[0], self.init_paddle_pos[1]])
+            vel = (0,0)
+            print("init paddle", self.init_paddle_pos, pos)
         self.simulator.spawn_paddle(pos, vel, name)
         
     def validate_configuration(self):
@@ -149,12 +213,13 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
         dist = np.linalg.norm(achieved_goal[:, :2] - desired_goal[:, :2], axis=1)
         max_euclidean_distance = np.linalg.norm(np.array([self.table_x_bot, self.table_y_right]) - np.array([self.table_x_top, self.table_y_left]))
         # reward for closer to goal
-        reward = 1 - (dist / max_euclidean_distance)
+        reward = - (dist / max_euclidean_distance)
 
         for nrr in self.reward_regions:
             reward += nrr.check_reward(achieved_goal)
 
-        print(dist / max_euclidean_distance, 1 - (dist / max_euclidean_distance), reward)
+        print(achieved_goal, desired_goal, reward)
+        # print(dist / max_euclidean_distance, 1 - (dist / max_euclidean_distance), reward)
         if single:
             reward = reward[0]
         return reward
@@ -176,7 +241,10 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
         max_y = self.table_y_right
         min_x = 0
         max_x = self.table_x_bot
-        goal_position = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
+        if self.init_goal_pos is None: goal_position = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
+        else: 
+            goal_position = copy.deepcopy(self.grid_midpoints[self.init_goal_pos[0], self.init_goal_pos[1]])
+            print("init_goal", self.grid_midpoints,self.table_x_bot, self.init_goal_pos, goal_position)
         self.goal_radius = self.min_goal_radius # not too important
         self.goal_pos = goal_position if self.goal_set is None else self.goal_set[0, :2]
             
