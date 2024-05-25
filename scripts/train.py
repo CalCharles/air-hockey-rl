@@ -15,7 +15,7 @@ import os
 import yaml
 from utils import EvalCallback, save_evaluation_gifs, save_tensorboard_plots
 from curriculum.classifier_curriculum import CurriculumCallback
-
+import h5py
             
 def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_prior_task_results=False, progress_bar=False):
     """
@@ -203,6 +203,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
         if use_wandb:
             wandb_run.finish()
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Demonstrate the air hockey game.')
     parser.add_argument('--cfg', type=str, default=None, help='Path to the configuration file.')
@@ -231,3 +232,5 @@ if __name__ == "__main__":
     clear_prior_task_results = args.clear
     progress_bar = args.progress_bar
     train_air_hockey_model(air_hockey_cfg, use_wandb, device, clear_prior_task_results, progress_bar)
+
+    # python scripts/train.py --cfg configs/gat/puch_height2.yaml
