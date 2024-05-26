@@ -39,6 +39,12 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
         pos, vel = self.get_paddle_configuration(name)
         self.simulator.spawn_paddle(pos, vel, name)
         
+    def create_world_objects_from_state(self, state_vector):
+
+        name = 'paddle_ego'
+        paddle_pos, paddle_vel = state_vector[:2], state_vector[2:4]
+        self.simulator.spawn_paddle(paddle_pos, paddle_vel, name)
+
     def validate_configuration(self):
         assert self.num_pucks == 0
         assert self.num_blocks == 0

@@ -49,14 +49,15 @@ def get_frames(renderer, env, model, n_eps_viz, n_eval_eps, cfg):
                             else:
                                 robosuite_frames[key].append(current_img)
                 observations.append(obs)
-                action, _ = model.predict(obs)
+                # action, _ = model.predict(obs)
+                action = np.random.uniform(-1, 1, size=(1,6))
                 actions.append(action)
                 obs, rew, done, info = env_test.step(action)
                 rewards.append(rew)
                 dones.append(done[0] or info[0]['TimeLimit.truncated'])
                 done = done[0] or info[0]['TimeLimit.truncated']
         
-        dataset['observations'] = np.array(observations)
+        dataset['states'] = np.array(observations)
         dataset['actions'] = np.array(actions)
         dataset['rewards'] = np.array(rewards)
         dataset['dones'] = np.array(dones)
