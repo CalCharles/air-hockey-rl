@@ -7,10 +7,7 @@ import copy
 import numpy as np
 import sys
  
-# adding Folder_2 to the system path
-sys.path.insert(0, '/Users/yuchunfeng/Downloads/air-hockey-rl-main')
-
-from dataset_management.repair_data import read_new_real_data
+from dataset_management.repair_data import read_new_real_data, read_real_data
 from airhockey import AirHockeyEnv
 from airhockey.airhockey_base import populate_state_info
 from airhockey.renderers import AirHockeyRenderer
@@ -42,7 +39,8 @@ class Visualizer:
         self.renderer = AirHockeyRenderer(self.air_hockey)
         self.keyboard_scheme = 'wasd'
         self.print_reward = air_hockey_cfg['print_reward']
-        self.values, self.images, self.dones = read_new_real_data(dataset_path, num_load)
+        # self.values, self.images, self.dones = read_new_real_data(dataset_path, num_load)
+        self.data_dict = read_real_data(dataset_path, num_load)
 
     def step_frame(self, key):
         """
@@ -90,7 +88,7 @@ class Visualizer:
         Mimg = np.load('assets/real/Mimg.npy')
 
         while True:
-            frame, save_image = homography_transform(self.images[frame_idx], from_save = True, rotate=False, Mimg = Mimg)
+            frame, save_image = homography_transform(self.data_dict["image"][frame_idx], from_save = True, rotate=False, Mimg = Mimg)
             for r in self.air_hockey.reward_regions:
                 # print("reward_regions", r.state, r.radius)
                 offset_constants = np.array((2100, 500))
@@ -121,13 +119,13 @@ class Visualizer:
             # py = -py
 
             frame_idx += self.step_frame(key)
-            frame_idx = min(max(0, frame_idx), len(self.values) - 1)
-            paddles = [copy.deepcopy(self.values[frame_idx]["pose"][:2])]
+            frame_idx = min(max(0, frame_idx), len(self.data_dict["pose"]) - 1)
+            paddles = [copy.deepcopy(self.data_dict["pose"][frame_idx][:2])]
             # print("paddle", self.values[frame_idx]["pose"][:2])
             # paddle_coord = ((paddles[0][0])*3000, (paddles[0][1])*3000 ) + offset_constants
             # print('debug p',paddles[0][0], paddles[0][0], (paddles[0][0])*1000 *3, paddle_coord/2)
             paddles[0][0] = paddles[0][0] + 1.0
-            pucks = [self.values[frame_idx]["puck"][:2] if "puck" in self.values[frame_idx] else [-1,0,0]]
+            pucks = [self.data_dict["puck"][frame_idx][:2] if "puck" in self.data_dict else [-1,0,0]]
             self.air_hockey.simulator.paddles['paddle_ego'].position = paddles[0]
             state_dict = populate_state_info(paddles, pucks, [])
             rew = self.air_hockey.get_base_reward(state_dict)

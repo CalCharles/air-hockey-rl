@@ -160,5 +160,36 @@ def collect_new_state_data(data_dir, state_dir, target_dir):
             print("SKIP", file)
     return trajectories
 
+def read_real_data(data_dir, num_load=-1):
+    data_dict = dict()
+    itr = 0
+    for file in os.listdir(data_dir):
+        print(file)
+        with h5py.File(os.path.join(data_dir, file), 'r') as f:
+            try:
+                for k in f.keys():
+                    # print(mv, len(mv))
+                    if k in data_dict:
+                        data_dict[k].append(np.array(f[k]))
+                    else:
+                        data_dict[k] = [np.array(f[k])]
+                dones = np.zeros(len(f[k]))
+                dones[-1] = 1
+                if "done" in data_dict:
+                    data_dict["done"].append(dones)
+                else:
+                    data_dict["done"] = [dones]
+
+            except Exception as e:
+                print('Error in file:', file, e)
+                continue
+            print("added trajectory ", file)
+        itr += 1
+        if itr > num_load and num_load > 0: break
+    for k in data_dict.keys():
+        data_dict[k] = np.concatenate(data_dict[k], axis=0)
+    return data_dict
+# read_new_real_data("/datastor1/calebc/public/data/mouse/cleaned_new/")
+
 if __name__ == "__main__":
     collect_new_state_data("/datastor1/calebc/public/data/mouse/cleaned_all/", "/datastor1/calebc/public/data/mouse/all_cleaned_state_trajectories_5-25-2024/", "/datastor1/calebc/public/data/mouse/state_data_all")
