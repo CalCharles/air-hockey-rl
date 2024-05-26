@@ -103,11 +103,7 @@ if __name__ == '__main__':
         air_hockey_cfg = yaml.safe_load(f)
     # param_names = list(air_hockey_cfg['air_hockey']["simulator_params"].keys())
 
-    # non_param_names = ['seed', 'render_size', 'absorb_target', 'max_force_timestep']
-    # for name in param_names:
-    #     if name in non_param_names:
-    #         param_names.remove(name)
-    param_names = ['force_scaling', 'gravity', 'paddle_damping', 'paddle_density', 'puck_damping', 'puck_density']
+    param_names = ['force_scaling', 'max_force_timestep', 'paddle_damping', 'paddle_density'] # 'puck_damping', 'puck_density']
     param_names.sort()
     
     air_hockey_params = air_hockey_cfg['air_hockey']
@@ -131,10 +127,10 @@ if __name__ == '__main__':
 
 
     wandb.init(project="air_hockey_rl", entity="carltheq", config=air_hockey_cfg)
-    wandb.run.name = "sysid_CEM_puck_touch"
+    wandb.run.name = "sysid_CEM_paddle_reach"
 
 
-    new_config = assign_values(initial_params, param_names, air_hockey_params)
+    new_config = assign_values(initial_params, param_names, air_hockey_params_cp)
     eval_env = AirHockeyEnv(new_config)
     renderer = AirHockeyRenderer(eval_env)
     frames = get_frames(renderer, eval_env, data['actions'])
@@ -144,13 +140,19 @@ if __name__ == '__main__':
     fps = 30 # slightly faster than 20 fps (simulation time), but makes rendering smooth
     imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(fps))
 
+    lower_bounds = np.array([900, 90, 2, 2000])
+    upper_bounds = np.array([1100, 110, 4, 3000])
+    initial_params = [900, 100, 2, 2000]
 
-    planner = CEMPlanner(eval_fn=lambda params, trajs: get_value(params, param_names, air_hockey_params, trajs), trajectories=data, elite_frac=0.2, n_samples=500, n_iterations=20, variance=0.1, lower_bounds=None, upper_bounds=None)
+    planner = CEMPlanner(eval_fn=lambda params, trajs: get_value(params, param_names, air_hockey_params_cp, trajs), 
+                         trajectories=data, elite_frac=0.2, n_samples=500, n_iterations=200, variance=0.1, lower_bounds=None, upper_bounds=None, param_names=param_names)
+    # TODO Implemetn CMA-ES planner also
+    
     optimal_parameters = planner.optimize(initial_params)
     print(f"Optimal Parameters: {optimal_parameters}")
 
 
-    new_config = assign_values(optimal_parameters, param_names, air_hockey_params)
+    new_config = assign_values(optimal_parameters, param_names, air_hockey_params_cp)
     eval_env = AirHockeyEnv(new_config)
     renderer = AirHockeyRenderer(eval_env)
     frames = get_frames(renderer, eval_env, data['actions'])

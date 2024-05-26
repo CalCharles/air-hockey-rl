@@ -4,8 +4,10 @@ import wandb
 import time
 from multiprocessing import Pool
 
+from scripts.domain_adaptation.normalization import MinMaxNormalizer
+
 class CEMPlanner:
-    def __init__(self, eval_fn, trajectories, elite_frac=0.2, n_samples=100, n_iterations=10, variance=0.1, lower_bounds=None, upper_bounds=None):
+    def __init__(self, eval_fn, trajectories, elite_frac=0.2, n_samples=100, n_iterations=10, variance=0.1, lower_bounds=None, upper_bounds=None, param_names=None):
         # Existing initialization
         self.eval_fn = eval_fn
         self.data = trajectories
@@ -16,13 +18,18 @@ class CEMPlanner:
         # Initialize distribution parameters
         self.mean = None
         self.std = None
+        self.param_names = param_names
         # New: Parameter bounds
         self.lower_bounds = np.array(lower_bounds) if lower_bounds is not None else None
         self.upper_bounds = np.array(upper_bounds) if upper_bounds is not None else None
+        self.normalizer = MinMaxNormalizer(min_val=self.lower_bounds, max_val=self.upper_bounds)
 
     def initialize(self, initial_guess):
         """Initialize the distribution parameters based on the initial guess."""
-        self.mean = np.array(initial_guess)
+        initial_guess = np.array(initial_guess)
+        initial_guess = self.normalizer.normalize(initial_guess)
+
+        self.mean = initial_guess
         self.std = np.ones_like(self.mean) * self.variance
 
     def sample_actions(self):
@@ -30,7 +37,8 @@ class CEMPlanner:
         samples = np.random.randn(self.n_samples, self.mean.shape[0]) * self.std + self.mean
         # Clip the samples if bounds are defined
         if self.lower_bounds is not None and self.upper_bounds is not None:
-            np.clip(samples, self.lower_bounds, self.upper_bounds, out=samples)
+            samples = self.normalizer.denormalize(samples)
+            samples = np.clip(samples, self.lower_bounds, self.upper_bounds)
         return samples
     
     def sample_trajectories(self, num_samples=20, traj_length=20):
@@ -73,6 +81,8 @@ class CEMPlanner:
         for iteration in pbar:
             start_time = time.time()
             samples = self.sample_actions()
+            for dim in range(len(self.param_names)):
+                wandb.log({self.param_names[dim]: self.mean[dim]}, step=iteration)
             total_sampling_time += time.time() - start_time
 
             trajs = self.sample_trajectories(num_samples=2, traj_length=20)
@@ -85,7 +95,7 @@ class CEMPlanner:
 
             avg_reward = np.mean(rewards)
             pbar.set_description(f"Iteration {iteration}, Avg Return: {avg_reward:.2f}")
-            wandb.log({"Mean": self.mean, "Std": self.std, "Average Return": avg_reward}, step=iteration)
+            wandb.log({"Average Return": avg_reward}, step=iteration)
             
             start_time = time.time()
             self.update_plan(rewards, samples)
