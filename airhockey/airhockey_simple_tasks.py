@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 from gymnasium.spaces import Box
 from .airhockey_base import AirHockeyBaseEnv
@@ -54,19 +56,27 @@ class AirHockeyPuckVelEnv(AirHockeyBaseEnv):
         return obs
 
     def get_base_reward(self, state_info):
+        puck_pos = state_info['pucks'][0]['position']
+        paddle_pos = state_info['paddles']['paddle_ego']['position']
+        min_dist = self.paddle_radius + self.puck_radius
+        dist = np.linalg.norm(np.array(puck_pos) - np.array(paddle_pos))
+
         # reward for positive velocity towards the top of the board
-        reward = -state_info['pucks'][0]['velocity'][0]
-        max_rew = 2 # estimated max vel
-        min_rew = 0  # min acceptable good velocity
-        if reward < min_rew:
-            return 0, False
-        reward = min(reward, max_rew)
-        reward = (reward - min_rew) / (max_rew - min_rew)
-        success = reward > 0.5 and self.current_timestep > 25
+        puck_vel = -state_info['pucks'][0]['velocity'][0]
+        puck_height = -puck_pos[0]
+
+        reward = max(puck_vel * 5, 0) + 0.5 / dist
+        success = puck_height > 0.5 and self.current_timestep > 25
         return reward, success
 
 
 class AirHockeyPuckHeightEnv(AirHockeyBaseEnv):
+
+    def __init__(self, *args, **kwargs):
+        super(AirHockeyPuckHeightEnv, self).__init__(*args, **kwargs)
+        self.num_touches = 0
+        self.touching = False
+
     def initialize_spaces(self):
         # setup observation / action / reward spaces
         paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
@@ -117,16 +127,34 @@ class AirHockeyPuckHeightEnv(AirHockeyBaseEnv):
         return obs
 
     def get_base_reward(self, state_info):
-        reward = -state_info['pucks'][0]['position'][0]
-        # min acceptable reward is 0 height and above
-        reward = max(reward, 0)
-        # let's normalize reward w.r.t. the top half length of the table
-        # aka within the range [0, self.length / 2]
-        max_rew = self.length / 2
-        min_rew = 0
-        reward = (reward - min_rew) / (max_rew - min_rew)
-        success = reward > 0.5 and self.current_timestep > 25
+        puck_height = -state_info['pucks'][0]['position'][0]
+        puck_vel = -state_info['pucks'][0]['velocity'][0]
+        puck_pos = state_info['pucks'][0]['position']
+
+        paddle_pos = state_info['paddles']['paddle_ego']['position']
+        min_dist = self.paddle_radius + self.puck_radius
+        dist = np.linalg.norm(np.array(puck_pos) - np.array(paddle_pos))
+
+        reward = max(puck_vel, 0) * 5 if puck_height < 0 else max(puck_vel, 0) * -10
+        success = puck_height > 0 and self.current_timestep > 25
+
+        if dist - min_dist < 0.05:
+            if not self.touching:
+                reward += 20
+                self.num_touches += 1
+            self.touching = True
+        else:
+            self.touching = False
+
+
+        if success:
+            reward = 60
         return reward, success
+
+    def has_finished(self, state_info, multiagent=False):
+        terminated, truncated, puck_within_home, puck_within_alt_home, puck_within_ego_goal, puck_within_alt_goal = super().has_finished(state_info, multiagent)
+        terminated = terminated or self.success_in_ep
+        return terminated, truncated, puck_within_home, puck_within_alt_home, puck_within_ego_goal, puck_within_alt_goal
 
 
 class AirHockeyPuckCatchEnv(AirHockeyBaseEnv):
@@ -352,15 +380,8 @@ class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
     @staticmethod
     def from_dict(state_dict):
         return AirHockeyPuckTouchEnv(**state_dict)
+
     def create_world_objects(self):
-        puck_x_low = self.length / 5
-        puck_x_high = self.length / 3
-        # puck_y_low = -self.width / 2 + self.puck_radius
-        # puck_y_high = self.width / 2 - self.puck_radius
-        # puck_y_low = -self.width / 2 + self.simulator.table_y_offset + self.simulator.puck_radius
-        # puck_y_high = self.width / 2 - self.simulator.table_y_offset - self.simulator.puck_radius
-        # puck_x = self.rng.uniform(low=puck_x_low, high=puck_x_high)
-        # puck_y = self.rng.uniform(low=puck_y_low, high=puck_y_high)
         name = 'puck_{}'.format(0)
         pos, vel = self.get_puck_configuration()
         self.simulator.spawn_puck(pos, vel, name)
@@ -383,7 +404,6 @@ class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
         puck_y_pos = state_info['pucks'][0]['position'][1]
         puck_x_vel = state_info['pucks'][0]['velocity'][0]
         puck_y_vel = state_info['pucks'][0]['velocity'][1]
-        puck_y_vel = state_info['pucks'][0]['velocity'][1]
         obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
         return obs
     def get_base_reward(self, state_info):
@@ -399,15 +419,6 @@ class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
         puck_initial_position = self.puck_initial_position
         puck_current_position = state_info['pucks'][0]['position']
         delta = np.linalg.norm(np.array(puck_initial_position) - np.array(puck_current_position))
-        epsilon = 0.01 + min_dist
-        # if delta >= epsilon:
-        #     reward -= 1
-        # success = reward >= 0.9 and dist < epsilon
-        success = dist < epsilon
-        # print("dist: ", dist)
-        # print("dist < epsilon: ", dist < epsilon)
-        # print("reward: ", reward)
-        # print("===========================================")
         epsilon = 0.01 + min_dist
         # if delta >= epsilon:
         #     reward -= 1
