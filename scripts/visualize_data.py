@@ -5,11 +5,6 @@ import cv2
 import time
 import copy
 import numpy as np
-import sys
- 
-# adding Folder_2 to the system path
-sys.path.insert(0, '/Users/yuchunfeng/Downloads/air-hockey-rl-main')
-
 from dataset_management.repair_data import read_new_real_data
 from airhockey import AirHockeyEnv
 from airhockey.airhockey_base import populate_state_info
@@ -107,8 +102,11 @@ class Visualizer:
                 # print("reward_regions", center_coordinates_new, pixel_radius)
                 # Draw the circle on the frame
                 cv2.ellipse(frame, center_coordinates_new, pixel_radius, angle=0, startAngle=0, endAngle=360, color=color, thickness=thickness)
-
-                # cv2.circle(frame, center_coordinates_new, radius, color=color, thickness=thickness)
+            paddles = [copy.deepcopy(self.values[frame_idx]["pose"][:2])]
+            paddle_coord = (((paddles[0][0])*1000, (-paddles[0][1])*1000 ) + offset_constants) /2
+            center_coordinates = (int(np.round(paddle_coord[0])), int(np.round(paddle_coord[1])))  # Example coordinates (x, y)
+                
+            cv2.circle(frame, center_coordinates, radius=0.0508*1000/2, color=color, thickness=thickness)
             cv2.imshow("frame", frame)
             # cv2.imwrite('./images_debug.png', frame) 
             key = cv2.waitKey(10)
