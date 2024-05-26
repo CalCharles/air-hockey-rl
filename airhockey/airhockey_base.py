@@ -190,8 +190,9 @@ class AirHockeyBaseEnv(ABC, Env):
         
         if 'pucks' in state_info and len(state_info['pucks']) > 0:
             self.puck_initial_position = state_info['pucks'][0]['position']
-            
-        return obs, {'success': False}
+        
+        # return obs, {'success': False}.update(self.simulator_params)
+        return obs, self.simulator_params
             
     def get_puck_configuration(self, bad_regions=None):
         y_pos = None
@@ -278,6 +279,12 @@ class AirHockeyBaseEnv(ABC, Env):
         # puck passed the our paddle
         if state_info['pucks'][0]['position'][0] > (state_info['paddles']['paddle_ego']['position'][0] + self.paddle_radius):
             truncated = True
+
+        # puck touched our paddle
+        if np.linalg.norm(state_info['pucks'][0]['position'][0] - state_info['paddles']['paddle_ego']['position'][0]) <= (self.paddle_radius + self.puck_radius + 0.03):
+            puck_within_home = True
+            terminated = True
+
         
         puck_within_ego_goal = False
         puck_within_alt_goal = False
@@ -380,6 +387,7 @@ class AirHockeyBaseEnv(ABC, Env):
         #     is_finished = True
         
         obs = self.get_observation(next_state)
+        info.update(self.simulator_params)
         return obs, reward, is_finished, truncated, info
     
     def multi_step(self, joint_action):
