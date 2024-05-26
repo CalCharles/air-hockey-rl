@@ -52,6 +52,24 @@ class ReplayMemory(object):
             print(f"Element {i}: {transition}")
 
 
+
+class GATWrapper:
+    def __init__(self, env, forward_model, inverse_model):
+        self.env = env
+        self.forward_model = forward_model
+        self.inverse_model = inverse_model
+    
+    def reset(self):
+        return self.env.reset()
+    
+    def step(self, action):
+        s = torch.tensor(self.env.get_observation())
+        a = torch.tensor(action)
+        next_state = self.forward_model(s, a)
+        grounded_action = self.inverse_model(s, next_state)
+        return self.env.step(grounded_action)
+
+
 """-------------------------------------- Forward Model --------------------------------------"""
 def compute_loss(predictions, targets):
     _loss = F.mse_loss(predictions, targets)
@@ -168,7 +186,8 @@ class GroundedActionTransformation():
         if i == 0:
             model = PPO("MlpPolicy", self.sim_env, verbose=1)
         else:
-            model = PPO.load(self.policy, env=self.sim_env)
+            grounded_sim_env = GATWrapper(self.sim_env, self.forward_model, self.inverse_model)
+            model = PPO.load(self.policy, env=grounded_sim_env)
             obs = self.sim_env.get_observation(self.sim_current_state) # get current observation
             action, _states = model.predict(obs)
             grounded_action = self.grounded_transform(state=self.sim_current_state, action=action) # action transform
