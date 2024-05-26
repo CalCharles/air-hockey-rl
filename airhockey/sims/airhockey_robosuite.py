@@ -528,7 +528,7 @@ class AirHockeyRobosuite(AirHockeySim):
                     "@type": "slide",
                     "@axis": "1 0 0",
                     "@damping": f"{self.puck_damping}",
-                    "@damping": "0.01",
+                    # "@damping": "0.01",
                     "@limited": "false",
                 },
                 {
@@ -563,7 +563,7 @@ class AirHockeyRobosuite(AirHockeySim):
                 "inertial": {
                     "@pos": "0 0 0",
                     # "@mass": f"{puck_mass}",
-                    "@mass": 0.01,
+                    "@mass": 0.001,
                     "@diaginertia": "2.5e-6 2.5e-6 5e-6",
                 },
             }
