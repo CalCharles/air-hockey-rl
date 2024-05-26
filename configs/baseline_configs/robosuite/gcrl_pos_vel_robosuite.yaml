@@ -29,13 +29,13 @@ air_hockey:
     table_tilt: 0.09
     width: 1.0436
   stand_still_rew: 0.01
-  task: puck_touch
+  task: puck_goal_position_velocity
   terminate_on_enemy_goal: true
   terminate_on_out_of_bounds: true
-  terminate_on_puck_stop: false
+  terminate_on_puck_stop: true
   truncate_rew: -1
   wall_bumping_rew: -1
-algorithm: ppo
+algorithm: sac
 eval_freq: 5000
 gamma: 0.99
 model_save_filepath: model
