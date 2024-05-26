@@ -45,7 +45,8 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
                  reward_normalized_radius_max=0.1,
                  reward_velocity_limits_min=[0,0],
                  reward_velocity_limits_max=[0,0],
-                 reward_movement_types=[]):
+                 reward_movement_types=[],
+                 initialization_description_pth=""):
         self.num_negative_reward_regions = num_negative_reward_regions
         self.negative_reward_range = negative_reward_range
         self.reward_region_shapes = reward_region_shapes

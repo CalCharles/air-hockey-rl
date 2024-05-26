@@ -111,7 +111,7 @@ class AirHockeyPuckHeightEnv(AirHockeyBaseEnv):
         puck_x_pos = state_info['pucks'][0]['position'][0]
         puck_y_pos = state_info['pucks'][0]['position'][1]
         puck_x_vel = state_info['pucks'][0]['velocity'][0]
-        puck_y_vel = state_info['pucks'][0]['velocity'][1]       
+        puck_y_vel = state_info['pucks'][0]['velocity'][1]
 
         obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
         return obs

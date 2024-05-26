@@ -3,8 +3,9 @@ try:
     from collections.abc import Iterable
 except ImportError:
     from collections import Iterable
+
 class RewardRegion():
-    def __init__(self, reward_value_range, scale_range, limits, rad_limits, shapes, reset=True):
+    def __init__(self, reward_value_range, scale_range, limits, rad_limits, shapes, reset=True, object_radius=0,):
         self.reward_value_range = reward_value_range
         self.scale_range = scale_range
         self.shapes = shapes
@@ -12,6 +13,7 @@ class RewardRegion():
         self.limits = limits
         self.limit_range = self.limits[1] - self.limits[0]
         self.rad_limits = rad_limits
+        self.object_radius= object_radius
         if reset: self.reset()
 
     def reset(self):
@@ -33,7 +35,8 @@ class RewardRegion():
 
     def check_reward(self, obj_state):
         if self.shape == "circle" or self.shape == "ellipse":
-            norm_dist = np.sum(np.square(obj_state - self.state) / np.square(self.radius))
+            norm_dist = np.sum(np.square(obj_state - self.state) / np.square(self.radius + self.object_radius))
+        # TODO: self.object_radius not support if the object shape is not the same as the negative reward region
         elif self.shape == "diamond":
             norm_dist = np.sum(np.abs(obj_state - self.state) / self.radius)
         elif self.shape == "rect" or self.shape == "rectangle" or self.shape == "square":
@@ -42,9 +45,10 @@ class RewardRegion():
 
 
 class DynamicRewardRegion(RewardRegion):
-    def __init__(self, reward_value_range, scale_range, limits, rad_limits, shapes, movement_patterns, velocity_limits, use_reset=True):
-        super().__init__(reward_value_range, scale_range, limits, rad_limits, shapes, reset=False)
+    def __init__(self, reward_value_range, scale_range, limits, rad_limits, shapes, movement_patterns, velocity_limits, use_reset=True, object_radius=0):
+        super().__init__(reward_value_range, scale_range, limits, rad_limits, shapes, reset=False, object_radius=object_radius)
         self.movement_patterns = movement_patterns
+        self.object_radius = object_radius
         self.movement_onehot_helper = np.eye(len(movement_patterns))
         self.velocity_limits = velocity_limits
         self.velocity_limit_range = self.velocity_limits[1] - self.velocity_limits[0]
@@ -94,7 +98,7 @@ class DynamicRewardRegion(RewardRegion):
         self.state = next_state
         
 class DynamicGoalRegion():
-    def __init__(self,  limits, movement_patterns, velocity_limits, use_reset=True):
+    def __init__(self,  limits, movement_patterns, velocity_limits, use_reset=True, object_radius=0):
         # super().__init__(reward_value_range, scale_range, limits, rad_limits, shapes, reset=False)
         self.movement_patterns = movement_patterns
         self.movement_onehot_helper = np.eye(len(movement_patterns))
@@ -102,6 +106,7 @@ class DynamicGoalRegion():
         self.velocity_limit_range = self.velocity_limits[1] - self.velocity_limits[0]
         self.limits = limits
         self.limit_range = self.limits[1] - self.limits[0]
+        self.object_radius = object_radius
         
         if use_reset: self.reset()
 
