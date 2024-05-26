@@ -142,10 +142,10 @@ if __name__ == '__main__':
 
     lower_bounds = np.array([900, 90, 2, 2000])
     upper_bounds = np.array([1100, 110, 4, 3000])
-    initial_params = [900, 100, 2, 2000]
+    initial_params = [1000, 100, 3, 2500]
 
     planner = CEMPlanner(eval_fn=lambda params, trajs: get_value(params, param_names, air_hockey_params_cp, trajs), 
-                         trajectories=data, elite_frac=0.2, n_samples=500, n_iterations=200, variance=0.1, lower_bounds=None, upper_bounds=None, param_names=param_names)
+                         trajectories=data, elite_frac=0.2, n_samples=500, n_iterations=10, variance=0.1, lower_bounds=None, upper_bounds=None, param_names=param_names)
     # TODO Implemetn CMA-ES planner also
     
     optimal_parameters = planner.optimize(initial_params)
