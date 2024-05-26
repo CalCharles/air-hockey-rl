@@ -1,9 +1,9 @@
 import numpy as np
 
 DATA_RANGES = [[0,1], [1,2], [2,3], [3,4], [4,5],[5,10], [11,16], [17,22], [23,25], [26,32]]
-DATA_NAMES = ["cur_time", "tidx", "i", "pose", "speed", "force", "acc", "desired_pose", "estop", "safety"]
+DATA_NAMES = ["cur_time", "tidx", "i",  "estop", "safety", "pose", "speed", "force", "acc", "desired_pose"]
 def slicer(val):
-    cur_time, tidx, i, pose, speed, force, acc, desired_pose, estop, safety = val[...,DATA_RANGES[0][0]:DATA_RANGES[0][1]],\
+    cur_time, tidx, i, estop, safety, pose, speed, force, acc, desired_pose = val[...,DATA_RANGES[0][0]:DATA_RANGES[0][1]],\
         val[...,DATA_RANGES[1][0]:DATA_RANGES[1][1]], \
         val[...,DATA_RANGES[2][0]:DATA_RANGES[2][1]], \
         val[...,DATA_RANGES[3][0]:DATA_RANGES[3][1]], \
@@ -17,7 +17,13 @@ def slicer(val):
         "cur_time": cur_time, "tidx": tidx, "i": i, "pose": pose, "speed": speed, "force": force, 
         "acc": acc, "desired_pose": desired_pose, "estop": estop, "safety": safety
     }
-    return cur_time, tidx, i, pose, speed, force, acc, desired_pose, estop, safety, res_dict
+    return res_dict
+
+def flatten(data_dict):
+    val = list()
+    for name in DATA_NAMES:
+        val.append(np.array(data_dict[name]))
+    return np.concatenate(val)
 
 def get_state_array(cur_time, tidx, i, pose, speed, force, acc, desired_pose, estop, safety):
     # rcv = RTDEReceive("172.22.22.2")

@@ -174,6 +174,7 @@ class AirHockeySim(ABC):
         self.offset_constants = np.array((2100, 500))
         
         # max workspace limits
+        self.x_offset = 1
         self.x_min_lim = -0.8
         self.x_max_lim = -0.33
         # y_min = -0.3382
@@ -255,19 +256,24 @@ class AirHockeySim(ABC):
         self.dataset_state_std = np.load('normalizing_vectors/mouse_mimic_std.npy')
 
     def _compute_state(self, pose, speed, i, puck_history):
+        # This should be the only place where it is necessary to correct detection by the offsets
         state_info = dict()
         state_info['paddles'] = dict()
         state_info['paddles']['paddle_ego'] = dict()
         state_info['paddles']['paddle_ego']['position'] = pose[:2]
+        state_info['paddles']['paddle_ego']['position'][0] += self.x_offset
         state_info['paddles']['paddle_ego']['velocity'] = speed[:2]
         state_info["pucks"] = list()
+        puck = np.array(puck_history[i])[:2]
+        puck[0] += self.x_offset
         state_info["pucks"].append({"history": puck_history[max(0,i - self.puck_history_len + 1):i+1], 
-                                    "position": np.array(puck_history[i])[:2], 
+                                    "position": puck, 
                                     "velocity": np.array(puck_history[i])[:2] - np.array(puck_history[i-1])[:2], 
                                     "occluded": np.array(puck_history[i])[-1:]})
         return state_info
 
     def take_action(self, action, pose, speed, force, acc, estop, image, images, puck_history, lims, move_lims):
+        # converts an action from the agent to an action in the robot space
         if self.puck_detector is not None: puck = self.puck_detector(image, puck_history)
         else: puck = (puck_history[-1][0],puck_history[-1][1],0)
         puck_vals = np.concatenate( [np.array(puck_history[self.puck_history_len-i]) for i in range(1,self.puck_history_len)] + [np.array(puck)])
@@ -291,7 +297,7 @@ class AirHockeySim(ABC):
         self.vals = list()
         self.timestep = 0
         self.pose_hist, self.dpose_hist = deque(maxlen=self.hist_len), deque(maxlen=self.hist_len)
-        self.puck_history = [(-2,0,0) for i in range(5)] # pretend that the puck starts at the other end of the table, but is occluded, for 5 frames
+        self.puck_history = [(-1,0,0) for i in range(5)] # pretend that the puck starts at the other end of the table, but is occluded, for 5 frames
         self.total = time.time()
         self.runtime = 0.0
 
@@ -381,6 +387,7 @@ class AirHockeySim(ABC):
             x,y, puck = self.take_action(action, true_pose, true_speed, true_force, measured_acc, self.rcv.isProtectiveStopped(), image, self.images, self.puck_history, self.lims, self.move_lims) # TODO: add image handling
             print("puck", puck)
             self.puck_history.append(puck)
+            srvpose = [[x, y, 0.30] + self.angle, self.vel,self.acc]
         ###### servoL #####
         if self.control_type == "pol":
             polx, poly = compute_pol(x, y, true_pose, self.lims, self.move_lims)

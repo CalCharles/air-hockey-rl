@@ -29,6 +29,7 @@ import os
 import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
+from dataset_management.create_dataset import load_dataset
 
 TensorBatch = List[torch.Tensor]
 
@@ -67,6 +68,8 @@ class TrainConfig:
     project: str = "CORL"
     group: str = "IQL-D4RL"
     name: str = "IQL"
+    dataset_path: str = "./"
+    data_type: str = "vel"
 
     def __post_init__(self):
         self.name = f"{self.name}-{self.env}-{str(uuid.uuid4())[:8]}"
@@ -539,16 +542,19 @@ def train(config: TrainConfig):
     
     env = AirHockeyEnv.from_dict(air_hockey_params)
 
-    # TODO: remove hardcoded spaces
-    state_dim = 8
-    action_dim = 2
-    np_dataset = np.load('trajs.npy', allow_pickle=True)
-    dataset = {}
-    dataset["observations"] = np_dataset[:,:8]
-    dataset["actions"] = np_dataset[:,8:10]
-    dataset["rewards"] = np_dataset[:,10]
-    dataset["next_observations"] = np_dataset[:,11:19]
-    dataset["terminals"] = np_dataset[:,19]*0
+    if len(config.data_type) > 0:
+        dataset = load_dataset(os.path.join(config.dataset_path, 'state_trajectory.hdf5'), config.data_type, env)
+    else:
+        # TODO: remove hardcoded spaces
+        state_dim = 8
+        action_dim = 2
+        np_dataset = np.load(os.path.join(config.dataset_path, 'trajs.npy'), allow_pickle=True)
+        dataset = {}
+        dataset["observations"] = np_dataset[:,:8]
+        dataset["actions"] = np_dataset[:,8:10]
+        dataset["rewards"] = np_dataset[:,10]
+        dataset["next_observations"] = np_dataset[:,11:19]
+        dataset["terminals"] = np_dataset[:,19]*0
 
     if config.normalize_reward:
         modify_reward(dataset, config.env)

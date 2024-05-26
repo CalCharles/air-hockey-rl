@@ -207,7 +207,7 @@ class AirHockeyRenderer:
             cv2.circle(self.frame, center.astype(int), goal_radius, color, 2)
         elif shape == "ellipse": 
             goal_radius = np.array((goal_radius[1], goal_radius[0]))
-            cv2.ellipse(self.frame, center.astype(int), (goal_radius[0], goal_radius[1]), 0, 0, 360, color, 2)
+            cv2.ellipse(self.frame, center.astype(int), (goal_radius[1], goal_radius[0]), 0, 0, 360, color, 2)
         elif shape == "rect": 
             # goal_radius = np.array((goal_radius[1], goal_radius[0])).astype(int)
             start_point = [int(center[0] - goal_radius[0]), int(center[1] - goal_radius[1])]

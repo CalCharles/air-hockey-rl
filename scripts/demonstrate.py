@@ -51,36 +51,38 @@ class Demonstrator:
         frame = self.renderer.get_frame()
         cv2.imshow('Air Hockey 2D Demonstration',frame)
         key = cv2.waitKey(20)
+        DEMOFORCE = 0.005
         if self.keyboard_scheme == 'qweasdzxc':
             if key == ord('k'):
                 action = -1
             elif key == ord('q'):
-                action = np.array([-1,-1])
+                action = np.array([-DEMOFORCE,-DEMOFORCE])
             elif key == ord('w'):
-                action = np.array([-1,0])
+                action = np.array([-DEMOFORCE,0])
             elif key == ord('e'):
-                action = np.array([-1,1])
+                action = np.array([-DEMOFORCE,DEMOFORCE])
             elif key == ord('a'):
-                action = np.array([0,-1])
+                action = np.array([0,-DEMOFORCE])
             elif key == ord('s'):
                 action = np.array([0,0])
             elif key == ord('d'):
-                action = np.array([0,1])
+                action = np.array([0,DEMOFORCE])
             elif key == ord('z'):
-                action = np.array([1,-1])
+                action = np.array([DEMOFORCE,-DEMOFORCE])
             elif key == ord('x'):
-                action = np.array([1,0])
+                action = np.array([DEMOFORCE,0])
             elif key == ord('c'):
-                action = np.array([1,1])
+                action = np.array([DEMOFORCE,DEMOFORCE])
         elif self.keyboard_scheme == 'wasd':
             if key == ord('w'):
-                action = np.array([-0.001,0])
+                action = np.array([-DEMOFORCE,0])
             elif key == ord('a'):
-                action = np.array([0,-0.001])
+                action = np.array([0,-DEMOFORCE])
             elif key == ord('s'):
-                action = np.array([0.001,0])
+                action = np.array([DEMOFORCE,0])
             elif key == ord('d'):
-                action = np.array([0,0.001])
+                action = np.array([0,DEMOFORCE])
+            print(action)
         else:
             raise ValueError("Invalid keyboard scheme")
         if self.renderer.orientation == 'vertical':
