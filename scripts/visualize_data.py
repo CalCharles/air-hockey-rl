@@ -5,6 +5,11 @@ import cv2
 import time
 import copy
 import numpy as np
+import sys
+ 
+# adding Folder_2 to the system path
+sys.path.insert(0, '/Users/yuchunfeng/Downloads/air-hockey-rl-main')
+
 from dataset_management.repair_data import read_new_real_data
 from airhockey import AirHockeyEnv
 from airhockey.airhockey_base import populate_state_info
@@ -86,16 +91,41 @@ class Visualizer:
 
         while True:
             frame, save_image = homography_transform(self.images[frame_idx], from_save = True, rotate=False, Mimg = Mimg)
+            for r in self.air_hockey.reward_regions:
+                # print("reward_regions", r.state, r.radius)
+                offset_constants = np.array((2100, 500))
+                # ((0.09870443) *1000  + 500)/2
+                pixel_coord = (((r.state[0] - 1)*1000, (-r.state[1])*1000 ) + offset_constants) /2
+                center_coordinates = (int(np.round(pixel_coord[0])), int(np.round(pixel_coord[1])))  # Example coordinates (x, y)
+                
+                pixel_radius = (int((r.radius[0])*1000 /2), int((r.radius[1])*1000 /2))
+                # radius = int(np.round((pixel_radius[0]))) #, int(np.round(-pixel_radius[1])))
+                color = (0, 0, 255)  # Red color in BGR
+                thickness = 2  # Thickness of 2 px, use -1 for a filled circle
+                # center_coordinates = (480, 360)
+                center_coordinates_new = (center_coordinates[0], center_coordinates[1])
+                # print("reward_regions", center_coordinates_new, pixel_radius)
+                # Draw the circle on the frame
+                cv2.ellipse(frame, center_coordinates_new, pixel_radius, angle=0, startAngle=0, endAngle=360, color=color, thickness=thickness)
+
+                # cv2.circle(frame, center_coordinates_new, radius, color=color, thickness=thickness)
             cv2.imshow("frame", frame)
+            # cv2.imwrite('./images_debug.png', frame) 
             key = cv2.waitKey(10)
             # convert from pixel to robot coordinates with:
             # offset_constants = np.array((2100, 500))
             # x, y = (pixel_coord - self.offset_constants) * 0.001
             # y= -y
 
+            # (px, py) = (x+1 , y) * 1000 + self.offset_constants)
+            # py = -py
+
             frame_idx += self.step_frame(key)
             frame_idx = min(max(0, frame_idx), len(self.values) - 1)
             paddles = [copy.deepcopy(self.values[frame_idx]["pose"][:2])]
+            # print("paddle", self.values[frame_idx]["pose"][:2])
+            # paddle_coord = ((paddles[0][0])*3000, (paddles[0][1])*3000 ) + offset_constants
+            # print('debug p',paddles[0][0], paddles[0][0], (paddles[0][0])*1000 *3, paddle_coord/2)
             paddles[0][0] = paddles[0][0] + 1.0
             pucks = [self.values[frame_idx]["puck"][:2] if "puck" in self.values[frame_idx] else [-1,0,0]]
             self.air_hockey.simulator.paddles['paddle_ego'].position = paddles[0]
