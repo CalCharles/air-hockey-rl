@@ -123,6 +123,11 @@ class AirHockeyBaseEnv(ABC, Env):
         self.table_x_bot = self.length / 2
         self.table_y_right = self.width / 2
         self.table_y_left = -self.width / 2
+        
+        self.paddle_x_min = self.table_x_top / 2 + 2 * self.paddle_radius
+        self.paddle_x_max = self.table_x_bot - 2 * self.paddle_radius
+        self.paddle_y_min = self.table_y_left + 2 * self.paddle_radius
+        self.paddle_y_max = self.table_y_right - 2 * self.paddle_radius
 
         self.max_paddle_vel = self.simulator.max_paddle_vel
         self.max_puck_vel = self.simulator.max_puck_vel
@@ -364,6 +369,16 @@ class AirHockeyBaseEnv(ABC, Env):
         
 
     def single_agent_step(self, action) -> Tuple[np.ndarray, float, bool, bool, dict]:
+        paddle_x_pos = self.current_state['paddles']['paddle_ego']['position'][0]
+        paddle_y_pos = self.current_state['paddles']['paddle_ego']['position'][1]
+        if paddle_x_pos < self.paddle_x_min:
+            action[0] = max(action[0], 0)
+        if paddle_x_pos > self.paddle_x_max:
+            action[0] = min(action[0], 0)
+        if paddle_y_pos < self.paddle_y_min:
+            action[1] = max(action[1], 0)
+        if paddle_y_pos > self.paddle_y_max:
+            action[1] = min(action[1], 0)
 
         next_state = self.simulator.get_transition(action)
         if self.current_timestep > 0:
