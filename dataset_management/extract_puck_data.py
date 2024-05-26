@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 from matplotlib import pyplot as plt
 import h5py
+import os
 # Load the image
 import sys
 import numpy
@@ -230,99 +231,100 @@ def homography_transform(image, get_save=False):
                 # interpolation = cv2.INTER_LINEAR)
     return showdst, save_image
 
-# try:
-plt.rcParams['figure.figsize'] = [10, 10]
-true_if_red = True
-green_range = [[40,100,50], [80,255,255]]
+if __name__ == "__main__":
+    # try:
+    plt.rcParams['figure.figsize'] = [10, 10]
+    true_if_red = True
+    green_range = [[40,100,50], [80,255,255]]
 
-parser = argparse.ArgumentParser(description='Extract puck data from trajectory data')
-parser.add_argument('--start-id', type=int, default=0, help='Trajectory number to extract puck data from')
-parser.add_argument('--end-id', type=int, default=1000, help='Trajectory number to extract puck data from')
+    parser = argparse.ArgumentParser(description='Extract puck data from trajectory data')
+    parser.add_argument('--start-id', type=int, default=0, help='Trajectory number to extract puck data from')
+    parser.add_argument('--end-id', type=int, default=1000, help='Trajectory number to extract puck data from')
 
-args = parser.parse_args()
+    args = parser.parse_args()
 
-for traj in range(args.start_id, args.end_id):
-    if traj < 100:
-        color = 'green'
-    elif traj < 250:
-        color = 'red_with_glare'
-    else:
-        color = 'red_without_glare'
-    try:
-        path = f'/datastor1/calebc/public/data/mouse/cleaned_all/trajectory_data{traj}.hdf5'
-        dataset_dict = {}
-        dataset_dict = load_hdf5_to_dict(path)
-        print(f'failed to load {traj}')
+    for traj in range(args.start_id, args.end_id):
+        if traj < 100:
+            color = 'green'
+        elif traj < 250:
+            color = 'red_with_glare'
+        else:
+            color = 'red_without_glare'
+        try:
+            path = f'/datastor1/calebc/public/data/mouse/cleaned_all/trajectory_data{traj}.hdf5'
+            dataset_dict = {}
+            dataset_dict = load_hdf5_to_dict(path)
+            print(f'loading {traj}')
 
-        xs,ys = [], []
-        # create_video_from_frames(dataset_dict['train_img'], f'traj_videos/traj_video{traj}.mp4')
-        imgs = dataset_dict['train_img']#[150:160]
-        for i, img in enumerate(imgs):
-            train_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-            dst, save_img = homography_transform(train_img)
+            xs,ys = [], []
+            # create_video_from_frames(dataset_dict['train_img'], f'traj_videos/traj_video{traj}.mp4')
+            imgs = dataset_dict['train_img']#[150:160]
+            for i, img in enumerate(imgs):
+                train_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                dst, save_img = homography_transform(train_img)
 
-            green_hsv = [[40,100,50], [80,255,255]]
-            red_hsv = [[0,100,50], [50,255,255]]
+                green_hsv = [[40,100,50], [80,255,255]]
+                red_hsv = [[0,100,50], [50,255,255]]
 
-            if color == 'red_with_glare':
-                refined_img, idx,mask = find_hsv_puck(dst, color_hsv=red_hsv, apply_mask=True, glare=True )
-            elif color == 'red_without_glare':
-                refined_img, idx,mask = find_hsv_puck(dst, color_hsv=red_hsv, apply_mask=True, glare=False )
-            elif color == 'green':
-                alternate_color = [[40,70,50], [80,255,255]]
-                refined_img, idx,mask = find_hsv_puck(dst, color_hsv=green_hsv, apply_mask=True, color_alt=alternate_color)
+                if color == 'red_with_glare':
+                    refined_img, idx,mask = find_hsv_puck(dst, color_hsv=red_hsv, apply_mask=True, glare=True )
+                elif color == 'red_without_glare':
+                    refined_img, idx,mask = find_hsv_puck(dst, color_hsv=red_hsv, apply_mask=True, glare=False )
+                elif color == 'green':
+                    alternate_color = [[40,70,50], [80,255,255]]
+                    refined_img, idx,mask = find_hsv_puck(dst, color_hsv=green_hsv, apply_mask=True, color_alt=alternate_color)
 
-            x,y = np.median(idx[0]), np.median(idx[1])
+                x,y = np.median(idx[0]), np.median(idx[1])
 
-            
-            MIN_PTS_CUTOFF = 500 if true_if_red else 200
-            if len(idx[0]) < MIN_PTS_CUTOFF:
-                xs.append(np.NaN)
-                ys.append(np.NaN)
-            else:
-                xs.append(x)
-                ys.append(y)
                 
-            if i == 0:
-                img_puck_traj = dst 
-                total_mask = mask
-            else:
-                total_mask = (total_mask | mask)
-                img_puck_traj[:,:,0] = np.minimum(img_puck_traj[:,:,0], dst[:,:,0])
-                img_puck_traj[:,:,1] = np.minimum(img_puck_traj[:,:,1], dst[:,:,1])
-                img_puck_traj[:,:,2] = np.minimum(img_puck_traj[:,:,2], dst[:,:,2])
-        
-        xy_robot_frame = pixel2loc(xs, ys) #
-        
-        plt.figure()
-        plt.subplot(2,2,1)
-        plt.imshow(dst)
-        plt.subplot(2,2,2)
-        plt.plot(xy_robot_frame[1], xy_robot_frame[0])
-
-        ax = plt.gca()  # Get current axes
-
-        ax.set_aspect(aspect='equal', adjustable='box')
-        # ax.invert_yaxis()
-        
-        plt.subplot(2,2,3)
-        plt.imshow(img_puck_traj)
-        plt.subplot(2,2,4)
-        plt.imshow(total_mask)
-        plt.savefig(f'/datastor1/calebc/public/data/mouse/all_cleaned_state_trajectories_5-25-2024_imgs/traj_videos/traj_plot{traj}.png')
-        # plt.show()
-        # Create a new HDF5 file
-        save_dir = '/datastor1/calebc/public/data/mouse/all_cleaned_state_trajectories_5-25-2024/'
-        
-        save_path = save_dir + f'state_trajectory_data{traj}.hdf5'
-        dataset_dict['puck_state'] = xy_robot_frame
-        dataset_dict['puck_state_nan_mask'] = np.isnan(xy_robot_frame)
-        # import pdb; pdb.set_trace()
-        with h5py.File(save_path, 'w') as hdf5_file:
-            print(dataset_dict.keys())
-            save_dict_to_hdf5(dataset_dict, hdf5_file)
+                MIN_PTS_CUTOFF = 500 if true_if_red else 200
+                if len(idx[0]) < MIN_PTS_CUTOFF:
+                    xs.append(np.NaN)
+                    ys.append(np.NaN)
+                else:
+                    xs.append(x)
+                    ys.append(y)
+                    
+                if i == 0:
+                    img_puck_traj = dst 
+                    total_mask = mask
+                else:
+                    total_mask = (total_mask | mask)
+                    img_puck_traj[:,:,0] = np.minimum(img_puck_traj[:,:,0], dst[:,:,0])
+                    img_puck_traj[:,:,1] = np.minimum(img_puck_traj[:,:,1], dst[:,:,1])
+                    img_puck_traj[:,:,2] = np.minimum(img_puck_traj[:,:,2], dst[:,:,2])
             
-        print(f'finished traj {traj}')
-    except Exception as e:
-        print("doesn't work, you fuck")
-        print(e)
+            xy_robot_frame = pixel2loc(xs, ys) #
+            
+            plt.figure()
+            plt.subplot(2,2,1)
+            plt.imshow(dst)
+            plt.subplot(2,2,2)
+            plt.plot(xy_robot_frame[1], xy_robot_frame[0])
+
+            ax = plt.gca()  # Get current axes
+
+            ax.set_aspect(aspect='equal', adjustable='box')
+            # ax.invert_yaxis()
+            
+            plt.subplot(2,2,3)
+            plt.imshow(img_puck_traj)
+            plt.subplot(2,2,4)
+            plt.imshow(total_mask)
+            plt.savefig(f'/datastor1/calebc/public/data/mouse/all_cleaned_state_trajectories_5-25-2024_imgs/traj_videos/traj_plot{traj}.png')
+            # plt.show()
+            # Create a new HDF5 file
+            save_dir = '/datastor1/calebc/public/data/mouse/all_cleaned_state_trajectories_5-25-2024/'
+            
+            save_path = os.path.join(save_dir, f'state_trajectory_data{traj}.hdf5')
+            dataset_dict['puck_state'] = xy_robot_frame
+            dataset_dict['puck_state_nan_mask'] = np.isnan(xy_robot_frame)
+            # import pdb; pdb.set_trace()
+            with h5py.File(save_path, 'w') as hdf5_file:
+                print(dataset_dict.keys())
+                save_dict_to_hdf5(dataset_dict, hdf5_file)
+                
+            print(f'finished traj {traj}')
+        except Exception as e:
+            print("doesn't work, you fuck")
+            print(e)

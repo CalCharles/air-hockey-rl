@@ -430,7 +430,7 @@ def get_observation_by_type(state_info, obs_type='vel', **kwargs):
         ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
         ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
         
-        puck_hist = np.array(kwargs["puck_hist"][-5:]).flatten().tolist()
+        puck_hist = np.array(kwargs["puck_history"][-5:]).flatten().tolist()
         obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel] + puck_hist)
         return obs
 

@@ -89,6 +89,7 @@ class Visualizer:
             cv2.imshow("frame", frame)
             key = cv2.waitKey(10)
             # convert from pixel to robot coordinates with:
+            # offset_constants = np.array((2100, 500))
             # x, y = (pixel_coord - self.offset_constants) * 0.001
             # y= -y
 

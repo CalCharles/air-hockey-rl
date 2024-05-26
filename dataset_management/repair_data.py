@@ -104,31 +104,37 @@ def collect_new_state_data(data_dir, state_dir, target_dir):
     for file in os.listdir(data_dir):
         traj = list()
         traj_num = int(file[len("trajectory_data"):-5])
-        if traj_num > 430: continue
+        # if traj_num > 430: continue
         puck_traj = list()
         total_masked = 0
-        with h5py.File(os.path.join(state_dir, f"state_trajectory_data{traj_num}.hdf5"), 'r') as f:
-            puck_state = np.array(f["puck_state"]).T
-            masks = np.array(f["puck_state_nan_mask"]).T
-            last_state = np.array((-2,0,0))
-            for state, mask in zip(puck_state, masks):
-                if mask[0]:
-                    state = np.zeros(last_state.shape)
-                    state[0] = last_state[0]
-                    state[1] = last_state[1]
-                    total_masked += 1
-                else:
-                    state = np.concatenate([state, [1]])
-                puck_traj.append(state)
+        try:
+            with h5py.File(os.path.join(state_dir, f"state_trajectory_data{traj_num}.hdf5"), 'r') as f:
+                puck_state = np.array(f["puck_state"]).T
+                masks = np.array(f["puck_state_nan_mask"]).T
+                last_state = np.array((-2,0,0))
+                for state, mask in zip(puck_state, masks):
+                    if mask[0]:
+                        state = np.zeros(last_state.shape)
+                        state[0] = last_state[0]
+                        state[1] = last_state[1]
+                        total_masked += 1
+                    else:
+                        state = np.concatenate([state, [1]])
+                    puck_traj.append(state)
+        except Exception as e:
+            print("No state file found, ", file, e)
+            continue
         with h5py.File(os.path.join(data_dir, file), 'r') as f:
             # puck_vals = np.load(os.path.join(state_dir, "state_trajectory_data{traj_num}.npy"))
             try:
                 measured_vals = np.array(f['train_vals'])
+                images = np.array(f['train_img'])
                 # print(len(measured_vals))
-                for pv, mv in zip(puck_traj, measured_vals):
+                for pv, mv, im in zip(puck_traj, measured_vals, images):
                     # print(mv, len(mv))
                     updating_dict = slicer(mv)
                     updating_dict["puck"] = pv
+                    updating_dict["image"] = im
                     traj.append(updating_dict)
 
             except Exception as e:
@@ -154,4 +160,5 @@ def collect_new_state_data(data_dir, state_dir, target_dir):
             print("SKIP", file)
     return trajectories
 
-# collect_new_state_data("/datastor1/calebc/public/data/mouse/cleaned_all/", "/datastor1/calebc/public/data/mouse/clean_state_trajectories", "/datastor1/calebc/public/data/mouse/state_data_all")
+if __name__ == "__main__":
+    collect_new_state_data("/datastor1/calebc/public/data/mouse/cleaned_all/", "/datastor1/calebc/public/data/mouse/all_cleaned_state_trajectories_5-25-2024/", "/datastor1/calebc/public/data/mouse/state_data_all")

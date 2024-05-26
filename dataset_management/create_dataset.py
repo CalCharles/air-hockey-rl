@@ -2,7 +2,9 @@ import os, copy
 import h5py
 import numpy as np
 from airhockey.airhockey_base import get_observation_by_type
-
+import argparse
+import yaml
+from airhockey import AirHockeyEnv
 
 
 def get_observation(paddle, paddle_vel, puck, puck_history, obs_type):
@@ -36,15 +38,15 @@ def load_dataset(data_dir, obs_type, environment):
                 print('Error in file:', file, e)
                 continue
             print("added trajectory ", file)
-            puck_history = [(-2,0,0) for i in range(5)]
+            puck_history = [(-1,0,0) for i in range(5)]
             observation, state_info = get_observation(paddle[0], paddle_vel[0], puck[0], puck_history, obs_type=obs_type)
             observations = []
             next_observations = list()
-            rewards = [environment.get_reward(state_info)]
+            rewards = [environment.get_base_reward(state_info)]
             for pa, pav, pu in zip(paddle[1:], paddle_vel[1:], puck[1:]):
                 next_observation, state_info = get_observation(pa, pav, pu, puck_history, obs_type=obs_type)
                 observations.append(observation)
-                rewards.append(environment.get_reward(state_info))
+                rewards.append(environment.get_base_reward(state_info))
                 next_observations.append(next_observation)
                 observation = copy.deepcopy(next_observation)
                 puck_history.append(pu)
@@ -64,3 +66,41 @@ def load_dataset(data_dir, obs_type, environment):
 
     return dataset
 # read_new_real_data("/datastor1/calebc/public/data/mouse/cleaned_new/")
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Demonstrate the air hockey game.')
+    parser.add_argument('--cfg', type=str, default=None, help='Path to the configuration file.')
+
+    args = parser.parse_args()
+
+    if args.cfg is None:
+        dir_path = os.path.dirname(os.path.realpath(__file__))
+        air_hockey_cfg_fp = os.path.join(dir_path, '../configs', 'default_train_puck_vel.yaml')
+    else:
+        air_hockey_cfg_fp = args.cfg
+    
+    with open(air_hockey_cfg_fp, 'r') as f:
+        air_hockey_cfg = yaml.safe_load(f)
+
+    air_hockey_params = air_hockey_cfg['air_hockey']
+    air_hockey_params['n_training_steps'] = air_hockey_cfg['n_training_steps']
+    
+    if 'sac' == air_hockey_cfg['algorithm']:
+        if 'goal' in air_hockey_cfg['air_hockey']['task']:
+            air_hockey_cfg['air_hockey']['return_goal_obs'] = True
+        else:
+            air_hockey_cfg['air_hockey']['return_goal_obs'] = False
+    else:
+        air_hockey_cfg['air_hockey']['return_goal_obs'] = False
+    
+    air_hockey_params_cp = air_hockey_params.copy()
+    air_hockey_params_cp['seed'] = 42
+    air_hockey_params_cp['max_timesteps'] = 200
+    
+    eval_env = AirHockeyEnv(air_hockey_params_cp)
+
+    dataset = load_dataset("/datastor1/calebc/public/data/mouse/state_data_all/", "history", eval_env)
+    print(dataset["observations"].shape)
+    print(dataset["next_observations"].shape)
+    print(dataset["actions"].shape)
+    print(dataset["rewards"].shape)
+    print(dataset["terminals"].shape)
