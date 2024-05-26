@@ -279,12 +279,6 @@ class AirHockeyBaseEnv(ABC, Env):
         # puck passed the our paddle
         if state_info['pucks'][0]['position'][0] > (state_info['paddles']['paddle_ego']['position'][0] + self.paddle_radius):
             truncated = True
-
-        # puck touched our paddle
-        if np.linalg.norm(state_info['pucks'][0]['position'][0] - state_info['paddles']['paddle_ego']['position'][0]) <= (self.paddle_radius + self.puck_radius + 0.03):
-            puck_within_home = True
-            terminated = True
-
         
         puck_within_ego_goal = False
         puck_within_alt_goal = False
