@@ -2,7 +2,7 @@ import os, imageio, h5py, shutil
 import numpy as np
 
 def merge_trajectory(image_path, images, vals):
-
+    print(len(images))
     if len(images) == 0:
         list_of_files = filter( lambda x: os.path.isfile 
                             (os.path.join(image_path, x)), 
@@ -74,7 +74,7 @@ def write_trajectory(pth, tidx, imgs, vals, filename=""):
 def get_trajectory_idx(save_path):
     if len(save_path) > 0:
         try:  
-            os.mkdir(save_path)
+            os.makedirs(save_path)
             print("made ", save_path)
         except OSError as error:
             print(error)

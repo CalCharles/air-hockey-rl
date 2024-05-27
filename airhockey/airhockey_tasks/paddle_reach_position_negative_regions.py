@@ -267,4 +267,4 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
     def reset(self, seed=None, **kwargs):
         for nrr in self.reward_regions:
             nrr.reset()
-        return super().reset(seed)
+        return super().reset(seed, **kwargs)

@@ -110,8 +110,8 @@ class AirHockeyReal:
         # TODO: we should have these come in as parameters
         self.puck_history_len = 5
         self.puck_detector = find_red_hockey_puck
-        self.image_path = "./temp/"
-        self.save_path = ""
+        self.image_path = "./temp/images/"
+        self.save_path = "./data/mouse/expert_avoid_fixed_start_goal"
         self.tidx = get_trajectory_idx(self.save_path)
 
 
@@ -282,9 +282,12 @@ class AirHockeyReal:
     def reset(self, seed, **kwargs):
         self.ctrl.servoStop(6)
         self.ctrl.forceModeStop()
-        imgs, vals = merge_trajectory(self.image_path, self.images, self.vals)
+        print("write_traj" in kwargs)
+        if "write_traj" in kwargs:
+            print( kwargs["write_traj"])
+        if "write_traj" in kwargs and kwargs["write_traj"]: imgs, vals = merge_trajectory(self.image_path, self.images, self.vals)
         clear_images(folder=self.image_path)
-        if "write_traj" in kwargs and kwargs["write_traj"]: write_trajectory(self.save_path, self.tidx, imgs, vals) # TODO: not necessarily the best place to do writing
+        if "write_traj" in kwargs and kwargs["write_traj"] and imgs is not None: write_trajectory(self.save_path, self.tidx, imgs, vals) # TODO: not necessarily the best place to do writing
         self.images = list()
         self.vals = list()
         self.timestep = 0
