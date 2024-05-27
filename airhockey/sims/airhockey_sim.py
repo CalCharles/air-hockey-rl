@@ -23,5 +23,5 @@ class AirHockeySim(ABC):
         pass
 
     @abstractmethod
-    def reset(self, seed):
+    def reset(self, seed, **kwargs):
         pass

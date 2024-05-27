@@ -1,5 +1,5 @@
 import numpy as np
-from sims.real.coordinate_transform import clip_limits
+from .coordinate_transform import clip_limits
 
 def apply_negative_z_force(ctrl, rcv=None):
     if rcv is None:

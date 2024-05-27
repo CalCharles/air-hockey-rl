@@ -285,7 +285,10 @@ class AirHockeyRobosuite(AirHockeySim):
         state_dict_copy = state_dict.copy()
         return AirHockeyRobosuite(**state_dict_copy)
 
-    def reset(self, seed=None):
+    def start_callbacks(self, **kwargs):
+        return
+
+    def reset(self, seed=None, **kwargs):
         if self.robosuite_env is not None:
             self.robosuite_env.reset()
         

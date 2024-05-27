@@ -85,6 +85,14 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
     def from_dict(state_dict):
         return AirHockeyPaddleReachPositionNegRegionsEnv(**state_dict)
 
+    def start_callbacks(self):
+        # starts callbacks for the real robot, should be overwritten for most methods
+        # but the default logic should suffice
+        region_info = [r.state.tolist() + r.radius.tolist() for r in self.reward_regions]
+        goal_info = self.goal_pos.tolist() + [self.goal_radius]
+        self.simulator.start_callbacks(region_info=region_info, goal_info=goal_info)
+
+
     def load_initialization(self, pth):
         '''
         We can initialize preset arrangements as a n x m grid with the hashes:
@@ -158,6 +166,8 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
                     midpoint_row.append(np.array([0, self.table_y_left]) + np.array([i + 0.5,j + 1.0]) * self.grid_lengths)
                 self.grid_midpoints.append(midpoint_row)
             self.grid_midpoints = np.array(self.grid_midpoints)
+        
+        self.set_goals(self.goal_radius_type)
 
         if len(self.init_negative_pos):
             # TODO: ignores the num_negative_reward_region, could have those initialized randomly
@@ -218,7 +228,7 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
         for nrr in self.reward_regions:
             reward += nrr.check_reward(achieved_goal)
 
-        print(achieved_goal, desired_goal, reward)
+        # print(achieved_goal, desired_goal, reward)
         # print(dist / max_euclidean_distance, 1 - (dist / max_euclidean_distance), reward)
         if single:
             reward = reward[0]
@@ -254,7 +264,7 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
         success = success.item()
         return reward, success
 
-    def reset(self, seed=None):
+    def reset(self, seed=None, **kwargs):
         for nrr in self.reward_regions:
             nrr.reset()
-        return super().reset(seed)
+        return super().reset(seed, **kwargs)
