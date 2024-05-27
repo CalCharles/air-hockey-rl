@@ -57,7 +57,9 @@ class AirHockeyBaseEnv(ABC, Env):
                  reward_velocity_limits_min=[0,0],
                  reward_velocity_limits_max=[0,0],
                  reward_movement_types=[],
-                 compute_online_rewards=True):
+                 compute_online_rewards=True,
+                 domain_random=False,
+                 ):
         
         if simulator == 'box2d':
             simulator_fn = get_box2d_simulator_fn()
@@ -109,6 +111,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.diagonal_motion_rew = diagonal_motion_rew
         self.stand_still_rew = stand_still_rew
         
+        self.simulator_params = simulator_params
         self.width = simulator_params['width']
         self.length = simulator_params['length']
         self.paddle_radius = simulator_params['paddle_radius']
@@ -140,6 +143,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.initialize_spaces()
         self.falling_time = 25
         self.metadata = {}
+        self.domain_random = domain_random
         self.reset()
 
     @abstractmethod
@@ -170,6 +174,35 @@ class AirHockeyBaseEnv(ABC, Env):
         return Box(low=np.array(low), high=np.array(high), dtype=float)        
 
     def reset(self, seed=None, **kwargs):
+
+        if self.domain_random:
+            if self.simulator_name == 'box2d':
+                simulator_fn = get_box2d_simulator_fn()
+            elif self.simulator_name == 'robosuite':
+                simulator_fn = get_robosuite_simulator_fn()
+            else:
+                raise ValueError("Invalid simulator type. Must be 'box2d' or 'robosuite'.")
+
+            # puck_damping: 0.1-1.0
+            # puck_density: 100-400
+            # gravity: -0.3-0.7
+
+            self.simulator_params['puck_damping'] = np.random.uniform(0.1, 1.0)
+            self.simulator_params['puck_density'] = np.random.uniform(100, 400)
+            self.simulator_params['gravity'] = np.random.uniform(-0.3, -0.7)
+
+            # print("reset -> domain_random")
+
+            # import pdb; pdb.set_trace()
+
+            self.simulator = simulator_fn.from_dict(self.simulator_params)
+            self.render_length = self.simulator.render_length
+            self.render_width = self.simulator.render_width
+            self.render_masks = self.simulator.render_masks
+            self.ppm = self.simulator.ppm
+        
+        # print("Resetting environment")
+
         if seed is None: # determine next seed, in a deterministic manner
             seed = self.rng.randint(0, int(1e8))
 
@@ -190,7 +223,8 @@ class AirHockeyBaseEnv(ABC, Env):
         
         if 'pucks' in state_info and len(state_info['pucks']) > 0:
             self.puck_initial_position = state_info['pucks'][0]['position']
-        
+    
+
         # return obs, {'success': False}.update(self.simulator_params)
         return obs, self.simulator_params
             

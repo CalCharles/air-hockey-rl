@@ -263,7 +263,8 @@ class AirHockeyRobosuite(AirHockeySim):
         
         self.initialized_objects = False
         current_time = datetime.datetime.fromtimestamp(time.time())
-        formatted_time = current_time.strftime('%Y%m%d_%H%M%S')
+        # formatted_time = current_time.strftime('%Y%m%d_%H%M%S')
+        formatted_time = np.random.randint(1000000000000000000)
         self.tmp_xml_fp = robosuite_xml_path_completion(self.table_xml + f"_{formatted_time}.xml")
         
     def __del__(self):
@@ -345,7 +346,6 @@ class AirHockeyRobosuite(AirHockeySim):
         if self.initialized_objects:
             self.set_obj_configs()
             return
-        
         # this is only for the first time
         with open(self.tmp_xml_fp, 'w') as file:
             file.write(xmltodict.unparse(self.xml_config, pretty=True))

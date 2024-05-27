@@ -35,7 +35,7 @@ import tyro
 from torch.distributions.normal import Normal
 from torch.utils.tensorboard import SummaryWriter
 
-priv_keys = ["puck_density", "puck_radius", "puck_damping"]
+priv_keys = ["puck_density", "puck_damping", "gravity"]
 
 @dataclass
 class Args:
@@ -143,7 +143,7 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
 
 
 class SubprocVecEnv_domain_random(SubprocVecEnv):
-    def reset(self) -> VecEnvObs:
+    def reset(self, seed=None, **kwargs) -> VecEnvObs:
         for env_idx, remote in enumerate(self.remotes):
             remote.send(("reset", (self._seeds[env_idx], self._options[env_idx])))
         results = [remote.recv() for remote in self.remotes]
@@ -334,8 +334,7 @@ def train(envs):
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
-    next_obs, infos = envs.reset()
-    # next_obs, _ = envs.reset(seed=args.seed)
+    next_obs, infos = envs.reset(seed=args.seed)
     next_priv_info = get_priv_info(infos, device)
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
