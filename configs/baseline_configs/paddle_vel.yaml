@@ -13,7 +13,6 @@ air_hockey:
     paddle_density: 2500
     puck_density: 250
     block_density: 1000
-    render_size: 360
     gravity: -0.5
     max_force_timestep: 100 # max force we can apply at one timestep
     render_size: 360
