@@ -88,11 +88,14 @@ class AirHockeyBox2D:
         # self.ground_body.fixtures[0].friction = 0.0
         self.reset(seed)
 
+    def start_callbacks(self, **kwargs):
+        return
+
     @staticmethod
     def from_dict(state_dict):
         return AirHockeyBox2D(**state_dict)
 
-    def reset(self, seed):
+    def reset(self, seed, **kwargs):
         self.rng = np.random.RandomState(seed)
         self.timestep = 0
 

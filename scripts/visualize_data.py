@@ -105,8 +105,17 @@ class Visualizer:
                 # print("reward_regions", center_coordinates_new, pixel_radius)
                 # Draw the circle on the frame
                 cv2.ellipse(frame, center_coordinates_new, pixel_radius, angle=0, startAngle=0, endAngle=360, color=color, thickness=thickness)
+            goal = self.air_hockey.goal_pos
+            goal = copy.deepcopy(self.air_hockey.goal_pos)
+            goal_coord = (((goal[0] - 1)*1000, (-goal[1])*1000 ) + offset_constants) /2
+            goal_center_coordinates = (int(np.round(goal_coord[0])), int(np.round(goal_coord[1])))  # Example coordinates (x, y)
+            cv2.circle(frame, goal_center_coordinates, radius=int(np.round(self.air_hockey.goal_radius*1000/2)), color=(0,255,0), thickness=thickness)
 
-                # cv2.circle(frame, center_coordinates_new, radius, color=color, thickness=thickness)
+            paddles = [copy.deepcopy(self.data_dict["pose"][frame_idx][:2])]
+            paddle_coord = (((paddles[0][0])*1000, (-paddles[0][1])*1000 ) + offset_constants) /2
+            center_coordinates = (int(np.round(paddle_coord[0])), int(np.round(paddle_coord[1])))  # Example coordinates (x, y)
+                
+            cv2.circle(frame, center_coordinates, radius=int(np.round(0.0508*1000/2)), color=(255,0,0), thickness=thickness)
             cv2.imshow("frame", frame)
             # cv2.imwrite('./images_debug.png', frame) 
             key = cv2.waitKey(10)
@@ -120,10 +129,6 @@ class Visualizer:
 
             frame_idx += self.step_frame(key)
             frame_idx = min(max(0, frame_idx), len(self.data_dict["pose"]) - 1)
-            paddles = [copy.deepcopy(self.data_dict["pose"][frame_idx][:2])]
-            # print("paddle", self.values[frame_idx]["pose"][:2])
-            # paddle_coord = ((paddles[0][0])*3000, (paddles[0][1])*3000 ) + offset_constants
-            # print('debug p',paddles[0][0], paddles[0][0], (paddles[0][0])*1000 *3, paddle_coord/2)
             paddles[0][0] = paddles[0][0] + 1.0
             pucks = [self.data_dict["puck"][frame_idx][:2] if "puck" in self.data_dict else [-1,0,0]]
             self.air_hockey.simulator.paddles['paddle_ego'].position = paddles[0]

@@ -16,6 +16,10 @@ def get_robosuite_simulator_fn():
     from airhockey.sims import AirHockeyRobosuite
     return AirHockeyRobosuite
 
+def get_real_simulator_fn():
+    from airhockey.sims import AirHockeyReal
+    return AirHockeyReal
+
 
 class AirHockeyBaseEnv(ABC, Env):
     def __init__(self,
@@ -64,6 +68,8 @@ class AirHockeyBaseEnv(ABC, Env):
             simulator_fn = get_box2d_simulator_fn()
         elif simulator == 'robosuite':
             simulator_fn = get_robosuite_simulator_fn()
+        elif simulator == 'real':
+            simulator_fn = get_real_simulator_fn()
         else:
             raise ValueError("Invalid simulator type. Must be 'box2d' or 'robosuite'.")
 
@@ -146,7 +152,9 @@ class AirHockeyBaseEnv(ABC, Env):
         self.initialize_spaces()
         self.falling_time = 25
         self.metadata = {}
+        self.start_callbacks()
         self.reset()
+
 
     @abstractmethod
     def from_dict(state_dict):
@@ -172,6 +180,11 @@ class AirHockeyBaseEnv(ABC, Env):
     def get_observation(self, state_info):
         pass
 
+    def start_callbacks(self):
+        # starts callbacks for the real robot, should be overwritten for most methods
+        # but the default logic should suffice
+        self.simulator.start_callbacks()
+
     def get_obs_space(self, low: list, high: list):
         return Box(low=np.array(low), high=np.array(high), dtype=float)        
 
@@ -181,7 +194,7 @@ class AirHockeyBaseEnv(ABC, Env):
 
         self.rng = np.random.RandomState(seed)
         sim_seed = self.rng.randint(0, int(1e8))
-        self.simulator.reset(sim_seed) # no point in getting state since no spawning
+        self.simulator.reset(sim_seed, **kwargs) # no point in getting state since no spawning
         self.create_world_objects()
         self.simulator.instantiate_objects()
         state_info = self.simulator.get_current_state()

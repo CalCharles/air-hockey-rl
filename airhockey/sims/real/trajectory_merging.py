@@ -29,7 +29,7 @@ def merge_trajectory(image_path, images, vals):
                     break
     else:
         imgs = images
-
+    if len(imgs) == 0: return None, None
     imgs = np.stack(imgs, axis=0)
     
     vals = np.stack(vals, axis=0)
@@ -53,37 +53,40 @@ def clear_images(folder='./temp/images/'):
             print('Failed to delete %s. Reason: %s' % (file_path, e))
 
 def write_trajectory(pth, tidx, imgs, vals, filename=""):
-    if len(filename) <= 0: filename = os.path.join(pth, 'trajectory_data' + str(tidx) + '.hdf5') # filename replaces tidx if nonzero
-    else: filename = os.path.join(pth, filename)
-    with h5py.File(filename, 'w') as hf:
-        hf.create_dataset("train_img",
-                        shape=imgs.shape,
-                        compression="gzip",
-                        compression_opts=9,
-                        data = imgs)
-        print(vals)
+    if len(pth) > 0:
+        if len(filename) <= 0: filename = os.path.join(pth, 'trajectory_data' + str(tidx) + '.hdf5') # filename replaces tidx if nonzero
+        else: filename = os.path.join(pth, filename)
+        with h5py.File(filename, 'w') as hf:
+            hf.create_dataset("train_img",
+                            shape=imgs.shape,
+                            compression="gzip",
+                            compression_opts=9,
+                            data = imgs)
+            print(vals)
 
-        hf.create_dataset("train_vals",
-                        shape=vals.shape,
-                        compression="gzip",
-                        compression_opts=9,
-                        data = vals)
-        print(tidx, hf)
+            hf.create_dataset("train_vals",
+                            shape=vals.shape,
+                            compression="gzip",
+                            compression_opts=9,
+                            data = vals)
+            print(tidx, hf)
 
 def get_trajectory_idx(save_path):
-    try:  
-        os.mkdir(save_path)
-        print("made ", save_path)
-    except OSError as error:
-        print(error)
-        pass
-    list_of_files = filter( lambda x: os.path.isfile 
-            (os.path.join(save_path, x)), 
-                os.listdir(save_path) )
-    list_of_files = list(list_of_files)
-    list_of_files.sort(key = lambda x: int(x[len("trajectory_data"):-5]))
-    if len(list_of_files) == 0:
-        tstart = 0
-    else:
-        tstart = int(list_of_files[-1][len("trajectory_data"):-5]) + 1
-    return tstart
+    if len(save_path) > 0:
+        try:  
+            os.mkdir(save_path)
+            print("made ", save_path)
+        except OSError as error:
+            print(error)
+            pass
+        list_of_files = filter( lambda x: os.path.isfile 
+                (os.path.join(save_path, x)), 
+                    os.listdir(save_path) )
+        list_of_files = list(list_of_files)
+        list_of_files.sort(key = lambda x: int(x[len("trajectory_data"):-5]))
+        if len(list_of_files) == 0:
+            tstart = 0
+        else:
+            tstart = int(list_of_files[-1][len("trajectory_data"):-5]) + 1
+        return tstart
+    return 0

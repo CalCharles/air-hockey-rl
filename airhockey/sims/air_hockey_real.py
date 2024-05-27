@@ -1,21 +1,20 @@
-from abc import ABC, abstractmethod
-from sims.airhockey_box2d import AirHockeyBox2D
 import time
 from rtde_control import RTDEControlInterface as RTDEControl
 from rtde_receive import RTDEReceiveInterface as RTDEReceive
 from collections import deque
 import numpy as np
-from sims.real.multiprocessing import ProtectedArray, NonBlockingConsole
-from sims.real.control_parameters import camera_callback, save_callback, mimic_control, save_collect
-from sims.real.trajectory_merging import merge_trajectory, clear_images, write_trajectory
-from sims.real.robot_control import MotionPrimitive, apply_negative_z_force, filter_update
-from sims.real.coordinate_transform import compute_rect, compute_pol
-from sims.real.proprioceptive_state import get_state_array
+from .real.multiprocessing import ProtectedArray, NonBlockingConsole
+from .real.control_parameters import camera_callback, save_callback, mimic_control, save_collect
+from .real.trajectory_merging import merge_trajectory, clear_images, write_trajectory, get_trajectory_idx
+from .real.robot_control import MotionPrimitive, apply_negative_z_force, filter_update
+from .real.coordinate_transform import compute_rect, compute_pol
+from .real.proprioceptive_state import get_state_array
+from .real.image_detection import find_red_hockey_puck
 import multiprocessing
 import cv2
 
 
-class AirHockeySim(ABC):
+class AirHockeyReal:
     def __init__(self,
                  absorb_target, 
                  length, 
@@ -36,7 +35,6 @@ class AirHockeySim(ABC):
                  block_density=1000,
                  max_paddle_vel=2,
                  time_frequency=20):
-
         # physics / world params
         # TODO: special config for real
         self.length, self.width = length, width
@@ -109,7 +107,16 @@ class AirHockeySim(ABC):
         # control_mode = 'mouse' # 'mimic'
         # control_mode = 'mimic'
 
+        # TODO: we should have these come in as parameters
+        self.puck_history_len = 5
+        self.puck_detector = find_red_hockey_puck
+        self.image_path = "./temp/"
+        self.save_path = ""
+        self.tidx = get_trajectory_idx(self.save_path)
+
+
         shared_mouse_pos = multiprocessing.Array("f", 3)
+        shared_paddle_pos = multiprocessing.Array("f", 3)
         shared_image_check = multiprocessing.Array("f", 1)
         shared_mouse_pos[0] = 0
         shared_mouse_pos[1] = 0
@@ -117,24 +124,13 @@ class AirHockeySim(ABC):
         shared_image_check[0] = 0
         self.protected_mouse_pos = ProtectedArray(shared_mouse_pos)
         self.protected_img_check = ProtectedArray(shared_image_check)
+        self.protected_paddle_pos = ProtectedArray(shared_paddle_pos)
         self.cap, self.camera_process, self.mimic_process = None, None, None
-        if self.control_mode == 'mouse':
-            self.camera_process = multiprocessing.Process(target=camera_callback, args=(self.protected_mouse_pos,self.protected_img_check))
-            self.camera_process.start()
-        elif self.control_mode == 'mimic':
-            self.mimic_process = multiprocessing.Process(target=mimic_control, args=(self.protected_mouse_pos,))
-            self.mimic_process.start()
-            self.camera_process = multiprocessing.Process(target=save_callback, args=(self.protected_img_check,))
-            self.camera_process.start()
-        else:
-            self.cap = cv2.VideoCapture(1)
         if self.control_type == "prim":
             self.motion_primitive = MotionPrimitive()
 
         self.images = list() # image data of the trajectory
         self.vals = list() # proprioceptive data of the trajectory
-        # self.save_path = save_path
-        # self.tidx = get_tidx(save_path)
         # self.num_trajectories = num_trajectories
         self.vel = 0.8 # velocity limit
         self.acc = 0.8 # acceleration limit 
@@ -207,7 +203,9 @@ class AirHockeySim(ABC):
 
         # robot reset pose
         # reset_pose = ([-0.68, 0., 0.34] + angle, vel,acc)
-        self.reset_pose = ([-0.68, 0., 0.33] + self.angle, self.vel,self.acc)
+        # TODO: make the reset pose not hardcoded but from the high level environment
+        # self.reset_pose = ([-0.68, 0., 0.33] + self.angle, self.vel,self.acc)
+        self.reset_pose = ([-0.38, -0.345, 0.33] + self.angle, self.vel,self.acc)
         self.lims = (self.x_min_lim, self.x_max_lim, self.y_min, self.y_max)
         self.move_lims = (self.rmax_x, self.rmax_y)
 
@@ -216,61 +214,53 @@ class AirHockeySim(ABC):
 
 
         # creating the ground -- need to only call once! otherwise it can be laggy
-        self.reset(seed)
-        
-    def __init__(self, img_size, puck_history_len, device, input_mode, normalize, target_config = 'train_ppo.yaml', puck_detector=None):
-        super().__init__(target_config)
-        
-        # a randomly initialized neural network that takes in all the paddle components and estop and computes an action
-        # optional puck detection
-        # self.args = ObjDict({
-        #     "num_inputs": 1 + 6 + 6 + 6 + 3 + 3 * 3, # estop + pose + speed + force + acc + last 3 puck pos (with missing indicator)
-        #     "num_outputs": 2,
-        #     "use_layer_norm": False,
-        #     "hidden_sizes": hidden_sizes,
-        #     "gpu": 0,
-        #     "scale_final": 1,
-        #     "activation": 'relu',
-        #     "activation_final": 'tanh',
-        #     "use_bias": False,
-        #     "dropout": 0,
-        #     "init_form": 'knorm'
-        # })
-        # self.network = MLPNetwork(args)
-        self.input_mode = input_mode
-        self.normalize = normalize
-        if self.input_mode == "state": self.obs_dim = 1 + 6 + 6 + 3 * puck_history_len
-        elif self.input_mode == "force_acc": self.obs_dim = 1 + 6 + 6 + 6 + 3 + 3 * puck_history_len
-        elif self.input_mode == 'puck_vals': self.obs_dim = 1 + 6 + 6 + 2 + 2 + 3 * puck_history_len
-        elif self.input_mode == 'goal': self.obs_dim = 1 + 6 + 6 + 2
-        elif self.input_mode == 'goal_vel': self.obs_dim = 1 + 6 + 6 + 4
-        print('obs_dim', self.obs_dim, self.input_mode)
-        self.act_dim = 2
-        self.img_size = img_size
-        self.puck_history_len = puck_history_len
+        # self.reset(seed)
+    
+    @staticmethod
+    def from_dict(state_dict):
+        return AirHockeyReal(**state_dict)
 
-        # if args.gpu >= 0: self.network.cuda(device=args.gpu)
-        self.device = device
-        self.puck_detector = puck_detector
-        self.dataset_state_mean = np.load('normalizing_vectors/mouse_mimic_mean.npy')
-        self.dataset_state_std = np.load('normalizing_vectors/mouse_mimic_std.npy')
+
+    def start_callbacks(self, **kwargs):
+        if self.control_mode == 'mouse':
+            region_info = kwargs["region_info"] if "region_info" in kwargs else None
+            goal_info = kwargs["goal_info"] if "goal_info" in kwargs else None
+            self.camera_process = multiprocessing.Process(target=camera_callback, args=(self.protected_mouse_pos,self.protected_img_check, self.protected_paddle_pos, region_info, goal_info))
+            self.camera_process.start()
+        elif self.control_mode == 'mimic':
+            self.mimic_process = multiprocessing.Process(target=mimic_control, args=(self.protected_mouse_pos,))
+            self.mimic_process.start()
+            self.camera_process = multiprocessing.Process(target=save_callback, args=(self.protected_img_check,))
+            self.camera_process.start()
+        else:
+            self.cap = cv2.VideoCapture(1)
 
     def _compute_state(self, pose, speed, i, puck_history):
         # This should be the only place where it is necessary to correct detection by the offsets
+        puck = np.array(puck_history[i])[:2]
+        puck[0] += self.x_offset
+        self.puck = puck
+        self.pose = pose
+        self.speed = speed
+
+        state_info = self.get_current_state()
+
+        return state_info
+
+    def get_current_state(self):
         state_info = dict()
         state_info['paddles'] = dict()
         state_info['paddles']['paddle_ego'] = dict()
-        state_info['paddles']['paddle_ego']['position'] = pose[:2]
+        state_info['paddles']['paddle_ego']['position'] = self.pose[:2]
         state_info['paddles']['paddle_ego']['position'][0] += self.x_offset
-        state_info['paddles']['paddle_ego']['velocity'] = speed[:2]
+        state_info['paddles']['paddle_ego']['velocity'] = self.speed[:2]
         state_info["pucks"] = list()
-        puck = np.array(puck_history[i])[:2]
-        puck[0] += self.x_offset
-        state_info["pucks"].append({"history": puck_history[max(0,i - self.puck_history_len + 1):i+1], 
-                                    "position": puck, 
-                                    "velocity": np.array(puck_history[i])[:2] - np.array(puck_history[i-1])[:2], 
-                                    "occluded": np.array(puck_history[i])[-1:]})
+        state_info["pucks"].append({"history": self.puck_history[- self.puck_history_len:], 
+                                    "position": self.puck, 
+                                    "velocity": np.array(self.puck_history[-1])[:2] - np.array(self.puck_history[-2])[:2], 
+                                    "occluded": np.array(self.puck_history[-1])[-1:]})
         return state_info
+
 
     def take_action(self, action, pose, speed, force, acc, estop, image, images, puck_history, lims, move_lims):
         # converts an action from the agent to an action in the robot space
@@ -289,10 +279,12 @@ class AirHockeySim(ABC):
 
 
 
-    def reset(self, seed, write_traj=False):
+    def reset(self, seed, **kwargs):
+        self.ctrl.servoStop(6)
+        self.ctrl.forceModeStop()
         imgs, vals = merge_trajectory(self.image_path, self.images, self.vals)
         clear_images(folder=self.image_path)
-        if write_traj: write_trajectory(self.save_path, self.tidx, imgs, vals) # TODO: not necessarily the best place to do writing
+        if "write_traj" in kwargs and kwargs["write_traj"]: write_trajectory(self.save_path, self.tidx, imgs, vals) # TODO: not necessarily the best place to do writing
         self.images = list()
         self.vals = list()
         self.timestep = 0
@@ -315,7 +307,6 @@ class AirHockeySim(ABC):
         self.target_attrs = None
 
         self.object_dict = {}
-        state_info = self.get_current_state()
         with NonBlockingConsole() as nbc:
 
             # Setting a reset pose for the robot
@@ -328,7 +319,6 @@ class AirHockeySim(ABC):
             print("Press space to start")
             for j in range(10000):
                 time.sleep(0.01)  # To prevent high CPU usage
-                i += 1
                 if nbc.get_data() == ' ':  # x1b is ESC
                     break
         self.protected_img_check[0] = 1 and bool(self.save_path)
@@ -338,6 +328,9 @@ class AirHockeySim(ABC):
         print("reset to initial pose:", reset_success)
         count = 0
         time.sleep(0.7)
+        true_pose = self.rcv.getTargetTCPPose()
+        true_speed = self.rcv.getTargetTCPSpeed()
+        state_info = self._compute_state(true_pose, true_speed, 0, self.puck_history) # TODO: not sure if i=0 is correct
 
         print("To exit press 'q'")
 
@@ -379,10 +372,15 @@ class AirHockeySim(ABC):
         true_speed = self.rcv.getTargetTCPSpeed()
         true_force = self.rcv.getActualTCPForce()
         measured_acc = self.rcv.getActualToolAccelerometer()
+        self.protected_paddle_pos[0] = true_pose[0]
+        self.protected_paddle_pos[1] = true_pose[1]
+        self.protected_paddle_pos[2] = self.paddle_radius
+
         
         if self.control_mode in ["mouse", "mimic"]:
             x, y = (pixel_coord - self.offset_constants) * 0.001
             y= -y
+            self.puck_history.append((-2,0,0))
         else:
             x,y, puck = self.take_action(action, true_pose, true_speed, true_force, measured_acc, self.rcv.isProtectiveStopped(), image, self.images, self.puck_history, self.lims, self.move_lims) # TODO: add image handling
             print("puck", puck)
@@ -408,7 +406,7 @@ class AirHockeySim(ABC):
         srvpose[0] = filter_update(true_speed, self.pose_hist, self.dpose_hist)
         safety_check = self.ctrl.isPoseWithinSafetyLimits(srvpose[0])
         values = get_state_array(time.time(), self.tidx, self.timestep, true_pose, true_speed, true_force, measured_acc, srvpose, self.rcv.isProtectiveStopped(), safety_check)
-        self.measured_values.append(values), #frames.append(np.array(protected_img[:]).reshape(640,480,3))
+        self.vals.append(values), #frames.append(np.array(protected_img[:]).reshape(640,480,3))
 
         print("servl", true_speed[:2], srvpose[0][:2], x,y, safety_check)# srvpose[0][:2], x,y, true_pose[:2], rcv.isProtectiveStopped())# , true_speed, true_force, measured_acc, )
         if safety_check: self.ctrl.servoL(srvpose[0], self.vel, self.acc, self.block_time, self.lookahead, self.gain)
@@ -421,15 +419,12 @@ class AirHockeySim(ABC):
         self.runtime = time.time() - self.transition_start
         return self._compute_state(srvpose[0], true_speed, self.timestep, self.puck_history) # TODO: populate this with the names of objects
 
-    @abstractmethod
     def spawn_puck(self, pos, vel, name, affected_by_gravity=False, movable=True):
         pass
 
-    @abstractmethod
     def spawn_paddle(self, pos, vel, name, affected_by_gravity=False, movable=True):
         pass
 
-    @abstractmethod
     def spawn_block(self, pos, vel, name, affected_by_gravity=False, movable=True):
         pass
     
