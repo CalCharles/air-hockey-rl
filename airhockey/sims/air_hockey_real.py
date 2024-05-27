@@ -102,7 +102,7 @@ class AirHockeySim(ABC):
         self.rcv = RTDEReceive("172.22.22.2")
 
         teleoperation_modes = ['mouse', 'mimic', 'keyboard']
-        autonomous_modes = ['BC', 'RL', 'IQL', 'rnet', 'reach']
+        autonomous_modes = ['BC', 'RL', 'IQL', 'rnet', 'reach', 'rand']
         autonomous_model = None
         # if control_mode in autonomous_modes:
         #     autonomous_model = initialize_agent(control_mode, load_path, additional_args=additional_args)
@@ -144,6 +144,7 @@ class AirHockeySim(ABC):
         # fast limits
         self.rmax_x = 0.26
         self.rmax_y = 0.12
+        self.teleoperation_noise = 0.0 # adds noise to the robot # TODO: make this an input parameter
 
         # safe limits 
         # rmax_x = 0.1
@@ -383,6 +384,10 @@ class AirHockeySim(ABC):
         if self.control_mode in ["mouse", "mimic"]:
             x, y = (pixel_coord - self.offset_constants) * 0.001
             y= -y
+            if self.teleoperation_noise > 0: # add some random normal noise
+                noise = np.random.normal(0.0, self.teleoperation_noise, 2)
+                x = x + noise[0]
+                y = y + noise[1]
         else:
             x,y, puck = self.take_action(action, true_pose, true_speed, true_force, measured_acc, self.rcv.isProtectiveStopped(), image, self.images, self.puck_history, self.lims, self.move_lims) # TODO: add image handling
             print("puck", puck)
