@@ -287,7 +287,9 @@ class AirHockeyReal:
             print( kwargs["write_traj"])
         if "write_traj" in kwargs and kwargs["write_traj"]: imgs, vals = merge_trajectory(self.image_path, self.images, self.vals)
         clear_images(folder=self.image_path)
-        if "write_traj" in kwargs and kwargs["write_traj"] and imgs is not None: write_trajectory(self.save_path, self.tidx, imgs, vals) # TODO: not necessarily the best place to do writing
+        if "write_traj" in kwargs and kwargs["write_traj"] and imgs is not None: 
+            write_trajectory(self.save_path, self.tidx, imgs, vals) # TODO: not necessarily the best place to do writing
+            self.tidx += 1
         self.images = list()
         self.vals = list()
         self.timestep = 0
