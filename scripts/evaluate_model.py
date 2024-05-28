@@ -71,7 +71,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Save an evaluation gif of a trained model.')
     parser.add_argument('--model', type=str, default="", help='Folder that contains model and model_cfg.')
     parser.add_argument('--save-dir', type=str, default="", help='Path to save the evaluation gifs to.')
-    parser.add_argument('--seed', type=int, default=0, help='The random seed for the environment')
+    parser.add_argument('--seed', type=int, default=42, help='The random seed for the environment')
     args = parser.parse_args()
 
     with open(os.path.join(args.model, "model_cfg.yaml"), 'r') as f:
