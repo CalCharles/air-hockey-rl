@@ -2,11 +2,12 @@ import cv2
 import imageio
 import time
 import numpy as np
-from sims.real import find_red_hockey_paddle
+from .image_detection import find_red_hockey_paddle
+from .draw_regions import visualize_regions
 
 
 mousepos = (0,0,1)
-Mimg = np.load('Mimg.npy')
+Mimg = np.load('assets/real/Mimg.npy')
 
 upscale_constant = 3
 original_size = np.array([640, 480])
@@ -33,15 +34,15 @@ def homography_transform(image, get_save=True, rotate=False):
                 interpolation = cv2.INTER_LINEAR)
     return showdst, save_image
 
-
-def camera_callback(shared_array, save_image_check):
+def camera_callback(shared_array, save_image_check, paddle_info, region_info, goal_info):
     cap = cv2.VideoCapture(1)
-
+    print(paddle_info, goal_info, region_info)
     while True:
         start = time.time()
         ret, image = cap.read()
         save_image_id = save_image_check[0] == 1
         showdst, save_image = homography_transform(image, get_save=save_image_id)
+        if region_info is not None: showdst = visualize_regions(showdst, region_info, goal_info, paddle_info)
         if save_image_id: 
             imageio.imsave("./temp/images/img" + str(time.time()) + ".jpg", save_image)
         # image = cv2.rotate(image, cv2.ROTATE_180)

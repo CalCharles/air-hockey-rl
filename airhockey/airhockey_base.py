@@ -16,6 +16,10 @@ def get_robosuite_simulator_fn():
     from airhockey.sims import AirHockeyRobosuite
     return AirHockeyRobosuite
 
+def get_real_simulator_fn():
+    from airhockey.sims import AirHockeyReal
+    return AirHockeyReal
+
 
 class AirHockeyBaseEnv(ABC, Env):
     def __init__(self,
@@ -46,6 +50,8 @@ class AirHockeyBaseEnv(ABC, Env):
                  dense_goal=True,
                  goal_selector='stationary',
                  max_timesteps=1000,
+                 paddle_bounds=[],
+                 paddle_edge_bounds=[],
                  num_positive_reward_regions=0,
                  positive_reward_range=[1,1],
                  num_negative_reward_regions=0,
@@ -64,6 +70,8 @@ class AirHockeyBaseEnv(ABC, Env):
             simulator_fn = get_box2d_simulator_fn()
         elif simulator == 'robosuite':
             simulator_fn = get_robosuite_simulator_fn()
+        elif simulator == 'real':
+            simulator_fn = get_real_simulator_fn()
         else:
             raise ValueError("Invalid simulator type. Must be 'box2d' or 'robosuite'.")
 
@@ -124,10 +132,21 @@ class AirHockeyBaseEnv(ABC, Env):
         self.table_y_right = self.width / 2
         self.table_y_left = -self.width / 2
         
-        self.paddle_x_min = self.table_x_top / 2 + 2 * self.paddle_radius
-        self.paddle_x_max = self.table_x_bot - 2 * self.paddle_radius
-        self.paddle_y_min = self.table_y_left + 2 * self.paddle_radius
-        self.paddle_y_max = self.table_y_right - 2 * self.paddle_radius
+        if len(paddle_bounds) == 0: # use preset values
+            self.paddle_x_min = self.table_x_top / 2 + 2 * self.paddle_radius
+            self.paddle_x_max = self.table_x_bot - 2 * self.paddle_radius
+            self.paddle_y_min = self.table_y_left + 2 * self.paddle_radius
+            self.paddle_y_max = self.table_y_right - 2 * self.paddle_radius
+        else:
+            self.paddle_x_min, self.paddle_x_max, self.paddle_y_min, self.paddle_y_max = paddle_bounds
+            self.boundary_lims = [self.paddle_x_min, self.paddle_x_max, self.paddle_y_min, self.paddle_y_max]
+            self.move_lims = [-1,1]
+            # real world bounds: x_min_lim = -0.8, x_max_lim = -0.33, y_min = -0.3582, y_max = 0.350
+
+        if len(paddle_edge_bounds):
+            self.edge_lims = paddle_edge_bounds
+        else:
+            self.edge_lims = [0,0,100,100]
 
         self.max_paddle_vel = self.simulator.max_paddle_vel
         self.max_puck_vel = self.simulator.max_puck_vel
@@ -146,7 +165,9 @@ class AirHockeyBaseEnv(ABC, Env):
         self.initialize_spaces()
         self.falling_time = 25
         self.metadata = {}
+        self.start_callbacks()
         self.reset()
+
 
     @abstractmethod
     def from_dict(state_dict):
@@ -172,6 +193,11 @@ class AirHockeyBaseEnv(ABC, Env):
     def get_observation(self, state_info):
         pass
 
+    def start_callbacks(self):
+        # starts callbacks for the real robot, should be overwritten for most methods
+        # but the default logic should suffice
+        self.simulator.start_callbacks()
+
     def get_obs_space(self, low: list, high: list):
         return Box(low=np.array(low), high=np.array(high), dtype=float)        
 
@@ -181,7 +207,7 @@ class AirHockeyBaseEnv(ABC, Env):
 
         self.rng = np.random.RandomState(seed)
         sim_seed = self.rng.randint(0, int(1e8))
-        self.simulator.reset(sim_seed) # no point in getting state since no spawning
+        self.simulator.reset(sim_seed, **kwargs) # no point in getting state since no spawning
         self.create_world_objects()
         self.simulator.instantiate_objects()
         state_info = self.simulator.get_current_state()
@@ -371,6 +397,7 @@ class AirHockeyBaseEnv(ABC, Env):
     def single_agent_step(self, action) -> Tuple[np.ndarray, float, bool, bool, dict]:
         paddle_x_pos = self.current_state['paddles']['paddle_ego']['position'][0]
         paddle_y_pos = self.current_state['paddles']['paddle_ego']['position'][1]
+        # limits = clip_limits(paddle_x_pos,paddle_y_pos,lims, edge_lims)
         if paddle_x_pos < self.paddle_x_min:
             action[0] = max(action[0], 0)
         if paddle_x_pos > self.paddle_x_max:

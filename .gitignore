@@ -184,3 +184,5 @@ pyrightconfig.json
 
 testt/
 traj_videos/
+data/
+temp/

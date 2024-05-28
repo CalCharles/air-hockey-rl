@@ -26,6 +26,7 @@ setup(
         'xmltodict',
         'robosuite',
         'pyyaml',
+        'ur-rtde'
     ],
     extras_require={
         'train': [
