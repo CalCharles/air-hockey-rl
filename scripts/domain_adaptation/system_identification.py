@@ -152,8 +152,6 @@ if __name__ == '__main__':
 
     # magic number to shift the observations
     data["observations"][:, 0] += 1.2
-    print(data['actions'][:20])
-    exit()
 
     vis_before = True
     if vis_before:
@@ -205,4 +203,3 @@ if __name__ == '__main__':
 
         side_by_side = [np.concatenate([saved_frames[i], post_frames[i]], axis=1) for i in range(min(len(post_frames), len(saved_frames)))]
         imageio.mimsave(gif_savepath, side_by_side, format='GIF', loop=0, duration=fps_to_duration(fps))
-    exit()
