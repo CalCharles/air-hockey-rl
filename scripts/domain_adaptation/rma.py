@@ -35,6 +35,13 @@ import tyro
 from torch.distributions.normal import Normal
 from torch.utils.tensorboard import SummaryWriter
 
+from gymnasium import Env
+from gymnasium.spaces import Space
+from copy import deepcopy
+from gymnasium.vector.utils import concatenate, create_empty_array, iterate
+from numpy.typing import NDArray
+
+
 priv_keys = ["puck_density", "puck_damping", "gravity"]
 
 @dataclass
@@ -115,6 +122,8 @@ class Args:
 
     history_len: int = 10
     phase: int = 1
+    phase_2_batch_size: int = 256
+    phase_2_data_size: int = 4000
 
 
 def make_env(env_id, idx, capture_video, run_name, gamma):
@@ -154,20 +163,28 @@ class SubprocVecEnv_domain_random(SubprocVecEnv):
         return _flatten_obs(obs, self.observation_space), self.reset_infos
 
 class Agent(nn.Module):
-    def __init__(self, envs, phase=1):
+    def __init__(self, envs, phase=1, extrinsics_dim=6, history_len=10):
         super().__init__()
 
         self.shared_priv_encoder = nn.Sequential(
             layer_init(nn.Linear(len(priv_keys), 32)),
             nn.Tanh(),
-            layer_init(nn.Linear(32, 6)),
+            layer_init(nn.Linear(32, extrinsics_dim)),
             nn.Tanh(),
         )
 
+
         self.shared_history_encoder = nn.Sequential(
-            layer_init(nn.Linear((np.array(envs.observation_space.shape).prod() + np.prod(envs.action_space.shape)) * 10, 32)),
+            nn.Linear((np.array(envs.observation_space.shape).prod() + np.prod(envs.action_space.shape)), 32),
             nn.Tanh(),
-            layer_init(nn.Linear(32, 6)),
+            nn.Conv1d(in_channels=history_len, out_channels=128, kernel_size=(3,), stride=(1,)),
+            nn.Tanh(),
+            nn.Conv1d(in_channels=128, out_channels=128, kernel_size=(2,), stride=(1,)),
+            nn.Tanh(),
+            nn.Conv1d(in_channels=128, out_channels=128, kernel_size=(2,), stride=(1,)),
+            nn.Tanh(),
+            nn.Flatten(),
+            nn.Linear(128 * 28, extrinsics_dim),
             nn.Tanh(),
         )
 
@@ -188,22 +205,39 @@ class Agent(nn.Module):
         self.actor_logstd = nn.Parameter(torch.zeros(1, np.prod(envs.action_space.shape)))
 
         self.phase = phase
+        self.extrinsics_dim = extrinsics_dim
+        self.history_len = history_len
+
+    def get_priv_extrinsics(self, priv_info):
+        return self.shared_priv_encoder(priv_info)
+    
+    def get_history_extrinsics(self, old_obs, old_action):
+        obs_action = torch.cat([old_obs, old_action], dim=2)
+        return self.shared_history_encoder(obs_action)
+        
 
     def get_value(self, obs, priv_info, last_action, old_obs, old_action,):
-        if self.phase == 1:
+        if self.phase == 1 or self.phase == 2:
             extrinsics = self.shared_priv_encoder(priv_info)
         elif self.phase == 3:
-            extrinsics = self.shared_history_encoder(torch.cat([old_obs.view(old_obs.size(0), -1), old_action.view(old_action.size(0), -1)], dim=1))
+            extrinsics = self.shared_history_encoder(torch.cat([old_obs, old_action], dim=2))
 
         obs = torch.cat([obs.view(obs.size(0), -1), extrinsics, last_action], dim=1)
         return self.critic(obs)
 
+    def get_action(self, obs, priv_info, last_action, old_obs, old_action,):
+        return self.get_action_and_value(obs, priv_info, last_action, old_obs, old_action)[0]
+
     def get_action_and_value(self, obs, priv_info, last_action, old_obs, old_action, action=None,):
-        if self.phase == 1:
+        if self.phase == 1 or self.phase == 2:
             extrinsics = self.shared_priv_encoder(priv_info)
         elif self.phase == 3:
-            extrinsics = self.shared_history_encoder(torch.cat([old_obs.view(old_obs.size(0), -1), old_action.view(old_action.size(0), -1)], dim=1))
+            extrinsics = self.shared_history_encoder(torch.cat([old_obs, old_action], dim=2))
         
+        # print(type(obs))
+        # print(type(extrinsics))
+        # print(type(last_action))
+        # import pdb; pdb.set_trace()
         obs = torch.cat([obs.view(obs.size(0), -1), extrinsics, last_action], dim=1)
         action_mean = self.actor_mean(obs)
         action_logstd = self.actor_logstd.expand_as(action_mean)
@@ -212,7 +246,6 @@ class Agent(nn.Module):
         if action is None:
             action = probs.sample()
         return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(obs)
-
 
 
 def get_intereact_history(next_done, next_obs, action, old_obs, old_action, last_action, history_len):
@@ -245,79 +278,236 @@ def get_priv_info(infos, device):
     priv_info = priv_info.to(device)
     return priv_info
 
+class SyncVectorEnv_domain_random(gym.vector.SyncVectorEnv):
+    # def gppd(self):
+    #     pass
+    def __init__(self, env_fns: Iterable[Callable[[], Env]], observation_space: Space = None, action_space: Space = None, copy: bool = True):
+        super().__init__(env_fns, observation_space, action_space, copy)
+        self.finished_envs = [False] * len(self.envs)
+        self._observations = create_empty_array(self.single_observation_space, n=self.num_envs, fn=np.zeros)
+        self._infos = [{} for _ in range(self.num_envs)]
+
+    def _check_spaces(self) -> bool:
+        return True
+    
+
+    def step_wait(self) -> Tuple[Any, NDArray[Any], NDArray[Any], NDArray[Any], dict]:
+        """Steps through each of the environments returning the batched results.
+
+        Returns:
+            The batched environment step results
+        """
+        # observations, infos = [], {}
+        for i, (env, action) in enumerate(zip(self.envs, self._actions)):
+            if not self.finished_envs[i]:
+                (
+                    self._observations[i],
+                    self._rewards[i],
+                    self._terminateds[i],
+                    self._truncateds[i],
+                    self._infos[i],
+                ) = env.step(action)
+
+            if self._terminateds[i] or self._truncateds[i]:
+                self.finished_envs[i] = True
+
+            # observations.append(observation)
+            # infos = self._add_info(infos, info, i)
+        # self.observations = concatenate(
+        #     self.single_observation_space, observations, self.observations
+        # )
+
+        return (
+            np.copy(self._observations),
+            np.copy(self._rewards),
+            np.copy(self._terminateds),
+            np.copy(self._infos),
+        )
+
+def sort_info(info):
+    length = len(info[priv_keys[0]])
+    new_info = []
+    for i in range(length):
+        new_info.append({})
+        for key in info:
+            new_info[i][key] = info[key][i]
+    return new_info
+
 def evaluate(
-    model_path: str,
-    make_env: Callable,
-    env_id: str,
+    agent: torch.nn.Module,
     eval_episodes: int,
-    run_name: str,
-    Model: torch.nn.Module,
     device: torch.device = torch.device("cpu"),
-    capture_video: bool = True,
-    gamma: float = 0.99,
+    air_hockey_cfg: Dict[str, Any] = None,
 ):
-    envs = gym.vector.SyncVectorEnv([make_env(env_id, 0, capture_video, run_name, gamma)])
-    agent = Model(envs).to(device)
-    agent.load_state_dict(torch.load(model_path, map_location=device))
+    air_hockey_params = air_hockey_cfg['air_hockey']
+    def get_airhockey_env_for_parallel():
+        """
+        Utility function for multiprocessed env.
+
+        :param env_id: (str) the environment ID
+        :param num_env: (int) the number of environments you wish to have in subprocesses
+        :param seed: (int) the inital seed for RNG
+        :param rank: (int) index of the subprocess
+        """
+        def _init():
+            curr_seed = random.randint(0, int(1e8))
+            air_hockey_params['seed'] = curr_seed
+            # Note: With this seed, an individual rng is created for each env
+            # It does not affect the global rng!
+            env = AirHockeyEnv(air_hockey_params)
+            return Monitor(env)
+        return _init()
+	
+    envs = SyncVectorEnv_domain_random([get_airhockey_env_for_parallel for _ in range(eval_episodes)])
+
     agent.eval()
 
-    obs, _ = envs.reset()
+    next_obs, infos = envs.reset(seed=args.seed)
+    infos = sort_info(infos)
+    next_priv_info = get_priv_info(infos, device)
+    next_obs = torch.Tensor(next_obs).to(device)
+    old_obs = torch.zeros((eval_episodes,) + (args.history_len,) + envs.single_observation_space.shape).to(device)
+    old_action = torch.zeros((eval_episodes,) + (args.history_len,) + envs.single_action_space.shape).to(device)
+    last_action = torch.zeros((eval_episodes,) + envs.single_action_space.shape).to(device)
+
     episodic_returns = []
     # if all end, then break and count the number of successful episodes
-    while len(episodic_returns) < eval_episodes:
-        actions, _, _, _ = agent.get_action_and_value(torch.Tensor(obs).to(device))
-        next_obs, _, _, _, infos = envs.step(actions.cpu().numpy())
-        if "final_info" in infos:
-            for info in infos["final_info"]:
-                if "episode" not in info:
-                    continue
-                print(f"eval_episode={len(episodic_returns)}, episodic_return={info['episode']['r']}")
-                episodic_returns += [info["episode"]["r"]]
-        obs = next_obs
+    while True:
+        # import pdb; pdb.set_trace()
+        action, _, _, _ = agent.get_action_and_value(obs = next_obs,
+                                                    priv_info = next_priv_info,
+                                                    last_action = last_action,
+                                                    old_obs = old_obs,
+                                                    old_action = old_action,)
 
-    return episodic_returns
+        step_ret = envs.step(action.cpu().numpy())
 
-def train(envs):
-    args = tyro.cli(Args)
-    args.batch_size = int(args.num_envs * args.num_steps)
-    args.minibatch_size = int(args.batch_size // args.num_minibatches)
-    args.num_iterations = args.total_timesteps // args.batch_size
-    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
-    if args.track:
-        import wandb
+        next_obs = torch.Tensor(step_ret[0]).to(device)
+        reward = step_ret[1]
+        terminations = step_ret[2]
+        truncations = np.copy(terminations)
+        infos = step_ret[3]
+        # import pdb; pdb.set_trace()
+        next_priv_info = get_priv_info(infos, device)
+        next_done = np.logical_or(terminations, truncations)
+        old_obs, old_action, last_action = get_intereact_history(step_ret[2], next_obs, action, old_obs, old_action, last_action, args.history_len)
+        
 
-        wandb.init(
-            project=args.wandb_project_name,
-            entity=args.wandb_entity,
-            sync_tensorboard=True,
-            config=vars(args),
-            name=run_name,
-            monitor_gym=True,
-            save_code=True,
-        )
-    writer = SummaryWriter(f"runs/{run_name}")
-    writer.add_text(
-        "hyperparameters",
-        "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
-    )
+        if np.sum(envs._terminateds) == envs.num_envs:
+            success_num = 0
+            # count the number of successful episodes
+            for info in infos:
+                if info["success"]:
+                    success_num += 1
+            
+            print("success rate: ", success_num / len(infos))
+            success_rate = success_num / len(infos)
+            break
 
-    # TRY NOT TO MODIFY: seeding
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.backends.cudnn.deterministic = args.torch_deterministic
-
-    device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
-
-    # env setup
-    # envs = gym.vector.SyncVectorEnv(
-    #     [make_env(args.env_id, i, args.capture_video, run_name, args.gamma) for i in range(args.num_envs)]
-    # )
+        # print("here !!!!!!!!!")
+                
     # import pdb; pdb.set_trace()
-    assert isinstance(envs.action_space, gym.spaces.Box), "only continuous action space is supported"
+    agent.train()
+    return success_rate
 
+# regress shared_history_encoder to shared_priv_encoder
+def phase_2_train(envs, writer, run_name, args, air_hockey_cfg, device):
     agent = Agent(envs, args.phase).to(device)
-    optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+    optimizer = optim.Adam(agent.shared_history_encoder.parameters(), lr=args.learning_rate, eps=1e-5)
+    global_step = 0
+
+    
+
+
+    for epoch in range(0, 1000):
+        
+
+        next_obs, infos = envs.reset(seed=args.seed)
+        next_obs = torch.Tensor(next_obs).to(device)
+        old_obs = torch.zeros((args.num_envs,) + (args.history_len,) + envs.observation_space.shape).to(device)
+        old_action = torch.zeros((args.num_envs,) + (args.history_len,) + envs.action_space.shape).to(device)
+        last_action = torch.zeros((args.num_envs,) + envs.action_space.shape).to(device)
+
+        
+        data_step = int(args.phase_2_data_size / args.num_envs)
+
+        priv_extrinsics_data = torch.zeros((data_step, args.num_envs, agent.extrinsics_dim)).to(device)
+        history_extrinsics_data = torch.zeros((data_step, args.num_envs, agent.extrinsics_dim)).to(device)
+        next_priv_info_data = torch.zeros((data_step, args.num_envs, len(priv_keys))).to(device)
+        old_obs_data = torch.zeros((data_step, args.num_envs, args.history_len) + envs.observation_space.shape).to(device)
+        old_action_data = torch.zeros((data_step, args.num_envs, args.history_len) + envs.action_space.shape).to(device)
+        
+        for step in range(0, data_step):
+            global_step += args.num_envs
+
+            next_priv_info = get_priv_info(infos, device)
+
+            with torch.no_grad():
+                action, _, _, _ = agent.get_action_and_value(obs = next_obs,
+                                                                priv_info = next_priv_info,
+                                                                last_action = last_action,
+                                                                old_obs = old_obs,
+                                                                old_action = old_action,)
+
+            next_priv_info_data[step] = next_priv_info
+            old_obs_data[step] = old_obs
+            old_action_data[step] = old_action
+                
+            step_ret = envs.step(action.cpu().numpy())
+            old_obs, old_action, last_action = get_intereact_history(step_ret[2], next_obs, action, old_obs, old_action, last_action, args.history_len)
+
+            next_obs = step_ret[0] 
+            reward = step_ret[1]
+            terminations = step_ret[2]
+            truncations = np.copy(terminations)
+            infos = step_ret[3]
+            next_priv_info = get_priv_info(infos, device)
+            next_done = np.logical_or(terminations, truncations)
+            next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(next_done).to(device)
+
+
+        next_priv_info_data = next_priv_info_data.reshape((-1, len(priv_keys)))
+        old_obs_data = old_obs_data.reshape((-1,) + (args.history_len,) + envs.observation_space.shape)
+        old_action_data = old_action_data.reshape((-1,) + (args.history_len,) + envs.action_space.shape)
+
+        total_loss = []
+        for i in range(0, int(args.phase_2_data_size / args.phase_2_batch_size)):
+            # sample a batch and learn
+            idx = np.random.choice(next_priv_info_data.shape[0], args.phase_2_batch_size, replace=False)
+            priv_extrinsics_data_sample = agent.get_priv_extrinsics(next_priv_info_data[idx])
+            history_extrinsics_data_sample = agent.get_history_extrinsics(old_obs_data[idx], old_action_data[idx])
+            loss = ((priv_extrinsics_data_sample - history_extrinsics_data_sample) ** 2).mean()
+            optimizer.zero_grad()
+            loss.backward()
+            # nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
+            optimizer.step()
+            total_loss.append(loss.item())
+
+        print(f"epoch={epoch}, loss={np.mean(total_loss)}")
+        # log mean loss
+        # writer.add_scalar("losses/phase_2_loss", total_loss.mean(), global_step)
+
+        if (epoch + 1) % 10 == 0:
+            
+            # save the model
+            # agent.phase = 3
+            # evaluate the model
+            agent.phase = 3
+            evaluate(agent=agent, eval_episodes=10, device=device, air_hockey_cfg=air_hockey_cfg)
+            agent.phase = 2
+            
+            # pass
+
+        # import pdb; pdb.set_trace()
+
+
+def train(envs, writer, run_name, args, air_hockey_cfg, device):
+    if args.phase == 1:
+        agent = Agent(envs, args.phase).to(device)
+        optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+    elif args.phase == 3:
+        agent = Agent(envs, args.phase).to(device)
+        optimizer = optim.Adam(agent.shared_history_encoder.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # ALGO Logic: Storage setup
     obs = torch.zeros((args.num_steps, args.num_envs) + envs.observation_space.shape).to(device)
@@ -330,6 +520,7 @@ def train(envs):
     actions_history = torch.zeros((args.num_steps, args.num_envs, args.history_len) + envs.action_space.shape).to(device)
     last_action_history = torch.zeros((args.num_steps, args.num_envs) + envs.action_space.shape).to(device)
     priv_info = torch.zeros((args.num_steps, args.num_envs, len(priv_keys))).to(device)
+
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -506,11 +697,10 @@ def train(envs):
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-    # if args.save_model:
-    #     model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
-    #     torch.save(agent.state_dict(), model_path)
-    #     print(f"model saved to {model_path}")
-    #     from cleanrl_utils.evals.ppo_eval import evaluate
+    if args.save_model:
+        model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
+        torch.save(agent.state_dict(), model_path)
+        print(f"model saved to {model_path}")
 
     #     episodic_returns = evaluate(
     #         model_path,
@@ -655,4 +845,42 @@ if __name__ == "__main__":
     clear_prior_task_results = args.clear
     progress_bar = args.progress_bar
     envs, eval_env, log_dir, air_hockey_cfg, wandb_run = train_air_hockey_model(air_hockey_cfg, use_wandb, device, clear_prior_task_results, progress_bar)
-    train(envs)
+    
+    # train prep
+    args = tyro.cli(Args)
+    args.batch_size = int(args.num_envs * args.num_steps)
+    args.minibatch_size = int(args.batch_size // args.num_minibatches)
+    args.num_iterations = args.total_timesteps // args.batch_size
+    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
+    if args.track:
+        import wandb
+
+        wandb.init(
+            project=args.wandb_project_name,
+            entity=args.wandb_entity,
+            sync_tensorboard=True,
+            config=vars(args),
+            name=run_name,
+            monitor_gym=True,
+            save_code=True,
+        )
+    writer = SummaryWriter(f"runs/{run_name}")
+    writer.add_text(
+        "hyperparameters",
+        "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
+    )
+
+    # TRY NOT TO MODIFY: seeding
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.backends.cudnn.deterministic = args.torch_deterministic
+
+    device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
+    assert isinstance(envs.action_space, gym.spaces.Box), "only continuous action space is supported"
+
+    if args.phase == 1 or args.phase == 3:
+        train(envs, writer, run_name, args, air_hockey_cfg, device)
+
+    elif args.phase == 2:
+        phase_2_train(envs, writer, run_name, args, air_hockey_cfg, device)

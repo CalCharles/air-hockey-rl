@@ -191,6 +191,7 @@ class AirHockeyBaseEnv(ABC, Env):
             self.simulator_params['puck_density'] = np.random.uniform(100, 400)
             self.simulator_params['gravity'] = np.random.uniform(-0.3, -0.7)
 
+            # print("self.simulator_params['gravity']: ", self.simulator_params['gravity'])
             # print("reset -> domain_random")
 
             # import pdb; pdb.set_trace()
@@ -368,6 +369,7 @@ class AirHockeyBaseEnv(ABC, Env):
     def step(self, action):
         if not self.multiagent:
             obs, reward, is_finished, truncated, info = self.single_agent_step(action)
+            is_finished = is_finished or truncated
             return obs, reward, is_finished, truncated, info
         else:
             return self.multi_step(action)
@@ -413,7 +415,7 @@ class AirHockeyBaseEnv(ABC, Env):
         # # only end if timesteps
         # if self.current_timestep >= self.max_timesteps:
         #     is_finished = True
-        
+
         obs = self.get_observation(next_state)
         info.update(self.simulator_params)
         return obs, reward, is_finished, truncated, info

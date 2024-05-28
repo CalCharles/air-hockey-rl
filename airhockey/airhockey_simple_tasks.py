@@ -17,8 +17,8 @@ class AirHockeyPuckVelEnv(AirHockeyBaseEnv):
         low = paddle_obs_low + puck_obs_low
         high = paddle_obs_high + puck_obs_high
 
-        self.observation_space = self.get_obs_space(low, high)
-        self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
+        self.observation_space = self.single_observation_space = self.get_obs_space(low, high)
+        self.action_space = self.single_action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
         
     @staticmethod
@@ -88,8 +88,8 @@ class AirHockeyPuckHeightEnv(AirHockeyBaseEnv):
         low = paddle_obs_low + puck_obs_low
         high = paddle_obs_high + puck_obs_high
 
-        self.observation_space = self.get_obs_space(low, high)
-        self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
+        self.observation_space = self.single_observation_space = self.get_obs_space(low, high)
+        self.action_space = self.single_action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
         
     @staticmethod
@@ -169,8 +169,8 @@ class AirHockeyPuckCatchEnv(AirHockeyBaseEnv):
         low = paddle_obs_low + puck_obs_low
         high = paddle_obs_high + puck_obs_high
 
-        self.observation_space = self.get_obs_space(low, high)
-        self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
+        self.observation_space = self.single_observation_space = self.get_obs_space(low, high)
+        self.action_space = self.single_action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
         
     @staticmethod
@@ -232,8 +232,8 @@ class AirHockeyPuckJuggleEnv(AirHockeyBaseEnv):
         low = paddle_obs_low + puck_obs_low
         high = paddle_obs_high + puck_obs_high
 
-        self.observation_space = self.get_obs_space(low, high)
-        self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
+        self.observation_space = self.single_observation_space = self.get_obs_space(low, high)
+        self.action_space = self.single_action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
         
     @staticmethod
@@ -295,8 +295,8 @@ class AirHockeyPuckStrikeEnv(AirHockeyBaseEnv):
         low = paddle_obs_low + puck_obs_low
         high = paddle_obs_high + puck_obs_high
 
-        self.observation_space = self.get_obs_space(low, high)
-        self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
+        self.observation_space = self.single_observation_space = self.get_obs_space(low, high)
+        self.action_space = self.single_action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
         
     @staticmethod
@@ -374,8 +374,8 @@ class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
         puck_obs_high = [self.table_x_bot, self.table_y_right, self.max_puck_vel, self.max_puck_vel]
         low = paddle_obs_low + puck_obs_low
         high = paddle_obs_high + puck_obs_high
-        self.observation_space = self.get_obs_space(low, high)
-        self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
+        self.observation_space = self.single_observation_space = self.get_obs_space(low, high)
+        self.action_space = self.single_action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
     @staticmethod
     def from_dict(state_dict):
