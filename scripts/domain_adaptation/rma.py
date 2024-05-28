@@ -5,6 +5,10 @@ from stable_baselines3 import HerReplayBuffer, SAC
 from stable_baselines3.common.vec_env.subproc_vec_env import _flatten_obs, VecEnvObs
 from airhockey import AirHockeyEnv
 from airhockey.renderers.render import AirHockeyRenderer
+from stable_baselines3.common.vec_env.base_vec_env import (
+    VecEnvObs,
+    VecEnvStepReturn,
+)
 import argparse
 import yaml
 import os
@@ -42,7 +46,9 @@ from gymnasium.vector.utils import concatenate, create_empty_array, iterate
 from numpy.typing import NDArray
 
 
-priv_keys = ["puck_density", "puck_damping", "gravity"]
+# priv_keys = ["puck_density", "puck_damping", "gravity"]
+
+priv_keys = ["puck_density"]
 
 @dataclass
 class Args:
@@ -278,51 +284,74 @@ def get_priv_info(infos, device):
     priv_info = priv_info.to(device)
     return priv_info
 
-class SyncVectorEnv_domain_random(gym.vector.SyncVectorEnv):
-    # def gppd(self):
-    #     pass
-    def __init__(self, env_fns: Iterable[Callable[[], Env]], observation_space: Space = None, action_space: Space = None, copy: bool = True):
-        super().__init__(env_fns, observation_space, action_space, copy)
-        self.finished_envs = [False] * len(self.envs)
-        self._observations = create_empty_array(self.single_observation_space, n=self.num_envs, fn=np.zeros)
-        self._infos = [{} for _ in range(self.num_envs)]
+class SubprocVecEnv_domain_random_eval(SubprocVecEnv_domain_random):
+    def __init__(self, env_fns: List[Callable[[], gym.Env]], start_method: Optional[str] = None):
+        super().__init__(env_fns, start_method)
+        self.finished_envs = [False] * len(env_fns)
+        self.results = [None] * len(env_fns)
 
-    def _check_spaces(self) -> bool:
-        return True
+    def step_async(self, actions: np.ndarray) -> None:
+        for index, (remote, action) in enumerate(zip(self.remotes, actions)):
+            if not self.finished_envs[index]:
+                remote.send(("step", action))
+        self.waiting = True
+
+    def step_wait(self) -> VecEnvStepReturn:
+        for index, remote in enumerate(self.remotes):
+            if not self.finished_envs[index]:
+                self.results[index] = remote.recv()
+                if self.results[index][2]:
+                    self.finished_envs[index] = True
+        self.waiting = False
+        obs, rews, dones, infos, self.reset_infos = zip(*self.results)  # type: ignore[assignment]
+        return _flatten_obs(obs, self.observation_space), np.stack(rews), np.stack(dones), infos  # type: ignore[return-value]
+        
+
+# class SyncVectorEnv_domain_random(gym.vector.SyncVectorEnv):
+#     # def gppd(self):
+#     #     pass
+#     def __init__(self, env_fns: Iterable[Callable[[], Env]], observation_space: Space = None, action_space: Space = None, copy: bool = True):
+#         super().__init__(env_fns, observation_space, action_space, copy)
+#         self.finished_envs = [False] * len(self.envs)
+#         self._observations = create_empty_array(self.single_observation_space, n=self.num_envs, fn=np.zeros)
+#         self._infos = [{} for _ in range(self.num_envs)]
+
+#     def _check_spaces(self) -> bool:
+#         return True
     
 
-    def step_wait(self) -> Tuple[Any, NDArray[Any], NDArray[Any], NDArray[Any], dict]:
-        """Steps through each of the environments returning the batched results.
+#     def step_wait(self) -> Tuple[Any, NDArray[Any], NDArray[Any], NDArray[Any], dict]:
+#         """Steps through each of the environments returning the batched results.
 
-        Returns:
-            The batched environment step results
-        """
-        # observations, infos = [], {}
-        for i, (env, action) in enumerate(zip(self.envs, self._actions)):
-            if not self.finished_envs[i]:
-                (
-                    self._observations[i],
-                    self._rewards[i],
-                    self._terminateds[i],
-                    self._truncateds[i],
-                    self._infos[i],
-                ) = env.step(action)
+#         Returns:
+#             The batched environment step results
+#         """
+#         # observations, infos = [], {}
+#         for i, (env, action) in enumerate(zip(self.envs, self._actions)):
+#             if not self.finished_envs[i]:
+#                 (
+#                     self._observations[i],
+#                     self._rewards[i],
+#                     self._terminateds[i],
+#                     self._truncateds[i],
+#                     self._infos[i],
+#                 ) = env.step(action)
 
-            if self._terminateds[i] or self._truncateds[i]:
-                self.finished_envs[i] = True
+#             if self._terminateds[i] or self._truncateds[i]:
+#                 self.finished_envs[i] = True
 
-            # observations.append(observation)
-            # infos = self._add_info(infos, info, i)
-        # self.observations = concatenate(
-        #     self.single_observation_space, observations, self.observations
-        # )
+#             # observations.append(observation)
+#             # infos = self._add_info(infos, info, i)
+#         # self.observations = concatenate(
+#         #     self.single_observation_space, observations, self.observations
+#         # )
 
-        return (
-            np.copy(self._observations),
-            np.copy(self._rewards),
-            np.copy(self._terminateds),
-            np.copy(self._infos),
-        )
+#         return (
+#             np.copy(self._observations),
+#             np.copy(self._rewards),
+#             np.copy(self._terminateds),
+#             np.copy(self._infos),
+#         )
 
 def sort_info(info):
     length = len(info[priv_keys[0]])
@@ -339,6 +368,13 @@ def evaluate(
     device: torch.device = torch.device("cpu"),
     air_hockey_cfg: Dict[str, Any] = None,
 ):
+    
+    # 用老的process 方法 添加一个 self._done, 如果done了，就不再step了
+    # def step_async(self, actions: np.ndarray) -> None:
+    #     for remote, action in zip(self.remotes, actions):
+    #         remote.send(("step", action))
+    #     self.waiting = True
+
     air_hockey_params = air_hockey_cfg['air_hockey']
     def get_airhockey_env_for_parallel():
         """
@@ -358,17 +394,18 @@ def evaluate(
             return Monitor(env)
         return _init()
 	
-    envs = SyncVectorEnv_domain_random([get_airhockey_env_for_parallel for _ in range(eval_episodes)])
+    # envs = SyncVectorEnv_domain_random([get_airhockey_env_for_parallel for _ in range(eval_episodes)])
+    envs = SubprocVecEnv_domain_random_eval([get_airhockey_env_for_parallel for _ in range(eval_episodes)])
 
     agent.eval()
 
     next_obs, infos = envs.reset(seed=args.seed)
-    infos = sort_info(infos)
+    # infos = sort_info(infos)
     next_priv_info = get_priv_info(infos, device)
     next_obs = torch.Tensor(next_obs).to(device)
-    old_obs = torch.zeros((eval_episodes,) + (args.history_len,) + envs.single_observation_space.shape).to(device)
-    old_action = torch.zeros((eval_episodes,) + (args.history_len,) + envs.single_action_space.shape).to(device)
-    last_action = torch.zeros((eval_episodes,) + envs.single_action_space.shape).to(device)
+    old_obs = torch.zeros((eval_episodes,) + (args.history_len,) + envs.observation_space.shape).to(device)
+    old_action = torch.zeros((eval_episodes,) + (args.history_len,) + envs.action_space.shape).to(device)
+    last_action = torch.zeros((eval_episodes,) + envs.action_space.shape).to(device)
 
     episodic_returns = []
     # if all end, then break and count the number of successful episodes
@@ -393,7 +430,7 @@ def evaluate(
         old_obs, old_action, last_action = get_intereact_history(step_ret[2], next_obs, action, old_obs, old_action, last_action, args.history_len)
         
 
-        if np.sum(envs._terminateds) == envs.num_envs:
+        if np.sum(envs.finished_envs) == eval_episodes:
             success_num = 0
             # count the number of successful episodes
             for info in infos:
@@ -405,6 +442,7 @@ def evaluate(
             break
 
         # print("here !!!!!!!!!")
+        print("done: ", np.sum(envs.finished_envs))
                 
     # import pdb; pdb.set_trace()
     agent.train()
