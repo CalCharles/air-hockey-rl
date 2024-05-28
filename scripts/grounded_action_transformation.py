@@ -53,21 +53,24 @@ class ReplayMemory(object):
 
 
 
-class GATWrapper:
+class GATWrapper(gym.Env):
     def __init__(self, env, forward_model, inverse_model):
         self.env = env
         self.forward_model = forward_model
         self.inverse_model = inverse_model
+        self.observation_space = self.env.observation_space
+        self.action_space = self.env.action_space
     
-    def reset(self):
-        return self.env.reset()
+    def reset(self, seed=0):
+        return self.env.reset(seed=seed)
     
     def step(self, action):
-        s = torch.tensor(self.env.get_observation())
+        s = torch.tensor(self.env.get_observation(self.env.simulator.get_current_state()))
         a = torch.tensor(action)
         next_state = self.forward_model(s, a)
         grounded_action = self.inverse_model(s, next_state)
-        return self.env.step(grounded_action)
+        print("action before:", a, "action after:", grounded_action.detach())
+        return self.env.step(grounded_action.detach())
 
 
 """-------------------------------------- Forward Model --------------------------------------"""
@@ -183,18 +186,20 @@ class GroundedActionTransformation():
         # TODO: train should automatically add to self.sim_buffer, so we don't need to keep
         # the trajectories
         # trajectories = self.train_ppo(self.sim_env, self.policy, self.sim_buffer, self.grounded_transform, num_iters)
+        print("i", i)
         if i == 0:
             model = PPO("MlpPolicy", self.sim_env, verbose=1)
         else:
+            
             grounded_sim_env = GATWrapper(self.sim_env, self.forward_model, self.inverse_model)
             model = PPO.load(self.policy, env=grounded_sim_env)
-            obs = self.sim_env.get_observation(self.sim_current_state) # get current observation
-            action, _states = model.predict(obs)
-            grounded_action = self.grounded_transform(state=self.sim_current_state, action=action) # action transform
-            print("\naction transform:", action, grounded_action, "\n")
-            obs, reward, is_finished, truncated, info = self.sim_env.step(grounded_action)
-            self.sim_current_state = self.sim_env.simulator.get_current_state() # update current state
-            model = PPO.load(self.policy, env=self.sim_env) # env: the new environment to run the loaded model on
+            # obs = self.sim_env.get_observation(self.sim_current_state) # get current observation
+            # action, _states = model.predict(obs)
+            # grounded_action = self.grounded_transform(state=self.sim_current_state, action=action) # action transform
+            # print("\naction transform:", action, grounded_action, "\n")
+            # obs, reward, is_finished, truncated, info = self.sim_env.step(grounded_action)
+            # self.sim_current_state = self.sim_env.simulator.get_current_state() # update current state
+            # model = PPO.load(self.policy, env=self.sim_env) # env: the new environment to run the loaded model on
             
         model.learn(num_iters)
         self.policy = self.log_dir + "/optimized_policy" + str(i) # self.policy stores the current model name
@@ -268,10 +273,10 @@ def load_dataset(dataset_pth): # TODO
     return result
     
 
-def train_GAT(args, data, sim_air_hockey_cfg, real_air_hockey_cfg):
+def train_GAT(args, data, sim_air_hockey_cfg, real_air_hockey_cfg,log_dir):
     sim_env = AirHockeyEnv(sim_air_hockey_cfg['air_hockey'])
     real_env = AirHockeyEnv(real_air_hockey_cfg['air_hockey'])
-    gat = GroundedActionTransformation(args, data, sim_env, real_env)
+    gat = GroundedActionTransformation(args, data, sim_env, real_env,log_dir)
     gat.add_data(data)
     print("Starting train_sim...")
     gat.train_sim(args.initial_rl_training, i=0)
@@ -296,8 +301,8 @@ if __name__ == '__main__':
     parser.add_argument('--real-cfg', type=str, default=None, help='Path to the configuration file.')
     parser.add_argument('--dataset_pth', type=str, default=None, help='Path to the dataset file.') # real-cfg
     parser.add_argument('--initial_rl_training', type=int, default=10, help='initial_rl_training')
-    parser.add_argument('--initial_inverse_training', type=int, default=10, help='initial_inverse_training')
-    parser.add_argument('--initial_forward_training', type=int, default=10, help='initial_forward_training')
+    parser.add_argument('--initial_inverse_training', type=int, default=100, help='initial_inverse_training')
+    parser.add_argument('--initial_forward_training', type=int, default=100, help='initial_forward_training')
     parser.add_argument('--num_real_sim_iters', type=int, default=10, help='num_real_sim_iters')
     parser.add_argument('--num_real_steps', type=int, default=10, help='num_real_steps')
     parser.add_argument('--rl_iters', type=int, default=10, help='rl_iters')
@@ -316,5 +321,5 @@ if __name__ == '__main__':
     # sorting is: trajectory->key->data
     data = load_dataset(args.dataset_pth) 
     log_dir = 'gat_log/'
-    best_params, mean_params = train_GAT(args, data, sim_air_hockey_cfg, real_air_hockey_cfg, log_dir)
+    train_GAT(args, data, sim_air_hockey_cfg, real_air_hockey_cfg, log_dir)
 # python scripts/grounded_action_transformation.py --sim-cfg configs/gat/puck_height.yaml --real-cfg configs/gat/puch_height2.yaml --dataset_pth baseline_models/puck_height/air_hockey_agent_13/trajectory_data0.hdf5
