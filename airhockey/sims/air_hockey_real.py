@@ -134,6 +134,7 @@ class AirHockeyReal:
         # self.num_trajectories = num_trajectories
         self.vel = 0.8 # velocity limit
         self.acc = 0.8 # acceleration limit 
+        self.x_convert_offset = 1.2 # offset to convert positions to centered coordinate frame
 
         # rmax_x = 0.23
         # rmax_y = 0.12

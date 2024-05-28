@@ -4,6 +4,7 @@ from gymnasium.spaces import Box
 from gymnasium import spaces
 from abc import ABC, abstractmethod
 import math
+from .sims.real.coordinate_transform import clip_limits
 
 from typing import Tuple
 
@@ -140,7 +141,7 @@ class AirHockeyBaseEnv(ABC, Env):
         else:
             self.paddle_x_min, self.paddle_x_max, self.paddle_y_min, self.paddle_y_max = paddle_bounds
             self.boundary_lims = [self.paddle_x_min, self.paddle_x_max, self.paddle_y_min, self.paddle_y_max]
-            self.move_lims = [-1,1]
+            self.move_lims = [-1,-1]
             # real world bounds: x_min_lim = -0.8, x_max_lim = -0.33, y_min = -0.3582, y_max = 0.350
 
         if len(paddle_edge_bounds):
@@ -397,14 +398,15 @@ class AirHockeyBaseEnv(ABC, Env):
     def single_agent_step(self, action) -> Tuple[np.ndarray, float, bool, bool, dict]:
         paddle_x_pos = self.current_state['paddles']['paddle_ego']['position'][0]
         paddle_y_pos = self.current_state['paddles']['paddle_ego']['position'][1]
-        # limits = clip_limits(paddle_x_pos,paddle_y_pos,lims, edge_lims)
-        if paddle_x_pos < self.paddle_x_min:
+        min_max_limits = clip_limits(paddle_x_pos,paddle_y_pos,self.boundary_lims, self.edge_lims)
+        paddle_x_min, paddle_x_max, paddle_y_min, paddle_y_max = min_max_limits
+        if paddle_x_pos < paddle_x_min:
             action[0] = max(action[0], 0)
-        if paddle_x_pos > self.paddle_x_max:
+        if paddle_x_pos > paddle_x_max:
             action[0] = min(action[0], 0)
-        if paddle_y_pos < self.paddle_y_min:
+        if paddle_y_pos < paddle_y_min:
             action[1] = max(action[1], 0)
-        if paddle_y_pos > self.paddle_y_max:
+        if paddle_y_pos > paddle_y_max:
             action[1] = min(action[1], 0)
 
         next_state = self.simulator.get_transition(action)
