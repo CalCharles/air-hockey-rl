@@ -111,7 +111,7 @@ class AirHockeyReal:
         self.puck_history_len = 5
         self.puck_detector = find_red_hockey_puck
         self.image_path = "./temp/images/"
-        self.save_path = "./data/mouse/expert_avoid_fixed_start_goal"
+        self.save_path = "./data/mouse/expert_avoid_random_start_fixed_goal"
         self.tidx = get_trajectory_idx(self.save_path)
 
 
@@ -140,6 +140,7 @@ class AirHockeyReal:
         # fast limits
         self.rmax_x = 0.26
         self.rmax_y = 0.12
+        # self.teleoperation_noise = 0.20 # adds noise to the robot # TODO: make this an input parameter
         self.teleoperation_noise = 0.0 # adds noise to the robot # TODO: make this an input parameter
 
         # safe limits 
@@ -206,6 +207,7 @@ class AirHockeyReal:
         # reset_pose = ([-0.68, 0., 0.34] + angle, vel,acc)
         # TODO: make the reset pose not hardcoded but from the high level environment
         # self.reset_pose = ([-0.68, 0., 0.33] + self.angle, self.vel,self.acc)
+        self.random_reset = True
         self.reset_pose = ([-0.38, -0.345, 0.33] + self.angle, self.vel,self.acc)
         self.lims = (self.x_min_lim, self.x_max_lim, self.y_min, self.y_max)
         self.move_lims = (self.rmax_x, self.rmax_y)
@@ -316,6 +318,7 @@ class AirHockeyReal:
         with NonBlockingConsole() as nbc:
 
             # Setting a reset pose for the robot
+            if self.random_reset: self.reset_pose[0][0], self.reset_pose[0][1] = np.random.rand(2) * np.array([self.x_max_lim - self.x_min_lim, self.y_max - self.y_min]) + np.array([self.x_min_lim, self.y_min])
             reset_success = self.ctrl.moveL(self.reset_pose[0], self.reset_pose[1], self.reset_pose[2], False)
             apply_negative_z_force(self.ctrl, self.rcv)
             print("reset to initial pose:", reset_success)
@@ -388,8 +391,8 @@ class AirHockeyReal:
             y= -y
             if self.teleoperation_noise > 0: # add some random normal noise
                 noise = np.random.normal(0.0, self.teleoperation_noise, 2)
-                x = x + noise[0]
-                y = y + noise[1]
+                x = x + noise[0] * self.rmax_x
+                y = y + noise[1] * self.rmax_y
             self.puck_history.append((-2,0,0))
         else:
             x,y, puck = self.take_action(action, true_pose, true_speed, true_force, measured_acc, self.rcv.isProtectiveStopped(), image, self.images, self.puck_history, self.lims, self.move_lims) # TODO: add image handling
