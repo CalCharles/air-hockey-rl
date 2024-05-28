@@ -46,9 +46,9 @@ from gymnasium.vector.utils import concatenate, create_empty_array, iterate
 from numpy.typing import NDArray
 
 
-# priv_keys = ["puck_density", "puck_damping", "gravity"]
+priv_keys = ["puck_density", "puck_damping", "gravity"]
 
-priv_keys = ["puck_density"]
+# priv_keys = ["puck_density"]
 
 @dataclass
 class Args:
@@ -307,61 +307,6 @@ class SubprocVecEnv_domain_random_eval(SubprocVecEnv_domain_random):
         return _flatten_obs(obs, self.observation_space), np.stack(rews), np.stack(dones), infos  # type: ignore[return-value]
         
 
-# class SyncVectorEnv_domain_random(gym.vector.SyncVectorEnv):
-#     # def gppd(self):
-#     #     pass
-#     def __init__(self, env_fns: Iterable[Callable[[], Env]], observation_space: Space = None, action_space: Space = None, copy: bool = True):
-#         super().__init__(env_fns, observation_space, action_space, copy)
-#         self.finished_envs = [False] * len(self.envs)
-#         self._observations = create_empty_array(self.single_observation_space, n=self.num_envs, fn=np.zeros)
-#         self._infos = [{} for _ in range(self.num_envs)]
-
-#     def _check_spaces(self) -> bool:
-#         return True
-    
-
-#     def step_wait(self) -> Tuple[Any, NDArray[Any], NDArray[Any], NDArray[Any], dict]:
-#         """Steps through each of the environments returning the batched results.
-
-#         Returns:
-#             The batched environment step results
-#         """
-#         # observations, infos = [], {}
-#         for i, (env, action) in enumerate(zip(self.envs, self._actions)):
-#             if not self.finished_envs[i]:
-#                 (
-#                     self._observations[i],
-#                     self._rewards[i],
-#                     self._terminateds[i],
-#                     self._truncateds[i],
-#                     self._infos[i],
-#                 ) = env.step(action)
-
-#             if self._terminateds[i] or self._truncateds[i]:
-#                 self.finished_envs[i] = True
-
-#             # observations.append(observation)
-#             # infos = self._add_info(infos, info, i)
-#         # self.observations = concatenate(
-#         #     self.single_observation_space, observations, self.observations
-#         # )
-
-#         return (
-#             np.copy(self._observations),
-#             np.copy(self._rewards),
-#             np.copy(self._terminateds),
-#             np.copy(self._infos),
-#         )
-
-def sort_info(info):
-    length = len(info[priv_keys[0]])
-    new_info = []
-    for i in range(length):
-        new_info.append({})
-        for key in info:
-            new_info[i][key] = info[key][i]
-    return new_info
-
 def evaluate(
     agent: torch.nn.Module,
     eval_episodes: int,
@@ -369,13 +314,8 @@ def evaluate(
     air_hockey_cfg: Dict[str, Any] = None,
 ):
     
-    # 用老的process 方法 添加一个 self._done, 如果done了，就不再step了
-    # def step_async(self, actions: np.ndarray) -> None:
-    #     for remote, action in zip(self.remotes, actions):
-    #         remote.send(("step", action))
-    #     self.waiting = True
-
     air_hockey_params = air_hockey_cfg['air_hockey']
+    curr_seed = [0]
     def get_airhockey_env_for_parallel():
         """
         Utility function for multiprocessed env.
@@ -386,15 +326,14 @@ def evaluate(
         :param rank: (int) index of the subprocess
         """
         def _init():
-            curr_seed = random.randint(0, int(1e8))
-            air_hockey_params['seed'] = curr_seed
+            air_hockey_params['seed'] = curr_seed[0]
+            curr_seed[0] += 1
             # Note: With this seed, an individual rng is created for each env
             # It does not affect the global rng!
             env = AirHockeyEnv(air_hockey_params)
             return Monitor(env)
         return _init()
 	
-    # envs = SyncVectorEnv_domain_random([get_airhockey_env_for_parallel for _ in range(eval_episodes)])
     envs = SubprocVecEnv_domain_random_eval([get_airhockey_env_for_parallel for _ in range(eval_episodes)])
 
     agent.eval()
@@ -442,7 +381,7 @@ def evaluate(
             break
 
         # print("here !!!!!!!!!")
-        print("done: ", np.sum(envs.finished_envs))
+        # print("done: ", np.sum(envs.finished_envs))
                 
     # import pdb; pdb.set_trace()
     agent.train()
@@ -740,6 +679,8 @@ def train(envs, writer, run_name, args, air_hockey_cfg, device):
         torch.save(agent.state_dict(), model_path)
         print(f"model saved to {model_path}")
 
+        evaluate(agent=agent, eval_episodes=10, device=device, air_hockey_cfg=air_hockey_cfg)
+
     #     episodic_returns = evaluate(
     #         model_path,
     #         make_env,
@@ -912,6 +853,7 @@ if __name__ == "__main__":
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
+    os.environ["PYTHONHASHSEED"] = str(args.seed)
     torch.backends.cudnn.deterministic = args.torch_deterministic
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
