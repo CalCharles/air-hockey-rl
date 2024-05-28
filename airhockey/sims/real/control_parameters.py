@@ -34,7 +34,6 @@ def homography_transform(image, get_save=True, rotate=False):
                 interpolation = cv2.INTER_LINEAR)
     return showdst, save_image
 
-
 def camera_callback(shared_array, save_image_check, paddle_info, region_info, goal_info):
     cap = cv2.VideoCapture(1)
     print(paddle_info, goal_info, region_info)

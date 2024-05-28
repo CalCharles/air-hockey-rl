@@ -44,7 +44,9 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
                  reward_velocity_limits_min=[0,0],
                  reward_velocity_limits_max=[0,0],
                  reward_movement_types=[],
-                 initialization_description_pth=""):
+                 initialization_description_pth="",
+                 paddle_offsets = [0,0,0,0],
+                 paddle_clipping = [1,0,-0.1,-0.15]):
         self.init_dict = self.load_initialization(initialization_description_pth)
         self.num_negative_reward_regions = num_negative_reward_regions
         self.negative_reward_range = negative_reward_range

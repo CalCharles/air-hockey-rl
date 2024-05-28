@@ -50,6 +50,8 @@ class AirHockeyBaseEnv(ABC, Env):
                  dense_goal=True,
                  goal_selector='stationary',
                  max_timesteps=1000,
+                 paddle_bounds=[],
+                 paddle_edge_bounds=[],
                  num_positive_reward_regions=0,
                  positive_reward_range=[1,1],
                  num_negative_reward_regions=0,
@@ -130,10 +132,21 @@ class AirHockeyBaseEnv(ABC, Env):
         self.table_y_right = self.width / 2
         self.table_y_left = -self.width / 2
         
-        self.paddle_x_min = self.table_x_top / 2 + 2 * self.paddle_radius
-        self.paddle_x_max = self.table_x_bot - 2 * self.paddle_radius
-        self.paddle_y_min = self.table_y_left + 2 * self.paddle_radius
-        self.paddle_y_max = self.table_y_right - 2 * self.paddle_radius
+        if len(paddle_bounds) == 0: # use preset values
+            self.paddle_x_min = self.table_x_top / 2 + 2 * self.paddle_radius
+            self.paddle_x_max = self.table_x_bot - 2 * self.paddle_radius
+            self.paddle_y_min = self.table_y_left + 2 * self.paddle_radius
+            self.paddle_y_max = self.table_y_right - 2 * self.paddle_radius
+        else:
+            self.paddle_x_min, self.paddle_x_max, self.paddle_y_min, self.paddle_y_max = paddle_bounds
+            self.boundary_lims = [self.paddle_x_min, self.paddle_x_max, self.paddle_y_min, self.paddle_y_max]
+            self.move_lims = [-1,1]
+            # real world bounds: x_min_lim = -0.8, x_max_lim = -0.33, y_min = -0.3582, y_max = 0.350
+
+        if len(paddle_edge_bounds):
+            self.edge_lims = paddle_edge_bounds
+        else:
+            self.edge_lims = [0,0,100,100]
 
         self.max_paddle_vel = self.simulator.max_paddle_vel
         self.max_puck_vel = self.simulator.max_puck_vel
@@ -384,6 +397,7 @@ class AirHockeyBaseEnv(ABC, Env):
     def single_agent_step(self, action) -> Tuple[np.ndarray, float, bool, bool, dict]:
         paddle_x_pos = self.current_state['paddles']['paddle_ego']['position'][0]
         paddle_y_pos = self.current_state['paddles']['paddle_ego']['position'][1]
+        # limits = clip_limits(paddle_x_pos,paddle_y_pos,lims, edge_lims)
         if paddle_x_pos < self.paddle_x_min:
             action[0] = max(action[0], 0)
         if paddle_x_pos > self.paddle_x_max:

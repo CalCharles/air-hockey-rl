@@ -181,6 +181,13 @@ class AirHockeyReal:
         # y_max = 0.360
         self.y_min = -0.3582
         self.y_max = 0.350
+    
+        self.bot_abs = 0.1
+        self.top_abs = 0.8
+        self.max_bias_p = -0.10
+        self.max_bias_m = -0.15
+        self.edge_lims = [self.bot_abs, self.top_abs, self.max_bias_p, self.max_bias_m]
+
         # y_min = -0.3482
         # y_max = 0.350
 
@@ -401,15 +408,15 @@ class AirHockeyReal:
             srvpose = [[x, y, 0.30] + self.angle, self.vel,self.acc]
         ###### servoL #####
         if self.control_type == "pol":
-            polx, poly = compute_pol(x, y, true_pose, self.lims, self.move_lims)
+            polx, poly = compute_pol(x, y, true_pose, self.lims, self.move_lims, self.edge_lims)
             srvpose = [[polx, poly, 0.30] + self.angle, self.vel,self.acc]
         elif self.control_type == "rect":
             # x,y = true_pose[:2] + (np.random.rand(2) * ((np.random.randint(2) - 0.5) * 2)) # uncomment to test random actions
-            recx, recy = compute_rect(x, y, true_pose, self.lims, self.move_lims)
+            recx, recy = compute_rect(x, y, true_pose, self.lims, self.move_lims, self.edge_lims)
             # print(recx - true_pose[0], recy -true_pose[1], true_pose[:2],recx, recy,  x,y)
             srvpose = [[recx, recy, 0.30] + self.angle, self.vel,self.acc]
         elif self.control_type == "prim":
-            x, y = self.motion_primitive.compute_primitive(action, true_pose, self.lims, self.move_lims)
+            x, y = self.motion_primitive.compute_primitive(action, true_pose, self.lims, self.move_lims, self.edge_lims)
             srvpose = [[x, y, 0.30] + self.angle, self.vel,self.acc]
         
         # TODO: change of direction is currently very sudden, we need to tune that
