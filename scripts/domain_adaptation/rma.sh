@@ -5,7 +5,7 @@ wandb_project_name="test_2"
 cfg="box2d.yaml"
 conda_env="airhockey"
 # checkpoints_path_base="halfcheetah_percent"
-
+phase="1"
 
 semi_vdice_lambda=(0.5)
 true_vdice_lambda=(0.99)
@@ -55,6 +55,7 @@ for current_seed in "${seed[@]}"; do
                                             --wandb_project_name $wandb_project_name \
                                             --wandb True \
                                             --save_model True \
+                                            --phase $phase \
                                             --run_name $run_name" C-m
 
             # Increment the experiment counter

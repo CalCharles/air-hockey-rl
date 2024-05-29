@@ -298,6 +298,8 @@ def evaluate(
     device: torch.device = torch.device("cpu"),
     air_hockey_cfg: Dict[str, Any] = None,
     args: Dict[str, Any] = None,
+    writer: wandb = None,
+    global_step: int = 0,
 ):
     
     air_hockey_params = air_hockey_cfg['air_hockey']
@@ -362,8 +364,9 @@ def evaluate(
                 if info["success"]:
                     success_num += 1
             
-            print("success rate: ", success_num / len(infos))
             success_rate = success_num / len(infos)
+            print(f"global_step={global_step}, success rate={success_rate}")
+            writer.add_scalar("task/success_rate", success_rate, global_step)
             break
 
         # print("here !!!!!!!!!")
@@ -446,7 +449,9 @@ def phase_2_train(envs, writer, run_name, args, air_hockey_cfg, device):
             optimizer.step()
             total_loss.append(loss.item())
 
-        print(f"epoch={epoch + 1}, loss={np.mean(total_loss)}")
+        mean_loss = np.mean(total_loss)
+        print(f"epoch={epoch + 1}, loss={mean_loss}")
+        writer.add_scalar("losses/mean_loss", mean_loss, epoch)
         # log mean loss
         # writer.add_scalar("losses/phase_2_loss", total_loss.mean(), global_step)
 
@@ -456,13 +461,14 @@ def phase_2_train(envs, writer, run_name, args, air_hockey_cfg, device):
             # agent.phase = 3
             # evaluate the model
             agent.phase = 3
-            evaluate(agent=agent, eval_episodes=10, device=device, air_hockey_cfg=air_hockey_cfg, args=args)
+            evaluate(agent=agent, eval_episodes=10, device=device, air_hockey_cfg=air_hockey_cfg, args=args, writer=writer, global_step=epoch)
             agent.phase = 2
 
-        if args.save_model and global_step % 1000 == 0:
-            model_path = f"runs/{run_name}/phase_{args.phase}_{global_step}.cleanrl_model"
-            torch.save(agent.state_dict(), model_path)
-            print(f"model saved to {model_path}")
+            # if args.save_model and global_step % 1000 == 0:
+            if args.save_model:
+                model_path = f"runs/{run_name}/phase_{args.phase}_{epoch}.cleanrl_model"
+                torch.save(agent.state_dict(), model_path)
+                print(f"model saved to {model_path}")
 
 
 
@@ -544,12 +550,6 @@ def train(envs, writer, run_name, args, air_hockey_cfg, device):
             rewards[step] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(next_done).to(device)
             
-            if "final_info" in infos:
-                for info in infos["final_info"]:
-                    if info and "episode" in info:
-                        print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
-                        writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-                        writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
 
         # bootstrap value if not done
         with torch.no_grad():
@@ -663,7 +663,7 @@ def train(envs, writer, run_name, args, air_hockey_cfg, device):
         print("global_step: ", global_step)
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-        evaluate(agent=agent, eval_episodes=10, device=device, air_hockey_cfg=air_hockey_cfg, args=args)
+        evaluate(agent=agent, eval_episodes=10, device=device, air_hockey_cfg=air_hockey_cfg, args=args, writer=writer)
 
         if args.save_model and global_step % (args.num_envs * args.num_steps * 4) == 0:
             model_path = f"runs/{run_name}/phase_{args.phase}_{global_step}.cleanrl_model"
@@ -802,6 +802,8 @@ def main(args: Args):
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
     run_name = args.run_name
+    os.makedirs(f"runs/{run_name}", exist_ok=True)
+    writer_dir = run_name + "_wandb"
     if args.track:
         import wandb
 
@@ -814,7 +816,9 @@ def main(args: Args):
             monitor_gym=True,
             save_code=True,
         )
-    writer = SummaryWriter(f"runs/{run_name+"_wandb"}")
+
+    
+    writer = SummaryWriter(f"runs/{writer_dir}")
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
