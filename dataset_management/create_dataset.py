@@ -38,7 +38,7 @@ def load_dataset(data_dir, obs_type, environment):
                 print('Error in file:', file, e)
                 continue
             print("added trajectory ", file)
-            puck_history = [(-1,0,1) for i in range(5)]
+            puck_history = [(-2 + environment.center_offset_constant,0,1) for i in range(5)]
             observation, state_info = get_observation(paddle[0], paddle_vel[0], puck[0], puck_history, obs_type=obs_type)
             observations = [observation]
             next_observations = list()

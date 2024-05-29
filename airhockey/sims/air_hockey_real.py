@@ -34,7 +34,8 @@ class AirHockeyReal:
                  puck_density=250,
                  block_density=1000,
                  max_paddle_vel=2,
-                 time_frequency=20):
+                 time_frequency=20,
+                 center_offset_constant=1.2):
         # physics / world params
         # TODO: special config for real
         self.length, self.width = length, width
@@ -60,6 +61,7 @@ class AirHockeyReal:
         # these assume 2d, in 3d since we have height it would be higher mass
         self.paddle_mass = self.paddle_density * np.pi * self.paddle_radius ** 2
         self.puck_mass = self.puck_density * np.pi * self.puck_radius ** 2
+        self.center_offset_constant = center_offset_constant
 
         # these 2 will depend on the other parameters
         self.max_paddle_vel = max_paddle_vel # m/s. This will be dependent on the robot arm
@@ -310,7 +312,7 @@ class AirHockeyReal:
         self.vals = list()
         self.timestep = 0
         self.pose_hist, self.dpose_hist = deque(maxlen=self.hist_len), deque(maxlen=self.hist_len)
-        self.puck_history = [(-1,0,0) for i in range(5)] # pretend that the puck starts at the other end of the table, but is occluded, for 5 frames
+        self.puck_history = [(-2 + self.center_offset_constant,0,1) for i in range(5)] # pretend that the puck starts at the other end of the table, but is occluded, for 5 frames
         self.total = time.time()
         self.runtime = 0.0
 
@@ -408,7 +410,7 @@ class AirHockeyReal:
                 x = x + noise[0] * self.rmax_x
                 y = y + noise[1] * self.rmax_y
             puck = np.zeros(3)
-            puck[0] = self.protected_puck_pos[0]
+            puck[0] = self.protected_puck_pos[0] + self.center_offset_constant
             puck[1] = self.protected_puck_pos[1]
             puck[2] = self.protected_puck_pos[2]
             self.puck_history.append(puck)
@@ -436,7 +438,7 @@ class AirHockeyReal:
         self.dpose_hist.append(srvpose[0])
         srvpose[0] = filter_update(true_speed, self.pose_hist, self.dpose_hist)
         safety_check = self.ctrl.isPoseWithinSafetyLimits(srvpose[0])
-        values = get_state_array(time.time(), self.tidx, self.timestep, true_pose, true_speed, true_force, measured_acc, srvpose, self.rcv.isProtectiveStopped(), safety_check)
+        values = get_state_array(time.time(), self.tidx, self.timestep, true_pose, true_speed, true_force, measured_acc, srvpose, self.rcv.isProtectiveStopped(), safety_check, puck)
         self.vals.append(values), #frames.append(np.array(protected_img[:]).reshape(640,480,3))
 
         # print("servl", true_speed[:2], srvpose[0][:2], x,y, safety_check)# srvpose[0][:2], x,y, true_pose[:2], rcv.isProtectiveStopped())# , true_speed, true_force, measured_acc, )

@@ -53,6 +53,7 @@ class AirHockeyBaseEnv(ABC, Env):
                  max_timesteps=1000,
                  paddle_bounds=[],
                  paddle_edge_bounds=[],
+                 center_offset_constant=1.2,
                  num_positive_reward_regions=0,
                  positive_reward_range=[1,1],
                  num_negative_reward_regions=0,
@@ -77,6 +78,9 @@ class AirHockeyBaseEnv(ABC, Env):
             raise ValueError("Invalid simulator type. Must be 'box2d' or 'robosuite'.")
 
         simulator_params['seed'] = seed
+        simulator_params['paddle_bounds'] = paddle_bounds
+        simulator_params['paddle_edge_bounds'] = paddle_edge_bounds
+        simulator_params['center_offset_constant'] = center_offset_constant
         self.simulator_name = simulator
         self.simulator = simulator_fn.from_dict(simulator_params)
         self.render_length = self.simulator.render_length
@@ -132,6 +136,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.table_x_bot = self.length / 2
         self.table_y_right = self.width / 2
         self.table_y_left = -self.width / 2
+        self.center_offset_constant = center_offset_constant
         
         if len(paddle_bounds) == 0: # use preset values
             self.paddle_x_min = self.table_x_top / 2 + 2 * self.paddle_radius

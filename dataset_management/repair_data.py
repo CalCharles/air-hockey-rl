@@ -113,7 +113,7 @@ def collect_new_state_data(data_dir, state_dir, target_dir):
                 with h5py.File(os.path.join(state_dir, f"state_trajectory_data{traj_num}.hdf5"), 'r') as f:
                     puck_state = np.array(f["puck_state"]).T
                     masks = np.array(f["puck_state_nan_mask"]).T
-                    last_state = np.array((-2,0,0))
+                    last_state = np.array((-2,0,1))
                     for state, mask in zip(puck_state, masks):
                         if mask[0]:
                             state = np.zeros(last_state.shape)
@@ -128,10 +128,10 @@ def collect_new_state_data(data_dir, state_dir, target_dir):
                 continue
         with h5py.File(os.path.join(data_dir, file), 'r') as f:
             # puck_vals = np.load(os.path.join(state_dir, "state_trajectory_data{traj_num}.npy"))
+                
             try:
                 measured_vals = np.array(f['train_vals'])
                 images = np.array(f['train_img'])
-                # print(len(measured_vals))
                 if len(puck_traj):
                     for pv, mv, im in zip(puck_traj, measured_vals, images):
                         # print(mv, len(mv))
@@ -143,7 +143,9 @@ def collect_new_state_data(data_dir, state_dir, target_dir):
                     for mv, im in zip(measured_vals, images):
                         # print(mv, len(mv))
                         updating_dict = slicer(mv)
-                        updating_dict["puck"] = np.array([-2,0,0])
+                        print(updating_dict["puck"])
+                        if np.sum(np.abs(updating_dict["puck"] - np.array([1,0,0]))) == 0:
+                            print(updating_dict["puck"])
                         updating_dict["image"] = im
                         traj.append(updating_dict)
             except Exception as e:
@@ -157,6 +159,11 @@ def collect_new_state_data(data_dir, state_dir, target_dir):
                 for state_dict in traj:
                     vals.append(state_dict[k])
                 traj_dict[k] = np.stack(vals)
+            try:  
+                os.makedirs(target_dir)
+                print("made ", target_dir)
+            except OSError as error:
+                pass
 
             with h5py.File(os.path.join(target_dir, file), 'w') as hf:
                 for k in traj_dict.keys():
@@ -208,6 +215,6 @@ if __name__ == "__main__":
     # collect_new_state_data("/datastor1/calebc/public/data/mouse/expert_avoid_random_start_fixed_goal/", "", "/datastor1/calebc/public/data/mouse/expert_avoid_random_start_fixed_goal_all/")
     # collect_new_state_data("/datastor1/calebc/public/data/mouse/expert_avoid_random_start_random_goal/", "", "/datastor1/calebc/public/data/mouse/expert_avoid_random_start_random_goal_all/")
     # collect_new_state_data("/datastor1/calebc/public/data/mouse/expert_no_avoid_random_start_random_goal/", "", "/datastor1/calebc/public/data/mouse/expert_no_avoid_random_start_random_goal_all/")
-    collect_new_state_data("/datastor1/calebc/public/data/mouse/single_drop_expert/", "", "/datastor1/calebc/public/data/mouse/single_drop_expert_all/")
-    collect_new_state_data("/datastor1/calebc/public/data/mouse/single_drop_multi/", "", "/datastor1/calebc/public/data/mouse/single_drop_multi_all/")
-    collect_new_state_data("/datastor1/calebc/public/data/mouse/single_drop_random/", "", "/datastor1/calebc/public/data/mouse/single_drop_random_all/")
+    collect_new_state_data("/datastor1/calebc/public/data/dilo/single_drop_expert/", "/datastor1/calebc/public/data/dilo/single_drop_expert_state_trajectories/", "/datastor1/calebc/public/data/dilo/single_drop_expert_all/")
+    collect_new_state_data("/datastor1/calebc/public/data/dilo/single_drop_random/", "/datastor1/calebc/public/data/dilo/single_drop_random_state_trajectories/", "/datastor1/calebc/public/data/dilo/single_drop_random_all/")
+    collect_new_state_data("/datastor1/calebc/public/data/dilo/single_drop_multi/", "/datastor1/calebc/public/data/dilo/single_drop_multi_state_trajectories/", "/datastor1/calebc/public/data/dilo/single_drop_multi_all/")

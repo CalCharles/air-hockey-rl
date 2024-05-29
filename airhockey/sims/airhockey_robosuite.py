@@ -199,6 +199,10 @@ class AirHockeyRobosuite(AirHockeySim):
         block_density = 1,
         gravity = 1,
         max_force_timestep=1,
+        # TODO: real world specific configs not yet implemented
+        paddle_bounds=[],
+        paddle_edge_bounds=[],
+        center_offset_constant=1.2
     ):
         # settings for table top
         table_full_size = (length / 2, width / 2, depth / 2)
@@ -229,6 +233,7 @@ class AirHockeyRobosuite(AirHockeySim):
         self.high_level_table_x_bot = self.length / 2
         self.high_level_table_y_right = self.width / 2
         self.high_level_table_y_left = -self.width / 2
+        self.center_offset_constant = center_offset_constant
         
         self.table_x_offset = 2 * rim_width
         self.table_y_offset = 2 * rim_width
@@ -293,7 +298,7 @@ class AirHockeyRobosuite(AirHockeySim):
             self.robosuite_env.reset()
         
         self.timestep = 0
-        self.puck_history = [(-1,0,0) for i in range(5)]
+        self.puck_history = [(-2 + self.center_offset_constant,0,1) for i in range(5)]
         
         if not self.initialized_objects:
             self.puck_names = {}
@@ -650,8 +655,8 @@ class AirHockeyRobosuite(AirHockeySim):
         self.timestep += 1
 
         current_state = self.get_current_state()
-        if 'pucks' in current_state: self.puck_history.append(list(current_state['pucks'][0]["position"]) + [1])
-        else: self.puck_history.append([-2,0,0])
+        if 'pucks' in current_state: self.puck_history.append(list(current_state['pucks'][0]["position"]) + [0])
+        else: self.puck_history.append([-2 + self.center_offset_constant,0,1])
         return current_state
 
     def get_current_state(self):

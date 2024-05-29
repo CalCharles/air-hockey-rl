@@ -26,7 +26,7 @@ def flatten(data_dict):
         val.append(np.array(data_dict[name]))
     return np.concatenate(val)
 
-def get_state_array(cur_time, tidx, i, pose, speed, force, acc, desired_pose, estop, safety):
+def get_state_array(cur_time, tidx, i, pose, speed, force, acc, desired_pose, estop, safety, puck):
     # rcv = RTDEReceive("172.22.22.2")
     # ret, image = cap.read()
     # timestamp = time.time()
@@ -55,5 +55,6 @@ def get_state_array(cur_time, tidx, i, pose, speed, force, acc, desired_pose, es
                        np.array(speed), # 11-16
                        np.array(force), # 17-22
                        np.array(acc), # 23-25
-                       np.array(desired_pose[0])]) # 26-32
+                       np.array(desired_pose[0]),# 26-32
+                       np.array(puck)]) # 33-35
     return val#, image
