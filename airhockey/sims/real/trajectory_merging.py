@@ -12,21 +12,28 @@ def merge_trajectory(image_path, images, vals):
 
         vidx = 0
         imgs = list()
-        for fil, nextfil in zip(list_of_files, list_of_files[1:]):
-            tfil, tnextfil = float(fil[3:-4]), float(nextfil[3:-4])
-            tcur = vals[vidx][0]
-            if tfil < tcur < tnextfil:
-                if np.abs(tfil-tcur) >= np.abs(tnextfil - tcur):
-                    print(nextfil, tcur)
-                    imgs.append(imageio.imread(os.path.join(image_path, nextfil)))
-                else:
-                    print(fil, tcur)
-                    imgs.append(imageio.imread(os.path.join(image_path, fil)))
-                vidx += 1
-                # cv2.imshow('hsv',imgs[-1])
-                # cv2.waitKey(1)
-                if vidx == len(vals):
-                    break
+        image_timestamps = np.array([float(fil[3:-4]) for fil in list_of_files])
+        value_timestamps = [v[0] for v in vals]
+        for v in value_timestamps:
+            closest_image_idx = np.argmin(image_timestamps - v)
+            imgs.append(imageio.imread(os.path.join(image_path, list_of_files[closest_image_idx])))
+            
+
+        # for fil, nextfil in zip(list_of_files, list_of_files[1:]):
+        #     tfil, tnextfil = float(fil[3:-4]), float(nextfil[3:-4])
+        #     tcur = vals[vidx][0]
+        #     if tfil < tcur < tnextfil:
+        #         if np.abs(tfil-tcur) >= np.abs(tnextfil - tcur):
+        #             print(nextfil, tcur)
+        #             imgs.append(imageio.imread(os.path.join(image_path, nextfil)))
+        #         else:
+        #             print(fil, tcur)
+        #             imgs.append(imageio.imread(os.path.join(image_path, fil)))
+        #         vidx += 1
+        #         # cv2.imshow('hsv',imgs[-1])
+        #         # cv2.waitKey(1)
+        #         if vidx == len(vals):
+        #             break
     else:
         imgs = images
     if len(imgs) == 0: return None, None

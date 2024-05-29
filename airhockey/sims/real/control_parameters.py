@@ -2,7 +2,7 @@ import cv2
 import imageio
 import time
 import numpy as np
-from .image_detection import find_red_hockey_paddle
+from .image_detection import find_red_hockey_paddle, find_red_hockey_puck
 from .draw_regions import visualize_regions
 
 
@@ -34,9 +34,8 @@ def homography_transform(image, get_save=True, rotate=False):
                 interpolation = cv2.INTER_LINEAR)
     return showdst, save_image
 
-def camera_callback(shared_array, save_image_check, paddle_info, region_info, goal_info):
+def camera_callback(shared_array, save_image_check, puck_array, paddle_info, region_info, goal_info):
     cap = cv2.VideoCapture(1)
-    print(paddle_info, goal_info, region_info)
     while True:
         start = time.time()
         ret, image = cap.read()
@@ -59,6 +58,10 @@ def camera_callback(shared_array, save_image_check, paddle_info, region_info, go
         # cv2.imshow('image',image)
         cv2.imshow('image',showdst)
         cv2.setMouseCallback('image', move_event)
+        puck = find_red_hockey_puck(showdst, rotate=False)
+        puck_array[0] = puck[0]
+        puck_array[1] = puck[1]
+        puck_array[2] = puck[2]
         shared_array[0] = mousepos[0] * visual_downscale_constant
         shared_array[1] = mousepos[1] * visual_downscale_constant
         shared_array[2] = mousepos[2] * visual_downscale_constant
@@ -128,12 +131,12 @@ def save_callback(save_image_check):
         cv2.imshow('showdst',showdst)
         cv2.waitKey(1)
 
-
 # performs saving without multiprocessing
-def save_collect(cap):
+def save_collect(cap, paddle_info, region_info, goal_info):
     start = time.time()
     ret, image = cap.read()
-    showdst, save_image = homography_transform(image, get_save=True, rotate=True)
-    # cv2.imshow('showdst',showdst)
-    # cv2.waitKey(1)
+    showdst, save_image = homography_transform(image, get_save=True, rotate=False)
+    if region_info is not None: showdst = visualize_regions(showdst, region_info, goal_info, paddle_info)
+    cv2.imshow('showdst',showdst)
+    cv2.waitKey(1)
     return showdst, save_image

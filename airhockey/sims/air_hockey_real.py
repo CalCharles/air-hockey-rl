@@ -111,11 +111,12 @@ class AirHockeyReal:
         self.puck_history_len = 5
         self.puck_detector = find_red_hockey_puck
         self.image_path = "./temp/images/"
-        self.save_path = "./data/mouse/expert_avoid_random_start_fixed_goal"
+        self.save_path = "./data/mouse/single_drop_multi"
         self.tidx = get_trajectory_idx(self.save_path)
 
 
         shared_mouse_pos = multiprocessing.Array("f", 3)
+        shared_puck_pos = multiprocessing.Array("f", 3)
         shared_paddle_pos = multiprocessing.Array("f", 3)
         shared_image_check = multiprocessing.Array("f", 1)
         shared_mouse_pos[0] = 0
@@ -123,6 +124,7 @@ class AirHockeyReal:
         shared_mouse_pos[2] = 1
         shared_image_check[0] = 0
         self.protected_mouse_pos = ProtectedArray(shared_mouse_pos)
+        self.protected_puck_pos = ProtectedArray(shared_puck_pos)
         self.protected_img_check = ProtectedArray(shared_image_check)
         self.protected_paddle_pos = ProtectedArray(shared_paddle_pos)
         self.cap, self.camera_process, self.mimic_process = None, None, None
@@ -213,9 +215,9 @@ class AirHockeyReal:
         # robot reset pose
         # reset_pose = ([-0.68, 0., 0.34] + angle, vel,acc)
         # TODO: make the reset pose not hardcoded but from the high level environment
-        # self.reset_pose = ([-0.68, 0., 0.33] + self.angle, self.vel,self.acc)
-        self.random_reset = True
-        self.reset_pose = ([-0.38, -0.345, 0.33] + self.angle, self.vel,self.acc)
+        self.reset_pose = ([-0.68, 0., 0.33] + self.angle, self.vel,self.acc)
+        self.random_reset = False
+        # self.reset_pose = ([-0.38, -0.345, 0.33] + self.angle, self.vel,self.acc)
         self.lims = (self.x_min_lim, self.x_max_lim, self.y_min, self.y_max)
         self.move_lims = (self.rmax_x, self.rmax_y)
 
@@ -232,10 +234,10 @@ class AirHockeyReal:
 
 
     def start_callbacks(self, **kwargs):
+        self.region_info = kwargs["region_info"] if "region_info" in kwargs else None
+        self.goal_info = kwargs["goal_info"] if "goal_info" in kwargs else None
         if self.control_mode == 'mouse':
-            region_info = kwargs["region_info"] if "region_info" in kwargs else None
-            goal_info = kwargs["goal_info"] if "goal_info" in kwargs else None
-            self.camera_process = multiprocessing.Process(target=camera_callback, args=(self.protected_mouse_pos,self.protected_img_check, self.protected_paddle_pos, region_info, goal_info))
+            self.camera_process = multiprocessing.Process(target=camera_callback, args=(self.protected_mouse_pos,self.protected_img_check, self.protected_puck_pos, self.protected_paddle_pos, self.region_info, self.goal_info))
             self.camera_process.start()
         elif self.control_mode == 'mimic':
             self.mimic_process = multiprocessing.Process(target=mimic_control, args=(self.protected_mouse_pos,))
@@ -282,8 +284,11 @@ class AirHockeyReal:
         delta_x, delta_y = action
         move_vector = np.array((delta_x,delta_y)) * np.array(move_lims)
         x, y = move_vector + pose[:2]
+        
+        # x, y = action
+        
         # x, y = clip_limits(delta_vector[0], delta_vector[1],lims)
-        print(action, move_vector, delta_x, delta_y, pose[:2],  x,y)
+        # print(action, move_vector, delta_x, delta_y, pose[:2],  x,y)
         return x, y, puck
 
 
@@ -361,7 +366,7 @@ class AirHockeyReal:
         # TODO: change self.block_time if additional computation happens outside of get_transition
         runtime = time.time() - self.transition_start 
         time.sleep(max(0,self.block_time - runtime))
-        print(time.time() - self.total, runtime)
+        print("runtime", time.time() - self.total, runtime)
         self.total = time.time()
         self.transition_start = time.time()
         # ret, image = cap.read()
@@ -378,10 +383,6 @@ class AirHockeyReal:
         # force control, need it to keep it on the table
         apply_negative_z_force(self.ctrl, self.rcv)
 
-        # get image data
-        if self.cap is not None:
-            image, save_img = save_collect(self.cap)
-            self.images.append(save_img)
         
         # acquire useful statistics
         true_pose = self.rcv.getTargetTCPPose()
@@ -392,6 +393,11 @@ class AirHockeyReal:
         self.protected_paddle_pos[1] = true_pose[1]
         self.protected_paddle_pos[2] = self.paddle_radius
 
+        # get image data
+        if self.cap is not None:
+            image, save_img = save_collect(self.cap, [true_pose[0], true_pose[1], self.paddle_radius], self.region_info, self.goal_info)
+            self.images.append(save_img)
+
         
         if self.control_mode in ["mouse", "mimic"]:
             x, y = (pixel_coord - self.offset_constants) * 0.001
@@ -400,7 +406,11 @@ class AirHockeyReal:
                 noise = np.random.normal(0.0, self.teleoperation_noise, 2)
                 x = x + noise[0] * self.rmax_x
                 y = y + noise[1] * self.rmax_y
-            self.puck_history.append((-2,0,0))
+            puck = np.zeros(3)
+            puck[0] = self.protected_puck_pos[0]
+            puck[1] = self.protected_puck_pos[1]
+            puck[2] = self.protected_puck_pos[2]
+            self.puck_history.append(puck)
         else:
             x,y, puck = self.take_action(action, true_pose, true_speed, true_force, measured_acc, self.rcv.isProtectiveStopped(), image, self.images, self.puck_history, self.lims, self.move_lims) # TODO: add image handling
             print("puck", puck)
@@ -428,10 +438,13 @@ class AirHockeyReal:
         values = get_state_array(time.time(), self.tidx, self.timestep, true_pose, true_speed, true_force, measured_acc, srvpose, self.rcv.isProtectiveStopped(), safety_check)
         self.vals.append(values), #frames.append(np.array(protected_img[:]).reshape(640,480,3))
 
-        print("servl", true_speed[:2], srvpose[0][:2], x,y, safety_check)# srvpose[0][:2], x,y, true_pose[:2], rcv.isProtectiveStopped())# , true_speed, true_force, measured_acc, )
+        # print("servl", true_speed[:2], srvpose[0][:2], x,y, safety_check)# srvpose[0][:2], x,y, true_pose[:2], rcv.isProtectiveStopped())# , true_speed, true_force, measured_acc, )
+        print("desired_pose", srvpose[0][:2])
+        print("delta desired", np.array(srvpose[0][:2]) - true_pose[:2])
+        print("unnorm_delta", x- true_pose[0],y - true_pose[1], safety_check, self.rcv.isProtectiveStopped())# srvpose[0][:2], x,y, true_pose[:2], rcv.isProtectiveStopped())# , true_speed, true_force, measured_acc, )
         if safety_check: self.ctrl.servoL(srvpose[0], self.vel, self.acc, self.block_time, self.lookahead, self.gain)
         if self.rcv.isProtectiveStopped():
-            return None
+            return self._compute_state(srvpose[0], true_speed, self.timestep, self.puck_history)
 
         # print("servl", np.abs(polx - true_pose[0]), np.abs(poly - true_pose[1]), pixel_coord, srvpose[0], rcv.isProtectiveStopped())# , true_speed, true_force, measured_acc, )
         # print("time", time.time() - start)

@@ -17,7 +17,7 @@ air_hockey:
     max_force_timestep: 100 # max force we can apply at one timestep
     render_size: 360
 
-  simulator: box2d # or robosuite
+  simulator: real # or robosuite
   num_paddles: 1
   num_pucks: 1
   num_blocks: 0
