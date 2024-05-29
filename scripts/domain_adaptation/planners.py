@@ -42,12 +42,16 @@ class CEMPlanner:
         return samples
     
     def sample_trajectories(self, num_samples=20, traj_length=20):
-        random_starts = np.random.randint(0, len(self.data['observations']) - traj_length + 1, num_samples)
+        N = len(self.data['observations'])
+        random_idx = np.random.randint(0, N, num_samples)
+        random_starts = [np.random.randint(0, len(self.data["observations"][idx]) - traj_length + 1) for idx in random_idx]
 
-        sampled_states = np.concatenate([self.data['observations'][random_start: random_start + traj_length][None, :] for random_start in random_starts], axis=0)
-        sampled_actions = np.concatenate([self.data['actions'][random_start: random_start + traj_length][None, :] for random_start in random_starts], axis=0)
-        sampled_dones = np.concatenate([self.data['terminals'][random_start: random_start + traj_length][None, :] for random_start in random_starts], axis=0)
-            
+        sampled_states = np.concatenate([self.data['observations'][idx][random_start: random_start + traj_length][None, :] 
+                                         for idx, random_start in zip(random_idx, random_starts)], axis=0)
+        sampled_actions = np.concatenate([self.data['actions'][idx][random_start: random_start + traj_length][None, :] 
+                                          for idx, random_start in zip(random_idx, random_starts)], axis=0)
+        sampled_dones = np.concatenate([self.data['terminals'][idx][random_start: random_start + traj_length][None, :]
+                                        for idx, random_start in zip(random_idx, random_starts)], axis=0)
         # Create a dictionary for the sampled trajectory
         sampled_traj = {
             'observations': sampled_states,
