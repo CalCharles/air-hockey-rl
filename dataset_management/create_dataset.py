@@ -33,7 +33,7 @@ def load_dataset(data_dir, obs_type, environment):
             try:
                 paddle = f["pose"][:,:2]
                 paddle_vel = f["speed"][:,:2]
-                action = f["desired_pose"][:,:2]
+                action = f["desired_pose"][:,:2] - paddle
                 puck = f["puck"]
                 image = f["image"]
             except Exception as e:
