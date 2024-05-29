@@ -26,14 +26,16 @@ def load_dataset(data_dir, obs_type, environment):
     dataset["rewards"] = list()
     dataset["next_observations"] = list()
     dataset["terminals"] = list()
+    dataset["image"] = list()
 
-    for file in os.listdir(data_dir):
+    for file in os.listdir(data_dir)[:1]:
         with h5py.File(os.path.join(data_dir, file), 'r') as f:
             try:
                 paddle = f["pose"][:,:2]
                 paddle_vel = f["speed"][:,:2]
-                action = f["desired_pose"][:,:2]
+                action = f["desired_pose"][:,:2] - paddle
                 puck = f["puck"]
+                image = f["image"]
             except Exception as e:
                 print('Error in file:', file, e)
                 continue
@@ -50,19 +52,21 @@ def load_dataset(data_dir, obs_type, environment):
                 next_observations.append(next_observation)
                 observation = copy.deepcopy(next_observation)
                 puck_history.append(pu)
-            next_observations.append(copy.deepcopy(next_observation)) # TODO: see if we want to append the same observation twice and use the terminal
+            # next_observations.append(copy.deepcopy(next_observation)) # TODO: see if we want to append the same observation twice and use the terminal
             dataset["observations"].append(np.array(observations))
-            dataset["actions"].append(action)
+            dataset["actions"].append(action[:-1])
             dataset["rewards"].append(np.array(rewards))
             dataset["next_observations"].append(np.array(next_observations))
-            terminals = np.zeros(len(action))
+            terminals = np.zeros(len(action)-1)
             terminals[-1] = 1
             dataset["terminals"].append(terminals)
+            dataset["image"].append(copy.deepcopy(image[:-1]))
     dataset["observations"] = np.concatenate(dataset["observations"], axis=0)
     dataset["actions"] = np.concatenate(dataset["actions"], axis=0)
     dataset["rewards"] = np.concatenate(dataset["rewards"], axis=0)
     dataset["next_observations"] = np.concatenate(dataset["next_observations"], axis=0)
     dataset["terminals"] = np.concatenate(dataset["terminals"], axis=0)
+    dataset["image"] = np.concatenate(dataset["image"], axis=0)
 
     return dataset
 # read_new_real_data("/datastor1/calebc/public/data/mouse/cleaned_new/")

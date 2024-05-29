@@ -95,6 +95,7 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
         goal_position = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
         self.goal_radius = self.min_goal_radius # not too important
         self.goal_pos = goal_position if self.goal_set is None else self.goal_set[0, :2]
+        self.goal_pos = goal_pos if goal_pos is not None else self.goal_pos
         
     def get_base_reward(self, state_info):
         reward = self.compute_reward(self.get_achieved_goal(state_info), self.get_desired_goal(), {})

@@ -42,17 +42,17 @@ class CEMPlanner:
         return samples
     
     def sample_trajectories(self, num_samples=20, traj_length=20):
-        random_starts = np.random.randint(0, len(self.data['states']) - traj_length + 1, num_samples)
+        random_starts = np.random.randint(0, len(self.data['observations']) - traj_length + 1, num_samples)
 
-        sampled_states = np.concatenate([self.data['states'][random_start: random_start + traj_length][None, :] for random_start in random_starts], axis=0)
+        sampled_states = np.concatenate([self.data['observations'][random_start: random_start + traj_length][None, :] for random_start in random_starts], axis=0)
         sampled_actions = np.concatenate([self.data['actions'][random_start: random_start + traj_length][None, :] for random_start in random_starts], axis=0)
-        sampled_dones = np.concatenate([self.data['dones'][random_start: random_start + traj_length][None, :] for random_start in random_starts], axis=0)
+        sampled_dones = np.concatenate([self.data['terminals'][random_start: random_start + traj_length][None, :] for random_start in random_starts], axis=0)
             
         # Create a dictionary for the sampled trajectory
         sampled_traj = {
-            'states': sampled_states,
+            'observations': sampled_states,
             'actions': sampled_actions,
-            'dones': sampled_dones
+            'terminals': sampled_dones
         }
             
         return sampled_traj
@@ -61,7 +61,10 @@ class CEMPlanner:
         """Update the distribution parameters based on the sampled rewards."""
         # Rank the samples based on the rewards
         elite_idx = np.argsort(rewards)[-int(self.n_samples * self.elite_frac):]
-        elite_samples = samples[elite_idx]
+        if self.lower_bounds is not None and self.upper_bounds is not None:
+            elite_samples = self.normalizer.normalize(samples[elite_idx])
+        else:
+            elite_samples = samples[elite_idx]
 
         # Update the distribution parameters
         self.mean = np.mean(elite_samples, axis=0)
@@ -82,24 +85,29 @@ class CEMPlanner:
             start_time = time.time()
             samples = self.sample_actions()
             for dim in range(len(self.param_names)):
-                wandb.log({self.param_names[dim]: self.mean[dim]}, step=iteration)
+                denormed_mean = self.normalizer.denormalize(self.mean)
+                wandb.log({self.param_names[dim]: denormed_mean[dim]}, step=iteration)
             total_sampling_time += time.time() - start_time
 
-            trajs = self.sample_trajectories(num_samples=2, traj_length=20)
+            trajs = self.sample_trajectories(num_samples=20, traj_length=20)
 
             start_time = time.time()
             rewards = np.array([self.eval_fn(sample, trajs) for sample in samples])
             # with Pool(processes=self.n_samples) as pool:  # Adjust the number of processes based on your CPU
                 # rewards = np.array(pool.map(self.eval_fn, samples))
             total_evaluation_time += time.time() - start_time
-
             avg_reward = np.mean(rewards)
-            pbar.set_description(f"Iteration {iteration}, Avg Return: {avg_reward:.2f}")
-            wandb.log({"Average Return": avg_reward}, step=iteration)
+            min_reward = np.min(rewards)
+            max_reward = np.max(rewards)
+            pbar.set_description(f"Iteration {iteration}, Avg Return: {avg_reward:.2f}, Min Return: {min_reward:.2f}, Max Return: {max_reward:.2f}")
+            wandb.log({"Average Return": avg_reward, "Min Return": min_reward, "Max Return": max_reward}, step=iteration)
             
             start_time = time.time()
             self.update_plan(rewards, samples)
             total_update_time += time.time() - start_time
 
             wandb.log({"Total Sampling Time": total_sampling_time, "Total Evaluation Time": total_evaluation_time, "Total Update Time": total_update_time}, step=iteration)
-        return self.mean
+        
+        
+        
+        return self.normalizer.denormalize(self.mean)

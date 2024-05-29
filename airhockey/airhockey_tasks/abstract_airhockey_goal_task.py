@@ -63,6 +63,20 @@ class AirHockeyGoalEnv(AirHockeyBaseEnv, ABC):
         else:
             obs = np.concatenate([obs, desired_goal])
             return obs, success
+
+    def reset_from_state_and_goal(self, state_vector, goal_vector, seed=None):
+        self.set_goals(None, goal_pos=goal_vector)
+
+        obs, success = super().reset_from_state(state_vector, seed)
+
+        achieved_goal = self.get_achieved_goal(self.current_state)
+        desired_goal = self.get_desired_goal()
+        if self.return_goal_obs:
+            return {"observation": obs, "desired_goal": desired_goal, "achieved_goal": achieved_goal}, success
+        else:
+            obs = np.concatenate([obs, desired_goal])
+            return obs, success
+
         
     def set_goal_set(self, goal_set):
         self.goal_set = goal_set
