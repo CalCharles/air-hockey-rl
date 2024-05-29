@@ -42,9 +42,22 @@ class ReplayMemory(object):
         """Save a transition"""
         self.memory.append(Transition(*args))
         
-    def sample(self, batch_size):
+    def sample(self, batch_size) -> dict:
         # print("in sample, current memory:", len(self.memory))
-        return random.sample(self.memory, batch_size)
+        batch = random.sample(self.memory, batch_size)
+        data = {}
+        state_tensor = batch[0].state
+        next_state_tensor = batch[0].next_state
+        action_tensor = batch[0].action
+        for j in range(1, batch_size):
+            state_tensor = torch.vstack((state_tensor, batch[j].state))
+            next_state_tensor = torch.vstack((next_state_tensor, batch[j].next_state))
+            action_tensor = torch.vstack((action_tensor, batch[j].action))
+
+        data['state'] = state_tensor
+        data['next_state'] = next_state_tensor
+        data['action'] = action_tensor
+        return data
     
     def print_memory(self):
         print("Current memory:")
@@ -67,27 +80,31 @@ class GATWrapper(gym.Env):
     def step(self, action):
         s = torch.tensor(self.env.get_observation(self.env.simulator.get_current_state()))
         a = torch.tensor(action)
-        next_state = self.forward_model(s, a)
-        grounded_action = self.inverse_model(s, next_state)
-        print("action before:", a, "action after:", grounded_action.detach())
+        next_state = self.forward_model(torch.unsqueeze(s, dim=0), torch.unsqueeze(a, dim=0))
+        # print('next_state', next_state.size()) # next_state torch.Size([1, 8])
+        grounded_action = self.inverse_model(torch.unsqueeze(s, dim=0), next_state)
+        grounded_action = torch.squeeze(grounded_action, dim=0)
+        # print("action before:", a, "action after:", grounded_action.detach())
         return self.env.step(grounded_action.detach())
 
 
 """-------------------------------------- Forward Model --------------------------------------"""
 def compute_loss(predictions, targets):
-    _loss = F.mse_loss(predictions, targets)
-    return _loss
+    _loss = F.mse_loss(predictions.double(), targets.double())
+    # print('loss type', _loss)
+    return _loss.double()
 
 class ForwardKinematicsCNN(nn.Module):
     def __init__(self, n_observations, n_actions):
         super(ForwardKinematicsCNN, self).__init__()
-        self.fc1 = nn.Linear(n_observations + n_actions, 64)
-        self.fc2 = nn.Linear(64, 32)
-        self.fc3 = nn.Linear(32, n_observations)
+        self.fc1 = nn.Linear(n_observations + n_actions, 128)
+        self.fc2 = nn.Linear(128, 128)
+        self.fc3 = nn.Linear(128, n_observations)
         self.double()
 
     def forward(self, state, action):
-        x = torch.cat((state, action), dim=0)
+        # print(state.size(), action.size())
+        x = torch.cat((state, action), dim=1)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
@@ -96,14 +113,13 @@ class ForwardKinematicsCNN(nn.Module):
 class InverseKinematicsCNN(nn.Module):
     def __init__(self, n_observations, n_actions):
         super(InverseKinematicsCNN, self).__init__()
-        self.fc1 = nn.Linear(n_observations * 2, 64)
-        self.fc2 = nn.Linear(64, 32)
-        self.fc3 = nn.Linear(32, n_actions)
+        self.fc1 = nn.Linear(n_observations * 2, 128)
+        self.fc2 = nn.Linear(128, 128)
+        self.fc3 = nn.Linear(128, n_actions)
         self.double()
 
     def forward(self, state, next_state):
-        x = torch.cat((state, next_state), dim=0)   
-        # print(x)
+        x = torch.cat((state, next_state), dim=1)   
         # x = x.to(torch.double) 
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
@@ -143,11 +159,11 @@ class GroundedActionTransformation():
         self.policy = "optimized_policy0"
         self.forward_model = init_forward_model(self.n_observations, self.n_actions)
         self.forward_optimizer = optim.Adam(self.forward_model.parameters(), lr=0.001)
-        self.forward_batch_size = 1
+        self.forward_batch_size = 1024
 
         self.inverse_model = init_inverse_model(self.n_observations, self.n_actions)
         self.inverse_optimizer = optim.Adam(self.inverse_model.parameters(), lr=0.001)
-        self.inverse_batch_size = 1
+        self.inverse_batch_size = 1024
     
         # TODO: need to define the buffers, check with Michael Munje about how we are using buffers
         # for the current RL training code
@@ -157,17 +173,26 @@ class GroundedActionTransformation():
         # before we have trained anything, don't use the grounded transform
         self.first = True
         
-
-
-    def grounded_transform(self, state, action):
-        if self.first: return action
-        return self.inverse_model(state, self.forward_model(state, action))
+    # def grounded_transform(self, state, action):
+    #     if self.first: return action
+    #     return self.inverse_model(state, self.forward_model(state, action))
     
     def add_data(self, trajectories):
         # TODO: pretty sure you can't do this
         for trajectory in trajectories:
             self.real_buffer.add(*trajectory)
             self.sim_buffer.add(*trajectory) # proxy
+
+    def rollout_sim(self, num_frames):
+        for i in range(num_frames):
+            obs = self.sim_env.get_observation(self.sim_current_state)
+            model = PPO.load(self.policy, env=self.sim_env)
+            act, _states = model.predict(obs) # apply policy to sim_env
+            # print(self.sim_env.step(act))
+            obs_next, reward, is_finished, truncated, info = self.sim_env.step(act)
+            self.sim_current_state = self.sim_env.simulator.get_current_state()
+            traj = torch.tensor(obs), torch.tensor(obs_next), torch.tensor(act), torch.tensor(reward), torch.tensor(is_finished), torch.tensor(truncated), info
+            self.sim_buffer.add(*traj)
 
     def rollout_real(self, num_frames):
         for i in range(num_frames):
@@ -186,7 +211,7 @@ class GroundedActionTransformation():
         # TODO: train should automatically add to self.sim_buffer, so we don't need to keep
         # the trajectories
         # trajectories = self.train_ppo(self.sim_env, self.policy, self.sim_buffer, self.grounded_transform, num_iters)
-        print("i", i)
+        # print("i", i)
         if i == 0:
             model = PPO("MlpPolicy", self.sim_env, verbose=1)
         else:
@@ -210,61 +235,65 @@ class GroundedActionTransformation():
         self.forward_model.train()
         for i in range(num_iters):
             data = self.real_buffer.sample(self.forward_batch_size)
-            for i in range(self.inverse_batch_size):
-                data = data[i]
-                pred_next_state = self.forward_model(data.state, data.action)
-                # TODO: define these functions generally so we can change them later
-                loss = compute_loss(pred_next_state, data.next_state)
-                # print("In forward model, loss:", loss, ", iter:", i)
-                # self.forward_optimizer.step(loss.mean())
-                loss.backward()  # Backward pass
-                self.forward_optimizer.step()
+            pred_next_state = self.forward_model(data['state'], data['action'])
+            # TODO: define these functions generally so we can change them later
+            loss = compute_loss(pred_next_state, data['next_state'])
+            if (num_iters > 10 and i % 100 == 0) or num_iters == 10:
+                print("In forward model, loss:", loss.detach(), ", iter:", i)
+            # self.forward_optimizer.step(loss.mean())
+            loss.backward()  # Backward pass
+            self.forward_optimizer.step()
 
     def train_inverse(self, num_iters):
         self.inverse_model.train()
         for i in range(num_iters):
             data = self.sim_buffer.sample(self.inverse_batch_size)
-            # print("data", data)
-            for i in range(self.inverse_batch_size):
-                data = data[i]
-                pred_action = self.inverse_model(data.state, data.next_state)
-                # TODO: define these functions generally so we can change them later
-                loss = compute_loss(pred_action, data.action)
-                # print("In inverse model, loss:", loss, ", iter:", i)
+            # print(data['state'].size(), data['next_state'].size())
+            pred_action = self.inverse_model(data['state'], data['next_state'])
+            # TODO: define these functions generally so we can change them later
+            loss = compute_loss(pred_action, data['action'])
+            if (num_iters > 10 and i % 100 == 0) or num_iters == 10:
+                print("In inverse model, loss:", loss.detach(), ", iter:", i)
+            try:
                 loss.backward()  # Backward pass
-                self.forward_optimizer.step()
+            except Exception as e:
+                print(e)
+                import pdb; pdb.set_trace()
+            self.inverse_optimizer.step()
 
 def load_dataset(dataset_pth): # TODO
     import h5py
     import os
     import ast
-    keys = ['obs', 'act', 'rew', 'term', 'trunc'] #, 'info']
-    file_path = os.path.join(dataset_pth)
-    print("Reading h5py file from", file_path)
-    
-    with h5py.File(file_path, 'r') as hf:
-        data = {}
-        for key in keys:
-            dataset = hf[key]
-            data[key] = torch.tensor(dataset[:])
-            print(f"Key: {key}")
-            print(f"Data: {data[key][0]}")
-            print(f"Shape: {dataset.shape}")
-            print(f"Dtype: {dataset.dtype}")
-            if key == 'term':
-                n = dataset.shape[0]
-        # info
-        data['info'] = [{}] * n
-        # print("data['info']", len(data['info']))
-    # Create the list of tuples
-    keys = ['obs', 'act', 'rew', 'term', 'trunc', 'info']
-    result = []
-    for i in range(n-1):
-        # if i < n-1:
-        next_state = data['obs'][i+1]
-        # else:
-        #     next_state = np.zeros(data['obs'][0].shape) # assume last state's next state is all zeros
-        result.append((data['obs'][i], next_state, data['act'][i], data['rew'][i], data['term'][i], data['trunc'][i], data['info'][i]))
+    keys = ['obs', 'next_obs', 'act', 'rew', 'term', 'trunc'] #, 'info']
+    result = [] # frames
+    # print("getting files from,", os.listdir(dataset_pth))
+    # input('cont?')
+    for filename in os.listdir(dataset_pth):
+        # print(len(result))
+        if len(result)>100000: #993564
+            return result
+        file_path = os.path.join(dataset_pth, filename)
+        # print("Reading h5py file from", file_path)
+        
+        with h5py.File(file_path, 'r') as hf:
+            data = {}
+            for key in keys:
+                dataset = hf[key]
+                data[key] = torch.tensor(dataset[:])
+                # print(f"Key: {key}")
+                # print(f"Data: {data[key][0]}")
+                # print(f"Shape: {dataset.shape}")
+                # print(f"Dtype: {dataset.dtype}")
+                if key == 'term':
+                    n = dataset.shape[0]
+            # info
+            data['info'] = [{}] * n
+            # print("data['info']", len(data['info']))
+        # Create the list of tuples
+        # keys = ['obs', 'next_obs', 'act', 'rew', 'term', 'trunc', 'info']
+        for i in range(n-1): # n-1: the last state is the termination state so we dont have s' for that
+            result.append((data['obs'][i], data['next_obs'][i], data['act'][i], data['rew'][i], data['term'][i], data['trunc'][i], data['info'][i]))
     # Print the result
     # for item in result:
     #     print(item)
@@ -273,10 +302,11 @@ def load_dataset(dataset_pth): # TODO
     return result
     
 
-def train_GAT(args, data, sim_air_hockey_cfg, real_air_hockey_cfg,log_dir):
+def train_GAT(args, data, sim_air_hockey_cfg, real_air_hockey_cfg, log_dir):
     sim_env = AirHockeyEnv(sim_air_hockey_cfg['air_hockey'])
     real_env = AirHockeyEnv(real_air_hockey_cfg['air_hockey'])
     gat = GroundedActionTransformation(args, data, sim_env, real_env,log_dir)
+    print("Adding data...")
     gat.add_data(data)
     print("Starting train_sim...")
     gat.train_sim(args.initial_rl_training, i=0)
@@ -287,12 +317,15 @@ def train_GAT(args, data, sim_air_hockey_cfg, real_air_hockey_cfg,log_dir):
     print("Starting train_forward...")
     gat.train_forward(args.initial_forward_training)
     for i in range(args.num_real_sim_iters):
+        print('Iteration', i, 'started.')
         gat.train_sim(args.rl_iters, i)
         gat.rollout_real(args.num_real_steps)
+        gat.rollout_sim(args.num_sim_steps)
         gat.train_inverse(args.inverse_iters)
         gat.train_forward(args.forward_iters)
+        print('Iteration', i, 'finished.')
     print("train_GAT finished,")
-    gat.real_buffer.print_memory()
+    # gat.real_buffer.print_memory()
     return 
 
 if __name__ == '__main__':
@@ -300,14 +333,15 @@ if __name__ == '__main__':
     parser.add_argument('--sim-cfg', type=str, default=None, help='Path to the configuration file.')
     parser.add_argument('--real-cfg', type=str, default=None, help='Path to the configuration file.')
     parser.add_argument('--dataset_pth', type=str, default=None, help='Path to the dataset file.') # real-cfg
-    parser.add_argument('--initial_rl_training', type=int, default=10, help='initial_rl_training')
-    parser.add_argument('--initial_inverse_training', type=int, default=100, help='initial_inverse_training')
-    parser.add_argument('--initial_forward_training', type=int, default=100, help='initial_forward_training')
-    parser.add_argument('--num_real_sim_iters', type=int, default=10, help='num_real_sim_iters')
-    parser.add_argument('--num_real_steps', type=int, default=10, help='num_real_steps')
-    parser.add_argument('--rl_iters', type=int, default=10, help='rl_iters')
-    parser.add_argument('--inverse_iters', type=int, default=10, help='inverse_iters')
-    parser.add_argument('--forward_iters', type=int, default=10, help='forward_iters')
+    parser.add_argument('--initial_rl_training', type=int, default=1000, help='initial_rl_training')
+    parser.add_argument('--initial_inverse_training', type=int, default=1000, help='initial_inverse_training')
+    parser.add_argument('--initial_forward_training', type=int, default=1000, help='initial_forward_training')
+    parser.add_argument('--num_real_sim_iters', type=int, default=1000, help='num_real_sim_iters')
+    parser.add_argument('--num_real_steps', type=int, default=1000, help='num_real_steps')
+    parser.add_argument('--num_sim_steps', type=int, default=1000, help='num_sim_steps')
+    parser.add_argument('--rl_iters', type=int, default=1000, help='rl_iters')
+    parser.add_argument('--inverse_iters', type=int, default=1000, help='inverse_iters')
+    parser.add_argument('--forward_iters', type=int, default=1000, help='forward_iters')
 
     args = parser.parse_args()
 
@@ -321,5 +355,6 @@ if __name__ == '__main__':
     # sorting is: trajectory->key->data
     data = load_dataset(args.dataset_pth) 
     log_dir = 'gat_log/'
+    print("len of data", len(data))
     train_GAT(args, data, sim_air_hockey_cfg, real_air_hockey_cfg, log_dir)
-# python scripts/grounded_action_transformation.py --sim-cfg configs/gat/puck_height.yaml --real-cfg configs/gat/puch_height2.yaml --dataset_pth baseline_models/puck_height/air_hockey_agent_13/trajectory_data0.hdf5
+# python scripts/grounded_action_transformation.py --sim-cfg configs/gat/puck_height3.yaml --real-cfg configs/gat/puck_height3.yaml --dataset_pth baseline_models/puck_height/air_hockey_agent_20/trajectory_data

@@ -40,7 +40,8 @@ air_hockey:
   diagonal_motion_rew: -0.1
   stand_still_rew: 0.01
   return_goal_obs: False
-
+  n_training_steps: 1000000
+  seed: [0, 1, 2, 3, 4]
 # Training Parameters
 n_training_steps: 1000000
 model_save_filepath: model # will be saved same dir as tb_log_dir
