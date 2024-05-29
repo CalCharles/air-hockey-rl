@@ -113,7 +113,7 @@ if __name__ == '__main__':
         air_hockey_cfg = yaml.safe_load(f)
     # param_names = list(air_hockey_cfg['air_hockey']["simulator_params"].keys())
 
-    param_names = ['force_scaling', 'max_force_timestep', 'paddle_damping', 'paddle_density'] # 'puck_damping', 'puck_density']
+    param_names = ['action_x_scaling', 'action_y_scaling', 'max_force_timestep', 'paddle_damping', 'paddle_density'] # 'puck_damping', 'puck_density']
     param_names.sort()
     
     air_hockey_params = air_hockey_cfg['air_hockey']
@@ -133,9 +133,9 @@ if __name__ == '__main__':
 
     # initial_params = extract_value(param_names, air_hockey_params_cp)
 
-    lower_bounds = np.array([100, 10, 1, 1500])
-    upper_bounds = np.array([2000, 110, 10, 3000])
-    initial_params = [1000, 50, 5, 2000]
+    lower_bounds = np.array([0.5, 0.5, 10, 1, 1500])
+    upper_bounds = np.array([1.5, 1.5, 110, 10, 3000])
+    initial_params = [1.0, 1.0, 50, 5, 2000]
     print(initial_params, param_names)
 
     ### dataset loading ### 
@@ -172,13 +172,12 @@ if __name__ == '__main__':
         
         side_by_side = [np.concatenate([saved_frames[i], frames[i]], axis=1) for i in range(min(len(frames), len(saved_frames)))]
         imageio.mimsave(gif_savepath, side_by_side, format='GIF', loop=0, duration=fps_to_duration(fps))
-
     
     wandb.init(project="air_hockey_rl", entity="carltheq", config=air_hockey_cfg)
     wandb.run.name = "sysid_CEM_paddle_reach_realworld"
 
     planner = CEMPlanner(eval_fn=lambda params, trajs: get_value(params, param_names, air_hockey_params_cp, trajs, air_hockey_cfg['air_hockey']['task']), 
-                         trajectories=data, elite_frac=0.2, n_samples=100, n_iterations=20, variance=0.1, lower_bounds=lower_bounds, upper_bounds=upper_bounds, param_names=param_names)
+                         trajectories=data, elite_frac=0.2, n_samples=100, n_iterations=30, variance=0.2, lower_bounds=lower_bounds, upper_bounds=upper_bounds, param_names=param_names)
     # TODO Implemetn CMA-ES planner also
     
     optimal_parameters = planner.optimize(initial_params)

@@ -19,6 +19,8 @@ class AirHockeyBox2D:
                  puck_damping,
                  render_size,
                  seed,
+                 action_x_scaling=1.0,
+                 action_y_scaling=1.0,
                  render_masks=False, 
                  gravity=-5,
                  paddle_density=1000,
@@ -48,6 +50,8 @@ class AirHockeyBox2D:
         self.paddle_density = paddle_density
         self.puck_density = puck_density
         self.block_density = block_density
+        self.action_x_scaling = action_x_scaling
+        self.action_y_scaling = action_y_scaling
         # these assume 2d, in 3d since we have height it would be higher mass
         self.paddle_mass = self.paddle_density * np.pi * self.paddle_radius ** 2
         self.puck_mass = self.puck_density * np.pi * self.puck_radius ** 2
@@ -303,6 +307,8 @@ class AirHockeyBox2D:
             if new_force < -self.max_force_timestep:
                 new_force = -self.max_force_timestep
             force[1] = min(new_force, 0)
+        else:
+            force = force * np.array([self.action_x_scaling, self.action_y_scaling])
         if 'paddle_ego' in self.paddles:
             self.paddles['paddle_ego'].ApplyForceToCenter(force, True)
 
