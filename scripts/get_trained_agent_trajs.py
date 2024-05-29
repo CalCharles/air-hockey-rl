@@ -48,6 +48,7 @@ def evaluate_air_hockey_model(air_hockey_cfg, log_dir):
     done = False
     # let's save
     # s,a,r,s', timestep
+    # trajs0 = []
     trajs = []
     timestep = 0
     # saved_obs = np.array([])
@@ -55,9 +56,11 @@ def evaluate_air_hockey_model(air_hockey_cfg, log_dir):
     # saved_rew = np.array([])
 
     for i in tqdm.tqdm(range(1000000)):
+        print("i:", i, "time:", timestep)
         # Draw the world
         # renderer.render()
         action = model.predict(obs, deterministic=True)[0]
+        # print("env_test", env_test)
         next_obs, rew, done, info = env_test.step(action)
         if 'goal' in air_hockey_cfg['air_hockey']['task']:
             # then it's an ordered dict
@@ -69,25 +72,6 @@ def evaluate_air_hockey_model(air_hockey_cfg, log_dir):
             s = obs.flatten()
         a = action.flatten()
         r = np.array(rew)
-
-        # saving trajectory purpose
-        if timestep == 0:
-            saved_obs = np.array(s)
-            saved_act = np.array(a)
-            saved_rew = np.array(r)
-            saved_term = np.zeros(1)
-            saved_trunc = np.zeros(1)
-            saved_info = [{}]
-        else:
-            saved_obs = np.vstack([saved_obs, s])
-            saved_act = np.vstack([saved_act, a])
-            saved_rew = np.vstack([saved_rew, r])
-            if done:
-                saved_term = np.vstack([saved_term, np.ones(1)])
-            else:
-                saved_term = np.vstack([saved_term, np.zeros(1)])
-            saved_trunc = np.vstack([saved_trunc, np.zeros(1)])
-            saved_info.append({})
             
         if 'goal' in air_hockey_cfg['air_hockey']['task']:
             s_prime = next_obs['observation']
@@ -96,38 +80,59 @@ def evaluate_air_hockey_model(air_hockey_cfg, log_dir):
         else:
             s_prime = next_obs.flatten()
         t = np.array([timestep])
-        
+
         trajs.append(np.concatenate([s, a, r, s_prime, t]))
-
+        # saving trajectory  # 'state', 'next_state', 'action', 'rew', 'term', 'trunc', 'info'
+        if timestep == 0:
+            saved_obs = np.array(s)
+            saved_s_prime = np.array(s_prime)
+            saved_act = np.array(a)
+            saved_rew = np.array(r)
+            saved_term = np.zeros(1)
+            saved_trunc = np.array([1])
+            saved_info = np.array([info])
+        else:
+            saved_obs = np.vstack([saved_obs, s])
+            saved_s_prime = np.vstack([saved_s_prime, s_prime])
+            saved_act = np.vstack([saved_act, a])
+            saved_rew = np.vstack([saved_rew, r])
+            if done:
+                saved_term = np.vstack([saved_term, np.ones(1)])
+            else:
+                saved_term = np.vstack([saved_term, np.zeros(1)])
+            saved_trunc = np.vstack([saved_trunc, np.array([1])])
+            saved_info = np.vstack([saved_info, np.array([info])])
+        
         obs = next_obs
-
         timestep += 1
         if done: # term
             obs = env_test.reset()
             timestep = 0
+            d = {}
+            keys = ["obs", 'next_obs', "act", "rew", "term", "trunc"] #, "info"]
+            d["obs"] = saved_obs.astype(np.float64)
+            d["next_obs"] = saved_s_prime.astype(np.float64)
+            d["act"] = saved_act.astype(np.float64)
+            d["rew"] = saved_rew.astype(np.float64)
+            d["term"] = saved_term.astype(np.float64)
+            d["trunc"] = saved_trunc.astype(np.float64)
+            # d["info"] = str(saved_info)
+            write_trajectory(log_dir, i, d, keys)
+
     env_test.close()
     
-    trajs = np.array(trajs)
-    np.save(os.path.join(log_dir, 'trajs.npy'), trajs)
+    # trajs = np.array(trajs)
+    # np.save(os.path.join(log_dir, 'trajs.npy'), trajs)
 
-    d = {}
-    keys = ["obs", "act", "rew", "term", "trunc"] #, "info"]
-    d["obs"] = saved_obs.astype(np.float64)
-    d["act"] = saved_act.astype(np.float64)
-    d["rew"] = saved_rew.astype(np.float64)
-    d["term"] = saved_term.astype(np.float64)
-    d["trunc"] = saved_trunc.astype(np.float64)
-    # d["info"] = str(saved_info)
-    # print(d)
-    write_trajectory(log_dir, 1, d, keys)
+    
 
 def write_trajectory(pth, tidx, d, keys): # (obs, act, rew, term, trunc, info) , trunc is always false, info is empty dictionary
-    file_path = os.path.join(pth, 'trajectory_data' + str(tidx) + '.hdf5')
+    file_path = os.path.join(pth, 'trajectory_data/trajectory_data' + str(tidx) + '.hdf5')
     print("h5py file saved to", file_path)
     with h5py.File(file_path, 'w') as hf:
         for key in keys:
             vals = d[key]
-            print(vals)
+            # print(vals)
             if isinstance(vals, np.ndarray):
                 shape = vals.shape
                 hf.create_dataset(key,
@@ -154,4 +159,4 @@ if __name__ == '__main__':
 
     evaluate_air_hockey_model(air_hockey_cfg, log_dir)
 
-    # python scripts/get_trained_agent_trajs.py --log_dir baseline_models/puck_height/air_hockey_agent_13
+    # python scripts/get_trained_agent_trajs.py --log_dir baseline_models/puck_height/air_hockey_agent_20

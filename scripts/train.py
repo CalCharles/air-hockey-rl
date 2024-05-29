@@ -27,6 +27,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
     """
     
     air_hockey_params = air_hockey_cfg['air_hockey']
+    print("air_hockey_params", air_hockey_params)
     air_hockey_params['n_training_steps'] = air_hockey_cfg['n_training_steps']
     
     if 'sac' == air_hockey_cfg['algorithm']:
@@ -231,4 +232,4 @@ if __name__ == "__main__":
     clear_prior_task_results = args.clear
     train_air_hockey_model(air_hockey_cfg, use_wandb, device, clear_prior_task_results)
 
-    # python scripts/train.py --cfg configs/gat/puch_height2.yaml
+    # python scripts/train.py --cfg configs/gat/puck_height.yaml
