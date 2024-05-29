@@ -45,6 +45,8 @@ from copy import deepcopy
 from gymnasium.vector.utils import concatenate, create_empty_array, iterate
 from numpy.typing import NDArray
 
+import pyrallis
+
 
 priv_keys = ["puck_density", "puck_damping", "gravity"]
 
@@ -64,6 +66,7 @@ class Args:
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "cleanRL"
     """the wandb's project name"""
+    run_name: str = "test"
     wandb_entity: str = None
     """the entity (team) of wandb's project"""
     capture_video: bool = False
@@ -131,24 +134,6 @@ class Args:
     phase_2_batch_size: int = 256
     phase_2_data_size: int = 4000
 
-
-def make_env(env_id, idx, capture_video, run_name, gamma):
-    def thunk():
-        if capture_video and idx == 0:
-            env = gym.make(env_id, render_mode="rgb_array")
-            env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
-        else:
-            env = gym.make(env_id)
-        env = gym.wrappers.FlattenObservation(env)  # deal with dm_control's Dict observation space
-        env = gym.wrappers.RecordEpisodeStatistics(env)
-        env = gym.wrappers.ClipAction(env)
-        env = gym.wrappers.NormalizeObservation(env)
-        env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
-        env = gym.wrappers.NormalizeReward(env, gamma=gamma)
-        env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
-        return env
-
-    return thunk
 
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
@@ -312,6 +297,7 @@ def evaluate(
     eval_episodes: int,
     device: torch.device = torch.device("cpu"),
     air_hockey_cfg: Dict[str, Any] = None,
+    args: Dict[str, Any] = None,
 ):
     
     air_hockey_params = air_hockey_cfg['air_hockey']
@@ -460,7 +446,7 @@ def phase_2_train(envs, writer, run_name, args, air_hockey_cfg, device):
             optimizer.step()
             total_loss.append(loss.item())
 
-        print(f"epoch={epoch}, loss={np.mean(total_loss)}")
+        print(f"epoch={epoch + 1}, loss={np.mean(total_loss)}")
         # log mean loss
         # writer.add_scalar("losses/phase_2_loss", total_loss.mean(), global_step)
 
@@ -470,12 +456,14 @@ def phase_2_train(envs, writer, run_name, args, air_hockey_cfg, device):
             # agent.phase = 3
             # evaluate the model
             agent.phase = 3
-            evaluate(agent=agent, eval_episodes=10, device=device, air_hockey_cfg=air_hockey_cfg)
+            evaluate(agent=agent, eval_episodes=10, device=device, air_hockey_cfg=air_hockey_cfg, args=args)
             agent.phase = 2
-            
-            # pass
 
-        # import pdb; pdb.set_trace()
+        if args.save_model and global_step % 1000 == 0:
+            model_path = f"runs/{run_name}/phase_{args.phase}_{global_step}.cleanrl_model"
+            torch.save(agent.state_dict(), model_path)
+            print(f"model saved to {model_path}")
+
 
 
 def train(envs, writer, run_name, args, air_hockey_cfg, device):
@@ -671,35 +659,17 @@ def train(envs, writer, run_name, args, air_hockey_cfg, device):
         writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
         writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
-        print("SPS:", int(global_step / (time.time() - start_time)))
+        # print("SPS:", int(global_step / (time.time() - start_time)))
+        print("global_step: ", global_step)
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-    if args.save_model:
-        model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
-        torch.save(agent.state_dict(), model_path)
-        print(f"model saved to {model_path}")
+        evaluate(agent=agent, eval_episodes=10, device=device, air_hockey_cfg=air_hockey_cfg, args=args)
 
-        evaluate(agent=agent, eval_episodes=10, device=device, air_hockey_cfg=air_hockey_cfg)
-
-    #     episodic_returns = evaluate(
-    #         model_path,
-    #         make_env,
-    #         args.env_id,
-    #         eval_episodes=10,
-    #         run_name=f"{run_name}-eval",
-    #         Model=Agent,
-    #         device=device,
-    #         gamma=args.gamma,
-    #     )
-    #     for idx, episodic_return in enumerate(episodic_returns):
-    #         writer.add_scalar("eval/episodic_return", episodic_return, idx)
-
-    #     if args.upload_model:
-    #         from cleanrl_utils.huggingface import push_to_hub
-
-    #         repo_name = f"{args.env_id}-{args.exp_name}-seed{args.seed}"
-    #         repo_id = f"{args.hf_entity}/{repo_name}" if args.hf_entity else repo_name
-    #         push_to_hub(args, episodic_returns, repo_id, "PPO", f"runs/{run_name}", f"videos/{run_name}-eval")
+        if args.save_model and global_step % (args.num_envs * args.num_steps * 4) == 0:
+            model_path = f"runs/{run_name}/phase_{args.phase}_{global_step}.cleanrl_model"
+            torch.save(agent.state_dict(), model_path)
+            print(f"model saved to {model_path}")
+            
 
     envs.close()
     writer.close()
@@ -803,9 +773,9 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
     
     return env, eval_env, log_dir, air_hockey_cfg, wandb_run
 
-
-if __name__ == "__main__":
-    args = tyro.cli(Args)
+@pyrallis.wrap()
+def main(args: Args):
+    # args = tyro.cli(Args)
 
     if args.cfg is None:
         dir_path = os.path.dirname(os.path.realpath(__file__))
@@ -826,11 +796,12 @@ if __name__ == "__main__":
     envs, eval_env, log_dir, air_hockey_cfg, wandb_run = train_air_hockey_model(air_hockey_cfg, use_wandb, device, clear_prior_task_results, progress_bar)
     
     # train prep
-    args = tyro.cli(Args)
+    # args = tyro.cli(Args)
+    args.num_envs = air_hockey_cfg['n_threads']
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
-    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
+    run_name = args.run_name
     if args.track:
         import wandb
 
@@ -843,7 +814,7 @@ if __name__ == "__main__":
             monitor_gym=True,
             save_code=True,
         )
-    writer = SummaryWriter(f"runs/{run_name}")
+    writer = SummaryWriter(f"runs/{run_name+"_wandb"}")
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
@@ -864,3 +835,6 @@ if __name__ == "__main__":
 
     elif args.phase == 2:
         phase_2_train(envs, writer, run_name, args, air_hockey_cfg, device)
+
+if __name__ == "__main__":
+    main()
