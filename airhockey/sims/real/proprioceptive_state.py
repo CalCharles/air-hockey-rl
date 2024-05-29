@@ -1,9 +1,9 @@
 import numpy as np
 
-DATA_RANGES = [[0,1], [1,2], [2,3], [3,4], [4,5],[5,10], [11,16], [17,22], [23,25], [26,32]]
-DATA_NAMES = ["cur_time", "tidx", "i",  "estop", "safety", "pose", "speed", "force", "acc", "desired_pose"]
+DATA_RANGES = [[0,1], [1,2], [2,3], [3,4], [4,5],[5,10], [11,16], [17,22], [23,25], [26,32], [33,35]]
+DATA_NAMES = ["cur_time", "tidx", "i",  "estop", "safety", "pose", "speed", "force", "acc", "desired_pose", "puck"]
 def slicer(val):
-    cur_time, tidx, i, estop, safety, pose, speed, force, acc, desired_pose = val[...,DATA_RANGES[0][0]:DATA_RANGES[0][1]],\
+    cur_time, tidx, i, estop, safety, pose, speed, force, acc, desired_pose, puck = val[...,DATA_RANGES[0][0]:DATA_RANGES[0][1]],\
         val[...,DATA_RANGES[1][0]:DATA_RANGES[1][1]], \
         val[...,DATA_RANGES[2][0]:DATA_RANGES[2][1]], \
         val[...,DATA_RANGES[3][0]:DATA_RANGES[3][1]], \
@@ -12,10 +12,11 @@ def slicer(val):
         val[...,DATA_RANGES[6][0]:DATA_RANGES[6][1]], \
         val[...,DATA_RANGES[7][0]:DATA_RANGES[7][1]], \
         val[...,DATA_RANGES[8][0]:DATA_RANGES[8][1]], \
-        val[...,DATA_RANGES[9][0]:DATA_RANGES[9][1]]
+        val[...,DATA_RANGES[9][0]:DATA_RANGES[9][1]], \
+        val[...,DATA_RANGES[10][0]:DATA_RANGES[10][1]]
     res_dict = {
         "cur_time": cur_time, "tidx": tidx, "i": i, "pose": pose, "speed": speed, "force": force, 
-        "acc": acc, "desired_pose": desired_pose, "estop": estop, "safety": safety
+        "acc": acc, "desired_pose": desired_pose, "estop": estop, "safety": safety, "puck": puck,
     }
     return res_dict
 
@@ -25,7 +26,7 @@ def flatten(data_dict):
         val.append(np.array(data_dict[name]))
     return np.concatenate(val)
 
-def get_state_array(cur_time, tidx, i, pose, speed, force, acc, desired_pose, estop, safety):
+def get_state_array(cur_time, tidx, i, pose, speed, force, acc, desired_pose, estop, safety, puck):
     # rcv = RTDEReceive("172.22.22.2")
     # ret, image = cap.read()
     # timestamp = time.time()
@@ -54,5 +55,6 @@ def get_state_array(cur_time, tidx, i, pose, speed, force, acc, desired_pose, es
                        np.array(speed), # 11-16
                        np.array(force), # 17-22
                        np.array(acc), # 23-25
-                       np.array(desired_pose[0])]) # 26-32
+                       np.array(desired_pose[0]),# 26-32
+                       np.array(puck)]) # 33-35
     return val#, image

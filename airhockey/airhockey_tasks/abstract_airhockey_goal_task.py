@@ -53,9 +53,9 @@ class AirHockeyGoalEnv(AirHockeyBaseEnv, ABC):
             achieved_goal=Box(low=np.array(goal_low), high=np.array(goal_high), dtype=float)
         ))
         
-    def reset(self, seed=None):
+    def reset(self, seed=None, **kwargs):
         self.set_goals(self.goal_radius_type)
-        obs, success = super().reset(seed)
+        obs, success = super().reset(seed, **kwargs)
         achieved_goal = self.get_achieved_goal(self.current_state)
         desired_goal = self.get_desired_goal()
         if self.return_goal_obs:

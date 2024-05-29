@@ -25,7 +25,10 @@ class AirHockeyBox2D:
                  puck_density=250,
                  block_density=1000,
                  max_paddle_vel=2,
-                 time_frequency=20):
+                 time_frequency=20,
+                 paddle_bounds=[],
+                 paddle_edge_bounds=[],
+                 center_offset_constant=1.2):
 
         # physics / world params
         self.length, self.width = length, width
@@ -48,6 +51,7 @@ class AirHockeyBox2D:
         self.paddle_density = paddle_density
         self.puck_density = puck_density
         self.block_density = block_density
+        self.center_offset_constant = center_offset_constant
         # these assume 2d, in 3d since we have height it would be higher mass
         self.paddle_mass = self.paddle_density * np.pi * self.paddle_radius ** 2
         self.puck_mass = self.puck_density * np.pi * self.puck_radius ** 2
@@ -88,11 +92,14 @@ class AirHockeyBox2D:
         # self.ground_body.fixtures[0].friction = 0.0
         self.reset(seed)
 
+    def start_callbacks(self, **kwargs):
+        return
+
     @staticmethod
     def from_dict(state_dict):
         return AirHockeyBox2D(**state_dict)
 
-    def reset(self, seed):
+    def reset(self, seed, **kwargs):
         self.rng = np.random.RandomState(seed)
         self.timestep = 0
 
@@ -112,7 +119,7 @@ class AirHockeyBox2D:
         
         self.multiagent = False
 
-        self.puck_history = [(-1,0,0) for i in range(5)]
+        self.puck_history = [(-2 + self.center_offset_constant,0,1) for i in range(5)]
         self.paddle_attrs = None
         self.target_attrs = None
 
@@ -335,8 +342,8 @@ class AirHockeyBox2D:
         self.paddles['paddle_ego'].position = (pos[0], pos[1])
         
         state_info = self.get_current_state()
-        if 'pucks' in state_info: self.puck_history.append(list(state_info['pucks'][0]["position"]) + [1])
-        else: self.puck_history.append([-2,0,0])
+        if 'pucks' in state_info: self.puck_history.append(list(state_info['pucks'][0]["position"]) + [0])
+        else: self.puck_history.append([-2 + self.center_offset_constant,0,1])
 
         self.timestep += 1
         return state_info

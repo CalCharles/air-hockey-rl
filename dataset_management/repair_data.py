@@ -3,6 +3,7 @@ import h5py
 from airhockey.sims.real.proprioceptive_state import slicer, flatten
 from airhockey.sims.real.trajectory_merging import write_trajectory
 import numpy as np
+from collections.abc import Iterable
 
 DATA_RANGES = [[0,1], [1,2], [2,3], [3,4], [4,9], [10,15], [16,21], [22,24], [25,31]]
 DATA_NAMES = ["cur_time", "tidx", "i", "estop", "pose", "speed", "force", "acc", "desired_pose"]
@@ -107,36 +108,46 @@ def collect_new_state_data(data_dir, state_dir, target_dir):
         # if traj_num > 430: continue
         puck_traj = list()
         total_masked = 0
-        try:
-            with h5py.File(os.path.join(state_dir, f"state_trajectory_data{traj_num}.hdf5"), 'r') as f:
-                puck_state = np.array(f["puck_state"]).T
-                masks = np.array(f["puck_state_nan_mask"]).T
-                last_state = np.array((-2,0,0))
-                for state, mask in zip(puck_state, masks):
-                    if mask[0]:
-                        state = np.zeros(last_state.shape)
-                        state[0] = last_state[0]
-                        state[1] = last_state[1]
-                        total_masked += 1
-                    else:
-                        state = np.concatenate([state, [1]])
-                    puck_traj.append(state)
-        except Exception as e:
-            print("No state file found, ", file, e)
-            continue
+        if len(state_dir) > 0:
+            try:
+                with h5py.File(os.path.join(state_dir, f"state_trajectory_data{traj_num}.hdf5"), 'r') as f:
+                    puck_state = np.array(f["puck_state"]).T
+                    masks = np.array(f["puck_state_nan_mask"]).T
+                    last_state = np.array((-2,0,1))
+                    for state, mask in zip(puck_state, masks):
+                        if mask[0]:
+                            state = np.zeros(last_state.shape)
+                            state[0] = last_state[0]
+                            state[1] = last_state[1]
+                            total_masked += 1
+                        else:
+                            state = np.concatenate([state, [1]])
+                        puck_traj.append(state)
+            except Exception as e:
+                print("No state file found, ", file, e)
+                continue
         with h5py.File(os.path.join(data_dir, file), 'r') as f:
             # puck_vals = np.load(os.path.join(state_dir, "state_trajectory_data{traj_num}.npy"))
+                
             try:
                 measured_vals = np.array(f['train_vals'])
                 images = np.array(f['train_img'])
-                # print(len(measured_vals))
-                for pv, mv, im in zip(puck_traj, measured_vals, images):
-                    # print(mv, len(mv))
-                    updating_dict = slicer(mv)
-                    updating_dict["puck"] = pv
-                    updating_dict["image"] = im
-                    traj.append(updating_dict)
-
+                if len(puck_traj):
+                    for pv, mv, im in zip(puck_traj, measured_vals, images):
+                        # print(mv, len(mv))
+                        updating_dict = slicer(mv)
+                        updating_dict["puck"] = pv
+                        updating_dict["image"] = im
+                        traj.append(updating_dict)
+                else:
+                    for mv, im in zip(measured_vals, images):
+                        # print(mv, len(mv))
+                        updating_dict = slicer(mv)
+                        print(updating_dict["puck"])
+                        if np.sum(np.abs(updating_dict["puck"] - np.array([1,0,0]))) == 0:
+                            print(updating_dict["puck"])
+                        updating_dict["image"] = im
+                        traj.append(updating_dict)
             except Exception as e:
                 print('Error in file:', file, e)
                 continue
@@ -148,6 +159,11 @@ def collect_new_state_data(data_dir, state_dir, target_dir):
                 for state_dict in traj:
                     vals.append(state_dict[k])
                 traj_dict[k] = np.stack(vals)
+            try:  
+                os.makedirs(target_dir)
+                print("made ", target_dir)
+            except OSError as error:
+                pass
 
             with h5py.File(os.path.join(target_dir, file), 'w') as hf:
                 for k in traj_dict.keys():
@@ -160,5 +176,45 @@ def collect_new_state_data(data_dir, state_dir, target_dir):
             print("SKIP", file)
     return trajectories
 
+def read_real_data(data_dir, num_load=-1):
+    data_dict = dict()
+    itr = 0
+    for file in os.listdir(data_dir):
+        print(file)
+        with h5py.File(os.path.join(data_dir, file), 'r') as f:
+            try:
+                for k in f.keys():
+                    # print(mv, len(mv))
+                    if k in data_dict:
+                        data_dict[k].append(np.array(f[k]))
+                    else:
+                        data_dict[k] = [np.array(f[k])]
+                dones = np.zeros(len(f[k]))
+                dones[-1] = 1
+                if "done" in data_dict:
+                    data_dict["done"].append(dones)
+                else:
+                    data_dict["done"] = [dones]
+
+            except Exception as e:
+                print('Error in file:', file, e)
+                continue
+            print("added trajectory ", file)
+        itr += 1
+        if itr > num_load and num_load > 0: break
+    for k in data_dict.keys():
+        print(k, [datav.shape for datav in data_dict[k]])
+        if k not in ["num_hits", "occlusions"]: data_dict[k] = np.concatenate(data_dict[k], axis=0)
+        else: data_dict[k] = np.stack(data_dict[k])
+    return data_dict
+# read_new_real_data("/datastor1/calebc/public/data/mouse/cleaned_new/")
+
 if __name__ == "__main__":
-    collect_new_state_data("/datastor1/calebc/public/data/mouse/cleaned_all/", "/datastor1/calebc/public/data/mouse/all_cleaned_state_trajectories_5-25-2024/", "/datastor1/calebc/public/data/mouse/state_data_all")
+    # collect_new_state_data("/datastor1/calebc/public/data/mouse/cleaned_all/", "/datastor1/calebc/public/data/mouse/all_cleaned_state_trajectories_5-25-2024/", "/datastor1/calebc/public/data/mouse/state_data_all")
+    # collect_new_state_data("/datastor1/calebc/public/data/mouse/expert_avoid_fixed_start_fixed_goal/", "", "/datastor1/calebc/public/data/mouse/expert_avoid_fixed_start_fixed_goal_all/")
+    # collect_new_state_data("/datastor1/calebc/public/data/mouse/expert_avoid_random_start_fixed_goal/", "", "/datastor1/calebc/public/data/mouse/expert_avoid_random_start_fixed_goal_all/")
+    # collect_new_state_data("/datastor1/calebc/public/data/mouse/expert_avoid_random_start_random_goal/", "", "/datastor1/calebc/public/data/mouse/expert_avoid_random_start_random_goal_all/")
+    # collect_new_state_data("/datastor1/calebc/public/data/mouse/expert_no_avoid_random_start_random_goal/", "", "/datastor1/calebc/public/data/mouse/expert_no_avoid_random_start_random_goal_all/")
+    collect_new_state_data("/datastor1/calebc/public/data/dilo/single_drop_expert/", "/datastor1/calebc/public/data/dilo/single_drop_expert_state_trajectories/", "/datastor1/calebc/public/data/dilo/single_drop_expert_all/")
+    collect_new_state_data("/datastor1/calebc/public/data/dilo/single_drop_random/", "/datastor1/calebc/public/data/dilo/single_drop_random_state_trajectories/", "/datastor1/calebc/public/data/dilo/single_drop_random_all/")
+    collect_new_state_data("/datastor1/calebc/public/data/dilo/single_drop_multi/", "/datastor1/calebc/public/data/dilo/single_drop_multi_state_trajectories/", "/datastor1/calebc/public/data/dilo/single_drop_multi_all/")
