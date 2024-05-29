@@ -3,6 +3,7 @@ import h5py
 from airhockey.sims.real.proprioceptive_state import slicer, flatten
 from airhockey.sims.real.trajectory_merging import write_trajectory
 import numpy as np
+from collections.abc import Iterable
 
 DATA_RANGES = [[0,1], [1,2], [2,3], [3,4], [4,9], [10,15], [16,21], [22,24], [25,31]]
 DATA_NAMES = ["cur_time", "tidx", "i", "estop", "pose", "speed", "force", "acc", "desired_pose"]
@@ -195,7 +196,9 @@ def read_real_data(data_dir, num_load=-1):
         itr += 1
         if itr > num_load and num_load > 0: break
     for k in data_dict.keys():
-        data_dict[k] = np.concatenate(data_dict[k], axis=0)
+        print(k, [datav.shape for datav in data_dict[k]])
+        if k not in ["num_hits", "occlusions"]: data_dict[k] = np.concatenate(data_dict[k], axis=0)
+        else: data_dict[k] = np.stack(data_dict[k])
     return data_dict
 # read_new_real_data("/datastor1/calebc/public/data/mouse/cleaned_new/")
 

@@ -11,6 +11,7 @@ def visualize_regions(frame, reward_region_info, goal_info, paddle_info):
     for r in reward_region_info:
         # print("reward_regions", r.state, r.radius)
         # ((0.09870443) *1000  + 500)/2
+        # print("reward_regions", r, goal_info)
         pixel_coord = (((r[0] - 1)*1000, (-r[1])*1000 ) + offset_constants) /2
         center_coordinates = (int(np.round(pixel_coord[0])), int(np.round(pixel_coord[1])))  # Example coordinates (x, y)
         

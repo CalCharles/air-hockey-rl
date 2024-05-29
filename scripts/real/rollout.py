@@ -15,7 +15,27 @@ import shutil
 import os
 import yaml
 import numpy as np
-            
+import sys
+sys.path.append("/home/pearl/dilo_ar_inference")
+from absl import app, flags
+from ml_collections import config_flags
+from dataclasses import dataclass
+import torch
+from models import  TwinQ, ValueFunction, TwinV
+from dilo import RECOIL_V_ODICE
+from  policy import GaussianPolicy, DeterministicPolicy
+from dilo_utils import DEFAULT_DEVICE
+
+def modify_obs(obs):
+    paddle_info = obs[:4]
+    paddle_info[0] = paddle_info[0] - 1
+    paddle_info = paddle_info.tolist()
+    paddle_info[2] = 0
+    paddle_info[3] = 0
+    puck_info = [0,0,0] * 5
+    return np.array(paddle_info + puck_info)
+
+         
 def run_policy(air_hockey_cfg, model, use_wandb=False, device='cpu', clear_prior_task_results=False, progress_bar=True):
     """
     Train an air hockey paddle model using stable baselines.
@@ -40,16 +60,43 @@ def run_policy(air_hockey_cfg, model, use_wandb=False, device='cpu', clear_prior
     air_hockey_params_cp['max_timesteps'] = 200
 
     eval_env = AirHockeyEnv(air_hockey_params_cp)
-    obs = eval_env.get_observation()
+    state_dict = eval_env.simulator.get_current_state()
+    obs = eval_env.get_observation(state_dict)
+    obs_list = list()
     with NonBlockingConsole() as nbc:
         while True:
-            action = model.get_action(obs)
-            obs, reward, is_finished, truncated, info = eval_env.step(action)
+            obs = modify_obs(obs)
+            obs = torch.tensor(obs).unsqueeze(0).to(0).float()
+            action = model.policy(obs)
+            print("action", action, obs)
+            action = action
+
+            obs, reward, is_finished, truncated, info = eval_env.step(action.squeeze().detach().cpu().numpy())
 
             if nbc.get_data() == 'y':
                 eval_env.reset(seed=None, write_traj = True)
             if nbc.get_data() == 'q':  
                 eval_env.reset(seed=None, write_traj = False)
+
+def load_model(pth):
+
+
+    agent_path = 'trained_models/dilo/rel_vel_low_temp_zero_vel_2.pth'
+
+    task = 'goal_obstacle_avoidance'
+
+    obs_dim = 19 # TODO: change this to the correct observation dimension
+    act_dim = 2
+
+    agent = RECOIL_V_ODICE(qf=TwinQ(state_dim=obs_dim,act_dim=obs_dim),vf = ValueFunction(state_dim=obs_dim),policy=DeterministicPolicy(obs_dim,act_dim),
+                                                    optimizer_factory=torch.optim.Adam,
+                                                    tau=0.8, maximizer="smoothed_chi", gradient_type="full", beta=0.5,use_twinV=True, lr=3e-4, discount=0.99, alpha=0.005).to(DEFAULT_DEVICE)
+
+    agent.load_state_dict(torch.load(agent_path))
+    return agent
+    # import ipdb;ipdb.set_trace()
+    observation = torch.randn(1,obs_dim).to(DEFAULT_DEVICE)
+    action = agent.policy(observation)
 
 
 
