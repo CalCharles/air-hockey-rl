@@ -201,7 +201,10 @@ def read_real_data(data_dir, num_load=-1):
 
 if __name__ == "__main__":
     # collect_new_state_data("/datastor1/calebc/public/data/mouse/cleaned_all/", "/datastor1/calebc/public/data/mouse/all_cleaned_state_trajectories_5-25-2024/", "/datastor1/calebc/public/data/mouse/state_data_all")
-    collect_new_state_data("/datastor1/calebc/public/data/mouse/expert_avoid_fixed_start_fixed_goal/", "", "/datastor1/calebc/public/data/mouse/expert_avoid_fixed_start_fixed_goal_all/")
-    collect_new_state_data("/datastor1/calebc/public/data/mouse/expert_avoid_random_start_fixed_goal/", "", "/datastor1/calebc/public/data/mouse/expert_avoid_random_start_fixed_goal_all/")
-    collect_new_state_data("/datastor1/calebc/public/data/mouse/expert_avoid_random_start_random_goal/", "", "/datastor1/calebc/public/data/mouse/expert_avoid_random_start_random_goal_all/")
-    collect_new_state_data("/datastor1/calebc/public/data/mouse/expert_no_avoid_random_start_random_goal/", "", "/datastor1/calebc/public/data/mouse/expert_no_avoid_random_start_random_goal_all/")
+    # collect_new_state_data("/datastor1/calebc/public/data/mouse/expert_avoid_fixed_start_fixed_goal/", "", "/datastor1/calebc/public/data/mouse/expert_avoid_fixed_start_fixed_goal_all/")
+    # collect_new_state_data("/datastor1/calebc/public/data/mouse/expert_avoid_random_start_fixed_goal/", "", "/datastor1/calebc/public/data/mouse/expert_avoid_random_start_fixed_goal_all/")
+    # collect_new_state_data("/datastor1/calebc/public/data/mouse/expert_avoid_random_start_random_goal/", "", "/datastor1/calebc/public/data/mouse/expert_avoid_random_start_random_goal_all/")
+    # collect_new_state_data("/datastor1/calebc/public/data/mouse/expert_no_avoid_random_start_random_goal/", "", "/datastor1/calebc/public/data/mouse/expert_no_avoid_random_start_random_goal_all/")
+    collect_new_state_data("/datastor1/calebc/public/data/mouse/single_drop_expert/", "", "/datastor1/calebc/public/data/mouse/single_drop_expert_all/")
+    collect_new_state_data("/datastor1/calebc/public/data/mouse/single_drop_multi/", "", "/datastor1/calebc/public/data/mouse/single_drop_multi_all/")
+    collect_new_state_data("/datastor1/calebc/public/data/mouse/single_drop_random/", "", "/datastor1/calebc/public/data/mouse/single_drop_random_all/")
