@@ -87,14 +87,14 @@ def find_red_hockey_paddle(image):
 
 
 MIN_DETECT = 25
-Mimg = np.load('Mimg.npy')
+Mimg = np.load('assets/real/Mimg.npy')
 upscale_constant = 3
 original_size = np.array([640, 480])
 visual_downscale_constant = 2
 save_downscale_constant = 2
 offset_constants = np.array((2100, 500))
 
-def find_red_hockey_puck(image, puck_history):
+def find_red_hockey_puck(image, puck_history = None, rotate=True):
     # hsv_alt should e a lit
     h, w, _ = image.shape
     # lower HSV: [110  25 119], upper HSV: [125 255 255]
@@ -102,7 +102,7 @@ def find_red_hockey_puck(image, puck_history):
     hsv_high = [ 8, 255, 255]
     # hsv_low = [0,100,140]
     # hsv_high=[50,255,255]
-    image = cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    if rotate: image = cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
     image = cv2.resize(image, (int(image.shape[1] / 2), int(image.shape[0] / 2)), 
                     interpolation = cv2.INTER_LINEAR)
@@ -124,18 +124,19 @@ def find_red_hockey_puck(image, puck_history):
     # refined_mask *= remove_table_edges_mask
 
     puck_idx = np.where(refined_mask)
-    cv2.imshow('MASK',refined_mask)
-    cv2.waitKey(1)
+    # cv2.imshow('MASK',refined_mask)
+    # cv2.waitKey(1)
 
     if len(puck_idx[0]) < MIN_DETECT:
-        return puck_history[-1][0], puck_history[-1][1], 1
+        if puck_history is not None: return puck_history[-1][0], puck_history[-1][1], 1
+        return -1, 0, 1
     y, x = int(np.round(np.median(puck_idx[0]))),int(np.round(np.median(puck_idx[1])))
     image[y-3:y+3, x-3:x+3, :] = 0
     # homo_idx = (Mimg @ np.array([[x * upscale_constant,y * upscale_constant,1]]).T - offset_constants / 2) * 0.001
     homo_idx = (np.array([x*2 * 2,y*2 * 2]) - offset_constants) * 0.001
-    cv2.imshow('detect',image)
-    cv2.waitKey(1)
-    print(image.shape, offset_constants, x,y, x*2 * 1.5,y*2 * 1.5, homo_idx)
+    # cv2.imshow('detect',image)
+    # cv2.waitKey(1)
+    # print(image.shape, offset_constants, x,y, x*2 * 1.5,y*2 * 1.5, homo_idx)
     # print(h,w, x,y,homo_idx)
     return homo_idx[0], -homo_idx[1], 0
 

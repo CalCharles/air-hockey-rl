@@ -1,3 +1,4 @@
+from yaml import ScalarEvent
 from stable_baselines3.common.callbacks import BaseCallback
 import imageio
 import cv2
@@ -60,7 +61,14 @@ def save_tensorboard_plots(log_dir, air_hockey_cfg):
     for i, metric in enumerate(metrics):
         if metric in ea.Tags()['scalars']:
             # Extract time steps and values for the metric
-            times, step_nums, values = zip(*ea.Scalars(metric))
+            # times, step_nums, values = zip(*ea.Scalars(metric))
+            scalar_events = ea.Scalars(metric)
+            # Ensure scalar_events is an iterable
+            if isinstance(scalar_events, ScalarEvent):
+                scalar_events = [scalar_events]
+            # Unpack the values
+            times, step_nums, values = zip(*[(event.wall_time, event.step, event.value) for event in scalar_events])
+
 
             # Plot on the i-th subplot
             axs[i].plot(step_nums, values, label=metric)

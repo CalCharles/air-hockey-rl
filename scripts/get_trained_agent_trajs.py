@@ -1,7 +1,7 @@
 from stable_baselines3 import PPO, SAC
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from airhockey import AirHockeyEnv
-from render import AirHockeyRenderer
+from airhockey.renderers.render import AirHockeyRenderer
 from matplotlib import pyplot as plt
 import threading
 import time
@@ -12,6 +12,7 @@ import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
 from tensorboard.backend.event_processing import event_accumulator
+import h5py
 
 def evaluate_air_hockey_model(air_hockey_cfg, log_dir):
     """
@@ -29,11 +30,11 @@ def evaluate_air_hockey_model(air_hockey_cfg, log_dir):
     model_fp = os.path.join(log_dir, air_hockey_cfg['model_save_filepath'])
     air_hockey_cfg['air_hockey']['max_timesteps'] = 200
     
-    env_test = AirHockeyEnv.from_dict(air_hockey_params)
+    env_test = AirHockeyEnv(air_hockey_params) #.from_dict(air_hockey_params)
     # renderer = AirHockeyRenderer(env_test)
     
     env_test = DummyVecEnv([lambda : env_test])
-    env_test = VecNormalize.load(os.path.join(log_dir, air_hockey_cfg['vec_normalize_save_filepath']), env_test)
+    # env_test = VecNormalize.load(os.path.join(log_dir, air_hockey_cfg['vec_normalize_save_filepath']), env_test)
     
     # if goal-conditioned use SAC
     if 'goal' in air_hockey_cfg['air_hockey']['task']:
@@ -42,13 +43,17 @@ def evaluate_air_hockey_model(air_hockey_cfg, log_dir):
         model = PPO.load(model_fp)
 
     obs = env_test.reset()
+    print(obs, type(obs)) # ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel
     start = time.time()
     done = False
     # let's save
     # s,a,r,s', timestep
     trajs = []
     timestep = 0
-    
+    # saved_obs = np.array([])
+    # saved_act = np.array([])
+    # saved_rew = np.array([])
+
     for i in tqdm.tqdm(range(1000000)):
         # Draw the world
         # renderer.render()
@@ -64,6 +69,26 @@ def evaluate_air_hockey_model(air_hockey_cfg, log_dir):
             s = obs.flatten()
         a = action.flatten()
         r = np.array(rew)
+
+        # saving trajectory purpose
+        if timestep == 0:
+            saved_obs = np.array(s)
+            saved_act = np.array(a)
+            saved_rew = np.array(r)
+            saved_term = np.zeros(1)
+            saved_trunc = np.zeros(1)
+            saved_info = [{}]
+        else:
+            saved_obs = np.vstack([saved_obs, s])
+            saved_act = np.vstack([saved_act, a])
+            saved_rew = np.vstack([saved_rew, r])
+            if done:
+                saved_term = np.vstack([saved_term, np.ones(1)])
+            else:
+                saved_term = np.vstack([saved_term, np.zeros(1)])
+            saved_trunc = np.vstack([saved_trunc, np.zeros(1)])
+            saved_info.append({})
+            
         if 'goal' in air_hockey_cfg['air_hockey']['task']:
             s_prime = next_obs['observation']
             g_prime = next_obs['desired_goal']
@@ -73,15 +98,50 @@ def evaluate_air_hockey_model(air_hockey_cfg, log_dir):
         t = np.array([timestep])
         
         trajs.append(np.concatenate([s, a, r, s_prime, t]))
+
         obs = next_obs
+
         timestep += 1
-        if done:
+        if done: # term
             obs = env_test.reset()
             timestep = 0
     env_test.close()
     
     trajs = np.array(trajs)
     np.save(os.path.join(log_dir, 'trajs.npy'), trajs)
+
+    d = {}
+    keys = ["obs", "act", "rew", "term", "trunc"] #, "info"]
+    d["obs"] = saved_obs.astype(np.float64)
+    d["act"] = saved_act.astype(np.float64)
+    d["rew"] = saved_rew.astype(np.float64)
+    d["term"] = saved_term.astype(np.float64)
+    d["trunc"] = saved_trunc.astype(np.float64)
+    # d["info"] = str(saved_info)
+    # print(d)
+    write_trajectory(log_dir, 1, d, keys)
+
+def write_trajectory(pth, tidx, d, keys): # (obs, act, rew, term, trunc, info) , trunc is always false, info is empty dictionary
+    file_path = os.path.join(pth, 'trajectory_data' + str(tidx) + '.hdf5')
+    print("h5py file saved to", file_path)
+    with h5py.File(file_path, 'w') as hf:
+        for key in keys:
+            vals = d[key]
+            print(vals)
+            if isinstance(vals, np.ndarray):
+                shape = vals.shape
+                hf.create_dataset(key,
+                            shape=shape,
+                            compression="gzip",
+                            compression_opts=9,
+                            data = vals)
+            else:
+                shape = (len(vals),)
+                hf.create_dataset(key,
+                                compression="gzip",
+                                compression_opts=9,
+                                data = vals)
+            print(tidx, hf)
 
 if __name__ == '__main__':  
     parser = argparse.ArgumentParser(description='Demonstrate the air hockey game.')
@@ -93,3 +153,5 @@ if __name__ == '__main__':
         air_hockey_cfg = yaml.safe_load(f)
 
     evaluate_air_hockey_model(air_hockey_cfg, log_dir)
+
+    # python scripts/get_trained_agent_trajs.py --log_dir baseline_models/puck_height/air_hockey_agent_13

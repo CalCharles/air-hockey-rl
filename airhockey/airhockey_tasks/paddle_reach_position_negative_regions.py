@@ -44,7 +44,9 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
                  reward_velocity_limits_min=[0,0],
                  reward_velocity_limits_max=[0,0],
                  reward_movement_types=[],
-                 initialization_description_pth=""):
+                 initialization_description_pth="",
+                 paddle_offsets = [0,0,0,0],
+                 paddle_clipping = [1,0,-0.1,-0.15]):
         self.init_dict = self.load_initialization(initialization_description_pth)
         self.num_negative_reward_regions = num_negative_reward_regions
         self.negative_reward_range = negative_reward_range
@@ -84,6 +86,14 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
     @staticmethod
     def from_dict(state_dict):
         return AirHockeyPaddleReachPositionNegRegionsEnv(**state_dict)
+
+    def start_callbacks(self):
+        # starts callbacks for the real robot, should be overwritten for most methods
+        # but the default logic should suffice
+        region_info = [r.state.tolist() + r.radius.tolist() for r in self.reward_regions]
+        goal_info = self.goal_pos.tolist() + [self.goal_radius]
+        self.simulator.start_callbacks(region_info=region_info, goal_info=goal_info)
+
 
     def load_initialization(self, pth):
         '''
@@ -158,6 +168,8 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
                     midpoint_row.append(np.array([0, self.table_y_left]) + np.array([i + 0.5,j + 1.0]) * self.grid_lengths)
                 self.grid_midpoints.append(midpoint_row)
             self.grid_midpoints = np.array(self.grid_midpoints)
+        
+        self.set_goals(self.goal_radius_type)
 
         if len(self.init_negative_pos):
             # TODO: ignores the num_negative_reward_region, could have those initialized randomly
@@ -218,7 +230,7 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
         for nrr in self.reward_regions:
             reward += nrr.check_reward(achieved_goal)
 
-        print(achieved_goal, desired_goal, reward)
+        # print(achieved_goal, desired_goal, reward)
         # print(dist / max_euclidean_distance, 1 - (dist / max_euclidean_distance), reward)
         if single:
             reward = reward[0]
@@ -254,7 +266,7 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
         success = success.item()
         return reward, success
 
-    def reset(self, seed=None):
+    def reset(self, seed=None, **kwargs):
         for nrr in self.reward_regions:
             nrr.reset()
-        return super().reset(seed)
+        return super().reset(seed, **kwargs)
