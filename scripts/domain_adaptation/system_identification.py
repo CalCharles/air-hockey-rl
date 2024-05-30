@@ -11,6 +11,27 @@ from airhockey import AirHockeyEnv
 from dataset_management.create_dataset import load_dataset
 import wandb
 import cv2
+from scipy.spatial import distance
+
+# dynamic time warping
+def DTW(a, b):
+    # num_states x obs dimension
+    an = len(a)
+    bn = len(b)
+    obs_dim = a.shape[-1]
+    pointwise_distance = distance.cdist(a.reshape(-1,obs_dim),b.reshape(-1,obs_dim))
+    cumdist = np.matrix(np.ones((an+1,bn+1)) * np.inf)
+    cumdist[0,0] = 0
+    
+    for ai in range(an):
+        for bi in range(bn):
+            minimum_cost = np.min([cumdist[ai, bi+1],
+                                   cumdist[ai+1, bi],
+                                   cumdist[ai, bi]])
+            cumdist[ai+1, bi+1] = pointwise_distance[ai,bi] + minimum_cost
+
+    return cumdist[an, bn]
+
 
 def set_ipdb_debugger():
     import sys
@@ -57,6 +78,10 @@ def compare_trajectories(a_traj, b_traj, comp_type="l2"):
     # TODO: Dynamic time warping for trajectory comparison
     if comp_type == "l2":
         return - np.linalg.norm(a_traj - b_traj)
+    if comp_type == "last":
+        return - np.linalg.norm(a_traj[-1] - b_traj[-1])
+    if comp_type == "dtw":
+        return - DTW(a_traj, b_traj)
 
 def load_custom_dataset(dataset_pth):
     dataset = np.load(dataset_pth)

@@ -4,6 +4,7 @@ from airhockey.sims.real.proprioceptive_state import slicer, flatten
 from airhockey.sims.real.trajectory_merging import write_trajectory
 import numpy as np
 from collections.abc import Iterable
+import copy
 
 DATA_RANGES = [[0,1], [1,2], [2,3], [3,4], [4,9], [10,15], [16,21], [22,24], [25,31]]
 DATA_NAMES = ["cur_time", "tidx", "i", "estop", "pose", "speed", "force", "acc", "desired_pose"]
@@ -140,12 +141,16 @@ def collect_new_state_data(data_dir, state_dir, target_dir):
                         updating_dict["image"] = im
                         traj.append(updating_dict)
                 else:
+                    last_puck = np.array([-0.8,0,1])
                     for mv, im in zip(measured_vals, images):
                         # print(mv, len(mv))
                         updating_dict = slicer(mv)
+                        if np.sum(np.abs(updating_dict["puck"] - np.array([0.2,0,1]))) < 1e-10:
+                            updating_dict["puck"] = copy.deepcopy(last_puck)
+                            updating_dict["puck"][-1] = 1
+                            
+                        last_puck = updating_dict["puck"]
                         print(updating_dict["puck"])
-                        if np.sum(np.abs(updating_dict["puck"] - np.array([1,0,0]))) == 0:
-                            print(updating_dict["puck"])
                         updating_dict["image"] = im
                         traj.append(updating_dict)
             except Exception as e:
@@ -215,6 +220,6 @@ if __name__ == "__main__":
     # collect_new_state_data("/datastor1/calebc/public/data/mouse/expert_avoid_random_start_fixed_goal/", "", "/datastor1/calebc/public/data/mouse/expert_avoid_random_start_fixed_goal_all/")
     # collect_new_state_data("/datastor1/calebc/public/data/mouse/expert_avoid_random_start_random_goal/", "", "/datastor1/calebc/public/data/mouse/expert_avoid_random_start_random_goal_all/")
     # collect_new_state_data("/datastor1/calebc/public/data/mouse/expert_no_avoid_random_start_random_goal/", "", "/datastor1/calebc/public/data/mouse/expert_no_avoid_random_start_random_goal_all/")
-    collect_new_state_data("/datastor1/calebc/public/data/dilo/single_drop_expert/", "/datastor1/calebc/public/data/dilo/single_drop_expert_state_trajectories/", "/datastor1/calebc/public/data/dilo/single_drop_expert_all/")
-    collect_new_state_data("/datastor1/calebc/public/data/dilo/single_drop_random/", "/datastor1/calebc/public/data/dilo/single_drop_random_state_trajectories/", "/datastor1/calebc/public/data/dilo/single_drop_random_all/")
-    collect_new_state_data("/datastor1/calebc/public/data/dilo/single_drop_multi/", "/datastor1/calebc/public/data/dilo/single_drop_multi_state_trajectories/", "/datastor1/calebc/public/data/dilo/single_drop_multi_all/")
+    collect_new_state_data("/datastor1/calebc/public/data/dilo/single_drop_expert/", "", "/datastor1/calebc/public/data/dilo/single_drop_expert_all/")
+    # collect_new_state_data("/datastor1/calebc/public/data/dilo/single_drop_random/", "/datastor1/calebc/public/data/dilo/single_drop_random_state_trajectories/", "/datastor1/calebc/public/data/dilo/single_drop_random_all/")
+    collect_new_state_data("/datastor1/calebc/public/data/dilo/multi_drop_expert/", "", "/datastor1/calebc/public/data/dilo/multi_drop_expert_all/")
