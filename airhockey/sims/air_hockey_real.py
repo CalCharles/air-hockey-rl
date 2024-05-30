@@ -180,7 +180,7 @@ class AirHockeyReal:
         self.offset_constants = np.array((2100, 500))
         
         # max workspace limits
-        self.x_offset = 1
+        self.x_offset = 1.2
         self.x_min_lim = -0.8
         self.x_max_lim = -0.33
         # y_min = -0.3382

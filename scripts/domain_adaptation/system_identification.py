@@ -32,6 +32,36 @@ def DTW(a, b):
 
     return cumdist[an, bn]
 
+def lcss(t0, t1,min_dist = 0.1):
+    """
+    Usage
+    -----
+    The Longuest-Common-Subsequence distance between trajectory t0 and t1.
+
+    Parameters
+    ----------
+    param t0 : len(t0)x2 numpy_array
+    param t1 : len(t1)x2 numpy_array
+    min_dist : float, the minimum distance to consider two points close together
+
+    Returns
+    -------
+    lcss : float
+           The Longuest-Common-Subsequence distance between trajectory t0 and t1
+    """
+    n0 = len(t0)
+    n1 = len(t1)
+    # An (m+1) times (n+1) matrix
+    C = [[0] * (n1+1) for _ in range(n0+1)]
+    for i in range(1, n0+1):
+        for j in range(1, n1+1):
+            if np.linalg.norm(t0[i-1],t1[j-1])<min_dist:
+                C[i][j] = C[i-1][j-1] + 1
+            else:
+                C[i][j] = max(C[i][j-1], C[i-1][j])
+    lcss = 1-float(C[n0][n1])/min([n0,n1])
+    return lcss
+
 
 def set_ipdb_debugger():
     import sys
@@ -82,6 +112,8 @@ def compare_trajectories(a_traj, b_traj, comp_type="l2"):
         return - np.linalg.norm(a_traj[-1] - b_traj[-1])
     if comp_type == "dtw":
         return - DTW(a_traj, b_traj)
+    if comp_type == "lcss":
+        return - lcss(a_traj, b_traj)
 
 def load_custom_dataset(dataset_pth):
     dataset = np.load(dataset_pth)
