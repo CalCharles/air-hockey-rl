@@ -1,5 +1,6 @@
 import os, imageio, h5py, shutil
 import numpy as np
+import cv2
 
 def merge_trajectory(image_path, images, vals):
     print(len(images))
@@ -15,7 +16,7 @@ def merge_trajectory(image_path, images, vals):
         image_timestamps = np.array([float(fil[3:-4]) for fil in list_of_files])
         value_timestamps = [v[0] for v in vals]
         for v in value_timestamps:
-            closest_image_idx = np.argmin(image_timestamps - v)
+            closest_image_idx = np.argmin(np.abs(image_timestamps - v))
             imgs.append(imageio.imread(os.path.join(image_path, list_of_files[closest_image_idx])))
             
 
@@ -40,6 +41,10 @@ def merge_trajectory(image_path, images, vals):
     imgs = np.stack(imgs, axis=0)
     
     vals = np.stack(vals, axis=0)
+    # for im, val in zip(imgs, vals):
+    #     cv2.imshow("saving", im)
+    #     cv2.waitKey(100)
+    #     print(val[30:])
     print(imgs.shape, vals.shape)
     if imgs.shape[0] != vals.shape[0]:
         print("MISALIGNED")
