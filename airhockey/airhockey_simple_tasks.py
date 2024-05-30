@@ -1,6 +1,6 @@
 import numpy as np
 from gymnasium.spaces import Box
-from .airhockey_base import AirHockeyBaseEnv
+from .airhockey_base import AirHockeyBaseEnv, get_observation_by_type
 
 
 class AirHockeyPuckVelEnv(AirHockeyBaseEnv):
@@ -384,18 +384,21 @@ class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
         assert self.num_obstacles == 0
         assert self.num_targets == 0
         assert self.num_paddles == 1
-    def get_observation(self, state_info):
-        ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
-        ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
-        ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
-        ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
-        puck_x_pos = state_info['pucks'][0]['position'][0]
-        puck_y_pos = state_info['pucks'][0]['position'][1]
-        puck_x_vel = state_info['pucks'][0]['velocity'][0]
-        puck_y_vel = state_info['pucks'][0]['velocity'][1]
 
-        obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
-        return obs
+    def get_observation(self, state_info, obs_type='vel', **kwargs):
+        return get_observation_by_type(state_info, obs_type=obs_type, **kwargs)
+        # ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
+        # ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
+        # ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
+        # ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
+        # puck_x_pos = state_info['pucks'][0]['position'][0]
+        # puck_y_pos = state_info['pucks'][0]['position'][1]
+        # puck_x_vel = state_info['pucks'][0]['velocity'][0]
+        # puck_y_vel = state_info['pucks'][0]['velocity'][1]
+
+        # obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
+        # return obs
+    
     def get_base_reward(self, state_info):
         # reward for getting close to the puck, but make sure not to displace it
         puck_pos = state_info['pucks'][0]['position']

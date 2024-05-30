@@ -41,7 +41,6 @@ def camera_callback(shared_array, save_image_check, puck_array, paddle_info, reg
         ret, image = cap.read()
         save_image_id = save_image_check[0] == 1
         showdst, save_image = homography_transform(image, get_save=save_image_id)
-        if region_info is not None: showdst = visualize_regions(showdst, region_info, goal_info, paddle_info)
         if save_image_id: 
             imageio.imsave("./temp/images/img" + str(time.time()) + ".jpg", save_image)
         # image = cv2.rotate(image, cv2.ROTATE_180)
@@ -56,9 +55,10 @@ def camera_callback(shared_array, save_image_check, puck_array, paddle_info, reg
         # dst = cv2.resize(dst, original_size.astype(int).tolist(), 
         #             interpolation = cv2.INTER_LINEAR)
         # cv2.imshow('image',image)
+        puck = find_red_hockey_puck(showdst, rotate=False)
+        if region_info is not None: showdst = visualize_regions(showdst, region_info, goal_info, paddle_info)
         cv2.imshow('image',showdst)
         cv2.setMouseCallback('image', move_event)
-        puck = find_red_hockey_puck(showdst, rotate=False)
         puck_array[0] = puck[0]
         puck_array[1] = puck[1]
         puck_array[2] = puck[2]

@@ -15,6 +15,7 @@ def apply_negative_z_force(ctrl, rcv=None):
 
     ctrl.forceMode(task_frame, selection_vector, wrench_down, ctrl_type, limits)
 
+
 def filter_update(vel, pose_hist, dpose_hist):
     pose_vel = np.array(dpose_hist[-1]) - np.array(pose_hist[-1])
     transform_vel = pose_vel
