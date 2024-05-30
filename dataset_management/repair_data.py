@@ -5,6 +5,7 @@ from airhockey.sims.real.trajectory_merging import write_trajectory
 import numpy as np
 from collections.abc import Iterable
 import copy
+import cv2
 
 DATA_RANGES = [[0,1], [1,2], [2,3], [3,4], [4,9], [10,15], [16,21], [22,24], [25,31]]
 DATA_NAMES = ["cur_time", "tidx", "i", "estop", "pose", "speed", "force", "acc", "desired_pose"]
@@ -102,6 +103,7 @@ desired_pose: `action` desired posed xyz rxryrz (6,)
 puck: location of the puck, with occlusion 1 if occluded xy occluded (3,)
 '''
 def collect_new_state_data(data_dir, state_dir, target_dir):
+    offset_constant = 1.2 # TODO: don't manually specify the offset constant
     trajectories = dict()
     for file in os.listdir(data_dir):
         traj = list()
@@ -114,15 +116,16 @@ def collect_new_state_data(data_dir, state_dir, target_dir):
                 with h5py.File(os.path.join(state_dir, f"state_trajectory_data{traj_num}.hdf5"), 'r') as f:
                     puck_state = np.array(f["puck_state"]).T
                     masks = np.array(f["puck_state_nan_mask"]).T
-                    last_state = np.array((-2,0,1))
+                    last_state = np.array((-2 + offset_constant,0,1))
                     for state, mask in zip(puck_state, masks):
                         if mask[0]:
                             state = np.zeros(last_state.shape)
                             state[0] = last_state[0]
                             state[1] = last_state[1]
+                            state[2] = 1
                             total_masked += 1
                         else:
-                            state = np.concatenate([state, [1]])
+                            state = np.concatenate([state, [0]])
                         puck_traj.append(state)
             except Exception as e:
                 print("No state file found, ", file, e)
@@ -139,15 +142,21 @@ def collect_new_state_data(data_dir, state_dir, target_dir):
                         updating_dict = slicer(mv)
                         updating_dict["puck"] = pv
                         updating_dict["image"] = im
+                        updating_dict["action"] = updating_dict["pose"][:2] - updating_dict["desired_pose"][:2] 
+                        updating_dict["paddle"] = copy.deepcopy(updating_dict["pose"])
+                        updating_dict["paddle"][0] += offset_constant
                         traj.append(updating_dict)
                 else:
-                    last_puck = np.array([-0.8,0,1])
+                    last_puck = np.array([-2 + offset_constant,0,1]) # -2 + real_env.offset_constant
                     for mv, im in zip(measured_vals, images):
                         # print(mv, len(mv))
                         updating_dict = slicer(mv)
                         if np.sum(np.abs(updating_dict["puck"] - np.array([0.2,0,1]))) < 1e-10:
                             updating_dict["puck"] = copy.deepcopy(last_puck)
                             updating_dict["puck"][-1] = 1
+                        updating_dict["action"] = updating_dict["pose"][:2] - updating_dict["desired_pose"][:2] 
+                        updating_dict["paddle"] = copy.deepcopy(updating_dict["pose"])
+                        updating_dict["paddle"][0] += offset_constant
                             
                         last_puck = updating_dict["puck"]
                         print(updating_dict["puck"])
@@ -208,9 +217,16 @@ def read_real_data(data_dir, num_load=-1):
         itr += 1
         if itr > num_load and num_load > 0: break
     for k in data_dict.keys():
-        print(k, [datav.shape for datav in data_dict[k]])
         if k not in ["num_hits", "occlusions"]: data_dict[k] = np.concatenate(data_dict[k], axis=0)
         else: data_dict[k] = np.stack(data_dict[k])
+        # print(k, [datav.shape for datav in data_dict[k]])
+        print(k, data_dict[k].shape)
+    for i in range(len(data_dict["done"])):
+        cv2.imshow("frame", data_dict["image"][i])
+        cv2.waitKey(100)
+        print(data_dict["puck"][i], data_dict["speed"][i][:2])
+
+
     return data_dict
 # read_new_real_data("/datastor1/calebc/public/data/mouse/cleaned_new/")
 
@@ -220,6 +236,7 @@ if __name__ == "__main__":
     # collect_new_state_data("/datastor1/calebc/public/data/mouse/expert_avoid_random_start_fixed_goal/", "", "/datastor1/calebc/public/data/mouse/expert_avoid_random_start_fixed_goal_all/")
     # collect_new_state_data("/datastor1/calebc/public/data/mouse/expert_avoid_random_start_random_goal/", "", "/datastor1/calebc/public/data/mouse/expert_avoid_random_start_random_goal_all/")
     # collect_new_state_data("/datastor1/calebc/public/data/mouse/expert_no_avoid_random_start_random_goal/", "", "/datastor1/calebc/public/data/mouse/expert_no_avoid_random_start_random_goal_all/")
-    collect_new_state_data("/datastor1/calebc/public/data/dilo/single_drop_expert/", "", "/datastor1/calebc/public/data/dilo/single_drop_expert_all/")
-    # collect_new_state_data("/datastor1/calebc/public/data/dilo/single_drop_random/", "/datastor1/calebc/public/data/dilo/single_drop_random_state_trajectories/", "/datastor1/calebc/public/data/dilo/single_drop_random_all/")
-    collect_new_state_data("/datastor1/calebc/public/data/dilo/multi_drop_expert/", "", "/datastor1/calebc/public/data/dilo/multi_drop_expert_all/")
+    # collect_new_state_data("/datastor1/calebc/public/data/dilo/single_drop_expert/", "", "/datastor1/calebc/public/data/dilo/single_drop_expert_all_new/")
+    collect_new_state_data("/datastor1/calebc/public/data/dilo/single_drop_random/", "/datastor1/calebc/public/data/dilo/single_drop_random_state_trajectories/", "/datastor1/calebc/public/data/dilo/single_drop_random_all_new/")
+    # collect_new_state_data("/datastor1/calebc/public/data/dilo/multi_drop_expert/", "", "/datastor1/calebc/public/data/dilo/multi_drop_expert_all_new/")
+    # read_real_data("/datastor1/calebc/public/data/dilo/single_drop_random_all_new/", 20)
