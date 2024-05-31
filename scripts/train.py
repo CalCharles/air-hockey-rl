@@ -62,6 +62,9 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
                 config=air_hockey_cfg,
                 sync_tensorboard=True,
                 save_code=True)
+
+            file_path = os.path.dirname(os.path.realpath(__file__))
+            wandb.run.log_code(os.path.join(file_path, '..'), name="Codebase", include_fn=lambda s: s.endswith('.py'))
         
         if air_hockey_cfg['n_threads'] > 1:
 

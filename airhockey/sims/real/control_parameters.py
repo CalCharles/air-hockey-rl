@@ -15,6 +15,12 @@ visual_downscale_constant = 2
 save_downscale_constant = 2
 offset_constants = np.array((2100, 500))
 
+def single_point_homography(matrix, point):
+    x,y = point
+    return np.array([matrix[0,0] * x + matrix[0,1] * y + matrix[0,2] /
+                    (matrix[2,0] * x + matrix[2,1] * y + matrix[2,2]), 
+                     matrix[1,0] * x + matrix[1,1] * y + matrix[1,2] /
+                    (matrix[2,0] * x + matrix[2,1] * y + matrix[2,2])])
 
 def homography_transform(image, get_save=True, rotate=False):
     image = cv2.rotate(image, cv2.ROTATE_180)
