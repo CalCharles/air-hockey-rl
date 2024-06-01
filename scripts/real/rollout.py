@@ -31,7 +31,7 @@ from dilo_utils import DEFAULT_DEVICE
 
 def modify_obs(obs):
     paddle_info = obs[:4]
-    paddle_info[0] = paddle_info[0] - 1
+    paddle_info[0] = paddle_info[0] - 1.2
     paddle_info = paddle_info.tolist()
     paddle_info[2] = 0
     paddle_info[3] = 0
@@ -41,6 +41,9 @@ def modify_obs(obs):
 def modify_obs_hit(obs):
     for i in range(5):
         obs[4 + i * 3:4 + i * 3 + 2] = obs[4 + i * 3:4 + i * 3 + 2] - obs[:2]
+        obs[4+i*3+2] = 0
+    # obs[2:4] = 0
+    # print(obs)
     return obs
 
 
@@ -75,11 +78,12 @@ def run_policy(air_hockey_cfg, model, use_wandb=False, device='cpu', clear_prior
     obs_list = list()
     with NonBlockingConsole() as nbc:
         while True:
-            obs = modify_obs_hit(obs)
+            # obs = modify_obs_hit(obs)
+            obs = modify_obs(obs)
             obs = torch.tensor(obs).unsqueeze(0).to(0).float()
             action = model.policy(obs)
-            print("action", action, obs)
-            # action = action.mean
+            # print("action", action, obs)
+            action = action.mean
 
             obs, reward, is_finished, truncated, info = eval_env.step(action.squeeze().detach().cpu().numpy())
             
@@ -96,7 +100,8 @@ def load_model(pth):
 
 
     # agent_path = 'trained_models/dilo/rel_vel_low_temp_zero_vel_2_success.pth'
-    agent_path = 'trained_models/puck_hitting/test_initial/dilo/best_model.pth'
+    agent_path = 'trained_models/cross_embodi_obs_avoid/cross_goal_obstacle_avoidance_fixed_start/smodice/best_model.pth'
+    # agent_path = 'trained_models/puck_hitting/test_initial/dilo/best_model_20000.pth'
 
     task = 'goal_obstacle_avoidance'
 
