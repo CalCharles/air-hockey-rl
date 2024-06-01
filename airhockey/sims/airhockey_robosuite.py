@@ -18,7 +18,7 @@ import time
 import datetime
 from collections import namedtuple
 from robosuite.utils.control_utils import trans
-
+import inspect
 import os
 
 import numpy as np
@@ -276,7 +276,8 @@ class AirHockeyRobosuite(AirHockeySim):
         
         self.initialized_objects = False
         current_time = datetime.datetime.fromtimestamp(time.time())
-        formatted_time = current_time.strftime('%Y%m%d_%H%M%S')
+        # formatted_time = current_time.strftime('%Y%m%d_%H%M%S')
+        formatted_time = np.random.randint(1000000000000000000)
         self.tmp_xml_fp = robosuite_xml_path_completion(self.table_xml + f"_{formatted_time}.xml")
         
     def __del__(self):
@@ -287,8 +288,10 @@ class AirHockeyRobosuite(AirHockeySim):
 
     @staticmethod
     def from_dict(state_dict):
-        state_dict_copy = state_dict.copy()
-        return AirHockeyRobosuite(**state_dict_copy)
+        # create a dictionary of only the relevant parameters
+        init_params = inspect.signature(AirHockeyRobosuite).parameters
+        relevant_params = {k: v for k, v in state_dict.items() if k in init_params}
+        return AirHockeyRobosuite(**relevant_params)
 
     def start_callbacks(self, **kwargs):
         return
@@ -360,7 +363,6 @@ class AirHockeyRobosuite(AirHockeySim):
         if self.initialized_objects:
             self.set_obj_configs()
             return
-        
         # this is only for the first time
         with open(self.tmp_xml_fp, 'w') as file:
             file.write(xmltodict.unparse(self.xml_config, pretty=True))
@@ -543,7 +545,7 @@ class AirHockeyRobosuite(AirHockeySim):
                     "@type": "slide",
                     "@axis": "1 0 0",
                     "@damping": f"{self.puck_damping}",
-                    "@damping": "0.01",
+                    # "@damping": "0.01",
                     "@limited": "false",
                 },
                 {
@@ -578,7 +580,7 @@ class AirHockeyRobosuite(AirHockeySim):
                 "inertial": {
                     "@pos": "0 0 0",
                     # "@mass": f"{puck_mass}",
-                    "@mass": 0.01,
+                    "@mass": 0.001,
                     "@diaginertia": "2.5e-6 2.5e-6 5e-6",
                 },
             }
@@ -619,7 +621,8 @@ class AirHockeyRobosuite(AirHockeySim):
         """
         delta_pos_x = -action[0] * self.x_to_x_prime_ratio
         delta_pos_y = action[1]
-        delta_pos_z = -action[0] * self.x_to_z_ratio
+        delta_pos_z = self.transform_z(- action[0]) #  * self.x_to_z_ratio
+        
         return np.array([delta_pos_x, delta_pos_y, delta_pos_z])
 
     def get_transition(self, action):

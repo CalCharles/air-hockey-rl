@@ -48,6 +48,8 @@ class AirHockeyBaseEnv(ABC, Env):
                  return_goal_obs,
                  seed,
                  terminate_on_puck_hit_bottom=False,  # TODO Specify this parameter in the yaml config
+                 terminate_on_puck_hit_paddle=False,
+                 terminate_on_puck_pass_paddle=False,
                  dense_goal=True,
                  goal_selector='stationary',
                  max_timesteps=1000,
@@ -66,7 +68,9 @@ class AirHockeyBaseEnv(ABC, Env):
                  reward_velocity_limits_max=[0,0],
                  reward_movement_types=[],
                  compute_online_rewards=True,
-                 initialization_description_pth=""):
+                 initialization_description_pth="",
+                 domain_random=False,
+                 ):
         
         if simulator == 'box2d':
             simulator_fn = get_box2d_simulator_fn()
@@ -103,6 +107,8 @@ class AirHockeyBaseEnv(ABC, Env):
         self.terminate_on_enemy_goal = terminate_on_enemy_goal
         self.terminate_on_puck_stop = terminate_on_puck_stop
         self.terminate_on_puck_hit_bottom = terminate_on_puck_hit_bottom
+        self.terminate_on_puck_hit_paddle = terminate_on_puck_hit_paddle
+        self.terminate_on_puck_pass_paddle = terminate_on_puck_pass_paddle
         
         # reward function
         self.compute_online_rewards = compute_online_rewards
@@ -123,6 +129,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.diagonal_motion_rew = diagonal_motion_rew
         self.stand_still_rew = stand_still_rew
         
+        self.simulator_params = simulator_params
         self.width = simulator_params['width']
         self.length = simulator_params['length']
         self.paddle_radius = simulator_params['paddle_radius']
@@ -141,8 +148,8 @@ class AirHockeyBaseEnv(ABC, Env):
         if len(paddle_bounds) == 0: # use preset values
             self.paddle_x_min = self.table_x_top / 2 + 2 * self.paddle_radius
             self.paddle_x_max = self.table_x_bot - 2 * self.paddle_radius
-            self.paddle_y_min = self.table_y_left + 2 * self.paddle_radius
-            self.paddle_y_max = self.table_y_right - 2 * self.paddle_radius
+            self.paddle_y_min = self.table_y_left - self.paddle_radius
+            self.paddle_y_max = self.table_y_right + self.paddle_radius
         else:
             self.paddle_x_min, self.paddle_x_max, self.paddle_y_min, self.paddle_y_max = paddle_bounds
             self.move_lims = [-1,-1]
@@ -173,6 +180,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.falling_time = 25
         self.metadata = {}
         self.start_callbacks()
+        self.domain_random = domain_random
         self.reset()
 
 
@@ -209,6 +217,36 @@ class AirHockeyBaseEnv(ABC, Env):
         return Box(low=np.array(low), high=np.array(high), dtype=float)        
 
     def reset(self, seed=None, **kwargs):
+
+        if self.domain_random:
+            if self.simulator_name == 'box2d':
+                simulator_fn = get_box2d_simulator_fn()
+            elif self.simulator_name == 'robosuite':
+                simulator_fn = get_robosuite_simulator_fn()
+            else:
+                raise ValueError("Invalid simulator type. Must be 'box2d' or 'robosuite'.")
+
+            # puck_damping: 0.1-1.0
+            # puck_density: 100-400
+            # gravity: -0.3-0.7
+
+            self.simulator_params['puck_damping'] = np.random.uniform(0.1, 1.0)
+            self.simulator_params['puck_density'] = np.random.uniform(100, 400)
+            self.simulator_params['gravity'] = np.random.uniform(-0.3, -0.7)
+
+            # print("self.simulator_params['gravity']: ", self.simulator_params['gravity'])
+            # print("reset -> domain_random")
+
+            # import pdb; pdb.set_trace()
+
+            self.simulator = simulator_fn.from_dict(self.simulator_params)
+            self.render_length = self.simulator.render_length
+            self.render_width = self.simulator.render_width
+            self.render_masks = self.simulator.render_masks
+            self.ppm = self.simulator.ppm
+        
+        # print("Resetting environment")
+
         if seed is None: # determine next seed, in a deterministic manner
             seed = self.rng.randint(0, int(1e8))
 
@@ -230,7 +268,7 @@ class AirHockeyBaseEnv(ABC, Env):
         if 'pucks' in state_info and len(state_info['pucks']) > 0:
             self.puck_initial_position = state_info['pucks'][0]['position']
             
-        return obs, {'success': False}
+        return obs, {**{'success': False}, **self.simulator_params}
 
     def reset_from_state(self, state_vector, seed=None):
         if seed is None: # determine next seed, in a deterministic manner
@@ -328,14 +366,14 @@ class AirHockeyBaseEnv(ABC, Env):
             if not truncated and np.linalg.norm(state_info['pucks'][0]['velocity']) < 0.01:
                 truncated = True
 
-        # puck passed the our paddle
-        if 'pucks' in state_info and (state_info['pucks'][0]['position'][0] > (state_info['paddles']['paddle_ego']['position'][0] + self.paddle_radius)):
-            truncated = True
+        if self.terminate_on_puck_pass_paddle:
+            if 'pucks' in state_info and (state_info['pucks'][0]['position'][0] > (state_info['paddles']['paddle_ego']['position'][0] + self.paddle_radius)):
+                truncated = True
 
-        # puck touched our paddle
-        # if np.linalg.norm(state_info['pucks'][0]['position'][0] - state_info['paddles']['paddle_ego']['position'][0]) <= (self.paddle_radius + self.puck_radius + 0.1):
-            # puck_within_home = True
-            # terminated = True
+        if self.terminate_on_puck_hit_paddle:
+            if np.linalg.norm(state_info['pucks'][0]['position'][0] - state_info['paddles']['paddle_ego']['position'][0]) <= (self.paddle_radius + self.puck_radius + 0.1):
+                puck_within_home = True
+                terminated = True
         
         puck_within_ego_goal = False
         puck_within_alt_goal = False
@@ -391,6 +429,7 @@ class AirHockeyBaseEnv(ABC, Env):
     def step(self, action):
         if not self.multiagent:
             obs, reward, is_finished, truncated, info = self.single_agent_step(action)
+            is_finished = is_finished or truncated
             return obs, reward, is_finished, truncated, info
         else:
             return self.multi_step(action)
@@ -448,8 +487,9 @@ class AirHockeyBaseEnv(ABC, Env):
         # # only end if timesteps
         # if self.current_timestep >= self.max_timesteps:
         #     is_finished = True
-        
+
         obs = self.get_observation(next_state)
+        info.update(self.simulator_params)
         return obs, reward, is_finished, truncated, info
     
     def multi_step(self, joint_action):

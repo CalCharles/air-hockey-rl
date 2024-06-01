@@ -155,7 +155,7 @@ class AirHockeyOperationalSpaceController(OperationalSpaceController):
         
         # TODO: position should be confined to a reachable area on the table
         # FIXME: make these numbers relative/config-specified
-        position_limits = [[-0.1, -0.4, -10], [0.4, 0.4, 0]]
+        position_limits = [[-0.1, -0.46, -10], [0.55, 0.46, 0]]
         
         super().__init__(
             sim,
@@ -197,8 +197,8 @@ class AirHockeyOperationalSpaceController(OperationalSpaceController):
     def set_goal(self, action, set_pos=None, set_ori=None):
         super().set_goal(action)
         self.goal_ori = self.fixed_ori
-        self.goal_pos[2] = self.transform_z(self.goal_pos[0])
-        self.goal_pos[0] = self.transform_x(self.goal_pos[0])
+        # self.goal_pos[2] = self.transform_z(self.goal_pos[0])
+        # self.goal_pos[0] = self.transform_x(self.goal_pos[0])
 
         if self.interpolator_pos is not None:
             self.interpolator_pos.set_goal(self.goal_pos)
@@ -243,7 +243,7 @@ class AirHockeyOperationalSpaceController(OperationalSpaceController):
             desired_pos = np.array(self.goal_pos)
 
         desired_pos[2] = self.transform_z(desired_pos[0])
-        desired_pos[0] = self.transform_x(desired_pos[0])
+        # desired_pos[0] = self.transform_x(desired_pos[0])
 
         if self.interpolator_ori is not None:
             # relative orientation based on difference between current ori and ref
@@ -326,8 +326,8 @@ class AirHockeyOperationalSpaceController(OperationalSpaceController):
         self.goal_ori = self.fixed_ori
         self.goal_pos = np.array(self.ee_pos)
 
-        self.goal_pos[2] = self.transform_z(self.goal_pos[0])
-        self.goal_pos[0] = self.transform_x(self.goal_pos[0])
+        # self.goal_pos[2] = self.transform_z(self.goal_pos[0])
+        # self.goal_pos[0] = self.transform_x(self.goal_pos[0])
 
         # Also reset interpolators if required
 
