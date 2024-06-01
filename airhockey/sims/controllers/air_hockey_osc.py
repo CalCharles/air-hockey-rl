@@ -155,7 +155,7 @@ class AirHockeyOperationalSpaceController(OperationalSpaceController):
         
         # TODO: position should be confined to a reachable area on the table
         # FIXME: make these numbers relative/config-specified
-        position_limits = [[-0.1, -0.43, -10], [0.55, 0.43, 0]]
+        position_limits = [[-0.1, -0.46, -10], [0.55, 0.46, 0]]
         
         super().__init__(
             sim,
