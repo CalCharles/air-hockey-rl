@@ -48,6 +48,8 @@ class AirHockeyBaseEnv(ABC, Env):
                  return_goal_obs,
                  seed,
                  terminate_on_puck_hit_bottom=False,  # TODO Specify this parameter in the yaml config
+                 terminate_on_puck_hit_paddle=False,
+                 terminate_on_puck_pass_paddle=False,
                  dense_goal=True,
                  goal_selector='stationary',
                  max_timesteps=1000,
@@ -105,6 +107,8 @@ class AirHockeyBaseEnv(ABC, Env):
         self.terminate_on_enemy_goal = terminate_on_enemy_goal
         self.terminate_on_puck_stop = terminate_on_puck_stop
         self.terminate_on_puck_hit_bottom = terminate_on_puck_hit_bottom
+        self.terminate_on_puck_hit_paddle = terminate_on_puck_hit_paddle
+        self.terminate_on_puck_pass_paddle = terminate_on_puck_pass_paddle
         
         # reward function
         self.compute_online_rewards = compute_online_rewards
@@ -144,8 +148,8 @@ class AirHockeyBaseEnv(ABC, Env):
         if len(paddle_bounds) == 0: # use preset values
             self.paddle_x_min = self.table_x_top / 2 + 2 * self.paddle_radius
             self.paddle_x_max = self.table_x_bot - 2 * self.paddle_radius
-            self.paddle_y_min = self.table_y_left + 2 * self.paddle_radius
-            self.paddle_y_max = self.table_y_right - 2 * self.paddle_radius
+            self.paddle_y_min = self.table_y_left - self.paddle_radius
+            self.paddle_y_max = self.table_y_right + self.paddle_radius
         else:
             self.paddle_x_min, self.paddle_x_max, self.paddle_y_min, self.paddle_y_max = paddle_bounds
             self.move_lims = [-1,-1]
@@ -362,14 +366,14 @@ class AirHockeyBaseEnv(ABC, Env):
             if not truncated and np.linalg.norm(state_info['pucks'][0]['velocity']) < 0.01:
                 truncated = True
 
-        # puck passed the our paddle
-        # if 'pucks' in state_info and (state_info['pucks'][0]['position'][0] > (state_info['paddles']['paddle_ego']['position'][0] + self.paddle_radius)):
-        #     truncated = True
+        if self.terminate_on_puck_pass_paddle:
+            if 'pucks' in state_info and (state_info['pucks'][0]['position'][0] > (state_info['paddles']['paddle_ego']['position'][0] + self.paddle_radius)):
+                truncated = True
 
-        # puck touched our paddle
-        # if np.linalg.norm(state_info['pucks'][0]['position'][0] - state_info['paddles']['paddle_ego']['position'][0]) <= (self.paddle_radius + self.puck_radius + 0.1):
-            # puck_within_home = True
-            # terminated = True
+        if self.terminate_on_puck_hit_paddle:
+            if np.linalg.norm(state_info['pucks'][0]['position'][0] - state_info['paddles']['paddle_ego']['position'][0]) <= (self.paddle_radius + self.puck_radius + 0.1):
+                puck_within_home = True
+                terminated = True
         
         puck_within_ego_goal = False
         puck_within_alt_goal = False
