@@ -188,3 +188,7 @@ traj_videos/
 data/
 temp/
 gat_log/
+
+*.gif
+*.zip
+*.0
