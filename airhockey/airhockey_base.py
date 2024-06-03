@@ -181,7 +181,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.validate_configuration()
 
         self.goal_selector = goal_selector
-        self.initialize_spaces()
+        self.initialize_spaces(self.obs_type)
         self.falling_time = 25
         self.metadata = {}
         self.start_callbacks()

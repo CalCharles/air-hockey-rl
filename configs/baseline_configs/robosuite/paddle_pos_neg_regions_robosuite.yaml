@@ -1,4 +1,5 @@
 air_hockey:
+  obs_type: 'paddle'
   diagonal_motion_rew: -0.1
   direction_change_rew: -0.05
   goal_max_x_velocity: 1

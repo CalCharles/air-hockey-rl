@@ -1,5 +1,6 @@
 # Air Hockey Table Parameters
 air_hockey:
+  obs_type: 'history'
   simulator_params:
     num_paddles: 1
     num_pucks: 1

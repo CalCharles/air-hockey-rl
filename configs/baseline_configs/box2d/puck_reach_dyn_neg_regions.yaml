@@ -1,5 +1,6 @@
 # Air Hockey Table Parameters
 air_hockey:
+  obs_type: 'history'
   simulator_params:
     # 57: <geom name="surface" type="box" material="white" size="length width 0.0505" pos="0 0 -0.0505"
     length: 1.064
