@@ -47,7 +47,7 @@ eval_freq: 5000
 gamma: 0.99
 model_save_filepath: model
 n_eval_eps: 30
-n_threads: 4
+n_threads: 20
 n_training_steps: 1000000
 print_reward: false
 seed: 0

@@ -381,14 +381,21 @@ class AirHockeyBaseEnv(ABC, Env):
             if not truncated and np.linalg.norm(state_info['pucks'][0]['velocity']) < 0.01:
                 truncated = True
 
-        if self.terminate_on_puck_pass_paddle:
-            if 'pucks' in state_info and (state_info['pucks'][0]['position'][0] > (state_info['paddles']['paddle_ego']['position'][0] + self.paddle_radius)):
-                truncated = True
 
-        if self.terminate_on_puck_hit_paddle:
-            if np.linalg.norm(state_info['pucks'][0]['position'][0] - state_info['paddles']['paddle_ego']['position'][0]) <= (self.paddle_radius + self.puck_radius + 0.1):
-                puck_within_home = True
-                terminated = True
+        if "pucks" in state_info.keys():
+            # puck paddle distance
+            puck_paddle_distance = np.linalg.norm(np.array(state_info['pucks'][0]['position']) - np.array(state_info['paddles']['paddle_ego']['position']))
+
+            if self.terminate_on_puck_pass_paddle:
+                if state_info['pucks'][0]['position'][0] > (state_info['paddles']['paddle_ego']['position'][0] + self.paddle_radius ):
+                    truncated = True
+                    # print("Puck pass paddle")
+
+            if self.terminate_on_puck_hit_paddle:
+                if puck_paddle_distance <= (self.paddle_radius + self.puck_radius + 0.02):
+                    puck_within_home = True
+                    terminated = True
+                    # print("Puck hit paddle")
         
         puck_within_ego_goal = False
         puck_within_alt_goal = False

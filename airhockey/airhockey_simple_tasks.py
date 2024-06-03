@@ -397,7 +397,10 @@ class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
 
     def create_world_objects(self):
         name = 'puck_{}'.format(0)
-        pos, vel = self.get_puck_configuration()
+        # pos, vel = self.get_puck_configuration()
+        y_pos = self.rng.uniform(low=-self.width / 3, high=self.width / 3)
+        pos = (self.table_x_top + 1.1, y_pos)
+        vel = (1, 0)
         self.simulator.spawn_puck(pos, vel, name)
 
         name = 'paddle_ego'
@@ -451,11 +454,16 @@ class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
         # if delta >= epsilon:
         #     reward -= 1
         # success = reward >= 0.9 and dist < epsilon
-        success = dist < epsilon
+
+        # print("dist: ", dist)
+        # print("self.paddle_radius + self.puck_radius: ", self.paddle_radius + self.puck_radius + 0.02)
+        success = dist < (self.paddle_radius + self.puck_radius + 0.02)
         # print("dist: ", dist)
         # print("dist < epsilon: ", dist < epsilon)
         # print("reward: ", reward)
         # print("===========================================")
         if reward > 0:
             reward *= 20 # make it more significant
+
+        # print("success: ", success)
         return reward, success
