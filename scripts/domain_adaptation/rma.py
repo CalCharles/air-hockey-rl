@@ -48,9 +48,9 @@ from numpy.typing import NDArray
 import pyrallis
 
 
-# priv_keys = ["puck_density", "puck_damping", "gravity"]
+priv_keys = ["puck_density", "puck_damping", "gravity"]
 
-priv_keys = ["puck_density"]
+# priv_keys = ["puck_density"]
 
 @dataclass
 class Args:
@@ -291,59 +291,6 @@ class SubprocVecEnv_domain_random_eval(SubprocVecEnv_domain_random):
         obs, rews, dones, infos, self.reset_infos = zip(*self.results)  # type: ignore[assignment]
         return _flatten_obs(obs, self.observation_space), np.stack(rews), np.stack(dones), infos  # type: ignore[return-value]
         
-# def get_frames(renderer, env, model, n_eps_viz, n_eval_eps, cfg):
-        
-#         dataset = {}
-#         observations = []
-#         actions = []
-#         rewards = []
-#         dones = []
-
-#         frames = []
-#         robosuite_frames = {}
-#         env = env_test.envs[0]
-#         for ep_idx in range(n_eval_eps):
-#             obs = env_test.reset()
-#             done = False
-#             while not done:
-#                 if ep_idx < n_eps_viz:
-#                     frame = renderer.get_frame()
-#                     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-#                     # decrease width to 160 but keep aspect ratio
-#                     aspect_ratio = frame.shape[1] / frame.shape[0]
-#                     frame = cv2.resize(frame, (160, int(160 / aspect_ratio)))
-#                     frames.append(frame)
-#                     if cfg['air_hockey']['simulator'] == 'robosuite':
-#                         for key in env.current_state:
-#                             if 'image' not in key:
-#                                 continue
-#                             current_img = env.current_state[key]
-#                             # flip upside down
-#                             current_img = cv2.flip(current_img, 0)
-#                             # concatenate with frame
-#                             current_img = cv2.resize(current_img, (160, int(160 / aspect_ratio)))
-#                             current_img = np.concatenate([frame, current_img], axis=1)
-#                             if key not in robosuite_frames:
-#                                 robosuite_frames[key] = [current_img]
-#                             else:
-#                                 robosuite_frames[key].append(current_img)
-#                 observations.append(obs)
-#                 # action, _ = model.predict(obs)
-#                 action = np.random.uniform(-1, 1, size=(1,6))
-#                 actions.append(action)
-#                 obs, rew, done, info = env_test.step(action)
-#                 rewards.append(rew)
-#                 dones.append(done[0] or info[0]['TimeLimit.truncated'])
-#                 done = done[0] or info[0]['TimeLimit.truncated']
-        
-#         dataset['states'] = np.array(observations)
-#         dataset['actions'] = np.array(actions)
-#         dataset['rewards'] = np.array(rewards)
-#         dataset['dones'] = np.array(dones)
-
-#         # import pdb; pdb.set_trace()
-
-#         return frames, robosuite_frames, dataset
 
 def evaluate(
     agent: torch.nn.Module,
