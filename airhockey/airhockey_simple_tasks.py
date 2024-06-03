@@ -441,7 +441,10 @@ class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
         # if delta >= epsilon:
         #     reward -= 1
         # success = reward >= 0.9 and dist < epsilon
-        success = dist < self.paddle_radius + self.puck_radius
+
+        # print("dist: ", dist)
+        # print("self.paddle_radius + self.puck_radius: ", self.paddle_radius + self.puck_radius + 0.02)
+        success = dist < (self.paddle_radius + self.puck_radius + 0.02)
         # print("dist: ", dist)
         # print("dist < epsilon: ", dist < epsilon)
         # print("reward: ", reward)
@@ -449,5 +452,5 @@ class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
         if reward > 0:
             reward *= 20 # make it more significant
 
-        # print("success: ", success)
+        print("success: ", success)
         return reward, success
