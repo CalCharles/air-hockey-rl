@@ -235,16 +235,20 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
         if single:
             reward = reward[0]
         return reward
+    
+    def get_observation(self, state_info, obs_type ="negative_regions_paddle", **kwargs):
+        state_info["negative_regions"] = [nrr.get_state() for nrr in self.reward_regions]
+        return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)
 
-    def get_observation(self, state_info):
-        ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
-        ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
-        ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
-        ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
-        reward_regions_states = [nrr.get_state() for nrr in self.reward_regions]
+    # def get_observation(self, state_info):
+    #     ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
+    #     ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
+    #     ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
+    #     ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
+    #     reward_regions_states = [nrr.get_state() for nrr in self.reward_regions]
 
-        obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel])
-        return np.concatenate([obs] + reward_regions_states)
+    #     obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel])
+    #     return np.concatenate([obs] + reward_regions_states)
     
     def set_goals(self, goal_radius_type, goal_pos=None, alt_goal_pos=None, goal_set=None):
         self.goal_set = goal_set

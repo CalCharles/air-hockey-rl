@@ -5,6 +5,7 @@ from gymnasium import spaces
 from abc import ABC, abstractmethod
 import math
 from .sims.real.coordinate_transform import get_clip_limits
+from .utils import get_observation_by_type
 
 from typing import Tuple
 
@@ -70,6 +71,7 @@ class AirHockeyBaseEnv(ABC, Env):
                  compute_online_rewards=True,
                  initialization_description_pth="",
                  domain_random=False,
+                 obs_type = "vel",
                  ):
         
         if simulator == 'box2d':
@@ -165,6 +167,9 @@ class AirHockeyBaseEnv(ABC, Env):
         self.max_paddle_vel = self.simulator.max_paddle_vel
         self.max_puck_vel = self.simulator.max_puck_vel
         self.goal_set = None
+
+        self.get_observation_by_type = get_observation_by_type
+        self.obs_type = obs_type
         
         self.num_pucks = num_pucks
         self.multiagent = num_paddles > 1
@@ -207,6 +212,16 @@ class AirHockeyBaseEnv(ABC, Env):
     @abstractmethod
     def get_observation(self, state_info):
         pass
+
+    def get_current_state(self): 
+        # gets the current state and info
+        state_info = self.simulator.get_current_state()
+        obs = self.get_observation(state_info, obs_type=self.obs_type, puck_history=self.simulator.puck_history)
+        return obs, state_info
+
+    def define_get_observation(self, getter, obs_type=""):
+        if len(obs_type) > 0: self.obs_type = obs_type
+        self.get_observation_by_type = getter
 
     def start_callbacks(self):
         # starts callbacks for the real robot, should be overwritten for most methods
@@ -257,7 +272,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.simulator.instantiate_objects()
         state_info = self.simulator.get_current_state()
         self.current_state = state_info
-        obs = self.get_observation(state_info)
+        obs = self.get_observation(state_info, obs_type=self.obs_type, puck_history=self.simulator.puck_history)
         
         self.n_timesteps_so_far += self.current_timestep
         self.current_timestep = 0
@@ -281,7 +296,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.simulator.instantiate_objects()
         state_info = self.simulator.get_current_state()
         self.current_state = state_info
-        obs = self.get_observation(state_info)
+        obs = self.get_observation(state_info, obs_type=self.obs_type, puck_history=self.simulator.puck_history)
         return obs, {'success': False}
 
     def get_puck_configuration(self, bad_regions=None):
@@ -488,7 +503,7 @@ class AirHockeyBaseEnv(ABC, Env):
         # if self.current_timestep >= self.max_timesteps:
         #     is_finished = True
 
-        obs = self.get_observation(next_state)
+        obs = self.get_observation(next_state, obs_type=self.obs_type, puck_history=self.simulator.puck_history)
         info.update(self.simulator_params)
         return obs, reward, is_finished, truncated, info
     
@@ -499,30 +514,6 @@ class AirHockeyBaseEnv(ABC, Env):
                          puck_within_ego_home, puck_within_alt_home,
                          puck_within_ego_goal, puck_within_alt_goal):
         NotImplementedError("Joint reward function not implemented yet.")
-
-def get_observation_by_type(state_info, obs_type='vel', **kwargs):
-    # TODO: once other code is merged, replace get_obs with this code to remove redundancy and increase functionality
-    if obs_type == 'vel':
-        ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
-        ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
-        ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
-        ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
-        
-        puck_x_pos = state_info['pucks'][0]['position'][0]
-        puck_y_pos = state_info['pucks'][0]['position'][1]
-        puck_x_vel = state_info['pucks'][0]['velocity'][0]
-        puck_y_vel = state_info['pucks'][0]['velocity'][1] 
-        obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
-        return obs
-    elif obs_type == "history":
-        ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
-        ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
-        ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
-        ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
-        
-        puck_hist = np.array(kwargs["puck_history"][-5:]).flatten().tolist()
-        obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel] + puck_hist)
-        return obs
 
 def populate_state_info(paddles, pucks, blocks):
         # populates a state infor dictionary based on the components
