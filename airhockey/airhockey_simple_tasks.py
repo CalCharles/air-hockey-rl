@@ -452,5 +452,5 @@ class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
         if reward > 0:
             reward *= 20 # make it more significant
 
-        print("success: ", success)
+        # print("success: ", success)
         return reward, success
