@@ -412,8 +412,10 @@ class AirHockeyRobosuite(AirHockeySim):
         x = (pos[0] - self.table_x_top) / (self.table_x_bot - self.table_x_top) * (self.high_level_table_x_bot - self.high_level_table_x_top) + self.high_level_table_x_top
         y = (pos[1] - self.table_y_left) / (self.table_y_right - self.table_y_left) * (self.high_level_table_y_right - self.high_level_table_y_left) + self.high_level_table_y_left
         if object_type == 'puck':
-            x += self.puck_radius
-            y += self.puck_radius
+            # x += self.puck_radius
+            # y += self.puck_radius
+            x += 0
+            y += 0
         elif object_type == 'block':
             x += self.block_width / 2
             y += self.block_width / 2
@@ -547,6 +549,7 @@ class AirHockeyRobosuite(AirHockeySim):
                     "@damping": f"{self.puck_damping}",
                     # "@damping": "0.01",
                     "@limited": "false",
+                    "@frictionloss": "0.00000000000001",
                 },
                 {
                     "@name": f"{name}_y",
@@ -554,6 +557,7 @@ class AirHockeyRobosuite(AirHockeySim):
                     "@axis": "0 1 0",
                     "@damping": f"{self.puck_damping}",
                     "@limited": "false",
+                    "@frictionloss": "0.00000000000001",
                 },
                 {
                     "@name": f"{name}_yaw",
@@ -561,6 +565,7 @@ class AirHockeyRobosuite(AirHockeySim):
                     "@axis": "0 0 1",
                     "@damping": "2e-6",
                     "@limited": "false",
+                    "@frictionloss": "0.00000000000001",
                 },
             ],
             "body": {

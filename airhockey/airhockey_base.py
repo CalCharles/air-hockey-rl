@@ -218,32 +218,32 @@ class AirHockeyBaseEnv(ABC, Env):
 
     def reset(self, seed=None, **kwargs):
 
-        if self.domain_random:
-            if self.simulator_name == 'box2d':
-                simulator_fn = get_box2d_simulator_fn()
-            elif self.simulator_name == 'robosuite':
-                simulator_fn = get_robosuite_simulator_fn()
-            else:
-                raise ValueError("Invalid simulator type. Must be 'box2d' or 'robosuite'.")
+        # if self.domain_random:
+        #     if self.simulator_name == 'box2d':
+        #         simulator_fn = get_box2d_simulator_fn()
+        #     elif self.simulator_name == 'robosuite':
+        #         simulator_fn = get_robosuite_simulator_fn()
+        #     else:
+        #         raise ValueError("Invalid simulator type. Must be 'box2d' or 'robosuite'.")
 
-            # puck_damping: 0.1-1.0
-            # puck_density: 100-400
-            # gravity: -0.3-0.7
+        #     # puck_damping: 0.1-1.0
+        #     # puck_density: 100-400
+        #     # gravity: -0.3-0.7
 
-            self.simulator_params['puck_damping'] = np.random.uniform(0.1, 1.0)
-            self.simulator_params['puck_density'] = np.random.uniform(100, 400)
-            self.simulator_params['gravity'] = np.random.uniform(-0.3, -0.7)
+        #     self.simulator_params['puck_damping'] = np.random.uniform(0.1, 1.0)
+        #     self.simulator_params['puck_density'] = np.random.uniform(100, 400)
+        #     self.simulator_params['gravity'] = np.random.uniform(-0.3, -0.7)
 
-            # print("self.simulator_params['gravity']: ", self.simulator_params['gravity'])
-            # print("reset -> domain_random")
+        #     # print("self.simulator_params['gravity']: ", self.simulator_params['gravity'])
+        #     # print("reset -> domain_random")
 
-            # import pdb; pdb.set_trace()
+        #     # import pdb; pdb.set_trace()
 
-            self.simulator = simulator_fn.from_dict(self.simulator_params)
-            self.render_length = self.simulator.render_length
-            self.render_width = self.simulator.render_width
-            self.render_masks = self.simulator.render_masks
-            self.ppm = self.simulator.ppm
+        #     self.simulator = simulator_fn.from_dict(self.simulator_params)
+        #     self.render_length = self.simulator.render_length
+        #     self.render_width = self.simulator.render_width
+        #     self.render_masks = self.simulator.render_masks
+        #     self.ppm = self.simulator.ppm
         
         # print("Resetting environment")
 
@@ -366,14 +366,20 @@ class AirHockeyBaseEnv(ABC, Env):
             if not truncated and np.linalg.norm(state_info['pucks'][0]['velocity']) < 0.01:
                 truncated = True
 
-        if self.terminate_on_puck_pass_paddle:
-            if 'pucks' in state_info and (state_info['pucks'][0]['position'][0] > (state_info['paddles']['paddle_ego']['position'][0] + self.paddle_radius)):
-                truncated = True
+        if "puck" in state_info:
+            # puck paddle distance
+            puck_paddle_distance = np.linalg.norm(np.array(state_info['pucks'][0]['position']) - np.array(state_info['paddles']['paddle_ego']['position']))
 
-        if self.terminate_on_puck_hit_paddle:
-            if np.linalg.norm(state_info['pucks'][0]['position'][0] - state_info['paddles']['paddle_ego']['position'][0]) <= (self.paddle_radius + self.puck_radius + 0.1):
-                puck_within_home = True
-                terminated = True
+            if self.terminate_on_puck_pass_paddle:
+                if state_info['pucks'][0]['position'][0] > (state_info['paddles']['paddle_ego']['position'][0] + 100 * self.puck_radius ):
+                    truncated = True
+                    print("Puck pass paddle")
+
+            if self.terminate_on_puck_hit_paddle:
+                if puck_paddle_distance <= (self.paddle_radius + self.puck_radius):
+                    puck_within_home = True
+                    terminated = True
+                    print("Puck hit paddle")
         
         puck_within_ego_goal = False
         puck_within_alt_goal = False
