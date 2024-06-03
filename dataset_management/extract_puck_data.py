@@ -300,6 +300,7 @@ if __name__ == "__main__":
                     img_puck_traj[:,:,2] = np.minimum(img_puck_traj[:,:,2], dst[:,:,2])
             
             xy_robot_frame = pixel2loc(xs, ys) #
+            print(xy_robot_frame)
             
             plt.figure()
             plt.subplot(2,2,1)

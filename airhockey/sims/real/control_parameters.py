@@ -138,11 +138,24 @@ def save_callback(save_image_check):
         cv2.waitKey(1)
 
 # performs saving without multiprocessing
-def save_collect(cap, paddle_info, region_info, goal_info):
+def save_collect(cap, paddle_info, region_info, goal_info, show = True):
     start = time.time()
     ret, image = cap.read()
     showdst, save_image = homography_transform(image, get_save=True, rotate=False)
     if region_info is not None: showdst = visualize_regions(showdst, region_info, goal_info, paddle_info)
-    cv2.imshow('showdst',showdst)
-    cv2.waitKey(1)
+    if show:
+        cv2.imshow('showdst',showdst)
+        cv2.waitKey(1)
     return showdst, save_image
+
+def observe_collect(showdst, paddle_info, region_info, goal_info):
+    result, changed_image = find_red_hockey_paddle(showdst)
+    x,y,detected = result
+    showdst[x-3:x+3, y-3:y+3, :] = 0
+    x,y = (np.array([y * 2,x * 2]) - offset_constants)/ 1000
+    y = - y 
+    print(x,y)
+    if region_info is not None: showdst = visualize_regions(showdst, region_info, goal_info, (x, y, paddle_info[-1]))
+    cv2.imshow('image',showdst)
+    cv2.waitKey(1)
+    return x,y, detected

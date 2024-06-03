@@ -7,14 +7,14 @@ air_hockey:
     puck_radius: 0.03175
     paddle_radius: 0.0508
     block_width: 0.0254
-    force_scaling: 1000
+    force_scaling: 900
     paddle_damping: 3
-    puck_damping: 0.5
-    paddle_density: 2500
+    puck_damping: 0.4
+    paddle_density: 2300
     puck_density: 250
     block_density: 500
-    gravity: -0.5
-    max_force_timestep: 100 # max force we can apply at one timestep
+    gravity: -0.4
+    max_force_timestep: 90 # max force we can apply at one timestep
     render_size: 360
 
   simulator: box2d # or robosuite
@@ -40,7 +40,8 @@ air_hockey:
   diagonal_motion_rew: -0.1
   stand_still_rew: 0.01
   return_goal_obs: False
-
+  n_training_steps: 1000000
+  seed: [0, 1, 2, 3, 4]
 # Training Parameters
 n_training_steps: 1000000
 model_save_filepath: model # will be saved same dir as tb_log_dir
