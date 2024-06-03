@@ -7,7 +7,7 @@ from collections.abc import Iterable
 
 class AirHockeyGoalEnv(AirHockeyBaseEnv, ABC):        
     @abstractmethod
-    def initialize_spaces(self):
+    def initialize_spaces(self, obs_type):
         pass
 
     @abstractmethod

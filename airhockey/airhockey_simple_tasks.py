@@ -183,7 +183,7 @@ class AirHockeyPuckHeightEnv(AirHockeyBaseEnv):
 
 
 class AirHockeyPuckCatchEnv(AirHockeyBaseEnv):
-    def initialize_spaces(self):
+    def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
         paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
         paddle_obs_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
@@ -258,7 +258,7 @@ class AirHockeyPuckCatchEnv(AirHockeyBaseEnv):
     
     
 class AirHockeyPuckJuggleEnv(AirHockeyBaseEnv):
-    def initialize_spaces(self):
+    def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
         paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
         paddle_obs_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
@@ -334,7 +334,7 @@ class AirHockeyPuckJuggleEnv(AirHockeyBaseEnv):
 
 
 class AirHockeyPuckStrikeEnv(AirHockeyBaseEnv):
-    def initialize_spaces(self):
+    def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
         paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
         paddle_obs_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
@@ -429,7 +429,7 @@ class AirHockeyPuckStrikeEnv(AirHockeyBaseEnv):
 
 
 class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
-    def initialize_spaces(self):
+    def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
         paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
         paddle_obs_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]

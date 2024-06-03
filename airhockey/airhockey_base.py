@@ -194,7 +194,7 @@ class AirHockeyBaseEnv(ABC, Env):
         pass
 
     @abstractmethod
-    def initialize_spaces(self):
+    def initialize_spaces(self, obs_type):
         pass
     
     @abstractmethod
