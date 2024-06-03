@@ -46,7 +46,8 @@ from gymnasium.vector.utils import concatenate, create_empty_array, iterate
 from numpy.typing import NDArray
 
 import pyrallis
-
+import cv2
+import imageio
 
 priv_keys = ["puck_density", "puck_damping", "gravity"]
 
@@ -375,6 +376,98 @@ def evaluate(
     # import pdb; pdb.set_trace()
     agent.train()
     return success_rate
+
+def get_frames(renderer, env_test, agent, n_eps_viz, n_eval_eps, cfg, device):
+        frames = []
+        robosuite_frames = {}
+        env = env_test.envs[0]
+        for ep_idx in range(n_eval_eps):
+            obs = env_test.reset()
+            done = False
+            action = None
+            while not done:
+                if ep_idx < n_eps_viz:
+                    frame = renderer.get_frame()
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    # decrease width to 160 but keep aspect ratio
+                    aspect_ratio = frame.shape[1] / frame.shape[0]
+                    frame = cv2.resize(frame, (160, int(160 / aspect_ratio)))
+                    frames.append(frame)
+                    if cfg['air_hockey']['simulator'] == 'robosuite':
+                        for key in env.current_state:
+                            if 'image' not in key:
+                                continue
+                            current_img = env.current_state[key]
+                            # flip upside down
+                            current_img = cv2.flip(current_img, 0)
+                            # concatenate with frame
+                            current_img = cv2.resize(current_img, (160, int(160 / aspect_ratio)))
+                            current_img = np.concatenate([frame, current_img], axis=1)
+                            if key not in robosuite_frames:
+                                robosuite_frames[key] = [current_img]
+                            else:
+                                robosuite_frames[key].append(current_img)
+                if action is not None:
+                    action, _, _, _ = agent.get_action_and_value(
+                        obs=torch.Tensor(obs).to(device),
+                        priv_info=torch.Tensor(get_priv_info(env.current_state, device)).to(device),
+                        last_action=torch.Tensor().to(device),
+                        old_obs=torch.Tensor().to(device),
+                        old_action=torch.Tensor().to(device),
+                    )
+                else:
+                    action, _, _, _ = agent.get_action_and_value(
+                        obs=torch.Tensor(obs).to(device),
+                        priv_info=torch.Tensor(get_priv_info(env.current_state, device)).to(device),
+                        last_action=torch.Tensor(action).to(device),
+                        old_obs=torch.Tensor(obs).to(device),
+                        old_action=torch.Tensor(action).to(device),
+                    )
+                obs, _, done, info = env_test.step(action.cpu().numpy())
+                done = done[0] or info[0]['TimeLimit.truncated']
+
+        # import pdb; pdb.set_trace()
+
+        return frames, robosuite_frames
+
+
+def visualize(args, cfg, agent, gif_savepath, device):
+    # make renderer, env
+    air_hockey_params = cfg['air_hockey']
+    air_hockey_params['n_training_steps'] = cfg['n_training_steps']
+
+
+    # Set the return_goal_obs parameter for sac
+    cfg['air_hockey']['return_goal_obs'] = 'goal' in cfg['air_hockey']['task'] and 'sac' == cfg['algorithm']
+    
+    cfg['air_hockey']['max_timesteps'] = 200
+            
+    air_hockey_params = cfg['air_hockey']
+    air_hockey_params['n_training_steps'] = cfg['n_training_steps']
+    air_hockey_params['seed'] = args.seed
+
+    env_test = AirHockeyEnv(air_hockey_params)
+    renderer = AirHockeyRenderer(env_test)
+    env_test = DummyVecEnv([lambda: env_test])
+
+    # get frames
+    frames, robosuite_frames = get_frames(renderer=renderer, env_test=env_test, agent=agent, n_eps_viz=5, n_eval_eps=3, cfg=cfg, device=device)
+
+    os.makedirs(gif_savepath, exist_ok=True)
+    
+    # save gif
+    assert len(frames) > 0
+
+    def fps_to_duration(fps):
+        return int(1000 * 1/fps)
+    
+    fps = 30 # slightly faster than 20 fps (simulation time), but makes rendering smooth
+    imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(fps))
+    if len(robosuite_frames) > 0:
+        for key in robosuite_frames:
+            frames = robosuite_frames[key]
+            gif_savepath = os.path.join(args.save_dir, f'feval_robosuite_{key}.gif')
+            imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(fps))
 
 # regress shared_history_encoder to shared_priv_encoder
 def phase_2_train(envs, writer, run_name, args, air_hockey_cfg, device):
