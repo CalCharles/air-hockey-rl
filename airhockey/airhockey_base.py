@@ -218,32 +218,32 @@ class AirHockeyBaseEnv(ABC, Env):
 
     def reset(self, seed=None, **kwargs):
 
-        # if self.domain_random:
-        #     if self.simulator_name == 'box2d':
-        #         simulator_fn = get_box2d_simulator_fn()
-        #     elif self.simulator_name == 'robosuite':
-        #         simulator_fn = get_robosuite_simulator_fn()
-        #     else:
-        #         raise ValueError("Invalid simulator type. Must be 'box2d' or 'robosuite'.")
+        if self.domain_random:
+            if self.simulator_name == 'box2d':
+                simulator_fn = get_box2d_simulator_fn()
+            elif self.simulator_name == 'robosuite':
+                simulator_fn = get_robosuite_simulator_fn()
+            else:
+                raise ValueError("Invalid simulator type. Must be 'box2d' or 'robosuite'.")
 
-        #     # puck_damping: 0.1-1.0
-        #     # puck_density: 100-400
-        #     # gravity: -0.3-0.7
+            # puck_damping: 0.1-1.0
+            # puck_density: 100-400
+            # gravity: -0.3-0.7
 
-        #     self.simulator_params['puck_damping'] = np.random.uniform(0.1, 1.0)
-        #     self.simulator_params['puck_density'] = np.random.uniform(100, 400)
-        #     self.simulator_params['gravity'] = np.random.uniform(-0.3, -0.7)
+            self.simulator_params['puck_damping'] = np.random.uniform(0.1, 1.0)
+            self.simulator_params['puck_density'] = np.random.uniform(100, 400)
+            self.simulator_params['gravity'] = np.random.uniform(-0.3, -0.7)
 
-        #     # print("self.simulator_params['gravity']: ", self.simulator_params['gravity'])
-        #     # print("reset -> domain_random")
+            # print("self.simulator_params['gravity']: ", self.simulator_params['gravity'])
+            # print("reset -> domain_random")
 
-        #     # import pdb; pdb.set_trace()
+            # import pdb; pdb.set_trace()
 
-        #     self.simulator = simulator_fn.from_dict(self.simulator_params)
-        #     self.render_length = self.simulator.render_length
-        #     self.render_width = self.simulator.render_width
-        #     self.render_masks = self.simulator.render_masks
-        #     self.ppm = self.simulator.ppm
+            self.simulator = simulator_fn.from_dict(self.simulator_params)
+            self.render_length = self.simulator.render_length
+            self.render_width = self.simulator.render_width
+            self.render_masks = self.simulator.render_masks
+            self.ppm = self.simulator.ppm
         
         # print("Resetting environment")
 
