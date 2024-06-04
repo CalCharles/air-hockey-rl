@@ -4,7 +4,7 @@ from gymnasium import spaces
 from .abstract_airhockey_goal_task import AirHockeyGoalEnv
 
 class AirHockeyPaddleReachPositionVelocityEnv(AirHockeyGoalEnv):
-    def initialize_spaces(self):
+    def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
         paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
         paddle_obs_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
@@ -102,15 +102,18 @@ class AirHockeyPaddleReachPositionVelocityEnv(AirHockeyGoalEnv):
         if single:
             reward = reward[0]
         return reward
+    
+    def get_observation(self, state_info, obs_type ="paddle", **kwargs):
+        return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)
 
-    def get_observation(self, state_info):
-        ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
-        ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
-        ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
-        ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
+    # def get_observation(self, state_info):
+    #     ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
+    #     ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
+    #     ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
+    #     ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
 
-        obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel])
-        return obs
+    #     obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel])
+    #     return obs
     
     def set_goals(self, goal_radius_type, goal_pos=None, alt_goal_pos=None, goal_set=None):
         self.goal_set = goal_set

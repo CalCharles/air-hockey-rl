@@ -3,6 +3,7 @@ from gymnasium.spaces import Box
 from gymnasium import spaces
 from .abstract_airhockey_goal_task import AirHockeyGoalEnv
 from airhockey.airhockey_tasks.utils import DynamicRewardRegion, DynamicGoalRegion
+import copy
 
 class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
     def __init__(self,
@@ -90,7 +91,7 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
     def from_dict(state_dict):
         return AirHockeyPuckGoalPositionDynamicNegRegionsEnv(**state_dict)
 
-    def initialize_spaces(self):
+    def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
         paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
         paddle_obs_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
@@ -101,13 +102,24 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
         goal_low = [self.table_x_top, self.table_y_left]        
         goal_high = [0, self.table_y_right]
         
-        if self.return_goal_obs:
+        puck_hist_low = [self.table_x_top, self.table_y_left, 0] * 5
+        puck_hist_high = [self.table_x_bot, self.table_y_right, 0] * 5
+
+        if obs_type == "paddle":
+            low = paddle_obs_low
+            high = paddle_obs_high
+        elif obs_type == "vel":
             low = paddle_obs_low + puck_obs_low
             high = paddle_obs_high + puck_obs_high
+        elif obs_type == "history":
+            low = paddle_obs_low + puck_hist_low
+            high = paddle_obs_high + puck_hist_high
+
+        if self.return_goal_obs:
             self.observation_space = self.get_goal_obs_space(low, high, goal_low, goal_high)
         else:
-            low = paddle_obs_low + puck_obs_low + goal_low
-            high = paddle_obs_high + puck_obs_high + goal_high
+            low = low + goal_low
+            high = high + goal_high
             self.observation_space = self.get_obs_space(low, high)
 
         self.min_goal_radius = self.width / 16
@@ -185,21 +197,26 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
             
         return reward
 
-    def get_observation(self, state_info):
-        ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
-        ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
-        ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
-        ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
-        self.ego_pos = np.array([ego_paddle_x_pos, ego_paddle_y_pos])
-        puck_x_pos = state_info['pucks'][0]['position'][0]
-        puck_y_pos = state_info['pucks'][0]['position'][1]
-        puck_x_vel = state_info['pucks'][0]['velocity'][0]
-        puck_y_vel = state_info['pucks'][0]['velocity'][1]       
-        reward_regions_states = [nrr.get_state() for nrr in self.reward_regions]
+    def get_observation(self, state_info, obs_type ="negative_regions_puck", **kwargs):
+        state_info["negative_regions"] = [nrr.get_state() for nrr in self.reward_regions]
+        self.ego_pos = np.array(copy.deepcopy(state_info['paddles']['paddle_ego']['position']))
+        return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)
+
+    # def get_observation(self, state_info):
+    #     ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
+    #     ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
+    #     ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
+    #     ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
+    #     self.ego_pos = np.array([ego_paddle_x_pos, ego_paddle_y_pos])
+    #     puck_x_pos = state_info['pucks'][0]['position'][0]
+    #     puck_y_pos = state_info['pucks'][0]['position'][1]
+    #     puck_x_vel = state_info['pucks'][0]['velocity'][0]
+    #     puck_y_vel = state_info['pucks'][0]['velocity'][1]       
+    #     reward_regions_states = [nrr.get_state() for nrr in self.reward_regions]
 
 
-        obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
-        return np.concatenate([obs] + reward_regions_states)
+    #     obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
+    #     return np.concatenate([obs] + reward_regions_states)
     
     def set_goals(self, goal_radius_type, goal_pos=None, alt_goal_pos=None, goal_set=None):
         if self.goal_type == 'dynamic':

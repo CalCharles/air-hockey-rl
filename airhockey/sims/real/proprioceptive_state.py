@@ -1,6 +1,6 @@
 import numpy as np
 
-DATA_RANGES = [[0,1], [1,2], [2,3], [3,4], [4,5],[5,10], [11,16], [17,22], [23,25], [26,32], [33,35]]
+DATA_RANGES = [[0,1], [1,2], [2,3], [3,4], [4,5],[5,11], [11,17], [17,23], [23,26], [26,32], [32,35]]
 DATA_NAMES = ["cur_time", "tidx", "i",  "estop", "safety", "pose", "speed", "force", "acc", "desired_pose", "puck"]
 def slicer(val):
     cur_time, tidx, i, estop, safety, pose, speed, force, acc, desired_pose, puck = val[...,DATA_RANGES[0][0]:DATA_RANGES[0][1]],\
@@ -56,5 +56,5 @@ def get_state_array(cur_time, tidx, i, pose, speed, force, acc, desired_pose, es
                        np.array(force), # 17-22
                        np.array(acc), # 23-25
                        np.array(desired_pose[0]),# 26-32
-                       np.array(puck)]) # 33-35
+                       np.array(puck)]) 
     return val#, image

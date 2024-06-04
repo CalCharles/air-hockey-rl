@@ -32,6 +32,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+runs/
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -180,6 +181,7 @@ poetry.toml
 # LSP config files
 pyrightconfig.json
 
+<<<<<<< HEAD
 # End of https://www.toptal.com/developers/gitignore/api/py
 
 testt/
@@ -187,3 +189,16 @@ traj_videos/
 data/
 temp/
 gat_log/
+<<<<<<< HEAD
+
+*.gif
+*.zip
+*.0
+=======
+*.txt
+>>>>>>> d3bce21c8ed03150ce2b91407dc3fa5b6993943b
+=======
+# End of https://www.toptal.com/developers/gitignore/api/python
+testt/
+traj_videos/
+>>>>>>> goal_cond_verify

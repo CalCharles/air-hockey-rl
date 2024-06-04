@@ -12,7 +12,7 @@ from airhockey.renderers import AirHockeyRenderer
 
 if __name__ == '__main__':
     dir_path = os.path.dirname(os.path.realpath(__file__))
-    air_hockey_cfg_fp = os.path.join(dir_path, '../configs', 'baseline_configs/puck_touch_robosuite.yaml')
+    air_hockey_cfg_fp = os.path.join(dir_path, '../configs', 'baseline_configs/puck_height_robosuite.yaml')
 
     with open(air_hockey_cfg_fp, 'r') as f:
         air_hockey_cfg = yaml.safe_load(f)
@@ -29,7 +29,7 @@ if __name__ == '__main__':
         air_hockey_cfg['air_hockey']['return_goal_obs'] = False
 
     air_hockey_params_cp = air_hockey_params.copy()
-    air_hockey_params_cp['seed'] = 42
+    air_hockey_params_cp['seed'] = 43
     air_hockey_params_cp['max_timesteps'] = 200
 
     eval_env = AirHockeyEnv(air_hockey_params_cp)
@@ -51,7 +51,10 @@ if __name__ == '__main__':
     obs, info = eval_env.reset()
     done = False
     success = False
+    cum_rew = 0
+    step = 0
     while not done:
+        step += 1
         frame = renderer.get_frame()
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         # decrease width to 160 but keep aspect ratio
@@ -67,11 +70,17 @@ if __name__ == '__main__':
         current_img = np.concatenate([frame, current_img], axis=1)
 
         frames.append(current_img)
+        cv2.imshow("AirHockey", current_img)
 
-        action = np.array([0, 0])  # debugging!
+        forward = -1 if step > 32 else 0.01
+        action = np.array([forward, 0.0165])  # debugging!
         obs, rew, done, truncated, info = eval_env.step(action)
+        print(rew, done)
+        cum_rew += rew
         done = done or truncated
+        cv2.waitKey(1)
 
+    print(cum_rew)
     if not os.path.exists('../eval_gifs'):
         os.makedirs('../eval_gifs')
 

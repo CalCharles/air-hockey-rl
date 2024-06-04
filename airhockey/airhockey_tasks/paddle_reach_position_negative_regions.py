@@ -132,7 +132,7 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
         else: # initialize these values to -1, but probably unnecessary
             self.grid_dims = [-1,-1]
 
-    def initialize_spaces(self):
+    def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
         paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
         paddle_obs_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
@@ -142,15 +142,7 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
 
         goal_low = [0, self.table_y_left]
         goal_high = [self.table_x_bot, self.table_y_right]
-
-        if self.return_goal_obs:
-            low = paddle_obs_low
-            high = paddle_obs_high
-            self.observation_space = self.get_goal_obs_space(low, high, goal_low, goal_high)
-        else:
-            low = paddle_obs_low + goal_low
-            high = paddle_obs_high + goal_high
-            self.observation_space = self.get_obs_space(low, high)
+                    
         
         self.min_goal_radius = self.width / 16
         self.max_goal_radius = self.width / 4
@@ -187,8 +179,23 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
             self.reward_regions = [RewardRegion(self.negative_reward_range, 
                                                      self.reward_region_scale_range, 
                                                      [np.array([0, self.table_y_left]), np.array([self.table_x_bot,self.table_y_right])],
-                                                     radius_range, shapes=self.reward_region_shapes, object_radius = self.paddle_radius) for _ in range(self.num_negative_reward_regions)]
+                                                     radius_range, shapes=self.reward_region_shapes) for _ in range(self.num_negative_reward_regions)]
+        
+        reward_regions_states_shape = np.concatenate([nrr.get_state() for nrr in self.reward_regions]).shape
+        # these are misspecified but you can check later
+        reward_region_states_low = [-100] * reward_regions_states_shape[0]
+        reward_region_states_high = [100] * reward_regions_states_shape[0]
 
+        if self.return_goal_obs:
+            low = paddle_obs_low + reward_region_states_low
+            high = paddle_obs_high + reward_region_states_high
+            self.observation_space = self.get_goal_obs_space(low, high, goal_low, goal_high)
+        else:
+            low = paddle_obs_low + goal_low + reward_region_states_low
+            high = paddle_obs_high + goal_high + reward_region_states_high
+            
+            self.observation_space = self.get_obs_space(low, high)
+            
     def create_world_objects(self):
         name = 'paddle_ego'
         if self.init_paddle_pos is None: pos, vel = self.get_paddle_configuration(name)
@@ -230,21 +237,23 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
         for nrr in self.reward_regions:
             reward += nrr.check_reward(achieved_goal)
 
-        # print(achieved_goal, desired_goal, reward)
-        # print(dist / max_euclidean_distance, 1 - (dist / max_euclidean_distance), reward)
         if single:
             reward = reward[0]
         return reward
+    
+    def get_observation(self, state_info, obs_type ="negative_regions_paddle", **kwargs):
+        state_info["negative_regions"] = [nrr.get_state() for nrr in self.reward_regions]
+        return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)
 
-    def get_observation(self, state_info):
-        ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
-        ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
-        ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
-        ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
-        reward_regions_states = [nrr.get_state() for nrr in self.reward_regions]
+    # def get_observation(self, state_info):
+    #     ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
+    #     ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
+    #     ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
+    #     ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
+    #     reward_regions_states = [nrr.get_state() for nrr in self.reward_regions]
 
-        obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel])
-        return np.concatenate([obs] + reward_regions_states)
+    #     obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel])
+    #     return np.concatenate([obs] + reward_regions_states)
     
     def set_goals(self, goal_radius_type, goal_pos=None, alt_goal_pos=None, goal_set=None):
         self.goal_set = goal_set

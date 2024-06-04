@@ -18,7 +18,7 @@ import time
 import datetime
 from collections import namedtuple
 from robosuite.utils.control_utils import trans
-
+import inspect
 import os
 
 import numpy as np
@@ -276,7 +276,8 @@ class AirHockeyRobosuite(AirHockeySim):
         
         self.initialized_objects = False
         current_time = datetime.datetime.fromtimestamp(time.time())
-        formatted_time = current_time.strftime('%Y%m%d_%H%M%S')
+        # formatted_time = current_time.strftime('%Y%m%d_%H%M%S')
+        formatted_time = np.random.randint(1000000000000000000)
         self.tmp_xml_fp = robosuite_xml_path_completion(self.table_xml + f"_{formatted_time}.xml")
         
     def __del__(self):
@@ -287,8 +288,10 @@ class AirHockeyRobosuite(AirHockeySim):
 
     @staticmethod
     def from_dict(state_dict):
-        state_dict_copy = state_dict.copy()
-        return AirHockeyRobosuite(**state_dict_copy)
+        # create a dictionary of only the relevant parameters
+        init_params = inspect.signature(AirHockeyRobosuite).parameters
+        relevant_params = {k: v for k, v in state_dict.items() if k in init_params}
+        return AirHockeyRobosuite(**relevant_params)
 
     def start_callbacks(self, **kwargs):
         return
@@ -360,7 +363,6 @@ class AirHockeyRobosuite(AirHockeySim):
         if self.initialized_objects:
             self.set_obj_configs()
             return
-        
         # this is only for the first time
         with open(self.tmp_xml_fp, 'w') as file:
             file.write(xmltodict.unparse(self.xml_config, pretty=True))
@@ -410,8 +412,10 @@ class AirHockeyRobosuite(AirHockeySim):
         x = (pos[0] - self.table_x_top) / (self.table_x_bot - self.table_x_top) * (self.high_level_table_x_bot - self.high_level_table_x_top) + self.high_level_table_x_top
         y = (pos[1] - self.table_y_left) / (self.table_y_right - self.table_y_left) * (self.high_level_table_y_right - self.high_level_table_y_left) + self.high_level_table_y_left
         if object_type == 'puck':
-            x += self.puck_radius
-            y += self.puck_radius
+            # x += self.puck_radius
+            # y += self.puck_radius
+            x += 0
+            y += 0
         elif object_type == 'block':
             x += self.block_width / 2
             y += self.block_width / 2
@@ -543,8 +547,9 @@ class AirHockeyRobosuite(AirHockeySim):
                     "@type": "slide",
                     "@axis": "1 0 0",
                     "@damping": f"{self.puck_damping}",
-                    "@damping": "0.01",
+                    # "@damping": "0.01",
                     "@limited": "false",
+                    "@frictionloss": "0.00000000000001",
                 },
                 {
                     "@name": f"{name}_y",
@@ -552,6 +557,7 @@ class AirHockeyRobosuite(AirHockeySim):
                     "@axis": "0 1 0",
                     "@damping": f"{self.puck_damping}",
                     "@limited": "false",
+                    "@frictionloss": "0.00000000000001",
                 },
                 {
                     "@name": f"{name}_yaw",
@@ -559,6 +565,7 @@ class AirHockeyRobosuite(AirHockeySim):
                     "@axis": "0 0 1",
                     "@damping": "2e-6",
                     "@limited": "false",
+                    "@frictionloss": "0.00000000000001",
                 },
             ],
             "body": {
@@ -578,7 +585,7 @@ class AirHockeyRobosuite(AirHockeySim):
                 "inertial": {
                     "@pos": "0 0 0",
                     # "@mass": f"{puck_mass}",
-                    "@mass": 0.01,
+                    "@mass": 0.001,
                     "@diaginertia": "2.5e-6 2.5e-6 5e-6",
                 },
             }
@@ -619,7 +626,8 @@ class AirHockeyRobosuite(AirHockeySim):
         """
         delta_pos_x = -action[0] * self.x_to_x_prime_ratio
         delta_pos_y = action[1]
-        delta_pos_z = -action[0] * self.x_to_z_ratio
+        delta_pos_z = self.transform_z(- action[0]) #  * self.x_to_z_ratio
+        
         return np.array([delta_pos_x, delta_pos_y, delta_pos_z])
 
     def get_transition(self, action):
@@ -634,12 +642,12 @@ class AirHockeyRobosuite(AirHockeySim):
             ValueError: [Steps past episode termination]
         """
         action = self.translate_action(action)
-
         # Since the env.step frequency is slower than the mjsim timestep frequency, the internal controller will output
         # multiple torque commands in between new high level action commands. Therefore, we need to denote via
         # 'policy_step' whether the current step we're taking is simply an internal update of the controller,
         # or an actual policy update
         policy_step = True
+        initial_vel = self.robosuite_env._get_observations()['gripper_eef_vel']
 
         # Loop through the simulation at the model timestep rate until we're ready to take the next policy step
         # (as defined by the control frequency specified at the environment level)
@@ -647,6 +655,11 @@ class AirHockeyRobosuite(AirHockeySim):
             self.robosuite_env.sim.forward()
             self.robosuite_env._pre_action(action, policy_step)
             self.robosuite_env.sim.step()
+            
+            contact_forces = self.robosuite_env.sim.data.cfrc_ext
+            eef_index = self.robosuite_env.sim.model.body_name2id('gripper0_eef')
+            current_state['paddles']['paddle_ego']['force'] = contact_forces[eef_index][:2] # exclude torques and z force
+
             self.robosuite_env._update_observables()
             policy_step = False
 
@@ -657,6 +670,11 @@ class AirHockeyRobosuite(AirHockeySim):
         current_state = self.get_current_state()
         if 'pucks' in current_state: self.puck_history.append(list(current_state['pucks'][0]["position"]) + [0])
         else: self.puck_history.append([-2 + self.center_offset_constant,0,1])
+        
+        final_vel = current_state['paddles']['paddle_ego']['velocity']
+        
+        current_state['paddles']['paddle_ego']['acceleration'] = final_vel - initial_vel[:1]
+
         return current_state
 
     def get_current_state(self):
@@ -676,7 +694,9 @@ class AirHockeyRobosuite(AirHockeySim):
         ego_paddle_y_vel = ego_paddle_vel[1]
         
         state_info['paddles'] = {'paddle_ego': {'position': (ego_paddle_x_pos, ego_paddle_y_pos),
-                                                'velocity': (ego_paddle_x_vel, ego_paddle_y_vel)}}
+                                                'velocity': (ego_paddle_x_vel, ego_paddle_y_vel),
+                                                'acceleration': (0, 0),
+                                                'force': [0, 0]}}
         if len(self.puck_names) > 0:
             state_info['pucks'] = []
             for puck_name in self.puck_names:

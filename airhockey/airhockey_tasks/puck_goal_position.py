@@ -4,7 +4,7 @@ from gymnasium import spaces
 from .abstract_airhockey_goal_task import AirHockeyGoalEnv
 
 class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
-    def initialize_spaces(self):
+    def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
         paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
         paddle_obs_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
@@ -14,14 +14,25 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
 
         goal_low = [self.table_x_top, self.table_y_left]        
         goal_high = [0, self.table_y_right]
-        
-        if self.return_goal_obs:
+
+        puck_hist_low = [self.table_x_top, self.table_y_left, 0] * 5
+        puck_hist_high = [self.table_x_bot, self.table_y_right, 0] * 5
+
+        if obs_type == "paddle":
+            low = paddle_obs_low
+            high = paddle_obs_high
+        elif obs_type == "vel":
             low = paddle_obs_low + puck_obs_low
             high = paddle_obs_high + puck_obs_high
+        elif obs_type == "history":
+            low = paddle_obs_low + puck_hist_low
+            high = paddle_obs_high + puck_hist_high
+        
+        if self.return_goal_obs:
             self.observation_space = self.get_goal_obs_space(low, high, goal_low, goal_high)
         else:
-            low = paddle_obs_low + puck_obs_low + goal_low
-            high = paddle_obs_high + puck_obs_high + goal_high
+            low = low + goal_low
+            high = high + goal_high
             self.observation_space = self.get_obs_space(low, high)
 
         self.min_goal_radius = self.width / 16
@@ -74,27 +85,30 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
         reward = 1 / (1 + np.exp(-reward_raw * sigmoid_scale))
         reward[reward_mask] = 0
 
-        if self.dense_goal:
-            bonus = 10 if self.current_timestep > self.falling_time else 0 # this prevents the falling initiliazwed puck from triggering a success
-            reward = -dist  + (bonus if dist < radius else 0)
+
+        bonus = 10 if self.current_timestep > self.falling_time else 0 # this prevents the falling initiliazwed puck from triggering a success
+        reward = -dist  + (bonus if dist < radius else 0)
 
         if single:
             reward = reward[0]
         return reward
 
-    def get_observation(self, state_info):
-        ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
-        ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
-        ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
-        ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
-        
-        puck_x_pos = state_info['pucks'][0]['position'][0]
-        puck_y_pos = state_info['pucks'][0]['position'][1]
-        puck_x_vel = state_info['pucks'][0]['velocity'][0]
-        puck_y_vel = state_info['pucks'][0]['velocity'][1]       
+    def get_observation(self, state_info, obs_type ="vel", **kwargs):
+        return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)
 
-        obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
-        return obs
+    # def get_observation(self, state_info):
+    #     ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
+    #     ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
+    #     ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
+    #     ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
+        
+    #     puck_x_pos = state_info['pucks'][0]['position'][0]
+    #     puck_y_pos = state_info['pucks'][0]['position'][1]
+    #     puck_x_vel = state_info['pucks'][0]['velocity'][0]
+    #     puck_y_vel = state_info['pucks'][0]['velocity'][1]       
+
+    #     obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
+    #     return obs
     
     def set_goals(self, goal_radius_type, goal_pos=None, alt_goal_pos=None, goal_set=None):
         self.goal_set = goal_set
@@ -106,8 +120,8 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
             goal_radius = ratio * base_radius
             self.goal_radius = goal_radius
             
-        if self.goal_selector == 'dynamic':
-            self.goal_radius = 0.16
+        # if self.goal_selector == 'dynamic':
+        self.goal_radius = 0.15
 
         if goal_pos is None and goal_set is None:
             min_y = self.table_y_left + self.goal_radius

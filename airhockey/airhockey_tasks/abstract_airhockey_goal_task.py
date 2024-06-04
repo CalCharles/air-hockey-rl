@@ -3,11 +3,11 @@ from gymnasium.spaces import Box
 from gymnasium import spaces
 from airhockey.airhockey_base import AirHockeyBaseEnv
 from abc import ABC, abstractmethod
-from collections import Iterable
+from collections.abc import Iterable
 
 class AirHockeyGoalEnv(AirHockeyBaseEnv, ABC):        
     @abstractmethod
-    def initialize_spaces(self):
+    def initialize_spaces(self, obs_type):
         pass
 
     @abstractmethod

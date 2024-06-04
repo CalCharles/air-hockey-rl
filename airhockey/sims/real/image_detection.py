@@ -67,6 +67,8 @@ def find_red_hockey_paddle(image):
     # Detect blobs
     # keypoints = detector.detect(mask)
     vals = np.where(mask > 0)
+    if len(vals[0]) < MIN_DETECT:
+        return (-2, 0, 1), image
     x, y = int(np.round(np.median(vals[0]))),int(np.round(np.median(vals[1])))
 
     # # Draw detected blobs as red circles
@@ -82,7 +84,7 @@ def find_red_hockey_paddle(image):
     # Save the image with keypoints
     # cv2.imwrite('output.jpg', image_with_keypoints)
     # print("inrange", time.time()-start)
-    return x*4,y*4,image
+    return (x*4,y*4,0), image
 
 
 
@@ -129,14 +131,14 @@ def find_red_hockey_puck(image, puck_history = None, rotate=True):
 
     if len(puck_idx[0]) < MIN_DETECT:
         if puck_history is not None: return puck_history[-1][0], puck_history[-1][1], 1
-        return -1, 0, 1
+        return -2, 0, 1
     y, x = int(np.round(np.median(puck_idx[0]))),int(np.round(np.median(puck_idx[1])))
     image[y-3:y+3, x-3:x+3, :] = 0
     # homo_idx = (Mimg @ np.array([[x * upscale_constant,y * upscale_constant,1]]).T - offset_constants / 2) * 0.001
     homo_idx = (np.array([x*2 * 2,y*2 * 2]) - offset_constants) * 0.001
     # cv2.imshow('detect',image)
     # cv2.waitKey(1)
-    # print(image.shape, offset_constants, x,y, x*2 * 1.5,y*2 * 1.5, homo_idx)
+    # # print(image.shape, offset_constants, x,y, x*2 * 1.5,y*2 * 1.5, homo_idx)
     # print(h,w, x,y,homo_idx)
     return homo_idx[0], -homo_idx[1], 0
 

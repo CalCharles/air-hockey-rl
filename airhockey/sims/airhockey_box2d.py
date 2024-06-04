@@ -1,9 +1,32 @@
-from Box2D.b2 import world
+from Box2D.b2 import world, contactListener
 from Box2D import (b2CircleShape, b2FixtureDef, b2LoopShape, b2PolygonShape,
                    b2_dynamicBody, b2_staticBody, b2Filter, b2Vec2)
 import numpy as np
-from airhockey.sims.airhockey_sim import AirHockeySim
+import inspect
 
+class CollisionForceListener(contactListener):
+    def __init__(self):
+        contactListener.__init__(self)
+        self.collision_forces = []
+
+    def PostSolve(self, contact, impulse):
+        fixtureA = contact.fixtureA
+        fixtureB = contact.fixtureB
+        bodyA = fixtureA.body
+        bodyB = fixtureB.body
+        world_manifold = contact.worldManifold
+
+        # Calculate the forces for each contact point
+        for i in range(contact.manifold.pointCount):
+            normal_impulse = impulse.normalImpulses[i]
+            normal = world_manifold.normal
+
+            self.collision_forces.append({
+                'bodyA': bodyA.userData,
+                'bodyB': bodyB.userData,
+                'normal_force': normal_impulse / 60.0,
+                'contact_normal': (normal.x, normal.y)
+            })
 
 class AirHockeyBox2D:
     def __init__(self,
@@ -96,12 +119,19 @@ class AirHockeyBox2D:
         # self.ground_body.fixtures[0].friction = 0.0
         self.reset(seed)
 
+        # Initialize the contact listener
+        self.collision_listener = CollisionForceListener()
+        self.world.contactListener = self.collision_listener
+
     def start_callbacks(self, **kwargs):
         return
 
     @staticmethod
     def from_dict(state_dict):
-        return AirHockeyBox2D(**state_dict)
+        # create a dictionary of only the relevant parameters
+        init_params = inspect.signature(AirHockeyBox2D).parameters
+        relevant_params = {k: v for k, v in state_dict.items() if k in init_params}
+        return AirHockeyBox2D(**relevant_params)
 
     def reset(self, seed, **kwargs):
         self.rng = np.random.RandomState(seed)
@@ -129,6 +159,11 @@ class AirHockeyBox2D:
 
         self.object_dict = {}
         state_info = self.get_current_state()
+        
+        if 'paddle_ego' in state_info:
+            state_info['paddle_ego']['acceleration'] = [0, 0]
+            state_info['paddle_ego']['force'] = [0, 0]
+
         return state_info
     
     def convert_from_box2d_coords(self, state_info):
@@ -277,7 +312,7 @@ class AirHockeyBox2D:
             return self.get_singleagent_transition(action)
 
     def get_singleagent_transition(self, action):
-        
+
         # check if out of bounds and correct
         pos = [self.paddles['paddle_ego'].position[0], self.paddles['paddle_ego'].position[1]]
         if pos[1] > 0 - 3 * self.paddle_radius:
@@ -290,8 +325,7 @@ class AirHockeyBox2D:
         #     force = np.array([0, 0])
         # else:
         current_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0], self.paddles['paddle_ego'].linearVelocity[1]])
-        accel = [2 * (delta_pos[0] - current_vel[0] * self.time_per_step) / self.time_per_step ** 2,
-                2 * (delta_pos[1] - current_vel[1] * self.time_per_step) / self.time_per_step ** 2]
+        
         # force = np.array([self.paddles['paddle_ego'][0].mass * accel[0], self.paddles['paddle_ego'][0].mass * accel[1]])
         
         # # first let's determine velocity
@@ -350,6 +384,23 @@ class AirHockeyBox2D:
         state_info = self.get_current_state()
         if 'pucks' in state_info: self.puck_history.append(list(state_info['pucks'][0]["position"]) + [0])
         else: self.puck_history.append([-2 + self.center_offset_constant,0,1])
+        
+        state_info['paddles']['paddle_ego']['acceleration'] = vel - current_vel
+
+        total_force = np.array(force)
+
+        collision_forces = self.get_collision_forces()
+        for collision in collision_forces:
+            if collision['bodyA'] == 'paddle_ego':
+                total_force[0] += collision['normal_force'] * collision['contact_normal'][0]
+                total_force[1] += collision['normal_force'] * collision['contact_normal'][1]
+            elif collision['bodyB'] == 'paddle_ego':
+                total_force[0] -= collision['normal_force'] * collision['contact_normal'][0]
+                total_force[1] -= collision['normal_force'] * collision['contact_normal'][1]
+
+        state_info['paddles']['paddle_ego']['force'] = total_force
+
+
 
         self.timestep += 1
         return state_info
@@ -387,3 +438,7 @@ class AirHockeyBox2D:
                 self.world.DestroyBody(self.object_dict[cn])
                 del self.object_dict[cn]
         return hit_a_puck # TODO: record a destroyed flag
+
+    def get_collision_forces(self):
+        # Extract forces from the collision listener
+        return self.collision_listener.collision_forces

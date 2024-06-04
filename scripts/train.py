@@ -27,6 +27,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
     """
     
     air_hockey_params = air_hockey_cfg['air_hockey']
+    print("air_hockey_params", air_hockey_params)
     air_hockey_params['n_training_steps'] = air_hockey_cfg['n_training_steps']
     
     if 'sac' == air_hockey_cfg['algorithm']:
@@ -61,6 +62,9 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
                 config=air_hockey_cfg,
                 sync_tensorboard=True,
                 save_code=True)
+
+            file_path = os.path.dirname(os.path.realpath(__file__))
+            wandb.run.log_code(os.path.join(file_path, '..'), name="Codebase", include_fn=lambda s: s.endswith('.py'))
         
         if air_hockey_cfg['n_threads'] > 1:
 
@@ -95,11 +99,13 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
         else:
             env = AirHockeyEnv(air_hockey_params)
             def wrap_env(env):
+                import pdb; pdb.set_trace()
+                
                 wrapped_env = Monitor(env) # needed for extracting eprewmean and eplenmean
                 wrapped_env = DummyVecEnv([lambda: wrapped_env]) # Needed for all environments (e.g. used for multi-processing)
                 # wrapped_env = VecNormalize(wrapped_env) # probably something to try when tuning
                 return wrapped_env
-            env = wrap_env(env)
+            # env = wrap_env(env)
 
         os.makedirs(air_hockey_cfg['tb_log_dir'], exist_ok=True)
         log_parent_dir = os.path.join(air_hockey_cfg['tb_log_dir'], air_hockey_cfg['air_hockey']['task'])
@@ -149,6 +155,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
                 device=device,
             )
         else:
+            # import pdb; pdb.set_trace()
             model = PPO("MlpPolicy", env, verbose=1, 
                     tensorboard_log=log_parent_dir, 
                     device=device, 
@@ -157,7 +164,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
                     #n_epochs=5,
                     gamma=air_hockey_cfg['gamma']) 
         
-
+        # import pdb; pdb.set_trace()
         model.learn(total_timesteps=air_hockey_cfg['n_training_steps'],
                     tb_log_name=air_hockey_cfg['tb_log_name'], 
                     callback=callback,
@@ -231,4 +238,4 @@ if __name__ == "__main__":
     clear_prior_task_results = args.clear
     train_air_hockey_model(air_hockey_cfg, use_wandb, device, clear_prior_task_results)
 
-    # python scripts/train.py --cfg configs/gat/puch_height2.yaml
+    # python scripts/train.py --cfg configs/gat/puck_height.yaml

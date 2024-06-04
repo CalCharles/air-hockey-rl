@@ -4,7 +4,7 @@ from rtde_receive import RTDEReceiveInterface as RTDEReceive
 from collections import deque
 import numpy as np
 from .real.multiprocessing import ProtectedArray, NonBlockingConsole
-from .real.control_parameters import camera_callback, save_callback, mimic_control, save_collect
+from .real.control_parameters import camera_callback, save_callback, mimic_control, save_collect, observe_collect
 from .real.trajectory_merging import merge_trajectory, clear_images, write_trajectory, get_trajectory_idx
 from .real.robot_control import MotionPrimitive, apply_negative_z_force, filter_update
 from .real.coordinate_transform import compute_rect, compute_pol
@@ -12,6 +12,7 @@ from .real.proprioceptive_state import get_state_array
 from .real.image_detection import find_red_hockey_puck
 import multiprocessing
 import cv2
+import copy
 
 
 class AirHockeyReal:
@@ -35,6 +36,8 @@ class AirHockeyReal:
                  block_density=1000,
                  max_paddle_vel=2,
                  time_frequency=20,
+                 paddle_bounds=[],
+                 paddle_edge_bounds=[],
                  center_offset_constant=1.2):
         # physics / world params
         # TODO: special config for real
@@ -90,7 +93,7 @@ class AirHockeyReal:
 
         self.transition_start = time.time()
         rtde_frequency = 500.0
-        self.control_mode = 'mouse' # mouse, mimic, keyboard, RL, BC, IQL, rnet, reach
+        self.control_mode = 'RL' # mouse, mimic, keyboard, RL, BC, IQL, rnet, reach, observe
         self.control_type = 'rect' # rect, pol or prim
         # input modes: state force_acc puck_vals goal goal_vel
         # algo options: iql, ppo
@@ -113,7 +116,9 @@ class AirHockeyReal:
         self.puck_history_len = 5
         self.puck_detector = find_red_hockey_puck
         self.image_path = "./temp/images/"
-        self.save_path = "./data/mouse/single_drop_multi"
+        self.save_path = "./data/rollout/reaching_cups_cross_embodiment"
+        # self.save_path = "./data/observe/observe_reaching_expert_cups"
+        # self.save_path = "data/mouse/drawing_W"
         self.tidx = get_trajectory_idx(self.save_path)
 
 
@@ -177,7 +182,7 @@ class AirHockeyReal:
         self.offset_constants = np.array((2100, 500))
         
         # max workspace limits
-        self.x_offset = 1
+        self.x_offset = 1.2
         self.x_min_lim = -0.8
         self.x_max_lim = -0.33
         # y_min = -0.3382
@@ -189,9 +194,9 @@ class AirHockeyReal:
     
         self.bot_abs = 0.1
         self.top_abs = 0.8
-        self.max_bias_p = -0.10
+        self.max_bias_p = -0.15
         self.max_bias_m = -0.15
-        self.edge_lims = [self.bot_abs, self.top_abs, self.max_bias_p, self.max_bias_m]
+        self.edge_lims = [self.top_abs, self.bot_abs, self.max_bias_p, self.max_bias_m]
 
         # y_min = -0.3482
         # y_max = 0.350
@@ -216,11 +221,33 @@ class AirHockeyReal:
 
 
         # robot reset pose
+        self.reset_pose_list = np.array([
+            [-.340,.050],
+            [-.388, -.348],
+            [-.692,-.307],
+            [-.564,-.196],
+            [-.414,-.078],
+            [-.330,-.170],
+            [-.698,.028],
+            [-.572,.176],
+            [-.368,.290],
+            [-.688,.315]
+        ])
         # reset_pose = ([-0.68, 0., 0.34] + angle, vel,acc)
         # TODO: make the reset pose not hardcoded but from the high level environment
-        self.reset_pose = ([-0.68, 0., 0.33] + self.angle, self.vel,self.acc)
-        self.random_reset = False
-        # self.reset_pose = ([-0.38, -0.345, 0.33] + self.angle, self.vel,self.acc)
+        # self.reset_pose = ([-0.68, 0., 0.33] + self.angle, self.vel,self.acc) # hitting reset pose
+        # self.reset_pose = ([-0.38, 0., 0.33] + self.angle, self.vel,self.acc) # stationary hitting reset pose
+        # self.reset_pose = ([-0.78, 0., 0.33] + self.angle, self.vel,self.acc) # hitting reset pose
+        self.reset_pose = ([-0.38, -0.345, 0.33] + self.angle, self.vel,self.acc) # negative regions reset
+        self.high_reset_val = 0.38
+        self.very_high_reset_val = 0.42
+        self.high_reset = True # negative regions
+        # self.reset_pose = ([-0.68, 0., self.high_reset_val] + self.angle, self.vel,self.acc)
+        self.random_reset = False # negative regions data collection only 
+        self.preset_reset = True # negative regions evaluation only
+        self.above_table = True # negative regions
+        self.reset_idx = 0
+        self.control_off = self.control_mode in ["observe"]
         self.lims = (self.x_min_lim, self.x_max_lim, self.y_min, self.y_max)
         self.move_lims = (self.rmax_x, self.rmax_y)
 
@@ -253,7 +280,7 @@ class AirHockeyReal:
     def _compute_state(self, pose, speed, i, puck_history):
         # This should be the only place where it is necessary to correct detection by the offsets
         puck = np.array(puck_history[i])[:2]
-        puck[0] += self.x_offset
+        # puck[0] += self.x_offset
         self.puck = puck
         self.pose = pose
         self.speed = speed
@@ -266,24 +293,28 @@ class AirHockeyReal:
         state_info = dict()
         state_info['paddles'] = dict()
         state_info['paddles']['paddle_ego'] = dict()
-        state_info['paddles']['paddle_ego']['position'] = self.pose[:2]
+        state_info['paddles']['paddle_ego']['position'] = copy.deepcopy(self.pose[:2])
         state_info['paddles']['paddle_ego']['position'][0] += self.x_offset
-        state_info['paddles']['paddle_ego']['velocity'] = self.speed[:2]
+        state_info['paddles']['paddle_ego']['velocity'] = copy.deepcopy(self.speed[:2])
         state_info["pucks"] = list()
         state_info["pucks"].append({"history": self.puck_history[- self.puck_history_len:], 
-                                    "position": self.puck, 
+                                    "position": copy.deepcopy(self.puck), 
                                     "velocity": np.array(self.puck_history[-1])[:2] - np.array(self.puck_history[-2])[:2], 
                                     "occluded": np.array(self.puck_history[-1])[-1:]})
+        print("state_info", state_info)
         return state_info
 
 
     def take_action(self, action, pose, speed, force, acc, estop, image, images, puck_history, lims, move_lims):
         # converts an action from the agent to an action in the robot space
-        if self.puck_detector is not None: puck = self.puck_detector(image, puck_history)
+        if self.puck_detector is not None: 
+            puck = self.puck_detector(image, puck_history, rotate=False)
+            puck = np.array(puck)
+            if puck[-1] == 0: puck[0] += self.center_offset_constant
         else: puck = (puck_history[-1][0],puck_history[-1][1],0)
         puck_vals = np.concatenate( [np.array(puck_history[self.puck_history_len-i]) for i in range(1,self.puck_history_len)] + [np.array(puck)])
         puck_vel = (np.array(puck)[:2] - np.array(puck_history[-self.puck_history_len])[:2])
-        paddle_puck_rel = np.array(pose[:2]) - np.array(puck[:2])
+        paddle_puck_rel = np.array((pose[0] - self.center_offset_constant, pose[1])) - np.array(puck[:2])
         delta_x, delta_y = action
         move_vector = np.array((delta_x,delta_y)) * np.array(move_lims)
         x, y = move_vector + pose[:2]
@@ -330,13 +361,22 @@ class AirHockeyReal:
         self.target_attrs = None
 
         self.object_dict = {}
+        if self.high_reset and not self.control_off:
+            true_pose = self.rcv.getTargetTCPPose()
+            true_pose[2] = self.very_high_reset_val
+            high_reset_success = self.ctrl.moveL(true_pose, self.reset_pose[1], self.reset_pose[2], False)
+            if self.preset_reset:
+                self.reset_pose[0][0], self.reset_pose[0][1] = self.reset_pose_list[self.reset_idx % len(self.reset_pose_list)]
+                self.reset_pose[0][2] = self.very_high_reset_val
+                high_reset_success = self.ctrl.moveL(self.reset_pose[0], self.reset_pose[1], self.reset_pose[2], False)
         with NonBlockingConsole() as nbc:
 
             # Setting a reset pose for the robot
-            if self.random_reset: self.reset_pose[0][0], self.reset_pose[0][1] = np.random.rand(2) * np.array([self.x_max_lim - self.x_min_lim, self.y_max - self.y_min]) + np.array([self.x_min_lim, self.y_min])
-            reset_success = self.ctrl.moveL(self.reset_pose[0], self.reset_pose[1], self.reset_pose[2], False)
-            apply_negative_z_force(self.ctrl, self.rcv)
-            print("reset to initial pose:", reset_success)
+            if not self.high_reset and not self.control_off:
+                if self.random_reset: self.reset_pose[0][0], self.reset_pose[0][1] = np.random.rand(2) * np.array([self.x_max_lim - self.x_min_lim, self.y_max - self.y_min]) + np.array([self.x_min_lim, self.y_min])
+                reset_success = self.ctrl.moveL(self.reset_pose[0], self.reset_pose[1], self.reset_pose[2], False)
+                apply_negative_z_force(self.ctrl, self.rcv)
+                print("reset to initial pose:", reset_success)
             count = 0
             time.sleep(0.7)
             # wait to start moving
@@ -346,10 +386,17 @@ class AirHockeyReal:
                 if nbc.get_data() == ' ':  # x1b is ESC
                     break
         self.protected_img_check[0] = 1 and bool(self.save_path)
-        time.sleep(0.1)
-
-        reset_success = self.ctrl.moveL(self.reset_pose[0], self.reset_pose[1], self.reset_pose[2], False)
-        print("reset to initial pose:", reset_success)
+        # time.sleep(0.1)
+        if self.random_reset: self.reset_pose[0][0], self.reset_pose[0][1] = np.random.rand(2) * np.array([self.x_max_lim - self.x_min_lim, self.y_max - self.y_min]) + np.array([self.x_min_lim, self.y_min])
+        if self.preset_reset:
+            self.reset_pose[0][0], self.reset_pose[0][1] = self.reset_pose_list[self.reset_idx % len(self.reset_pose_list)]
+            print(self.reset_idx, self.reset_pose_list[self.reset_idx % len(self.reset_pose_list)])
+            self.reset_idx += 1
+        if not self.control_off: 
+            reset_success = self.ctrl.moveL(self.reset_pose[0], self.reset_pose[1], self.reset_pose[2], False)
+            print("reset to initial pose:", reset_success)
+        time.sleep(0.2)
+        if self.high_reset and not self.above_table and not self.control_off: apply_negative_z_force(self.ctrl, self.rcv)
         count = 0
         time.sleep(0.7)
         true_pose = self.rcv.getTargetTCPPose()
@@ -372,6 +419,7 @@ class AirHockeyReal:
         print("runtime", time.time() - self.total, runtime)
         self.total = time.time()
         self.transition_start = time.time()
+
         # ret, image = cap.read()
         # cv2.imshow('image',image)
         # cv2.setMouseCallback('image', move_event)
@@ -384,7 +432,7 @@ class AirHockeyReal:
         # print("Consumer Side Pixel Coord: ", pixel_coord)
 
         # force control, need it to keep it on the table
-        apply_negative_z_force(self.ctrl, self.rcv)
+        if not self.above_table and not self.control_off: apply_negative_z_force(self.ctrl, self.rcv)
 
         
         # acquire useful statistics
@@ -398,7 +446,7 @@ class AirHockeyReal:
 
         # get image data
         if self.cap is not None:
-            image, save_img = save_collect(self.cap, [true_pose[0], true_pose[1], self.paddle_radius], self.region_info, self.goal_info)
+            image, save_img = save_collect(self.cap, [true_pose[0], true_pose[1], self.paddle_radius], self.region_info if not self.control_mode in ["observe"] else None, self.goal_info, show = not self.control_mode in ["observe"])
             self.images.append(save_img)
 
         
@@ -413,9 +461,22 @@ class AirHockeyReal:
             puck[0] = self.protected_puck_pos[0] + self.center_offset_constant
             puck[1] = self.protected_puck_pos[1]
             puck[2] = self.protected_puck_pos[2]
+            if self.protected_puck_pos[2] == 1: 
+                puck[0] = self.puck_history[-1][0]
+                puck[1] = self.puck_history[-1][1]
+                puck[2] = 1
+            print("puck", puck, self.protected_puck_pos)
+            self.puck_history.append(puck)
+        elif self.control_mode in ["observe"]:
+            x,y, occluded = observe_collect(image, [true_pose[0], true_pose[1], self.paddle_radius], self.region_info, self.goal_info)
+            puck = np.array([x,y, occluded])
+            true_pose[0] = x
+            true_pose[1] = y
+            true_pose[2] = occluded
             self.puck_history.append(puck)
         else:
             x,y, puck = self.take_action(action, true_pose, true_speed, true_force, measured_acc, self.rcv.isProtectiveStopped(), image, self.images, self.puck_history, self.lims, self.move_lims) # TODO: add image handling
+            puck = np.array(puck)
             print("puck", puck)
             self.puck_history.append(puck)
             srvpose = [[x, y, 0.30] + self.angle, self.vel,self.acc]
@@ -427,13 +488,15 @@ class AirHockeyReal:
             # x,y = true_pose[:2] + (np.random.rand(2) * ((np.random.randint(2) - 0.5) * 2)) # uncomment to test random actions
             recx, recy = compute_rect(x, y, true_pose, self.lims, self.move_lims, self.edge_lims)
             # print(recx - true_pose[0], recy -true_pose[1], true_pose[:2],recx, recy,  x,y)
-            srvpose = [[recx, recy, 0.30] + self.angle, self.vel,self.acc]
+            if self.above_table :srvpose = [[recx, recy, self.high_reset_val] + self.angle, self.vel,self.acc]
+            else: srvpose = [[recx, recy, 0.30] + self.angle, self.vel,self.acc]
         elif self.control_type == "prim":
             x, y = self.motion_primitive.compute_primitive(action, true_pose, self.lims, self.move_lims, self.edge_lims)
             srvpose = [[x, y, 0.30] + self.angle, self.vel,self.acc]
         
         # TODO: change of direction is currently very sudden, we need to tune that
         # print("servl", srvpose[0][1], true_speed, true_force, measured_acc, ctrl.servoL(srvpose[0], vel, acc, block_time, lookahead, gain))
+        
         self.pose_hist.append(true_pose)
         self.dpose_hist.append(srvpose[0])
         srvpose[0] = filter_update(true_speed, self.pose_hist, self.dpose_hist)
@@ -445,7 +508,7 @@ class AirHockeyReal:
         print("desired_pose", srvpose[0][:2])
         print("delta desired", np.array(srvpose[0][:2]) - true_pose[:2])
         print("unnorm_delta", x- true_pose[0],y - true_pose[1], safety_check, self.rcv.isProtectiveStopped())# srvpose[0][:2], x,y, true_pose[:2], rcv.isProtectiveStopped())# , true_speed, true_force, measured_acc, )
-        if safety_check: self.ctrl.servoL(srvpose[0], self.vel, self.acc, self.block_time, self.lookahead, self.gain)
+        if safety_check and self.control_mode not in ["observe"]: self.ctrl.servoL(srvpose[0], self.vel, self.acc, self.block_time, self.lookahead, self.gain)
         if self.rcv.isProtectiveStopped():
             return self._compute_state(srvpose[0], true_speed, self.timestep, self.puck_history)
 

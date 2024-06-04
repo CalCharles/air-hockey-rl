@@ -4,7 +4,7 @@ from gymnasium import spaces
 from .abstract_airhockey_goal_task import AirHockeyGoalEnv
 
 class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
-    def initialize_spaces(self):
+    def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
         paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
         paddle_obs_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
@@ -70,20 +70,26 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
         dist = np.linalg.norm(achieved_goal[:, :2] - desired_goal[:, :2], axis=1)
         max_euclidean_distance = np.linalg.norm(np.array([self.table_x_bot, self.table_y_right]) - np.array([self.table_x_top, self.table_y_left]))
         # reward for closer to goal
-        reward = 1 - (dist / max_euclidean_distance)
-
+        # reward = 1 - (dist / max_euclidean_distance)
+        # reward = -np.log(dist)
+        radius = self.goal_radius
+        bonus = 10 if self.current_timestep > self.falling_time else 0 # this prevents the falling initiliazwed puck from triggering a success
+        reward = -dist  + (bonus if dist < radius else 0)
         if single:
             reward = reward[0]
         return reward
+    
+    def get_observation(self, state_info, obs_type ="paddle", **kwargs):
+        return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)
 
-    def get_observation(self, state_info):
-        ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
-        ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
-        ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
-        ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
+    # def get_observation(self, state_info):
+    #     ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
+    #     ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
+    #     ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
+    #     ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
 
-        obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel])
-        return obs
+    #     obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel])
+    #     return obs
     
     def set_goals(self, goal_radius_type, goal_pos=None, alt_goal_pos=None, goal_set=None):
         self.goal_set = goal_set
@@ -99,6 +105,7 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
         
     def get_base_reward(self, state_info):
         reward = self.compute_reward(self.get_achieved_goal(state_info), self.get_desired_goal(), {})
-        success = reward > 0.9
+        # success = reward > 0.9 
+        success = np.abs(reward) < self.goal_radius
         success = success.item()
         return reward, success

@@ -12,7 +12,7 @@ import argparse
 from utils import save_evaluation_gifs
 
 
-def get_frames(renderer, env, model, n_eps_viz, n_eval_eps, cfg):
+def get_frames(renderer, env_test, model, n_eps_viz, n_eval_eps, cfg):
         
         dataset = {}
         observations = []
@@ -101,7 +101,7 @@ if __name__ == '__main__':
     else:
         model = PPO.load(os.path.join(args.model, "model.zip"))
 
-    frames, robosuite_frames, dataset = get_frames(renderer=renderer, env=env_test, model=model, n_eps_viz=5, n_eval_eps=3, cfg=model_cfg)
+    frames, robosuite_frames, dataset = get_frames(renderer=renderer, env_test=env_test, model=model, n_eps_viz=5, n_eval_eps=3, cfg=model_cfg)
 
     # save dataset to disk
     dataset_savepath = os.path.join(args.save_dir, f'eval_dataset.npz')
