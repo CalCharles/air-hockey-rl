@@ -98,13 +98,14 @@ def get_observation_by_type(state_info, obs_type='vel', **kwargs):
         ego_paddle_x_acc = state_info['paddles']['paddle_ego']['acceleration'][0]
         ego_paddle_y_acc = state_info['paddles']['paddle_ego']['acceleration'][1]
         
-        paddle_forces = state_info['paddles']['paddle_ego']['force']
+        paddle_forces_x = state_info['paddles']['paddle_ego']['force'][0]
+        paddle_forces_y = state_info['paddles']['paddle_ego']['force'][1]
 
         puck_x_pos = state_info['pucks'][0]['position'][0]
         puck_y_pos = state_info['pucks'][0]['position'][1]
         puck_x_vel = state_info['pucks'][0]['velocity'][0]
         puck_y_vel = state_info['pucks'][0]['velocity'][1] 
-        obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_acc, ego_paddle_y_acc, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
+        obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_acc, paddle_forces_x, paddle_forces_y, ego_paddle_y_acc, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
         return obs
 
     raise  ValueError("obs type " + obs_type + " is not a defined observation type")

@@ -642,12 +642,12 @@ class AirHockeyRobosuite(AirHockeySim):
             ValueError: [Steps past episode termination]
         """
         action = self.translate_action(action)
-
         # Since the env.step frequency is slower than the mjsim timestep frequency, the internal controller will output
         # multiple torque commands in between new high level action commands. Therefore, we need to denote via
         # 'policy_step' whether the current step we're taking is simply an internal update of the controller,
         # or an actual policy update
         policy_step = True
+        initial_vel = self.robosuite_env._get_observations()['gripper_eef_vel']
 
         # Loop through the simulation at the model timestep rate until we're ready to take the next policy step
         # (as defined by the control frequency specified at the environment level)
@@ -665,6 +665,12 @@ class AirHockeyRobosuite(AirHockeySim):
         current_state = self.get_current_state()
         if 'pucks' in current_state: self.puck_history.append(list(current_state['pucks'][0]["position"]) + [0])
         else: self.puck_history.append([-2 + self.center_offset_constant,0,1])
+        
+        final_vel = current_state['paddles']['paddle_ego']['velocity']
+        current_state['paddles']['paddle_ego']['acceleration'] = final_vel - initial_vel
+        # TODO: Get total force on paddle
+        current_state['paddles']['paddle_ego']['force'] = None
+
         return current_state
 
     def get_current_state(self):
@@ -684,7 +690,9 @@ class AirHockeyRobosuite(AirHockeySim):
         ego_paddle_y_vel = ego_paddle_vel[1]
         
         state_info['paddles'] = {'paddle_ego': {'position': (ego_paddle_x_pos, ego_paddle_y_pos),
-                                                'velocity': (ego_paddle_x_vel, ego_paddle_y_vel)}}
+                                                'velocity': (ego_paddle_x_vel, ego_paddle_y_vel),
+                                                'acceleration': (0, 0),
+                                                'force': None}}
         if len(self.puck_names) > 0:
             state_info['pucks'] = []
             for puck_name in self.puck_names:

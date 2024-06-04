@@ -325,8 +325,7 @@ class AirHockeyBox2D:
         #     force = np.array([0, 0])
         # else:
         current_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0], self.paddles['paddle_ego'].linearVelocity[1]])
-        accel = [2 * (delta_pos[0] - current_vel[0] * self.time_per_step) / self.time_per_step ** 2,
-                2 * (delta_pos[1] - current_vel[1] * self.time_per_step) / self.time_per_step ** 2]
+        
         # force = np.array([self.paddles['paddle_ego'][0].mass * accel[0], self.paddles['paddle_ego'][0].mass * accel[1]])
         
         # # first let's determine velocity
@@ -386,7 +385,7 @@ class AirHockeyBox2D:
         if 'pucks' in state_info: self.puck_history.append(list(state_info['pucks'][0]["position"]) + [0])
         else: self.puck_history.append([-2 + self.center_offset_constant,0,1])
         
-        state_info['paddles']['paddle_ego']['acceleration'] = accel
+        state_info['paddles']['paddle_ego']['acceleration'] = vel - current_vel
 
         total_force = np.array(force)
 
