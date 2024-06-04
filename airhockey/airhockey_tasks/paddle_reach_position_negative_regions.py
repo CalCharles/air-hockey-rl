@@ -142,15 +142,7 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
 
         goal_low = [0, self.table_y_left]
         goal_high = [self.table_x_bot, self.table_y_right]
-
-        if self.return_goal_obs:
-            low = paddle_obs_low
-            high = paddle_obs_high
-            self.observation_space = self.get_goal_obs_space(low, high, goal_low, goal_high)
-        else:
-            low = paddle_obs_low + goal_low
-            high = paddle_obs_high + goal_high
-            self.observation_space = self.get_obs_space(low, high)
+                    
         
         self.min_goal_radius = self.width / 16
         self.max_goal_radius = self.width / 4
@@ -187,8 +179,23 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
             self.reward_regions = [RewardRegion(self.negative_reward_range, 
                                                      self.reward_region_scale_range, 
                                                      [np.array([0, self.table_y_left]), np.array([self.table_x_bot,self.table_y_right])],
-                                                     radius_range, shapes=self.reward_region_shapes, object_radius = self.paddle_radius) for _ in range(self.num_negative_reward_regions)]
+                                                     radius_range, shapes=self.reward_region_shapes) for _ in range(self.num_negative_reward_regions)]
+        
+        reward_regions_states_shape = np.concatenate([nrr.get_state() for nrr in self.reward_regions]).shape
+        # these are misspecified but you can check later
+        reward_region_states_low = [-100] * reward_regions_states_shape[0]
+        reward_region_states_high = [100] * reward_regions_states_shape[0]
 
+        if self.return_goal_obs:
+            low = paddle_obs_low + reward_region_states_low
+            high = paddle_obs_high + reward_region_states_high
+            self.observation_space = self.get_goal_obs_space(low, high, goal_low, goal_high)
+        else:
+            low = paddle_obs_low + goal_low + reward_region_states_low
+            high = paddle_obs_high + goal_high + reward_region_states_high
+            
+            self.observation_space = self.get_obs_space(low, high)
+            
     def create_world_objects(self):
         name = 'paddle_ego'
         if self.init_paddle_pos is None: pos, vel = self.get_paddle_configuration(name)
@@ -230,8 +237,6 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
         for nrr in self.reward_regions:
             reward += nrr.check_reward(achieved_goal)
 
-        # print(achieved_goal, desired_goal, reward)
-        # print(dist / max_euclidean_distance, 1 - (dist / max_euclidean_distance), reward)
         if single:
             reward = reward[0]
         return reward

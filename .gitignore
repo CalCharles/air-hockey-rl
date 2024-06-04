@@ -181,6 +181,7 @@ poetry.toml
 # LSP config files
 pyrightconfig.json
 
+<<<<<<< HEAD
 # End of https://www.toptal.com/developers/gitignore/api/py
 
 testt/
@@ -196,3 +197,8 @@ gat_log/
 =======
 *.txt
 >>>>>>> d3bce21c8ed03150ce2b91407dc3fa5b6993943b
+=======
+# End of https://www.toptal.com/developers/gitignore/api/python
+testt/
+traj_videos/
+>>>>>>> goal_cond_verify
