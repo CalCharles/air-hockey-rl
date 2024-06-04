@@ -655,6 +655,11 @@ class AirHockeyRobosuite(AirHockeySim):
             self.robosuite_env.sim.forward()
             self.robosuite_env._pre_action(action, policy_step)
             self.robosuite_env.sim.step()
+            
+            contact_forces = self.robosuite_env.sim.data.cfrc_ext
+            eef_index = self.robosuite_env.sim.model.body_name2id('gripper0_eef')
+            current_state['paddles']['paddle_ego']['force'] = contact_forces[eef_index][:2] # exclude torques and z force
+
             self.robosuite_env._update_observables()
             policy_step = False
 
@@ -667,9 +672,8 @@ class AirHockeyRobosuite(AirHockeySim):
         else: self.puck_history.append([-2 + self.center_offset_constant,0,1])
         
         final_vel = current_state['paddles']['paddle_ego']['velocity']
-        current_state['paddles']['paddle_ego']['acceleration'] = final_vel - initial_vel
-        # TODO: Get total force on paddle
-        current_state['paddles']['paddle_ego']['force'] = None
+        
+        current_state['paddles']['paddle_ego']['acceleration'] = final_vel - initial_vel[:1]
 
         return current_state
 
@@ -692,7 +696,7 @@ class AirHockeyRobosuite(AirHockeySim):
         state_info['paddles'] = {'paddle_ego': {'position': (ego_paddle_x_pos, ego_paddle_y_pos),
                                                 'velocity': (ego_paddle_x_vel, ego_paddle_y_vel),
                                                 'acceleration': (0, 0),
-                                                'force': None}}
+                                                'force': [0, 0]}}
         if len(self.puck_names) > 0:
             state_info['pucks'] = []
             for puck_name in self.puck_names:
