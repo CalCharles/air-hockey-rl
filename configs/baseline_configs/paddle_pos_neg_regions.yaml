@@ -42,9 +42,9 @@ air_hockey:
   stand_still_rew: 0.01
 
   # Reward region parameters
-  num_negative_reward_regions: 10
+  num_negative_reward_regions: 2
   negative_reward_range: [-1,-1]
-  reward_region_shapes: ["circle", "rect", "ellipse"]
+  reward_region_shapes: ["circle"] #, "rect", "ellipse"]
   reward_region_scale_range: [0,0]
   reward_normalized_radius_min: [0.05,0.05]
   reward_normalized_radius_max: [0.25,0.25]  

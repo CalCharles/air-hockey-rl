@@ -95,11 +95,13 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
         else:
             env = AirHockeyEnv(air_hockey_params)
             def wrap_env(env):
+                import pdb; pdb.set_trace()
+                
                 wrapped_env = Monitor(env) # needed for extracting eprewmean and eplenmean
                 wrapped_env = DummyVecEnv([lambda: wrapped_env]) # Needed for all environments (e.g. used for multi-processing)
                 # wrapped_env = VecNormalize(wrapped_env) # probably something to try when tuning
                 return wrapped_env
-            env = wrap_env(env)
+            # env = wrap_env(env)
 
         os.makedirs(air_hockey_cfg['tb_log_dir'], exist_ok=True)
         log_parent_dir = os.path.join(air_hockey_cfg['tb_log_dir'], air_hockey_cfg['air_hockey']['task'])
@@ -149,6 +151,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
                 device=device,
             )
         else:
+            # import pdb; pdb.set_trace()
             model = PPO("MlpPolicy", env, verbose=1, 
                     tensorboard_log=log_parent_dir, 
                     device=device, 
@@ -157,7 +160,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
                     #n_epochs=5,
                     gamma=air_hockey_cfg['gamma']) 
         
-
+        # import pdb; pdb.set_trace()
         model.learn(total_timesteps=air_hockey_cfg['n_training_steps'],
                     tb_log_name=air_hockey_cfg['tb_log_name'], 
                     callback=callback,

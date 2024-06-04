@@ -77,11 +77,11 @@ def AirHockeyEnv(cfg):
         task_env = AirHockeyPuckGoalPositionEnv
     elif task == "puck_goal_position_velocity":
         task_env = AirHockeyPuckGoalPositionVelocityEnv
-    elif task == "paddle_goal_position":
+    elif task == "paddle_reach_position":
         task_env = AirHockeyPaddleReachPositionEnv
-    elif task == "paddle_goal_position_velocity":
+    elif task == "paddle_reach_position_velocity":
         task_env = AirHockeyPaddleReachPositionVelocityEnv
-    elif task == "paddle_goal_position_neg":
+    elif task == "paddle_reach_position_neg":
         task_env = AirHockeyPaddleReachPositionNegRegionsEnv
     elif task == "puck_goal_position_dynamic_neg":
         task_env = AirHockeyPuckGoalPositionDynamicNegRegionsEnv

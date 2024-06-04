@@ -64,8 +64,11 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
         dist = np.linalg.norm(achieved_goal[:, :2] - desired_goal[:, :2], axis=1)
         max_euclidean_distance = np.linalg.norm(np.array([self.table_x_bot, self.table_y_right]) - np.array([self.table_x_top, self.table_y_left]))
         # reward for closer to goal
-        reward = 1 - (dist / max_euclidean_distance)
-
+        # reward = 1 - (dist / max_euclidean_distance)
+        # reward = -np.log(dist)
+        radius = self.goal_radius
+        bonus = 10 if self.current_timestep > self.falling_time else 0 # this prevents the falling initiliazwed puck from triggering a success
+        reward = -dist  + (bonus if dist < radius else 0)
         if single:
             reward = reward[0]
         return reward
@@ -92,6 +95,7 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
         
     def get_base_reward(self, state_info):
         reward = self.compute_reward(self.get_achieved_goal(state_info), self.get_desired_goal(), {})
-        success = reward > 0.9
+        # success = reward > 0.9 
+        success = np.abs(reward) < self.goal_radius
         success = success.item()
         return reward, success
