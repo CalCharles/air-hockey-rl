@@ -616,6 +616,33 @@ class AirHockeyRobosuite(AirHockeySim):
         #         }]
         #     }
 
+    def update_table(self, top_solref=None, bot_solref=None, left_solref=None, right_solref=None):
+
+        if isinstance(self.xml_config['mujoco']['worldbody']['body'], list):
+            geoms = self.xml_config['mujoco']['worldbody']['body'][0]['body'][1]['geom']
+        else:
+            geoms = self.xml_config['mujoco']['worldbody']['body']['body'][1]['geom']
+
+        for geom in geoms:
+            geom_name = geom.get('@name', '') 
+            if 'home' in geom_name:
+                if bot_solref is not None:
+                    geom['@solref'] = f"{bot_solref} -250" 
+            elif 'away' in geom_name:
+                if top_solref is not None:
+                    geom['@solref'] = f"{top_solref} -250"
+            elif 'left' in geom_name:
+                if left_solref is not None:
+                    geom['@solref'] = f"{left_solref} -250"
+            elif 'right' in geom_name:
+                if right_solref is not None:
+                    geom['@solref'] = f"{right_solref} -250"
+
+        if isinstance(self.xml_config['mujoco']['worldbody']['body'], list):
+            self.xml_config['mujoco']['worldbody']['body'][0]['body'][1]['geom'] = geoms
+        else:
+            self.xml_config['mujoco']['worldbody']['body']['body'][1]['geom'] = geoms
+
     def spawn_paddle(self, pos, vel, name):
         # put the eef in pos
         self.initial_obj_configurations['paddles'][name] = {'position': pos, 'velocity': vel}

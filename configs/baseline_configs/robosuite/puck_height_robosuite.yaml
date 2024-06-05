@@ -29,11 +29,15 @@ air_hockey:
     table_elevation: 0.7874
     table_tilt: 0.09
     width: 1.0436
+    bot_solref: -100000
+    top_solref: -100000
+    left_solref: -100000
+    right_solref: -100000
   stand_still_rew: 0.01
   task: puck_height
-  terminate_on_enemy_goal: true
-  terminate_on_out_of_bounds: true
-  terminate_on_puck_stop: true
+  terminate_on_enemy_goal: false
+  terminate_on_out_of_bounds: false
+  terminate_on_puck_stop: false
   truncate_rew: -1
   wall_bumping_rew: -1
 algorithm: ppo
