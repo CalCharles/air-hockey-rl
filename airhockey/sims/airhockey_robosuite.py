@@ -655,10 +655,6 @@ class AirHockeyRobosuite(AirHockeySim):
             self.robosuite_env.sim.forward()
             self.robosuite_env._pre_action(action, policy_step)
             self.robosuite_env.sim.step()
-            
-            contact_forces = self.robosuite_env.sim.data.cfrc_ext
-            eef_index = self.robosuite_env.sim.model.body_name2id('gripper0_eef')
-            current_state['paddles']['paddle_ego']['force'] = contact_forces[eef_index][:2] # exclude torques and z force
 
             self.robosuite_env._update_observables()
             policy_step = False
@@ -668,6 +664,10 @@ class AirHockeyRobosuite(AirHockeySim):
         self.timestep += 1
 
         current_state = self.get_current_state()
+        contact_forces = self.robosuite_env.sim.data.cfrc_ext
+        eef_index = self.robosuite_env.sim.model.body_name2id('gripper0_eef')
+        current_state['paddles']['paddle_ego']['force'] = contact_forces[eef_index][:2] # exclude torques and z force
+        
         if 'pucks' in current_state: self.puck_history.append(list(current_state['pucks'][0]["position"]) + [0])
         else: self.puck_history.append([-2 + self.center_offset_constant,0,1])
         
