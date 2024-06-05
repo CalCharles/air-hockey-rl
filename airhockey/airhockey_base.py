@@ -137,6 +137,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.length = simulator_params['length']
         self.paddle_radius = simulator_params['paddle_radius']
         self.puck_radius = simulator_params['puck_radius']
+        self.puck_damping = simulator_params.get('puck_damping', None)
         if simulator == "robosuite":
             self.solrefs = [simulator_params.get('top_solref', None), simulator_params.get('bot_solref', None), simulator_params.get('left_solref', None), simulator_params.get('right_solref', None)]
         
@@ -247,8 +248,9 @@ class AirHockeyBaseEnv(ABC, Env):
             # puck_damping: 0.1-1.0
             # puck_density: 100-400
             # gravity: -0.3-0.7
+            if self.puck_damping is None:
+                self.simulator_params['puck_damping'] = np.random.uniform(0.1, 1.0)
 
-            self.simulator_params['puck_damping'] = np.random.uniform(0.1, 1.0)
             self.simulator_params['puck_density'] = np.random.uniform(100, 400)
             self.simulator_params['gravity'] = np.random.uniform(-0.3, -0.7)
 
