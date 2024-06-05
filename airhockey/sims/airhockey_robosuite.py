@@ -191,7 +191,7 @@ class AirHockeyRobosuite(AirHockeySim):
         puck_damping=0.8,
         puck_density=30,
         seed=0,
-        # TODO: box2d specific config values not yet implemente
+        # TODO: box2d specific config values not yet implemented
         absorb_target = False,
         force_scaling = 1000,
         paddle_damping = 1,
@@ -626,17 +626,13 @@ class AirHockeyRobosuite(AirHockeySim):
         for geom in geoms:
             geom_name = geom.get('@name', '') 
             if 'home' in geom_name:
-                if bot_solref is not None:
-                    geom['@solref'] = f"{bot_solref} -250" 
+                geom['@solref'] = f"{bot_solref} -250" if bot_solref is not None else "-80000 250"
             elif 'away' in geom_name:
-                if top_solref is not None:
-                    geom['@solref'] = f"{top_solref} -250"
+                geom['@solref'] = f"{top_solref} -250" if top_solref is not None else "-80000 250"
             elif 'left' in geom_name:
-                if left_solref is not None:
-                    geom['@solref'] = f"{left_solref} -250"
+                    geom['@solref'] = f"{left_solref} -250" if left_solref is not None else "-100000 250"
             elif 'right' in geom_name:
-                if right_solref is not None:
-                    geom['@solref'] = f"{right_solref} -250"
+                geom['@solref'] = f"{right_solref} -250" if right_solref is not None else "-100000 250"
 
         if isinstance(self.xml_config['mujoco']['worldbody']['body'], list):
             self.xml_config['mujoco']['worldbody']['body'][0]['body'][1]['geom'] = geoms
