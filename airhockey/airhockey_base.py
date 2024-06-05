@@ -114,7 +114,7 @@ class AirHockeyBaseEnv(ABC, Env):
         
         # reward function
         self.compute_online_rewards = compute_online_rewards
-        self.goal_conditioned = True if 'goal' or 'reach' in task else False
+        self.goal_conditioned = True if 'goal' in task or 'reach' in task else False
         self.goal_radius_type = 'fixed'
         self.goal_min_x_velocity = -goal_max_x_velocity
         self.goal_max_x_velocity = goal_max_x_velocity
