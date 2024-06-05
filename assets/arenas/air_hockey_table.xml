@@ -23,7 +23,7 @@
         <geom condim="4" solref="0.02 0.3"/>
         <default class="rim">
                 <geom type="box" material="grey" condim="6" friction="10000 0.0 0.0" priority="1"
-                solref="-800000 -250" solimp="0.99 0.999 0.001 0.5 2" group="1"/>
+                solref="-100000 -250" solimp="0.99 0.999 0.001 0.5 2" group="1"/>
         </default>
     </default>
 
