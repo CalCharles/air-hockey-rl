@@ -684,7 +684,7 @@ class AirHockeyRobosuite(AirHockeySim):
 
         # Note: this is done all at once to avoid floating point inaccuracies
         self.robosuite_env.cur_time += self.robosuite_env.control_timestep
-        self.timestep += 1
+        self.timestep += 20 / self.robosuite_env.control_freq
 
         current_state = self.get_current_state()
         contact_forces = self.robosuite_env.sim.data.cfrc_ext
