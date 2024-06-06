@@ -116,9 +116,10 @@ if __name__ == '__main__':
     def fps_to_duration(fps):
         return int(1000 * 1/fps)
     fps = 30 # slightly faster than 20 fps (simulation time), but makes rendering smooth
-    imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(fps))
+    control_freq = air_hockey_params["simulator_params"].get("control_freq", 20)
+    imageio.mimsave(gif_savepath, frames[::int(control_freq/20)], format='GIF', loop=0, duration=fps_to_duration(fps))
     if len(robosuite_frames) > 0:
         for key in robosuite_frames:
             frames = robosuite_frames[key]
             gif_savepath = os.path.join(args.save_dir, f'feval_robosuite_{key}.gif')
-            imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(fps))
+            imageio.mimsave(gif_savepath, frames[::int(control_freq/20)], format='GIF', loop=0, duration=fps_to_duration(fps))
