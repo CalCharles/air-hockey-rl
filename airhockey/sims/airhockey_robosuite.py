@@ -671,7 +671,7 @@ class AirHockeyRobosuite(AirHockeySim):
         # multiple torque commands in between new high level action commands. Therefore, we need to denote via
         # 'policy_step' whether the current step we're taking is simply an internal update of the controller,
         # or an actual policy update
-        policy_step = self.transition_calls % int(self.control_freq / self.policy_freq)
+        policy_step = self.transition_calls % int((1/self.robosuite_env.control_timestep) / self.policy_freq)
         self.transition_calls+=1
         initial_vel = self.robosuite_env._get_observations()['gripper_eef_vel']
 
