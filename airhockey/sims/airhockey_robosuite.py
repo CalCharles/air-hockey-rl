@@ -279,8 +279,6 @@ class AirHockeyRobosuite(AirHockeySim):
         # formatted_time = current_time.strftime('%Y%m%d_%H%M%S')
         formatted_time = np.random.randint(1000000000000000000)
         self.tmp_xml_fp = robosuite_xml_path_completion(self.table_xml + f"_{formatted_time}.xml")
-        self.policy_freq = 20
-        self.transition_calls = 0
         
     def __del__(self):
         if self.robosuite_env is not None:
@@ -671,8 +669,7 @@ class AirHockeyRobosuite(AirHockeySim):
         # multiple torque commands in between new high level action commands. Therefore, we need to denote via
         # 'policy_step' whether the current step we're taking is simply an internal update of the controller,
         # or an actual policy update
-        policy_step = self.transition_calls % int((1/self.robosuite_env.control_timestep) / self.policy_freq)
-        self.transition_calls+=1
+        policy_step = True
         initial_vel = self.robosuite_env._get_observations()['gripper_eef_vel']
 
         # Loop through the simulation at the model timestep rate until we're ready to take the next policy step
@@ -687,7 +684,7 @@ class AirHockeyRobosuite(AirHockeySim):
 
         # Note: this is done all at once to avoid floating point inaccuracies
         self.robosuite_env.cur_time += self.robosuite_env.control_timestep
-        self.timestep += 20 / self.robosuite_env.control_freq
+        self.timestep += 1
 
         current_state = self.get_current_state()
         contact_forces = self.robosuite_env.sim.data.cfrc_ext
