@@ -11,9 +11,15 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
 
         low = paddle_obs_low
         high = paddle_obs_high
-
+        
         goal_low = [0, self.table_y_left]
         goal_high = [self.table_x_bot, self.table_y_right]
+        
+        if self.paddle_x_min is not None:
+            goal_low = [self.paddle_x_min, self.paddle_y_min]
+            goal_high = [self.paddle_x_max, self.paddle_y_max]
+            print(goal_low)
+        
 
         if self.return_goal_obs:
             low = paddle_obs_low
@@ -92,12 +98,21 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
     #     return obs
     
     def set_goals(self, goal_radius_type, goal_pos=None, alt_goal_pos=None, goal_set=None):
+
+        goal_low = [0, self.table_y_left]
+        goal_high = [self.table_x_bot, self.table_y_right]
+        
+        if self.paddle_x_min is not None:
+            goal_low = [self.paddle_x_min, self.paddle_y_min]
+            goal_high = [self.paddle_x_max, self.paddle_y_max]
+            print(goal_low)
+        
         self.goal_set = goal_set
         # sample goal position
-        min_y = self.table_y_left
-        max_y = self.table_y_right
-        min_x = 0
-        max_x = self.table_x_bot
+        min_y = goal_low[1]
+        max_y = goal_high[1]
+        min_x = goal_low[0]
+        max_x = goal_high[0]
         goal_position = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
         self.goal_radius = self.min_goal_radius # not too important
         self.goal_pos = goal_position if self.goal_set is None else self.goal_set[0, :2]

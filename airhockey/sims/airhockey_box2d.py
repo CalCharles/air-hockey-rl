@@ -159,11 +159,6 @@ class AirHockeyBox2D:
 
         self.object_dict = {}
         state_info = self.get_current_state()
-        
-        if 'paddle_ego' in state_info:
-            state_info['paddle_ego']['acceleration'] = [0, 0]
-            state_info['paddle_ego']['force'] = [0, 0]
-
         return state_info
     
     def convert_from_box2d_coords(self, state_info):
@@ -192,10 +187,17 @@ class AirHockeyBox2D:
             ego_paddle_y_pos = self.paddles['paddle_ego'].position[1]
             ego_paddle_x_vel = self.paddles['paddle_ego'].linearVelocity[0]
             ego_paddle_y_vel = self.paddles['paddle_ego'].linearVelocity[1]
+            ego_paddle_x_acc = self.paddles['paddle_ego_acceleration'][0]
+            ego_paddle_y_acc = self.paddles['paddle_ego_acceleration'][0]
+            ego_paddle_x_force = self.paddles['paddle_ego_force'][0]
+            ego_paddle_y_force = self.paddles['paddle_ego_force'][0]
             
             state_info['paddles'] = {'paddle_ego': {'position': (ego_paddle_x_pos, ego_paddle_y_pos),
-                                                    'velocity': (ego_paddle_x_vel, ego_paddle_y_vel)}}
-            
+                                                    'velocity': (ego_paddle_x_vel, ego_paddle_y_vel),
+                                                    'acceleration': (ego_paddle_x_acc, ego_paddle_y_acc),
+                                                    'force': (ego_paddle_x_force, ego_paddle_y_force)
+                                                    }}
+
         if 'paddle_alt' in self.paddles:
             alt_paddle_x_pos = self.paddles['paddle_alt'].position[0]
             alt_paddle_y_pos = self.paddles['paddle_alt'].position[1]
@@ -252,6 +254,9 @@ class AirHockeyBox2D:
             paddle.gravityScale = 0
         
         self.paddles[name] = paddle
+        if name == "paddle_ego":
+            self.paddles['paddle_ego_acceleration'] = (0, 0)
+            self.paddles['paddle_ego_force'] = (0, 0)
         self.object_dict[name] = paddle
         
         if 'paddle_ego' in self.paddles and 'paddle_alt' in self.paddles:
@@ -385,7 +390,7 @@ class AirHockeyBox2D:
         if 'pucks' in state_info: self.puck_history.append(list(state_info['pucks'][0]["position"]) + [0])
         else: self.puck_history.append([-2 + self.center_offset_constant,0,1])
         
-        state_info['paddles']['paddle_ego']['acceleration'] = vel - current_vel
+        self.paddles['paddle_ego_acceleration'] = vel - current_vel
 
         total_force = np.array(force)
 
@@ -398,7 +403,7 @@ class AirHockeyBox2D:
                 total_force[0] -= collision['normal_force'] * collision['contact_normal'][0]
                 total_force[1] -= collision['normal_force'] * collision['contact_normal'][1]
 
-        state_info['paddles']['paddle_ego']['force'] = total_force
+        self.paddles['paddle_ego_force'] = total_force
 
 
 

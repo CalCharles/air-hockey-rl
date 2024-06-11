@@ -23,7 +23,7 @@
         <geom condim="4" solref="0.02 0.3"/>
         <default class="rim">
                 <geom type="box" material="grey" condim="6" friction="10000 0.0 0.0" priority="1"
-                solref="-800000 -250" solimp="0.99 0.999 0.001 0.5 2" group="1"/>
+                solref="-100000 -250" solimp="0.99 0.999 0.001 0.5 2" group="1"/>
         </default>
     </default>
 
@@ -35,22 +35,22 @@
                 group="1" contype="1" conaffinity="1"/>
             </body>
             <body name="rim">
-                <geom name="rim_home_l" class="rim" size="0.01 0.1945 0.005" pos="-1.019 0.3245 0.005" group="1"/>
-                <geom name="rim_home_r" class="rim" size="0.045 0.1945 0.005" pos="-1.019 -0.3245 0.005" group="1"/>
-                <geom name="rim_home_bound_l" class="rim" type="cylinder" size="0.005 0.005" pos="-0.979 0.13 0.005" group="1"/>
-                <geom name="rim_home_bound_l_tail" class="rim" size="0.0425 0.005 0.005" pos="-1.0215 0.13 0.005"/>
-                <geom name="rim_home_bound_r" class="rim" type="cylinder" size="0.005 0.005" pos="-0.979 -0.13 0.005" group="1"/>
-                <geom name="rim_home_bound_r_tail" class="rim" size="0.0425 0.005 0.005" pos="-1.0215 -0.13 0.005" group="1"/>
-                <geom name="rim_home_top" class="rim" size="0.045 0.519 0.01" pos="-1.019 0 0.02" group="1"/>
-                <geom name="rim_left" class="rim" size="1.064 0.045 0.015" pos="0 0.564 0.015" group="1"/>
-                <geom name="rim_right" class="rim" size="1.064 0.045 0.015" pos="0 -0.564 0.015" group="1"/>
-                <geom name="rim_away_l" class="rim" size="0.01 0.1945 0.005" pos="1.019 0.3245 0.005" group="1"/>
-                <geom name="rim_away_r" class="rim" size="0.01 0.1945 0.005" pos="1.019 -0.3245 0.005" group="1"/>
-                <geom name="rim_away_bound_l" class="rim" type="cylinder" size="0.005 0.005" pos="0.979 0.13 0.005" group="1"/>
-                <geom name="rim_away_bound_l_tail" class="rim" size="0.0425 0.005 0.005" pos="1.0215 0.13 0.005" group="1"/>
-                <geom name="rim_away_bound_r" class="rim" type="cylinder" size="0.005 0.005" pos="0.979 -0.13 0.005" group="1"/>
-                <geom name="rim_away_bound_r_tail" class="rim" size="0.0425 0.005 0.005" pos="1.0215 -0.13 0.005" group="1"/>
-                <geom name="rim_away_top" class="rim" size="0.045 0.519 0.01" pos="1.019 0 0.02" group="1"/>
+                <geom name="rim_home_l" class="rim" size="0.01 0.1945 0.005" pos="-1.019 0.3245 0.005" group="1" solref="-100000 -250" solimp="0.99 0.999 0.001 0.5 2"/>
+                <geom name="rim_home_r" class="rim" size="0.045 0.1945 0.005" pos="-1.019 -0.3245 0.005" group="1" solref="-100000 -250" solimp="0.99 0.999 0.001 0.5 2"/>
+                <geom name="rim_home_bound_l" class="rim" type="cylinder" size="0.005 0.005" pos="-0.979 0.13 0.005" group="1" solref="-100000 -250" solimp="0.99 0.999 0.001 0.5 2"/>
+                <geom name="rim_home_bound_l_tail" class="rim" size="0.0425 0.005 0.005" pos="-1.0215 0.13 0.005" solref="-100000 -250" solimp="0.99 0.999 0.001 0.5 2"/>
+                <geom name="rim_home_bound_r" class="rim" type="cylinder" size="0.005 0.005" pos="-0.979 -0.13 0.005" group="1" solref="-100000 -250" solimp="0.99 0.999 0.001 0.5 2"/>
+                <geom name="rim_home_bound_r_tail" class="rim" size="0.0425 0.005 0.005" pos="-1.0215 -0.13 0.005" group="1" solref="-100000 -250" solimp="0.99 0.999 0.001 0.5 2"/>
+                <geom name="rim_home_top" class="rim" size="0.045 0.519 0.01" pos="-1.019 0 0.02" group="1" solref="-100000 -250" solimp="0.99 0.999 0.001 0.5 2"/>
+                <geom name="rim_right" class="rim" size="1.064 0.045 0.015" pos="0 0.564 0.015" group="1" solref="-100000 -250" solimp="0.99 0.999 0.001 0.5 2"/>
+                <geom name="rim_left" class="rim" size="1.064 0.045 0.015" pos="0 -0.564 0.015" group="1" solref="-100000 -250" solimp="0.99 0.999 0.001 0.5 2"/>
+                <geom name="rim_away_l" class="rim" size="0.01 0.1945 0.005" pos="1.019 0.3245 0.005" group="1" solref="-100000 -250" solimp="0.99 0.999 0.001 0.5 2"/>
+                <geom name="rim_away_r" class="rim" size="0.01 0.1945 0.005" pos="1.019 -0.3245 0.005" group="1" solref="-100000 -250" solimp="0.99 0.999 0.001 0.5 2"/>
+                <geom name="rim_away_bound_l" class="rim" type="cylinder" size="0.005 0.005" pos="0.979 0.13 0.005" group="1" solref="-100000 -250" solimp="0.99 0.999 0.001 0.5 2"/>
+                <geom name="rim_away_bound_l_tail" class="rim" size="0.0425 0.005 0.005" pos="1.0215 0.13 0.005" group="1" solref="-100000 -250" solimp="0.99 0.999 0.001 0.5 2"/>
+                <geom name="rim_away_bound_r" class="rim" type="cylinder" size="0.005 0.005" pos="0.979 -0.13 0.005" group="1" solref="-100000 -250" solimp="0.99 0.999 0.001 0.5 2"/>
+                <geom name="rim_away_bound_r_tail" class="rim" size="0.0425 0.005 0.005" pos="1.0215 -0.13 0.005" group="1" solref="-100000 -250" solimp="0.99 0.999 0.001 0.5 2"/>
+                <geom name="rim_away_top" class="rim" size="0.045 0.519 0.01" pos="1.019 0 0.02" group="1" solref="-100000 -250" solimp="0.99 0.999 0.001 0.5 2"/>
             </body>
         </body>
 

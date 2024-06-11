@@ -17,6 +17,12 @@ class AirHockeyPuckVelEnv(AirHockeyBaseEnv):
         puck_hist_low = [self.table_x_top, self.table_y_left, 0] * 5
         puck_hist_high = [self.table_x_bot, self.table_y_right, 0] * 5
 
+        paddle_accel_low = [float('-inf'), float('-inf')]
+        paddle_accel_high = [float('inf'), float('inf')]
+        
+        paddle_force_low = [float('-inf'), float('-inf')]
+        paddle_force_high = [float('inf'), float('inf')]
+
         if obs_type == "paddle":
             low = paddle_obs_low
             high = paddle_obs_high
@@ -26,10 +32,14 @@ class AirHockeyPuckVelEnv(AirHockeyBaseEnv):
         elif obs_type == "history":
             low = paddle_obs_low + puck_hist_low
             high = paddle_obs_high + puck_hist_high
+        elif obs_type == "paddle_acceleration":
+            low = paddle_obs_low + paddle_accel_low + paddle_force_low + puck_obs_low
+            high = paddle_obs_high + paddle_accel_high + paddle_force_high + puck_obs_high
 
         self.observation_space = self.single_observation_space = self.get_obs_space(low, high)
         self.action_space = self.single_action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
+
         
     @staticmethod
     def from_dict(state_dict):

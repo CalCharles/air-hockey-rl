@@ -223,9 +223,6 @@ class AirHockeyOperationalSpaceController(OperationalSpaceController):
         Returns:
              np.array: Command torques
         """
-
-        # Call super to avoid compatibility issues
-        super().run_controller()
         self.update()
 
         msg = dict()
@@ -314,7 +311,7 @@ class AirHockeyOperationalSpaceController(OperationalSpaceController):
         self.torques += nullspace_torques(
             self.mass_matrix, nullspace_matrix, self.initial_joint, self.joint_pos, self.joint_vel
         )
-
+        self.new_update = True
         return self.torques
 
     def reset_goal(self):

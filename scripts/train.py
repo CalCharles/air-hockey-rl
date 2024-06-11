@@ -195,7 +195,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
         # env_test = VecNormalize.load(os.path.join(log_dir, air_hockey_cfg['vec_normalize_save_filepath']), env_test)
         
         # if goal-conditioned use SAC
-        if 'goal' in air_hockey_cfg['air_hockey']['task']:
+        if 'sac' == air_hockey_cfg['algorithm']:
             model = SAC.load(model_filepath, env=env_test)
         else:
             model = PPO.load(model_filepath)
