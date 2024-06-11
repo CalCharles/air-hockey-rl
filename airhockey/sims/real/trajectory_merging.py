@@ -45,7 +45,7 @@ def merge_trajectory(image_path, images, vals):
     #     cv2.imshow("saving", im)
     #     cv2.waitKey(100)
     #     print(val[30:])
-    print(imgs.shape, vals.shape)
+    # print(imgs.shape, vals.shape)
     if imgs.shape[0] != vals.shape[0]:
         print("MISALIGNED")
         return None, None
@@ -74,14 +74,14 @@ def write_trajectory(pth, tidx, imgs, vals, filename=""):
                             compression="gzip",
                             compression_opts=9,
                             data = imgs)
-            print(vals)
+            # print(vals)
 
             hf.create_dataset("train_vals",
                             shape=vals.shape,
                             compression="gzip",
                             compression_opts=9,
                             data = vals)
-            print(tidx, hf)
+            # print(tidx, hf)
 
 def get_trajectory_idx(save_path):
     if len(save_path) > 0:
