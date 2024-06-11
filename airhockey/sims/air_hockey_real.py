@@ -301,7 +301,7 @@ class AirHockeyReal:
                                     "position": copy.deepcopy(self.puck), 
                                     "velocity": np.array(self.puck_history[-1])[:2] - np.array(self.puck_history[-2])[:2], 
                                     "occluded": np.array(self.puck_history[-1])[-1:]})
-        print("state_info", state_info)
+        # print("state_info", state_info)
         return state_info
 
 
@@ -331,9 +331,9 @@ class AirHockeyReal:
     def reset(self, seed, **kwargs):
         self.ctrl.servoStop(6)
         self.ctrl.forceModeStop()
-        print("write_traj" in kwargs)
-        if "write_traj" in kwargs:
-            print( kwargs["write_traj"])
+        # print("write_traj" in kwargs)
+        # if "write_traj" in kwargs:
+        #     print( kwargs["write_traj"])
         if "write_traj" in kwargs and kwargs["write_traj"]: imgs, vals = merge_trajectory(self.image_path, self.images, self.vals)
         clear_images(folder=self.image_path)
         if "write_traj" in kwargs and kwargs["write_traj"] and imgs is not None: 

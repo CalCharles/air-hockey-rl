@@ -125,7 +125,7 @@ class AirHockeyPuckHeightEnv(AirHockeyBaseEnv):
         
     @staticmethod
     def from_dict(state_dict):
-        print("state_dict", state_dict)
+        # print("state_dict", state_dict)
         return AirHockeyPuckHeightEnv(**state_dict)
 
     def create_world_objects(self):

@@ -18,8 +18,7 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
         if self.paddle_x_min is not None:
             goal_low = [self.paddle_x_min, self.paddle_y_min]
             goal_high = [self.paddle_x_max, self.paddle_y_max]
-            print(goal_low)
-        
+            # print(goal_low)
 
         if self.return_goal_obs:
             low = paddle_obs_low
@@ -105,7 +104,7 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
         if self.paddle_x_min is not None:
             goal_low = [self.paddle_x_min, self.paddle_y_min]
             goal_high = [self.paddle_x_max, self.paddle_y_max]
-            print(goal_low)
+            # print(goal_low)
         
         self.goal_set = goal_set
         # sample goal position
