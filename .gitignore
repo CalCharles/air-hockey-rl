@@ -202,3 +202,6 @@ gat_log/
 testt/
 traj_videos/
 >>>>>>> goal_cond_verify
+
+# pytorch
+*.pth
