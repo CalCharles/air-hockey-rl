@@ -763,7 +763,7 @@ def train(envs, writer, run_name, args, air_hockey_cfg, device):
         print("global_step: ", global_step)
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-        evaluate(agent=agent, eval_episodes=10, device=device, air_hockey_cfg=air_hockey_cfg, args=args, writer=writer)
+        evaluate(agent=agent, eval_episodes=10, device=device, air_hockey_cfg=air_hockey_cfg, args=args, writer=writer, global_step=global_step)
 
         if args.save_model and global_step % (args.num_envs * args.num_steps * 4) == 0:
             model_path = f"runs/{run_name}/phase_{args.phase}/global_step_{global_step}.pth"
