@@ -70,6 +70,7 @@ class AirHockeyBaseEnv(ABC, Env):
                  reward_movement_types=[],
                  compute_online_rewards=True,
                  initialization_description_pth="",
+                 solrefs=[None, None, None, None],
                  domain_random=False,
                  obs_type = "vel",
                  ):
@@ -114,7 +115,7 @@ class AirHockeyBaseEnv(ABC, Env):
         
         # reward function
         self.compute_online_rewards = compute_online_rewards
-        self.goal_conditioned = True if 'goal' in task else False
+        self.goal_conditioned = True if 'goal' in task or 'reach' in task else False
         self.goal_radius_type = 'fixed'
         self.goal_min_x_velocity = -goal_max_x_velocity
         self.goal_max_x_velocity = goal_max_x_velocity
@@ -136,6 +137,9 @@ class AirHockeyBaseEnv(ABC, Env):
         self.length = simulator_params['length']
         self.paddle_radius = simulator_params['paddle_radius']
         self.puck_radius = simulator_params['puck_radius']
+        self.puck_damping = simulator_params.get('puck_damping', None)
+        if simulator == "robosuite":
+            self.solrefs = [simulator_params.get('top_solref', None), simulator_params.get('bot_solref', None), simulator_params.get('left_solref', None), simulator_params.get('right_solref', None)]
         
         self.paddle_radius = simulator_params['paddle_radius']
         self.puck_radius = simulator_params['puck_radius']
@@ -244,8 +248,9 @@ class AirHockeyBaseEnv(ABC, Env):
             # puck_damping: 0.1-1.0
             # puck_density: 100-400
             # gravity: -0.3-0.7
+            if self.puck_damping is None:
+                self.simulator_params['puck_damping'] = np.random.uniform(0.1, 1.0)
 
-            self.simulator_params['puck_damping'] = np.random.uniform(0.1, 1.0)
             self.simulator_params['puck_density'] = np.random.uniform(100, 400)
             self.simulator_params['gravity'] = np.random.uniform(-0.3, -0.7)
 
@@ -269,6 +274,8 @@ class AirHockeyBaseEnv(ABC, Env):
         sim_seed = self.rng.randint(0, int(1e8))
         self.simulator.reset(sim_seed, **kwargs) # no point in getting state since no spawning
         self.create_world_objects()
+        if self.simulator_name == "robosuite":
+            self.simulator.update_table(*self.solrefs)
         self.simulator.instantiate_objects()
         state_info = self.simulator.get_current_state()
         self.current_state = state_info

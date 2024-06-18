@@ -134,6 +134,7 @@ class Args:
     phase: int = 1
     phase_2_batch_size: int = 256
     phase_2_data_size: int = 4000
+    checkpoint: str = None
 
 
 
@@ -473,7 +474,9 @@ def get_frames(
 
 # regress shared_history_encoder to shared_priv_encoder
 def phase_2_train(envs, writer, run_name, args, air_hockey_cfg, device):
-    agent = Agent(envs, args.phase).to(device)
+    agent = Agent(envs, args.phase)
+    agent.load_state_dict(torch.load(args.checkpoint))
+    agent = agent.to(device)
     optimizer = optim.Adam(agent.shared_history_encoder.parameters(), lr=args.learning_rate, eps=1e-5)
     global_step = 0
 
@@ -561,7 +564,7 @@ def phase_2_train(envs, writer, run_name, args, air_hockey_cfg, device):
 
             # if args.save_model and global_step % 1000 == 0:
             if args.save_model:
-                model_path = f"runs/{run_name}/phase_{args.phase}_{epoch}.cleanrl_model"
+                model_path = f"runs/{run_name}/phase_{args.phase}/epoch_{epoch}.pth"
                 torch.save(agent.state_dict(), model_path)
                 print(f"model saved to {model_path}")
 
@@ -572,7 +575,9 @@ def train(envs, writer, run_name, args, air_hockey_cfg, device):
         agent = Agent(envs, args.phase).to(device)
         optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
     elif args.phase == 3:
-        agent = Agent(envs, args.phase).to(device)
+        agent = Agent(envs, args.phase)
+        agent.load_state_dict(torch.load(args.checkpoint))
+        agent = agent.to(device)
         optimizer = optim.Adam(agent.shared_history_encoder.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # ALGO Logic: Storage setup
@@ -758,10 +763,10 @@ def train(envs, writer, run_name, args, air_hockey_cfg, device):
         print("global_step: ", global_step)
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-        evaluate(agent=agent, eval_episodes=10, device=device, air_hockey_cfg=air_hockey_cfg, args=args, writer=writer)
+        evaluate(agent=agent, eval_episodes=10, device=device, air_hockey_cfg=air_hockey_cfg, args=args, writer=writer, global_step=global_step)
 
         if args.save_model and global_step % (args.num_envs * args.num_steps * 4) == 0:
-            model_path = f"runs/{run_name}/phase_{args.phase}_{global_step}.cleanrl_model"
+            model_path = f"runs/{run_name}/phase_{args.phase}/global_step_{global_step}.pth"
             torch.save(agent.state_dict(), model_path)
             print(f"model saved to {model_path}")
             
@@ -884,6 +889,8 @@ def main(args: Args):
     args.num_iterations = args.total_timesteps // args.batch_size
     run_name = args.run_name
     os.makedirs(f"runs/{run_name}", exist_ok=True)
+    if args.save_model:
+        os.makedirs(f"runs/{run_name}/phase_{args.phase}", exist_ok=True)
     writer_dir = run_name + "_wandb"
     if args.track:
         import wandb

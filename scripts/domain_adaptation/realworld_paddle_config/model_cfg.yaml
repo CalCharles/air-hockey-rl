@@ -22,7 +22,8 @@ air_hockey:
   simulator: box2d # or robosuite
   max_timesteps: 300
   # reward_type: 'goal_position_velocity'
-  task: 'paddle_goal_position'
+  task: 'paddle_reach_position'
+  obs_type: paddle
   num_paddles: 1
   num_pucks: 0
   num_blocks: 0

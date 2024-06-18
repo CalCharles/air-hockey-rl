@@ -72,14 +72,12 @@ def write_trajectory(pth, tidx, imgs, vals, metadata=None):
                         compression="gzip",
                         compression_opts=9,
                         data = imgs)
-        print(vals)
 
         hf.create_dataset("train_vals",
                         shape=vals.shape,
                         compression="gzip",
                         compression_opts=9,
                         data = vals)
-        print(tidx, hf)
         for key in metadata.keys():
             hf[key] = metadata[key]
 
@@ -244,11 +242,9 @@ def get_hits(pth):
         dataset_dict = load_hdf5_to_dict(os.path.join(target, fn))
         if "num_hits" in dataset_dict:
             total_hits.append(dataset_dict["num_hits"])
-            print(dataset_dict["num_hits"])
     total_hits = np.array(total_hits)
     total_hits[total_hits < 4] = 0 
     total_hits[total_hits >= 4] = 1 
-    print(np.mean(total_hits))
 
 def write_video(pth, target, tnums=[]):
     import imageio

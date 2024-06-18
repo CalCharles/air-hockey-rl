@@ -11,7 +11,6 @@ import sys
 import argparse
 sys.path.append('../')
 sys.path.append('../..')
-print(sys.path)
 
 def create_video_from_frames(frame_array, output_path, fps=30):
     """
@@ -300,7 +299,6 @@ if __name__ == "__main__":
                     img_puck_traj[:,:,2] = np.minimum(img_puck_traj[:,:,2], dst[:,:,2])
             
             xy_robot_frame = pixel2loc(xs, ys) #
-            print(xy_robot_frame)
             
             plt.figure()
             plt.subplot(2,2,1)
@@ -339,10 +337,9 @@ if __name__ == "__main__":
             dataset_dict['puck_state_nan_mask'] = np.isnan(xy_robot_frame)
             # import pdb; pdb.set_trace()
             with h5py.File(save_path, 'w') as hdf5_file:
-                print(dataset_dict.keys())
                 save_dict_to_hdf5(dataset_dict, hdf5_file)
                 
             print(f'finished traj {traj}')
         except Exception as e:
-            print("doesn't work, you fuck")
+            print("doesn't work")
             print(e)

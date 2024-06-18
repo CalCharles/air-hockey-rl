@@ -191,7 +191,7 @@ class AirHockeyRobosuite(AirHockeySim):
         puck_damping=0.8,
         puck_density=30,
         seed=0,
-        # TODO: box2d specific config values not yet implemente
+        # TODO: box2d specific config values not yet implemented
         absorb_target = False,
         force_scaling = 1000,
         paddle_damping = 1,
@@ -616,6 +616,29 @@ class AirHockeyRobosuite(AirHockeySim):
         #         }]
         #     }
 
+    def update_table(self, top_solref=None, bot_solref=None, left_solref=None, right_solref=None):
+
+        if isinstance(self.xml_config['mujoco']['worldbody']['body'], list):
+            geoms = self.xml_config['mujoco']['worldbody']['body'][0]['body'][1]['geom']
+        else:
+            geoms = self.xml_config['mujoco']['worldbody']['body']['body'][1]['geom']
+
+        for geom in geoms:
+            geom_name = geom.get('@name', '') 
+            if 'home' in geom_name:
+                geom['@solref'] = f"{bot_solref} -250" if bot_solref is not None else "-80000 -250"
+            elif 'away' in geom_name:
+                geom['@solref'] = f"{top_solref} -250" if top_solref is not None else "-80000 -250"
+            elif 'left' in geom_name:
+                    geom['@solref'] = f"{left_solref} -250" if left_solref is not None else "-100000 -250"
+            elif 'right' in geom_name:
+                geom['@solref'] = f"{right_solref} -250" if right_solref is not None else "-100000 -250"
+
+        if isinstance(self.xml_config['mujoco']['worldbody']['body'], list):
+            self.xml_config['mujoco']['worldbody']['body'][0]['body'][1]['geom'] = geoms
+        else:
+            self.xml_config['mujoco']['worldbody']['body']['body'][1]['geom'] = geoms
+
     def spawn_paddle(self, pos, vel, name):
         # put the eef in pos
         self.initial_obj_configurations['paddles'][name] = {'position': pos, 'velocity': vel}
@@ -655,10 +678,6 @@ class AirHockeyRobosuite(AirHockeySim):
             self.robosuite_env.sim.forward()
             self.robosuite_env._pre_action(action, policy_step)
             self.robosuite_env.sim.step()
-            
-            contact_forces = self.robosuite_env.sim.data.cfrc_ext
-            eef_index = self.robosuite_env.sim.model.body_name2id('gripper0_eef')
-            current_state['paddles']['paddle_ego']['force'] = contact_forces[eef_index][:2] # exclude torques and z force
 
             self.robosuite_env._update_observables()
             policy_step = False
@@ -668,6 +687,10 @@ class AirHockeyRobosuite(AirHockeySim):
         self.timestep += 1
 
         current_state = self.get_current_state()
+        contact_forces = self.robosuite_env.sim.data.cfrc_ext
+        eef_index = self.robosuite_env.sim.model.body_name2id('gripper0_eef')
+        current_state['paddles']['paddle_ego']['force'] = contact_forces[eef_index][:2] # exclude torques and z force
+        
         if 'pucks' in current_state: self.puck_history.append(list(current_state['pucks'][0]["position"]) + [0])
         else: self.puck_history.append([-2 + self.center_offset_constant,0,1])
         
