@@ -28,14 +28,17 @@ def load_dataset(data_dir, obs_type, environment):
     dataset["terminals"] = list()
     dataset["images"] = list()
 
-    for file in os.listdir(data_dir)[:20]:
+    for file in os.listdir(data_dir):
         with h5py.File(os.path.join(data_dir, file), 'r') as f:
             try:
-                paddle = f["pose"][:,:2]
-                paddle_vel = f["speed"][:,:2]
-                action = f["desired_pose"][:,:2] - paddle
-                puck = f["puck"]
-                image = f["image"]
+                if f['pose'].shape[0] < 50:
+                    continue
+                else:
+                    paddle = f["pose"][:,:2]
+                    paddle_vel = f["speed"][:,:2]
+                    action = f["desired_pose"][:,:2] - paddle
+                    puck = f["puck"]
+                    image = f["image"]
             except Exception as e:
                 print('Error in file:', file, e)
                 continue

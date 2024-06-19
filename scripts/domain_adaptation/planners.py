@@ -44,7 +44,7 @@ class CEMPlanner:
     def sample_trajectories(self, num_samples=20, traj_length=20):
         N = len(self.data['observations'])
         random_idx = np.random.randint(0, N, num_samples)
-        random_starts = [np.random.randint(0, len(self.data["observations"][idx]) - traj_length + 1) for idx in random_idx]
+        random_starts = [np.random.randint(0, len(self.data["observations"][idx]) - traj_length) for idx in random_idx]
 
         sampled_states = np.concatenate([self.data['observations'][idx][random_start: random_start + traj_length][None, :] 
                                          for idx, random_start in zip(random_idx, random_starts)], axis=0)
@@ -93,7 +93,7 @@ class CEMPlanner:
                 wandb.log({self.param_names[dim]: denormed_mean[dim]}, step=iteration)
             total_sampling_time += time.time() - start_time
 
-            trajs = self.sample_trajectories(num_samples=20, traj_length=20)
+            trajs = self.sample_trajectories(num_samples=20, traj_length=50)
 
             start_time = time.time()
             rewards = np.array([self.eval_fn(sample, trajs) for sample in samples])

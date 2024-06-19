@@ -78,7 +78,7 @@ def set_ipdb_debugger():
 
     sys.excepthook = info
 
-if True:
+if False:
     set_ipdb_debugger()
     import faulthandler
     faulthandler.enable()
@@ -101,7 +101,6 @@ def get_value(param_vector, param_names, base_config, trajectories, task_name):
     evaluated_states = np.array(evaluated_states)
     target_states = np.concatenate(trajectories['observations'][:, 1:, :4], axis=0)
     value = compare_trajectories(evaluated_states[:, :4], target_states)
-    print(param_vector, value)
     return value
 
 def compare_trajectories(a_traj, b_traj, comp_type="l2"):
@@ -234,7 +233,7 @@ if __name__ == '__main__':
     wandb.run.name = "sysid_CEM_paddle_reach_realworld"
 
     planner = CEMPlanner(eval_fn=lambda params, trajs: get_value(params, param_names, air_hockey_params_cp, trajs, air_hockey_cfg['air_hockey']['task']), 
-                         trajectories=data, elite_frac=0.2, n_samples=100, n_iterations=30, variance=0.2, lower_bounds=lower_bounds, upper_bounds=upper_bounds, param_names=param_names)
+                         trajectories=data, elite_frac=0.2, n_samples=100, n_iterations=50, variance=0.2, lower_bounds=lower_bounds, upper_bounds=upper_bounds, param_names=param_names)
     # TODO Implemetn CMA-ES planner also
     
     optimal_parameters = planner.optimize(initial_params)
@@ -246,6 +245,12 @@ if __name__ == '__main__':
     if vis_after:
 
         new_config = assign_values(optimal_parameters, param_names, air_hockey_params_cp)
+        ## save the new config with the optimal parameters
+        cfg_folder = os.path.split(args.cfg)[0]
+        with open(os.path.join(cfg_folder, 'optimal_config.yaml'), 'w') as f:
+            new_air_hockey_cfg = copy.deepcopy(air_hockey_cfg)
+            new_air_hockey_cfg['air_hockey']["simulator_params"] = new_config
+            yaml.dump(new_config, f)
         eval_env = AirHockeyEnv(new_config)
 
         renderer = AirHockeyRenderer(eval_env)
