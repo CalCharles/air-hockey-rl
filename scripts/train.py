@@ -58,7 +58,8 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
         wandb_run = None
         if use_wandb:
             wandb_run = wandb.init(
-                project="air-hockey",
+                project="air_hockey_rl", 
+                entity="carltheq",
                 config=air_hockey_cfg,
                 sync_tensorboard=True,
                 save_code=True)

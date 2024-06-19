@@ -1,6 +1,6 @@
 import time
-from rtde_control import RTDEControlInterface as RTDEControl
-from rtde_receive import RTDEReceiveInterface as RTDEReceive
+# from rtde_control import RTDEControlInterface as RTDEControl
+# from rtde_receive import RTDEReceiveInterface as RTDEReceive
 from collections import deque
 import numpy as np
 from .real.multiprocessing import ProtectedArray, NonBlockingConsole
