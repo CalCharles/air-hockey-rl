@@ -7,14 +7,16 @@ air_hockey:
     paddle_radius: 0.0508
     block_width: 0.0554
     force_scaling: 1000
-    paddle_damping: 3
+    action_x_scaling: 1.164
+    action_y_scaling: 0.677
+    paddle_damping: 6.5218
     puck_damping: 0.5
-    paddle_density: 2500
+    paddle_density: 2259.6
     puck_density: 250
     block_density: 1000
     render_size: 360
     gravity: -0.5
-    max_force_timestep: 100 # max force we can apply at one timestep
+    max_force_timestep: 25.82 # max force we can apply at one timestep
     render_size: 360
 
   simulator: box2d # or robosuite
