@@ -1,7 +1,7 @@
 import numpy as np
 from gymnasium.spaces import Box
 from .airhockey_base import AirHockeyBaseEnv
-
+from .airhockey_rewards import AirHockeyMoveBlockReward, AirHockeyStrikeCrowdReward
 
 class AirHockeyMoveBlockEnv(AirHockeyBaseEnv):
     def initialize_spaces(self, obs_type):
@@ -34,6 +34,7 @@ class AirHockeyMoveBlockEnv(AirHockeyBaseEnv):
         self.observation_space = self.get_obs_space(low, high)
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
+        self.reward = AirHockeyMoveBlockReward(self)
         
     @staticmethod
     def from_dict(state_dict):
@@ -90,26 +91,6 @@ class AirHockeyMoveBlockEnv(AirHockeyBaseEnv):
     #     obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel, block_x_pos, block_y_pos, block_initial_x_pos, block_initial_y_pos])
     #     return obs
 
-    def get_base_reward(self, state_info):
-        # also reward hitting puck! some shaping here :)
-        vel_reward = -state_info['pucks'][0]['velocity'][0]
-        max_rew = 2 # estimated max vel
-        min_rew = 0  # min acceptable good velocity
-        if vel_reward <= min_rew:
-            vel_reward = 0
-        else:
-            vel_reward = min(vel_reward, max_rew)
-            vel_reward = (vel_reward - min_rew) / (vel_reward - min_rew)
-        
-        # more reward if we move the block away from initial position
-        block_initial_pos = state_info['blocks'][0]['initial_position']
-        block_pos = state_info['blocks'][0]['current_position']
-        dist = np.linalg.norm(np.array(block_pos) - np.array(block_initial_pos))
-        max_euclidean_distance = np.linalg.norm(np.array([self.table_x_bot, self.table_y_right]) - np.array([self.table_x_top, self.table_y_left]))
-        reward = 5000 * dist / max_euclidean_distance # big reward since its sparse!
-        success = reward > 1 and self.current_timestep > 5
-        return vel_reward + reward, success
-
 class AirHockeyStrikeCrowdEnv(AirHockeyBaseEnv):
     def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
@@ -141,6 +122,7 @@ class AirHockeyStrikeCrowdEnv(AirHockeyBaseEnv):
         self.observation_space = self.get_obs_space(low, high)
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
+        self.reward = AirHockeyStrikeCrowdReward(self)
         
     @staticmethod
     def from_dict(state_dict):
@@ -247,16 +229,3 @@ class AirHockeyStrikeCrowdEnv(AirHockeyBaseEnv):
     #     block_initial_positions = np.array(block_initial_positions).flatten()
     #     obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel] + block_initial_positions.tolist())
     #     return obs
-
-    def get_base_reward(self, state_info):
-        # check how much blocks deviate from initial position
-        reward = 0.0
-        for block in state_info['blocks']:
-            initial_pos = block['initial_position']
-            current_pos = block['current_position']
-            dist = np.linalg.norm(np.array(initial_pos) - np.array(current_pos))
-            max_euclidean_distance = np.linalg.norm(np.array([self.table_x_bot, self.table_y_right]) - np.array([self.table_x_top, self.table_y_left]))
-            reward += 10 * dist / max_euclidean_distance
-        success = reward > 1 and self.current_timestep > 3
-        return reward, success
-

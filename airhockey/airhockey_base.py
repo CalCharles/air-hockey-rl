@@ -208,14 +208,13 @@ class AirHockeyBaseEnv(ABC, Env):
     @abstractmethod
     def validate_configuration(self):
         pass
-    
-    @abstractmethod
-    def get_base_reward(self, state_info):
-        pass
 
     @abstractmethod
     def get_observation(self, state_info):
         pass
+
+    def get_base_reward(self, state_info):
+        return self.reward.get_base_reward(state_info)
 
     def get_current_state(self): 
         # gets the current state and info
