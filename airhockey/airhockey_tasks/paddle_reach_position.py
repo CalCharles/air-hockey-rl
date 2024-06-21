@@ -35,7 +35,7 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
 
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
-        self.reward = AirHockeyPaddleReachPositionReward(self0)
+        self.reward = AirHockeyPaddleReachPositionReward(self)
     @staticmethod
     def from_dict(state_dict):
         return AirHockeyPaddleReachPositionEnv(**state_dict)

@@ -40,7 +40,7 @@ class AirHockeyPuckGoalPositionVelocityEnv(AirHockeyGoalEnv):
         self.max_goal_radius = self.width / 4
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
-        self.reward = AirHockeyPuckGoalPositionVelocityReward
+        self.reward = AirHockeyPuckGoalPositionVelocityReward(self)
 
     @staticmethod
     def from_dict(state_dict):

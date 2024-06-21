@@ -39,7 +39,7 @@ class AirHockeyGoalEnv(AirHockeyBaseEnv, ABC):
         pass
     
     def compute_reward(self, achieved_goal, desired_goal, info):
-        return self.reward.compute_reward(achieved_goal, desired_goal)
+        return self.reward.compute_reward(achieved_goal, desired_goal, info)
     
     def get_base_reward(self, state_info):
         return self.reward.get_base_reward(state_info)
