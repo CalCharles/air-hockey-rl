@@ -27,9 +27,9 @@ class AirHockeyMoveBlockEnv(AirHockeyBaseEnv):
         elif obs_type == "history":
             low = paddle_obs_low + puck_hist_low
             high = paddle_obs_high + puck_hist_high
-
-        low = low + block_obs_low
-        high = high + block_obs_high
+        if obs_type == "single_block":
+            low = paddle_obs_low + puck_obs_low + block_obs_low
+            high = paddle_obs_high + puck_obs_high + block_obs_high
 
         self.observation_space = self.get_obs_space(low, high)
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
@@ -115,9 +115,9 @@ class AirHockeyStrikeCrowdEnv(AirHockeyBaseEnv):
         elif obs_type == "history":
             low = paddle_obs_low + puck_hist_low
             high = paddle_obs_high + puck_hist_high
-
-        low = low + [block_obs_low[0], block_obs_low[1]] * self.num_blocks
-        high = high + [block_obs_high[0], block_obs_high[1]] * self.num_blocks
+        elif obs_type == "many_blocks":
+            low = paddle_obs_low + puck_obs_low + [block_obs_low[0], block_obs_low[1]] * self.num_blocks
+            high = paddle_obs_high + puck_obs_high + [block_obs_high[0], block_obs_high[1]] * self.num_blocks
 
         self.observation_space = self.get_obs_space(low, high)
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
