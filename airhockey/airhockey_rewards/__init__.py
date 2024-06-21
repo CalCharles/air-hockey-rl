@@ -1,0 +1,3 @@
+from .airhockey_hierarchical_task_rewards import AirHockeyMoveBlockReward, AirHockeyStrikeCrowdReward
+from .airhockey_simple_task_rewards import AirHockeyPuckCatchReward, AirHockeyPuckVelReward, AirHockeyPuckTouchReward, AirHockeyPuckHeightReward, AirHockeyPuckJuggleReward, AirHockeyPuckStrikeReward
+from .airhockey_reward_base import AirHockeyRewardBase
