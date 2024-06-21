@@ -34,7 +34,9 @@ air_hockey:
 
   terminate_on_out_of_bounds: False
   terminate_on_enemy_goal: False
-  terminate_on_puck_stop: False
+  terminate_on_puck_stop: false
+  terminate_on_puck_pass_paddle: True
+  terminate_on_puck_hit_bottom: True
   truncate_rew: -1
   wall_bumping_rew: -1
   direction_change_rew: -0.05
