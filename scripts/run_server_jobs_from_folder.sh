@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Directory containing the YAML files
-CONFIG_DIR="/path/to/yaml/folder"
+CONFIG_DIR="/home/air_hockey/air-hockey-rl/configs/baseline_configs/box2d"
 
 # List all YAML files in the directory
 CONFIG_FILES=($CONFIG_DIR/*.yaml)
@@ -31,10 +31,21 @@ for i in "${!CONFIG_FILES[@]}"; do
     REMOTE_DIR="$DEFAULT_REMOTE_DIR"
   fi
 
-  ssh -t "$MACHINE" << EOF
+
+  # Construct the command to create a tmux session and window
+  REMOTE_CMD="
 if ! tmux has-session -t $TMUX_SESSION_NAME 2>/dev/null; then
   tmux new-session -d -s $TMUX_SESSION_NAME
 fi
-tmux new-window -t $TMUX_SESSION_NAME -n "training_${i}" "cd $REMOTE_DIR && git pull && source activate sarthak_rl_35 && python train.py --cfg $CONFIG_FILE --device cuda"
-EOF
+tmux new-window -t $TMUX_SESSION_NAME -n training_${i}
+"
+
+  # Execute the command on the remote machine
+  echo "Executing on $MACHINE:"
+  echo "$REMOTE_CMD"
+  ssh -t "$MACHINE" "$REMOTE_CMD"
+  # Send the training command to the tmux window
+  TRAIN_CMD="cd $REMOTE_DIR && conda activate sarthak_rl_35 && python scripts/train.py --cfg $CONFIG_FILE --device cuda"
+  ssh -t "$MACHINE" "tmux send-keys -t $TMUX_SESSION_NAME:training_${i} \"$TRAIN_CMD\" C-m"
+
 done
