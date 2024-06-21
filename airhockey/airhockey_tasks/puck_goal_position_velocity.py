@@ -2,7 +2,8 @@ import numpy as np
 from gymnasium.spaces import Box
 from gymnasium import spaces
 from .abstract_airhockey_goal_task import AirHockeyGoalEnv
-    
+from airhockey.airhockey_rewards import AirHockeyPuckGoalPositionVelocityReward
+
 class AirHockeyPuckGoalPositionVelocityEnv(AirHockeyGoalEnv):
     def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
@@ -39,7 +40,8 @@ class AirHockeyPuckGoalPositionVelocityEnv(AirHockeyGoalEnv):
         self.max_goal_radius = self.width / 4
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
-        
+        self.reward = AirHockeyPuckGoalPositionVelocityReward
+
     @staticmethod
     def from_dict(state_dict):
         return AirHockeyPuckGoalPositionVelocityEnv(**state_dict)
@@ -69,55 +71,6 @@ class AirHockeyPuckGoalPositionVelocityEnv(AirHockeyGoalEnv):
         position = self.goal_pos
         velocity = self.goal_vel
         return np.array([position[0], position[1], velocity[0], velocity[1]])
-    
-    def compute_reward(self, achieved_goal, desired_goal, info):
-        # if not vectorized, convert to vector
-        single = len(achieved_goal.shape) == 1
-        if single:
-            achieved_goal = achieved_goal.reshape(1, -1)
-            desired_goal = desired_goal.reshape(1, -1)
-        # return euclidean distance between the two points
-        dist = np.linalg.norm(achieved_goal[:, :2] - desired_goal[:, :2], axis=1)
-        # compute angle between velocities
-        denom = np.linalg.norm(achieved_goal[:, 2:], axis=1) * np.linalg.norm(desired_goal[:, 2:], axis=1) + 1e-8
-        vel_cos = np.sum(achieved_goal[:, 2:] * desired_goal[:, 2:], axis=1) / denom
-        
-        # numerical stability
-        vel_cos = np.clip(vel_cos, -1, 1)
-        vel_angle = np.arccos(vel_cos)
-        # mag difference
-        mag_achieved = np.linalg.norm(achieved_goal[:, 2:], axis=1)
-        mag_desired = np.linalg.norm(desired_goal[:, 2:], axis=1)
-        mag_diff = np.abs(mag_achieved - mag_desired)
-        
-        # # also return float from [0, 1] 0 being far 1 being the point
-        # # use sigmoid function because being closer is much more important than being far
-        sigmoid_scale = 2
-        radius = self.goal_radius
-        reward_raw = 1 - (dist / radius)#self.max_goal_rew_radius * radius)
-        
-        mask = dist >= radius
-        reward_raw[mask] = 0 # numerical stability, we will make these 0 later
-        reward = 1 / (1 + np.exp(-reward_raw * sigmoid_scale))
-        reward_mask = dist >= radius
-        reward[reward_mask] = 0
-        position_reward = reward
-
-        vel_mag_reward = 1 - mag_diff / self.max_paddle_vel
-        
-        reward_mask = position_reward == 0
-        norm_cos_sim = (vel_cos + 1) / 2
-        vel_angle_reward = norm_cos_sim
-        vel_angle_reward[reward_mask] = 0
-        vel_mag_reward[reward_mask] = 0
-        vel_reward = (vel_angle_reward + vel_mag_reward) / 2
-        
-        # reward = (position_reward + vel_reward + vel_mag_reward) / 3
-        reward = 0.5 * position_reward + 0.5 * vel_reward
-
-        if single:
-            reward = reward[0]
-        return reward
     
     def get_observation(self, state_info, obs_type ="vel", **kwargs):
         return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)
@@ -166,9 +119,3 @@ class AirHockeyPuckGoalPositionVelocityEnv(AirHockeyGoalEnv):
         
     def set_goal_set(self, goal_set):
         self.goal_set = goal_set
-    
-    def get_base_reward(self, state_info):
-        reward = self.compute_reward(self.get_achieved_goal(state_info), self.get_desired_goal(), {})
-        success = reward > 0.0
-        success = success.item()
-        return reward, success

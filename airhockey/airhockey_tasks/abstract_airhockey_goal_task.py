@@ -21,10 +21,6 @@ class AirHockeyGoalEnv(AirHockeyBaseEnv, ABC):
     @abstractmethod
     def get_desired_goal(self):
         pass
-    
-    @abstractmethod
-    def compute_reward(self, achieved_goal, desired_goal, info):
-        pass
 
     @abstractmethod
     def get_observation(self, state_info):
@@ -42,9 +38,11 @@ class AirHockeyGoalEnv(AirHockeyBaseEnv, ABC):
     def from_dict(state_dict):
         pass
     
-    @abstractmethod
+    def compute_reward(self, achieved_goal, desired_goal, info):
+        return self.reward.compute_reward(achieved_goal, desired_goal)
+    
     def get_base_reward(self, state_info):
-        pass
+        return self.reward.get_base_reward(state_info)
         
     def get_goal_obs_space(self, low: list, high: list, goal_low: list, goal_high: list):
         return spaces.Dict(dict(

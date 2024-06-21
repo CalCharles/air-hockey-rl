@@ -2,6 +2,7 @@ import numpy as np
 from gymnasium.spaces import Box
 from gymnasium import spaces
 from .abstract_airhockey_goal_task import AirHockeyGoalEnv
+from airhockey.airhockey_rewards import AirHockeyPuckGoalPositionReward
 
 class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
     def initialize_spaces(self, obs_type):
@@ -40,7 +41,8 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
 
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
-        
+        self.reward = AirHockeyPuckGoalPositionReward(self)
+
     @staticmethod
     def from_dict(state_dict):
         return AirHockeyPuckGoalPositionEnv(**state_dict)
@@ -68,30 +70,6 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
         assert self.num_obstacles == 0
         assert self.num_targets == 0
         assert self.num_paddles == 1
-    
-    def compute_reward(self, achieved_goal, desired_goal, info):
-        # if not vectorized, convert to vector
-        single = len(achieved_goal.shape) == 1
-        if single:
-            achieved_goal = achieved_goal.reshape(1, -1)
-            desired_goal = desired_goal.reshape(1, -1)
-        # return euclidean distance between the two points
-        dist = np.linalg.norm(achieved_goal[:, :2] - desired_goal[:, :2], axis=1)
-        sigmoid_scale = 2
-        radius = self.goal_radius
-        reward_raw = 1 - (dist / radius) #self.max_goal_rew_radius * radius)
-        reward_mask = dist >= radius
-        reward_raw[reward_mask] = 0 # numerical stability, we will make these 0 later
-        reward = 1 / (1 + np.exp(-reward_raw * sigmoid_scale))
-        reward[reward_mask] = 0
-
-
-        bonus = 10 if self.current_timestep > self.falling_time else 0 # this prevents the falling initiliazwed puck from triggering a success
-        reward = -dist  + (bonus if dist < radius else 0)
-
-        if single:
-            reward = reward[0]
-        return reward
 
     def get_observation(self, state_info, obs_type ="vel", **kwargs):
         return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)
@@ -134,9 +112,3 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
         
     def set_goal_set(self, goal_set):
         self.goal_set = goal_set
-    
-    def get_base_reward(self, state_info):
-        reward = self.compute_reward(self.get_achieved_goal(state_info), self.get_desired_goal(), {})
-        success = reward > 0.0
-        success = success.item()
-        return reward, success
