@@ -30,12 +30,13 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
             high = paddle_obs_high + goal_high
             self.observation_space = self.get_obs_space(low, high)
         
-        self.min_goal_radius = self.width / 16
+        self.min_goal_radius = self.width / 8
         self.max_goal_radius = self.width / 4
 
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
         self.reward = AirHockeyPaddleReachPositionReward(self)
+        
     @staticmethod
     def from_dict(state_dict):
         return AirHockeyPaddleReachPositionEnv(**state_dict)
@@ -68,32 +69,23 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
 
     def get_observation(self, state_info, obs_type ="paddle", **kwargs):
         return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)
-
-    # def get_observation(self, state_info):
-    #     ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
-    #     ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
-    #     ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
-    #     ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
-
-    #     obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel])
-    #     return obs
     
-    def set_goals(self, goal_radius_type, goal_pos=None, alt_goal_pos=None, goal_set=None):
-
+    def set_goals(self, goal_pos=None, goal_set=None):
         goal_low = [0, self.table_y_left]
-        goal_high = [self.table_x_bot, self.table_y_right]
+        goal_high = [self.table_x_bot / 2, self.table_y_right] # set goal positions to be in the bottom half of the table.
         
         if self.paddle_x_min is not None:
             goal_low = [self.paddle_x_min, self.paddle_y_min]
             goal_high = [self.paddle_x_max, self.paddle_y_max]
-            # print(goal_low)
         
         self.goal_set = goal_set
+        
         # sample goal position
         min_y = goal_low[1]
         max_y = goal_high[1]
         min_x = goal_low[0]
         max_x = goal_high[0]
+        
         goal_position = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
         self.goal_radius = self.min_goal_radius # not too important
         self.goal_pos = goal_position if self.goal_set is None else self.goal_set[0, :2]

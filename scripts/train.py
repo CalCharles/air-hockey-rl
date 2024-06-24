@@ -59,7 +59,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
         if use_wandb:
             wandb_run = wandb.init(
                 project="air_hockey_rl", 
-                entity="carltheq",
+                entity="maxrudolph",
                 config=air_hockey_cfg,
                 sync_tensorboard=True,
                 save_code=True)
@@ -136,6 +136,7 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
         if 'sac' == air_hockey_cfg['algorithm']:
             # SAC hyperparams:
             # Create 4 artificial transitions per real transition air_hockey_simulator
+            import pdb; pdb.set_trace()
             n_sampled_goal = 4
             model = SAC(
                 "MultiInputPolicy",
@@ -237,6 +238,6 @@ if __name__ == "__main__":
     use_wandb = args.wandb
     device = args.device
     clear_prior_task_results = args.clear
-    train_air_hockey_model(air_hockey_cfg, use_wandb, device, clear_prior_task_results)
+    train_air_hockey_model(air_hockey_cfg, use_wandb, device, clear_prior_task_results, progress_bar=False)
 
     # python scripts/train.py --cfg configs/gat/puck_height.yaml

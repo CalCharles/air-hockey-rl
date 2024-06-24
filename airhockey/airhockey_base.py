@@ -73,6 +73,7 @@ class AirHockeyBaseEnv(ABC, Env):
                  solrefs=[None, None, None, None],
                  domain_random=False,
                  obs_type = "vel",
+                 **kwargs,
                  ):
         
         if simulator == 'box2d':
@@ -116,7 +117,6 @@ class AirHockeyBaseEnv(ABC, Env):
         # reward function
         self.compute_online_rewards = compute_online_rewards
         self.goal_conditioned = True if 'goal' in task or 'reach' in task else False
-        self.goal_radius_type = 'fixed'
         self.goal_min_x_velocity = -goal_max_x_velocity
         self.goal_max_x_velocity = goal_max_x_velocity
         self.goal_min_y_velocity = goal_min_y_velocity
@@ -494,6 +494,7 @@ class AirHockeyBaseEnv(ABC, Env):
         is_finished, truncated, puck_within_home, puck_within_alt_home, puck_within_goal, _ = self.has_finished(next_state)
         if not truncated:
             reward, success = self.get_base_reward(next_state)
+            # import pdb; pdb.set_trace()
             if not info['success'] and success:
                 info['success'] = success
                 self.success_in_ep = success

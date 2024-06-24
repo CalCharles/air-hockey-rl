@@ -5,6 +5,10 @@ from .abstract_airhockey_goal_task import AirHockeyGoalEnv
 from airhockey.airhockey_rewards import AirHockeyPuckGoalPositionReward
 
 class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
+    def __init__(self, **kwargs):
+        self.goal_radius_type = kwargs['goal_radius_type']
+        super().__init__(**kwargs)
+        
     def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
         paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
@@ -74,32 +78,14 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
     def get_observation(self, state_info, obs_type ="vel", **kwargs):
         return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)
 
-    # def get_observation(self, state_info):
-    #     ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
-    #     ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
-    #     ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
-    #     ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
-        
-    #     puck_x_pos = state_info['pucks'][0]['position'][0]
-    #     puck_y_pos = state_info['pucks'][0]['position'][1]
-    #     puck_x_vel = state_info['pucks'][0]['velocity'][0]
-    #     puck_y_vel = state_info['pucks'][0]['velocity'][1]       
-
-    #     obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
-    #     return obs
-    
-    def set_goals(self, goal_radius_type, goal_pos=None, alt_goal_pos=None, goal_set=None):
+    def set_goals(self, goal_pos=None, alt_goal_pos=None, goal_set=None):
         self.goal_set = goal_set
-        if goal_radius_type == 'fixed':
-            # goal_radius = self.rng.uniform(low=self.min_goal_radius, high=self.max_goal_radius)
+        if self.goal_radius_type == 'linear_decay':
             base_radius = (self.min_goal_radius + self.max_goal_radius) / 2 * (0.75)
             # linearly decrease radius, should start off at 3*base_radius then decrease to base_radius
             ratio = 2 * (1 - self.n_timesteps_so_far / self.n_training_steps) + 1
             goal_radius = ratio * base_radius
             self.goal_radius = goal_radius
-            
-        # if self.goal_selector == 'dynamic':
-        self.goal_radius = 0.15
 
         if goal_pos is None and goal_set is None:
             min_y = self.table_y_left + self.goal_radius

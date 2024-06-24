@@ -184,24 +184,19 @@ class EvalCallback(BaseCallback):
                 undiscounted_return += rew
                 assert 'success' in info
                 assert (info['success'] == True) or (info['success'] == False)
-                if info['success'] == True:
-                    # print(rew, info['success'])
-                    # import pdb; pdb.set_trace()
-                    success = True
-                    # print('SUCECSS')
+                if info['success'] == True:                    
+                    # success = self.eval_env.get_success()
+                    success = info['success']
+
                 max_reward = info['max_reward']
                 min_reward = info['min_reward']
-            # self.eval_ego_goals.append(info['ego_goal'])
-            # self.eval_ego_goals_succ.append(success)
+
             avg_undiscounted_return += undiscounted_return
-            # avg_success_rate += 1.0 if success  else 0.0
             avg_success_rate += success
             avg_max_reward += max_reward
             avg_min_reward += min_reward
         avg_undiscounted_return /= self.n_eval_eps
         avg_success_rate /= self.n_eval_eps
-        # import pdb; pdb.set_trace()
-        # print('succes rate', avg_success_rate)
         avg_max_reward /= self.n_eval_eps
         avg_min_reward /= self.n_eval_eps
         return avg_undiscounted_return, avg_success_rate, avg_max_reward, avg_min_reward, (frames, robosuite_frames)
@@ -258,6 +253,9 @@ class EvalCallback(BaseCallback):
                     imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(fps))
             # import sys
             # sys.exit()
+            wandb_frames = np.array(frames).transpose(0, 3, 1, 2)[:300]
+            # wandb.log({"video": wandb.Video(wandb_frames, fps=10)})
+            # import pdb; pdb.set_trace()
 
             model_fp = os.path.join(progress_dir, 'model.zip')
             self.model.save(model_fp)
