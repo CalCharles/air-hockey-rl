@@ -2,6 +2,7 @@ import numpy as np
 from gymnasium.spaces import Box
 from gymnasium import spaces
 from .abstract_airhockey_goal_task import AirHockeyGoalEnv
+from airhockey.airhockey_rewards import AirHockeyPaddleReachPositionReward
 
 class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
     def initialize_spaces(self, obs_type):
@@ -19,7 +20,7 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
             goal_low = [self.paddle_x_min, self.paddle_y_min]
             goal_high = [self.paddle_x_max, self.paddle_y_max]
             # print(goal_low)
-
+        
         if self.return_goal_obs:
             low = paddle_obs_low
             high = paddle_obs_high
@@ -34,6 +35,7 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
 
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
+        self.reward = AirHockeyPaddleReachPositionReward(self)
         
     @staticmethod
     def from_dict(state_dict):
@@ -64,29 +66,7 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
     def get_desired_goal(self):
         position = self.goal_pos
         return np.array([position[0], position[1]])
-    
-    def compute_reward(self, achieved_goal, desired_goal, info):
-        # if not vectorized, convert to vector
-        single = len(achieved_goal.shape) == 1
-        if single:
-            achieved_goal = achieved_goal.reshape(1, -1)
-            desired_goal = desired_goal.reshape(1, -1)
-            
-        # return euclidean distance between the two points
-        dist = np.linalg.norm(achieved_goal[:, :2] - desired_goal[:, :2], axis=1)
-        max_euclidean_distance = np.linalg.norm(np.array([self.table_x_bot, self.table_y_right]) - np.array([self.table_x_top, self.table_y_left]))
-        # reward for closer to goal
-        # reward = 1 - (dist / max_euclidean_distance)
-        # reward = -np.log(dist)
-        radius = self.goal_radius
-        bonus = 10 if self.current_timestep > self.falling_time else 0 # this prevents the falling initiliazwed puck from triggering a success
-        reward = -dist if dist > radius else bonus
-        
-        if single:
-            reward = reward[0]
-            
-        return reward
-    
+
     def get_observation(self, state_info, obs_type ="paddle", **kwargs):
         return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)
     
@@ -110,17 +90,3 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
         self.goal_radius = self.min_goal_radius # not too important
         self.goal_pos = goal_position if self.goal_set is None else self.goal_set[0, :2]
         self.goal_pos = goal_pos if goal_pos is not None else self.goal_pos
-        
-    def get_base_reward(self, state_info):
-        ag = self.get_achieved_goal(state_info)
-        dg = self.get_desired_goal()
-        reward = self.compute_reward(self.get_achieved_goal(state_info), self.get_desired_goal(), {})
-        dist = np.linalg.norm(ag - dg, axis=0)
-        
-        success = dist < self.goal_radius
-        success = success.item()
-        self.success = success
-        return reward, success
-    
-    def get_success(self):
-        return self.success

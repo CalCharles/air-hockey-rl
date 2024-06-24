@@ -4,6 +4,7 @@ from gymnasium import spaces
 from .abstract_airhockey_goal_task import AirHockeyGoalEnv
 from airhockey.airhockey_tasks.utils import DynamicRewardRegion, DynamicGoalRegion
 import copy
+from airhockey.airhockey_rewards import AirHockeyPuckGoalPositionDynamicNegRegionsReward
 
 class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
     def __init__(self,
@@ -60,6 +61,8 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
         self.velocity_of_goal_min = velocity_of_goal_min
         self.velocity_of_goal_max = velocity_of_goal_max
         self.reward_movement_types = reward_movement_types
+        self.reward = AirHockeyPuckGoalPositionVelocityReward(self)
+
         super().__init__(simulator, # box2d or robosuite
                  simulator_params,
                  task, 
@@ -168,34 +171,6 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
         assert self.num_obstacles == 0
         assert self.num_targets == 0
         assert self.num_paddles == 1
-    
-    def compute_reward(self, achieved_goal, desired_goal, info):
-        # if not vectorized, convert to vector
-        single = len(achieved_goal.shape) == 1
-        if single:
-            achieved_goal = achieved_goal.reshape(1, -1)
-            desired_goal = desired_goal.reshape(1, -1)
-        # return euclidean distance between the two points
-        dist = np.linalg.norm(achieved_goal[:, :2] - desired_goal[:, :2], axis=1)
-        sigmoid_scale = 2
-        radius = self.goal_radius
-        reward_raw = 1 - (dist / radius) #self.max_goal_rew_radius * radius)
-        reward_mask = dist >= radius
-        reward_raw[reward_mask] = 0 # numerical stability, we will make these 0 later
-        reward = 1 / (1 + np.exp(-reward_raw * sigmoid_scale))
-        reward[reward_mask] = 0
-
-        if self.dense_goal:
-            bonus = 10 if self.current_timestep > self.falling_time else 0 # this prevents the falling initiliazwed puck from triggering a success
-            reward = -dist  + (bonus if dist < radius else 0) # add bonus if within radius
-
-        if single:
-            reward = reward[0]
-            
-        for nrr in self.reward_regions:
-            reward += nrr.check_reward(achieved_goal)
-            
-        return reward
 
     def get_observation(self, state_info, obs_type ="negative_regions_puck", **kwargs):
         state_info["negative_regions"] = [nrr.get_state() for nrr in self.reward_regions]
@@ -249,12 +224,6 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
         
     def set_goal_set(self, goal_set):
         self.goal_set = goal_set
-    
-    def get_base_reward(self, state_info):
-        reward = self.compute_reward(self.get_achieved_goal(state_info), self.get_desired_goal(), {})
-        success = reward > 0.0
-        success = success.item()
-        return reward, success
     
     def step(self, action):
         obs, reward, is_finished, truncated, info = super().step(action)

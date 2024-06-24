@@ -4,6 +4,7 @@ from gymnasium.spaces import Box
 from gymnasium import spaces
 from .abstract_airhockey_goal_task import AirHockeyGoalEnv
 from airhockey.airhockey_tasks.utils import RewardRegion
+from airhockey.airhockey_rewards import AirHockeyPaddleReachPositionNegRegionsReward
 
 class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
     def __init__(self,
@@ -56,6 +57,7 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
         self.reward_normalized_radius_max = reward_normalized_radius_max
         self.reward_velocity_limits_min = reward_normalized_radius_min
         self.reward_velocity_limits_max = reward_normalized_radius_max
+        self.reward = AirHockeyPaddleReachPositionNegRegionsReward(self)
         super().__init__(simulator, # box2d or robosuite
                  simulator_params,
                  task, 
@@ -221,26 +223,6 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
         position = self.goal_pos
         return np.array([position[0], position[1]])
     
-    def compute_reward(self, achieved_goal, desired_goal, info):
-        # if not vectorized, convert to vector
-        # import pdb; pdb.set_trace()
-        single = len(achieved_goal.shape) == 1
-        if single:
-            achieved_goal = achieved_goal.reshape(1, -1)
-            desired_goal = desired_goal.reshape(1, -1)
-        # return euclidean distance between the two points
-        dist = np.linalg.norm(achieved_goal[:, :2] - desired_goal[:, :2], axis=1)
-        max_euclidean_distance = np.linalg.norm(np.array([self.table_x_bot, self.table_y_right]) - np.array([self.table_x_top, self.table_y_left]))
-        # reward for closer to goal
-        reward = - (dist / max_euclidean_distance)
-
-        for nrr in self.reward_regions:
-            reward += nrr.check_reward(achieved_goal)
-
-        if single:
-            reward = reward[0]
-        return reward
-    
     def get_observation(self, state_info, obs_type ="negative_regions_paddle", **kwargs):
         state_info["negative_regions"] = [nrr.get_state() for nrr in self.reward_regions]
         return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)
@@ -268,12 +250,6 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
             print("init_goal", self.grid_midpoints,self.table_x_bot, self.init_goal_pos, goal_position)
         self.goal_radius = self.min_goal_radius # not too important
         self.goal_pos = goal_position if self.goal_set is None else self.goal_set[0, :2]
-            
-    def get_base_reward(self, state_info):
-        reward = self.compute_reward(self.get_achieved_goal(state_info), self.get_desired_goal(), {})
-        success = reward > 0.9
-        success = success.item()
-        return reward, success
 
     def reset(self, seed=None, **kwargs):
         for nrr in self.reward_regions:

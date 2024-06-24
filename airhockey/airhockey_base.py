@@ -152,7 +152,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.center_offset_constant = center_offset_constant
         
         if len(paddle_bounds) == 0: # use preset values
-            self.paddle_x_min = self.table_x_top / 2 + 2 * self.paddle_radius
+            self.paddle_x_min = 0 # self.table_x_top / 2 + 2 * self.paddle_radius
             self.paddle_x_max = self.table_x_bot - 2 * self.paddle_radius
             self.paddle_y_min = self.table_y_left - self.paddle_radius
             self.paddle_y_max = self.table_y_right + self.paddle_radius
@@ -208,14 +208,13 @@ class AirHockeyBaseEnv(ABC, Env):
     @abstractmethod
     def validate_configuration(self):
         pass
-    
-    @abstractmethod
-    def get_base_reward(self, state_info):
-        pass
 
     @abstractmethod
     def get_observation(self, state_info):
         pass
+
+    def get_base_reward(self, state_info):
+        return self.reward.get_base_reward(state_info)
 
     def get_current_state(self): 
         # gets the current state and info
@@ -357,10 +356,10 @@ class AirHockeyBaseEnv(ABC, Env):
         else:
             if self.terminate_on_out_of_bounds:
                 # check if we hit any walls or are above the middle of the board
-                if state_info['paddles']['paddle_ego']['position'][0] < 0 or \
-                    state_info['paddles']['paddle_ego']['position'][0] > self.table_x_bot or \
-                    state_info['paddles']['paddle_ego']['position'][1] > self.table_y_right or \
-                    state_info['paddles']['paddle_ego']['position'][1] < self.table_y_left:
+                if state_info['paddles']['paddle_ego']['position'][0] < self.paddle_x_min or \
+                    state_info['paddles']['paddle_ego']['position'][0] > self.paddle_x_max or \
+                    state_info['paddles']['paddle_ego']['position'][1] >  self.paddle_y_max or \
+                    state_info['paddles']['paddle_ego']['position'][1] < self.paddle_y_min:
                     truncated = True
                     print("paddle out of bounds with position: ", state_info['paddles']['paddle_ego']['position'])
                     print("X_min, X_max, Y_min, Y_max: ", 0 + self.paddle_radius, self.table_x_bot - self.paddle_radius, self.table_y_left + self.paddle_radius, self.table_y_right - self.paddle_radius)
