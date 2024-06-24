@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Directory containing the YAML files
-CONFIG_DIR="/home/air_hockey/air-hockey-rl/configs/baseline_configs/box2d"
+CONFIG_DIR="/home/air_hockey/air-hockey-rl/configs/baseline_configs/tmp"
 
 # List all YAML files in the directory
 CONFIG_FILES=($CONFIG_DIR/*.yaml)
@@ -19,6 +19,10 @@ MACHINE_7_REMOTE_DIR="/home/air_hockey/sarthak/air-hockey-rl"
 # TMUX session name
 TMUX_SESSION_NAME="training_session"
 
+# Source machine details
+SOURCE_MACHINE="air_hockey@pearl-cluster.local"
+SOURCE_DIR="/home/air_hockey/air-hockey-rl/configs/baseline_configs/tmp/tmp_models"
+
 # Loop through the YAML files and distribute them across the machines
 for i in "${!CONFIG_FILES[@]}"; do
   CONFIG_FILE="${CONFIG_FILES[$i]}"
@@ -31,6 +35,48 @@ for i in "${!CONFIG_FILES[@]}"; do
     REMOTE_DIR="$DEFAULT_REMOTE_DIR"
   fi
 
+  REMOTE_CONFIG_FILE="$REMOTE_DIR/$(basename $CONFIG_FILE)"
+  MONITOR_SCRIPT="/tmp/monitor_and_cleanup_${i}.sh"
+
+  # Copy the configuration file to the remote machine
+  scp "$CONFIG_FILE" "$MACHINE:$REMOTE_CONFIG_FILE"
+
+  # Extract task name from YAML file
+  TASK_NAME=$(yq e '.task' "$CONFIG_FILE")
+
+  # Create monitoring and cleanup script
+  cat <<EOF > $MONITOR_SCRIPT
+#!/bin/bash
+BEFORE=\$(ls $REMOTE_DIR/baseline_models/$TASK_NAME)
+cd $REMOTE_DIR
+source ~/miniconda/etc/profile.d/conda.sh
+conda activate sarthak_rl_35
+python scripts/train.py --cfg $REMOTE_CONFIG_FILE --device cuda
+mkdir -p $REMOTE_DIR/baseline_models/$TASK_NAME
+AFTER=\$(ls $REMOTE_DIR/baseline_models/$TASK_NAME)
+NEW_FOLDERS=\$(comm -13 <(echo "\$BEFORE") <(echo "\$AFTER"))
+echo "Transferring folders"
+# Transfer the new folders back to the source machine
+for folder in \$NEW_FOLDERS; do
+  scp -r "$REMOTE_DIR/baseline_models/$TASK_NAME/\$folder" "$SOURCE_MACHINE:$SOURCE_DIR"
+  if [ $? -eq 0 ]; then
+    # Remove the folder if it was transferred successfully
+    rm -r "$REMOTE_DIR/baseline_models/$TASK_NAME/$folder"
+  else
+    echo "Error transferring $folder. It has not been removed from the machine."
+  fi
+done
+
+# Remove the remote config file
+rm $REMOTE_CONFIG_FILE
+
+# Remove this script
+rm -- "\$0"
+EOF
+
+  # Copy the monitoring script to the remote machine
+  scp "$MONITOR_SCRIPT" "$MACHINE:$REMOTE_DIR/monitor_and_cleanup.sh"
+  rm "$MONITOR_SCRIPT"
 
   # Construct the command to create a tmux session and window
   REMOTE_CMD="
@@ -40,12 +86,13 @@ fi
 tmux new-window -t $TMUX_SESSION_NAME -n training_${i}
 "
 
-  # Execute the command on the remote machine
+  # Execute the command on the remote machine to create the tmux window
   echo "Executing on $MACHINE:"
   echo "$REMOTE_CMD"
   ssh -t "$MACHINE" "$REMOTE_CMD"
-  # Send the training command to the tmux window
-  TRAIN_CMD="cd $REMOTE_DIR && conda activate sarthak_rl_35 && python scripts/train.py --cfg $CONFIG_FILE --device cuda"
+
+  # Send the training command to the new tmux window
+  TRAIN_CMD="bash $REMOTE_DIR/monitor_and_cleanup.sh"
   ssh -t "$MACHINE" "tmux send-keys -t $TMUX_SESSION_NAME:training_${i} \"$TRAIN_CMD\" C-m"
 
 done
