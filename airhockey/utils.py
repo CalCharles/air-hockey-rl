@@ -109,5 +109,19 @@ def get_observation_by_type(state_info, obs_type='vel', **kwargs):
         puck_y_vel = state_info['pucks'][0]['velocity'][1] 
         obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, ego_paddle_x_acc, ego_paddle_y_acc, paddle_forces_x, paddle_forces_y, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
         return obs
-
+    elif obs_type == "multipuck":
+        ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
+        ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
+        ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
+        ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
+        obs = [ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel]
+        
+        for puck in state_info['pucks']:
+            obs.append(puck['position'][0])
+            obs.append(puck['position'][1])
+            obs.append(puck['velocity'][0])
+            obs.append(puck['velocity'][1])
+        
+        obs = np.array(obs)
+        return obs
     raise  ValueError("obs type " + obs_type + " is not a defined observation type")

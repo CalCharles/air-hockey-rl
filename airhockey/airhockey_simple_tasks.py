@@ -221,8 +221,8 @@ class AirHockeyPuckJuggleEnv(AirHockeyBaseEnv):
         paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
         paddle_obs_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
         
-        puck_obs_low = [self.table_x_top, self.table_y_left, -self.max_puck_vel, -self.max_puck_vel]
-        puck_obs_high = [self.table_x_bot, self.table_y_right, self.max_puck_vel, self.max_puck_vel]
+        puck_obs_low = [self.table_x_top, self.table_y_left, -self.max_puck_vel, -self.max_puck_vel] * self.num_pucks
+        puck_obs_high = [self.table_x_bot, self.table_y_right, self.max_puck_vel, self.max_puck_vel] * self.num_pucks
         
         puck_hist_low = [self.table_x_top, self.table_y_left, 0] * 5
         puck_hist_high = [self.table_x_bot, self.table_y_right, 0] * 5

@@ -72,13 +72,16 @@ class AirHockeyPuckJuggleReward(AirHockeyRewardBase):
 
     def get_base_reward(self, state_info):
         reward = 0
-        x_pos = state_info['pucks'][0]['position'][0]
-        x_higher = self.task_env.table_x_top
-        x_lower = self.task_env.table_x_bot
-        if x_higher / 4 < x_pos < 0:
-            reward += 15
-        elif x_pos < x_higher / 4:
-            reward -= 1
+        
+        for puck in state_info["pucks"]:
+            x_pos = puck['position'][0]
+            x_higher = self.task_env.table_x_top
+            x_lower = self.task_env.table_x_bot
+            if x_higher / 4 < x_pos < 0:
+                reward += 15 / len(state_info["pucks"])
+            elif x_pos < x_higher / 4:
+                reward -= 1 / len(state_info["pucks"])
+        
         success = reward > 0 and self.task_env.current_timestep > 50
         return reward, success
 
