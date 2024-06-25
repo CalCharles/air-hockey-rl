@@ -52,7 +52,8 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
                  initialization_description_pth="",
                  obs_type="negative_regions_puck",
                  terminate_on_puck_pass_paddle=False,
-                 terminate_on_puck_hit_bottom=False):
+                 terminate_on_puck_hit_bottom=False,
+                 goal_radius_type="fixed"):
         self.num_negative_reward_regions = num_negative_reward_regions
         self.negative_reward_range = negative_reward_range
         self.reward_region_shapes = reward_region_shapes
@@ -66,7 +67,8 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
         self.velocity_of_goal_max = velocity_of_goal_max
         self.reward_movement_types = reward_movement_types
         self.reward = AirHockeyPuckGoalPositionDynamicNegRegionsReward(self)
-
+        self.goal_radius_type = goal_radius_type
+        
         super().__init__(simulator, # box2d or robosuite
                  simulator_params,
                  task, 

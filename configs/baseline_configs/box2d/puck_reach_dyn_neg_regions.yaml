@@ -43,7 +43,7 @@ air_hockey:
   horizontal_vel_rew: -0.1
   diagonal_motion_rew: -0.1
   stand_still_rew: 0.01
-
+  goal_radius_type: "fixed"
   # Reward region parameters
   num_negative_reward_regions: 5
   negative_reward_range: [-1,-1]

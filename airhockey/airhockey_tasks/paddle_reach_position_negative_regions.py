@@ -5,7 +5,7 @@ from gymnasium import spaces
 from .abstract_airhockey_goal_task import AirHockeyGoalEnv
 from airhockey.airhockey_tasks.utils import RewardRegion
 from airhockey.airhockey_rewards import AirHockeyPaddleReachPositionNegRegionsReward
-
+import math
 class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
     def __init__(self,
                  simulator, # box2d or robosuite
@@ -47,7 +47,9 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
                  reward_movement_types=[],
                  initialization_description_pth="",
                  paddle_offsets = [0,0,0,0],
-                 paddle_clipping = [1,0,-0.1,-0.15]):
+                 paddle_clipping = [1,0,-0.1,-0.15],
+                 obs_type="negative_regions_paddle",
+                 goal_radius_type="fixed"):
         self.init_dict = self.load_initialization(initialization_description_pth)
         self.num_negative_reward_regions = num_negative_reward_regions
         self.negative_reward_range = negative_reward_range
@@ -57,6 +59,7 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
         self.reward_normalized_radius_max = reward_normalized_radius_max
         self.reward_velocity_limits_min = reward_normalized_radius_min
         self.reward_velocity_limits_max = reward_normalized_radius_max
+        self.goal_radius_type = goal_radius_type
         self.reward = AirHockeyPaddleReachPositionNegRegionsReward(self)
         super().__init__(simulator, # box2d or robosuite
                  simulator_params,
@@ -83,7 +86,8 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
                  seed,
                  dense_goal=dense_goal,
                  goal_selector=goal_selector,
-                 max_timesteps=max_timesteps)
+                 max_timesteps=max_timesteps,
+                 obs_type=obs_type)
         
     @staticmethod
     def from_dict(state_dict):
@@ -92,7 +96,7 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
     def start_callbacks(self):
         # starts callbacks for the real robot, should be overwritten for most methods
         # but the default logic should suffice
-        region_info = [r.state.tolist() + r.radius.tolist() for r in self.reward_regions]
+        region_info = [r.state.tolist() + [r.radius] for r in self.reward_regions]
         goal_info = self.goal_pos.tolist() + [self.goal_radius]
         self.simulator.start_callbacks(region_info=region_info, goal_info=goal_info)
 
@@ -141,6 +145,9 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
 
         low = paddle_obs_low
         high = paddle_obs_high
+
+        nrr_obs_low = [-math.inf] * 12 * self.num_negative_reward_regions
+        nrr_obs_high = [-math.inf] * 12 * self.num_negative_reward_regions
 
         goal_low = [0, self.table_y_left]
         goal_high = [self.table_x_bot, self.table_y_right]
@@ -193,9 +200,8 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
             high = paddle_obs_high + reward_region_states_high
             self.observation_space = self.get_goal_obs_space(low, high, goal_low, goal_high)
         else:
-            low = paddle_obs_low + goal_low + reward_region_states_low
-            high = paddle_obs_high + goal_high + reward_region_states_high
-            
+            low = paddle_obs_low + reward_region_states_low + goal_low 
+            high = paddle_obs_high + reward_region_states_high + goal_high 
             self.observation_space = self.get_obs_space(low, high)
             
     def create_world_objects(self):
@@ -223,7 +229,7 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
         position = self.goal_pos
         return np.array([position[0], position[1]])
     
-    def get_observation(self, state_info, obs_type ="negative_regions_paddle", **kwargs):
+    def get_observation(self, state_info, obs_type="negative_regions_paddle", **kwargs):
         state_info["negative_regions"] = [nrr.get_state() for nrr in self.reward_regions]
         return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)
 

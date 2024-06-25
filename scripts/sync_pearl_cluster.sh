@@ -14,11 +14,13 @@ REMOTE_USER="air_hockey"
 DEFAULT_REMOTE_DIR="/home/air_hockey/air-hockey-rl"
 MACHINE_7_REMOTE_DIR="/home/air_hockey/sarthak/air-hockey-rl"
 
+EXCLUDE_SUBFOLDER="baseline_models"
+
 # Options:
 # -a: archive mode (preserves permissions, timestamps, symlinks, etc.)
 # -v: verbose mode
 # -z: compress files during transfer
-RSYNC_OPTIONS="-avz"
+RSYNC_OPTIONS="-avz --exclude=${EXCLUDE_SUBFOLDER}"
 
 # Loop through each machine in the cluster and perform synchronization
 for i in $(seq 1 $NUM_MACHINES); do

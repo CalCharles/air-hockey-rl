@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Directory containing the YAML files
-CONFIG_DIR="/home/air_hockey/air-hockey-rl/configs/baseline_configs/tmp"
+CONFIG_DIR="/home/air_hockey/air-hockey-rl/configs/baseline_configs/boox2d"
 
 # List all YAML files in the directory
 CONFIG_FILES=($CONFIG_DIR/*.yaml)
@@ -21,7 +21,7 @@ TMUX_SESSION_NAME="training_session"
 
 # Source machine details
 SOURCE_MACHINE="air_hockey@pearl-cluster.local"
-SOURCE_DIR="/home/air_hockey/air-hockey-rl/configs/baseline_configs/tmp/tmp_models"
+SOURCE_DIR="/home/air_hockey/air-hockey-rl/baseline_models/batch_runs"
 
 # Loop through the YAML files and distribute them across the machines
 for i in "${!CONFIG_FILES[@]}"; do
@@ -42,17 +42,26 @@ for i in "${!CONFIG_FILES[@]}"; do
   scp "$CONFIG_FILE" "$MACHINE:$REMOTE_CONFIG_FILE"
 
   # Extract task name from YAML file
-  TASK_NAME=$(yq e '.task' "$CONFIG_FILE")
+  TASK_NAME=$(yq '.air_hockey.task' "$CONFIG_FILE")
 
   # Create monitoring and cleanup script
   cat <<EOF > $MONITOR_SCRIPT
 #!/bin/bash
+mkdir -p $REMOTE_DIR/baseline_models/$TASK_NAME
 BEFORE=\$(ls $REMOTE_DIR/baseline_models/$TASK_NAME)
 cd $REMOTE_DIR
-source ~/miniconda/etc/profile.d/conda.sh
+if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
+  source "$HOME/miniconda3/etc/profile.d/conda.sh"
+elif [ -f "$HOME/miniconda/etc/profile.d/conda.sh" ]; then
+  source "$HOME/miniconda/etc/profile.d/conda.sh"
+elif [ -f "/opt/conda/etc/profile.d/conda.sh" ]; then
+  source "/opt/conda/etc/profile.d/conda.sh"
+else
+  echo "Conda setup script not found. Exiting."
+  exit 1
+fi
 conda activate sarthak_rl_35
 python scripts/train.py --cfg $REMOTE_CONFIG_FILE --device cuda
-mkdir -p $REMOTE_DIR/baseline_models/$TASK_NAME
 AFTER=\$(ls $REMOTE_DIR/baseline_models/$TASK_NAME)
 NEW_FOLDERS=\$(comm -13 <(echo "\$BEFORE") <(echo "\$AFTER"))
 echo "Transferring folders"
@@ -75,7 +84,7 @@ rm -- "\$0"
 EOF
 
   # Copy the monitoring script to the remote machine
-  scp "$MONITOR_SCRIPT" "$MACHINE:$REMOTE_DIR/monitor_and_cleanup.sh"
+  scp "$MONITOR_SCRIPT" "$MACHINE:$REMOTE_DIR/monitor_and_cleanup_${i}.sh"
   rm "$MONITOR_SCRIPT"
 
   # Construct the command to create a tmux session and window
@@ -92,7 +101,7 @@ tmux new-window -t $TMUX_SESSION_NAME -n training_${i}
   ssh -t "$MACHINE" "$REMOTE_CMD"
 
   # Send the training command to the new tmux window
-  TRAIN_CMD="bash $REMOTE_DIR/monitor_and_cleanup.sh"
+  TRAIN_CMD="bash $REMOTE_DIR/monitor_and_cleanup_${i}.sh"
   ssh -t "$MACHINE" "tmux send-keys -t $TMUX_SESSION_NAME:training_${i} \"$TRAIN_CMD\" C-m"
 
 done
