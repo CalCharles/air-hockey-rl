@@ -556,9 +556,8 @@ def collect(buffer, next_obs, infos, agent, envs, args):
 
         # ALGO LOGIC: action logic
         with torch.no_grad():
-            
             action, logprob, _, value = agent.get_action_and_value(obs = torch.Tensor(next_obs).to(args.device),
-                                                                    priv_info = next_priv_info,
+                                                                    priv_info = torch.Tensor(next_priv_info).to(args.device),
                                                                     last_action =  batch.last_action_history,
                                                                     old_obs =  batch.obs_history,
                                                                     old_action =  batch.actions_history,)
@@ -575,9 +574,9 @@ def collect(buffer, next_obs, infos, agent, envs, args):
                     log_prob = logprob,
                     value = value,
                     )
-        next_obs = step_ret[0] 
+        next_obs = step_ret[0]
     
-    return next_obs, step_ret[3]
+    return next_obs, infos
         
 
 
@@ -598,39 +597,44 @@ def train(envs, eval_envs, writer, run_name, args, device):
 
     # TODO buffer size only for ppo
     buffer = RolloutRMABuffer(buffer_size=args.num_steps,
-                            observation_space=envs.single_observation_space,
-                            action_space=envs.single_action_space,
+                            observation_space=envs.observation_space,
+                            action_space=envs.action_space,
                             device=args.device,
                             gae_lambda=args.gae_lambda,
                             gamma=args.gamma,
                             n_envs=args.num_envs,
                             history_len=args.history_len,
                             priv_info_dim=len(priv_keys),
+                            envs=envs,
                         )
 
     eval_buffer = RolloutRMABuffer(buffer_size=args.num_steps,
-                            observation_space=envs.single_observation_space,
-                            action_space=envs.single_action_space,
+                            observation_space=envs.observation_space,
+                            action_space=envs.action_space,
                             device=args.device,
                             gae_lambda=args.gae_lambda,
                             gamma=args.gamma,
                             n_envs=args.num_envs,
                             history_len=args.history_len,
                             priv_info_dim=len(priv_keys),
+                            envs=eval_envs,
                         )
+
 
     trainer = ppo(
         agent,
         minibatch_size=args.minibatch_size,
-        update_epochs = args.update_epochs,
-        clip_coef = args.clip_coef,
-        norm_adv = args.norm_adv,
-        clip_vloss = args.clip_vloss,
-        ent_coef = args.ent_coef,
-        vf_coef = args.vf_coef,
-        optimizer = optimizer,
-        writer = writer,
-        start_time = start_time,
+        update_epochs=args.update_epochs,
+        clip_coef=args.clip_coef,
+        norm_adv=args.norm_adv,
+        clip_vloss=args.clip_vloss,
+        ent_coef=args.ent_coef,
+        vf_coef=args.vf_coef,
+        max_grad_norm=args.max_grad_norm,
+        target_kl=args.target_kl,
+        optimizer=optimizer,
+        writer=writer,
+        start_time=start_time,
         )
 
     for iteration in range(1, args.num_iterations + 1):
@@ -643,20 +647,26 @@ def train(envs, eval_envs, writer, run_name, args, device):
 
         next_obs, infos = collect(buffer, next_obs, infos, agent, envs, args)
         global_step = iteration * args.num_steps
+        print(f"buffer pos={buffer.pos}")
         trainer.update(buffer, global_step)
+        next_obs, infos = envs.reset(seed=args.seed)
+        buffer.reset()
+        print(f"global_step={global_step}")
+        # import pdb; pdb.set_trace()
 
+        # import pdb; pdb.set_trace()
 
-        evaluate(eval_envs=eval_envs, 
-                 agent=agent,
-                 eval_buffer=eval_buffer,
-                 args=args, 
-                 writer=writer, 
-                 global_step=global_step)
+        # evaluate(eval_envs=eval_envs, 
+        #          agent=agent,
+        #          eval_buffer=eval_buffer,
+        #          args=args, 
+        #          writer=writer, 
+        #          global_step=global_step)
 
-        if args.save_model and global_step % (args.num_envs * args.num_steps * 4) == 0:
-            model_path = f"runs/{run_name}/phase_{args.phase}/global_step_{global_step}.pth"
-            torch.save(agent.state_dict(), model_path)
-            print(f"model saved to {model_path}")
+        # if args.save_model and global_step % (args.num_envs * args.num_steps * 4) == 0:
+        #     model_path = f"runs/{run_name}/phase_{args.phase}/global_step_{global_step}.pth"
+        #     torch.save(agent.state_dict(), model_path)
+        #     print(f"model saved to {model_path}")
             
 
     envs.close()
@@ -730,12 +740,12 @@ def init_air_hockey(air_hockey_cfg, args):
     log_dir = os.path.join(log_parent_dir, air_hockey_cfg['tb_log_name'] + f'_{next_num}')
     
     # TODO: SEED and thread for eval
-    env = make_env(air_hockey_cfg)
+    envs = make_env(air_hockey_cfg)
     air_hockey_cfg["seed"] = air_hockey_cfg["seed"] + 1
     air_hockey_cfg["n_threads"] = args.eval_epi
     eval_envs = make_env(air_hockey_cfg)
 
-    return env, eval_envs, log_dir, air_hockey_cfg
+    return envs, eval_envs, log_dir, air_hockey_cfg
 
 @pyrallis.wrap()
 def main(args: Args):
@@ -753,16 +763,15 @@ def main(args: Args):
     assert 'n_threads' in air_hockey_cfg, "Please specify the number of threads to use for training."
     assert 'algorithm' in air_hockey_cfg, "Please specify the algorithm to use for training."
 
-    air_hockey_cfg["air_hockey"]["domain_random"] = True
-    envs, eval_envs, log_dir, air_hockey_cfg = init_air_hockey(air_hockey_cfg, args)
-    
-    # train prep
-    # args = tyro.cli(Args)
     args.num_envs = air_hockey_cfg['n_threads']
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
     run_name = args.run_name
+
+    air_hockey_cfg["air_hockey"]["domain_random"] = True
+    envs, eval_envs, log_dir, air_hockey_cfg = init_air_hockey(air_hockey_cfg, args)
+
     os.makedirs(f"runs/{run_name}", exist_ok=True)
     if args.save_model:
         os.makedirs(f"runs/{run_name}/phase_{args.phase}", exist_ok=True)
@@ -794,14 +803,13 @@ def main(args: Args):
     os.environ["PYTHONHASHSEED"] = str(args.seed)
     torch.backends.cudnn.deterministic = args.torch_deterministic
 
-    device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
     assert isinstance(envs.action_space, gym.spaces.Box), "only continuous action space is supported"
 
     if args.phase == 1 or args.phase == 3:
-        train(envs, eval_envs, writer, run_name, args, air_hockey_cfg, device)
+        train(envs, eval_envs, writer, run_name, args, args.device)
 
     elif args.phase == 2:
-        phase_2_train(envs, writer, run_name, args, air_hockey_cfg, device)
+        phase_2_train(envs, writer, run_name, args, air_hockey_cfg, args.device)
 
 if __name__ == "__main__":
     main()

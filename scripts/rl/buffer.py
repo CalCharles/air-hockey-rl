@@ -1,6 +1,6 @@
 from stable_baselines3.common.buffers import ReplayBuffer, RolloutBuffer
 from stable_baselines3.common.vec_env import VecNormalize
-from types import Optional, Union, Generator
+from typing import Optional, Union, Generator, NamedTuple
 import numpy as np
 from gymnasium import spaces
 import torch as th
@@ -9,7 +9,7 @@ import torch as th
 class RolloutRMABufferSamples(NamedTuple):
     observations: th.Tensor
     actions: th.Tensor
-    old_values: th.Tensor
+    values: th.Tensor
     old_log_prob: th.Tensor
     advantages: th.Tensor
     returns: th.Tensor
@@ -61,23 +61,27 @@ class RolloutRMABuffer(RolloutBuffer):
         n_envs: int = 1,
         history_len: int = 1,
         priv_info_dim: int = 1,
+        envs: Optional[VecNormalize] = None,
     ):
-        super().__init__(buffer_size, observation_space, action_space, device, n_envs=n_envs)
+        
         self.gae_lambda = gae_lambda
         self.gamma = gamma
         self.generator_ready = False
         self.history_len = history_len
         self.priv_info_dim = priv_info_dim
+        self.envs = envs
+
+        super().__init__(buffer_size, observation_space, action_space, device, n_envs=n_envs)
         self.reset()
 
     def reset(self) -> None:
         super().reset()
 
-        self.obs_history = np.zeros((self.buffer_size, self.n_envs, self.history_len) + envs.observation_space.shape)
-        self.actions_history = np.zeros((self.buffer_size, self.n_envs, self.history_len) + envs.action_space.shape)
+        self.obs_history = np.zeros((self.buffer_size, self.n_envs, self.history_len) + self.envs.observation_space.shape, dtype=np.float32)
+        self.actions_history = np.zeros((self.buffer_size, self.n_envs, self.history_len) + self.envs.action_space.shape, dtype=np.float32)
         # TODO: change var name
-        self.last_action_history = np.zeros((self.buffer_size, self.n_envs) + envs.action_space.shape)
-        self.priv_info = np.zeros((self.buffer_size, self.n_envs, self.priv_info_dim))
+        self.last_action_history = np.zeros((self.buffer_size, self.n_envs) + self.envs.action_space.shape, dtype=np.float32)
+        self.priv_info = np.zeros((self.buffer_size, self.n_envs, self.priv_info_dim), dtype=np.float32)
         
 
 
@@ -203,23 +207,22 @@ class RolloutRMABuffer(RolloutBuffer):
     def _get_samples(
         self,
         batch_inds: np.ndarray,
-        env: Optional[VecNormalize] = None,
     ) -> RolloutRMABufferSamples:
         data = (
             self.observations[batch_inds].reshape((-1,) + self.obs_shape),
-            self.actions[batch_inds].reshape((-1,) + self.action_dim),
+            self.actions[batch_inds].reshape((-1,) + self.action_space.shape),
             self.values[batch_inds].flatten(),
             self.log_probs[batch_inds].flatten(),
             self.advantages[batch_inds].flatten(),
             self.returns[batch_inds].flatten(),
             self.obs_history[batch_inds].reshape((-1,) + (self.history_len,) + self.obs_shape),
-            self.actions_history[batch_inds].reshape((-1,) + (self.history_len,) + self.action_dim),
-            self.last_action_history[batch_inds].reshape((-1,) + self.action_dim),
-            self.priv_info[batch_inds].reshape((-1,) + self.priv_info_dim),
+            self.actions_history[batch_inds].reshape((-1,) + (self.history_len,) + self.action_space.shape),
+            self.last_action_history[batch_inds].reshape((-1,) + self.action_space.shape),
+            self.priv_info[batch_inds].reshape((-1,) + (self.priv_info_dim,)),
         )
         return RolloutRMABufferSamples(*tuple(map(self.to_torch, data)))
 
-    def get_curr(self,):
+    def get_curr(self,) -> RolloutRMABufferSamples:
         data = (
             self.observations[self.pos - 1],
             self.actions[self.pos - 1],
