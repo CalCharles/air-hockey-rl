@@ -153,7 +153,7 @@ class AirHockeyBaseEnv(ABC, Env):
         
         if len(paddle_bounds) == 0: # use preset values
             self.paddle_x_min = 0 # self.table_x_top / 2 + 2 * self.paddle_radius
-            self.paddle_x_max = self.table_x_bot
+            self.paddle_x_max = self.table_x_bot - 2 * self.paddle_radius
             self.paddle_y_min = self.table_y_left - self.paddle_radius
             self.paddle_y_max = self.table_y_right + self.paddle_radius
         else:
@@ -337,7 +337,7 @@ class AirHockeyBaseEnv(ABC, Env):
     
     def get_paddle_configuration(self, name):
         if name == 'paddle_ego':
-            x_pos = self.table_x_bot - self.paddle_radius
+            x_pos = self.table_x_bot * 3/4
         elif name == 'paddle_alt':
             x_pos = self.table_x_top + self.paddle_radius
         else:
