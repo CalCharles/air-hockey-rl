@@ -37,10 +37,10 @@ air_hockey:
   terminate_on_puck_stop: False
   truncate_rew: -1
   wall_bumping_rew: -1
-  direction_change_rew: -0.05
-  horizontal_vel_rew: -0.1
-  diagonal_motion_rew: -0.1
-  stand_still_rew: 0.01
+  direction_change_rew: 0 #-0.05
+  horizontal_vel_rew: 0 #-0.1
+  diagonal_motion_rew: 0 #-0.1
+  stand_still_rew: 0 #0.01
   goal_radius_type: linear_decay
 
 # Training Parameters
@@ -50,7 +50,7 @@ vec_normalize_save_filepath: vec_normalize.pkl
 tb_log_dir: baseline_models
 tb_log_name: air_hockey_agent
 gamma: 0.99
-seed: [0, 1, 2, 3, 4]
+seed: [0]
 
 # this parameter is only used when evaluating demonstrations
 print_reward: false

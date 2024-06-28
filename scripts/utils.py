@@ -114,6 +114,42 @@ def save_evaluation_gifs(n_eps_viz, n_gifs, env_test, model, renderer, log_dir, 
     if use_wandb:
         wandb_run.log({"Evaluation Video": wandb.Video(gif_savepath, fps=20)})
 
+def save_task_gif(n_eps_viz, n_gifs, env_test, policy, renderer, log_dir):
+    env_test.max_timesteps = 200
+    for gif_idx in range(n_gifs):
+        frames = []
+        for i in tqdm.tqdm(range(n_eps_viz)):
+            obs = env_test.reset()
+            done = False
+            rew = 0
+            while not done:
+                frame = renderer.get_frame()
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                # decrease width to 160 but keep aspect ratio
+                aspect_ratio = frame.shape[1] / frame.shape[0]
+                frame = cv2.resize(frame, (160, int(160 / aspect_ratio)))
+                
+                # Display reward on the top right of the frame
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.5  # Adjust size of the font
+                font_color = (0, 0, 0)  # White color
+                line_type = 2
+                text_position = (frame.shape[1] - 150, 30)  # Position near the top right corner
+
+                cv2.putText(frame, f"Reward: {rew}", text_position, font, font_scale, font_color, line_type)
+                            
+                frames.append(frame)
+                action = policy(obs)
+                obs, rew, term, trunc, info = env_test.step(action)
+                done = term or trunc
+                
+        gif_savepath = os.path.join(log_dir, f'eval_{gif_idx}.gif')
+        def fps_to_duration(fps):
+            return int(1000 * 1/fps)
+        fps = 30 # slightly faster than 20 fps (simulation time), but makes rendering smooth
+        imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(fps))
+
+
 class EvalCallback(BaseCallback):
     """
     A custom callback that derives from ``BaseCallback``.
