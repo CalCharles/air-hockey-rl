@@ -90,8 +90,11 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
         if goal_pos is None and goal_set is None:
             min_y = self.table_y_left + self.goal_radius
             max_y = self.table_y_right - self.goal_radius
-            max_x = 0 - self.goal_radius
-            min_x = self.table_x_top + self.goal_radius
+            # max_x = 0 - self.goal_radius
+            # min_x = self.table_x_top + self.goal_radius
+            max_x = self.table_x_bot - self.goal_radius
+            min_x = 0
+            # import pdb; pdb.set_trace()
             self.goal_pos = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
         else:
             self.goal_pos = goal_pos if self.goal_set is None else self.goal_set[0]
