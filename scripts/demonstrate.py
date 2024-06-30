@@ -82,7 +82,9 @@ class Demonstrator:
                 action = np.array([DEMOFORCE,0])
             elif key == ord('d'):
                 action = np.array([0,DEMOFORCE])
-            print(action)
+            elif key == ord('r'):
+                action = np.array([-10.1, 0])
+            # print(action)
         else:
             raise ValueError("Invalid keyboard scheme")
         if self.renderer.orientation == 'vertical':
@@ -109,7 +111,12 @@ class Demonstrator:
                 print("fps", 1000 / (time.time() - start))
                 start = time.time()
             action = self.demonstrate()
-            _, rew, _, _, _ = self.air_hockey.step(action)
+            if np.any(action == -10.1):
+                self.air_hockey.reset()
+                continue
+            obs, rew, _, _, _ = self.air_hockey.step(action)
+            print(obs['observation'][:2], obs['observation'][-3:-1])
+            # time.sleep(0.1)
             # if self.print_reward:
             print("reward: ", rew)
             if i % 2000 == 0:
