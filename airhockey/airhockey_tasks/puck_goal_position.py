@@ -7,6 +7,8 @@ from airhockey.airhockey_rewards import AirHockeyPuckGoalPositionReward
 class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
     def __init__(self, **kwargs):
         self.goal_radius_type = kwargs['goal_radius_type']
+        self.success_bonus = kwargs['success_bonus']
+        self.test_goal_condition = kwargs['test_goal_condition']
         super().__init__(**kwargs)
         
     def initialize_spaces(self, obs_type):
@@ -62,10 +64,13 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
     
     def get_achieved_goal(self, state_info):
         position = np.array(state_info['pucks'][0]['position'])
+        # if self.test_goal_condition:
+        #     position = np.array(state_info['paddles']['paddle_ego']['position'])
         return position.astype(float)
     
     def get_desired_goal(self):
         position = self.goal_pos
+        
         return position.astype(float)
     
     def validate_configuration(self):
@@ -78,23 +83,30 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
     def get_observation(self, state_info, obs_type ="vel", **kwargs):
         return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)
 
-    def set_goals(self, goal_pos=None, alt_goal_pos=None, goal_set=None):
-        self.goal_set = goal_set
+    def set_goals(self):
+        # self.goal_set = goal_set
         if self.goal_radius_type == 'linear_decay':
             base_radius = (self.min_goal_radius + self.max_goal_radius) / 2 * (0.75)
             # linearly decrease radius, should start off at 3*base_radius then decrease to base_radius
             ratio = 2 * (1 - self.n_timesteps_so_far / self.n_training_steps) + 1
             goal_radius = ratio * base_radius
             self.goal_radius = goal_radius
+        elif self.goal_radius_type == 'fixed':
+            self.goal_radius = 0.25
+            
+        if self.test_goal_condition:
+            self.goal_radius = 0.15
 
-        if goal_pos is None and goal_set is None:
-            min_y = self.table_y_left + self.goal_radius
-            max_y = self.table_y_right - self.goal_radius
-            max_x = 0 - self.goal_radius
-            min_x = self.table_x_top + self.goal_radius
-            self.goal_pos = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
-        else:
-            self.goal_pos = goal_pos if self.goal_set is None else self.goal_set[0]
+        # if goal_pos is None and goal_set is None:
+        min_y = self.table_y_left + self.goal_radius
+        max_y = self.table_y_right - self.goal_radius
+        max_x = 0 - self.goal_radius
+        min_x = self.table_x_top + self.goal_radius
+        self.goal_pos = np.array([max_x + min_x, min_y + max_y])/2   #self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
+        if self.test_goal_condition:
+            self.goal_pos = np.array([0.5, 0.0])
+        # if self.test_goal_condition:
+        #     self.goal_pos = 
+        # else:
+        #     self.goal_pos = goal_pos if self.goal_set is None else self.goal_set[0]
         
-    def set_goal_set(self, goal_set):
-        self.goal_set = goal_set
