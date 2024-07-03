@@ -18,15 +18,16 @@ class CollisionForceListener(contactListener):
 
         # Calculate the forces for each contact point
         for i in range(contact.manifold.pointCount):
-            normal_impulse = impulse.normalImpulses[i]
-            normal = world_manifold.normal
+            if i < len(impulse.normalImpulses):
+                normal_impulse = impulse.normalImpulses[i]
+                normal = world_manifold.normal
 
-            self.collision_forces.append({
-                'bodyA': bodyA.userData,
-                'bodyB': bodyB.userData,
-                'normal_force': normal_impulse / 60.0,
-                'contact_normal': (normal.x, normal.y)
-            })
+                self.collision_forces.append({
+                    'bodyA': bodyA.userData,
+                    'bodyB': bodyB.userData,
+                    'normal_force': normal_impulse / 60.0,
+                    'contact_normal': (normal.x, normal.y)
+                })
 
 class AirHockeyBox2D:
     def __init__(self,
