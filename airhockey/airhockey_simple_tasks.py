@@ -32,9 +32,12 @@ class AirHockeyPuckVelEnv(AirHockeyBaseEnv):
         elif obs_type == "history":
             low = paddle_obs_low + puck_hist_low
             high = paddle_obs_high + puck_hist_high
-        elif obs_type == "paddle_acceleration":
+        elif obs_type == "paddle_acceleration_vel":
             low = paddle_obs_low + paddle_accel_low + paddle_force_low + puck_obs_low
             high = paddle_obs_high + paddle_accel_high + paddle_force_high + puck_obs_high
+        elif obs_type == "paddle_acceleration_history":
+            low = paddle_obs_low + paddle_accel_low + paddle_force_low + puck_hist_low
+            high = paddle_obs_high + paddle_accel_high + paddle_force_high + puck_hist_high
 
         self.observation_space = self.single_observation_space = self.get_obs_space(low, high)
         self.action_space = self.single_action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
