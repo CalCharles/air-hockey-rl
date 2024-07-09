@@ -153,7 +153,7 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
         goal_high = [self.table_x_bot, self.table_y_right]
                     
         
-        self.min_goal_radius = self.width / 16
+        self.min_goal_radius = self.width / 8
         self.max_goal_radius = self.width / 4
 
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
@@ -249,7 +249,7 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
         min_y = self.table_y_left
         max_y = self.table_y_right
         min_x = 0
-        max_x = self.table_x_bot
+        max_x = self.table_x_bot / 2 # set goal positions to be in the bottom half of the table.
         if self.init_goal_pos is None: goal_position = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
         else: 
             goal_position = copy.deepcopy(self.grid_midpoints[self.init_goal_pos[0], self.init_goal_pos[1]])
