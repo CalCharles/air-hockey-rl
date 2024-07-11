@@ -233,7 +233,7 @@ class AirHockeyPuckJuggleEnv(AirHockeyBaseEnv):
         if obs_type == "paddle":
             low = paddle_obs_low
             high = paddle_obs_high
-        elif obs_type == "vel" or obs_type == "multipuck":
+        elif obs_type == "vel" or obs_type == "multipuck_vel":
             low = paddle_obs_low + puck_obs_low
             high = paddle_obs_high + puck_obs_high
         elif obs_type == "history":
