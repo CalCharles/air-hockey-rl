@@ -38,7 +38,7 @@ air_hockey:
   terminate_on_puck_hit_bottom: true
   truncate_rew: -1
   wall_bumping_rew: -1
-  goal_radius_type: fixed
+  goal_radius_type: linear_decay
 algorithm: ppo
 eval_freq: 5000
 gamma: 0.99
