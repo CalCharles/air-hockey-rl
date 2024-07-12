@@ -1,5 +1,4 @@
 air_hockey:
-  obs_type: 'history'
   diagonal_motion_rew: -0.1
   direction_change_rew: -0.05
   goal_max_x_velocity: 1
@@ -12,6 +11,7 @@ air_hockey:
   num_paddles: 1
   num_pucks: 1
   num_targets: 0
+  obs_type: vel
   simulator: robosuite
   simulator_params:
     block_width: 0.0254

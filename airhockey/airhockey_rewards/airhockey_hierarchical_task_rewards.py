@@ -30,6 +30,15 @@ class AirHockeyStrikeCrowdReward(AirHockeyRewardBase):
         super().__init__(task_env)
 
     def get_base_reward(self, state_info):
+        # also reward hitting puck! some shaping here :)
+        vel_reward = -state_info['pucks'][0]['velocity'][0]
+        max_rew = 2 # estimated max vel
+        min_rew = 0  # min acceptable good velocity
+        if vel_reward <= min_rew:
+            vel_reward = 0
+        else:
+            vel_reward = min(vel_reward, max_rew)
+            vel_reward = (vel_reward - min_rew) / (vel_reward - min_rew)
         # check how much blocks deviate from initial position
         reward = 0.0
         for block in state_info['blocks']:

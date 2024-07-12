@@ -5,6 +5,7 @@ from .abstract_airhockey_goal_task import AirHockeyGoalEnv
 from airhockey.airhockey_tasks.utils import DynamicRewardRegion, DynamicGoalRegion
 import copy
 from airhockey.airhockey_rewards import AirHockeyPuckGoalPositionDynamicNegRegionsReward
+import math
 
 class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
     def __init__(self,
@@ -48,7 +49,11 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
                  reward_velocity_limits_min=[0,0],
                  reward_velocity_limits_max=[0,0],
                  reward_movement_types=[],
-                 initialization_description_pth=""):
+                 initialization_description_pth="",
+                 obs_type="negative_regions_puck_vel",
+                 terminate_on_puck_pass_paddle=False,
+                 terminate_on_puck_hit_bottom=False,
+                 goal_radius_type="fixed"):
         self.num_negative_reward_regions = num_negative_reward_regions
         self.negative_reward_range = negative_reward_range
         self.reward_region_shapes = reward_region_shapes
@@ -61,8 +66,9 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
         self.velocity_of_goal_min = velocity_of_goal_min
         self.velocity_of_goal_max = velocity_of_goal_max
         self.reward_movement_types = reward_movement_types
-        self.reward = AirHockeyPuckGoalPositionVelocityReward(self)
-
+        self.reward = AirHockeyPuckGoalPositionDynamicNegRegionsReward(self)
+        self.goal_radius_type = goal_radius_type
+        
         super().__init__(simulator, # box2d or robosuite
                  simulator_params,
                  task, 
@@ -88,7 +94,11 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
                  seed,
                  dense_goal=dense_goal,
                  goal_selector=goal_selector,
-                 max_timesteps=max_timesteps)
+                 max_timesteps=max_timesteps,
+                 obs_type=obs_type,
+                 terminate_on_puck_pass_paddle=terminate_on_puck_pass_paddle,
+                 terminate_on_puck_hit_bottom=terminate_on_puck_hit_bottom
+                 )
 
     @staticmethod
     def from_dict(state_dict):
@@ -105,24 +115,30 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
         goal_low = [self.table_x_top, self.table_y_left]        
         goal_high = [0, self.table_y_right]
         
+        nrr_obs_low = [-math.inf] * 12 * self.num_negative_reward_regions
+        nrr_obs_high = [-math.inf] * 12 * self.num_negative_reward_regions
+
         puck_hist_low = [self.table_x_top, self.table_y_left, 0] * 5
         puck_hist_high = [self.table_x_bot, self.table_y_right, 0] * 5
 
         if obs_type == "paddle":
             low = paddle_obs_low
             high = paddle_obs_high
-        elif obs_type == "vel":
+        elif obs_type == "history":
+            low = paddle_obs_low + puck_hist_low
+            high = paddle_obs_high + puck_hist_high
+        elif obs_type == "negative_regions_puck_vel":
             low = paddle_obs_low + puck_obs_low
             high = paddle_obs_high + puck_obs_high
-        elif obs_type == "history":
+        elif obs_type == "negative_regions_puck_history":
             low = paddle_obs_low + puck_hist_low
             high = paddle_obs_high + puck_hist_high
 
         if self.return_goal_obs:
             self.observation_space = self.get_goal_obs_space(low, high, goal_low, goal_high)
         else:
-            low = low + goal_low
-            high = high + goal_high
+            low = low + nrr_obs_low + goal_low
+            high = high + nrr_obs_high + goal_high
             self.observation_space = self.get_obs_space(low, high)
 
         self.min_goal_radius = self.width / 16
@@ -172,7 +188,7 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
         assert self.num_targets == 0
         assert self.num_paddles == 1
 
-    def get_observation(self, state_info, obs_type ="negative_regions_puck", **kwargs):
+    def get_observation(self, state_info, obs_type ="negative_regions_puck_vel", **kwargs):
         state_info["negative_regions"] = [nrr.get_state() for nrr in self.reward_regions]
         self.ego_pos = np.array(copy.deepcopy(state_info['paddles']['paddle_ego']['position']))
         return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)
