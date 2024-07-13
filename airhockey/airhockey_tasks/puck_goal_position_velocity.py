@@ -5,6 +5,10 @@ from .abstract_airhockey_goal_task import AirHockeyGoalEnv
 from airhockey.airhockey_rewards import AirHockeyPuckGoalPositionVelocityReward
 
 class AirHockeyPuckGoalPositionVelocityEnv(AirHockeyGoalEnv):
+    def __init__(self, **kwargs):
+        self.goal_radius_type = kwargs['goal_radius_type']
+        super().__init__(**kwargs)
+        
     def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
         paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]

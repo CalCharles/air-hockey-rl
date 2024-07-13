@@ -5,6 +5,10 @@ from .abstract_airhockey_goal_task import AirHockeyGoalEnv
 from airhockey.airhockey_rewards import AirHockeyPaddleReachPositionReward
 
 class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
+    def __init__(self, **kwargs):
+        self.goal_radius_type = kwargs['goal_radius_type']
+        super().__init__(**kwargs)
+        
     def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
         paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
@@ -70,7 +74,7 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
     def get_observation(self, state_info, obs_type ="paddle", **kwargs):
         return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)
     
-    def set_goals(self, goal_pos=None, goal_set=None):
+    def set_goals(self, goal_radius_type, goal_pos=None, goal_set=None):
         goal_low = [0, self.table_y_left]
         goal_high = [self.table_x_bot / 2, self.table_y_right] # set goal positions to be in the bottom half of the table.
         

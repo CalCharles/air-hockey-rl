@@ -7,7 +7,11 @@ import inspect
 class CollisionForceListener(contactListener):
     def __init__(self):
         contactListener.__init__(self)
-        self.collision_forces = []
+        self.collision_forces = list()
+    
+    def reset(self):
+        del self.collision_forces
+        self.collision_forces = list()
 
     def PostSolve(self, contact, impulse):
         fixtureA = contact.fixtureA
@@ -18,15 +22,16 @@ class CollisionForceListener(contactListener):
 
         # Calculate the forces for each contact point
         for i in range(contact.manifold.pointCount):
-            normal_impulse = impulse.normalImpulses[i]
-            normal = world_manifold.normal
+            if i < len(impulse.normalImpulses):
+                normal_impulse = impulse.normalImpulses[i]
+                normal = world_manifold.normal
 
-            self.collision_forces.append({
-                'bodyA': bodyA.userData,
-                'bodyB': bodyB.userData,
-                'normal_force': normal_impulse / 60.0,
-                'contact_normal': (normal.x, normal.y)
-            })
+                self.collision_forces.append({
+                    'bodyA': bodyA.userData,
+                    'bodyB': bodyB.userData,
+                    'normal_force': normal_impulse / 60.0,
+                    'contact_normal': (normal.x, normal.y)
+                })
 
 class AirHockeyBox2D:
     def __init__(self,
@@ -143,6 +148,8 @@ class AirHockeyBox2D:
 
         if type(self.gravity) == list:
             self.world.gravity = (0, self.rng.uniform(low=self.gravity[0], high=self.gravity[1]))
+        
+        if hasattr(self, "collision_listener"): self.collision_listener.reset()
 
         self.paddles = dict()
         self.pucks = dict()
@@ -153,11 +160,11 @@ class AirHockeyBox2D:
         
         self.multiagent = False
 
-        self.puck_history = [(-2 + self.center_offset_constant,0,1) for i in range(5)]
+        self.puck_history = list()
         self.paddle_attrs = None
         self.target_attrs = None
 
-        self.object_dict = {}
+        self.object_dict = dict()
         state_info = self.get_current_state()
         return state_info
     
@@ -282,6 +289,7 @@ class AirHockeyBox2D:
             puck.gravityScale = 0
         self.pucks[name] = puck
         self.object_dict[name] = puck
+        self.puck_history += [(-2,0,1) for i in range(5)]
         
     def spawn_block(self, pos, vel, name, affected_by_gravity=False, movable=True):
         pos = self.base_coord_to_box2d(pos)
@@ -357,7 +365,6 @@ class AirHockeyBox2D:
             force = force * np.array([self.action_x_scaling, self.action_y_scaling])
         if 'paddle_ego' in self.paddles:
             self.paddles['paddle_ego'].ApplyForceToCenter(force, True)
-
         self.world.Step(self.time_per_step, 10, 10)
         
         # correct blocks for t=0
@@ -387,8 +394,12 @@ class AirHockeyBox2D:
         self.paddles['paddle_ego'].position = (pos[0], pos[1])
         
         state_info = self.get_current_state()
-        if 'pucks' in state_info: self.puck_history.append(list(state_info['pucks'][0]["position"]) + [0])
-        else: self.puck_history.append([-2 + self.center_offset_constant,0,1])
+        if 'pucks' in state_info:
+            for puck in state_info['pucks']:
+                self.puck_history.append(list(puck["position"]) + [0])
+        else:
+            for i in range(len(self.pucks.keys())):
+                self.puck_history.append([-2 + self.center_offset_constant,0,1])
         
         self.paddles['paddle_ego_acceleration'] = vel - current_vel
 

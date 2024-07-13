@@ -1,6 +1,6 @@
 # Air Hockey Table Parameters
 air_hockey:
-  obs_type: 'many_blocks'
+  obs_type: 'many_blocks_vel'
   simulator_params:
     absorb_target: false
     length: 1.9304

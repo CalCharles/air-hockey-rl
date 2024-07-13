@@ -11,7 +11,7 @@ for i in $(seq 1 $NUM_MACHINES); do
   MACHINE="${MACHINE_BASE_NAME}${i}.local"
 
   # Construct the command to kill all tmux sessions
-  REMOTE_CMD="tmux kill-server"
+  REMOTE_CMD="tmux kill-session -t robosuite_training_session"
 
   # Execute the command on the remote machine
   echo "Killing all tmux sessions on $MACHINE"
