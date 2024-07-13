@@ -7,7 +7,11 @@ import inspect
 class CollisionForceListener(contactListener):
     def __init__(self):
         contactListener.__init__(self)
-        self.collision_forces = []
+        self.collision_forces = list()
+    
+    def reset(self):
+        del self.collision_forces
+        self.collision_forces = list()
 
     def PostSolve(self, contact, impulse):
         fixtureA = contact.fixtureA
@@ -144,6 +148,8 @@ class AirHockeyBox2D:
 
         if type(self.gravity) == list:
             self.world.gravity = (0, self.rng.uniform(low=self.gravity[0], high=self.gravity[1]))
+        
+        if hasattr(self, "collision_listener"): self.collision_listener.reset()
 
         self.paddles = dict()
         self.pucks = dict()
@@ -154,11 +160,11 @@ class AirHockeyBox2D:
         
         self.multiagent = False
 
-        self.puck_history = []
+        self.puck_history = list()
         self.paddle_attrs = None
         self.target_attrs = None
 
-        self.object_dict = {}
+        self.object_dict = dict()
         state_info = self.get_current_state()
         return state_info
     
@@ -359,7 +365,6 @@ class AirHockeyBox2D:
             force = force * np.array([self.action_x_scaling, self.action_y_scaling])
         if 'paddle_ego' in self.paddles:
             self.paddles['paddle_ego'].ApplyForceToCenter(force, True)
-
         self.world.Step(self.time_per_step, 10, 10)
         
         # correct blocks for t=0
