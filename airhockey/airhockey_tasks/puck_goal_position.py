@@ -92,7 +92,7 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
             goal_radius = ratio * base_radius
             self.goal_radius = goal_radius
         elif self.goal_radius_type == 'fixed':
-            self.goal_radius = 0.25
+            self.goal_radius = 0.15
             
         if self.test_goal_condition:
             self.goal_radius = 0.15
@@ -102,7 +102,7 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
         max_y = self.table_y_right - self.goal_radius
         max_x = 0 - self.goal_radius
         min_x = self.table_x_top + self.goal_radius
-        self.goal_pos = np.array([max_x + min_x, min_y + max_y])/2   #self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
+        self.goal_pos = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y)) #np.array([max_x + min_x, min_y + max_y])/2   #self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
         if self.test_goal_condition:
             self.goal_pos = np.array([0.5, 0.0])
         # if self.test_goal_condition:

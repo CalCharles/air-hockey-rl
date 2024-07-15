@@ -9,7 +9,7 @@ class AirHockeyPuckGoalPositionReward(AirHockeyRewardBase):
         # if not vectorized, convert to vector
         single = len(achieved_goal.shape) == 1
         if single:
-            achieved_goal = np.array(info['paddle_ego']['position'])[None, ...] #achieved_goal.reshape(1, -1)
+            achieved_goal = achieved_goal.reshape(1, -1)
             desired_goal = desired_goal.reshape(1, -1)
         # return euclidean distance between the two points
         dist = np.linalg.norm(achieved_goal[:, :2] - desired_goal[:, :2], axis=1)
