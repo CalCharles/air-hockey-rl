@@ -16,6 +16,7 @@ import yaml
 from utils import EvalCallback, save_evaluation_gifs, save_tensorboard_plots
 from curriculum.classifier_curriculum import CurriculumCallback
 import h5py
+import time
             
 def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_prior_task_results=False, progress_bar=True):
     """

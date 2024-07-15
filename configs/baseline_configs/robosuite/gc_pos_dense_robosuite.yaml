@@ -1,5 +1,4 @@
 air_hockey:
-  obs_type: 'history'
   diagonal_motion_rew: -0.1
   direction_change_rew: -0.05
   goal_max_x_velocity: 1
@@ -8,6 +7,7 @@ air_hockey:
   goal_selector: dynamic
   horizontal_vel_rew: -0.1
   max_timesteps: 300
+  obs_type: vel
   simulator: robosuite
   simulator_params:
     block_width: 0.0254
@@ -31,6 +31,8 @@ air_hockey:
   terminate_on_goal_success: true
   terminate_on_out_of_bounds: true
   terminate_on_puck_stop: true
+  terminate_on_puck_pass_paddle: true
+  terminate_on_puck_hit_bottom: true
   truncate_rew: -1
   wall_bumping_rew: -1
 algorithm: ppo

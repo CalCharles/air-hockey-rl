@@ -83,8 +83,8 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
     def get_observation(self, state_info, obs_type ="vel", **kwargs):
         return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)
 
-    def set_goals(self):
-        # self.goal_set = goal_set
+    def set_goals(self, goal_radius_type, goal_pos=None, alt_goal_pos=None, goal_set=None):
+        self.goal_set = goal_set
         if self.goal_radius_type == 'linear_decay':
             base_radius = (self.min_goal_radius + self.max_goal_radius) / 2 * (0.75)
             # linearly decrease radius, should start off at 3*base_radius then decrease to base_radius

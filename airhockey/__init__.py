@@ -63,7 +63,7 @@ def AirHockeyEnv(cfg):
         task_env = AirHockeyPuckHeightEnv
     elif task == "puck_catch":
         task_env = AirHockeyPuckCatchEnv
-    elif task == "puck_juggle":
+    elif task == "puck_juggle" or task == "multipuck_juggle":
         task_env = AirHockeyPuckJuggleEnv
     elif task == "puck_strike":
         task_env = AirHockeyPuckStrikeEnv

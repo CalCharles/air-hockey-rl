@@ -1,6 +1,6 @@
 # Air Hockey Table Parameters
 air_hockey:
-  obs_type: 'paddle'
+  obs_type: 'negative_regions_paddle'
   simulator_params:
     absorb_target: false
     length: 1.9304
@@ -17,11 +17,11 @@ air_hockey:
     render_size: 360
     gravity: -0.5
     max_force_timestep: 100 # max force we can apply at one timestep
-  
+  goal_radius_type: fixed
   simulator: box2d # or robosuite
   max_timesteps: 300
   # reward_type: 'goal_position_velocity'
-  task: 'paddle_goal_position_neg'
+  task: 'paddle_reach_position_neg'
   num_paddles: 1
   num_pucks: 0
   num_blocks: 0

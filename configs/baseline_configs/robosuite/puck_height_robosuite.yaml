@@ -1,5 +1,4 @@
 air_hockey:
-  obs_type: 'history'
   diagonal_motion_rew: -0.1
   direction_change_rew: -0.05
   goal_max_x_velocity: 1
@@ -12,11 +11,14 @@ air_hockey:
   num_paddles: 1
   num_pucks: 1
   num_targets: 0
+  obs_type: vel
   simulator: robosuite
   simulator_params:
     block_width: 0.0254
+    bot_solref: -100000
     depth: 0.101
     has_renderer: true
+    left_solref: -100000
     length: 2.1104
     max_paddle_vel: 10
     max_puck_vel: 10
@@ -25,19 +27,19 @@ air_hockey:
     puck_density: 250
     puck_radius: 0.03175
     render_size: 360
+    right_solref: -100000
     rim_width: 0.045
     table_elevation: 0.7874
     table_tilt: 0.09
-    width: 1.0436
-    bot_solref: -100000
     top_solref: -100000
-    left_solref: -100000
-    right_solref: -100000
+    width: 1.0436
   stand_still_rew: 0.01
   task: puck_height
   terminate_on_enemy_goal: false
-  terminate_on_out_of_bounds: false
+  terminate_on_out_of_bounds: true
   terminate_on_puck_stop: false
+  terminate_on_puck_pass_paddle: true
+  terminate_on_puck_hit_bottom: true
   truncate_rew: -1
   wall_bumping_rew: -1
 algorithm: ppo

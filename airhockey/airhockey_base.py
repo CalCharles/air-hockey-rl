@@ -337,7 +337,7 @@ class AirHockeyBaseEnv(ABC, Env):
     
     def get_paddle_configuration(self, name):
         if name == 'paddle_ego':
-            x_pos = self.table_x_bot - self.paddle_radius
+            x_pos = self.table_x_bot * 3/4
         elif name == 'paddle_alt':
             x_pos = self.table_x_top + self.paddle_radius
         else:
