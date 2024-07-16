@@ -29,10 +29,20 @@ class AirHockeyPuckGoalPositionReward(AirHockeyRewardBase):
         ag = self.task_env.get_achieved_goal(state_info)
         dg = self.task_env.get_desired_goal()
         reward = self.compute_reward(self.task_env.get_achieved_goal(state_info), self.task_env.get_desired_goal())
-        puck_touch_reward = self.puck_touch_reward.compute_reward(np.array(state_info['paddles']['paddle_ego']['position']),
-                                                                  np.array(state_info['pucks'][0]['position']))
         
-        reward = max(reward, puck_touch_reward)
+        paddle_pos = np.array(state_info['paddles']['paddle_ego']['position'])
+        puck_pos = np.array(state_info['pucks'][0]['position'])
+        puck_vel = np.array(state_info['pucks'][0]['velocity'])
+        
+        if len(paddle_pos.shape) == 1:
+            paddle_pos = paddle_pos.reshape(1, -1)
+            puck_pos = puck_pos.reshape(1, -1)
+            puck_vel = puck_vel.reshape(1, -1)
+        puck_paddle_dist = np.linalg.norm(paddle_pos - puck_pos, axis=1)
+        puck_touch_reward = -puck_vel[:, 0] * (puck_vel[:, 0] < 0)
+        # print(puck_vel)
+        # if the puck has negative (away) velocity, give a reward
+        reward += puck_touch_reward
         
         
         dist = np.linalg.norm(ag - dg, axis=0)

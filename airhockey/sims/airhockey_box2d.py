@@ -5,7 +5,6 @@ import numpy as np
 import yaml
 import inspect
 from matplotlib import pyplot as plt
-from memory_profiler import profile as mprofile
 import pstats
 class CollisionForceListener(contactListener):
     def __init__(self):

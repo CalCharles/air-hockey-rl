@@ -36,13 +36,13 @@ air_hockey:
   terminate_on_enemy_goal: False
   terminate_on_puck_stop: False
   truncate_rew: -10
-  wall_bumping_rew: -0.1
+  wall_bumping_rew: 0.0
   puck_goal_success_bonus: 10.0
   paddle_puck_success_bonus: 2.0
-  direction_change_rew: -0.05
-  horizontal_vel_rew: -0.1
-  diagonal_motion_rew: -0.1
-  stand_still_rew: 0.01
+  direction_change_rew: 0.0
+  horizontal_vel_rew: 0.0
+  diagonal_motion_rew: 0.0
+  stand_still_rew: 0.0
   goal_radius_type: fixed
   test_goal_condition: False
 
