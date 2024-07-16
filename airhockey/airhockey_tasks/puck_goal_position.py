@@ -65,7 +65,7 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
     def get_achieved_goal(self, state_info):
         position = np.array(state_info['pucks'][0]['position'])
         # if self.test_goal_condition:
-        #     position = np.array(state_info['paddles']['paddle_ego']['position'])
+        # position = np.array(state_info['paddles']['paddle_ego']['position'])
         return position.astype(float)
     
     def get_desired_goal(self):

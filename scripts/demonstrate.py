@@ -115,8 +115,8 @@ class Demonstrator:
                 self.air_hockey.reset()
                 continue
             obs, rew, _, _, _ = self.air_hockey.step(action)
-            print(obs['observation'][:2], obs['observation'][-3:-1])
-            # time.sleep(0.1)
+            # print(obs['observation'][:2], obs['observation'][-3:-1])
+            time.sleep(0.1)
             # if self.print_reward:
             print("reward: ", rew)
             if i % 2000 == 0:
