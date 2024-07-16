@@ -35,7 +35,7 @@ air_hockey:
   terminate_on_out_of_bounds: False
   terminate_on_enemy_goal: False
   terminate_on_puck_stop: False
-  truncate_rew: -300.0
+  truncate_rew: -10
   wall_bumping_rew: -0.1
   success_bonus: 10.0
   direction_change_rew: 0 #-0.05
@@ -43,7 +43,7 @@ air_hockey:
   diagonal_motion_rew: 0 #-0.1
   stand_still_rew: 0 #0.01
   goal_radius_type: fixed
-  test_goal_condition: True
+  test_goal_condition: False
 
 # Training Parameters
 n_training_steps: 1000000
