@@ -43,7 +43,7 @@ air_hockey:
   diagonal_motion_rew: 0 #-0.1
   stand_still_rew: 0 #0.01
   goal_radius_type: fixed
-  test_goal_condition: False
+  test_goal_condition: True
 
 # Training Parameters
 n_training_steps: 1000000
@@ -57,7 +57,7 @@ seed: [0]
 # this parameter is only used when evaluating demonstrations
 print_reward: false
 n_threads: 1
-algorithm: sac
+algorithm: ppo
 
 n_eval_eps: 5
 eval_freq: 4096

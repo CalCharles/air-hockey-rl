@@ -104,9 +104,6 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
         min_x = self.table_x_top + self.goal_radius
         self.goal_pos = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y)) #np.array([max_x + min_x, min_y + max_y])/2   #self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
         if self.test_goal_condition:
-            self.goal_pos = np.array([0.5, 0.0])
-        # if self.test_goal_condition:
-        #     self.goal_pos = 
-        # else:
-        #     self.goal_pos = goal_pos if self.goal_set is None else self.goal_set[0]
+            self.goal_pos = np.array([-0.5, 0.0])
+
         
