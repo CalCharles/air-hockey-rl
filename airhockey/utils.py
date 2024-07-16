@@ -7,7 +7,6 @@ def get_observation_by_type(state_info, obs_type='vel', **kwargs):
     ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
     ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
     ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
-    
     if obs_type == "paddle":
         obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel])
         return obs

@@ -244,7 +244,6 @@ class EvalCallback(BaseCallback):
         avg_success_rate /= self.n_eval_eps
         avg_max_reward /= self.n_eval_eps
         avg_min_reward /= self.n_eval_eps
-        print(f"num steps in eval: {num_steps_in_eval}")
         return avg_undiscounted_return, avg_success_rate, avg_max_reward, avg_min_reward, (frames, robosuite_frames)
     
     def _on_rollout_start(self) -> None:
@@ -292,7 +291,6 @@ class EvalCallback(BaseCallback):
             keys = stats.stats.keys()
             for key in keys:
                 if 'get_singleagent_transition' in key:
-                    print(stats.stats[key])
                     self.logger.record("eval/singleagent_cum", stats.stats[key][3])
                     self.logger.record("eval/singleagent_tot", stats.stats[key][2])
                     
