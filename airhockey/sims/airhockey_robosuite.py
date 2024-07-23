@@ -293,9 +293,7 @@ class AirHockeyRobosuite(AirHockeySim):
     @staticmethod
     def from_dict(state_dict):
         # create a dictionary of only the relevant parameters
-        init_params = inspect.signature(AirHockeyRobosuite).parameters
-        relevant_params = {k: v for k, v in state_dict.items() if k in init_params}
-        return AirHockeyRobosuite(**relevant_params)
+        return AirHockeyRobosuite(**state_dict)
 
     def start_callbacks(self, **kwargs):
         return
