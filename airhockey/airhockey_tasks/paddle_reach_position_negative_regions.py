@@ -6,88 +6,48 @@ from .abstract_airhockey_goal_task import AirHockeyGoalEnv
 from airhockey.airhockey_tasks.utils import RewardRegion
 from airhockey.airhockey_rewards import AirHockeyPaddleReachPositionNegRegionsReward
 import math
+from types import SimpleNamespace
+
 class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
-    def __init__(self,
-                 simulator, # box2d or robosuite
-                 simulator_params,
-                 task, 
-                 num_pucks,
-                 num_blocks,
-                 num_obstacles,
-                 num_targets,
-                 num_paddles,
-                 n_training_steps,
-                 wall_bumping_rew,
-                 direction_change_rew,
-                 horizontal_vel_rew,
-                 diagonal_motion_rew,
-                 stand_still_rew,
-                 terminate_on_out_of_bounds, 
-                 terminate_on_enemy_goal, 
-                 terminate_on_puck_stop,
-                 truncate_rew,
-                 goal_max_x_velocity, 
-                 goal_min_y_velocity, 
-                 goal_max_y_velocity,
-                 return_goal_obs,
-                 seed,
-                 dense_goal=True,
-                 goal_selector='stationary',
-                 max_timesteps=1000,
-                 num_positive_reward_regions=0,
-                 positive_reward_range=[1,1],
-                 num_negative_reward_regions=0,
-                 negative_reward_range=[-1,-1],
-                 reward_region_shapes=[],
-                 reward_region_scale_range=[0,0],
-                 reward_normalized_radius_min=0.1,
-                 reward_normalized_radius_max=0.1,
-                 reward_velocity_limits_min=[0,0],
-                 reward_velocity_limits_max=[0,0],
-                 reward_movement_types=[],
-                 initialization_description_pth="",
-                 paddle_offsets = [0,0,0,0],
-                 paddle_clipping = [1,0,-0.1,-0.15],
-                 obs_type="negative_regions_paddle",
-                 goal_radius_type="fixed"):
-        self.init_dict = self.load_initialization(initialization_description_pth)
-        self.num_negative_reward_regions = num_negative_reward_regions
-        self.negative_reward_range = negative_reward_range
-        self.reward_region_shapes = reward_region_shapes
-        self.reward_region_scale_range = reward_region_scale_range
-        self.reward_normalized_radius_min = reward_normalized_radius_min
-        self.reward_normalized_radius_max = reward_normalized_radius_max
-        self.reward_velocity_limits_min = reward_normalized_radius_min
-        self.reward_velocity_limits_max = reward_normalized_radius_max
-        self.goal_radius_type = goal_radius_type
+    def __init__(self, **kwargs):
+        
+        defaults = {
+            'dense_goal': True,
+            'goal_selector': 'stationary',
+            'max_timesteps': 1000,
+            'num_positive_reward_regions': 0,
+            'positive_reward_range': [1, 1],
+            'num_negative_reward_regions': 0,
+            'negative_reward_range': [-1, -1],
+            'reward_region_shapes': [],
+            'reward_region_scale_range': [0, 0],
+            'reward_normalized_radius_min': 0.1,
+            'reward_normalized_radius_max': 0.1,
+            'reward_velocity_limits_min': [0, 0],
+            'reward_velocity_limits_max': [0, 0],
+            'reward_movement_types': [],
+            'initialization_description_pth': "",
+            'paddle_offsets': [0, 0, 0, 0],
+            'paddle_clipping': [1, 0, -0.1, -0.15],
+            'obs_type': "negative_regions_paddle",
+            'goal_radius_type': "fixed"
+        }
+        
+        kwargs = {**defaults, **kwargs}
+        config = SimpleNamespace(**kwargs)
+
+        self.init_dict = self.load_initialization(config.initialization_description_pth)
+        self.num_negative_reward_regions = config.num_negative_reward_regions
+        self.negative_reward_range = config.negative_reward_range
+        self.reward_region_shapes = config.reward_region_shapes
+        self.reward_region_scale_range = config.reward_region_scale_range
+        self.reward_normalized_radius_min = config.reward_normalized_radius_min
+        self.reward_normalized_radius_max = config.reward_normalized_radius_max
+        self.reward_velocity_limits_min = config.reward_velocity_limits_min
+        self.reward_velocity_limits_max = config.reward_velocity_limits_max
+        self.goal_radius_type = config.goal_radius_type
         self.reward = AirHockeyPaddleReachPositionNegRegionsReward(self)
-        super().__init__(simulator, # box2d or robosuite
-                 simulator_params,
-                 task, 
-                 num_pucks,
-                 num_blocks,
-                 num_obstacles,
-                 num_targets,
-                 num_paddles,
-                 n_training_steps,
-                 wall_bumping_rew,
-                 direction_change_rew,
-                 horizontal_vel_rew,
-                 diagonal_motion_rew,
-                 stand_still_rew,
-                 terminate_on_out_of_bounds, 
-                 terminate_on_enemy_goal, 
-                 terminate_on_puck_stop,
-                 truncate_rew,
-                 goal_max_x_velocity, 
-                 goal_min_y_velocity, 
-                 goal_max_y_velocity,
-                 return_goal_obs,
-                 seed,
-                 dense_goal=dense_goal,
-                 goal_selector=goal_selector,
-                 max_timesteps=max_timesteps,
-                 obs_type=obs_type)
+        super().__init__(**kwargs)
         
     @staticmethod
     def from_dict(state_dict):

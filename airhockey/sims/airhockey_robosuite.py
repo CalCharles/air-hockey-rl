@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 import numpy as np
 import math
 from robosuite.environments.manipulation.single_arm_env import SingleArmEnv
@@ -148,84 +149,87 @@ class AirHockeyRobosuite(AirHockeySim):
         AssertionError: [Invalid number of robots specified]
     """
 
-    def __init__(
-        self,
-        paddle_radius,
-        block_width,
-        max_paddle_vel,
-        max_puck_vel,
-        length, 
-        width,
-        depth,
-        table_tilt,
-        table_elevation,
-        rim_width,
-        render_size,
-        robots=['AirHockeyUR5e'],
-        env_configuration="default",
-        controller_configs=None,
-        gripper_types="RoundGripper",
-        initialization_noise="default",
-        table_friction=(1.0, 5e-3, 1e-4),
-        use_camera_obs=True,
-        has_renderer=False,
-        has_offscreen_renderer=True,
-        render_camera="frontview",
-        render_collision_mesh=False,
-        render_visual_mesh=True,
-        render_gpu_device_id=-1,
-        control_freq=20,
-        horizon=400,
-        ignore_done=False,
-        hard_reset=True,
-        camera_names=["birdview","sideview"],
-        camera_heights=512,
-        camera_widths=512,
-        camera_depths=False,
-        camera_segmentations=None,  # {None, instance, class, element}
-        renderer="mujoco",
-        renderer_config=None,
-        task="JUGGLE_PUCK",
-        table_xml="arenas/air_hockey_table.xml", # relative to assets dir
-        puck_radius=0.03165,
-        puck_damping=0.8,
-        puck_density=30,
-        seed=0,
-        # TODO: box2d specific config values not yet implemented
-        absorb_target = False,
-        force_scaling = 1000,
-        paddle_damping = 1,
-        paddle_density = 1,
-        block_density = 1,
-        gravity = 1,
-        max_force_timestep=1,
-        # TODO: real world specific configs not yet implemented
-        paddle_bounds=[],
-        paddle_edge_bounds=[],
-        center_offset_constant=1.2
-    ):
+    def __init__(self, **kwargs):
+
+        defaults = {
+            'action_x_scaling': 1.0,
+            'action_y_scaling': 1.0,
+            'render_masks': False,
+            'gravity': -5,
+            'paddle_density': 1000,
+            'puck_density': 250,
+            'block_density': 1000,
+            'max_paddle_vel': 2,
+            'time_frequency': 20,
+            'paddle_bounds': [],
+            'paddle_edge_bounds': [],
+            'center_offset_constant': 1.2,
+            'robots': ['AirHockeyUR5e'],
+            'env_configuration': "default",
+            'controller_configs': None,
+            'gripper_types': "RoundGripper",
+            'initialization_noise': "default",
+            'table_friction': (1.0, 5e-3, 1e-4),
+            'use_camera_obs': True,
+            'has_renderer': False,
+            'has_offscreen_renderer': True,
+            'render_camera': "frontview",
+            'render_collision_mesh': False,
+            'render_visual_mesh': True,
+            'render_gpu_device_id': -1,
+            'control_freq': 20,
+            'horizon': 400,
+            'ignore_done': False,
+            'hard_reset': True,
+            'camera_names': ["birdview", "sideview"],
+            'camera_heights': 512,
+            'camera_widths': 512,
+            'camera_depths': False,
+            'camera_segmentations': None,  # {None, instance, class, element}
+            'renderer': "mujoco",
+            'renderer_config': None,
+            'task': "JUGGLE_PUCK",
+            'table_xml': "arenas/air_hockey_table.xml",  # relative to assets dir
+            'puck_radius': 0.03165,
+            'puck_damping': 0.8,
+            'puck_density': 30,
+            'seed': 0,
+            'absorb_target': False,
+            'force_scaling': 1000,
+            'paddle_damping': 1,
+            'paddle_density': 1,
+            'block_density': 1,
+            'gravity': 1,
+            'max_force_timestep': 1,
+            'paddle_bounds': [],
+            'paddle_edge_bounds': [],
+            'center_offset_constant': 1.2
+        }
+
+        kwargs = {**defaults, **kwargs}
+        config = SimpleNamespace(**kwargs)
         # settings for table top
-        table_full_size = (length / 2, width / 2, depth / 2)
+        table_full_size = (config.length / 2, config.width / 2, config.depth / 2)
         self.table_full_size = table_full_size
-        self.table_friction = table_friction
-        self.table_offset = np.array((0, 0, table_elevation))
+        self.table_friction = config.table_friction
+        self.table_offset = np.array((0, 0, config.table_elevation))
         
-        self.length = length
-        self.width = width
-        self.ppm = render_size / self.width
-        self.render_width = int(render_size)
+        self.length = config.length
+        self.width = config.width
+        self.ppm = config.render_size / self.width
+        self.render_width = int(config.render_size)
         self.render_length = int(self.ppm * self.length)
         self.render_masks = False
 
-        self.gripper_types = gripper_types
+        self.gripper_types = config.gripper_types
 
-        self.table_tilt = table_tilt
-        self.table_elevation = table_elevation
-        self.table_depth = depth
+        self.table_tilt = config.table_tilt
+        self.table_elevation = config.table_elevation
+        self.table_depth = config.depth
         self.x_to_x_prime_ratio = math.cos(self.table_tilt)
         self.x_prime_to_x_ratio = 1 / self.x_to_x_prime_ratio
         self.x_to_z_ratio = math.sin(self.table_tilt)
-        self.transform_z = lambda x: self.x_to_z_ratio * x + self.table_elevation - depth
+        self.transform_z = lambda x: self.x_to_z_ratio * x + self.table_elevation - config.depth
         self.transform_x = lambda x: self.x_to_x_prime_ratio * x
         self.inverse_transform_x = lambda x: self.x_prime_to_x_ratio * x
         
@@ -233,10 +237,10 @@ class AirHockeyRobosuite(AirHockeySim):
         self.high_level_table_x_bot = self.length / 2
         self.high_level_table_y_right = self.width / 2
         self.high_level_table_y_left = -self.width / 2
-        self.center_offset_constant = center_offset_constant
+        self.center_offset_constant = config.center_offset_constant
         
-        self.table_x_offset = 2 * rim_width
-        self.table_y_offset = 2 * rim_width
+        self.table_x_offset = 2 * config.rim_width
+        self.table_y_offset = 2 * config.rim_width
         
         # where the playable area starts
         self.table_x_top = self.length - self.table_x_offset
@@ -250,29 +254,29 @@ class AirHockeyRobosuite(AirHockeySim):
 
         self.initial_puck_vels = dict()
         self.initial_block_positions = dict()
-        self.table_xml = table_xml
+        self.table_xml = config.table_xml
 
-        self.puck_radius = puck_radius
-        self.puck_damping = puck_damping
-        self.puck_density = puck_density
+        self.puck_radius = config.puck_radius
+        self.puck_damping = config.puck_damping
+        self.puck_density = config.puck_density
         self.puck_height = 0.009
         self.puck_z_offset = math.sin(self.table_tilt) * self.puck_radius
 
         # FIXME make these parameters do something, right now it's a placeholder to make calls to robosuite work
-        self.seed = seed
-        self.paddle_radius = paddle_radius
-        self.block_width = block_width
-        self.max_paddle_vel = max_paddle_vel
-        self.max_puck_vel = max_puck_vel
+        self.seed = config.seed
+        self.paddle_radius = config.paddle_radius
+        self.block_width = config.block_width
+        self.max_paddle_vel = config.max_paddle_vel
+        self.max_puck_vel = config.max_puck_vel
         
         self.robosuite_env = None
-        self.robosuite_env_cfg = {'robots': robots, 'env_configuration': env_configuration, 'controller_configs': controller_configs,
-                              'mount_types': "default", 'gripper_types': gripper_types, 'initialization_noise': initialization_noise,
-                              'use_camera_obs': use_camera_obs, 'has_renderer': has_renderer, 'has_offscreen_renderer': has_offscreen_renderer,
-                              'render_camera': render_camera, 'render_collision_mesh': render_collision_mesh, 'render_visual_mesh': render_visual_mesh,
-                              'render_gpu_device_id': render_gpu_device_id, 'control_freq': control_freq, 'horizon': horizon, 'ignore_done': ignore_done,
-                              'hard_reset': hard_reset, 'camera_names': camera_names, 'camera_heights': camera_heights, 'camera_widths': camera_widths,
-                              'camera_depths': camera_depths, 'camera_segmentations': camera_segmentations, 'renderer': renderer, 'renderer_config': renderer_config}
+        self.robosuite_env_cfg = {'robots': config.robots, 'env_configuration': config.env_configuration, 'controller_configs': config.controller_configs,
+                              'mount_types': "default", 'gripper_types': config.gripper_types, 'initialization_noise': config.initialization_noise,
+                              'use_camera_obs': config.use_camera_obs, 'has_renderer': config.has_renderer, 'has_offscreen_renderer': config.has_offscreen_renderer,
+                              'render_camera': config.render_camera, 'render_collision_mesh': config.render_collision_mesh, 'render_visual_mesh': config.render_visual_mesh,
+                              'render_gpu_device_id': config.render_gpu_device_id, 'control_freq': config.control_freq, 'horizon': config.horizon, 'ignore_done': config.ignore_done,
+                              'hard_reset': config.hard_reset, 'camera_names': config.camera_names, 'camera_heights': config.camera_heights, 'camera_widths': config.camera_widths,
+                              'camera_depths': config.camera_depths, 'camera_segmentations': config.camera_segmentations, 'renderer': config.renderer, 'renderer_config': config.renderer_config}
         
         self.initialized_objects = False
         current_time = datetime.datetime.fromtimestamp(time.time())

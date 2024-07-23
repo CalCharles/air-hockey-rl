@@ -81,8 +81,8 @@ class AirHockeyPuckVelEnv(AirHockeyBaseEnv):
 
 class AirHockeyPuckHeightEnv(AirHockeyBaseEnv):
 
-    def __init__(self, *args, **kwargs):
-        super(AirHockeyPuckHeightEnv, self).__init__(*args, **kwargs)
+    def __init__(self, **kwargs):
+        super(AirHockeyPuckHeightEnv, self).__init__(**kwargs)
         self.num_touches = 0
         self.touching = False
 
