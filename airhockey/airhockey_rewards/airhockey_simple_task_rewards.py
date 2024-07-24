@@ -15,7 +15,7 @@ class AirHockeyPuckVelReward(AirHockeyRewardBase):
         puck_vel = -state_info['pucks'][0]['velocity'][0]
         puck_height = -puck_pos[0]
 
-        reward = max(puck_vel * 5, 0) + 0.5 / dist
+        reward = max(puck_vel * 5, 0) # + 0.5 / dist
         success = puck_height > 0.5 and self.task_env.current_timestep > 25
         return reward, success
 
