@@ -8,7 +8,7 @@ from .sims.real.coordinate_transform import get_clip_limits
 from .utils import get_observation_by_type
 
 from typing import Tuple
-
+from types import SimpleNamespace
 
 def get_box2d_simulator_fn():
     from airhockey.sims import AirHockeyBox2D
@@ -24,72 +24,66 @@ def get_real_simulator_fn():
 
 
 class AirHockeyBaseEnv(ABC, Env):
-    def __init__(self,
-                 simulator, # box2d or robosuite
-                 simulator_params,
-                 task, 
-                 num_pucks,
-                 num_blocks,
-                 num_obstacles,
-                 num_targets,
-                 num_paddles,
-                 n_training_steps,
-                 wall_bumping_rew,
-                 direction_change_rew,
-                 horizontal_vel_rew,
-                 diagonal_motion_rew,
-                 stand_still_rew,
-                 terminate_on_out_of_bounds, 
-                 terminate_on_enemy_goal, 
-                 terminate_on_puck_stop,
-                 truncate_rew,
-                 goal_max_x_velocity, 
-                 goal_min_y_velocity, 
-                 goal_max_y_velocity,
-                 return_goal_obs,
-                 seed,
-                 terminate_on_puck_hit_bottom=False,  # TODO Specify this parameter in the yaml config
-                 terminate_on_puck_hit_paddle=False,
-                 terminate_on_puck_pass_paddle=False,
-                 dense_goal=True,
-                 goal_selector='stationary',
-                 max_timesteps=1000,
-                 paddle_bounds=[],
-                 paddle_edge_bounds=[],
-                 center_offset_constant=1.2,
-                 num_positive_reward_regions=0,
-                 positive_reward_range=[1,1],
-                 num_negative_reward_regions=0,
-                 negative_reward_range=[-1,-1],
-                 reward_region_shapes=[],
-                 reward_region_scale_range=[0,0],
-                 reward_normalized_radius_min=0.1,
-                 reward_normalized_radius_max=0.1,
-                 reward_velocity_limits_min=[0,0],
-                 reward_velocity_limits_max=[0,0],
-                 reward_movement_types=[],
-                 compute_online_rewards=True,
-                 initialization_description_pth="",
-                 solrefs=[None, None, None, None],
-                 domain_random=False,
-                 obs_type = "vel",
-                 **kwargs,
-                 ):
+    def __init__(self, **kwargs):
         
-        if simulator == 'box2d':
+        defaults = {
+            'ignore_done': False,
+            'hard_reset': True,
+            'camera_names': ["birdview", "sideview"],
+            'camera_heights': 512,
+            'camera_widths': 512,
+            'camera_depths': False,
+            'camera_segmentations': None,
+            'renderer': "mujoco",
+            'renderer_config': None,
+            'table_xml': "arenas/air_hockey_table.xml",
+            'paddle_bounds': [],
+            'paddle_edge_bounds': [],
+            'center_offset_constant': 1.2,
+            'num_positive_reward_regions': 0,
+            'positive_reward_range': [1, 1],
+            'num_negative_reward_regions': 0,
+            'negative_reward_range': [-1, -1],
+            'reward_region_shapes': [],
+            'compute_online_rewards': True,
+            'reward_region_scale_range': [0, 0],
+            'reward_normalized_radius_min': 0.1,
+            'reward_normalized_radius_max': 0.1,
+            'reward_velocity_limits_min': [0, 0],
+            'reward_velocity_limits_max': [0, 0],
+            'reward_movement_types': [],
+            'terminate_on_puck_hit_bottom': False,  # TODO Specify this parameter in the yaml config
+            'terminate_on_puck_hit_paddle': False,
+            'terminate_on_puck_pass_paddle': False,
+            'dense_goal': True,
+            'goal_selector': 'stationary',
+            'max_timesteps': 1000,
+            'domain_random': False,
+            'initialization_description_pth': "",
+            'solrefs': [None, None, None, None],
+            'obs_type': "vel"
+        }
+        
+        # handle defaults, keeps values for duplicate keys from right side!
+        kwargs = {**defaults, **kwargs}
+
+        config = SimpleNamespace(**kwargs)
+
+        if config.simulator == 'box2d':
             simulator_fn = get_box2d_simulator_fn()
-        elif simulator == 'robosuite':
+        elif config.simulator == 'robosuite':
             simulator_fn = get_robosuite_simulator_fn()
-        elif simulator == 'real':
+        elif config.simulator == 'real':
             simulator_fn = get_real_simulator_fn()
         else:
             raise ValueError("Invalid simulator type. Must be 'box2d' or 'robosuite'.")
 
-        simulator_params['seed'] = seed
-        simulator_params['paddle_bounds'] = paddle_bounds
-        simulator_params['paddle_edge_bounds'] = paddle_edge_bounds
-        simulator_params['center_offset_constant'] = center_offset_constant
-        self.simulator_name = simulator
+        simulator_params = config.simulator_params
+        simulator_params['seed'] = config.seed
+        simulator_params['paddle_bounds'] = config.paddle_bounds
+        simulator_params['paddle_edge_bounds'] = config.paddle_edge_bounds
+        simulator_params['center_offset_constant'] = config.center_offset_constant
+        self.simulator_name = config.simulator
         self.simulator = simulator_fn.from_dict(simulator_params)
         self.render_length = self.simulator.render_length
         self.render_width = self.simulator.render_width
@@ -98,39 +92,39 @@ class AirHockeyBaseEnv(ABC, Env):
         
         self.simulator_params = simulator_params
 
-        self.max_timesteps = max_timesteps
+        self.max_timesteps = config.max_timesteps
         self.current_timestep = 0
-        self.n_training_steps = n_training_steps
+        self.n_training_steps = config.n_training_steps
         self.n_timesteps_so_far = 0
-        self.rng = np.random.RandomState(seed)
+        self.rng = np.random.RandomState(config.seed)
         self.dynamic_virtual_objects = list() # if the environment has these, put them in at subclass initialization
         self.reward_regions = list()
         
         # termination conditions
-        self.terminate_on_out_of_bounds = terminate_on_out_of_bounds
-        self.terminate_on_enemy_goal = terminate_on_enemy_goal
-        self.terminate_on_puck_stop = terminate_on_puck_stop
-        self.terminate_on_puck_hit_bottom = terminate_on_puck_hit_bottom
-        self.terminate_on_puck_hit_paddle = terminate_on_puck_hit_paddle
-        self.terminate_on_puck_pass_paddle = terminate_on_puck_pass_paddle
+        self.terminate_on_out_of_bounds = config.terminate_on_out_of_bounds
+        self.terminate_on_enemy_goal = config.terminate_on_enemy_goal
+        self.terminate_on_puck_stop = config.terminate_on_puck_stop
+        self.terminate_on_puck_hit_bottom = config.terminate_on_puck_hit_bottom
+        self.terminate_on_puck_hit_paddle = config.terminate_on_puck_hit_paddle
+        self.terminate_on_puck_pass_paddle = config.terminate_on_puck_pass_paddle
         
         # reward function
-        self.compute_online_rewards = compute_online_rewards
-        self.goal_conditioned = True if 'goal' in task or 'reach' in task else False
-        self.goal_min_x_velocity = -goal_max_x_velocity
-        self.goal_max_x_velocity = goal_max_x_velocity
-        self.goal_min_y_velocity = goal_min_y_velocity
-        self.goal_max_y_velocity = goal_max_y_velocity
-        self.return_goal_obs = return_goal_obs
-        self.dense_goal = dense_goal
-        self.task = task
-        self.multiagent = num_paddles == 2
-        self.truncate_rew = truncate_rew
-        self.wall_bumping_rew = wall_bumping_rew
-        self.direction_change_rew = direction_change_rew
-        self.horizontal_vel_rew = horizontal_vel_rew
-        self.diagonal_motion_rew = diagonal_motion_rew
-        self.stand_still_rew = stand_still_rew
+        self.compute_online_rewards = config.compute_online_rewards
+        self.goal_conditioned = True if 'goal' in config.task or 'reach' in config.task else False
+        self.goal_min_x_velocity = -config.goal_max_x_velocity
+        self.goal_max_x_velocity = config.goal_max_x_velocity
+        self.goal_min_y_velocity = config.goal_min_y_velocity
+        self.goal_max_y_velocity = config.goal_max_y_velocity
+        self.return_goal_obs = config.return_goal_obs
+        self.dense_goal = config.dense_goal
+        self.task = config.task
+        self.multiagent = config.num_paddles == 2
+        self.truncate_rew = config.truncate_rew
+        self.wall_bumping_rew = config.wall_bumping_rew
+        self.direction_change_rew = config.direction_change_rew
+        self.horizontal_vel_rew = config.horizontal_vel_rew
+        self.diagonal_motion_rew = config.diagonal_motion_rew
+        self.stand_still_rew = config.stand_still_rew
         
         self.simulator_params = simulator_params
         self.width = simulator_params['width']
@@ -138,7 +132,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.paddle_radius = simulator_params['paddle_radius']
         self.puck_radius = simulator_params['puck_radius']
         self.puck_damping = simulator_params.get('puck_damping', None)
-        if simulator == "robosuite":
+        if config.simulator == "robosuite":
             self.solrefs = [simulator_params.get('top_solref', None), simulator_params.get('bot_solref', None), simulator_params.get('left_solref', None), simulator_params.get('right_solref', None)]
         
         self.paddle_radius = simulator_params['paddle_radius']
@@ -149,22 +143,22 @@ class AirHockeyBaseEnv(ABC, Env):
         self.table_x_bot = self.length / 2
         self.table_y_right = self.width / 2
         self.table_y_left = -self.width / 2
-        self.center_offset_constant = center_offset_constant
+        self.center_offset_constant = config.center_offset_constant
         
-        if len(paddle_bounds) == 0: # use preset values
+        if len(config.paddle_bounds) == 0: # use preset values
             self.paddle_x_min = 0 # self.table_x_top / 2 + 2 * self.paddle_radius
             self.paddle_x_max = self.table_x_bot - 2 * self.paddle_radius
             self.paddle_y_min = self.table_y_left - self.paddle_radius
             self.paddle_y_max = self.table_y_right + self.paddle_radius
         else:
-            self.paddle_x_min, self.paddle_x_max, self.paddle_y_min, self.paddle_y_max = paddle_bounds
+            self.paddle_x_min, self.paddle_x_max, self.paddle_y_min, self.paddle_y_max = config.paddle_bounds
             self.move_lims = [-1,-1]
             # real world bounds: x_min_lim = -0.8, x_max_lim = -0.33, y_min = -0.3582, y_max = 0.350
         self.boundary_lims = [self.paddle_x_min, self.paddle_x_max, self.paddle_y_min, self.paddle_y_max]
         self.move_lims = [-1,-1]
 
-        if len(paddle_edge_bounds):
-            self.edge_lims = paddle_edge_bounds
+        if len(config.paddle_edge_bounds):
+            self.edge_lims = config.paddle_edge_bounds
         else:
             self.edge_lims = [0,0,100,100]
 
@@ -173,23 +167,23 @@ class AirHockeyBaseEnv(ABC, Env):
         self.goal_set = None
 
         self.get_observation_by_type = get_observation_by_type
-        self.obs_type = obs_type
+        self.obs_type = config.obs_type
         
-        self.num_pucks = num_pucks
-        self.multiagent = num_paddles > 1
-        self.num_blocks = num_blocks
-        self.num_obstacles = num_obstacles
-        self.num_targets = num_targets
-        self.num_paddles = num_paddles
+        self.num_pucks = config.num_pucks
+        self.multiagent = config.num_paddles > 1
+        self.num_blocks = config.num_blocks
+        self.num_obstacles = config.num_obstacles
+        self.num_targets = config.num_targets
+        self.num_paddles = config.num_paddles
         
         self.validate_configuration()
 
-        self.goal_selector = goal_selector
+        self.goal_selector = config.goal_selector
         self.initialize_spaces(self.obs_type)
         self.falling_time = 25
         self.metadata = {}
         self.start_callbacks()
-        self.domain_random = domain_random
+        self.domain_random = config.domain_random
         self.reset()
 
 

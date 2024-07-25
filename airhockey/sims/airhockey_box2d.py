@@ -3,6 +3,7 @@ from Box2D import (b2CircleShape, b2FixtureDef, b2LoopShape, b2PolygonShape,
                    b2_dynamicBody, b2_staticBody, b2Filter, b2Vec2)
 import numpy as np
 import inspect
+from types import SimpleNamespace
 
 class CollisionForceListener(contactListener):
     def __init__(self):
@@ -34,62 +35,55 @@ class CollisionForceListener(contactListener):
                 })
 
 class AirHockeyBox2D:
-    def __init__(self,
-                 absorb_target, 
-                 length, 
-                 width,
-                 puck_radius, 
-                 paddle_radius, 
-                 block_width,
-                 max_force_timestep, 
-                 force_scaling, 
-                 paddle_damping, 
-                 puck_damping,
-                 render_size,
-                 seed,
-                 action_x_scaling=1.0,
-                 action_y_scaling=1.0,
-                 render_masks=False, 
-                 gravity=-5,
-                 paddle_density=1000,
-                 puck_density=250,
-                 block_density=1000,
-                 max_paddle_vel=2,
-                 time_frequency=20,
-                 paddle_bounds=[],
-                 paddle_edge_bounds=[],
-                 center_offset_constant=1.2):
+    def __init__(self, **kwargs):
+        defaults = {
+            'action_x_scaling': 1.0,
+            'action_y_scaling': 1.0,
+            'render_masks': False,
+            'gravity': -5,
+            'paddle_density': 1000,
+            'puck_density': 250,
+            'block_density': 1000,
+            'max_paddle_vel': 2,
+            'time_frequency': 20,
+            'paddle_bounds': [],
+            'paddle_edge_bounds': [],
+            'center_offset_constant': 1.2
+        }
+
+        kwargs = {**defaults, **kwargs}
+        config = SimpleNamespace(**kwargs)
 
         # physics / world params
-        self.length, self.width = length, width
-        self.paddle_radius = paddle_radius
-        self.puck_radius = puck_radius
-        self.block_width = block_width
-        self.max_force_timestep = max_force_timestep
-        self.time_frequency = time_frequency
+        self.length, self.width = config.length, config.width
+        self.paddle_radius = config.paddle_radius
+        self.puck_radius = config.puck_radius
+        self.block_width = config.block_width
+        self.max_force_timestep = config.max_force_timestep
+        self.time_frequency = config.time_frequency
         self.time_per_step = 1 / self.time_frequency
-        self.force_scaling = force_scaling
-        self.absorb_target = absorb_target
-        self.paddle_damping = paddle_damping
-        self.puck_damping = puck_damping
-        self.gravity = gravity
-        self.puck_min_height = (-length / 2) + (length / 3)
+        self.force_scaling = config.force_scaling
+        self.absorb_target = config.absorb_target
+        self.paddle_damping = config.paddle_damping
+        self.puck_damping = config.puck_damping
+        self.gravity = config.gravity
+        self.puck_min_height = (-config.length / 2) + (config.length / 3)
         self.paddle_max_height = 0
         self.block_min_height = 0
-        self.max_speed_start = width
-        self.min_speed_start = -width
-        self.paddle_density = paddle_density
-        self.puck_density = puck_density
-        self.block_density = block_density
-        self.action_x_scaling = action_x_scaling
-        self.action_y_scaling = action_y_scaling
-        self.center_offset_constant = center_offset_constant
+        self.max_speed_start = config.width
+        self.min_speed_start = -config.width
+        self.paddle_density = config.paddle_density
+        self.puck_density = config.puck_density
+        self.block_density = config.block_density
+        self.action_x_scaling = config.action_x_scaling
+        self.action_y_scaling = config.action_y_scaling
+        self.center_offset_constant = config.center_offset_constant
         # these assume 2d, in 3d since we have height it would be higher mass
         self.paddle_mass = self.paddle_density * np.pi * self.paddle_radius ** 2
         self.puck_mass = self.puck_density * np.pi * self.puck_radius ** 2
 
         # these 2 will depend on the other parameters
-        self.max_paddle_vel = max_paddle_vel # m/s. This will be dependent on the robot arm
+        self.max_paddle_vel = config.max_paddle_vel # m/s. This will be dependent on the robot arm
         # compute maximum force based on max paddle velocity
         max_a = self.max_paddle_vel / self.time_per_step
         max_f = self.paddle_mass * max_a
@@ -99,10 +93,10 @@ class AirHockeyBox2D:
         self.world = world(gravity=(0, self.gravity), doSleep=True) # gravity is negative usually
 
         # box2d visualization params (but the visualization is done in the Render file)
-        self.ppm = render_size / self.width
-        self.render_width = int(render_size)
+        self.ppm = config.render_size / self.width
+        self.render_width = int(config.render_size)
         self.render_length = int(self.ppm * self.length)
-        self.render_masks = render_masks
+        self.render_masks = config.render_masks
 
         self.table_x_min = -self.width / 2
         self.table_x_max = self.width / 2
@@ -122,7 +116,7 @@ class AirHockeyBox2D:
                                          (self.table_x_max, self.table_y_min)]),
         )
         # self.ground_body.fixtures[0].friction = 0.0
-        self.reset(seed)
+        self.reset(config.seed)
 
         # Initialize the contact listener
         self.collision_listener = CollisionForceListener()
@@ -134,9 +128,7 @@ class AirHockeyBox2D:
     @staticmethod
     def from_dict(state_dict):
         # create a dictionary of only the relevant parameters
-        init_params = inspect.signature(AirHockeyBox2D).parameters
-        relevant_params = {k: v for k, v in state_dict.items() if k in init_params}
-        return AirHockeyBox2D(**relevant_params)
+        return AirHockeyBox2D(**state_dict)
 
     def reset(self, seed, **kwargs):
         self.rng = np.random.RandomState(seed)
