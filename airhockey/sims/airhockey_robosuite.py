@@ -25,7 +25,7 @@ import os
 import numpy as np
 from robosuite.models.arenas import Arena
 from airhockey.sims.utils import custom_xml_path_completion
-
+from ..utils import dict_to_namespace
 
 class AirHockeyRobosuite(AirHockeySim):
     """
@@ -207,7 +207,7 @@ class AirHockeyRobosuite(AirHockeySim):
         }
 
         kwargs = {**defaults, **kwargs}
-        config = SimpleNamespace(**kwargs)
+        config = dict_to_namespace(kwargs)
         # settings for table top
         table_full_size = (config.length / 2, config.width / 2, config.depth / 2)
         self.table_full_size = table_full_size

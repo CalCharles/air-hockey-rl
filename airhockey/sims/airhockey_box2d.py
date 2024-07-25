@@ -4,6 +4,7 @@ from Box2D import (b2CircleShape, b2FixtureDef, b2LoopShape, b2PolygonShape,
 import numpy as np
 import inspect
 from types import SimpleNamespace
+from ..utils import dict_to_namespace
 
 class CollisionForceListener(contactListener):
     def __init__(self):
@@ -52,7 +53,7 @@ class AirHockeyBox2D:
         }
 
         kwargs = {**defaults, **kwargs}
-        config = SimpleNamespace(**kwargs)
+        config = dict_to_namespace(kwargs)
 
         # physics / world params
         self.length, self.width = config.length, config.width

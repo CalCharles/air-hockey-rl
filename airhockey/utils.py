@@ -1,5 +1,17 @@
 import numpy as np
 import copy
+from types import SimpleNamespace
+import collections.abc
+
+def dict_to_namespace(d):
+    if isinstance(d, dict):
+        namespace = SimpleNamespace(**{k: dict_to_namespace(v) for k, v in d.items()})
+        return namespace
+    elif isinstance(d, collections.abc.MutableMapping):
+        namespace = SimpleNamespace(**{k: dict_to_namespace(v) for k, v in d.items()})
+        return namespace
+    else:
+        return d
 
 def get_observation_by_type(state_info, obs_type='vel', **kwargs):
     # TODO: check that this code is used properly

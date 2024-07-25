@@ -5,7 +5,7 @@ from gymnasium import spaces
 from abc import ABC, abstractmethod
 import math
 from .sims.real.coordinate_transform import get_clip_limits
-from .utils import get_observation_by_type
+from .utils import get_observation_by_type, dict_to_namespace
 
 from typing import Tuple
 from types import SimpleNamespace
@@ -67,7 +67,7 @@ class AirHockeyBaseEnv(ABC, Env):
         # handle defaults, keeps values for duplicate keys from right side!
         kwargs = {**defaults, **kwargs}
 
-        config = SimpleNamespace(**kwargs)
+        config = dict_to_namespace(kwargs)
 
         if config.simulator == 'box2d':
             simulator_fn = get_box2d_simulator_fn()
@@ -79,12 +79,12 @@ class AirHockeyBaseEnv(ABC, Env):
             raise ValueError("Invalid simulator type. Must be 'box2d' or 'robosuite'.")
 
         simulator_params = config.simulator_params
-        simulator_params['seed'] = config.seed
-        simulator_params['paddle_bounds'] = config.paddle_bounds
-        simulator_params['paddle_edge_bounds'] = config.paddle_edge_bounds
-        simulator_params['center_offset_constant'] = config.center_offset_constant
+        simulator_params.seed = config.seed
+        simulator_params.paddle_bounds = config.paddle_bounds
+        simulator_params.paddle_edge_bounds = config.paddle_edge_bounds
+        simulator_params.center_offset_constant = config.center_offset_constant
         self.simulator_name = config.simulator
-        self.simulator = simulator_fn.from_dict(simulator_params)
+        self.simulator = simulator_fn.from_dict(vars(simulator_params))
         self.render_length = self.simulator.render_length
         self.render_width = self.simulator.render_width
         self.render_masks = self.simulator.render_masks
@@ -127,17 +127,22 @@ class AirHockeyBaseEnv(ABC, Env):
         self.stand_still_rew = config.stand_still_rew
         
         self.simulator_params = simulator_params
-        self.width = simulator_params['width']
-        self.length = simulator_params['length']
-        self.paddle_radius = simulator_params['paddle_radius']
-        self.puck_radius = simulator_params['puck_radius']
-        self.puck_damping = simulator_params.get('puck_damping', None)
+        self.width = simulator_params.width
+        self.length = simulator_params.length
+        self.paddle_radius = simulator_params.paddle_radius
+        self.puck_radius = simulator_params.puck_radius
+        self.puck_damping = getattr(simulator_params, 'puck_damping', None)
         if config.simulator == "robosuite":
-            self.solrefs = [simulator_params.get('top_solref', None), simulator_params.get('bot_solref', None), simulator_params.get('left_solref', None), simulator_params.get('right_solref', None)]
-        
-        self.paddle_radius = simulator_params['paddle_radius']
-        self.puck_radius = simulator_params['puck_radius']
-        self.block_width = simulator_params['block_width']
+            self.solrefs = [
+                getattr(simulator_params, 'top_solref', None),
+                getattr(simulator_params, 'bot_solref', None),
+                getattr(simulator_params, 'left_solref', None),
+                getattr(simulator_params, 'right_solref', None)
+            ]
+
+        self.paddle_radius = simulator_params.paddle_radius
+        self.puck_radius = simulator_params.puck_radius
+        self.block_width = simulator_params.block_width
         
         self.table_x_top = -self.length / 2
         self.table_x_bot = self.length / 2
@@ -242,17 +247,17 @@ class AirHockeyBaseEnv(ABC, Env):
             # puck_density: 100-400
             # gravity: -0.3-0.7
             if self.puck_damping is None:
-                self.simulator_params['puck_damping'] = np.random.uniform(0.1, 1.0)
+                self.simulator_params.puck_damping = np.random.uniform(0.1, 1.0)
 
-            self.simulator_params['puck_density'] = np.random.uniform(100, 400)
-            self.simulator_params['gravity'] = np.random.uniform(-0.3, -0.7)
+            self.simulator_params.puck_density = np.random.uniform(100, 400)
+            self.simulator_params.gravity = np.random.uniform(-0.3, -0.7)
 
             # print("self.simulator_params['gravity']: ", self.simulator_params['gravity'])
             # print("reset -> domain_random")
 
             # import pdb; pdb.set_trace()
 
-            self.simulator = simulator_fn.from_dict(self.simulator_params)
+            self.simulator = simulator_fn.from_dict(vars(self.simulator_params))
             self.render_length = self.simulator.render_length
             self.render_width = self.simulator.render_width
             self.render_masks = self.simulator.render_masks
@@ -283,7 +288,7 @@ class AirHockeyBaseEnv(ABC, Env):
         if 'pucks' in state_info and len(state_info['pucks']) > 0:
             self.puck_initial_position = state_info['pucks'][0]['position']
             
-        return obs, {**{'success': False}, **self.simulator_params}
+        return obs, {**{'success': False}, **vars(self.simulator_params)}
 
     def reset_from_state(self, state_vector, seed=None):
         if seed is None: # determine next seed, in a deterministic manner
@@ -513,7 +518,7 @@ class AirHockeyBaseEnv(ABC, Env):
         #     is_finished = True
 
         obs = self.get_observation(next_state, obs_type=self.obs_type, puck_history=self.simulator.puck_history)
-        info.update(self.simulator_params)
+        info.update(vars(self.simulator_params))
         return obs, reward, is_finished, truncated, info
     
     def multi_step(self, joint_action):
