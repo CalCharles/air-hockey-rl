@@ -37,7 +37,7 @@ air_hockey:
   stand_still_rew: 0.01
   task: puck_velocity
   terminate_on_enemy_goal: false
-  terminate_on_out_of_bounds: true
+  terminate_on_out_of_bounds: false
   terminate_on_puck_stop: false
   terminate_on_puck_pass_paddle: true
   terminate_on_puck_hit_bottom: true

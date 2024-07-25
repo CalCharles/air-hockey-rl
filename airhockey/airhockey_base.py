@@ -362,7 +362,7 @@ class AirHockeyBaseEnv(ABC, Env):
                     state_info['paddles']['paddle_ego']['position'][1] < self.paddle_y_min:
                     truncated = True
                     print("paddle out of bounds with position: ", state_info['paddles']['paddle_ego']['position'])
-                    print("X_min, X_max, Y_min, Y_max: ", 0 + self.paddle_radius, self.table_x_bot - self.paddle_radius, self.table_y_left + self.paddle_radius, self.table_y_right - self.paddle_radius)
+                    print("X_min, X_max, Y_min, Y_max: ", self.paddle_x_min + self.paddle_radius, self.paddle_x_max - self.paddle_radius, self.table_y_left + self.paddle_radius, self.table_y_right - self.paddle_radius)
 
         bottom_center_point = np.array([self.table_x_bot, 0])
         top_center_point = np.array([self.table_x_top, 0])
@@ -473,16 +473,17 @@ class AirHockeyBaseEnv(ABC, Env):
         paddle_y_pos = self.current_state['paddles']['paddle_ego']['position'][1]
         min_max_limits = get_clip_limits(paddle_x_pos,paddle_y_pos,self.boundary_lims, self.edge_lims)
         paddle_x_min, paddle_x_max,paddle_y_min, paddle_y_max = min_max_limits
-        if paddle_x_pos < paddle_x_min:
+        if paddle_x_pos < paddle_x_min + self.paddle_radius:
             action[0] = max(action[0], 0)
-        if paddle_x_pos > paddle_x_max:
+        if paddle_x_pos > paddle_x_max - self.paddle_radius:
             action[0] = min(action[0], 0)
-        if paddle_y_pos < paddle_y_min:
+        if paddle_y_pos < paddle_y_min + self.paddle_radius:
             action[1] = max(action[1], 0)
-        if paddle_y_pos > paddle_y_max:
+        if paddle_y_pos > paddle_y_max + self.paddle_radius:
             action[1] = min(action[1], 0)
 
         next_state = self.simulator.get_transition(action)
+        # print(action, min_max_limits, next_state['paddles']['paddle_ego']['position'], self.paddle_radius)
         if self.current_timestep > 0:
             self.old_state = self.current_state
         self.current_state = next_state
