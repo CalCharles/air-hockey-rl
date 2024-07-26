@@ -15,23 +15,23 @@ air_hockey:
   simulator: robosuite
   simulator_params:
     block_width: 0.0254
-    bot_solref: -100000
+    bot_solref: -50000
     depth: 0.101
     has_renderer: true
-    left_solref: -100000
+    left_solref: -50000
     length: 2.1104
     max_paddle_vel: 10
     max_puck_vel: 10
     paddle_radius: 0.0508
-    puck_damping: 0.0
+    puck_damping: -0.0008
     puck_density: 250
     puck_radius: 0.03175
     render_size: 360
-    right_solref: -100000
+    right_solref: -50000
     rim_width: 0.045
     table_elevation: 0.7874
     table_tilt: 0.09
-    top_solref: -100000
+    top_solref: -50000
     width: 1.0436
   stand_still_rew: 0.01
   task: puck_height
