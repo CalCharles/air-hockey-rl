@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 import wandb
 from airhockey.renderers.render import AirHockeyRenderer
 import numpy as np
+import time
+import pstats
 
 
 def save_tensorboard_plots(log_dir, air_hockey_cfg):
@@ -114,6 +116,42 @@ def save_evaluation_gifs(n_eps_viz, n_gifs, env_test, model, renderer, log_dir, 
     if use_wandb:
         wandb_run.log({"Evaluation Video": wandb.Video(gif_savepath, fps=20)})
 
+def save_task_gif(n_eps_viz, n_gifs, env_test, policy, renderer, log_dir):
+    env_test.max_timesteps = 200
+    for gif_idx in range(n_gifs):
+        frames = []
+        for i in tqdm.tqdm(range(n_eps_viz)):
+            obs = env_test.reset()
+            done = False
+            rew = 0
+            while not done:
+                frame = renderer.get_frame()
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                # decrease width to 160 but keep aspect ratio
+                aspect_ratio = frame.shape[1] / frame.shape[0]
+                frame = cv2.resize(frame, (160, int(160 / aspect_ratio)))
+                
+                # Display reward on the top right of the frame
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.5  # Adjust size of the font
+                font_color = (0, 0, 0)  # White color
+                line_type = 2
+                text_position = (frame.shape[1] - 150, 30)  # Position near the top right corner
+
+                cv2.putText(frame, f"Reward: {rew}", text_position, font, font_scale, font_color, line_type)
+                            
+                frames.append(frame)
+                action = policy(obs)
+                obs, rew, term, trunc, info = env_test.step(action)
+                done = term or trunc
+                
+        gif_savepath = os.path.join(log_dir, f'eval_{gif_idx}.gif')
+        def fps_to_duration(fps):
+            return int(1000 * 1/fps)
+        fps = 30 # slightly faster than 20 fps (simulation time), but makes rendering smooth
+        imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(fps))
+
+
 class EvalCallback(BaseCallback):
     """
     A custom callback that derives from ``BaseCallback``.
@@ -135,6 +173,9 @@ class EvalCallback(BaseCallback):
         self.goal_predictions = None
         # self.eval_ego_goals = []
         # self.eval_ego_goals_succ = []
+        from cProfile import Profile
+        from pstats import SortKey, Stats
+        self.profiler = Profile()
     
     def _eval(self, include_frames=False):
         avg_undiscounted_return = 0.0
@@ -147,6 +188,7 @@ class EvalCallback(BaseCallback):
         robosuite_frames = {}
         # self.eval_ego_goals = []
         # self.eval_ego_goals_succ = []
+        num_steps_in_eval = 0
         for ep_idx in range(self.n_eval_eps):
             obs, info = self.eval_env.reset()
             done = False
@@ -176,16 +218,19 @@ class EvalCallback(BaseCallback):
                             else:
                                 robosuite_frames[key].append(current_img)
                 action, _ = self.model.predict(obs)
+                num_steps_in_eval += 1
                 # action = np.array([-1, -1]) # debugging!
-                state = self.eval_env.simulator.get_current_state()                
+                # state = self.eval_env.simulator.get_current_state()                
+                self.profiler.enable()  # Start profiling
 
                 obs, rew, done, truncated, info = self.eval_env.step(action)
+                self.profiler.disable()  # Stop profiling
+                
                 done = done or truncated
                 undiscounted_return += rew
                 assert 'success' in info
                 assert (info['success'] == True) or (info['success'] == False)
                 if info['success'] == True:                    
-                    # success = self.eval_env.get_success()
                     success = info['success']
 
                 max_reward = info['max_reward']
@@ -209,30 +254,48 @@ class EvalCallback(BaseCallback):
         """
         save_progress = self.num_timesteps >= self.next_save
         frames = []
-        
         if self.num_timesteps >= self.next_eval:
             # print('hello...')
             # from cProfile import Profile
             # from pstats import SortKey, Stats
             # profiler = Profile()
             # profiler.enable()  # Start profiling
-
+            cur_time = time.time()
             avg_undiscounted_return, avg_success_rate, avg_max_reward, avg_min_reward, (frames, robosuite_frames) = self._eval(include_frames=save_progress)
-
+            eval_time = time.time() - cur_time
+            # import pdb; pdb.set_trace()
+            
             # profiler.disable()  # Stop profiling
             # profiler.print_stats(sort='time')  # Print the statistics sorted by time
             
             
             self.logger.record("eval/ep_return", avg_undiscounted_return)
             self.logger.record("eval/success_rate", avg_success_rate)
+            self.logger.record("eval/eval_time", eval_time)
             if avg_success_rate > self.best_success_so_far:
                 self.best_success_so_far = avg_success_rate
             self.logger.record("eval/best_success_rate", self.best_success_so_far)
             self.logger.record("eval/max_reward", avg_max_reward)
             self.logger.record("eval/min_reward", avg_min_reward)
+            if self.num_timesteps > 0:
+                self.logger.record("eval/fps", self.eval_freq / (cur_time - self.prev_time))
+                
             if self.classifier_acc is not None:
                 self.logger.record("eval/classifier_acc", self.classifier_acc)
             self.next_eval += self.eval_freq
+            self.prev_time = cur_time
+            
+        with open('eval_proflier.txt', 'w') as f:
+            stats = pstats.Stats(self.profiler, stream=f)
+            stats.sort_stats('time')
+            keys = stats.stats.keys()
+            for key in keys:
+                if 'get_singleagent_transition' in key:
+                    self.logger.record("eval/singleagent_cum", stats.stats[key][3])
+                    self.logger.record("eval/singleagent_tot", stats.stats[key][2])
+                    
+                # stats.add(key)
+            stats.print_stats()
             
         if save_progress:
             # make a subfolder in log dir for latest progress
@@ -264,13 +327,8 @@ class EvalCallback(BaseCallback):
                 plt.imsave( os.path.join(progress_dir, 'goal_predictions.png'), self.goal_predictions)
 
             plt.clf()
-            # eeg = np.array(self.eval_ego_goals)
-            # succ_mask = np.array(self.eval_ego_goals_succ)
-            # plt.plot(self.eval_ego_goals, c=self.eval_ego_goals_succ, marker='o')
-            # plt.plot(eeg[succ_mask, 0], eeg[succ_mask, 1], c='g', marker='o', linestyle='None')
-            # plt.plot(eeg[~succ_mask, 0], eeg[~succ_mask, 1], c='r', marker='o', linestyle='None')
+
             
-            # plt.savefig(os.path.join(progress_dir, 'ego_goal_predictions.png'))
 
     def _on_step(self) -> bool:
         """

@@ -34,8 +34,7 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
             high = paddle_obs_high + goal_high
             self.observation_space = self.get_obs_space(low, high)
         
-        self.min_goal_radius = self.width / 8
-        self.max_goal_radius = self.width / 4
+        self.goal_radius = 0.05
 
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
@@ -91,6 +90,5 @@ class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
         max_x = goal_high[0]
         
         goal_position = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
-        self.goal_radius = self.min_goal_radius # not too important
         self.goal_pos = goal_position if self.goal_set is None else self.goal_set[0, :2]
         self.goal_pos = goal_pos if goal_pos is not None else self.goal_pos

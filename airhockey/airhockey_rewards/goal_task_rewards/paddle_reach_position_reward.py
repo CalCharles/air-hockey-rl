@@ -2,10 +2,11 @@ import numpy as np
 from airhockey.airhockey_rewards import AirHockeyRewardBase
 
 class AirHockeyPaddleReachPositionReward(AirHockeyRewardBase):
-    def __init__(self, task_env):
+    def __init__(self, task_env, paddle_success_bonus=None):
         super().__init__(task_env)
+        self.paddle_success_bonus = paddle_success_bonus
 
-    def compute_reward(self, achieved_goal, desired_goal, info):
+    def compute_reward(self, achieved_goal, desired_goal):
         # if not vectorized, convert to vector
         single = len(achieved_goal.shape) == 1
         if single:
@@ -14,12 +15,9 @@ class AirHockeyPaddleReachPositionReward(AirHockeyRewardBase):
             
         # return euclidean distance between the two points
         dist = np.linalg.norm(achieved_goal[:, :2] - desired_goal[:, :2], axis=1)
-        max_euclidean_distance = np.linalg.norm(np.array([self.task_env.table_x_bot, self.task_env.table_y_right]) - np.array([self.task_env.table_x_top, self.task_env.table_y_left]))
-        # reward for closer to goal
-        # reward = 1 - (dist / max_euclidean_distance)
-        # reward = -np.log(dist)
+
         radius = self.task_env.goal_radius
-        bonus = 10 if self.task_env.current_timestep > self.task_env.falling_time else 0 # this prevents the falling initiliazwed puck from triggering a success
+        bonus = self.paddle_success_bonus if self.paddle_success_bonus is not None else 0
         reward = -dist if dist > radius else bonus
         
         if single and isinstance(reward, list):
