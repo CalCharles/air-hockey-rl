@@ -18,7 +18,7 @@ class AirHockeyPuckGoalPositionReward(AirHockeyRewardBase):
 
         radius = self.task_env.goal_radius
         # bonus = 10 if self.task_env.current_timestep > self.task_env.falling_time else 0 # this prevents the falling initiliazwed puck from triggering a success
-        reward = -dist if dist > radius else self.task_env.puck_goal_success_bonus
+        reward = -dist ** 2 if dist > radius else self.task_env.puck_goal_success_bonus
         
         if single and isinstance(reward, list):
             reward = reward[0]
@@ -38,8 +38,7 @@ class AirHockeyPuckGoalPositionReward(AirHockeyRewardBase):
             paddle_pos = paddle_pos.reshape(1, -1)
             puck_pos = puck_pos.reshape(1, -1)
             puck_vel = puck_vel.reshape(1, -1)
-        puck_paddle_dist = np.linalg.norm(paddle_pos - puck_pos, axis=1)
-        puck_touch_reward = -puck_vel[:, 0] * (puck_vel[:, 0] < 0)
+        puck_touch_reward = 0.0# np.clip(-puck_vel[:, 0] * (puck_vel[:, 0] < 0), 0, 0.0)
         # print(puck_vel)
         # if the puck has negative (away) velocity, give a reward
         reward += puck_touch_reward

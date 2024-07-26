@@ -34,9 +34,9 @@ air_hockey:
 
   terminate_on_out_of_bounds: False
   terminate_on_enemy_goal: False
-  terminate_on_puck_stop: False
-  truncate_rew: -10
-  wall_bumping_rew: 0.0
+  terminate_on_puck_stop: True
+  truncate_rew: -1000.0
+  wall_bumping_rew: -0.1
   puck_goal_success_bonus: 10.0
   paddle_puck_success_bonus: 2.0
   direction_change_rew: 0.0
@@ -47,7 +47,7 @@ air_hockey:
   test_goal_condition: False
 
 # Training Parameters
-n_training_steps: 1000000
+n_training_steps: 5000000
 model_save_filepath: model # will be saved same dir as tb_log_dir
 vec_normalize_save_filepath: vec_normalize.pkl
 tb_log_dir: baseline_models
@@ -60,7 +60,7 @@ print_reward: false
 n_threads: 1
 algorithm: ppo
 
-n_eval_eps: 5
+n_eval_eps: 30
 eval_freq: 4096
 
 # None of the below are integrated, but examples of what could be added to the config file
