@@ -45,6 +45,6 @@ class AirHockeyPuckGoalPositionReward(AirHockeyRewardBase):
         
         
         dist = np.linalg.norm(ag - dg, axis=0)
-        success = dist < self.task_env.goal_radius
+        success = (dist < self.task_env.goal_radius) and (puck_vel[:, 0] < 0)
         success = success.item()
         return reward, success
