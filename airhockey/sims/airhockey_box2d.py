@@ -4,23 +4,12 @@ from Box2D import (b2CircleShape, b2FixtureDef, b2LoopShape, b2PolygonShape,
 import numpy as np
 import yaml
 import inspect
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> goal-conditioned
 from types import SimpleNamespace
 from ..utils import dict_to_namespace
 
-<<<<<<< HEAD
-=======
-from matplotlib import pyplot as plt
-import pstats
->>>>>>> 95bd00a2bb4ce5c463282e097352dacd2e327131
-=======
 from matplotlib import pyplot as plt
 import pstats
 
->>>>>>> goal-conditioned
 class CollisionForceListener(contactListener):
     def __init__(self):
         contactListener.__init__(self)
