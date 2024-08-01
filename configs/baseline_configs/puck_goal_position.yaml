@@ -1,6 +1,6 @@
 # Air Hockey Table Parameters
 air_hockey:
-  obs_type: 'history'
+  obs_type: 'vel'
   simulator_params:
     absorb_target: false
     length: 1.9304
@@ -34,23 +34,26 @@ air_hockey:
 
   terminate_on_out_of_bounds: False
   terminate_on_enemy_goal: False
-  terminate_on_puck_stop: False
-  truncate_rew: -1
-  wall_bumping_rew: -1
-  direction_change_rew: -0.05
-  horizontal_vel_rew: -0.1
-  diagonal_motion_rew: -0.1
-  stand_still_rew: 0.01
-  goal_radius_type: linear_decay
+  terminate_on_puck_stop: True
+  truncate_rew: -1000.0
+  wall_bumping_rew: -0.1
+  puck_goal_success_bonus: 10.0
+  paddle_puck_success_bonus: 2.0
+  direction_change_rew: 0.0
+  horizontal_vel_rew: 0.0
+  diagonal_motion_rew: 0.0
+  stand_still_rew: 0.0
+  goal_radius_type: fixed
+  test_goal_condition: False
 
 # Training Parameters
-n_training_steps: 1000000
+n_training_steps: 5000000
 model_save_filepath: model # will be saved same dir as tb_log_dir
 vec_normalize_save_filepath: vec_normalize.pkl
 tb_log_dir: baseline_models
 tb_log_name: air_hockey_agent
 gamma: 0.99
-seed: [0, 1, 2, 3, 4]
+seed: [0]
 
 # this parameter is only used when evaluating demonstrations
 print_reward: false
@@ -58,7 +61,7 @@ n_threads: 1
 algorithm: ppo
 
 n_eval_eps: 30
-eval_freq: 5000
+eval_freq: 4096
 
 # None of the below are integrated, but examples of what could be added to the config file
 # num_envs: 16

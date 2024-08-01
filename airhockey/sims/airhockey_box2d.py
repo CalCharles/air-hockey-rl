@@ -2,10 +2,16 @@ from Box2D.b2 import world, contactListener
 from Box2D import (b2CircleShape, b2FixtureDef, b2LoopShape, b2PolygonShape,
                    b2_dynamicBody, b2_staticBody, b2Filter, b2Vec2)
 import numpy as np
+import yaml
 import inspect
+<<<<<<< HEAD
 from types import SimpleNamespace
 from ..utils import dict_to_namespace
 
+=======
+from matplotlib import pyplot as plt
+import pstats
+>>>>>>> 95bd00a2bb4ce5c463282e097352dacd2e327131
 class CollisionForceListener(contactListener):
     def __init__(self):
         contactListener.__init__(self)
@@ -82,7 +88,7 @@ class AirHockeyBox2D:
         # these assume 2d, in 3d since we have height it would be higher mass
         self.paddle_mass = self.paddle_density * np.pi * self.paddle_radius ** 2
         self.puck_mass = self.puck_density * np.pi * self.puck_radius ** 2
-
+        self.chump_dict = {}
         # these 2 will depend on the other parameters
         self.max_paddle_vel = config.max_paddle_vel # m/s. This will be dependent on the robot arm
         # compute maximum force based on max paddle velocity
@@ -122,6 +128,10 @@ class AirHockeyBox2D:
         # Initialize the contact listener
         self.collision_listener = CollisionForceListener()
         self.world.contactListener = self.collision_listener
+        self.total_timesteps = 0
+        from cProfile import Profile
+        from pstats import SortKey, Stats
+        self.profiler = Profile()
 
     def start_callbacks(self, **kwargs):
         return
@@ -317,8 +327,10 @@ class AirHockeyBox2D:
             action = self.convert_to_box2d_coords(action)
             return self.get_singleagent_transition(action)
 
+    # @mprofile
     def get_singleagent_transition(self, action):
 
+        # self.profiler.enable()  # Start profiling
         # check if out of bounds and correct
         pos = [self.paddles['paddle_ego'].position[0], self.paddles['paddle_ego'].position[1]]
         if pos[1] > 0 - 3 * self.paddle_radius:
@@ -412,6 +424,46 @@ class AirHockeyBox2D:
 
 
         self.timestep += 1
+        # self.total_timesteps += 1
+
+        
+
+        # self.profiler.disable()  # Stop profiling
+        
+        # # # if self.total_timesteps % 1000 == 0:
+        # # #     # self.profiler.print_stats(sort='time')  # Print the statistics sorted by time
+        # # #     # Save the statistics to a file
+        
+        # if self.total_timesteps % 1000 == 0:
+        #     with open('single_agent_transition_profile.txt', 'w' if self.total_timesteps <= 1000 else 'a') as f:
+        #         f.write(f'timesteps: {self.total_timesteps}\n')
+        #         stats = pstats.Stats(self.profiler, stream=f)
+            
+        #         stats.sort_stats('time')
+        #         # stats.print_stats()
+        #         keys = stats.stats.keys()
+                
+        #         for key in keys:
+        #             cbdk = ''.join([str(k) for k in key])
+        #             self.chump_dict[cbdk].append(stats.stats[key][3]) if cbdk in self.chump_dict else self.chump_dict.update({cbdk: [stats.stats[key][3]]})
+        #         stats.strip_dirs().sort_stats("cumtime").print_stats()
+                
+        #         f.write(f'------------------------------------\n')
+        #     with open('data.yaml', 'w') as file:
+        #         yaml.dump(self.chump_dict, file)
+                
+        #     # Plot the data
+        #     plt.figure(figsize=(12, 8))
+
+        #     for key, values in self.chump_dict.items():
+        #         plt.plot(values, label=key)
+
+        #     plt.xlabel('Index')
+        #     plt.ylabel('Value')
+        #     plt.title('cumulative run times in single agent transition function')
+        #     plt.legend()
+        #     plt.grid(True)
+        #     plt.savefig('fuckmejeans.png')
         return state_info
     
     def get_multiagent_transition(self, joint_action):
