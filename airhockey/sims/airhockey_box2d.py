@@ -11,9 +11,10 @@ from matplotlib import pyplot as plt
 import pstats
 
 class CollisionForceListener(contactListener):
-    def __init__(self):
+    def __init__(self, wall_bounce_scale=0.01):
         contactListener.__init__(self)
         self.collision_forces = list()
+        self.wall_bounce_scale = wall_bounce_scale
     
     def reset(self):
         del self.collision_forces
@@ -38,6 +39,12 @@ class CollisionForceListener(contactListener):
                     'normal_force': normal_impulse / 60.0,
                     'contact_normal': (normal.x, normal.y)
                 })
+
+                # If puck is involved, nudge it away from the wall
+                if bodyA.userData is not None and "puck" in bodyA.userData:
+                    bodyA.ApplyLinearImpulse(normal * self.wall_bounce_scale, bodyA.worldCenter, True)
+                if bodyB.userData is not None and "puck" in bodyB.userData:
+                    bodyB.ApplyLinearImpulse(normal * self.wall_bounce_scale, bodyB.worldCenter, True)
 
 class AirHockeyBox2D:
     def __init__(self, **kwargs):
@@ -83,6 +90,8 @@ class AirHockeyBox2D:
         self.action_x_scaling = config.action_x_scaling
         self.action_y_scaling = config.action_y_scaling
         self.center_offset_constant = config.center_offset_constant
+        self.wall_bounce_scale = config.wall_bounce_scale
+
         # these assume 2d, in 3d since we have height it would be higher mass
         self.paddle_mass = self.paddle_density * np.pi * self.paddle_radius ** 2
         self.puck_mass = self.puck_density * np.pi * self.puck_radius ** 2
@@ -124,7 +133,7 @@ class AirHockeyBox2D:
         self.reset(config.seed)
 
         # Initialize the contact listener
-        self.collision_listener = CollisionForceListener()
+        self.collision_listener = CollisionForceListener(wall_bounce_scale=self.wall_bounce_scale)
         self.world.contactListener = self.collision_listener
         self.total_timesteps = 0
         from cProfile import Profile
@@ -280,11 +289,14 @@ class AirHockeyBox2D:
                 density=self.puck_density,
                 restitution = 1.0,
                 filter=b2Filter (maskBits=1,
-                                 categoryBits=1)),
+                                 categoryBits=1),
+                friction=0.0),
             bullet=True,
             position=pos,
             linearVelocity=vel,
-            linearDamping=self.puck_damping
+            linearDamping=self.puck_damping,
+            angularDamping=100000,
+            userData=name
         )
         if not affected_by_gravity:
             puck.gravityScale = 0

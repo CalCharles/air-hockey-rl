@@ -1,5 +1,4 @@
 air_hockey:
-  obs_type: 'history'
   diagonal_motion_rew: -0.1
   direction_change_rew: -0.05
   goal_max_x_velocity: 1
@@ -13,6 +12,7 @@ air_hockey:
   num_paddles: 1
   num_pucks: 1
   num_targets: 0
+  obs_type: history
   return_goal_obs: false
   seed: 0
   simulator: box2d
@@ -32,17 +32,16 @@ air_hockey:
     puck_radius: 0.03175
     render_size: 360
     seed: 0
+    wall_bounce_scale: 0.01
     width: 0.8636
   stand_still_rew: 0.01
   task: puck_touch
   terminate_on_enemy_goal: true
   terminate_on_out_of_bounds: false
-  terminate_on_puck_stop: false
-  terminate_on_puck_pass_paddle: True
-  terminate_on_puck_hit_bottom: True
+  terminate_on_puck_hit_bottom: true
   terminate_on_puck_hit_paddle: true
   terminate_on_puck_pass_paddle: true
-  terminate_on_puck_hit_bottom: true
+  terminate_on_puck_stop: false
   truncate_rew: -1
   wall_bumping_rew: -1
 algorithm: ppo
