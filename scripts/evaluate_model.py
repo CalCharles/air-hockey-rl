@@ -23,6 +23,8 @@ def get_frames(renderer, env_test, model, n_eps_viz, n_eval_eps, cfg):
         frames = []
         robosuite_frames = {}
         env = env_test.envs[0]
+        successes = 0
+
         for ep_idx in range(n_eval_eps):
             obs = env_test.reset()
             done = False
@@ -49,18 +51,23 @@ def get_frames(renderer, env_test, model, n_eps_viz, n_eval_eps, cfg):
                             else:
                                 robosuite_frames[key].append(current_img)
                 observations.append(obs)
-                # action, _ = model.predict(obs)
-                action = np.random.uniform(-1, 1, size=(1,6))
+                action, _ = model.predict(obs)
+                # action = np.random.uniform(-1, 1, size=(1,6))
                 actions.append(action)
                 obs, rew, done, info = env_test.step(action)
                 rewards.append(rew)
                 dones.append(done[0] or info[0]['TimeLimit.truncated'])
-                done = done[0] or info[0]['TimeLimit.truncated']
+                if done:
+                    print(info[0]["success"])
+                    successes += 1 if info[0]["success"] else 0
         
         dataset['states'] = np.array(observations)
         dataset['actions'] = np.array(actions)
         dataset['rewards'] = np.array(rewards)
         dataset['dones'] = np.array(dones)
+        
+        success_rate = successes / n_eval_eps
+        print("Run complete with success rate: " + str(success_rate))
 
         # import pdb; pdb.set_trace()
 
@@ -101,7 +108,7 @@ if __name__ == '__main__':
     else:
         model = PPO.load(os.path.join(args.model, "model.zip"))
 
-    frames, robosuite_frames, dataset = get_frames(renderer=renderer, env_test=env_test, model=model, n_eps_viz=5, n_eval_eps=3, cfg=model_cfg)
+    frames, robosuite_frames, dataset = get_frames(renderer=renderer, env_test=env_test, model=model, n_eps_viz=5, n_eval_eps=30, cfg=model_cfg)
 
     # save dataset to disk
     dataset_savepath = os.path.join(args.save_dir, f'eval_dataset.npz')
