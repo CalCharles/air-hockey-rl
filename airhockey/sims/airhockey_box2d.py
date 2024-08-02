@@ -35,6 +35,12 @@ class CollisionForceListener(contactListener):
                     'contact_normal': (normal.x, normal.y)
                 })
 
+                # If puck is involved, nudge it away from the wall
+                if "puck" in bodyA.userData:
+                    bodyA.ApplyLinearImpulse(normal * 0.01, bodyA.worldCenter, True)
+                if "puck" in bodyB.userData:
+                    bodyB.ApplyLinearImpulse(normal * 0.01, bodyB.worldCenter, True)
+
 class AirHockeyBox2D:
     def __init__(self, **kwargs):
         defaults = {
@@ -272,11 +278,14 @@ class AirHockeyBox2D:
                 density=self.puck_density,
                 restitution = 1.0,
                 filter=b2Filter (maskBits=1,
-                                 categoryBits=1)),
+                                 categoryBits=1),
+                friction=0.0),
             bullet=True,
             position=pos,
             linearVelocity=vel,
-            linearDamping=self.puck_damping
+            linearDamping=self.puck_damping,
+            angularDamping=100000,
+            userData=name
         )
         if not affected_by_gravity:
             puck.gravityScale = 0
