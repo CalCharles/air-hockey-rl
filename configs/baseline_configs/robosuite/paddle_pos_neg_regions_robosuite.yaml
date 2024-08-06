@@ -17,6 +17,11 @@ air_hockey:
   num_pucks: 0
   num_targets: 0
   obs_type: negative_regions_paddle
+  paddle_bounds:
+  - 0.55
+  - 1.157
+  - -0.558
+  - 0.558
   reward_normalized_radius_max:
   - 0.25
   - 0.25

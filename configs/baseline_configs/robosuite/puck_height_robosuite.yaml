@@ -12,6 +12,11 @@ air_hockey:
   num_pucks: 1
   num_targets: 0
   obs_type: vel
+  paddle_bounds:
+  - 0.55
+  - 1.157
+  - -0.558
+  - 0.558
   simulator: robosuite
   simulator_params:
     block_width: 0.0254
@@ -37,9 +42,9 @@ air_hockey:
   task: puck_height
   terminate_on_enemy_goal: false
   terminate_on_out_of_bounds: true
-  terminate_on_puck_stop: false
-  terminate_on_puck_pass_paddle: true
   terminate_on_puck_hit_bottom: true
+  terminate_on_puck_pass_paddle: true
+  terminate_on_puck_stop: false
   truncate_rew: -1
   wall_bumping_rew: -1
 algorithm: ppo

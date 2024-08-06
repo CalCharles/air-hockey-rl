@@ -12,6 +12,11 @@ air_hockey:
   num_pucks: 1
   num_targets: 0
   obs_type: vel
+  paddle_bounds:
+  - 0.55
+  - 1.157
+  - -0.558
+  - 0.558
   simulator: robosuite
   simulator_params:
     block_width: 0.0254

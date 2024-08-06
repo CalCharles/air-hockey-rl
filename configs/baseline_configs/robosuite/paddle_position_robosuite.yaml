@@ -13,6 +13,11 @@ air_hockey:
   num_pucks: 0
   num_targets: 0
   obs_type: paddle
+  paddle_bounds:
+  - 0.55
+  - 1.157
+  - -0.558
+  - 0.558
   simulator: robosuite
   simulator_params:
     block_width: 0.0254
@@ -31,7 +36,6 @@ air_hockey:
     table_tilt: 0.09
     width: 1.0436
   stand_still_rew: 0.01
-  paddle_bounds: [0.55, 1.00, -0.558, 0.558]
   task: paddle_reach_position
   terminate_on_enemy_goal: false
   terminate_on_out_of_bounds: true
