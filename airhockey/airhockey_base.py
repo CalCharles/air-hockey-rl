@@ -149,10 +149,10 @@ class AirHockeyBaseEnv(ABC, Env):
         self.table_y_right = self.width / 2
         self.table_y_left = -self.width / 2
         self.center_offset_constant = config.center_offset_constant
-        
+        # import pdb; pdb.set_trace()
         if len(config.paddle_bounds) == 0: # use preset values
-            self.paddle_x_min = 0 # self.table_x_top / 2 + 2 * self.paddle_radius
-            self.paddle_x_max = self.table_x_bot + self.paddle_radius
+            self.paddle_x_min = 0 - 2 * self.paddle_radius # self.table_x_top / 2 + 2 * self.paddle_radius
+            self.paddle_x_max = self.table_x_bot + 2 * self.paddle_radius
             self.paddle_y_min = self.table_y_left - 2 * self.paddle_radius
             self.paddle_y_max = self.table_y_right + 2 * self.paddle_radius
         else:
