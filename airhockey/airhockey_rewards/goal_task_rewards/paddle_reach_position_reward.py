@@ -28,7 +28,7 @@ class AirHockeyPaddleReachPositionReward(AirHockeyRewardBase):
     def get_base_reward(self, state_info):
         ag = self.task_env.get_achieved_goal(state_info)
         dg = self.task_env.get_desired_goal()
-        reward = self.compute_reward(self.task_env.get_achieved_goal(state_info), self.task_env.get_desired_goal(), {})
+        reward = self.compute_reward(self.task_env.get_achieved_goal(state_info), self.task_env.get_desired_goal())
         dist = np.linalg.norm(ag - dg, axis=0)
         
         success = dist < self.task_env.goal_radius
