@@ -18,6 +18,7 @@ air_hockey:
     gravity: -0.5
     max_force_timestep: 100 # max force we can apply at one timestep
     render_size: 360
+    wall_bounce_scale: 0.01
 
   simulator: box2d # or robosuite
   num_paddles: 1
@@ -35,6 +36,7 @@ air_hockey:
   terminate_on_out_of_bounds: False
   terminate_on_enemy_goal: False
   terminate_on_puck_stop: True
+  terminate_on_puck_hit_bottom: True
   truncate_rew: -1000.0
   wall_bumping_rew: -0.1
   puck_goal_success_bonus: 10.0

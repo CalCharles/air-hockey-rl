@@ -42,9 +42,11 @@ class CollisionForceListener(contactListener):
 
                 # If puck is involved, nudge it away from the wall
                 if bodyA.userData is not None and "puck" in bodyA.userData:
-                    bodyA.ApplyLinearImpulse(normal * self.wall_bounce_scale, bodyA.worldCenter, True)
+                    speed = np.linalg.norm(bodyA.GetLinearVelocityFromWorldPoint(contact.worldManifold.points[i]))
+                    bodyA.ApplyLinearImpulse(normal * self.wall_bounce_scale * speed, bodyA.worldCenter, True)
                 if bodyB.userData is not None and "puck" in bodyB.userData:
-                    bodyB.ApplyLinearImpulse(normal * self.wall_bounce_scale, bodyB.worldCenter, True)
+                    speed = np.linalg.norm(bodyB.GetLinearVelocityFromWorldPoint(contact.worldManifold.points[i]))
+                    bodyB.ApplyLinearImpulse(normal * self.wall_bounce_scale * speed, bodyB.worldCenter, True)
 
 class AirHockeyBox2D:
     def __init__(self, **kwargs):
