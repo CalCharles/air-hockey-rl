@@ -28,7 +28,7 @@ air_hockey:
     puck_density: 250
     puck_radius: 0.03175
     render_size: 360
-    wall_bounce_scale: 0.1
+    wall_bounce_scale: 0.02
     width: 0.8636
   stand_still_rew: 0.01
   task: move_block
