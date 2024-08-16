@@ -27,7 +27,7 @@ class AirHockeyGoalEnv(AirHockeyBaseEnv, ABC):
         pass
     
     @abstractmethod
-    def set_goals(self, goal_radius_type, goal_pos=None, alt_goal_pos=None, goal_set=None):
+    def set_goals(self, goal_radius_type=None, goal_pos=None, alt_goal_pos=None, goal_set=None):
         pass
     
     @abstractmethod
@@ -52,7 +52,10 @@ class AirHockeyGoalEnv(AirHockeyBaseEnv, ABC):
         ))
         
     def reset(self, seed=None, **kwargs):
-        self.set_goals(self.goal_radius_type)
+        if hasattr(self, "goal_radius_type"):
+            self.set_goals(self.goal_radius_type)
+        else:
+            self.set_goals()
         obs, success = super().reset(seed, **kwargs)
         achieved_goal = self.get_achieved_goal(self.current_state)
         desired_goal = self.get_desired_goal()
@@ -81,7 +84,8 @@ class AirHockeyGoalEnv(AirHockeyBaseEnv, ABC):
 
     def step(self, action):
         obs, reward, is_finished, truncated, info = super().step(action)
-        info['ego_goal'] = self.goal_pos
+        if hasattr(self, "goal_pos"):
+            info['ego_goal'] = self.goal_pos
         achieved_goal = self.get_achieved_goal(self.current_state)
         desired_goal = self.get_desired_goal()
         if self.return_goal_obs:

@@ -137,5 +137,15 @@ def get_observation_by_type(state_info, obs_type='vel', **kwargs):
         puck_hist = np.array(kwargs["puck_history"][-5 * len(state_info['pucks']):]).flatten().tolist()
         obs = np.array(obs + puck_hist)
         return obs
+    elif obs_type == "angle_vel":
+        puck_x_pos = state_info['pucks'][0]['position'][0]
+        puck_y_pos = state_info['pucks'][0]['position'][1]
+        puck_x_vel = state_info['pucks'][0]['velocity'][0]
+        puck_y_vel = state_info['pucks'][0]['velocity'][1]
+
+        puck_vel_angle = np.arctan2(puck_y_vel, puck_x_vel)
+
+        obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel, puck_vel_angle])
+        return obs
 
     raise  ValueError("obs type " + obs_type + " is not a defined observation type")

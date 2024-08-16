@@ -21,7 +21,7 @@ from airhockey.airhockey_tasks.paddle_reach_position_velocity import AirHockeyPa
 from airhockey.airhockey_tasks.puck_goal_position_velocity import AirHockeyPuckGoalPositionVelocityEnv
 from airhockey.airhockey_tasks.paddle_reach_position_negative_regions import AirHockeyPaddleReachPositionNegRegionsEnv
 from airhockey.airhockey_tasks.puck_goal_position_dynamic_negative_regions import AirHockeyPuckGoalPositionDynamicNegRegionsEnv
-
+from airhockey.airhockey_tasks.puck_three_angle import AirHockeyPuckThreeAngleEnv
 
 
 ASSETS_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../assets"))
@@ -85,6 +85,8 @@ def AirHockeyEnv(cfg):
         task_env = AirHockeyPaddleReachPositionNegRegionsEnv
     elif task == "puck_goal_position_dynamic_neg":
         task_env = AirHockeyPuckGoalPositionDynamicNegRegionsEnv
+    elif task == "puck_three_angle":
+        task_env = AirHockeyPuckThreeAngleEnv
     else:
         raise ValueError("Task {} not recognized".format(task))
     return task_env.from_dict(cfg)
