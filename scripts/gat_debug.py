@@ -81,8 +81,9 @@ class ReplayMemory(object):
             self.memory[key] = np.vstack((self.memory[key], Transition(*args)[i]))
             # print("after add:", self.memory[key].shape)
             
-    # def sample(self, batch_size) -> dict:
+    # def sample(self, batch_size) -> dict: # randomized
     #     batch = {}
+    #     # print("self.memory['state'].shape[0]", self.memory['state'].shape[0])
     #     random_indices = np.random.randint(0, self.memory['state'].shape[0], batch_size)
     #     for key in self.keys:
     #         # batch[key] = self.memory[key][:batch_size]
@@ -144,20 +145,22 @@ class GATWrapper(gym.Env):
         # s = torch.tensor(self.s)[random_indices]
         # a = torch.tensor(self.a)[random_indices]
         # s_prime = self.s_prime[random_indices]
-        # print("s", s, a)
+
         with torch.no_grad():
             predicted_normalized_delta = self.forward_model(torch.unsqueeze(s, dim=0), torch.unsqueeze(a, dim=0))
         # normalized_delta, _, _ = normalize(self.s_prime - self.s)
         # print('normalized_delta', normalized_delta) # next_state torch.Size([1, 8])
-        print("predicted_normalized_delta", predicted_normalized_delta, predicted_normalized_delta.size())
+        print("---------------------")
+        print("s", s.numpy())
+        print("predicted_normalized_delta", predicted_normalized_delta)
         # grounded_action_true = self.inverse_model(torch.unsqueeze(s, dim=0), torch.unsqueeze(torch.tensor(s_prime), dim=0))
         with torch.no_grad():
             # normalized_delta, _, _ = normalize_tensor(torch.unsqueeze(s, dim=0) - next_state)
             grounded_action = self.inverse_model(torch.unsqueeze(s, dim=0), predicted_normalized_delta)
         grounded_action = torch.squeeze(grounded_action, dim=0)
-        print("s", s.numpy(), "a", a.numpy(), "a'", grounded_action.detach().numpy())
+        print("a", a.numpy(), "a'", grounded_action.detach().numpy())
         self.error.append((grounded_action - a).abs().sum().detach().numpy().item())
-        print("self.error", self.error)
+        print("self.error", self.error[-1])
 
         # debug
         # random_indices = np.random.randint(0, 1048, 1)[0]
@@ -182,10 +185,12 @@ class GATWrapper(gym.Env):
         #     print("self.error", self.error)
         #     input()
         #     self.error.clear()
-        state_dict, _, _, _, _ = self.env.step(grounded_action.detach())
-        print("next state", self.env.step(grounded_action.detach()))
+        # state_dict, A, B, C, D = self.env.step(grounded_action.detach())
+        # print("next state", self.env.step(grounded_action.detach()))
+        state_dict, A, B, C, D = self.env.step(a)
         self.current_state = state_dict['observation']
-        input('Press Enter to continue: ')
+        return state_dict, A, B, C, D
+        # input('Press Enter to continue: ')
 
 
 """-------------------------------------- Forward Model --------------------------------------"""
@@ -225,45 +230,57 @@ def normalize_tensor(tensor, range_min=-1, range_max=1):
 class ForwardKinematicsCNN(nn.Module):
     def __init__(self, n_observations, n_actions):
         super(ForwardKinematicsCNN, self).__init__()
-        self.fc1 = nn.Linear(n_observations + n_actions, 512)
-        self.bn1 = nn.BatchNorm1d(512)
-        self.fc2 = nn.Linear(512, 512)
-        self.bn2 = nn.BatchNorm1d(512)
-        self.fc3 = nn.Linear(512, 512)
-        self.bn3 = nn.BatchNorm1d(512)
-        self.fc4 = nn.Linear(512, 512)
-        self.bn4 = nn.BatchNorm1d(512)
-        self.fc5 = nn.Linear(512, n_observations)
+        
+        # Increase the size of the network by adding more layers and neurons
+        self.fc1 = nn.Linear(n_observations + n_actions, 1024)
+        self.bn1 = nn.BatchNorm1d(1024)
+        self.fc2 = nn.Linear(1024, 1024)
+        self.bn2 = nn.BatchNorm1d(1024)
+        self.fc3 = nn.Linear(1024, 1024)
+        self.bn3 = nn.BatchNorm1d(1024)
+        self.fc4 = nn.Linear(1024, 1024)
+        self.bn4 = nn.BatchNorm1d(1024)
+        self.fc5 = nn.Linear(1024, 512)
+        self.bn5 = nn.BatchNorm1d(512)
+        self.fc6 = nn.Linear(512, 512)
+        self.bn6 = nn.BatchNorm1d(512)
+        self.fc7 = nn.Linear(512, n_observations)
+
         # self.dropout = nn.Dropout(0.5)
         self.double()
-        
+
     def forward(self, state, action):
         x = torch.cat((state, action), dim=1)
         x = F.relu(self.bn1(self.fc1(x)))
         x = F.relu(self.bn2(self.fc2(x)))
         x = F.relu(self.bn3(self.fc3(x)))
         x = F.relu(self.bn4(self.fc4(x)))
+        x = F.relu(self.bn5(self.fc5(x)))
+        x = F.relu(self.bn6(self.fc6(x)))
         # x = self.dropout(x)
-        x = self.fc5(x)
-        x = torch.tanh(x) # prediction is normalized delta -> [-1, 1]
+        x = self.fc7(x) # prediction is normalized delta -> [-1, 1]
         # normalized_tensor, _, _ = normalize_tensor(x)  # Convert back to tensor
         return x #normalized_tensor
 
-    
+
 # need a new model for real data's format
 
 class InverseKinematicsCNN(nn.Module):
     def __init__(self, n_observations, n_actions):
         super(InverseKinematicsCNN, self).__init__()
-        self.fc1 = nn.Linear(n_observations * 2, 512)
-        self.bn1 = nn.BatchNorm1d(512)
-        self.fc2 = nn.Linear(512, 512)
-        self.bn2 = nn.BatchNorm1d(512)
-        self.fc3 = nn.Linear(512, 512)
-        self.bn3 = nn.BatchNorm1d(512)
-        self.fc4 = nn.Linear(512, 512)
-        self.bn4 = nn.BatchNorm1d(512)
-        self.fc5 = nn.Linear(512, n_actions)
+        self.fc1 = nn.Linear(n_observations * 2, 1024)
+        self.bn1 = nn.BatchNorm1d(1024)
+        self.fc2 = nn.Linear(1024, 1024)
+        self.bn2 = nn.BatchNorm1d(1024)
+        self.fc3 = nn.Linear(1024, 1024)
+        self.bn3 = nn.BatchNorm1d(1024)
+        self.fc4 = nn.Linear(1024, 1024)
+        self.bn4 = nn.BatchNorm1d(1024)
+        self.fc5 = nn.Linear(1024, 512)
+        self.bn5 = nn.BatchNorm1d(512)
+        self.fc6 = nn.Linear(512, 512)
+        self.bn6 = nn.BatchNorm1d(512)
+        self.fc7 = nn.Linear(512, n_actions)
         self.double()
 
     def forward(self, state, state_delta):
@@ -273,8 +290,9 @@ class InverseKinematicsCNN(nn.Module):
         x = F.relu(self.bn2(self.fc2(x)))
         x = F.relu(self.bn3(self.fc3(x)))
         x = F.relu(self.bn4(self.fc4(x)))
-
-        x = self.fc5(x) # prediction is action -> [-1, 1]
+        x = F.relu(self.bn5(self.fc5(x)))
+        x = F.relu(self.bn6(self.fc6(x)))
+        x = self.fc7(x)  # prediction is action -> [-1, 1]
         x = torch.tanh(x)
         return x
 
@@ -351,8 +369,8 @@ class GroundedActionTransformation():
         self.sim_current_state = self.sim_current_state_dict['observation']
         self.real_current_state_dict, info = self.real_env.reset()
         self.real_current_state = self.real_current_state_dict['observation']
-        print("data['state']", data['state'], data['state'].shape)
-        print("data['action']", data['action'], data['action'].shape)
+        print("data['state']", data['state'].shape)
+        print("data['action']", data['action'].shape)
         self.n_observations_sim = data['state'].shape[1] # observations is paddle x y vx vy + puck last 5 x y (occ0/1), actions is dx dy
         self.n_actions =  data['action'].shape[1]
         # print(self.n_observations, self.n_actions)
@@ -428,6 +446,46 @@ class GroundedActionTransformation():
             self.real_buffer.add(*traj) # ('state', 'next_state', 'action', 'rew', 'term', 'trunc', 'info')
         # TODO: might need to make this actually work
     
+    def evaluate_on_test(self):
+        # retrieve action using training data
+        self.sim_current_state_dict, info = self.sim_env.reset()
+        self.sim_current_state = self.sim_current_state_dict['observation']
+        s = self.sim_current_state_dict
+        action = self.sim_env.action_space.sample() # random action
+        a = np.expand_dims(action, axis=0)
+        with torch.no_grad():
+            predicted_normalized_delta = self.forward_model(torch.unsqueeze(s, dim=0), torch.unsqueeze(a, dim=0))
+        # normalized_delta, _, _ = normalize(self.s_prime - self.s)
+        # print('normalized_delta', normalized_delta) # next_state torch.Size([1, 8])
+        print("---------------------")
+        print("s", s.numpy())
+        print("predicted_normalized_delta", predicted_normalized_delta)
+        # grounded_action_true = self.inverse_model(torch.unsqueeze(s, dim=0), torch.unsqueeze(torch.tensor(s_prime), dim=0))
+        with torch.no_grad():
+            # normalized_delta, _, _ = normalize_tensor(torch.unsqueeze(s, dim=0) - next_state)
+            grounded_action = self.inverse_model(torch.unsqueeze(s, dim=0), predicted_normalized_delta)
+        grounded_action = torch.squeeze(grounded_action, dim=0)
+        print("a", a.numpy(), "a'", grounded_action.detach().numpy())
+        self.error.append((grounded_action - a).abs().sum().detach().numpy().item())
+        print("self.error", self.error[-1])
+    
+    def evaluate_on_train(self):
+        data = self.sim_buffer.sample(1)
+        s = torch.tensor(data['state'])
+        a = torch.tensor(data['action'])
+        with torch.no_grad():
+            print(s.shape, a.shape)
+            predicted_normalized_delta = self.forward_model(s, a)
+        normalized_delta, _, _ = normalize(data['next_state'] - data['state'])
+        loss = compute_loss(predicted_normalized_delta, torch.tensor(normalized_delta, dtype=torch.double))
+        print("In evaluate_on_train, loss:", loss.detach())
+        with torch.no_grad():
+            grounded_action = self.inverse_model(torch.unsqueeze(s, dim=0), predicted_normalized_delta)
+        grounded_action = torch.squeeze(grounded_action, dim=0)
+        print("a", a.numpy(), "a'", grounded_action.detach().numpy())
+        self.error.append((grounded_action - a).abs().sum().detach().numpy().item())
+        print("self.error", self.error[-1])
+
     def train_sim(self, num_iters, i):
         # TODO: try to utilize the same train function as other components
         # TODO: train should automatically add to self.sim_buffer, so we don't need to keep
@@ -437,7 +495,8 @@ class GroundedActionTransformation():
             model = PPO.load("gat_log/PointMaze/optimized_policy9", self.sim_env)
         else:
             # print("self.sim_current_state",self.sim_current_state)
-            print("current sim buffer index:", self.sim_buffer.current_index)
+            # print("current sim buffer index:", self.sim_buffer.current_index)
+            self.sim_current_state_dict, info = self.sim_env.reset() # before training every iteration, reset simulator
             grounded_sim_env = GATWrapper(self.sim_env, self.sim_current_state ,self.forward_model, self.inverse_model, self.sim_buffer.sample(self.sim_batch_size))
             model = PPO.load(self.policy, env=grounded_sim_env)
             model.learn(num_iters)
@@ -522,6 +581,7 @@ class GroundedActionTransformation():
                 print("In forward model, loss:", loss.detach(), ", iter:", i)
             # self.forward_optimizer.step(loss.mean())
             loss.backward()  # Backward pass
+            nn.utils.clip_grad_norm_(self.forward_model.parameters(), max_norm=1.0)
             self.forward_optimizer.step()
             self.scheduler_forward.step()
             loss_values.append(loss.item())
@@ -533,7 +593,7 @@ class GroundedActionTransformation():
         self.inverse_model.train()
         loss_values = []
         for i in range(num_iters):
-            print("current sim buffer index:", self.sim_buffer.current_index)
+            # print("current sim buffer index:", self.sim_buffer.current_index)
             data = self.sim_buffer.sample(self.inverse_batch_size)
             normalized_delta, _, _ = normalize(data['next_state'] - data['state'])
             # print(normalized_delta)
@@ -609,7 +669,7 @@ def load_dataset0(dataset_pth): # TODO
         }
     key_map = {"obs": "state", "next_obs": "next_state", "act": "action", "rew": "rew", "term": "term", "trunc": "trunc"}
     for filename in os.listdir(dataset_pth):
-        if num_frame > 200000: #993564
+        if num_frame > 200000: #993564 #200000
             data['state'] = np.array(data['state'])[:, :4] # not taking goal_x goal_y
             data['next_state'] = np.array(data['next_state'])[:, :4]
             data['action'] = np.array(data['action'])
@@ -667,6 +727,7 @@ def save_loss(loss, label, plot_fp):
     plt.title('Training Loss')
     plt.legend()
     plt.savefig(plot_fp)
+    plt.close()
 
 def readDataset(args):
     dataset_pth = (args.dataset_pth)
@@ -724,6 +785,8 @@ def train_GAT(args, log_dir):
     if train:
         loss_values_i0, inverse_model = gat.train_inverse(args.initial_inverse_training)
         torch.save(inverse_model.state_dict(), log_dir + 'inverse_model_pt.pth')
+        plot_fp = log_dir + '/training_summary/training_summary_i0.png'
+        save_loss(loss_values_i0, 'Inverse Model', plot_fp)
         print("train_inverse finished...")
         print("Starting train_forward...")
         loss_values_f0, forward_model = gat.train_forward(args.initial_forward_training)
@@ -731,13 +794,14 @@ def train_GAT(args, log_dir):
         print('Pre-trained model saving to', log_dir + 'inverse_model_pt.pth', "and", log_dir + 'forward_model_pt.pth')
         plot_fp = log_dir + '/training_summary/training_summary_f0.png'
         save_loss(loss_values_f0, 'Forward Model', plot_fp)
-        plot_fp = log_dir + '/training_summary/training_summary_i0.png'
-        save_loss(loss_values_i0, 'Inverse Model', plot_fp)
+        
     else: #eval: load our pretrained model
         print("Loading pretrained forward and inverse models...")
         gat.load_inverse(log_dir + 'inverse_model_pt.pth')
         gat.load_forward(log_dir + 'forward_model_pt.pth')
     
+    # gat.evaluate_on_train()
+    # eee
     for i in range(1, args.num_real_sim_iters):
         print('Iteration', i, 'started.')
         gat.train_sim(args.n_rl_timesteps, i)
