@@ -73,10 +73,18 @@ class AirHockeyPuckJuggleReward(AirHockeyRewardBase):
         self.hit_cooldown = False
 
     def get_base_reward(self, state_info):
-        reward = self.original_region_reward(state_info)
+        reward = self.original_region_reward(state_info) + self.top_bumping_reward(state_info)
         success = reward > 0 and self.task_env.current_timestep > 50
         return reward, success
     
+    def top_bumping_reward(self, state_info):
+        bump_top = state_info['paddles']['paddle_ego']['position'][0] < 0 + 4 * self.task_env.paddle_radius
+        
+        if bump_top:
+            return -5
+        
+        return 0
+
     def original_region_reward(self, state_info):
         reward = 0
         
