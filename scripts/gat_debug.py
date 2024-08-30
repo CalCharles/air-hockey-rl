@@ -34,7 +34,7 @@ plt.ion()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def normalize(data, range_min=-1, range_max=1):
-    # print('before', data)
+    print('max and min:', np.max(data), np.min(data))
     mean_val = np.mean(data)
     delta = data - mean_val
     max_abs_delta = np.max(np.abs(delta))
@@ -49,14 +49,15 @@ def unnormalize(normalized_array, min_val, max_val):
 
 """-------------------------------------- Buffers --------------------------------------"""
 Transition = namedtuple('Transition',
-                        ('state', 'next_state', 'action', 'rew', 'term', 'trunc', 'info'))
+                        ('state', 'next_state', 'delta', 'action', 'rew', 'term', 'trunc', 'info'))
 
 class ReplayMemory(object):
     def __init__(self, capacity):
-        self.keys = ['state', 'next_state', 'action', 'rew', 'term', 'trunc', 'info']
+        self.keys = ['state', 'next_state', 'delta', 'action', 'rew', 'term', 'trunc', 'info']
         self.memory = {
             'state': np.array([]),
             'next_state': np.array([]),
+            'delta': np.array([]),
             'action': np.array([]),
             'rew': np.array([]),
             'term': np.array([]),
@@ -81,33 +82,34 @@ class ReplayMemory(object):
             self.memory[key] = np.vstack((self.memory[key], Transition(*args)[i]))
             # print("after add:", self.memory[key].shape)
             
-    # def sample(self, batch_size) -> dict: # randomized
-    #     batch = {}
-    #     # print("self.memory['state'].shape[0]", self.memory['state'].shape[0])
-    #     random_indices = np.random.randint(0, self.memory['state'].shape[0], batch_size)
-    #     for key in self.keys:
-    #         # batch[key] = self.memory[key][:batch_size]
-
-    #         # Use the random indices to select samples from the array
-    #         batch[key]  = self.memory[key][random_indices]
-    #     # print(batch)
-    #     return batch
-
-    def sample(self, batch_size) -> dict:
+    def sample(self, batch_size) -> dict: # randomized
         batch = {}
-        total_samples = self.memory['state'].shape[0]
-
-        # Ensure the current index does not exceed the total number of samples
-        if self.current_index + batch_size > total_samples:
-            self.current_index = 0
-
-        # Select the samples sequentially
-        indices = np.arange(self.current_index, self.current_index + batch_size)
+        # print("self.memory['state'].shape[0]", self.memory['state'].shape[0])
+        random_indices = np.random.randint(0, self.memory['state'].shape[0], batch_size)
         for key in self.keys:
-            batch[key] = self.memory[key][indices]
-
-        self.current_index += batch_size
+            # batch[key] = self.memory[key][:batch_size]
+            # print("key", key)
+            # print(self.memory[key].shape)
+            # Use the random indices to select samples from the array
+            batch[key]  = self.memory[key][random_indices]
+        # print(batch)
         return batch
+
+    # def sample(self, batch_size) -> dict:
+    #     batch = {}
+    #     total_samples = self.memory['state'].shape[0]
+
+    #     # Ensure the current index does not exceed the total number of samples
+    #     if self.current_index + batch_size > total_samples:
+    #         self.current_index = 0
+
+    #     # Select the samples sequentially
+    #     indices = np.arange(self.current_index, self.current_index + batch_size)
+    #     for key in self.keys:
+    #         batch[key] = self.memory[key][indices]
+
+    #     self.current_index += batch_size
+    #     return batch
     
     def print_memory(self):
         print("Current memory:")
@@ -195,10 +197,10 @@ class GATWrapper(gym.Env):
 
 """-------------------------------------- Forward Model --------------------------------------"""
 def compute_loss(predictions, targets):
-    _loss = F.mse_loss(predictions, targets)
+    loss = F.mse_loss(predictions, targets)
     # _loss = (predictions - targets).square().mean()
     # print('loss type', _loss)
-    return _loss
+    return loss
 
 # class ForwardKinematicsCNN(nn.Module):
 #     def __init__(self, n_observations, n_actions):
@@ -246,18 +248,20 @@ class ForwardKinematicsCNN(nn.Module):
         self.bn6 = nn.BatchNorm1d(512)
         self.fc7 = nn.Linear(512, n_observations)
 
-        # self.dropout = nn.Dropout(0.5)
+        self.dropout = nn.Dropout(0.5)
         self.double()
 
     def forward(self, state, action):
+        # print("dim", state.shape, action.shape)
         x = torch.cat((state, action), dim=1)
+        # print("dim", x.shape)
         x = F.relu(self.bn1(self.fc1(x)))
         x = F.relu(self.bn2(self.fc2(x)))
         x = F.relu(self.bn3(self.fc3(x)))
         x = F.relu(self.bn4(self.fc4(x)))
         x = F.relu(self.bn5(self.fc5(x)))
         x = F.relu(self.bn6(self.fc6(x)))
-        # x = self.dropout(x)
+        x = self.dropout(x)
         x = self.fc7(x) # prediction is normalized delta -> [-1, 1]
         # normalized_tensor, _, _ = normalize_tensor(x)  # Convert back to tensor
         return x #normalized_tensor
@@ -374,16 +378,18 @@ class GroundedActionTransformation():
         self.n_observations_sim = data['state'].shape[1] # observations is paddle x y vx vy + puck last 5 x y (occ0/1), actions is dx dy
         self.n_actions =  data['action'].shape[1]
         # print(self.n_observations, self.n_actions)
-        self.policy = "optimized_policy0"
         self.forward_model = init_forward_model(self.n_observations_sim, self.n_actions) # for real
         self.forward_optimizer = optim.Adam(self.forward_model.parameters(), lr=0.0001, weight_decay=1e-5)
         self.scheduler_forward = StepLR(self.forward_optimizer, step_size=100, gamma=0.9)  # Learning rate scheduler
+        # self.scheduler_forward = optim.lr_scheduler.ReduceLROnPlateau(self.forward_optimizer, mode='min', factor=0.5, patience=10, verbose=True)
         self.forward_batch_size = 1024
 
         self.inverse_model = init_inverse_model(self.n_observations_sim, self.n_actions)
         self.inverse_optimizer = optim.Adam(self.inverse_model.parameters(), lr=0.0001, weight_decay=1e-5)
         self.scheduler_inverse = StepLR(self.inverse_optimizer, step_size=100, gamma=0.9)
         self.inverse_batch_size = 1024
+
+        self.policy = "optimized_policy0"
         self.sim_batch_size = 2048
 
         # TODO: need to define the buffers, check with Michael Munje about how we are using buffers
@@ -447,14 +453,17 @@ class GroundedActionTransformation():
         # TODO: might need to make this actually work
     
     def evaluate_on_test(self):
+        # Set the model to evaluation mode
+        self.forward_model.eval()
+        self.inverse_model.eval()
         # retrieve action using training data
         self.sim_current_state_dict, info = self.sim_env.reset()
         self.sim_current_state = self.sim_current_state_dict['observation']
-        s = self.sim_current_state_dict
+        s = torch.tensor(self.sim_current_state)
         action = self.sim_env.action_space.sample() # random action
-        a = np.expand_dims(action, axis=0)
+        a = torch.tensor(np.expand_dims(action, axis=0))
         with torch.no_grad():
-            predicted_normalized_delta = self.forward_model(torch.unsqueeze(s, dim=0), torch.unsqueeze(a, dim=0))
+            predicted_normalized_delta = self.forward_model(torch.unsqueeze(s, dim=0), a)
         # normalized_delta, _, _ = normalize(self.s_prime - self.s)
         # print('normalized_delta', normalized_delta) # next_state torch.Size([1, 8])
         print("---------------------")
@@ -466,25 +475,37 @@ class GroundedActionTransformation():
             grounded_action = self.inverse_model(torch.unsqueeze(s, dim=0), predicted_normalized_delta)
         grounded_action = torch.squeeze(grounded_action, dim=0)
         print("a", a.numpy(), "a'", grounded_action.detach().numpy())
-        self.error.append((grounded_action - a).abs().sum().detach().numpy().item())
-        print("self.error", self.error[-1])
-    
-    def evaluate_on_train(self):
-        data = self.sim_buffer.sample(1)
-        s = torch.tensor(data['state'])
-        a = torch.tensor(data['action'])
-        with torch.no_grad():
-            print(s.shape, a.shape)
-            predicted_normalized_delta = self.forward_model(s, a)
-        normalized_delta, _, _ = normalize(data['next_state'] - data['state'])
-        loss = compute_loss(predicted_normalized_delta, torch.tensor(normalized_delta, dtype=torch.double))
-        print("In evaluate_on_train, loss:", loss.detach())
-        with torch.no_grad():
-            grounded_action = self.inverse_model(torch.unsqueeze(s, dim=0), predicted_normalized_delta)
-        grounded_action = torch.squeeze(grounded_action, dim=0)
-        print("a", a.numpy(), "a'", grounded_action.detach().numpy())
-        self.error.append((grounded_action - a).abs().sum().detach().numpy().item())
-        print("self.error", self.error[-1])
+        error = (grounded_action - a).abs().sum().detach().numpy().item()
+        print("Action recovery loss:", error)
+        input()
+
+    def evaluate_on_dataset(self):
+        batch_size = 500
+        # Set the model to evaluation mode
+        self.forward_model.eval()
+        self.inverse_model.eval()
+        action_recovery_error = []
+        for i in range(400):
+            # change this to real_buffer if evaluating on testing data
+            data = self.real_buffer.sample(batch_size)
+            s = torch.tensor(data['state'])
+            a = torch.tensor(data['action'])
+            with torch.no_grad():
+                # print(s.shape, a.shape)
+                predicted_normalized_delta = self.forward_model(s, a)
+            # normalized_delta, _, _ = normalize(data['next_state'] - data['state'])
+            normalized_delta = data['delta']
+            # loss = compute_loss(predicted_normalized_delta, torch.tensor(normalized_delta, dtype=torch.double))
+            loss = compute_loss(predicted_normalized_delta, torch.tensor(normalized_delta))
+            print("In evaluate_on_train, forward model loss:", loss.detach())
+            with torch.no_grad():
+                grounded_action = self.inverse_model(s, predicted_normalized_delta)
+            grounded_action = torch.squeeze(grounded_action, dim=0)
+            # print("a", a.numpy(), "a'", grounded_action.detach().numpy())
+            error = (grounded_action - a).abs().sum().detach().numpy().item()
+            print("Action recovery loss:", error / batch_size)
+            action_recovery_error.append(error / batch_size)
+        return action_recovery_error
 
     def train_sim(self, num_iters, i):
         # TODO: try to utilize the same train function as other components
@@ -505,8 +526,7 @@ class GroundedActionTransformation():
         self.policy = self.log_dir + "/optimized_policy" + str(i) # self.policy stores the current model name
         model.save(self.policy)
         return
-
-
+        
     def check(self, state, n_state, act):
         second_col_array1 = state[:, 2]
         second_col_array2 = n_state[:, 2]
@@ -529,43 +549,6 @@ class GroundedActionTransformation():
         correct_rate = len(res)/len(act)
         print("correct rate",correct_rate)
         return correct_rate
-            
-
-    # def train_forward(self, num_iters):
-    #     self.forward_model.train()
-    #     loss_values = []
-    #     for i in range(num_iters):
-    #         data = self.real_buffer.sample(self.forward_batch_size)
-    #         # pred_next_state = self.forward_model(data['state'], data['action'])
-    #         pred_next_state = self.forward_model(torch.tensor(data['state'], dtype=torch.double), torch.tensor(data['action'], dtype=torch.double))
-    #         print('In forward', data['state'][:10], data['next_state'][:10], pred_next_state[:10].detach().numpy(), data['action'][:10])
-    #         loss = compute_loss(pred_next_state, torch.tensor(data['next_state'], dtype=torch.double))
-    #         if (num_iters > 10 and i % 100 == 0) or num_iters == 10:
-    #             print("In forward model, loss:", loss.detach(), ", iter:", i)
-    #         # self.forward_optimizer.step(loss.mean())
-    #         loss.backward()  # Backward pass
-    #         self.forward_optimizer.step()
-    #         self.scheduler.step()
-    #         loss_values.append(loss.item())
-    #     return loss_values, self.forward_model
-    # def train_inverse(self, num_iters):
-    #     self.inverse_model.train()
-    #     loss_values = []
-    #     for i in range(num_iters):
-    #         data = self.sim_buffer.sample(self.inverse_batch_size)
-    #         pred_action = self.inverse_model(torch.tensor(data['state'], dtype=torch.double), torch.tensor(data['next_state'], dtype=torch.double))
-    #         loss = compute_loss(pred_action, torch.tensor(data['action'], dtype=torch.double))
-    #         if (num_iters > 10 and i % 100 == 0) or num_iters == 10:
-    #             print("In inverse model, loss:", loss.detach(), ", iter:", i)
-    #             # print('pred',pred_action[0:30], data['action'][0:30])
-    #         try: 
-    #             loss.backward()  # Backward pass
-    #         except Exception as e:
-    #             print(e)
-    #             import pdb; pdb.set_trace()
-    #         self.inverse_optimizer.step()
-    #         loss_values.append(loss.item())
-    #     return loss_values, self.inverse_model
 
     def train_forward(self, num_iters):
         self.forward_model.train()
@@ -574,9 +557,16 @@ class GroundedActionTransformation():
             data = self.real_buffer.sample(self.forward_batch_size)
             # pred_next_state = self.forward_model(data['state'], data['action'])
             normalized_delta_pred = self.forward_model(torch.tensor(data['state'], dtype=torch.double), torch.tensor(data['action'], dtype=torch.double))
-            normalized_delta, _, _ = normalize(data['next_state'] - data['state'])
-            # print('In forward', data['state'][:10], normalized_delta[:10], normalized_delta_pred[:10].detach().numpy(), data['action'][:10])
+            # print("before nomalize", data['next_state'] - data['state'])
+            # normalized_delta, _, _ = normalize(data['next_state'] - data['state'])            
+            # print("after nomalize", normalized_delta)
+            # input()
+            normalized_delta = data['delta']
+            # print("nomalize", normalized_delta, normalized_delta.shape)
             loss = compute_loss(normalized_delta_pred, torch.tensor(normalized_delta, dtype=torch.double))
+            if i > 4000:
+                if loss.detach() > 0.1:
+                    print('In forward', data['state'][:10], normalized_delta[:10], normalized_delta_pred[:10].detach().numpy(), data['action'][:10])
             if (num_iters > 10 and i % 100 == 0) or num_iters == 10:
                 print("In forward model, loss:", loss.detach(), ", iter:", i)
             # self.forward_optimizer.step(loss.mean())
@@ -595,7 +585,8 @@ class GroundedActionTransformation():
         for i in range(num_iters):
             # print("current sim buffer index:", self.sim_buffer.current_index)
             data = self.sim_buffer.sample(self.inverse_batch_size)
-            normalized_delta, _, _ = normalize(data['next_state'] - data['state'])
+            normalized_delta = data['delta']
+            # normalized_delta, _, _ = normalize(data['next_state'] - data['state'])
             # print(normalized_delta)
             # input()
             pred_action = self.inverse_model(torch.tensor(data['state'], dtype=torch.double), torch.tensor(normalized_delta, dtype=torch.double))
@@ -615,44 +606,9 @@ class GroundedActionTransformation():
             loss_values.append(loss.item())
         return loss_values, self.inverse_model
 
-# def plot_trajectories_with_done(trajs, plot_dir='plots/'):
-#     if not os.path.exists(plot_dir):
-#         os.makedirs(plot_dir)
-
-#     for i, traj in enumerate(state_array, action_array):
-#         state_dim = 8  # Replace with actual state dimension
-#         action_dim = 2  # Replace with actual action dimension
-#         states = traj[:, :state_dim]  # Extracting states (s)
-#         actions = traj[:, state_dim:state_dim+action_dim]  # Extracting actions (a)
-#         next_states = traj[:, state_dim+action_dim:2*state_dim+action_dim]  # Extracting next states (s_prime)
-#         timesteps = traj[:, -1]  # Extracting timesteps (t)
-
-#         plt.figure(figsize=(12, 6))
-        
-#         # Plot states
-#         plt.subplot(2, 1, 1)
-#         plt.plot(timesteps, states)
-#         plt.title(f'Trajectory {i+1}: States')
-#         plt.xlabel('Timestep')
-#         plt.ylabel('State values')
-#         plt.grid(True)
-
-#         # Plot actions
-#         plt.subplot(2, 1, 2)
-#         plt.plot(timesteps, actions)
-#         plt.title(f'Trajectory {i+1}: Actions')
-#         plt.xlabel('Timestep')
-#         plt.ylabel('Action values')
-#         plt.grid(True)
-
-#         # Save the plot as a PNG file
-#         plt.tight_layout()
-#         plt.savefig(f'{plot_dir}/trajectory_{i+1}.png')
-#         plt.close()
-
-#         print(f'Plot saved for trajectory {i+1}')
 
 def load_dataset0(dataset_pth): # TODO
+    avg_delta = np.zeros(300) # len should be 300
     import h5py
     import os
     import ast
@@ -661,6 +617,7 @@ def load_dataset0(dataset_pth): # TODO
     data = {
             'state': [],
             'next_state':  [],
+            'delta': [],
             'action':  [],
             'rew':  [],
             'term': [],
@@ -668,7 +625,9 @@ def load_dataset0(dataset_pth): # TODO
             'info':  [],
         }
     key_map = {"obs": "state", "next_obs": "next_state", "act": "action", "rew": "rew", "term": "term", "trunc": "trunc"}
-    for filename in os.listdir(dataset_pth):
+    file_idx = 0
+    num_trajectories = 0
+    for filename in os.listdir(dataset_pth): 
         if num_frame > 200000: #993564 #200000
             data['state'] = np.array(data['state'])[:, :4] # not taking goal_x goal_y
             data['next_state'] = np.array(data['next_state'])[:, :4]
@@ -676,21 +635,41 @@ def load_dataset0(dataset_pth): # TODO
             data['rew'] = np.array(data['rew'])
             data['term'] = np.array(data['term'])
             data['trunc'] = np.array(data['trunc'])
-
-            # data['state'] = normalize(np.array(data['state']) )
-            # data['next_state'] = normalize(np.array(data['next_state']))
-            # data['action'] = normalize(np.array(data['action']))
-            # data['rew'] = normalize(np.array(data['rew']))
-            # data['term'] = normalize(np.array(data['term']))
-            # data['trunc'] = normalize(np.array(data['trunc']))
-            # print(data['info'])
             data['info'] = np.expand_dims(np.array(data['info']),axis=1)
+            delta_matrix = np.array(data['delta']) # convert list to np array
+            print("delta_matrix", delta_matrix)
+            # normalize each dimension
+            for dim in range(4):
+                normalized_delta, _, _ = normalize(delta_matrix[:, dim])
+                delta_matrix[:, dim] = normalized_delta
+                print("normalized_delta at dim =", dim, normalized_delta, normalized_delta.shape)
+            # input()
+            data['delta'] = delta_matrix[:, :4]
             # print("data['info']", data['info'].shape)
+            # produce histogram
+            # mean_delta_matrix = np.mean(delta_matrix, axis=2)
+            # print("delta_matrix", mean_delta_matrix.shape)
+            # print("num_trajectories", num_trajectories)
+            # print("mean_delta_matrix.shape[1]", mean_delta_matrix.shape[1])
+            # # plt.scatter(time_steps, avg_delta/num_trajectories, color='blue', alpha=0.7, s=5)
+            # for pic in range(mean_delta_matrix.shape[1]):
+            #     cur_timestep = mean_delta_matrix[:, pic]
+            #     print("cur_timestep", cur_timestep.shape)
+            #     plt.hist(cur_timestep, bins=100, color='blue', alpha=0.7)
+            #     plt.xlabel('avg delta')
+            #     plt.ylabel('Frequency')
+            #     plt.title('Histogram with 100 Bins')
+            #     plt.savefig("gat_log/PointMazeRandom/histogram/histogram" + str(pic) + ".png")
+            #     plt.close()
+            # print("data['state']",data['state'].shape)
+            # print("data['delta']", data['delta'].shape)
+            # eee
             return data
         file_path = os.path.join(dataset_pth, filename)
         # print("Reading h5py file from", file_path)
-        
+        num_trajectories += 1
         with h5py.File(file_path, 'r') as hf:
+        
             for key in keys:
                 dataset = hf[key]
                 data[key_map[key]].extend(dataset[:].tolist())
@@ -704,7 +683,22 @@ def load_dataset0(dataset_pth): # TODO
                     num_frame += n
             # info
             data['info'].extend([{}] * n)
+            # append the trajectory's state deltas
+            state_delta = np.array(hf['next_obs'][:]) - np.array(hf['obs'][:])
+            # print("state_delta", state_delta.shape)
+            data['delta'].extend(state_delta)
+            # print(hf['obs'][:], hf['next_obs'][:])
+            # input()
+            # avg_delta_old = avg_delta
+
+            # print("state_delta", state_delta.shape)
+            # avg_delta = avg_delta + np.mean(state_delta, axis=1)
+            # print("avg_delta", avg_delta)
+            # input()
+            # avg_delta.append(np.mean(np.array(data['next_state']) - np.array(data['state'])))
+        file_idx += 1
     return None
+
 
 def real_data_key_mapping(real_dataset):
     real_keys = ["observations","actions","rewards","next_observations","terminals"]
@@ -758,8 +752,9 @@ def readDataset(args):
                 input()
 
 
-def train_GAT(args, log_dir):
-    train = False
+def evaluate_GAT(args, mode):
+    train_forward = True
+    train_inverse = True
     # sim_env = AirHockeyEnv(sim_air_hockey_cfg['air_hockey'])
     # real_env = AirHockeyEnv(real_air_hockey_cfg['air_hockey'])
     example_map = [[0, 0, 0, 0, 0],
@@ -768,10 +763,113 @@ def train_GAT(args, log_dir):
     sim_env = gym.make('PointMaze_UMaze-v3', maze_map=example_map)
     real_env = gym.make('PointMaze_UMaze-v3', maze_map=example_map)
     real_env.observation_space = sim_env.observation_space
+    log_dir = None
+    if mode == '11':
+        log_dir = 'gat_log/PointMaze11/'
+        print("loading sim dataset from", args.dataset_pth1)
+        print("loading real dataset from", args.dataset_pth1)
+        sim_dataset = load_dataset0(args.dataset_pth1)
+        real_dataset = load_dataset0(args.dataset_pth1) 
+    elif mode == '12':
+        log_dir = 'gat_log/PointMaze12/'
+        print("loading sim dataset from", args.dataset_pth1)
+        print("loading real dataset from", args.dataset_pth2)
+        sim_dataset = load_dataset0(args.dataset_pth1)
+        real_dataset = load_dataset0(args.dataset_pth2) 
+    elif mode == '13':
+        log_dir = 'gat_log/PointMaze13/'
+        print("loading sim dataset from", args.dataset_pth1)
+        print("loading real dataset from", args.dataset_pth3)
+        sim_dataset = load_dataset0(args.dataset_pth1)
+        real_dataset = load_dataset0(args.dataset_pth3)
+    elif mode == '21':
+        log_dir = 'gat_log/PointMaze21/'
+        print("loading sim dataset from", args.dataset_pth2)
+        print("loading real dataset from", args.dataset_pth1)
+        sim_dataset = load_dataset0(args.dataset_pth2)
+        real_dataset = load_dataset0(args.dataset_pth1)
+    elif mode == '22':
+        log_dir = 'gat_log/PointMaze22/'
+        print("loading sim dataset from", args.dataset_pth2)
+        print("loading real dataset from", args.dataset_pth2)
+        sim_dataset = load_dataset0(args.dataset_pth2)
+        real_dataset = load_dataset0(args.dataset_pth2)
+    elif mode == '23':
+        log_dir = 'gat_log/PointMaze23/'
+        print("loading sim dataset from", args.dataset_pth2)
+        print("loading real dataset from", args.dataset_pth3)
+        sim_dataset = load_dataset0(args.dataset_pth2)
+        real_dataset = load_dataset0(args.dataset_pth3)
+    elif mode == '31':
+        log_dir = 'gat_log/PointMaze31/'
+        print("loading sim dataset from", args.dataset_pth3)
+        print("loading real dataset from", args.dataset_pth1)
+        sim_dataset = load_dataset0(args.dataset_pth3)
+        real_dataset = load_dataset0(args.dataset_pth1)
+    elif mode == '32':
+        log_dir = 'gat_log/PointMaze32/'
+        print("loading sim dataset from", args.dataset_pth3)
+        print("loading real dataset from", args.dataset_pth2)
+        sim_dataset = load_dataset0(args.dataset_pth3)
+        real_dataset = load_dataset0(args.dataset_pth2)
+    elif mode == '33':
+        log_dir = 'gat_log/PointMaze33/'
+        print("loading sim dataset from", args.dataset_pth3)
+        print("loading real dataset from", args.dataset_pth3)
+        sim_dataset = load_dataset0(args.dataset_pth3)
+        real_dataset = load_dataset0(args.dataset_pth3)   
 
-    sim_dataset = load_dataset0(args.dataset_pth)
+    os.makedirs(log_dir, exist_ok=True)
+    os.makedirs(log_dir + '/training_summary', exist_ok=True)
+    #real_data_key_mapping(load_dataset("/nfs/homes/air_hockey/data", "history", real_env))
 
-    real_dataset = sim_dataset #real_data_key_mapping(load_dataset("/nfs/homes/air_hockey/data", "history", real_env))
+    gat = GroundedActionTransformation(args, sim_dataset, sim_env, real_env, log_dir)
+    gat.load_buffer_from_dict(real_dict=real_dataset, sim_dict=sim_dataset)
+    
+    # gat.rollout_sim(args.num_sim_steps) #need this before train_inversefor actual implementation
+    if train_inverse:
+        print("Starting train_inverse...")
+        loss_values_i0, inverse_model = gat.train_inverse(args.initial_inverse_training)
+        torch.save(inverse_model.state_dict(), log_dir + 'inverse_model_pt.pth')
+        plot_fp = log_dir + '/training_summary/training_summary_i0.png'
+        save_loss(loss_values_i0, 'Inverse Model', plot_fp)
+        print("train_inverse finished...")
+    else: #eval: load our pretrained model
+        print("Loading pretrained inverse models from", log_dir)
+        gat.load_inverse(log_dir + 'inverse_model_pt.pth')
+    
+    if train_forward:
+        print("Starting train_forward...")
+        loss_values_f0, forward_model = gat.train_forward(args.initial_forward_training)
+        torch.save(forward_model.state_dict(), log_dir + 'forward_model_pt.pth')
+        print('Pre-trained model saving to', log_dir + 'inverse_model_pt.pth', "and", log_dir + 'forward_model_pt.pth')
+        plot_fp = log_dir + '/training_summary/training_summary_f0.png'
+        save_loss(loss_values_f0, 'Forward Model', plot_fp)
+    else:
+        print("Loading pretrained forward models from", log_dir)
+        gat.load_forward(log_dir + 'forward_model_pt.pth')
+
+    action_recovery_error = gat.evaluate_on_dataset()
+    plot_fp = log_dir + '/training_summary/action_recovery_error.png'
+    save_loss(action_recovery_error, 'Action Recovery Error', plot_fp)
+
+
+def train_GAT(args, log_dir):
+    train_forward = False
+    train_inverse = False
+    # sim_env = AirHockeyEnv(sim_air_hockey_cfg['air_hockey'])
+    # real_env = AirHockeyEnv(real_air_hockey_cfg['air_hockey'])
+    os.makedirs(log_dir, exist_ok=True)
+    example_map = [[0, 0, 0, 0, 0],
+       [0, 0, 0, 0, 0],
+       [0, 0, 0, 0, 0]]
+    sim_env = gym.make('PointMaze_UMaze-v3', maze_map=example_map)
+    real_env = gym.make('PointMaze_UMaze-v3', maze_map=example_map)
+    real_env.observation_space = sim_env.observation_space
+
+    sim_dataset = load_dataset0(args.dataset_pth1)
+    real_dataset = load_dataset0(args.dataset_pth1) 
+    #real_data_key_mapping(load_dataset("/nfs/homes/air_hockey/data", "history", real_env))
 
     gat = GroundedActionTransformation(args, sim_dataset, sim_env, real_env, log_dir)
     print("Adding data...")
@@ -779,29 +877,30 @@ def train_GAT(args, log_dir):
     print("Starting train_sim...")
     gat.train_sim(args.initial_rl_training, i=0)
     print("train_sim finished...")
-    print("Starting train_inverse...")
-    
+
     # gat.rollout_sim(args.num_sim_steps) #need this before train_inversefor actual implementation
-    if train:
+    if train_inverse:
+        print("Starting train_inverse...")
         loss_values_i0, inverse_model = gat.train_inverse(args.initial_inverse_training)
         torch.save(inverse_model.state_dict(), log_dir + 'inverse_model_pt.pth')
         plot_fp = log_dir + '/training_summary/training_summary_i0.png'
         save_loss(loss_values_i0, 'Inverse Model', plot_fp)
         print("train_inverse finished...")
+    else: #eval: load our pretrained model
+        print("Loading pretrained inverse models from", log_dir)
+        gat.load_inverse(log_dir + 'inverse_model_pt.pth')
+    
+    if train_forward:
         print("Starting train_forward...")
         loss_values_f0, forward_model = gat.train_forward(args.initial_forward_training)
         torch.save(forward_model.state_dict(), log_dir + 'forward_model_pt.pth')
         print('Pre-trained model saving to', log_dir + 'inverse_model_pt.pth', "and", log_dir + 'forward_model_pt.pth')
         plot_fp = log_dir + '/training_summary/training_summary_f0.png'
         save_loss(loss_values_f0, 'Forward Model', plot_fp)
-        
-    else: #eval: load our pretrained model
-        print("Loading pretrained forward and inverse models...")
-        gat.load_inverse(log_dir + 'inverse_model_pt.pth')
-        gat.load_forward(log_dir + 'forward_model_pt.pth')
-    
-    # gat.evaluate_on_train()
-    # eee
+    else:
+        print("Loading pretrained forward models from", log_dir)
+        gat.load_forward(log_dir + 'forward_model_pt.pth')    
+
     for i in range(1, args.num_real_sim_iters):
         print('Iteration', i, 'started.')
         gat.train_sim(args.n_rl_timesteps, i)
@@ -832,9 +931,12 @@ if __name__ == '__main__':
     parser.add_argument('--sim-cfg', type=str, default=None, help='Path to the configuration file.')
     parser.add_argument('--real-cfg', type=str, default=None, help='Path to the configuration file.')
     parser.add_argument('--dataset_pth', type=str, default=None, help='Path to the dataset file.') # real-cfg
+    parser.add_argument('--dataset_pth1', type=str, default='baseline_models/PointMazeRandomAction/PointMaze_1/trajectory_data', help='Path to the dataset file.') # real-cfg
+    parser.add_argument('--dataset_pth2', type=str, default='/nfs/homes/air_hockey/PointMazeRandomNetwork/trajectory_data', help='Path to the dataset file.') # real-cfg
+    parser.add_argument('--dataset_pth3', type=str, default='/nfs/homes/air_hockey/PointMazeTrainedNetwork/trajectory_data', help='Path to the dataset file.') # real-cfg
     parser.add_argument('--initial_rl_training', type=int, default=10000, help='initial_rl_training')
-    parser.add_argument('--initial_inverse_training', type=int, default=10000, help='initial_inverse_training') #20000
-    parser.add_argument('--initial_forward_training', type=int, default=12000, help='initial_forward_training') #22000
+    parser.add_argument('--initial_inverse_training', type=int, default=6000, help='initial_inverse_training') #20000
+    parser.add_argument('--initial_forward_training', type=int, default=6000, help='initial_forward_training') #22000
     parser.add_argument('--num_real_sim_iters', type=int, default=10, help='num_real_sim_iters')
     parser.add_argument('--num_real_steps', type=int, default=20000, help='num_real_steps') # 20000
     parser.add_argument('--num_sim_steps', type=int, default=20000, help='num_sim_steps')
@@ -846,20 +948,26 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    with open(args.sim_cfg, 'r') as f:
-        sim_air_hockey_cfg = yaml.safe_load(f)
+    # with open(args.sim_cfg, 'r') as f:
+    #     sim_air_hockey_cfg = yaml.safe_load(f)
 
-    with open(args.real_cfg, 'r') as f:
-        real_air_hockey_cfg = yaml.safe_load(f)
+    # with open(args.real_cfg, 'r') as f:
+    #     real_air_hockey_cfg = yaml.safe_load(f)
 
     # TODO: write a loader for the dataset, which should load into a list of dicts with three keys: states, actions, dones
     # sorting is: trajectory->key->data
 
     # input("cont?")
-    log_dir = 'gat_log/PointMazeRandom/'
+    log_dir = 'gat_log/PointMaze/'
+
     # print("len of data", len(data))
     # readDataset(args)
-    train_GAT(args, log_dir)
+
+    # train_GAT(args, log_dir)
+    evaluate_GAT(args, '31')
+    evaluate_GAT(args, '32')
+    evaluate_GAT(args, '33')
+
 # python scripts/grounded_action_transformation.py --sim-cfg configs/gat/puck_height3.yaml --real-cfg configs/gat/puck_height3.yaml --dataset_pth baseline_models/puck_height/air_hockey_agent_20/trajectory_data
 # python scripts/grounded_action_transformation.py --sim-cfg configs/gat/puck_height3.yaml --real-cfg configs/gat/puck_height_real.yaml --dataset_pth baseline_models/puck_height/air_hockey_agent_20/trajectory_data
 # python scripts/gat_debug.py --sim-cfg configs/gat/puck_height3.yaml --real-cfg configs/gat/puck_height_real.yaml --dataset_pth baseline_models/PointMaze/PointMaze_1/trajectory_data
@@ -877,3 +985,20 @@ real data has model with diff obs dims
 # pointmaze remove obstacles except the outter wall (perfect inverse dyn)
 # no visual obs, use only point position and velo
 # see 0 train loss in inverse model
+
+
+# 6 graphs: action statistics + reward
+# Dataset 1: random action
+# Dataset 2: random network
+# Dataset 3: trained network
+# Train on 1, test on 1
+# Train on 1, test on 2
+# Train on 1, test on 3
+# Train on 2, test on 1
+# Train on 2, test on 2
+# Train on 2, test on 3
+# Train on 3, test on 1
+# Train on 3, test on 2
+# Train on 3, test on 3
+# training forward loss + training inverse loss + testing action recovery error = 3
+# 3 * 9 = 27
