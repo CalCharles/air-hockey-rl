@@ -451,33 +451,6 @@ class GroundedActionTransformation():
             # print("traj", traj)
             self.real_buffer.add(*traj) # ('state', 'next_state', 'action', 'rew', 'term', 'trunc', 'info')
         # TODO: might need to make this actually work
-    
-    def evaluate_on_test(self):
-        # Set the model to evaluation mode
-        self.forward_model.eval()
-        self.inverse_model.eval()
-        # retrieve action using training data
-        self.sim_current_state_dict, info = self.sim_env.reset()
-        self.sim_current_state = self.sim_current_state_dict['observation']
-        s = torch.tensor(self.sim_current_state)
-        action = self.sim_env.action_space.sample() # random action
-        a = torch.tensor(np.expand_dims(action, axis=0))
-        with torch.no_grad():
-            predicted_normalized_delta = self.forward_model(torch.unsqueeze(s, dim=0), a)
-        # normalized_delta, _, _ = normalize(self.s_prime - self.s)
-        # print('normalized_delta', normalized_delta) # next_state torch.Size([1, 8])
-        print("---------------------")
-        print("s", s.numpy())
-        print("predicted_normalized_delta", predicted_normalized_delta)
-        # grounded_action_true = self.inverse_model(torch.unsqueeze(s, dim=0), torch.unsqueeze(torch.tensor(s_prime), dim=0))
-        with torch.no_grad():
-            # normalized_delta, _, _ = normalize_tensor(torch.unsqueeze(s, dim=0) - next_state)
-            grounded_action = self.inverse_model(torch.unsqueeze(s, dim=0), predicted_normalized_delta)
-        grounded_action = torch.squeeze(grounded_action, dim=0)
-        print("a", a.numpy(), "a'", grounded_action.detach().numpy())
-        error = (grounded_action - a).abs().sum().detach().numpy().item()
-        print("Action recovery loss:", error)
-        input()
 
     def evaluate_on_dataset(self):
         """Sample a batch size of 500 once, then return the mean action_recovery_error"""
@@ -495,15 +468,16 @@ class GroundedActionTransformation():
         # normalized_delta, _, _ = normalize(data['next_state'] - data['state'])
         normalized_delta = data['delta']
         # loss = compute_loss(predicted_normalized_delta, torch.tensor(normalized_delta, dtype=torch.double))
-        loss = compute_loss(predicted_normalized_delta, torch.tensor(normalized_delta))
+        forward_loss = compute_loss(predicted_normalized_delta, torch.tensor(normalized_delta))
         # print("In evaluate_on_train, forward model loss:", loss.detach())
         with torch.no_grad():
             grounded_action = self.inverse_model(s, predicted_normalized_delta)
+            inverse_loss = compute_loss(self.inverse_model(s, torch.tensor(normalized_delta)), a)
         grounded_action = torch.squeeze(grounded_action, dim=0)
         # print("a", a.numpy(), "a'", grounded_action.detach().numpy())
         error = (grounded_action - a).abs().sum().detach().numpy().item()
         # print("Action recovery loss:", error / batch_size)
-        return loss, error / batch_size
+        return forward_loss, inverse_loss, error / batch_size
 
     def train_sim(self, num_iters, i):
         # TODO: try to utilize the same train function as other components
@@ -552,7 +526,7 @@ class GroundedActionTransformation():
         self.forward_model.train()
         loss_values = []
         for i in range(num_iters):
-            data = self.real_buffer.sample(self.forward_batch_size)
+            data = self.sim_buffer.sample(self.forward_batch_size) # sim_buffer when evaluating, real_buffer when gat
             # pred_next_state = self.forward_model(data['state'], data['action'])
             normalized_delta_pred = self.forward_model(torch.tensor(data['state'], dtype=torch.double), torch.tensor(data['action'], dtype=torch.double))
             # print("before nomalize", data['next_state'] - data['state'])
@@ -748,7 +722,6 @@ def readDataset(args):
                 print("s'", hf['next_obs'][:].tolist()[i])
                 print('a', hf['act'][:].tolist()[i])
                 print('term', hf['term'][:].tolist()[i])
-                input()
 
 
 def evaluate_GAT(args, mode):
@@ -833,36 +806,11 @@ def evaluate_GAT(args, mode):
     gat = GroundedActionTransformation(args, sim_dataset, sim_env, real_env, log_dir)
     gat.load_buffer_from_dict(real_dict=real_dataset, sim_dict=sim_dataset)
     
-    # # gat.rollout_sim(args.num_sim_steps) #need this before train_inversefor actual implementation
-    # if train_inverse:
-    #     print("Starting train_inverse...")
-    #     loss_values_i0, inverse_model = gat.train_inverse(args.initial_inverse_training)
-    #     # loss_values_i0, inverse_model = gat.train_inverse_with_evaluation(args.initial_inverse_training, log_dir, label)
-    #     torch.save(inverse_model.state_dict(), log_dir + 'inverse_model_pt.pth')
-    #     print('Pre-trained model saving to', log_dir + 'inverse_model_pt.pth')
-    #     plot_fp = log_dir + '/training_summary/training_summary_i0.png'
-    #     save_loss(loss_values_i0, 'Inverse Model', plot_fp)
-    #     print("train_inverse finished...")
-    # else: #eval: load our pretrained model
-    #     print("Loading pretrained inverse models from", log_dir)
-    #     gat.load_inverse(log_dir + 'inverse_model_pt.pth')
-    
-    # if train_forward:
-    #     print("Starting train_forward...")
-    #     loss_values_f0, forward_model = gat.train_forward_with_evaluation(args.initial_forward_training, log_dir, label)
-    #     torch.save(forward_model.state_dict(), log_dir + 'forward_model_pt.pth')
-    #     print('Pre-trained model saving to', log_dir + 'forward_model_pt.pth')
-    #     plot_fp = log_dir + '/training_summary/training_summary_f0.png'
-    #     save_loss(loss_values_f0, 'Forward Model', plot_fp)
-    #     print("train_forward finished...")
-    # else:
-    #     print("Loading pretrained forward models from", log_dir)
-    #     gat.load_forward(log_dir + 'forward_model_pt.pth')
-    
     num_epochs = 6000
     eval_epoch_interval = 20
     action_recovery_error_list = []
     forward_testing_loss_list = []
+    inverse_testing_loss_list = []
     loss_values_i = []
     loss_values_f = []
     for eval_freq in range(num_epochs//eval_epoch_interval): # eval every 20 epochs, repeat for 300 times
@@ -870,11 +818,12 @@ def evaluate_GAT(args, mode):
         loss_values_i.extend(loss_values_i0)
         loss_values_f0, forward_model = gat.train_forward(eval_epoch_interval, verbose=False)
         loss_values_f.extend(loss_values_f0)
-        forward_testing_loss, action_recovery_error = gat.evaluate_on_dataset() # sample 500 data for once
+        forward_testing_loss, inverse_testing_loss, action_recovery_error = gat.evaluate_on_dataset() # sample 500 data for once
         if eval_freq % 100 == 0:
-            print(str(eval_freq*20) + " epochs action_recovery_error:", action_recovery_error)
+            print(str(eval_freq*20) + " epochs action_recovery_error:", action_recovery_error, '; forward and inverse loss:', forward_testing_loss, inverse_testing_loss)
         action_recovery_error_list.append(action_recovery_error)
         forward_testing_loss_list.append(forward_testing_loss)
+        inverse_testing_loss_list.append(inverse_testing_loss)
     # save final inverse model
     torch.save(inverse_model.state_dict(), log_dir + 'inverse_model_pt.pth')
     plot_fp = log_dir + '/training_summary/training_summary_i0.png'
@@ -888,6 +837,8 @@ def evaluate_GAT(args, mode):
     plot_fp = log_dir + '/training_summary/testing_error.png'
     plt.plot(x_axis, action_recovery_error_list, label='Action Recovery Error', color='b', linestyle='-', marker='o', markersize=1)
     plt.plot(x_axis, forward_testing_loss_list, label='Forward Model Testing Error', color='r', linestyle='-', marker='x', markersize=1)
+    plt.plot(x_axis, inverse_testing_loss_list, label='Inverse Model Testing Error', color='g', linestyle='-', marker='x', markersize=1)
+
     plt.xlabel('Epoch')
     plt.ylabel('Error')
     plt.title(label)
@@ -1002,7 +953,7 @@ if __name__ == '__main__':
     # sorting is: trajectory->key->data
 
     # input("cont?")
-    log_dir = 'gat_log/PointMaze/'
+    # log_dir = 'gat_log/PointMaze/'
 
     # print("len of data", len(data))
     # readDataset(args)
