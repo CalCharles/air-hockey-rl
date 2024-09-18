@@ -360,7 +360,21 @@ class AirHockeyRobosuite(AirHockeySim):
             joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_yaw")
             self.robosuite_env.sim.data.qpos[joint_key] = desired_qpos[2]
         self.robosuite_env.sim.step()
+
+    def set_object_links(self):
+        # set up object names TODO: might not be working
+        self.paddle_name_list = list(self.paddles_names.keys())
+        if "paddle_ego_acceleration" in self.paddle_name_list: self.paddle_name_list.pop(self.paddle_name_list.index("paddle_ego_acceleration"))
+        if "paddle_ego_force" in self.paddle_name_list: self.paddle_name_list.pop(self.paddle_name_list.index("paddle_ego_force"))
+
         
+        self.puck_name_list = list(self.puck_names.keys())
+        self.block_name_list = list(self.block_names.keys())
+
+        self.paddle_name_list.sort()
+        self.puck_name_list.sort()
+        self.block_name_list.sort()
+
     def instantiate_objects(self):
         if self.initialized_objects:
             self.set_obj_configs()

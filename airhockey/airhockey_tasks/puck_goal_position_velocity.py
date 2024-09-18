@@ -7,6 +7,7 @@ from airhockey.airhockey_rewards import AirHockeyPuckGoalPositionVelocityReward
 class AirHockeyPuckGoalPositionVelocityEnv(AirHockeyGoalEnv):
     def __init__(self, **kwargs):
         self.goal_radius_type = kwargs['goal_radius_type']
+        self.base_goal_radius = kwargs['base_goal_radius']
         super().__init__(**kwargs)
         
     def initialize_spaces(self, obs_type):
@@ -42,6 +43,8 @@ class AirHockeyPuckGoalPositionVelocityEnv(AirHockeyGoalEnv):
 
         self.min_goal_radius = self.width / 16
         self.max_goal_radius = self.width / 4
+        self.goal_radius = self.base_goal_radius
+        
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
         self.reward = AirHockeyPuckGoalPositionVelocityReward(self)

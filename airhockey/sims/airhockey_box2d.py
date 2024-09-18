@@ -178,6 +178,26 @@ class AirHockeyBox2D:
         state_info = self.get_current_state()
         return state_info
     
+    def set_object_links(self):
+        # set up object names
+        self.paddle_names = list(self.paddles.keys())
+        if "paddle_ego_acceleration" in self.paddle_names: self.paddle_names.pop(self.paddle_names.index("paddle_ego_acceleration"))
+        if "paddle_ego_force" in self.paddle_names: self.paddle_names.pop(self.paddle_names.index("paddle_ego_force"))
+
+        
+        self.puck_names = list(self.pucks.keys())
+        self.block_names = list(self.blocks.keys())
+
+        self.paddle_names.sort()
+        self.puck_names.sort()
+        self.block_names.sort()
+
+        
+        # TODO: obstacles and targets not implemented
+        # self.obstacle_names = [self.obstacles.keys()]
+        # self.target_names = [self.targets.keys()]
+
+    
     def convert_from_box2d_coords(self, state_info):
         # traverse through state_info until we find tuple, then correct
         for key, value in state_info.items():
@@ -244,7 +264,7 @@ class AirHockeyBox2D:
                 puck_y_vel = self.pucks[puck_name].linearVelocity[1]
                 state_info['pucks'].append({'position': (puck_x_pos, puck_y_pos), 
                                 'velocity': (puck_x_vel, puck_y_vel)})
-        
+
         return self.convert_from_box2d_coords(state_info)
     
     def instantiate_objects(self):
@@ -481,10 +501,10 @@ class AirHockeyBox2D:
 
     def get_contacts(self):
         contacts = list()
-        shape_pointers = ([self.paddles[bn][0] for bn in self.paddle_names]  + \
-                         [self.pucks[bn][0] for bn in self.puck_names] + [self.blocks[pn][0] for pn in self.block_names] + \
-                         [self.obstacles[pn][0] for pn in self.obstacle_names] + [self.targets[pn][0] for pn in self.target_names])
-        names = self.paddle_names + self.puck_names + self.block_names + self.obstacle_names + self.target_names
+        shape_pointers = ([self.paddles[bn] for bn in self.paddles.keys()]  + \
+                         [self.pucks[bn] for bn in self.pucks.keys()] + [self.blocks[pn] for pn in self.blocks.keys()])
+                        #  [self.obstacles[pn][0] for pn in self.obstacles.keys()] + [self.targets[pn][0] for pn in self.targets.keys()])
+        names = self.paddle_names + self.puck_names + self.block_names# + self.obstacle_names + self.target_names
         contact_names = {n: list() for n in names}
         for bn in names:
             all_contacts = np.zeros(len(shape_pointers)).astype(bool)

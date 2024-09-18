@@ -1,13 +1,14 @@
 import cv2
 import imageio
-import time
+import time, os
 import numpy as np
 from .image_detection import find_red_hockey_paddle, find_red_hockey_puck
 from .draw_regions import visualize_regions
 
 
 mousepos = (0,0,1)
-Mimg = np.load('assets/real/Mimg.npy')
+base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")
+Mimg = np.load(os.path.join(base_dir, 'assets', 'real' ,'Mimg.npy'))
 
 upscale_constant = 3
 original_size = np.array([640, 480])
@@ -92,7 +93,7 @@ def move_event(event, x, y, flags, params):
 def mimic_control(shared_array):
     cap = cv2.VideoCapture(0)
 
-    Mimg_tele = np.load('Mimg_tele.npy')
+    Mimg_tele = np.load(os.path.join(base_dir, 'assets', 'real' ,'Mimg_tele.npy'))
 
     while True:
         start = time.time()

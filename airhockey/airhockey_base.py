@@ -26,7 +26,7 @@ def get_real_simulator_fn():
 class AirHockeyBaseEnv(ABC, Env):
     def __init__(self, **kwargs):
         
-        defaults = {
+        self.defaults = {
             'ignore_done': False,
             'hard_reset': True,
             'camera_names': ["birdview", "sideview"],
@@ -61,11 +61,15 @@ class AirHockeyBaseEnv(ABC, Env):
             'domain_random': False,
             'initialization_description_pth': "",
             'solrefs': [None, None, None, None],
-            'obs_type': "vel"
+            'obs_type': "vel",
+            'base_goal_radius': 0.15,
+            'puck_goal_success_bonus': 0.0,
+            'paddle_puck_success_bonus': 0.0,
         }
         
         # handle defaults, keeps values for duplicate keys from right side!
-        kwargs = {**defaults, **kwargs}
+        kwargs = {**self.defaults, **kwargs}
+        print("initializing with", kwargs)
 
         config = dict_to_namespace(kwargs)
 
@@ -276,6 +280,7 @@ class AirHockeyBaseEnv(ABC, Env):
             self.simulator.update_table(*self.solrefs)
         self.simulator.instantiate_objects()
         state_info = self.simulator.get_current_state()
+        self.simulator.set_object_links()
         self.current_state = state_info
         obs = self.get_observation(state_info, obs_type=self.obs_type, puck_history=self.simulator.puck_history)
         

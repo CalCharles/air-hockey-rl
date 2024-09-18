@@ -30,7 +30,8 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
             'paddle_offsets': [0, 0, 0, 0],
             'paddle_clipping': [1, 0, -0.1, -0.15],
             'obs_type': "negative_regions_paddle",
-            'goal_radius_type': "fixed"
+            'goal_radius_type': "fixed",
+            'base_goal_radius': 0.05,
         }
         
         kwargs = {**defaults, **kwargs}
@@ -46,6 +47,7 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
         self.reward_velocity_limits_min = config.reward_velocity_limits_min
         self.reward_velocity_limits_max = config.reward_velocity_limits_max
         self.goal_radius_type = config.goal_radius_type
+        self.base_goal_radius = config.base_goal_radius
         self.reward = AirHockeyPaddleReachPositionNegRegionsReward(self)
         super().__init__(**kwargs)
         
@@ -115,6 +117,7 @@ class AirHockeyPaddleReachPositionNegRegionsEnv(AirHockeyGoalEnv):
         
         self.min_goal_radius = self.width / 8
         self.max_goal_radius = self.width / 4
+        self.goal_radius = self.base_goal_radius
 
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1

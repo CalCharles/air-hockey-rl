@@ -1,4 +1,4 @@
-import cv2
+import cv2, os
 import numpy as np
 
 def find_red_hockey_paddle(image):
@@ -89,7 +89,9 @@ def find_red_hockey_paddle(image):
 
 
 MIN_DETECT = 25
-Mimg = np.load('assets/real/Mimg.npy')
+
+# Mimg = np.load('assets/real/Mimg.npy')
+Mimg = np.load(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "assets", "real", "Mimg.npy"))
 upscale_constant = 3
 original_size = np.array([640, 480])
 visual_downscale_constant = 2

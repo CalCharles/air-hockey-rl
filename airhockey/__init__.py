@@ -8,7 +8,7 @@ try:
     import airhockey.sims.grippers # this registers the roundgripper!
     import airhockey.sims.utils.RobosuiteTransforms # this registers the transformations utility!
 except:
-    print('Some air hockey shit not installed. Does not work on Apple Silicon')
+    print('Some air hockey components not installed. Does not work on Apple Silicon')
 from airhockey.airhockey_simple_tasks import AirHockeyPuckVelEnv, AirHockeyPuckHeightEnv, AirHockeyPuckCatchEnv 
 from airhockey.airhockey_simple_tasks import AirHockeyPuckJuggleEnv, AirHockeyPuckStrikeEnv, AirHockeyPuckTouchEnv
 from airhockey.airhockey_hierarchical_tasks  import AirHockeyMoveBlockEnv, AirHockeyStrikeCrowdEnv
@@ -21,7 +21,6 @@ from airhockey.airhockey_tasks.paddle_reach_position_velocity import AirHockeyPa
 from airhockey.airhockey_tasks.puck_goal_position_velocity import AirHockeyPuckGoalPositionVelocityEnv
 from airhockey.airhockey_tasks.paddle_reach_position_negative_regions import AirHockeyPaddleReachPositionNegRegionsEnv
 from airhockey.airhockey_tasks.puck_goal_position_dynamic_negative_regions import AirHockeyPuckGoalPositionDynamicNegRegionsEnv
-
 
 
 ASSETS_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../assets"))

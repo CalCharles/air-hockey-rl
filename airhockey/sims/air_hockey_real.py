@@ -1,6 +1,4 @@
 import time
-# from rtde_control import RTDEControlInterface as RTDEControl
-# from rtde_receive import RTDEReceiveInterface as RTDEReceive
 from collections import deque
 import numpy as np
 from .real.multiprocessing import ProtectedArray, NonBlockingConsole
@@ -100,6 +98,8 @@ class AirHockeyReal:
         self.additional_args = {"image_input": False, "frame_stack": 1, "algo": "iql", "goal_type": "goal_vel", "input_mode": "puck_vals",
                         "normalize": True} # Goal conditoned args
 
+        from rtde_control import RTDEControlInterface as RTDEControl
+        from rtde_receive import RTDEReceiveInterface as RTDEReceive
 
         self.ctrl = RTDEControl("172.22.22.2", rtde_frequency, RTDEControl.FLAG_USE_EXT_UR_CAP)
         self.rcv = RTDEReceive("172.22.22.2")
@@ -324,6 +324,10 @@ class AirHockeyReal:
         # x, y = clip_limits(delta_vector[0], delta_vector[1],lims)
         # print(action, move_vector, delta_x, delta_y, pose[:2],  x,y)
         return x, y, puck
+    
+    def set_object_links(self):
+        # doesn't do anything because naming isn't supported
+        return None
 
 
 

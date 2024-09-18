@@ -6,9 +6,11 @@ from airhockey.airhockey_rewards import AirHockeyPuckGoalPositionReward, AirHock
 
 class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
     def __init__(self, **kwargs):
+        # TODO: rearrange defaults so that they happen before this assignment, instead of after
         self.goal_radius_type = kwargs['goal_radius_type']
         self.puck_goal_success_bonus = kwargs['puck_goal_success_bonus']
         self.paddle_puck_success_bonus = kwargs['paddle_puck_success_bonus']
+        self.base_goal_radius = kwargs['base_goal_radius']
         super().__init__(**kwargs)
         
     def initialize_spaces(self, obs_type):
@@ -45,7 +47,7 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
         # self.min_goal_radius = self.width / 16
         # self.max_goal_radius = self.width / 4
         
-        self.goal_radius = 0.15
+        self.goal_radius = self.base_goal_radius
 
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
@@ -85,9 +87,9 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
     def get_observation(self, state_info, obs_type ="paddle", **kwargs):
         return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)
     
-    def set_goals(self):
+    def set_goals(self, goal_radius_type, goal_pos=None, alt_goal_pos=None, goal_set=None):
         goal_low = [-self.table_x_bot , self.table_y_left]
-        goal_high = [0, self.table_y_right] # set goal positions to be in the bottom half of the table.
+        goal_high = [0, self.table_y_right] # set goal positions to be in the top half of the table.
         
         # sample goal position
         min_y = goal_low[1]
@@ -95,5 +97,5 @@ class AirHockeyPuckGoalPositionEnv(AirHockeyGoalEnv):
         min_x = goal_low[0]
         max_x = goal_high[0]
         
-        goal_position = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y))
+        goal_position = self.rng.uniform(low=(min_x, min_y), high=(max_x, max_y)) if goal_pos is None else goal_pos
         self.goal_pos = goal_position 
