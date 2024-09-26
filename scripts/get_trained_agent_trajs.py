@@ -44,6 +44,7 @@ def evaluate_air_hockey_model(air_hockey_cfg, log_dir):
 
     obs = env_test.reset()
     print(obs, type(obs)) # ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel
+
     start = time.time()
     done = False
     # let's save
@@ -55,7 +56,7 @@ def evaluate_air_hockey_model(air_hockey_cfg, log_dir):
     # saved_act = np.array([])
     # saved_rew = np.array([])
 
-    for i in tqdm.tqdm(range(1000000)):
+    for i in tqdm.tqdm(range(10000000)): # 1000000
         print("i:", i, "time:", timestep)
         # Draw the world
         # renderer.render()
@@ -129,6 +130,7 @@ def evaluate_air_hockey_model(air_hockey_cfg, log_dir):
 def write_trajectory(pth, tidx, d, keys): # (obs, act, rew, term, trunc, info) , trunc is always false, info is empty dictionary
     file_path = os.path.join(pth, 'trajectory_data/trajectory_data' + str(tidx) + '.hdf5')
     print("h5py file saved to", file_path)
+    input()
     with h5py.File(file_path, 'w') as hf:
         for key in keys:
             vals = d[key]

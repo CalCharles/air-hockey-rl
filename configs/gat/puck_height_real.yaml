@@ -7,7 +7,7 @@ air_hockey:
     puck_radius: 0.03175
     paddle_radius: 0.0508
     block_width: 0.0254
-    force_scaling: 900
+    force_scaling: 1100 # increase by 10%
     paddle_damping: 3
     puck_damping: 0.4
     paddle_density: 2300

@@ -21,7 +21,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 
 import numpy as np
 from dataset_management.create_dataset import load_dataset
-from torch.optim.lr_scheduler import StepLR
+from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR, ReduceLROnPlateau
 
 # set up matplotlib
 is_ipython = 'inline' in matplotlib.get_backend()
@@ -33,16 +33,11 @@ plt.ion()
 # if GPU is to be used
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def normalize(data, range_min=-1, range_max=1): # column-wise
-    if not data.any(): #x == 0 for x in data):
-        return data, 0, 0
-    # print('max and min:', np.max(data), np.min(data))
-    mean_val = np.mean(data)
-    delta = data - mean_val
-    max_abs_delta = np.max(np.abs(delta))
-    normalized_data = (delta / max_abs_delta) * (range_max - range_min) / 2
-    # print('after', normalized_data)
-    return normalized_data, mean_val, max_abs_delta
+
+def normalize(x):
+    original_min = np.min(x)
+    original_max = np.max(x)
+    return 2 * (x - original_min) / (original_max - original_min) - 1, original_min, original_max
 
 
 def unnormalize(normalized_array, min_val, max_val):
@@ -67,13 +62,50 @@ class ReplayMemory(object):
             'info': np.array([])
         } #deque([], maxlen=capacity)
         self.current_index = 0
+        self.delta_min = None
+        self.delta_max = None
     
     def load_from_dict(self, data):
+        # print("data['state'].shape[1]", data['state'].shape[1])
+        self.delta_min = np.zeros(data['state'].shape[1]) # array of (4,) for point maze
+        self.delta_max = np.zeros(data['state'].shape[1])
         for key in self.keys:
             self.memory[key] = data[key]
-        #     print(self.memory[key].shape)
-        # print(data)
+            # normalize delta and save min and max
+            if key == 'delta':
+                # print(self.memory[key].shape)
+                for dim in range(self.memory[key].shape[1]):
+                    cur_col = self.memory[key][:, dim]
+                    normalized_delta, cur_delta_min, cur_delta_max = normalize(cur_col)
+                    self.delta_min[dim] = cur_delta_min
+                    self.delta_max[dim] = cur_delta_max
+                    self.memory[key][:, dim] = normalized_delta
+        # print("self.delta_min", self.delta_min, self.delta_max)
+        # input()
         
+
+    def add_from_dict(self, data):
+        for key in self.keys:
+            if key == 'delta':
+                # print('before renormalization', np.max(self.memory[key]), np.min(self.memory[key]), self.memory[key].shape)
+                # print('in deltax')
+                old_memory = self.memory[key]
+                self.memory[key] = np.vstack((self.memory[key], data[key])) # establish the shape as (N1 + N2) x 4
+                for dim in range(self.memory[key].shape[1]): # fill in each (N1 + N2) x 1 column
+                    # unnormalize the old memory
+                    cur_col = old_memory[:, dim]
+                    unnormalize_delta = unnormalize(cur_col, self.delta_min[dim], self.delta_max[dim])
+                    # print(cur_col.shape, data[key][:, dim].shape)
+                    combined_delta = np.concatenate((unnormalize_delta, data[key][:, dim]))
+                    # print(cur_col.shape, data[key][:, dim].shape, combined_delta.shape)
+                    # renormalize everything and update min and max
+                    normalized_delta, cur_delta_min, cur_delta_max = normalize(combined_delta)
+                    self.delta_min[dim] = cur_delta_min
+                    self.delta_max[dim] = cur_delta_max
+                    self.memory[key][:, dim] = normalized_delta
+            else:
+                self.memory[key] = np.vstack((self.memory[key], data[key]))
+
 
     def add(self, *args):
         """Save a transition"""
@@ -228,9 +260,9 @@ class ForwardKinematicsCNN(nn.Module):
 class InverseKinematicsCNN(nn.Module):
     def __init__(self, n_observations, n_actions):
         super(InverseKinematicsCNN, self).__init__()
-        self.fc1 = nn.Linear(n_observations * 2, 1024)
-        self.bn1 = nn.BatchNorm1d(1024)
-        self.fc2 = nn.Linear(1024, 1024)
+        self.fc1 = nn.Linear(n_observations * 2, 2048)
+        self.bn1 = nn.BatchNorm1d(2048)
+        self.fc2 = nn.Linear(2048, 1024)
         self.bn2 = nn.BatchNorm1d(1024)
         self.fc3 = nn.Linear(1024, 1024)
         self.bn3 = nn.BatchNorm1d(1024)
@@ -302,19 +334,12 @@ class GroundedActionTransformation():
 
         self.sim_env = sim_env
         self.real_env = real_env
-        state, info = self.sim_env.reset()
-        state, info = self.real_env.reset()
+        self.sim_current_state_dict, info = self.sim_env.reset()
+        self.real_current_state_dict, info = self.real_env.reset()
         # self.sim_current_state = self.sim_env.simulator.get_current_state() # or self.sim_env.current_state
         # self.real_current_state = self.real_env.simulator.get_current_state() # or self.real_env.current_state
         # print("self.sim_current_state", self.sim_current_state)
         # print("self.real_current_state", self.real_current_state)
-        
-        # # print(type(self.sim_env), self.sim_current_state)
-        # self.sim_current_state_dict, info = self.sim_env.reset()
-        # self.sim_current_state = self.sim_current_state_dict['observation']
-        # self.real_current_state_dict, info = self.real_env.reset()
-        # self.real_current_state = self.real_current_state_dict['observation']
-
         self.sim_current_state = self.sim_env.simulator.get_current_state() # or self.sim_env.current_state
         self.real_current_state = self.real_env.simulator.get_current_state() # or self.real_env.current_state
 
@@ -330,9 +355,11 @@ class GroundedActionTransformation():
         # self.scheduler_forward = optim.lr_scheduler.ReduceLROnPlateau(self.forward_optimizer, mode='min', factor=0.5, patience=10, verbose=True)
         self.forward_batch_size = 1024
 
+        
         self.inverse_model = init_inverse_model(self.n_observations_sim, self.n_actions)
-        self.inverse_optimizer = optim.Adam(self.inverse_model.parameters(), lr=0.0001, weight_decay=1e-5)
-        self.scheduler_inverse = StepLR(self.inverse_optimizer, step_size=100, gamma=0.9)
+        self.inverse_optimizer = optim.AdamW(self.inverse_model.parameters(), lr=0.0001, weight_decay=1e-5)
+        # self.scheduler_inverse = StepLR(self.inverse_optimizer, step_size=100, gamma=0.9)
+        self.scheduler_inverse = CosineAnnealingLR(self.inverse_optimizer, T_max=100)
         self.inverse_batch_size = 1024
 
         self.policy = "optimized_policy0"
@@ -367,35 +394,99 @@ class GroundedActionTransformation():
             self.sim_buffer.add(*trajectory) # proxy ( will be removed )
 
     def rollout_sim(self, num_frames):
+        data = {
+            'state': [],
+            'next_state':  [],
+            'delta': [],
+            'action':  [],
+            'rew':  [],
+            'term': [],
+            'trunc': [],
+            'info':  [],
+        }
         for i in range(num_frames):
             if (num_frames > 10 and i % 1000 == 0) or num_frames == 10:
                 print("In rollout_sim, num_frames processed:", i)
+            obs_dict = self.sim_current_state_dict # self.real_env.get_observation(self.real_current_state)
             obs = self.sim_env.get_observation(self.sim_current_state)
             model = PPO.load(self.policy, env=self.sim_env)
-            act, _states = model.predict(obs) # apply policy to sim_env
+            act, _states = model.predict(obs_dict) # apply policy to sim_env
             # print(self.sim_env.step(act))
             obs_next, reward, is_finished, truncated, info = self.sim_env.step(act)
-            self.sim_current_state = self.sim_env.simulator.get_current_state()
-            normalized_delta, _, _ = normalize(obs - obs_next)
-            traj = (obs, obs_next, normalized_delta, act, np.array([reward]), np.array([int(is_finished)]), np.array([int(truncated)]), np.array([info]))
-            self.sim_buffer.add(*traj)
+            self.sim_current_state = self.sim_env.simulator.get_current_state() # self.sim_env.simulator.get_current_state()
+            self.sim_current_state_dict = obs_next
+            data['state'].append(np.array(obs))
+            data['next_state'].append(np.array(obs_next))
+            data['delta'].append(np.array(obs - obs_next))
+            data['action'].append(np.array(act))
+            data['rew'].append(np.array([reward]))
+            data['term'].append(np.array(np.array([int(is_finished)])))
+            data['trunc'].append(np.array([int(truncated)]))
+            data['info'].append(np.array([info]))
+        data['state'] = np.array(data['state'])# not taking goal_x goal_y
+        data['next_state'] = np.array(data['next_state'])
+        data['delta'] = np.array(data['delta'])
+        data['action'] = np.array(data['action'])
+        data['rew'] = np.array(data['rew'])
+        data['term'] = np.array(data['term'])
+        data['trunc'] = np.array(data['trunc'])
+        data['info'] = np.array(data['info'])
+        self.sim_buffer.add_from_dict(data) # perform re-normalization
+        self.inverse_model = init_inverse_model(self.n_observations_sim, self.n_actions)
+        self.inverse_optimizer = optim.AdamW(self.inverse_model.parameters(), lr=0.0001, weight_decay=1e-6)
+        # self.scheduler_inverse = StepLR(self.inverse_optimizer, step_size=100, gamma=0.9)
+        self.scheduler_inverse = CosineAnnealingLR(self.inverse_optimizer, T_max=100)
+        # self.scheduler_inverse = ReduceLROnPlateau(self.inverse_optimizer, mode='min', factor=0.5, patience=5)
+
 
     def rollout_real(self, num_frames):
+        data = {
+            'state': [],
+            'next_state':  [],
+            'delta': [],
+            'action':  [],
+            'rew':  [],
+            'term': [],
+            'trunc': [],
+            'info':  [],
+        }
         for i in range(num_frames):
             if (num_frames > 10 and i % 1000 == 0) or num_frames == 10:
                 print("In rollout_real, num_frames processed:", i)
+            obs_dict = self.real_current_state_dict # self.real_env.get_observation(self.real_current_state)
             obs = self.real_env.get_observation(self.real_current_state)
-            
             model = PPO.load(self.policy, env=self.real_env)
-            
-            act, _states = model.predict(obs) # apply policy to real_env
+            act, _states = model.predict(obs_dict) # apply policy to real_env
             # print(self.real_env.step(act))
             obs_next, reward, is_finished, truncated, info = self.real_env.step(act)
-            self.real_current_state = self.real_env.simulator.get_current_state()
-            normalized_delta, _, _ = normalize(obs - obs_next)
-            traj = (obs, obs_next, normalized_delta , act, np.array([reward]), np.array([int(is_finished)]), np.array([int(truncated)]), np.array([info]))
-            # print("traj", traj)
-            self.real_buffer.add(*traj) # ('state', 'next_state', 'delta', 'action', 'rew', 'term', 'trunc', 'info')
+            self.real_current_state = self.real_env.simulator.get_current_state() # self.real_env.simulator.get_current_state()
+            self.real_current_state_dict = obs_next
+            # print(type(obs), obs, type(obs_next), obs_next)
+            data['state'].append(np.array(obs))
+            data['next_state'].append(np.array(obs_next))
+            data['delta'].append(np.array(obs - obs_next))
+            data['action'].append(np.array(act))
+            data['rew'].append(np.array([reward]))
+            data['term'].append(np.array(np.array([int(is_finished)])))
+            data['trunc'].append(np.array([int(truncated)]))
+            data['info'].append(np.array([info]))
+            
+        data['state'] = np.array(data['state'])# not taking goal_x goal_y
+        data['next_state'] = np.array(data['next_state'])
+        data['delta'] = np.array(data['delta'])
+        data['action'] = np.array(data['action'])
+        data['rew'] = np.array(data['rew'])
+        data['term'] = np.array(data['term'])
+        data['trunc'] = np.array(data['trunc'])
+        data['info'] = np.array(data['info'])
+        self.real_buffer.add_from_dict(data) # ('state', 'next_state', 'delta', 'action', 'rew', 'term', 'trunc', 'info')
+        # TODO: might need to make this actually work
+        # Initialize forward model
+        self.forward_model = init_forward_model(self.n_observations_sim, self.n_actions) # for real
+        self.forward_optimizer = optim.Adam(self.forward_model.parameters(), lr=0.0001, weight_decay=1e-5)
+        self.scheduler_forward = StepLR(self.forward_optimizer, step_size=100, gamma=0.9)  # Learning rate scheduler
+        # self.scheduler_forward = optim.lr_scheduler.ReduceLROnPlateau(self.forward_optimizer, mode='min', factor=0.5, patience=10, verbose=True)
+
         # TODO: might need to make this actually work
     
     def evaluate_on_dataset(self):
@@ -452,7 +543,7 @@ class GroundedActionTransformation():
         self.forward_model.train()
         loss_values = []
         for i in range(num_iters):
-            data = self.sim_buffer.sample(self.forward_batch_size)
+            data = self.real_buffer.sample(self.forward_batch_size)
             # pred_next_state = self.forward_model(data['state'], data['action'])
             normalized_delta_pred = self.forward_model(torch.tensor(data['state'], dtype=torch.double), torch.tensor(data['action'], dtype=torch.double))
             # print("before nomalize", data['next_state'] - data['state'])
@@ -482,6 +573,7 @@ class GroundedActionTransformation():
         self.inverse_model.train()
         loss_values = []
         for i in range(num_iters):
+            self.inverse_optimizer.zero_grad()
             # print("current sim buffer index:", self.sim_buffer.current_index)
             data = self.sim_buffer.sample(self.inverse_batch_size)
             normalized_delta = data['delta']
@@ -494,12 +586,8 @@ class GroundedActionTransformation():
             if verbose and (num_iters > 10 and i % 100 == 0) or num_iters == 10:
                 print("In inverse model, loss:", loss.detach(), ", iter:", i)
                 # print('pred',pred_action[0:30], data['action'][0:30])
-            try:
-                loss.backward()  # Backward pass
-                nn.utils.clip_grad_norm_(self.inverse_model.parameters(), max_norm=1.0)
-            except Exception as e:
-                print(e)
-                import pdb; pdb.set_trace()
+            loss.backward()  # Backward pass
+            nn.utils.clip_grad_norm_(self.inverse_model.parameters(), max_norm=1.0)
             self.inverse_optimizer.step()
             self.scheduler_inverse.step()
             loss_values.append(loss.item())
@@ -535,15 +623,15 @@ def load_dataset0(dataset_pth): # TODO
             data['term'] = np.array(data['term'])
             data['trunc'] = np.array(data['trunc'])
             data['info'] = np.expand_dims(np.array(data['info']),axis=1)
-            delta_matrix = np.array(data['delta']) # convert list to np array
+            # delta_matrix = np.array(data['delta']) # convert list to np array
             # print("delta_matrix", delta_matrix.shape)
             # normalize each dimension
-            for dim in range(delta_matrix.shape[1]):
-                normalized_delta, _, _ = normalize(delta_matrix[:, dim])
-                delta_matrix[:, dim] = normalized_delta
+            # for dim in range(delta_matrix.shape[1]):
+            #     normalized_delta, _, _ = normalize(delta_matrix[:, dim])
+            #     delta_matrix[:, dim] = normalized_delta
                 # print("normalized_delta at dim =", dim, delta_matrix[:, dim], normalized_delta, normalized_delta.shape)
                 # input()
-            data['delta'] = delta_matrix
+            data['delta'] = np.array(data['delta'])
             # print("data['info']", data['info'].shape)
             # produce histogram
             # mean_delta_matrix = np.mean(delta_matrix, axis=2)
@@ -785,8 +873,8 @@ def train_GAT(args, log_dir):
         sim_air_hockey_cfg = yaml.safe_load(f)
     with open(args.real_cfg, 'r') as f:
         real_air_hockey_cfg = yaml.safe_load(f)
-    train_forward = False
-    train_inverse = False
+    train_forward = True
+    train_inverse = True
     pth_dir_inverse = 'gat_log/AirHockey33/'
     pth_dir_forward = 'gat_log/AirHockey33/'
     os.makedirs(log_dir, exist_ok=True)
@@ -815,7 +903,7 @@ def train_GAT(args, log_dir):
         save_loss(loss_values_i0, 'Inverse Model', plot_fp)
         print("train_inverse finished...")
     else: #eval: load our pretrained model
-        print("Loading pretrained inverse models from", log_dir)
+        print("Loading pretrained inverse models from", pth_dir_inverse)
         gat.load_inverse(pth_dir_inverse + 'inverse_model_pt.pth')
     
     if train_forward:
@@ -826,7 +914,7 @@ def train_GAT(args, log_dir):
         plot_fp = log_dir + '/training_summary/training_summary_f0.png'
         save_loss(loss_values_f0, 'Forward Model', plot_fp)
     else:
-        print("Loading pretrained forward models from", log_dir)
+        print("Loading pretrained forward models from", pth_dir_forward)
         gat.load_forward(pth_dir_forward + 'forward_model_pt.pth')    
 
     for i in range(1, args.num_real_sim_iters):
@@ -834,9 +922,14 @@ def train_GAT(args, log_dir):
         gat.train_sim(args.n_rl_timesteps, i)
         print('rollout_real', i, 'started.')
         gat.rollout_real(args.num_real_steps)
+        
         print('rollout_sim', i, 'started.')
         gat.rollout_sim(args.num_sim_steps)
-        loss_values_i, inverse_model_i = gat.train_inverse(args.inverse_iters)
+        print('Iteration', i, 'training started.')
+        if i > 3:
+            loss_values_i, inverse_model_i = gat.train_inverse(10000)
+        else:
+            loss_values_i, inverse_model_i = gat.train_inverse(args.inverse_iters)
         loss_values_f, forward_model_i = gat.train_forward(args.forward_iters)
         print('Iteration', i, 'finished.')
 
@@ -869,7 +962,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_real_steps', type=int, default=20000, help='num_real_steps') # 20000
     parser.add_argument('--num_sim_steps', type=int, default=20000, help='num_sim_steps')
     parser.add_argument('--n_rl_timesteps', type=int, default=100000, help='n_rl_timesteps') # 100000 in sim #10000 in real
-    parser.add_argument('--inverse_iters', type=int, default=3000, help='inverse_iters') #3000
+    parser.add_argument('--inverse_iters', type=int, default=10000, help='inverse_iters') #3000
     parser.add_argument('--forward_iters', type=int, default=3000, help='forward_iters')
     parser.add_argument('--inverse_pt_pth', type=str, default='inverse_model.pth', help='forward_iters')
     parser.add_argument('--forward_pt_pth', type=str, default='forward_model.pth', help='forward_iters')

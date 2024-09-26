@@ -110,7 +110,10 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
         
         # determine the actual log dir
         subdirs = [x for x in os.listdir(log_parent_dir) if os.path.isdir(os.path.join(log_parent_dir, x))]
-        subdir_nums = [int(x.split(air_hockey_cfg['tb_log_name'] + '_')[1]) for x in subdirs]
+        # for x in subdirs:
+        #     if air_hockey_cfg['tb_log_name'] in x:
+        #         print("x.split(air_hockey_cfg['tb_log_name'] + '_'", x.split(air_hockey_cfg['tb_log_name'] + '_'))
+        subdir_nums = [int(x.split(air_hockey_cfg['tb_log_name'] + '_')[1]) for x in subdirs if air_hockey_cfg['tb_log_name'] in x]
         next_num = max(subdir_nums) + 1 if subdir_nums else 1
         log_dir = os.path.join(log_parent_dir, air_hockey_cfg['tb_log_name'] + f'_{next_num}')
         

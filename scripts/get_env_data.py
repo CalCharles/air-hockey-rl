@@ -128,7 +128,7 @@ class CollectAirHockey():
             model.save(model_filepath)
             # env.save(env_filepath)
 
-    def collect_env_data_trained_network(self, log_dir, model_fp):
+    def collect_env_data_trained_network(self, air_hockey_cfg_fp, log_dir, model_fp):
         """
         Evaluate the performance of an air hockey model using Stable Baselines.
         Note: This evalutes the latest training directory in the tensorboard log directory. 
@@ -137,36 +137,22 @@ class CollectAirHockey():
         This script loads a trained model and evaluates its performance in the air hockey environment.
         It uses a configuration file to specify the environment parameters and the file path of the trained model.
         """
-        example_map = [[0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0]]
-
-        env_test = gym.make('PointMaze_UMaze-v3', maze_map=example_map)
+        with open(air_hockey_cfg_fp, 'r') as f:
+            air_hockey_cfg = yaml.safe_load(f)
+        # randomly generate seeds, should be different from training..
+        air_hockey_cfg['seed'] = np.random.randint(0, 1000)
+        air_hockey_params = air_hockey_cfg['air_hockey']
+        air_hockey_cfg['air_hockey']['max_timesteps'] = 200
+        
+        env_test = AirHockeyEnv(air_hockey_params) #.from_dict(air_hockey_params)
+        # renderer = AirHockeyRenderer(env_test)
         
         env_test = DummyVecEnv([lambda : env_test])
-        # env_test = VecNormalize.load(os.path.join(log_dir, env_cfg['vec_normalize_save_filepath']), env_test)
+        # env_test = VecNormalize.load(os.path.join(log_dir, air_hockey_cfg['vec_normalize_save_filepath']), env_test)
         
-        # if goal-conditioned use SAC
-        # model = SAC.load(model_fp, env=env_test)
         model = PPO.load(model_fp)
 
-        device='cpu'
-        gamma = 0.99
-        tb_log_dir = 'baseline_models'
-        tb_log_name = 'PointMazeRandom'
-        log_parent_dir = os.path.join(tb_log_dir, tb_log_name)
-        os.makedirs(log_parent_dir, exist_ok=True)
-        # model = PPO("MultiInputPolicy", env_test, verbose=1, 
-        #         tensorboard_log=log_parent_dir, 
-        #         device=device, 
-        #         seed=0,
-        #         # batch_size=512,
-        #         #n_epochs=5,
-        #         gamma=gamma)
-
-        state_dict = env_test.reset()
-        # print('obs', obs, type(obs)) # ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel
-        obs = state_dict #['observation'][0]
+        obs = env_test.reset()
         # print('obs', obs, type(obs))
         start = time.time()
         done = False
@@ -204,8 +190,7 @@ class CollectAirHockey():
                 if i % 1000 == 0: # 10000, 20000, etc
                     scatter_x.append(action[0][0])
                     scatter_y.append(action[0][1])
-                goal = True
-                if goal:
+                if 'goal' in air_hockey_cfg['air_hockey']['task']:
                     # then it's an ordered dict
                     s = obs['observation']
                     g = obs['desired_goal']
@@ -216,7 +201,7 @@ class CollectAirHockey():
                 a = action.flatten()
                 r = np.array(rew)
                     
-                if goal:
+                if 'goal' in air_hockey_cfg['air_hockey']['task']:
                     s_prime = next_obs['observation']
                     g_prime = next_obs['desired_goal']
                     s_prime = np.concatenate([s_prime.flatten(), g_prime.flatten()]) # g_prime should be the same
@@ -300,7 +285,7 @@ class CollectAirHockey():
         rew_plot = []
         rew_sum = 0
         num_trajectories = 0
-        for i in tqdm.tqdm(range(2000)): #10M 10000000
+        for i in tqdm.tqdm(range(10000000)): #10M 10000000
             # Draw the world
             # renderer.render()
             action = env_test.action_space.sample()
@@ -312,7 +297,7 @@ class CollectAirHockey():
             next_obs, rew, done, info = env_test.step(action)
             rew_sum += rew
             if done: # term
-                # print("num_trajectories", num_trajectories, timestep)
+                print("num_trajectories", num_trajectories, timestep)
                 rew_plot.append(rew_sum)
                 obs = env_test.reset()
                 timestep = 0
@@ -332,7 +317,6 @@ class CollectAirHockey():
                     print("i:", i, "time:", timestep)
                     scatter_x.append(action[0][0])
                     scatter_y.append(action[0][1])
-                goal = True
                 if 'goal' in air_hockey_cfg['air_hockey']['task']:
                     # then it's an ordered dict
                     s = obs['observation']
@@ -392,8 +376,7 @@ class CollectAirHockey():
         plot_fp = log_dir + "/rewards.png"
         save_rew(rew_plot, "Reward", plot_fp)
 
-
-    def collect_env_data_random_network(self, log_dir):
+    def collect_env_data_random_network(self, air_hockey_cfg_fp, log_dir):
         """
         Evaluate the performance of an air hockey model using Stable Baselines.
         Note: This evalutes the latest training directory in the tensorboard log directory. 
@@ -402,19 +385,19 @@ class CollectAirHockey():
         This script loads a trained model and evaluates its performance in the air hockey environment.
         It uses a configuration file to specify the environment parameters and the file path of the trained model.
         """
-        # env_test = gym.make('Ant-v2')
-        example_map = [[0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0]]
-
-        env_test = gym.make('PointMaze_UMaze-v3', maze_map=example_map)
+        with open(air_hockey_cfg_fp, 'r') as f:
+            air_hockey_cfg = yaml.safe_load(f)
+        # randomly generate seeds, should be different from training..
+        air_hockey_cfg['seed'] = np.random.randint(0, 1000)
+        air_hockey_params = air_hockey_cfg['air_hockey']
+        model_fp = os.path.join(log_dir, air_hockey_cfg['model_save_filepath'])
+        air_hockey_cfg['air_hockey']['max_timesteps'] = 200
+        
+        env_test = AirHockeyEnv(air_hockey_params) #.from_dict(air_hockey_params)
+        # renderer = AirHockeyRenderer(env_test)
         
         env_test = DummyVecEnv([lambda : env_test])
-        # env_test = VecNormalize.load(os.path.join(log_dir, env_cfg['vec_normalize_save_filepath']), env_test)
-        
-        # if goal-conditioned use SAC
-        # model = SAC.load(model_fp, env=env_test)
-        # model = PPO.load(model_fp)
+        # env_test = VecNormalize.load(os.path.join(log_dir, air_hockey_cfg['vec_normalize_save_filepath']), env_test)        
 
         device='cpu'
         gamma = 0.99
@@ -423,17 +406,14 @@ class CollectAirHockey():
         log_parent_dir = os.path.join(tb_log_dir, tb_log_name)
         os.makedirs(log_parent_dir, exist_ok=True)
         # using off-the-shelf model
-        model = PPO("MultiInputPolicy", env_test, verbose=1, 
+        model = PPO("MlpPolicy", env_test, verbose=1, 
                 tensorboard_log=log_parent_dir, 
                 device=device, 
                 seed=0,
                 # batch_size=512,
                 #n_epochs=5,
                 gamma=gamma)
-
-        state_dict = env_test.reset()
-        # print('obs', obs, type(obs)) # ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel
-        obs = state_dict #['observation'][0]
+        obs = env_test.reset() # if goal, obs is a dictionary, otherwise its a ndarray
         # print('obs', obs, type(obs))
         start = time.time()
         done = False
@@ -476,8 +456,7 @@ class CollectAirHockey():
                     scatter_x.append(action[0][0])
                     scatter_y.append(action[0][1])
                     rew_plot.append(rew)
-                goal = True
-                if goal:
+                if 'goal' in air_hockey_cfg['air_hockey']['task']:
                     # then it's an ordered dict
                     s = obs['observation']
                     g = obs['desired_goal']
@@ -488,7 +467,7 @@ class CollectAirHockey():
                 a = action.flatten()
                 r = np.array(rew)
                     
-                if goal:
+                if 'goal' in air_hockey_cfg['air_hockey']['task']:
                     s_prime = next_obs['observation']
                     g_prime = next_obs['desired_goal']
                     s_prime = np.concatenate([s_prime.flatten(), g_prime.flatten()]) # g_prime should be the same
@@ -520,7 +499,6 @@ class CollectAirHockey():
                 obs = next_obs
                 timestep += 1
             
-
         env_test.close()
         plt.scatter(scatter_x, scatter_y, color='blue', marker='o')
         # Add titles and labels (optional)
@@ -534,6 +512,7 @@ class CollectAirHockey():
         plt.close()
         plot_fp = log_dir + "/rewards.png"
         save_rew(rew_plot, "Reward", plot_fp)
+
 
 class CollectPointMaze():
     def train_env_model(self, tb_log_name, device='cpu', progress_bar=True):
@@ -1029,6 +1008,8 @@ if __name__ == '__main__':
     #     air_hockey_cfg = yaml.safe_load(f)
 
     air_hockey = CollectAirHockey()
-    air_hockey.collect_env_data_random_action(air_hockey_cfg_fp='configs/gat/puck_height3.yaml', log_dir='/nfs/homes/air_hockey/cathy_air_hockey/AirHockeyRandomAction')
-
+    # air_hockey.collect_env_data_random_action(air_hockey_cfg_fp='configs/gat/puck_height3.yaml', log_dir='/nfs/homes/air_hockey/cathy_air_hockey/AirHockeyRandomAction')
+    # air_hockey.collect_env_data_random_network(air_hockey_cfg_fp='configs/gat/puck_height3.yaml', log_dir='/nfs/homes/air_hockey/cathy_air_hockey/AirHockeyRandomNetwork')
+    air_hockey.collect_env_data_trained_network(air_hockey_cfg_fp='baseline_models/puck_height/air_hockey_agent_20/model_cfg.yaml', log_dir='/nfs/homes/air_hockey/cathy_air_hockey/AirHockeyTrainedNetwork', model_fp='baseline_models/puck_height/air_hockey_agent_20/model.zip')
+    
     # python scripts/get_trained_agent_trajs.py --log_dir baseline_models/？
