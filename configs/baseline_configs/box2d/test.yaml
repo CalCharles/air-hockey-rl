@@ -28,7 +28,7 @@ air_hockey:
     rim_width: 0.045
     table_elevation: 0.7874
     table_tilt: 0.09
-    wall_bounce_scale: 0.01
+    wall_bounce_scale: 0.02
     width: 1.0436
   stand_still_rew: 0.01
   task: puck_velocity
