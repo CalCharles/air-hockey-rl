@@ -69,7 +69,7 @@ class AirHockeyBaseEnv(ABC, Env):
         
         # handle defaults, keeps values for duplicate keys from right side!
         kwargs = {**self.defaults, **kwargs}
-        print("initializing with", kwargs)
+        # print("initializing with", kwargs)
 
         config = dict_to_namespace(kwargs)
 
@@ -235,7 +235,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.simulator.start_callbacks()
 
     def get_obs_space(self, low: list, high: list):
-        return Box(low=np.array(low), high=np.array(high), dtype=float)        
+        return Box(low=np.array(low), high=np.array(high), dtype=float)
 
     def reset(self, seed=None, **kwargs):
 
@@ -356,7 +356,7 @@ class AirHockeyBaseEnv(ABC, Env):
         puck_within_home = False
 
         if self.current_timestep > self.max_timesteps:
-            terminated = True
+            truncated = True
         else:
             if self.terminate_on_out_of_bounds:
                 # check if we hit any walls or are above the middle of the board
