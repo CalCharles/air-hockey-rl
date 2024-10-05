@@ -58,7 +58,8 @@ def load_dataset(data_dir, obs_type, environment):
             # next_observations.append(copy.deepcopy(next_observation)) # TODO: see if we want to append the same observation twice and use the terminal
             dataset["observations"].append(np.array(observations))
             dataset["actions"].append(action[:-1])
-            dataset["rewards"].append(np.array(rewards))
+            dataset["rewards"].append(np.array(rewards[0]))
+            dataset["success"].append(np.array(rewards[1]))
             dataset["next_observations"].append(np.array(next_observations))
             terminals = np.zeros(len(action)-1)
             terminals[-1] = 1

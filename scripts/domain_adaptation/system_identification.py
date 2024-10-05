@@ -158,13 +158,17 @@ def get_frames(renderer, env, states, actions, terminals, task_name):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Demonstrate the air hockey game.')
     parser.add_argument('--cfg', type=str, default='scripts/domain_adaptation/realworld_paddle_config/model_cfg.yaml', help='Path to the configuration file.')
-    parser.add_argument('--dataset_pth', type=str, default='scripts/domain_adaptation/paddle_reach_config/eval_dataset.npz', help='Path to the dataset file.')
+    parser.add_argument('--dataset-pth', type=str, default='scripts/domain_adaptation/paddle_reach_config/eval_dataset.npz', help='Path to the dataset file.')
     args = parser.parse_args()
 
+    # Dataset format:
+        # dictionary with keys: images, observations, actions, terminals
+        # observation with format: paddle pos vel, puck pos vel, goal pos (if goal based)
+    # python scripts/domain_adaptation/system_identification.py --cfg scripts/domain_adaptation/realworld_paddle_config/model_cfg.yaml --dataset-pth /datastor1/calebc/public/data/mouse/state_data_all/ 
 
 
 
-
+    # REWRITE THIS SO THAT IT TAKES IN A SET OF PARAMETERS
     with open(args.cfg, 'r') as f:
         air_hockey_cfg = yaml.safe_load(f)
     # param_names = list(air_hockey_cfg['air_hockey']["simulator_params"].keys())
@@ -193,12 +197,14 @@ if __name__ == '__main__':
     upper_bounds = np.array([1.5, 1.5, 110, 10, 3000])
     initial_params = [1.0, 1.0, 50, 5, 2000]
     print(initial_params, param_names)
+    ##################
 
     ### dataset loading ### 
-    # data = load_dataset(args.dataset_pth)
     new_config = assign_values(initial_params, param_names, air_hockey_params_cp)
     eval_env = AirHockeyEnv(new_config)
-    data = load_dataset("/datastor1/calebc/public/data/mouse/state_data_all/", "history", eval_env)
+    data = load_dataset(args.dataset_pth, "history", eval_env)
+    # data = load_dataset("/datastor1/calebc/public/data/mouse/state_data_all/", "history", eval_env)
+    print(data["observations"].shape)
 
     # magic number to shift the observations
     for observations in data["observations"]:

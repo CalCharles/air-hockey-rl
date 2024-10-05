@@ -363,9 +363,7 @@ class AirHockeyRobosuite(AirHockeySim):
 
     def set_object_links(self):
         # set up object names TODO: might not be working
-        self.paddle_name_list = list(self.paddles_names.keys())
-        if "paddle_ego_acceleration" in self.paddle_name_list: self.paddle_name_list.pop(self.paddle_name_list.index("paddle_ego_acceleration"))
-        if "paddle_ego_force" in self.paddle_name_list: self.paddle_name_list.pop(self.paddle_name_list.index("paddle_ego_force"))
+        self.paddle_name_list = ["gripper0_eef"] # TODO: doesn't handle multiple paddles or gripper force/acceleration
 
         
         self.puck_name_list = list(self.puck_names.keys())

@@ -6,6 +6,7 @@ from airhockey.airhockey_rewards import AirHockeyPaddleReachPositionReward
 
 class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
     def __init__(self, **kwargs):
+        print(list(kwargs.keys()))
         self.goal_radius_type = kwargs['goal_radius_type']
         self.base_goal_radius = kwargs['base_goal_radius']
         super().__init__(**kwargs)

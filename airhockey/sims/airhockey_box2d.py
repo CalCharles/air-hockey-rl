@@ -66,6 +66,7 @@ class AirHockeyBox2D:
 
         kwargs = {**defaults, **kwargs}
         config = dict_to_namespace(kwargs)
+        
 
         # physics / world params
         self.length, self.width = config.length, config.width
