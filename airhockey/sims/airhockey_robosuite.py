@@ -295,6 +295,9 @@ class AirHockeyRobosuite(AirHockeySim):
         # create a dictionary of only the relevant parameters
         return AirHockeyRobosuite(**state_dict)
 
+    def get_contacts(self):
+        return self.robosuite_env.get_contacts() if self.robosuite_env is not None else None
+
     def start_callbacks(self, **kwargs):
         return
 
@@ -858,7 +861,7 @@ class RobosuiteEnv(SingleArmEnv):
     
     def _load_model(self):
         super()._load_model()
-        self.model = self.task_model # Prevents the super call from making this None lol
+        self.model = self.task_model # Prevents the super call from making this None
             
     def load_robots_configs(self, robot_names, controller_configs, mount_types, initialization_noise, control_freq, robot_configs=None):
         num_robots = len(robot_names)
