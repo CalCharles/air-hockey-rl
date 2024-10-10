@@ -18,7 +18,9 @@ import torch.nn.functional as F
 from stable_baselines3 import PPO
 from stable_baselines3.common.buffers import RolloutBuffer
 from stable_baselines3.common.callbacks import BaseCallback
-
+from stable_baselines3.common import results_plotter
+from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.results_plotter import load_results, ts2xy, plot_results
 import numpy as np
 from dataset_management.create_dataset import load_dataset
 from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR, ReduceLROnPlateau
@@ -33,6 +35,53 @@ plt.ion()
 # if GPU is to be used
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
+class SaveOnBestTrainingRewardCallback(BaseCallback):
+    """
+    Callback for saving a model (the check is done every ``check_freq`` steps)
+    based on the training reward (in practice, we recommend using ``EvalCallback``).
+
+    :param check_freq:
+    :param log_dir: Path to the folder where the model will be saved.
+      It must contains the file created by the ``Monitor`` wrapper.
+    :param verbose: Verbosity level: 0 for no output, 1 for info messages, 2 for debug messages
+    """
+    def __init__(self, check_freq: int, log_dir: str, verbose: int = 1):
+        super().__init__(verbose)
+        self.check_freq = check_freq
+        self.log_dir = log_dir
+        self.save_path = os.path.join(log_dir, "best_model")
+        self.best_mean_reward = -np.inf
+
+    def _init_callback(self) -> None:
+        # Create folder if needed
+        if self.save_path is not None:
+            os.makedirs(self.save_path, exist_ok=True)
+
+    def _on_step(self) -> bool:
+        if self.n_calls % self.check_freq == 0:
+
+          # Retrieve training reward
+          x, y = ts2xy(load_results(self.log_dir), "timesteps")
+          if len(x) > 0:
+              # Mean training reward over the last 100 episodes
+              mean_reward = np.mean(y[-100:])
+              if self.verbose >= 1:
+                print(f"Num timesteps: {self.num_timesteps}")
+                print(f"Best mean reward: {self.best_mean_reward:.2f} - Last mean reward per episode: {mean_reward:.2f}")
+
+              # New best model, you could save the agent here
+              if mean_reward > self.best_mean_reward:
+                  self.best_mean_reward = mean_reward
+                  # Example for saving best model
+                  if self.verbose >= 1:
+                    print(f"Saving new best model to {self.save_path}")
+                  self.model.save(self.save_path)
+
+        return True
+
+
+"""-------------------------------------- Math Helpers --------------------------------------"""
 
 def normalize(x):
     original_min = np.min(x)
@@ -517,7 +566,7 @@ class GroundedActionTransformation():
         # print("Action recovery loss:", error)
         return forward_loss, inverse_loss, error / batch_size
 
-    def train_sim(self, num_iters, i):
+    def train_sim(self, num_iters, i): # 100,000
         # TODO: try to utilize the same train function as other components
         # TODO: train should automatically add to self.sim_buffer, so we don't need to keep
         if i == 0:
@@ -531,7 +580,14 @@ class GroundedActionTransformation():
             self.sim_current_state = self.sim_env.simulator.get_current_state() # udpate current state
             grounded_sim_env = GATWrapper(self.sim_env, self.sim_env.get_observation(self.sim_current_state), self.forward_model, self.inverse_model, self.sim_buffer.sample(self.sim_batch_size))
             model = PPO.load(self.policy, env=grounded_sim_env)
-            model.learn(num_iters)
+            model.learn(num_iters, callback=SaveOnBestTrainingRewardCallback(check_freq=5000, log_dir=self.log_dir + 'monitor'))
+            plot_results([self.log_dir + 'monitor'], num_iters, results_plotter.X_TIMESTEPS, "RL training rewards")
+            plt.xlabel('Epoch')
+            plt.ylabel('Rewards')
+            plt.title("RL training rewards")
+            plt.legend()
+            plt.savefig(self.log_dir + 'monitor/r'+str(i)) #file_path
+            plt.close()
         if i != 0:
             print("Action transform error:", np.mean(grounded_sim_env.error))
         self.policy = self.log_dir + "/optimized_policy" + str(i) # self.policy stores the current model name
@@ -873,14 +929,14 @@ def train_GAT(args, log_dir):
         sim_air_hockey_cfg = yaml.safe_load(f)
     with open(args.real_cfg, 'r') as f:
         real_air_hockey_cfg = yaml.safe_load(f)
-    train_forward = True
-    train_inverse = True
-    pth_dir_inverse = 'gat_log/AirHockey33/'
-    pth_dir_forward = 'gat_log/AirHockey33/'
+    train_forward = False
+    train_inverse = False
+    pth_dir_inverse = 'gat_log/AirHockey/'
+    pth_dir_forward = 'gat_log/AirHockey/'
     os.makedirs(log_dir, exist_ok=True)
     os.makedirs(log_dir + '/training_summary', exist_ok=True)
-    sim_env = AirHockeyEnv(sim_air_hockey_cfg['air_hockey'])
-    real_env = AirHockeyEnv(real_air_hockey_cfg['air_hockey'])
+    sim_env = Monitor(AirHockeyEnv(sim_air_hockey_cfg['air_hockey']), 'gat_log/AirHockey/monitor')
+    real_env = Monitor(AirHockeyEnv(real_air_hockey_cfg['air_hockey']), 'gat_log/AirHockey/monitor')
     real_env.observation_space = sim_env.observation_space
 
     sim_dataset = load_dataset0(args.dataset_pth3)
