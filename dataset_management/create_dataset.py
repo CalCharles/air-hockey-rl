@@ -18,17 +18,19 @@ def get_observation(paddle, paddle_vel, puck, puck_history, obs_type):
     observation = get_observation_by_type(state_info, obs_type=obs_type, puck_history=puck_history)
     return observation, state_info
 
-def load_dataset(data_dir, obs_type, environment):
+def load_dataset(data_dir, obs_type, environment, num_trajectories=-1):
     # loads data into a dataset of observations based on the observation type
     dataset = dict()
     dataset["observations"] = list()
     dataset["actions"] = list()
     dataset["rewards"] = list()
+    dataset["success"] = list()
     dataset["next_observations"] = list()
     dataset["terminals"] = list()
     dataset["images"] = list()
 
-    for file in os.listdir(data_dir):
+    for i, file in enumerate(os.listdir(data_dir)):
+        if i == num_trajectories: break # we only need num_trajectory trajectories
         with h5py.File(os.path.join(data_dir, file), 'r') as f:
             try:
                 if f['pose'].shape[0] < 50:
@@ -58,8 +60,8 @@ def load_dataset(data_dir, obs_type, environment):
             # next_observations.append(copy.deepcopy(next_observation)) # TODO: see if we want to append the same observation twice and use the terminal
             dataset["observations"].append(np.array(observations))
             dataset["actions"].append(action[:-1])
-            dataset["rewards"].append(np.array(rewards[0]))
-            dataset["success"].append(np.array(rewards[1]))
+            dataset["rewards"].append(np.array([r[0] for r in rewards]))
+            dataset["success"].append(np.array([r[1] for r in rewards]))
             dataset["next_observations"].append(np.array(next_observations))
             terminals = np.zeros(len(action)-1)
             terminals[-1] = 1
@@ -68,6 +70,7 @@ def load_dataset(data_dir, obs_type, environment):
     # dataset["observations"] = np.concatenate(dataset["observations"], axis=0)
     # dataset["actions"] = np.concatenate(dataset["actions"], axis=0)
     # dataset["rewards"] = np.concatenate(dataset["rewards"], axis=0)
+    # dataset["success"] = np.concatenate(dataset["success"], axis=0)
     # dataset["next_observations"] = np.concatenate(dataset["next_observations"], axis=0)
     # dataset["terminals"] = np.concatenate(dataset["terminals"], axis=0)
     # dataset["images"] = np.concatenate(dataset["images"], axis=0)
@@ -111,4 +114,5 @@ if __name__ == "__main__":
     print(dataset["next_observations"].shape)
     print(dataset["actions"].shape)
     print(dataset["rewards"].shape)
+    print(dataset["success"].shape)
     print(dataset["terminals"].shape)

@@ -13,22 +13,13 @@ import argparse
 import shutil
 import os
 import yaml
-from utils import EvalCallback, save_evaluation_gifs, save_tensorboard_plots
-from curriculum.classifier_curriculum import CurriculumCallback
+from scripts.utils import EvalCallback, save_evaluation_gifs, save_tensorboard_plots
+from scripts.curriculum.classifier_curriculum import CurriculumCallback
 import h5py
 import time
-            
-def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_prior_task_results=False, progress_bar=True):
-    """
-    Train an air hockey paddle model using stable baselines.
 
-    This script loads the configuration file, creates an AirHockey2D environment,
-    wraps the environment with necessary components, trains the model,
-    and saves the trained model and environment statistics.
-    """
-    
+def init_params(air_hockey_cfg):
     air_hockey_params = air_hockey_cfg['air_hockey']
-    print("air_hockey_params", air_hockey_params)
     air_hockey_params['n_training_steps'] = air_hockey_cfg['n_training_steps']
     
     if 'sac' == air_hockey_cfg['algorithm']:
@@ -40,8 +31,19 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
         air_hockey_cfg['air_hockey']['return_goal_obs'] = False
     
     air_hockey_params_cp = air_hockey_params.copy()
-    air_hockey_params_cp['seed'] = 42
-    air_hockey_params_cp['max_timesteps'] = 200
+    air_hockey_params_cp['seed'] = air_hockey_cfg['air_hockey']['seed'] = 42 if 'seed' not in air_hockey_cfg else air_hockey_cfg['seed']
+    return air_hockey_params_cp
+
+def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_prior_task_results=False, progress_bar=True):
+    """
+    Train an air hockey paddle model using stable baselines.
+
+    This script loads the configuration file, creates an AirHockey2D environment,
+    wraps the environment with necessary components, trains the model,
+    and saves the trained model and environment statistics.
+    """
+    
+    air_hockey_params_cp = init_params(air_hockey_cfg)
     
     eval_env = AirHockeyEnv(air_hockey_params_cp)
     

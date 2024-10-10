@@ -12,6 +12,7 @@ from dataset_management.create_dataset import load_dataset
 import wandb
 import cv2
 from scipy.spatial import distance
+from scripts.train import init_params
 
 # dynamic time warping
 def DTW(a, b):
@@ -153,12 +154,30 @@ def get_frames(renderer, env, states, actions, terminals, task_name):
 
         return frames
 
+def load_sys_id_yaml(pth):
+    
+    with open(pth, 'r') as f:
+        id_config = yaml.safe_load(f)
+        param_names = list(id_config.keys())
+        param_names.sort()
+
+        lower_bounds = list()
+        upper_bounds = list()
+        initial_params = list()
+        for n in param_names:
+            lower_bounds.append(id_config[n]["lower"])
+            upper_bounds.append(id_config[n]["upper"])
+            initial_params.append(id_config[n]["start"])
+    return param_names, lower_bounds, upper_bounds, initial_params
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Demonstrate the air hockey game.')
     parser.add_argument('--cfg', type=str, default='scripts/domain_adaptation/realworld_paddle_config/model_cfg.yaml', help='Path to the configuration file.')
+    parser.add_argument('--sys-id-pth', type=str, default='scripts/domain_adaptation/sys_id_configs/paddle_id_params.yaml', help='Path to the range of parameters to modify.')
     parser.add_argument('--dataset-pth', type=str, default='scripts/domain_adaptation/paddle_reach_config/eval_dataset.npz', help='Path to the dataset file.')
+    parser.add_argument('--wdb-entity', type=str, default='', help='who to log wdb to.')
+    parser.add_argument('--run-id', type=str, default='', help="logging identification")
     args = parser.parse_args()
 
     # Dataset format:
@@ -168,54 +187,32 @@ if __name__ == '__main__':
 
 
 
-    # REWRITE THIS SO THAT IT TAKES IN A SET OF PARAMETERS
     with open(args.cfg, 'r') as f:
         air_hockey_cfg = yaml.safe_load(f)
+    
+    air_hockey_cfg['air_hockey'] = init_params(air_hockey_cfg)
     # param_names = list(air_hockey_cfg['air_hockey']["simulator_params"].keys())
 
-    param_names = ['action_x_scaling', 'action_y_scaling', 'max_force_timestep', 'paddle_damping', 'paddle_density'] # 'puck_damping', 'puck_density']
-    param_names.sort()
-    
-    air_hockey_params = air_hockey_cfg['air_hockey']
-    air_hockey_params['n_training_steps'] = air_hockey_cfg['n_training_steps']
-    
-    if 'sac' == air_hockey_cfg['algorithm']:
-        if 'goal' in air_hockey_cfg['air_hockey']['task']:
-            air_hockey_cfg['air_hockey']['return_goal_obs'] = True
-        else:
-            air_hockey_cfg['air_hockey']['return_goal_obs'] = False
-    else:
-        air_hockey_cfg['air_hockey']['return_goal_obs'] = False
-    
-    air_hockey_params_cp = air_hockey_params.copy()
-    air_hockey_params_cp['seed'] = 42
-    air_hockey_params_cp['max_timesteps'] = 200
-
-    # initial_params = extract_value(param_names, air_hockey_params_cp)
-
-    lower_bounds = np.array([0.5, 0.5, 10, 1, 1500])
-    upper_bounds = np.array([1.5, 1.5, 110, 10, 3000])
-    initial_params = [1.0, 1.0, 50, 5, 2000]
-    print(initial_params, param_names)
-    ##################
+    param_names, lower_bounds, upper_bounds, initial_params = load_sys_id_yaml(args.sys_id_pth)
 
     ### dataset loading ### 
-    new_config = assign_values(initial_params, param_names, air_hockey_params_cp)
+    new_config = assign_values(initial_params, param_names, air_hockey_cfg['air_hockey'])
     eval_env = AirHockeyEnv(new_config)
-    data = load_dataset(args.dataset_pth, "history", eval_env)
+    data = load_dataset(args.dataset_pth, "history", eval_env, 10)
     # data = load_dataset("/datastor1/calebc/public/data/mouse/state_data_all/", "history", eval_env)
-    print(data["observations"].shape)
+    # print(list(data.keys()), data["observations"].shape)
 
     # magic number to shift the observations
     for observations in data["observations"]:
         observations[:, 0] += 1.2
+    ###
 
     vis_before = True
     if vis_before:
         # gif_path = os.path.join(os.path.split(args.dataset_pth)[0], 'eval.gif')
         # saved_frames = imageio.mimread(gif_path)
         saved_frames = data['images'][0]
-        new_config = assign_values(initial_params, param_names, air_hockey_params_cp)
+        new_config = assign_values(initial_params, param_names, air_hockey_cfg['air_hockey'])
         eval_env = AirHockeyEnv(new_config)
 
         renderer = AirHockeyRenderer(eval_env)
@@ -235,11 +232,20 @@ if __name__ == '__main__':
         side_by_side = [np.concatenate([saved_frames[i], frames[i]], axis=1) for i in range(min(len(frames), len(saved_frames)))]
         imageio.mimsave(gif_savepath, side_by_side, format='GIF', loop=0, duration=fps_to_duration(fps))
     
-    wandb.init(project="air_hockey_rl", entity="carltheq", config=air_hockey_cfg)
-    wandb.run.name = "sysid_CEM_paddle_reach_realworld"
+    if args.wdb_entity:
+        import datetime
+        timestamp = datetime.datetime.now()
+        formatted_timestamp = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        wandb.init(project="air_hockey_rl", 
+                   entity=args.wdb_entity, 
+                   config=air_hockey_cfg,
+                   name=os.path.basename(args.dataset_pth) + "_" + os.path.basename(args.sys_id_pth),
+                   id=args.run_id + '_' + formatted_timestamp.replace(":", "_"))
 
-    planner = CEMPlanner(eval_fn=lambda params, trajs: get_value(params, param_names, air_hockey_params_cp, trajs, air_hockey_cfg['air_hockey']['task']), 
-                         trajectories=data, elite_frac=0.2, n_samples=100, n_iterations=50, variance=0.2, lower_bounds=lower_bounds, upper_bounds=upper_bounds, param_names=param_names)
+    planner = CEMPlanner(eval_fn=lambda params, trajs: get_value(params, param_names, air_hockey_cfg['air_hockey'], trajs, air_hockey_cfg['air_hockey']['task']), 
+                         trajectories=data, elite_frac=0.2, n_samples=100, n_iterations=50, variance=0.2, 
+                         lower_bounds=lower_bounds, upper_bounds=upper_bounds, param_names=param_names,
+                         wdb_logging=len(args.wdb_entity) > 0)
     # TODO Implemetn CMA-ES planner also
     
     optimal_parameters = planner.optimize(initial_params)
@@ -250,7 +256,7 @@ if __name__ == '__main__':
     vis_after = True
     if vis_after:
 
-        new_config = assign_values(optimal_parameters, param_names, air_hockey_params_cp)
+        new_config = assign_values(optimal_parameters, param_names, air_hockey_cfg['air_hockey'])
         ## save the new config with the optimal parameters
         cfg_folder = os.path.split(args.cfg)[0]
         with open(os.path.join(cfg_folder, 'optimal_config.yaml'), 'w') as f:

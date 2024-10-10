@@ -7,7 +7,7 @@ from multiprocessing import Pool
 from scripts.domain_adaptation.normalization import MinMaxNormalizer
 
 class CEMPlanner:
-    def __init__(self, eval_fn, trajectories, elite_frac=0.2, n_samples=100, n_iterations=10, variance=0.1, lower_bounds=None, upper_bounds=None, param_names=None):
+    def __init__(self, eval_fn, trajectories, elite_frac=0.2, n_samples=100, n_iterations=10, variance=0.1, lower_bounds=None, upper_bounds=None, param_names=None, wdb_logging=False):
         # Existing initialization
         self.eval_fn = eval_fn
         self.data = trajectories
@@ -23,6 +23,7 @@ class CEMPlanner:
         self.lower_bounds = np.array(lower_bounds) if lower_bounds is not None else None
         self.upper_bounds = np.array(upper_bounds) if upper_bounds is not None else None
         self.normalizer = MinMaxNormalizer(min_val=self.lower_bounds, max_val=self.upper_bounds)
+        self.wdb_logging = wdb_logging
 
     def initialize(self, initial_guess):
         """Initialize the distribution parameters based on the initial guess."""
@@ -90,7 +91,7 @@ class CEMPlanner:
             samples = self.sample_actions()
             for dim in range(len(self.param_names)):
                 denormed_mean = self.normalizer.denormalize(self.mean)
-                wandb.log({self.param_names[dim]: denormed_mean[dim]}, step=iteration)
+                if self.wdb_logging: wandb.log({self.param_names[dim]: denormed_mean[dim]}, step=iteration)
             total_sampling_time += time.time() - start_time
 
             trajs = self.sample_trajectories(num_samples=20, traj_length=50)
@@ -104,13 +105,13 @@ class CEMPlanner:
             min_reward = np.min(rewards)
             max_reward = np.max(rewards)
             pbar.set_description(f"Iteration {iteration}, Avg Return: {avg_reward:.2f}, Min Return: {min_reward:.2f}, Max Return: {max_reward:.2f}")
-            wandb.log({"Average Return": avg_reward, "Min Return": min_reward, "Max Return": max_reward}, step=iteration)
+            if self.wdb_logging: wandb.log({"Average Return": avg_reward, "Min Return": min_reward, "Max Return": max_reward}, step=iteration)
             
             start_time = time.time()
             self.update_plan(rewards, samples)
             total_update_time += time.time() - start_time
 
-            wandb.log({"Total Sampling Time": total_sampling_time, "Total Evaluation Time": total_evaluation_time, "Total Update Time": total_update_time}, step=iteration)
+            if self.wdb_logging: wandb.log({"Total Sampling Time": total_sampling_time, "Total Evaluation Time": total_evaluation_time, "Total Update Time": total_update_time}, step=iteration)
         
         
         
