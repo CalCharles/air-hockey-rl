@@ -14,7 +14,7 @@ air_hockey:
   obs_type: many_blocks_vel
   paddle_bounds:
   - 0.55
-  - 1.157
+  - 1.007
   - -0.558
   - 0.558
   simulator: robosuite

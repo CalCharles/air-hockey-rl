@@ -665,7 +665,7 @@ class AirHockeyRobosuite(AirHockeySim):
         Converts 2D action to 3D robot action
         """
         delta_pos_x = -action[0] * self.x_to_x_prime_ratio
-        delta_pos_y = action[1]
+        delta_pos_y = - action[1]
         delta_pos_z = self.transform_z(- action[0]) #  * self.x_to_z_ratio
         
         return np.array([delta_pos_x, delta_pos_y, delta_pos_z])

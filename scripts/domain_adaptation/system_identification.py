@@ -84,7 +84,7 @@ if False:
     import faulthandler
     faulthandler.enable()
 
-def get_value(param_vector, param_names, base_config, trajectories, task_name):
+def get_value(param_vector, param_names, base_config, trajectories, task_name, comp_type="l2", object_name="paddle"):
     new_config = assign_values(param_vector, param_names, base_config)
     eval_env = AirHockeyEnv(new_config)
     
@@ -100,14 +100,23 @@ def get_value(param_vector, param_names, base_config, trajectories, task_name):
             evaluated_states.append(evaluated_state)
     
     evaluated_states = np.array(evaluated_states)
-    target_states = np.concatenate(trajectories['observations'][:, 1:, :4], axis=0)
-    value = compare_trajectories(evaluated_states[:, :4], target_states)
+    if object_name == "paddle":
+        target_states = np.concatenate(trajectories['observations'][:, 1:, :4], axis=0)
+        value = compare_trajectories(evaluated_states[:, :4], target_states, comp_type=comp_type)
+    elif object_name == "puck":
+        target_states = np.concatenate(trajectories['observations'][:, 1:, 4:], axis=0)
+        value = compare_trajectories(evaluated_states[:, 4:], target_states, comp_type=comp_type)
+    elif object_name == "all":
+        target_states = np.concatenate(trajectories['observations'][:, 1:], axis=0)
+        value = compare_trajectories(evaluated_states, target_states, comp_type=comp_type)
     return value
 
 def compare_trajectories(a_traj, b_traj, comp_type="l2"):
     # TODO: Dynamic time warping for trajectory comparison
     if comp_type == "l2":
         return - np.linalg.norm(a_traj - b_traj)
+    if comp_type == "posl2":
+        return - np.linalg.norm(a_traj[...,:2] - b_traj[...,:2])
     if comp_type == "last":
         return - np.linalg.norm(a_traj[-1] - b_traj[-1])
     if comp_type == "dtw":
@@ -177,14 +186,16 @@ if __name__ == '__main__':
     parser.add_argument('--sys-id-pth', type=str, default='scripts/domain_adaptation/sys_id_configs/paddle_id_params.yaml', help='Path to the range of parameters to modify.')
     parser.add_argument('--dataset-pth', type=str, default='scripts/domain_adaptation/paddle_reach_config/eval_dataset.npz', help='Path to the dataset file.')
     parser.add_argument('--wdb-entity', type=str, default='', help='who to log wdb to.')
+    parser.add_argument('--comp-type', type=str, default='l2', help='how to do comparisons.')
+    parser.add_argument('--object-name', type=str, default='paddle', help='which object to do comparisons on. "all" compares the whole state')
     parser.add_argument('--run-id', type=str, default='', help="logging identification")
     args = parser.parse_args()
 
     # Dataset format:
         # dictionary with keys: images, observations, actions, terminals
         # observation with format: paddle pos vel, puck pos vel, goal pos (if goal based)
-    # python scripts/domain_adaptation/system_identification.py --cfg scripts/domain_adaptation/realworld_paddle_config/model_cfg.yaml --dataset-pth /datastor1/calebc/public/data/mouse/state_data_all/ 
-
+    # python scripts/domain_adaptation/system_identification.py --cfg scripts/domain_adaptation/realworld_paddle_config/model_cfg.yaml --dataset-pth /datastor1/calebc/public/data/mouse/state_data_all_new/ 
+    # python scripts/domain_adaptation/system_identification.py --cfg scripts/domain_adaptation/realworld_paddle_config/optimal_paddle_config.yaml --dataset-pth /datastor1/calebc/public/data/mouse/state_data_all_new/ --sys-id-pth scripts/domain_adaptation/sys_id_configs/puck_id_params.yaml --comp-type posl2
 
 
     with open(args.cfg, 'r') as f:
@@ -198,13 +209,15 @@ if __name__ == '__main__':
     ### dataset loading ### 
     new_config = assign_values(initial_params, param_names, air_hockey_cfg['air_hockey'])
     eval_env = AirHockeyEnv(new_config)
-    data = load_dataset(args.dataset_pth, "history", eval_env, 10)
+    data = load_dataset(args.dataset_pth, "vel", eval_env, 10)
     # data = load_dataset("/datastor1/calebc/public/data/mouse/state_data_all/", "history", eval_env)
     # print(list(data.keys()), data["observations"].shape)
 
     # magic number to shift the observations
-    for observations in data["observations"]:
-        observations[:, 0] += 1.2
+    # print(data["observations"][0][:30])
+    # error
+    # for observations in data["observations"]:
+    #     observations[:, 0] += 1.2
     ###
 
     vis_before = True
@@ -242,7 +255,7 @@ if __name__ == '__main__':
                    name=os.path.basename(args.dataset_pth) + "_" + os.path.basename(args.sys_id_pth),
                    id=args.run_id + '_' + formatted_timestamp.replace(":", "_"))
 
-    planner = CEMPlanner(eval_fn=lambda params, trajs: get_value(params, param_names, air_hockey_cfg['air_hockey'], trajs, air_hockey_cfg['air_hockey']['task']), 
+    planner = CEMPlanner(eval_fn=lambda params, trajs: get_value(params, param_names, air_hockey_cfg['air_hockey'], trajs, air_hockey_cfg['air_hockey']['task'], comp_type=args.comp_type, object_name=args.object_name), 
                          trajectories=data, elite_frac=0.2, n_samples=100, n_iterations=50, variance=0.2, 
                          lower_bounds=lower_bounds, upper_bounds=upper_bounds, param_names=param_names,
                          wdb_logging=len(args.wdb_entity) > 0)

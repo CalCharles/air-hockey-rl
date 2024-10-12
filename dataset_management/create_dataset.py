@@ -12,9 +12,8 @@ def get_observation(paddle, paddle_vel, puck, puck_history, obs_type):
     state_info = dict()
     state_info["paddles"] = dict()
     state_info["paddles"]["paddle_ego"] = {"position": paddle, "velocity": paddle_vel}
-    state_info["pucks"] = dict()
     state_info["pucks"] = list()
-    state_info["pucks"].append({"position": puck, "velocity": puck - puck_history[-2], "history": puck_history})
+    state_info["pucks"].append({"position": puck[:2], "velocity": puck[:2] - puck_history[-2][:2], "history": puck_history}) # # TODO: puck dataset does not handle occlusion at the moment
     observation = get_observation_by_type(state_info, obs_type=obs_type, puck_history=puck_history)
     return observation, state_info
 
@@ -39,7 +38,7 @@ def load_dataset(data_dir, obs_type, environment, num_trajectories=-1):
                     paddle = f["pose"][:,:2]
                     paddle_vel = f["speed"][:,:2]
                     action = f["desired_pose"][:,:2] - paddle
-                    puck = f["puck"]
+                    puck = f["puck"] 
                     image = f["image"]
             except Exception as e:
                 print('Error in file:', file, e)

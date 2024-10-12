@@ -46,6 +46,7 @@ class CollisionForceListener(contactListener):
                         projected_vel = np.dot(vel, normal) / np.linalg.norm(normal)
                         body.ApplyLinearImpulse(normal * self.wall_bounce_scale * projected_vel, body.worldCenter, True)
                         body.ApplyLinearImpulse(normal * self.wall_bounce_scale / 4, body.worldCenter, True)
+                        # TODO: change the value if the normal is from the top
 
 class AirHockeyBox2D:
     def __init__(self, **kwargs):

@@ -246,7 +246,7 @@ class EvalCallback(BaseCallback):
             if len(robosuite_frames) > 0:
                 for key in robosuite_frames:
                     frames = robosuite_frames[key]
-                    gif_savepath = os.path.join(progress_dir, f'feval_robosuite_{key}.gif')
+                    gif_savepath = os.path.join(progress_dir, f'_robosuite_{key}.gif')
                     imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(fps))
             # import sys
             # sys.exit()

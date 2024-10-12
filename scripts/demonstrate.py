@@ -8,7 +8,7 @@ import yaml
 import os
 
 class Demonstrator:
-    def __init__(self, air_hockey_cfg):
+    def __init__(self, air_hockey_cfg, robo_view=""):
         """
         Initializes the Demonstrator class.
 
@@ -29,7 +29,7 @@ class Demonstrator:
         else:
             air_hockey_params['return_goal_obs'] = False
         self.air_hockey = AirHockeyEnv(air_hockey_params)
-        self.renderer = AirHockeyRenderer(self.air_hockey)
+        self.renderer = AirHockeyRenderer(self.air_hockey, robosuite_view=robo_view)
         self.keyboard_scheme = 'wasd'
         self.print_reward = air_hockey_cfg['print_reward']
     
@@ -51,7 +51,7 @@ class Demonstrator:
         frame = self.renderer.get_frame()
         cv2.imshow('Air Hockey 2D Demonstration',frame)
         key = cv2.waitKey(20)
-        DEMOFORCE = 0.005
+        DEMOFORCE = 0.5
         if self.keyboard_scheme == 'qweasdzxc':
             if key == ord('k'):
                 action = -1
@@ -167,6 +167,6 @@ if __name__ == "__main__":
     with open(air_hockey_cfg_fp, 'r') as f:
         air_hockey_cfg = yaml.safe_load(f)
 
-    demonstrator = Demonstrator(air_hockey_cfg)
+    demonstrator = Demonstrator(air_hockey_cfg, robo_view="sideview_image")
     demonstrator.run()
     cv2.destroyAllWindows()

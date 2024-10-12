@@ -17,13 +17,14 @@ class AirHockeyRenderer:
         orientation (str, optional): The orientation of the game table. Defaults to 'vertical'.
     """
 
-    def __init__(self, airhockey_env, orientation='vertical'):
+    def __init__(self, airhockey_env, orientation='vertical', robosuite_view=""):
         """
         Initializes the AirHockeyRenderer object.
 
         Args:
             airhockey_env (AirHockeySimulator): The air hockey simulator object.
             orientation (str, optional): The orientation of the game table. Defaults to 'vertical'.
+            robosuite_view: which view to take from robosuite. options: empty (none), sideview, topview
         """
         self.airhockey_env = airhockey_env
         self.orientation = orientation
@@ -35,6 +36,7 @@ class AirHockeyRenderer:
         self.length = self.airhockey_env.length
         self.screen_width, self.screen_height = 120, 120
         self.ppm = self.airhockey_env.ppm 
+        self.robosuite_view = robosuite_view
         
         # get directory where this file is
         dir_path = os.path.dirname(os.path.realpath(__file__))
@@ -123,7 +125,7 @@ class AirHockeyRenderer:
         # Overlay the image
         # check if circle is within the image
         if y_start >= resized_img.shape[0] or x_start >= resized_img.shape[1] or y_end <= 0 or x_end <= 0:
-            print("Circle (puck) is out of bounds. Not rendering...")
+            # print("Circle (puck) is out of bounds. Not rendering...")
             return
         mask = resized_img[y_start:y_end, x_start:x_end, 3] > 0
         self.frame[frame_top_left[1] : frame_bottom_right[1], frame_top_left[0]: frame_bottom_right[0]][mask] = resized_img[y_start:y_end, x_start:x_end, :3][mask]
@@ -238,6 +240,16 @@ class AirHockeyRenderer:
             vertices = [np.array((v[1], v[0])) * self.ppm for v in vertices]  # Default horizontal orientation
             vertices = np.array(vertices).astype(int)
             cv2.fillPoly(self.frame, pts=[vertices], color=color)
+    
+    def merge_robosuite_frame(self, frame):
+        print((self.airhockey_env.current_state.keys()))
+        current_img = self.airhockey_env.current_state[self.robosuite_view]
+        # flip upside down
+        current_img = cv2.flip(current_img, 0)
+        # concatenate with frame
+        current_img = cv2.resize(current_img, (frame.shape[1], frame.shape[0]))
+        current_img = np.concatenate([frame, current_img], axis=1)
+        return current_img
 
     def get_frame(self):
         """
@@ -292,6 +304,7 @@ class AirHockeyRenderer:
         # if self.airhockey_env.paddle[1] is not None: self.draw_circle_with_image(self.airhockey_env.paddle[1], circle_type='paddle')
         if self.orientation == 'vertical':
             self.frame = cv2.rotate(self.frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        if len(self.robosuite_view) > 0: self.frame = self.merge_robosuite_frame(self.frame)
         return self.frame
 
     def render(self):

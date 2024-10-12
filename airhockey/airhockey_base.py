@@ -534,6 +534,18 @@ class AirHockeyBaseEnv(ABC, Env):
                          puck_within_ego_goal, puck_within_alt_goal):
         NotImplementedError("Joint reward function not implemented yet.")
 
+    def create_world_objects_from_state(self, state_vector):
+        # assigns positions to the state components
+        # WARNING: in domains with more objects this should be defined differently
+        name = 'puck_{}'.format(0)
+        puck_pos, puck_vel = state_vector[:2], state_vector[2:4]
+        self.simulator.spawn_puck(puck_pos, puck_vel, name)
+
+        name = 'paddle_ego'
+        paddle_pos, paddle_vel = state_vector[4:6], state_vector[6:]
+        self.simulator.spawn_paddle(paddle_pos, paddle_vel, name)
+
+
 def populate_state_info(paddles, pucks, blocks):
         # populates a state infor dictionary based on the components
         # takes in paddles, pucks and blocks as lists

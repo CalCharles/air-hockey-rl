@@ -30,9 +30,9 @@ def init_params(air_hockey_cfg):
     else:
         air_hockey_cfg['air_hockey']['return_goal_obs'] = False
     
-    air_hockey_params_cp = air_hockey_params.copy()
-    air_hockey_params_cp['seed'] = air_hockey_cfg['air_hockey']['seed'] = 42 if 'seed' not in air_hockey_cfg else air_hockey_cfg['seed']
-    return air_hockey_params_cp
+    air_hockey_params = air_hockey_params.copy()
+    air_hockey_params['seed'] = air_hockey_cfg['air_hockey']['seed'] = 42 if 'seed' not in air_hockey_cfg else air_hockey_cfg['seed']
+    return air_hockey_params
 
 def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_prior_task_results=False, progress_bar=True):
     """
@@ -43,9 +43,9 @@ def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_
     and saves the trained model and environment statistics.
     """
     
-    air_hockey_params_cp = init_params(air_hockey_cfg)
+    air_hockey_params = init_params(air_hockey_cfg)
     
-    eval_env = AirHockeyEnv(air_hockey_params_cp)
+    eval_env = AirHockeyEnv(air_hockey_params)
     
     if type(air_hockey_cfg['seed']) is not list:
         seeds = [int(air_hockey_cfg['seed'])]

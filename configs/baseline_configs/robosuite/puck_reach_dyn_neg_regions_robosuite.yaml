@@ -19,7 +19,7 @@ air_hockey:
   obs_type: negative_regions_puck_vel
   paddle_bounds:
   - 0.55
-  - 1.157
+  - 1.007
   - -0.558
   - 0.558
   reward_movement_types:
