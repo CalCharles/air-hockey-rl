@@ -17,13 +17,16 @@ import torch.nn.functional as F
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.buffers import RolloutBuffer
-from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.callbacks import BaseCallback #, TensorboardCallback
+
 from stable_baselines3.common import results_plotter
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.results_plotter import load_results, ts2xy, plot_results
 import numpy as np
 from dataset_management.create_dataset import load_dataset
 from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR, ReduceLROnPlateau
+from stable_baselines3.common.logger import configure
+
 
 # set up matplotlib
 is_ipython = 'inline' in matplotlib.get_backend()
@@ -35,6 +38,67 @@ plt.ion()
 # if GPU is to be used
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
+class TrainingLossCallback(BaseCallback):
+    def __init__(self, log_dir, verbose=0):
+        super(TrainingLossCallback, self).__init__(verbose)
+        self.log_dir = log_dir
+        self.losses = []
+
+    def _on_step(self):
+        if self.n_calls > 0:
+        # Extract policy_gradient_loss from the logger's dictionary
+            # print("self.logger", self.logger.name_to_value)
+            if 'train/policy_gradient_loss' in self.logger.name_to_value:
+                loss_value = self.logger.name_to_value['train/policy_gradient_loss']
+                # print('loss_value', loss_value)
+                self.losses.append(loss_value)
+        return True
+
+    def _on_training_end(self):
+        # Save the accumulated losses to a .npy file
+        loss_file_path = os.path.join(self.log_dir, 'training_losses.npy')
+        np.save(loss_file_path, np.array(self.losses))
+        print(f"Training losses saved to {loss_file_path}")
+
+def plot_losses(log_dir, i):
+    # Load the training losses
+    loss_file = os.path.join(log_dir, 'monitor/training_losses.npy')
+    if os.path.exists(loss_file):
+        losses = np.load(loss_file)
+        iteration_numbers = np.arange(1, len(losses) + 1)
+        # print('Training loss', losses)
+        plt.plot(iteration_numbers, losses, '-o')
+        plt.title('PPO Training Loss')
+        plt.xlabel('Iteration')
+        plt.ylabel('Loss')
+        plt.legend()
+        plt.savefig(log_dir + 'monitor/loss_'+str(i)) #file_path
+        plt.close()
+    else:
+        print("No loss data found.")
+
+# plot_reward([self.log_dir + 'monitor'], num_iters, results_plotter.X_TIMESTEPS, "RL training rewards")
+def plot_reward(log_dir, i, results):
+    iteration_numbers = np.arange(1, len(results) + 1)
+    plt.plot(iteration_numbers, results, '-o')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title("RL training rewards")
+    plt.legend()
+    plt.savefig(log_dir + 'monitor/reward_'+str(i)) #file_path
+    plt.close()
+
+
+def plot_action_error(log_dir, i, results):
+    iteration_numbers = np.arange(1, len(results) + 1)
+    plt.plot(iteration_numbers, results, '-o')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title("Grounded Action Error")
+    plt.legend()
+    plt.savefig(log_dir + 'monitor/action_error_'+str(i)) #file_path
+    plt.close()
 
 class SaveOnBestTrainingRewardCallback(BaseCallback):
     """
@@ -67,7 +131,7 @@ class SaveOnBestTrainingRewardCallback(BaseCallback):
               # Mean training reward over the last 100 episodes
               mean_reward = np.mean(y[-100:])
               if self.verbose >= 1:
-                print(f"Num timesteps: {self.num_timesteps}")
+                # print(f"Num timesteps: {self.num_timesteps}")
                 print(f"Best mean reward: {self.best_mean_reward:.2f} - Last mean reward per episode: {mean_reward:.2f}")
 
               # New best model, you could save the agent here
@@ -130,7 +194,7 @@ class ReplayMemory(object):
                     self.delta_max[dim] = cur_delta_max
                     self.memory[key][:, dim] = normalized_delta
         # print("self.delta_min", self.delta_min, self.delta_max)
-        # input()
+        
         
 
     def add_from_dict(self, data):
@@ -202,7 +266,7 @@ class ReplayMemory(object):
 
 
 class GATWrapper(gym.Env):
-    def __init__(self, env, current_state, forward_model, inverse_model, batch=None):
+    def __init__(self, env, current_state, forward_model, inverse_model, action_error, batch=None):
         if batch:
             self.s = batch['state']
             self.a = batch['action']
@@ -214,7 +278,8 @@ class GATWrapper(gym.Env):
         self.inverse_model = inverse_model.eval()
         self.observation_space = self.env.observation_space
         self.action_space = self.env.action_space
-        self.error = deque(maxlen=1000)
+        # self.error = deque(maxlen=1000)
+        self.error = action_error
     
     def reset(self, seed=-1):
         if seed == -1:
@@ -421,6 +486,7 @@ class GroundedActionTransformation():
         self.log_dir = log_dir
         # before we have trained anything, don't use the grounded transform
         self.first = True
+        # self.tensorboard_callback = TensorboardCallback()
     
     def load_inverse(self, pth):
         self.inverse_model.load_state_dict(torch.load(pth))
@@ -472,6 +538,9 @@ class GroundedActionTransformation():
             data['term'].append(np.array(np.array([int(is_finished)])))
             data['trunc'].append(np.array([int(truncated)]))
             data['info'].append(np.array([info]))
+
+            if is_finished or truncated:
+                self.sim_current_state_dict, info = self.sim_env.reset()      
         data['state'] = np.array(data['state'])# not taking goal_x goal_y
         data['next_state'] = np.array(data['next_state'])
         data['delta'] = np.array(data['delta'])
@@ -508,6 +577,7 @@ class GroundedActionTransformation():
             act, _states = model.predict(obs_dict) # apply policy to real_env
             # print(self.real_env.step(act))
             obs_next, reward, is_finished, truncated, info = self.real_env.step(act)
+            # print('is_finished', is_finished, truncated)
             self.real_current_state = self.real_env.simulator.get_current_state() # self.real_env.simulator.get_current_state()
             self.real_current_state_dict = obs_next
             # print(type(obs), obs, type(obs_next), obs_next)
@@ -519,7 +589,9 @@ class GroundedActionTransformation():
             data['term'].append(np.array(np.array([int(is_finished)])))
             data['trunc'].append(np.array([int(truncated)]))
             data['info'].append(np.array([info]))
-            
+            if is_finished or truncated:
+                self.real_current_state_dict, info = self.real_env.reset()            
+                print('we just reset')
         data['state'] = np.array(data['state'])# not taking goal_x goal_y
         data['next_state'] = np.array(data['next_state'])
         data['delta'] = np.array(data['delta'])
@@ -570,7 +642,10 @@ class GroundedActionTransformation():
         # TODO: try to utilize the same train function as other components
         # TODO: train should automatically add to self.sim_buffer, so we don't need to keep
         if i == 0:
+            # model = PPO("MlpPolicy", self.sim_env, tensorboard_log=self.log_dir, verbose=1)
             model = PPO("MlpPolicy", self.sim_env, verbose=1)
+            new_logger = configure(self.log_dir, ["stdout", "csv", "tensorboard"])
+            model.set_logger(new_logger)
             # model = PPO.load("baseline_models/PointMaze/PointMaze_1/model", self.sim_env)
             # model = PPO.load("gat_log/PointMaze/optimized_policy9", self.sim_env)
         else:
@@ -578,20 +653,25 @@ class GroundedActionTransformation():
             # print("current sim buffer index:", self.sim_buffer.current_index)
             state, info = self.sim_env.reset() # before training every iteration, reset simulator
             self.sim_current_state = self.sim_env.simulator.get_current_state() # udpate current state
-            grounded_sim_env = GATWrapper(self.sim_env, self.sim_env.get_observation(self.sim_current_state), self.forward_model, self.inverse_model, self.sim_buffer.sample(self.sim_batch_size))
+            action_error = []
+            grounded_sim_env = GATWrapper(self.sim_env, self.sim_env.get_observation(self.sim_current_state), self.forward_model, self.inverse_model, action_error, self.sim_buffer.sample(self.sim_batch_size))
             model = PPO.load(self.policy, env=grounded_sim_env)
-            model.learn(num_iters, callback=SaveOnBestTrainingRewardCallback(check_freq=5000, log_dir=self.log_dir + 'monitor'))
-            plot_results([self.log_dir + 'monitor'], num_iters, results_plotter.X_TIMESTEPS, "RL training rewards")
-            plt.xlabel('Epoch')
-            plt.ylabel('Rewards')
-            plt.title("RL training rewards")
-            plt.legend()
-            plt.savefig(self.log_dir + 'monitor/r'+str(i)) #file_path
-            plt.close()
+            # model.learn(num_iters, callback=SaveOnBestTrainingRewardCallback(check_freq=5000, log_dir=self.log_dir + 'monitor'))
+            training_callback = TrainingLossCallback(log_dir=log_dir + '/monitor')
+            callback = [SaveOnBestTrainingRewardCallback(check_freq=5000, log_dir=self.log_dir + 'monitor'),
+                        training_callback]
+                        # self.tensorboard_callback]
+            model.learn(num_iters, callback=callback)
+            # print('action_error', action_error)
+            plot_losses(log_dir, i) # plot trainig loss
+            # plot training rewards
+            plot_reward(self.log_dir, i, results_plotter.X_TIMESTEPS)
+            plot_action_error(self.log_dir, i, action_error)
         if i != 0:
             print("Action transform error:", np.mean(grounded_sim_env.error))
         self.policy = self.log_dir + "/optimized_policy" + str(i) # self.policy stores the current model name
         model.save(self.policy)
+        state, info = self.sim_env.reset() # reset after training RL
         return
     
 
@@ -605,7 +685,7 @@ class GroundedActionTransformation():
             # print("before nomalize", data['next_state'] - data['state'])
             # normalized_delta, _, _ = normalize(data['next_state'] - data['state'])            
             # print("after nomalize", normalized_delta)
-            # input()
+            
             normalized_delta = data['delta']
             # print("nomalize", normalized_delta, normalized_delta.shape)
             loss = compute_loss(normalized_delta_pred, torch.tensor(normalized_delta, dtype=torch.double))
@@ -635,7 +715,7 @@ class GroundedActionTransformation():
             normalized_delta = data['delta']
             # normalized_delta, _, _ = normalize(data['next_state'] - data['state'])
             # print(normalized_delta)
-            # input()
+            
             pred_action = self.inverse_model(torch.tensor(data['state'], dtype=torch.double), torch.tensor(normalized_delta, dtype=torch.double))
             loss = compute_loss(pred_action, torch.tensor(data['action'], dtype=torch.double))
             # print('In inverse', data['state'][:10], normalized_delta[:10], pred_action[:10].detach().numpy(), data['action'][:10])
@@ -679,34 +759,9 @@ def load_dataset0(dataset_pth): # TODO
             data['term'] = np.array(data['term'])
             data['trunc'] = np.array(data['trunc'])
             data['info'] = np.expand_dims(np.array(data['info']),axis=1)
-            # delta_matrix = np.array(data['delta']) # convert list to np array
-            # print("delta_matrix", delta_matrix.shape)
-            # normalize each dimension
-            # for dim in range(delta_matrix.shape[1]):
-            #     normalized_delta, _, _ = normalize(delta_matrix[:, dim])
-            #     delta_matrix[:, dim] = normalized_delta
-                # print("normalized_delta at dim =", dim, delta_matrix[:, dim], normalized_delta, normalized_delta.shape)
-                # input()
+ 
             data['delta'] = np.array(data['delta'])
-            # print("data['info']", data['info'].shape)
-            # produce histogram
-            # mean_delta_matrix = np.mean(delta_matrix, axis=2)
-            # print("delta_matrix", mean_delta_matrix.shape)
-            # print("num_trajectories", num_trajectories)
-            # print("mean_delta_matrix.shape[1]", mean_delta_matrix.shape[1])
-            # # plt.scatter(time_steps, avg_delta/num_trajectories, color='blue', alpha=0.7, s=5)
-            # for pic in range(mean_delta_matrix.shape[1]):
-            #     cur_timestep = mean_delta_matrix[:, pic]
-            #     print("cur_timestep", cur_timestep.shape)
-            #     plt.hist(cur_timestep, bins=100, color='blue', alpha=0.7)
-            #     plt.xlabel('avg delta')
-            #     plt.ylabel('Frequency')
-            #     plt.title('Histogram with 100 Bins')
-            #     plt.savefig("gat_log/PointMazeRandom/histogram/histogram" + str(pic) + ".png")
-            #     plt.close()
-            # print("data['state']",data['state'].shape)
-            # print("data['delta']", data['delta'].shape)
-            # eee
+
             return data
         file_path = os.path.join(dataset_pth, filename)
         # print("Reading h5py file from", file_path)
@@ -729,16 +784,16 @@ def load_dataset0(dataset_pth): # TODO
             state_delta = np.array(hf['next_obs'][:]) - np.array(hf['obs'][:])
             # print("np.array(hf['obs'][:][-3:,:4])",  np.array(hf['obs'][:][-3:,:4])) # the last three timesteps
             # print("state_delta",  state_delta[:, 5], state_delta[:, 7]) # the last three timesteps
-            # input()
+            
             data['delta'].extend(state_delta)
             # print(hf['obs'][:], hf['next_obs'][:])
-            # input()
+            
             # avg_delta_old = avg_delta
 
             # print("state_delta", state_delta.shape)
             # avg_delta = avg_delta + np.mean(state_delta, axis=1)
             # print("avg_delta", avg_delta)
-            # input()
+            
             # avg_delta.append(np.mean(np.array(data['next_state']) - np.array(data['state'])))
         file_idx += 1
     return None
@@ -793,7 +848,7 @@ def readDataset(args):
                 print("s'", hf['next_obs'][:].tolist()[i])
                 print('a', hf['act'][:].tolist()[i])
                 print('term', hf['term'][:].tolist()[i])
-                # input()
+                
 
 
 def evaluate_GAT(args, mode,):
