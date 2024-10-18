@@ -26,7 +26,13 @@ import numpy as np
 from dataset_management.create_dataset import load_dataset
 from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR, ReduceLROnPlateau
 from stable_baselines3.common.logger import configure
+import wandb
 
+wandb.login()
+
+# Initialize wandb if not already initialized
+if not wandb.run:
+    wandb.init(project="ppo-training", name=f"Training Session", reinit=True)
 
 # set up matplotlib
 is_ipython = 'inline' in matplotlib.get_backend()
@@ -61,44 +67,121 @@ class TrainingLossCallback(BaseCallback):
         np.save(loss_file_path, np.array(self.losses))
         print(f"Training losses saved to {loss_file_path}")
 
+# def plot_losses(log_dir, i):
+#     # Load the training losses
+#     loss_file = os.path.join(log_dir, 'monitor/training_losses.npy')
+#     if os.path.exists(loss_file):
+#         losses = np.load(loss_file)
+#         iteration_numbers = np.arange(1, len(losses) + 1)
+#         # print('Training loss', losses)
+#         plt.plot(iteration_numbers, losses, '-o')
+#         plt.title('PPO Training Loss')
+#         plt.xlabel('Iteration')
+#         plt.ylabel('Loss')
+#         plt.legend()
+#         plt.savefig(log_dir + 'monitor/loss_'+str(i)) #file_path
+#         plt.close()
+#     else:
+#         print("No loss data found.")
+
 def plot_losses(log_dir, i):
     # Load the training losses
     loss_file = os.path.join(log_dir, 'monitor/training_losses.npy')
     if os.path.exists(loss_file):
         losses = np.load(loss_file)
         iteration_numbers = np.arange(1, len(losses) + 1)
-        # print('Training loss', losses)
-        plt.plot(iteration_numbers, losses, '-o')
-        plt.title('PPO Training Loss')
-        plt.xlabel('Iteration')
-        plt.ylabel('Loss')
-        plt.legend()
-        plt.savefig(log_dir + 'monitor/loss_'+str(i)) #file_path
-        plt.close()
-    else:
-        print("No loss data found.")
 
-# plot_reward([self.log_dir + 'monitor'], num_iters, results_plotter.X_TIMESTEPS, "RL training rewards")
+        # Log the training losses to wandb
+        for iteration, loss in zip(iteration_numbers, losses):
+            wandb.log({"Iteration": iteration, "PPO Training Loss " + str(i): loss})
+
+        # Optionally, create a wandb plot
+        wandb.plot.line_series(
+            xs=iteration_numbers,
+            ys=[losses],
+            keys=["PPO Training Loss"],
+            title="PPO Training Loss " + str(i),
+            xname="Iteration"
+        )
+
+
 def plot_reward(log_dir, i, results):
-    iteration_numbers = np.arange(1, len(results) + 1)
-    plt.plot(iteration_numbers, results, '-o')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title("RL training rewards")
-    plt.legend()
-    plt.savefig(log_dir + 'monitor/reward_'+str(i)) #file_path
-    plt.close()
+    results = load_results(log_dir + 'monitor')  # Load results from monitor files
+    x, y = ts2xy(results, results_plotter.X_TIMESTEPS)
+
+    # # Create line series plot with wandb
+    # line_data = [[x_val, y_val] for x_val, y_val in zip(x, y)]
+    # table = wandb.Table(data=line_data, columns=["Step", "Reward"])
+
+    # # Log the line plot to wandb
+    # wandb.log({"Training Reward": wandb.plot.line_series(
+    #     xs=x, ys=[y], keys=["Reward"], 
+    #     title="RL Training Rewards " + str(i), 
+    #     xname="Step")})
+
+    # Additionally log raw data for detailed analysis
+
+    # Clean the data by removing any NaN values from x and y
+    valid_indices = ~np.isnan(x) & ~np.isnan(y)
+    clean_x = x[valid_indices]
+    clean_y = y[valid_indices]
+    wandb.log({"reward_step": clean_x, "reward_value": clean_y, "Epoch": i})
+
+    if len(clean_x) > 0 and len(clean_y) > 0:
+        # Log the cleaned line plot to wandb
+        wandb.log({"Training Reward": wandb.plot.line_series(
+            xs=clean_x, ys=[clean_y], keys=["Reward"], 
+            title="RL Training Rewards " + str(i), 
+            xname="Step")
+        })
+
+        # Additionally, log the raw cleaned data
+        wandb.log({"reward_step": clean_x, "reward_value": clean_y, "Epoch": i})
+    else:
+        print("Warning: No valid data points to plot.")
 
 
 def plot_action_error(log_dir, i, results):
     iteration_numbers = np.arange(1, len(results) + 1)
-    plt.plot(iteration_numbers, results, '-o')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title("Grounded Action Error")
-    plt.legend()
-    plt.savefig(log_dir + 'monitor/action_error_'+str(i)) #file_path
-    plt.close()
+
+    # Create line series plot with wandb
+    line_data = [[iter_num, result] for iter_num, result in zip(iteration_numbers, results)]
+    table = wandb.Table(data=line_data, columns=["Iteration", "Action Error"])
+
+    # Log the line plot to wandb
+    wandb.log({"Grounded Action Error": wandb.plot.line_series(
+        xs=iteration_numbers, ys=[results], keys=["Action Error"],
+        title="Grounded Action Error " + str(i), xname="Iteration")})
+
+    # Additionally log raw data for detailed analysis
+    wandb.log({"action_error_iteration": iteration_numbers, "action_error_value": results, "Epoch": i})
+    
+
+# plot_reward([self.log_dir + 'monitor'], num_iters, results_plotter.X_TIMESTEPS, "RL training rewards")
+# def plot_reward(log_dir, i, results):
+#     results2 = load_results(log_dir + 'monitor') # location of the monitor files
+#     x, y = ts2xy(results2, results_plotter.X_TIMESTEPS)
+#     # print(x,y)
+    
+#     # iteration_numbers = np.arange(1, len(results) + 1)
+#     plt.plot(x, y, '-o', markersize=5)
+#     plt.xlabel('Epoch')
+#     plt.ylabel('Loss')
+#     plt.title("RL training rewards")
+#     plt.legend()
+#     plt.savefig(log_dir + 'monitor/reward_'+str(i)) #file_path
+#     plt.close()
+
+
+# def plot_action_error(log_dir, i, results):
+#     iteration_numbers = np.arange(1, len(results) + 1)
+#     plt.plot(iteration_numbers, results, '-o')
+#     plt.xlabel('Epoch')
+#     plt.ylabel('Loss')
+#     plt.title("Grounded Action Error")
+#     plt.legend()
+#     plt.savefig(log_dir + 'monitor/action_error_'+str(i)) #file_path
+#     plt.close()
 
 class SaveOnBestTrainingRewardCallback(BaseCallback):
     """
@@ -656,6 +739,8 @@ class GroundedActionTransformation():
             action_error = []
             grounded_sim_env = GATWrapper(self.sim_env, self.sim_env.get_observation(self.sim_current_state), self.forward_model, self.inverse_model, action_error, self.sim_buffer.sample(self.sim_batch_size))
             model = PPO.load(self.policy, env=grounded_sim_env)
+            # how frequently is PPO training
+            # use wandb plotting
             # model.learn(num_iters, callback=SaveOnBestTrainingRewardCallback(check_freq=5000, log_dir=self.log_dir + 'monitor'))
             training_callback = TrainingLossCallback(log_dir=log_dir + '/monitor')
             callback = [SaveOnBestTrainingRewardCallback(check_freq=5000, log_dir=self.log_dir + 'monitor'),
@@ -666,7 +751,8 @@ class GroundedActionTransformation():
             plot_losses(log_dir, i) # plot trainig loss
             # plot training rewards
             plot_reward(self.log_dir, i, results_plotter.X_TIMESTEPS)
-            plot_action_error(self.log_dir, i, action_error)
+            plot_action_error(self.log_dir, i, action_error[::1000])
+
         if i != 0:
             print("Action transform error:", np.mean(grounded_sim_env.error))
         self.policy = self.log_dir + "/optimized_policy" + str(i) # self.policy stores the current model name
@@ -1096,6 +1182,9 @@ if __name__ == '__main__':
     # readDataset(args)
 
     train_GAT(args, log_dir)
+
+    # Finish the wandb run
+    wandb.finish()
 
     # evaluate_GAT(args, '11')
     # evaluate_GAT(args, '12')
