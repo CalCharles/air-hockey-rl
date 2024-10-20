@@ -91,71 +91,60 @@ def plot_losses(log_dir, i):
         losses = np.load(loss_file)
         iteration_numbers = np.arange(1, len(losses) + 1)
 
-        # Log the training losses to wandb
-        for iteration, loss in zip(iteration_numbers, losses):
-            wandb.log({"Iteration": iteration, "PPO Training Loss " + str(i): loss})
+        data = list(zip(iteration_numbers, losses))
+        table = wandb.Table(data=data, columns=["step_loss", "RL Training Loss " + str(i)])
+        # Log the table to WandB
+        wandb.log({"Loss Data Table " + str(i): table})
 
-        # Optionally, create a wandb plot
-        wandb.plot.line_series(
-            xs=iteration_numbers,
-            ys=[losses],
-            keys=["PPO Training Loss"],
-            title="PPO Training Loss " + str(i),
-            xname="Iteration"
-        )
+        # Optionally, you can also plot the data as custom plots
+        wandb.log({"rl_training_loss_" + str(i): wandb.plot.line_series(
+            xs=iteration_numbers, ys=[losses], keys=["RL Training Loss " + str(i)], title="RL Training Loss: Iteration "+ str(i), xname="step_loss")
+        })
 
 
-def plot_reward(log_dir, i, results):
+def plot_reward(log_dir, i):
+    # reward
     results = load_results(log_dir + 'monitor')  # Load results from monitor files
     x, y = ts2xy(results, results_plotter.X_TIMESTEPS)
-
-    # # Create line series plot with wandb
-    # line_data = [[x_val, y_val] for x_val, y_val in zip(x, y)]
-    # table = wandb.Table(data=line_data, columns=["Step", "Reward"])
-
-    # # Log the line plot to wandb
-    # wandb.log({"Training Reward": wandb.plot.line_series(
-    #     xs=x, ys=[y], keys=["Reward"], 
-    #     title="RL Training Rewards " + str(i), 
-    #     xname="Step")})
-
-    # Additionally log raw data for detailed analysis
 
     # Clean the data by removing any NaN values from x and y
     valid_indices = ~np.isnan(x) & ~np.isnan(y)
     clean_x = x[valid_indices]
     clean_y = y[valid_indices]
-    wandb.log({"reward_step": clean_x, "reward_value": clean_y, "Epoch": i})
 
-    if len(clean_x) > 0 and len(clean_y) > 0:
-        # Log the cleaned line plot to wandb
-        wandb.log({"Training Reward": wandb.plot.line_series(
-            xs=clean_x, ys=[clean_y], keys=["Reward"], 
-            title="RL Training Rewards " + str(i), 
-            xname="Step")
-        })
+    data = list(zip(clean_x, clean_y))
+    table = wandb.Table(data=data, columns=["step_reward", "RL Training Rewards " + str(i)])
+    # Log the table to WandB
+    wandb.log({"Reward Data Table " + str(i): table})
 
-        # Additionally, log the raw cleaned data
-        wandb.log({"reward_step": clean_x, "reward_value": clean_y, "Epoch": i})
-    else:
-        print("Warning: No valid data points to plot.")
+    # Optionally, you can also plot the data as custom plots
+    wandb.log({"rl_training_rewards_" + str(i): wandb.plot.line_series(
+        xs=clean_x, ys=[clean_y], keys=["RL Training Rewards " + str(i)], title="RL Training Rewards: Iteration "+ str(i), xname="step_reward")
+    })
 
 
-def plot_action_error(log_dir, i, results):
+from scipy.interpolate import interp1d
+def plot_action_error(log_dir, i, results, downsample_rate=1000):
+    # Ensure results and iteration_numbers are NumPy arrays
+    results = np.array(results)
     iteration_numbers = np.arange(1, len(results) + 1)
 
+    # Downsample the data
+    downsampled_indices = np.arange(0, len(results), downsample_rate)
+    downsampled_iterations = iteration_numbers[downsampled_indices]
+    downsampled_results = results[downsampled_indices]
+
     # Create line series plot with wandb
-    line_data = [[iter_num, result] for iter_num, result in zip(iteration_numbers, results)]
-    table = wandb.Table(data=line_data, columns=["Iteration", "Action Error"])
+    data = list(zip(downsampled_iterations, downsampled_results))
+    table = wandb.Table(data=data, columns=["step_action_error", "Grounded Action Error " + str(i)])
+    # Log the table to WandB
+    wandb.log({"Grounded Action Error Table " + str(i): table})
 
-    # Log the line plot to wandb
-    wandb.log({"Grounded Action Error": wandb.plot.line_series(
-        xs=iteration_numbers, ys=[results], keys=["Action Error"],
-        title="Grounded Action Error " + str(i), xname="Iteration")})
+    # Optionally, you can also plot the data as custom plots
+    wandb.log({"grounded_action_error_" + str(i): wandb.plot.line_series(
+        xs=downsampled_iterations, ys=[downsampled_results], keys=["Grounded Action Error " + str(i)], title="Grounded Action Error: Iteration "+ str(i), xname="step_action_error")
+    })
 
-    # Additionally log raw data for detailed analysis
-    wandb.log({"action_error_iteration": iteration_numbers, "action_error_value": results, "Epoch": i})
-    
 
 # plot_reward([self.log_dir + 'monitor'], num_iters, results_plotter.X_TIMESTEPS, "RL training rewards")
 # def plot_reward(log_dir, i, results):
@@ -182,6 +171,7 @@ def plot_action_error(log_dir, i, results):
 #     plt.legend()
 #     plt.savefig(log_dir + 'monitor/action_error_'+str(i)) #file_path
 #     plt.close()
+
 
 class SaveOnBestTrainingRewardCallback(BaseCallback):
     """
@@ -674,7 +664,7 @@ class GroundedActionTransformation():
             data['info'].append(np.array([info]))
             if is_finished or truncated:
                 self.real_current_state_dict, info = self.real_env.reset()            
-                print('we just reset')
+                # print('we just reset')
         data['state'] = np.array(data['state'])# not taking goal_x goal_y
         data['next_state'] = np.array(data['next_state'])
         data['delta'] = np.array(data['delta'])
@@ -750,11 +740,11 @@ class GroundedActionTransformation():
             # print('action_error', action_error)
             plot_losses(log_dir, i) # plot trainig loss
             # plot training rewards
-            plot_reward(self.log_dir, i, results_plotter.X_TIMESTEPS)
-            plot_action_error(self.log_dir, i, action_error[::1000])
+            plot_reward(log_dir, i)
+            plot_action_error(log_dir, i, action_error) # freq is every 1k steps
 
-        if i != 0:
-            print("Action transform error:", np.mean(grounded_sim_env.error))
+        # if i != 0:
+        #     print("Action transform error:", np.mean(grounded_sim_env.error))
         self.policy = self.log_dir + "/optimized_policy" + str(i) # self.policy stores the current model name
         model.save(self.policy)
         state, info = self.sim_env.reset() # reset after training RL
@@ -817,7 +807,6 @@ class GroundedActionTransformation():
 
 
 def load_dataset0(dataset_pth): # TODO
-    avg_delta = np.zeros(300) # len should be 300
     import h5py
     import os
     import ast
@@ -845,7 +834,6 @@ def load_dataset0(dataset_pth): # TODO
             data['term'] = np.array(data['term'])
             data['trunc'] = np.array(data['trunc'])
             data['info'] = np.expand_dims(np.array(data['info']),axis=1)
- 
             data['delta'] = np.array(data['delta'])
 
             return data
@@ -1159,7 +1147,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_real_steps', type=int, default=20000, help='num_real_steps') # 20000
     parser.add_argument('--num_sim_steps', type=int, default=20000, help='num_sim_steps')
     parser.add_argument('--n_rl_timesteps', type=int, default=100000, help='n_rl_timesteps') # 100000 in sim #10000 in real
-    parser.add_argument('--inverse_iters', type=int, default=10000, help='inverse_iters') #3000
+    parser.add_argument('--inverse_iters', type=int, default=3000, help='inverse_iters') #3000
     parser.add_argument('--forward_iters', type=int, default=3000, help='forward_iters')
     parser.add_argument('--inverse_pt_pth', type=str, default='inverse_model.pth', help='forward_iters')
     parser.add_argument('--forward_pt_pth', type=str, default='forward_model.pth', help='forward_iters')
