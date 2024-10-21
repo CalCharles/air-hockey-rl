@@ -12,22 +12,22 @@ air_hockey:
   num_paddles: 1
   num_pucks: 1
   num_targets: 0
-  obs_type: history
+  obs_type: vel
   simulator: box2d
   simulator_params:
     absorb_target: false
     block_density: 500
     block_width: 0.0254
-    force_scaling: 1000
-    action_x_scaling: 1.108854046182425
-    action_y_scaling: 0.7325506641500633
+    force_scaling: 2 # 0.7500992709388284 # 1000
+    action_x_scaling: 1.5002134499007753 # 1.108854046182425
+    action_y_scaling: 1.282409981335295 # 0.7325506641500633
     max_force_timestep: 36.20022976369259
     puck_density: 250
     puck_damping: 0.5
     gravity: -0.5
     length: 1.9304
-    paddle_damping: 7.029979658078075
-    paddle_density: 2241.0772644878925
+    paddle_damping: 8.028012691401855 # 7.029979658078075
+    paddle_density: 2807.4956206531583 # 2241.0772644878925
     paddle_radius: 0.0508
     puck_radius: 0.03175
     render_size: 360

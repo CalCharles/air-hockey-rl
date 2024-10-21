@@ -62,7 +62,8 @@ class AirHockeyBox2D:
             'time_frequency': 20,
             'paddle_bounds': [],
             'paddle_edge_bounds': [],
-            'center_offset_constant': 1.2
+            'center_offset_constant': 1.2,
+            'puck_restitution': 1.0,
         }
 
         kwargs = {**defaults, **kwargs}
@@ -82,6 +83,7 @@ class AirHockeyBox2D:
         self.paddle_damping = config.paddle_damping
         self.puck_damping = config.puck_damping
         self.gravity = config.gravity
+        self.puck_restitution = config.puck_restitution
         self.puck_min_height = (-config.length / 2) + (config.length / 3)
         self.paddle_max_height = 0
         self.block_min_height = 0
@@ -310,7 +312,7 @@ class AirHockeyBox2D:
             fixtures=b2FixtureDef(
                 shape=b2CircleShape(radius=radius),
                 density=self.puck_density,
-                restitution = 1.0,
+                restitution = self.puck_restitution,
                 filter=b2Filter (maskBits=1,
                                  categoryBits=1),
                 friction=0.0),
@@ -325,7 +327,7 @@ class AirHockeyBox2D:
             puck.gravityScale = 0
         self.pucks[name] = puck
         self.object_dict[name] = puck
-        self.puck_history += [(-2,0,1) for i in range(5)]
+        self.puck_history += [(-2 + self.center_offset_constant,0,1) for i in range(5)]
         
     def spawn_block(self, pos, vel, name, affected_by_gravity=False, movable=True):
         pos = self.base_coord_to_box2d(pos)
@@ -392,6 +394,8 @@ class AirHockeyBox2D:
         force_unit = force / (force_mag + 1e-8)
         if force_mag > self.max_force_timestep:
             force = force_unit * self.max_force_timestep
+        if self.force_scaling > 0:
+            force = force * self.force_scaling
             
         force = force.astype(float)
         if self.paddles['paddle_ego'].position[1] > 0: 

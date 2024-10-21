@@ -40,6 +40,8 @@ class AirHockeyBaseEnv(ABC, Env):
             'paddle_bounds': [],
             'paddle_edge_bounds': [],
             'center_offset_constant': 1.2,
+            'action_x_ratio': 0.26,
+            'action_y_ratio': 0.12,
             'num_positive_reward_regions': 0,
             'positive_reward_range': [1, 1],
             'num_negative_reward_regions': 0,
@@ -153,6 +155,8 @@ class AirHockeyBaseEnv(ABC, Env):
         self.table_y_right = self.width / 2
         self.table_y_left = -self.width / 2
         self.center_offset_constant = config.center_offset_constant
+        self.action_x_ratio = config.action_x_ratio
+        self.action_y_ratio = config.action_y_ratio
         # import pdb; pdb.set_trace()
         if len(config.paddle_bounds) == 0: # use preset values
             self.paddle_x_min = 0 - 2 * self.paddle_radius # self.table_x_top / 2 + 2 * self.paddle_radius
@@ -536,13 +540,15 @@ class AirHockeyBaseEnv(ABC, Env):
 
     def create_world_objects_from_state(self, state_vector):
         # assigns positions to the state components
-        # WARNING: in domains with more objects this should be defined differently
+        # WARNING: in domains with more objects this should be defined differentlym assumes data is from "vel" data type
         name = 'puck_{}'.format(0)
-        puck_pos, puck_vel = state_vector[:2], state_vector[2:4]
+        # puck_pos, puck_vel = state_vector[:2], state_vector[2:4]
+        puck_pos, puck_vel = state_vector[4:6], state_vector[6:8]
         self.simulator.spawn_puck(puck_pos, puck_vel, name)
 
         name = 'paddle_ego'
-        paddle_pos, paddle_vel = state_vector[4:6], state_vector[6:]
+        # paddle_pos, paddle_vel = state_vector[4:6], state_vector[6:]
+        paddle_pos, paddle_vel = state_vector[:2], state_vector[2:4]
         self.simulator.spawn_paddle(paddle_pos, paddle_vel, name)
 
 

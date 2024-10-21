@@ -7,7 +7,7 @@ from multiprocessing import Pool
 from scripts.domain_adaptation.normalization import MinMaxNormalizer
 
 class CEMPlanner:
-    def __init__(self, eval_fn, trajectories, elite_frac=0.2, n_samples=100, n_iterations=10, variance=0.1, lower_bounds=None, upper_bounds=None, param_names=None, wdb_logging=False):
+    def __init__(self, eval_fn, trajectories, elite_frac=0.2, n_samples=100, n_iterations=10, variance=0.1, n_starts=20, traj_length=50, lower_bounds=None, upper_bounds=None, param_names=None, wdb_logging=False):
         # Existing initialization
         self.eval_fn = eval_fn
         self.data = trajectories
@@ -23,6 +23,8 @@ class CEMPlanner:
         self.lower_bounds = np.array(lower_bounds) if lower_bounds is not None else None
         self.upper_bounds = np.array(upper_bounds) if upper_bounds is not None else None
         self.normalizer = MinMaxNormalizer(min_val=self.lower_bounds, max_val=self.upper_bounds)
+        self.n_starts = n_starts
+        self.traj_length = traj_length
         self.wdb_logging = wdb_logging
 
     def initialize(self, initial_guess):
@@ -53,11 +55,14 @@ class CEMPlanner:
                                           for idx, random_start in zip(random_idx, random_starts)], axis=0)
         sampled_dones = np.concatenate([self.data['terminals'][idx][random_start: random_start + traj_length][None, :]
                                         for idx, random_start in zip(random_idx, random_starts)], axis=0)
+        sampled_images = np.concatenate([self.data['images'][idx][random_start: random_start + traj_length][None, :]
+                                        for idx, random_start in zip(random_idx, random_starts)], axis=0)
         # Create a dictionary for the sampled trajectory
         sampled_traj = {
             'observations': sampled_states,
             'actions': sampled_actions,
-            'terminals': sampled_dones
+            'terminals': sampled_dones,
+            'images': sampled_images
         }
             
         return sampled_traj
