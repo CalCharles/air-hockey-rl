@@ -28,11 +28,7 @@ from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR, ReduceLROnPlatea
 from stable_baselines3.common.logger import configure
 import wandb
 
-wandb.login()
 
-# Initialize wandb if not already initialized
-if not wandb.run:
-    wandb.init(project="ppo-training", name=f"Training Session", reinit=True)
 
 # set up matplotlib
 is_ipython = 'inline' in matplotlib.get_backend()
@@ -91,16 +87,17 @@ def plot_losses(log_dir, i):
         losses = np.load(loss_file)
         iteration_numbers = np.arange(1, len(losses) + 1)
 
-        data = list(zip(iteration_numbers, losses))
-        table = wandb.Table(data=data, columns=["step_loss", "RL Training Loss " + str(i)])
-        # Log the table to WandB
-        wandb.log({"Loss Data Table " + str(i): table})
+        # data = list(zip(iteration_numbers, losses))
+        # table = wandb.Table(data=data, columns=["step_loss", "RL Training Loss " + str(i)])
+        # # Log the table to WandB
+        # wandb.log({"Loss Data Table " + str(i): table})
 
-        # Optionally, you can also plot the data as custom plots
-        wandb.log({"rl_training_loss_" + str(i): wandb.plot.line_series(
-            xs=iteration_numbers, ys=[losses], keys=["RL Training Loss " + str(i)], title="RL Training Loss: Iteration "+ str(i), xname="step_loss")
-        })
-
+        # # Optionally, you can also plot the data as custom plots
+        # wandb.log({"rl_training_loss_" + str(i): wandb.plot.line_series(
+        #     xs=iteration_numbers, ys=[losses], keys=["RL Training Loss " + str(i)], title="RL Training Loss: Iteration "+ str(i), xname="step_loss")
+        # })
+        for step, loss in zip(iteration_numbers, losses):
+            wandb.log({"PPO Training Loss " + str(i): loss})
 
 def plot_reward(log_dir, i):
     # reward
@@ -112,15 +109,18 @@ def plot_reward(log_dir, i):
     clean_x = x[valid_indices]
     clean_y = y[valid_indices]
 
-    data = list(zip(clean_x, clean_y))
-    table = wandb.Table(data=data, columns=["step_reward", "RL Training Rewards " + str(i)])
-    # Log the table to WandB
-    wandb.log({"Reward Data Table " + str(i): table})
+    # data = list(zip(clean_x, clean_y))
+    # table = wandb.Table(data=data, columns=["step_reward", "RL Training Rewards " + str(i)])
+    # # Log the table to WandB
+    # wandb.log({"Reward Data Table " + str(i): table})
 
-    # Optionally, you can also plot the data as custom plots
-    wandb.log({"rl_training_rewards_" + str(i): wandb.plot.line_series(
-        xs=clean_x, ys=[clean_y], keys=["RL Training Rewards " + str(i)], title="RL Training Rewards: Iteration "+ str(i), xname="step_reward")
-    })
+    # # Optionally, you can also plot the data as custom plots
+    # wandb.log({"rl_training_rewards_" + str(i): wandb.plot.line_series(
+    #     xs=clean_x, ys=[clean_y], keys=["RL Training Rewards " + str(i)], title="RL Training Rewards: Iteration "+ str(i), xname="step_reward")
+    # })
+    for step, reward in zip(clean_x, clean_y):
+        wandb.log({"PPO Training Reward " + str(i): reward})
+
 
 
 from scipy.interpolate import interp1d
@@ -201,6 +201,7 @@ class SaveOnBestTrainingRewardCallback(BaseCallback):
           # Retrieve training reward
           x, y = ts2xy(load_results(self.log_dir), "timesteps")
           if len(x) > 0:
+              y = np.array(y, dtype=np.float64)  # or np.float32 depending on your needs
               # Mean training reward over the last 100 episodes
               mean_reward = np.mean(y[-100:])
               if self.verbose >= 1:
@@ -630,7 +631,7 @@ class GroundedActionTransformation():
         # self.scheduler_inverse = ReduceLROnPlateau(self.inverse_optimizer, mode='min', factor=0.5, patience=5)
 
 
-    def rollout_real(self, num_frames):
+    def rollout_real(self, num_frames, wandb=False):
         data = {
             'state': [],
             'next_state':  [],
@@ -641,6 +642,9 @@ class GroundedActionTransformation():
             'trunc': [],
             'info':  [],
         }
+        avg_reward = [] # avg reward per trajectory, logged for the last itr
+        reward_cur_trajectory = 0
+        count = 0
         for i in range(num_frames):
             if (num_frames > 10 and i % 1000 == 0) or num_frames == 10:
                 print("In rollout_real, num_frames processed:", i)
@@ -650,6 +654,9 @@ class GroundedActionTransformation():
             act, _states = model.predict(obs_dict) # apply policy to real_env
             # print(self.real_env.step(act))
             obs_next, reward, is_finished, truncated, info = self.real_env.step(act)
+            if wandb:
+                reward_cur_trajectory += reward
+                count += 1
             # print('is_finished', is_finished, truncated)
             self.real_current_state = self.real_env.simulator.get_current_state() # self.real_env.simulator.get_current_state()
             self.real_current_state_dict = obs_next
@@ -663,8 +670,11 @@ class GroundedActionTransformation():
             data['trunc'].append(np.array([int(truncated)]))
             data['info'].append(np.array([info]))
             if is_finished or truncated:
-                self.real_current_state_dict, info = self.real_env.reset()            
-                # print('we just reset')
+                self.real_current_state_dict, info = self.real_env.reset()          
+                if wandb and count != 0:
+                    wandb.log({"PPO Evaluation Reward": reward_cur_trajectory/count})
+                    reward_cur_trajectory = 0
+                    count = 0
         data['state'] = np.array(data['state'])# not taking goal_x goal_y
         data['next_state'] = np.array(data['next_state'])
         data['delta'] = np.array(data['delta'])
@@ -751,7 +761,7 @@ class GroundedActionTransformation():
         return
     
 
-    def train_forward(self, num_iters, verbose=True):
+    def train_forward(self, num_iters, verbose=True, iter_i=-1):
         self.forward_model.train()
         loss_values = []
         for i in range(num_iters):
@@ -775,13 +785,14 @@ class GroundedActionTransformation():
             nn.utils.clip_grad_norm_(self.forward_model.parameters(), max_norm=1.0)
             self.forward_optimizer.step()
             self.scheduler_forward.step()
-            loss_values.append(loss.item())
+            wandb.log({"Forward Model Loss " + str(iter_i): loss.item()})
+            # loss_values.append(loss.item())
         return loss_values, self.forward_model
     
 
 # forward(state, action) -> normalized_delta
 # inverse(state, normalized_delta) -> action
-    def train_inverse(self, num_iters, verbose=True):
+    def train_inverse(self, num_iters, verbose=True, iter_i=-1):
         self.inverse_model.train()
         loss_values = []
         for i in range(num_iters):
@@ -802,7 +813,8 @@ class GroundedActionTransformation():
             nn.utils.clip_grad_norm_(self.inverse_model.parameters(), max_norm=1.0)
             self.inverse_optimizer.step()
             self.scheduler_inverse.step()
-            loss_values.append(loss.item())
+            # loss_values.append(loss.item())
+            wandb.log({"Inverse Model Loss " + str(iter_i): loss.item()})
         return loss_values, self.inverse_model
 
 
@@ -1058,8 +1070,8 @@ def train_GAT(args, log_dir):
         sim_air_hockey_cfg = yaml.safe_load(f)
     with open(args.real_cfg, 'r') as f:
         real_air_hockey_cfg = yaml.safe_load(f)
-    train_forward = False
-    train_inverse = False
+    train_forward = True
+    train_inverse = True
     pth_dir_inverse = 'gat_log/AirHockey/'
     pth_dir_forward = 'gat_log/AirHockey/'
     os.makedirs(log_dir, exist_ok=True)
@@ -1102,20 +1114,23 @@ def train_GAT(args, log_dir):
         print("Loading pretrained forward models from", pth_dir_forward)
         gat.load_forward(pth_dir_forward + 'forward_model_pt.pth')    
 
-    for i in range(1, args.num_real_sim_iters):
+    for i in range(1, args.num_real_sim_iters + 1):
         print('Iteration', i, 'started.')
         gat.train_sim(args.n_rl_timesteps, i)
         print('rollout_real', i, 'started.')
-        gat.rollout_real(args.num_real_steps)
+        if i == args.num_real_sim_iters: # in last iteration, no training f/i model, get the final policy, evaluate in rollout_real then break
+            gat.rollout_real(args.num_real_steps, wandb=True)
+        else:
+            gat.rollout_real(args.num_real_steps)
         
         print('rollout_sim', i, 'started.')
         gat.rollout_sim(args.num_sim_steps)
         print('Iteration', i, 'training started.')
-        if i > 3:
-            loss_values_i, inverse_model_i = gat.train_inverse(10000)
+        if i > 3: # when inverse is harder to train
+            loss_values_i, inverse_model_i = gat.train_inverse(10000, iter_i=i)
         else:
-            loss_values_i, inverse_model_i = gat.train_inverse(args.inverse_iters)
-        loss_values_f, forward_model_i = gat.train_forward(args.forward_iters)
+            loss_values_i, inverse_model_i = gat.train_inverse(args.inverse_iters, iter_i=i)
+        loss_values_f, forward_model_i = gat.train_forward(args.forward_iters, iter_i=i)
         print('Iteration', i, 'finished.')
 
         plot_fp = log_dir + 'training_summary/training_summary_i'+str(i)+'.png'
@@ -1134,8 +1149,8 @@ def train_GAT(args, log_dir):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Demonstrate the air hockey game.')
-    parser.add_argument('--sim-cfg', type=str, default='configs/gat/puck_height3.yaml', help='Path to the configuration file.')
-    parser.add_argument('--real-cfg', type=str, default='configs/gat/puck_height_real.yaml', help='Path to the configuration file.')
+    parser.add_argument('--sim-cfg', type=str, default='configs/gat/puck_height0.yaml', help='Path to the configuration file.')
+    parser.add_argument('--real-cfg', type=str, default='configs/gat/puck_height1.yaml', help='Path to the configuration file.')
     parser.add_argument('--dataset_pth', type=str, default=None, help='Path to the dataset file.') # real-cfg
     parser.add_argument('--dataset_pth1', type=str, default='/nfs/homes/air_hockey/cathy_air_hockey/AirHockeyRandomAction/trajectory_data', help='Path to the dataset file.')
     parser.add_argument('--dataset_pth2', type=str, default='/nfs/homes/air_hockey/cathy_air_hockey/AirHockeyRandomNetwork/trajectory_data', help='Path to the dataset file.')
@@ -1154,6 +1169,11 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    wandb.login()
+    # Initialize wandb if not already initialized
+    session_name = args.sim_cfg[args.sim_cfg.index('puck'):] + " and " + args.real_cfg[args.real_cfg.index('puck'):]
+    if not wandb.run:
+        wandb.init(project="ppo-training", name=f"Training Session " + session_name, reinit=True)
     # with open(args.sim_cfg, 'r') as f:
     #     sim_air_hockey_cfg = yaml.safe_load(f)
 
