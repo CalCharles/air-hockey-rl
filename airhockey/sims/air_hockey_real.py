@@ -11,61 +11,104 @@ from .real.image_detection import find_red_hockey_puck
 import multiprocessing
 import cv2
 import copy
+from ..utils import dict_to_namespace
+
+puck_detectors = {
+    "red_puck": find_red_hockey_puck,
+    # TODO: other puck detectors here
+}
+
+reset_positions = {
+    "hitting": [-0.68, 0., 0.33],
+    "stationary": [-0.38, 0., 0.33],
+    "forward_hitting": [-0.78, 0., 0.33],
+    "negative_regions": [-0.38, -0.345, 0.33]
+}
 
 
 class AirHockeyReal:
-    def __init__(self,
-                 absorb_target, 
-                 length, 
-                 width,
-                 puck_radius, 
-                 paddle_radius, 
-                 block_width,
-                 max_force_timestep, 
-                 force_scaling, 
-                 paddle_damping, 
-                 puck_damping,
-                 render_size,
-                 seed,
-                 render_masks=False, 
-                 gravity=-5,
-                 paddle_density=1000,
-                 puck_density=250,
-                 block_density=1000,
-                 max_paddle_vel=2,
-                 time_frequency=20,
-                 paddle_bounds=[],
-                 paddle_edge_bounds=[],
-                 center_offset_constant=1.2):
+    def __init__(self, **kwargs):
+        defaults = {
+            "force_scaling": 1, 
+            "paddle_damping": 1000, 
+            'puck_damping': 1000,
+            'render_size': 360,
+            'seed': 42,
+            'action_x_scaling': 1.0,
+            'action_y_scaling': 1.0,
+            'render_masks': False,
+            'gravity': -5,
+            'paddle_density': 1000,
+            'puck_density': 250,
+            'block_density': 1000,
+            'max_paddle_vel': 2,
+            'time_frequency': 20,
+            'paddle_bounds': [-0.8, -0.33, -0.3582, 0.350],
+            'paddle_edge_bounds': [],
+            'center_offset_constant': 1.2,
+            'puck_restitution': 1.0,
+
+            "control_mode": 'mouse',
+            "control_type": "rect",
+            "puck_history_len": 5,
+            "puck_detector": "red_puck",
+            "image_path": "./temp/images/",
+            "save_path": "./data/rollout/temp_saving",
+            "vel_lim": 0.8,
+            "acc_lim": 0.8,
+            "rmax_x": 0.26,
+            "rmax_y": 0.12,
+            "teleoperation_noise": 0.0,
+            "block_time": 0.49,
+            "runtime": 0.0,
+            "lookahead": 0.2,
+            "gain": 700,
+            "angle": [-0.00153677648744038, -3.0647520618606172, 0.],
+            "zslope": 0.02577,
+            "x_offset": 1.2,
+            "bot_abs": 0.1,
+            "top_abs": 0.8,
+            "max_bias_p": -0.15,
+            "max_bias_m": -0.15,
+            "reset_pos_setting": "hitting",
+            "xv_min": -0.5,
+            "xv_max": 0.5,
+            "yv_min": -0.3,
+            "yv_max": 0.3,
+            "hist_len": 2
+        }
+        kwargs = {**defaults, **kwargs}
+        config = dict_to_namespace(kwargs)
+
         # physics / world params
         # TODO: special config for real
-        self.length, self.width = length, width
-        self.paddle_radius = paddle_radius
-        self.puck_radius = puck_radius
-        self.block_width = block_width
-        self.max_force_timestep = max_force_timestep
-        self.time_frequency = time_frequency
+        self.length, self.width = config.length, config.width
+        self.paddle_radius = config.paddle_radius
+        self.puck_radius = config.puck_radius
+        self.block_width = config.block_width
+        self.max_force_timestep = config.max_force_timestep
+        self.time_frequency = config.time_frequency
         self.time_per_step = 1 / self.time_frequency
-        self.force_scaling = force_scaling
-        self.absorb_target = absorb_target
-        self.paddle_damping = paddle_damping
-        self.puck_damping = puck_damping
-        self.gravity = gravity
-        self.puck_min_height = (-length / 2) + (length / 3)
+        self.force_scaling = config.force_scaling
+        self.absorb_target = config.absorb_target
+        self.paddle_damping = config.paddle_damping
+        self.puck_damping = config.puck_damping
+        self.gravity = config.gravity
+        self.puck_min_height = (-config.length / 2) + (config.length / 3)
         self.paddle_max_height = 0
         self.block_min_height = 0
-        self.max_speed_start = width
-        self.min_speed_start = -width
-        self.paddle_density = paddle_density
-        self.puck_density = puck_density
-        self.block_density = block_density
+        self.max_speed_start = config.width
+        self.min_speed_start = -config.width
+        self.paddle_density = config.paddle_density
+        self.puck_density = config.puck_density
+        self.block_density = config.block_density
         # these assume 2d, in 3d since we have height it would be higher mass
         self.paddle_mass = self.paddle_density * np.pi * self.paddle_radius ** 2
         self.puck_mass = self.puck_density * np.pi * self.puck_radius ** 2
-        self.center_offset_constant = center_offset_constant
+        self.center_offset_constant = config.center_offset_constant
 
         # these 2 will depend on the other parameters
-        self.max_paddle_vel = max_paddle_vel # m/s. This will be dependent on the robot arm
+        self.max_paddle_vel = config.max_paddle_vel # m/s. This will be dependent on the robot arm
         # compute maximum force based on max paddle velocity
         max_a = self.max_paddle_vel / self.time_per_step
         max_f = self.paddle_mass * max_a
@@ -74,10 +117,10 @@ class AirHockeyReal:
         self.max_puck_vel = puck_max_a * self.time_per_step
 
         # box2d visualization params (but the visualization is done in the Render file)
-        self.ppm = render_size / self.width
-        self.render_width = int(render_size)
+        self.ppm = config.render_size / self.width
+        self.render_width = int(config.render_size)
         self.render_length = int(self.ppm * self.length)
-        self.render_masks = render_masks
+        self.render_masks = config.render_masks
 
         self.table_x_min = -self.width / 2
         self.table_x_max = self.width / 2
@@ -114,7 +157,7 @@ class AirHockeyReal:
 
         # TODO: we should have these come in as parameters
         self.puck_history_len = 5
-        self.puck_detector = find_red_hockey_puck
+        self.puck_detector = puck_detectors[config.puck_detector]
         self.image_path = "./temp/images/"
         self.save_path = "./data/rollout/reaching_cups_cross_embodiment"
         # self.save_path = "./data/observe/observe_reaching_expert_cups"
@@ -143,23 +186,23 @@ class AirHockeyReal:
         # self.num_trajectories = num_trajectories
         self.vel = 0.8 # velocity limit
         self.acc = 0.8 # acceleration limit 
-        self.x_convert_offset = 1.2 # offset to convert positions to centered coordinate frame
+        self.x_convert_offset = config.center_offset_constant # offset to convert positions to centered coordinate frame
 
         # rmax_x = 0.23
         # rmax_y = 0.12
         # fast limits
-        self.rmax_x = 0.26
-        self.rmax_y = 0.12
+        self.rmax_x = config.rmax_x
+        self.rmax_y = config.rmax_y
         # self.teleoperation_noise = 0.20 # adds noise to the robot # TODO: make this an input parameter
-        self.teleoperation_noise = 0.0 # adds noise to the robot # TODO: make this an input parameter
+        self.teleoperation_noise = config.teleoperation_noise # adds noise to the robot # TODO: make this an input parameter
 
         # safe limits 
         # rmax_x = 0.1
         # rmax_y = 0.05
 
         # servol control parameters and general frame rate (20Hz)
-        self.block_time = 0.049 # time for the robot to reach a position (blocking)
-        self.runtime = 0
+        self.block_time = config.block_time # time for the robot to reach a position (blocking)
+        self.runtime = config.runtime
         if self.control_mode == "mimic":
             self.compute_time = 0.004
         elif self.control_mode == "mouse":
@@ -167,22 +210,22 @@ class AirHockeyReal:
         elif self.control_mode == "keyboard":
             self.compute_time = 0.025
         # compute_time = 0.004 if control_mode == 'mimic' else 0.002 # TODO: figure out the numbers for learned policies
-        self.lookahead = 0.2 # smooths more with larger values (0.03-0.2)
-        self.gain = 700 # 100-2000
+        self.lookahead = config.lookahead # smooths more with larger values (0.03-0.2)
+        self.gain = config.gain # 100-2000
         
         # may need to calibrate angle of end effector
         # angle = [-0.05153677648744038, -2.9847520618606172, 0.]
-        self.angle = [-0.00153677648744038, -3.0647520618606172, 0.]
+        self.angle = config.angle
 
         # if z is used to compute angles
-        self.zslope = 0.02577
+        self.zslope = config.zslope
         self.computez = lambda x: self.zslope * (x + 0.310) - 0.310
 
         # homography offsets
         self.offset_constants = np.array((2100, 500))
         
         # max workspace limits
-        self.x_offset = 1.2
+        self.x_offset = config.x_offset
         self.x_min_lim = -0.8
         self.x_max_lim = -0.33
         # y_min = -0.3382
@@ -192,10 +235,10 @@ class AirHockeyReal:
         self.y_min = -0.3582
         self.y_max = 0.350
     
-        self.bot_abs = 0.1
-        self.top_abs = 0.8
-        self.max_bias_p = -0.15
-        self.max_bias_m = -0.15
+        self.bot_abs = config.bot_abs
+        self.top_abs = config.top_abs
+        self.max_bias_p = config.max_bias_p
+        self.max_bias_m = config.max_bias_m
         self.edge_lims = [self.top_abs, self.bot_abs, self.max_bias_p, self.max_bias_m]
 
         # y_min = -0.3482
@@ -212,12 +255,12 @@ class AirHockeyReal:
         # y_max = 0.30
 
         # velocity limits
-        self.xv_min = -0.5
-        self.xv_max = 0.5
+        self.xv_min = config.xv_min
+        self.xv_max = config.xv_max
         # y_min = -0.3382
         # y_max = 0.388
-        self.yv_min = -0.3
-        self.yv_max = 0.3
+        self.yv_min = config.yv_min
+        self.yv_max = config.yv_max
 
 
         # robot reset pose
@@ -235,10 +278,11 @@ class AirHockeyReal:
         ])
         # reset_pose = ([-0.68, 0., 0.34] + angle, vel,acc)
         # TODO: make the reset pose not hardcoded but from the high level environment
+        self.reset_pose = (reset_positions[config.reset_pos_setting] + self.angle, self.vel, self.acc)
         # self.reset_pose = ([-0.68, 0., 0.33] + self.angle, self.vel,self.acc) # hitting reset pose
         # self.reset_pose = ([-0.38, 0., 0.33] + self.angle, self.vel,self.acc) # stationary hitting reset pose
-        # self.reset_pose = ([-0.78, 0., 0.33] + self.angle, self.vel,self.acc) # hitting reset pose
-        self.reset_pose = ([-0.38, -0.345, 0.33] + self.angle, self.vel,self.acc) # negative regions reset
+        # self.reset_pose = ([-0.78, 0., 0.33] + self.angle, self.vel,self.acc) # hitting reset ahead pose
+        # self.reset_pose = ([-0.38, -0.345, 0.33] + self.angle, self.vel,self.acc) # negative regions reset
         self.high_reset_val = 0.38
         self.very_high_reset_val = 0.42
         self.high_reset = True # negative regions
@@ -252,7 +296,7 @@ class AirHockeyReal:
         self.move_lims = (self.rmax_x, self.rmax_y)
 
         # smooth_history
-        self.hist_len = 2
+        self.hist_len = config.history_len
 
 
         # creating the ground -- need to only call once! otherwise it can be laggy
