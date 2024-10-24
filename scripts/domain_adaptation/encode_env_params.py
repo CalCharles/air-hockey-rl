@@ -14,8 +14,8 @@ def extract_value(param_names, config):
 def assign_values(param_vector, param_names, config):
     new_config = copy.deepcopy(config)
     at = 0
-    for name in param_names:
-        if type(config["simulator_params"][name]) == list:
+    for name in param_names: 
+        if name in config["simulator_params"] and type(config["simulator_params"][name]) == list:
             for i in range(len(config["simulator_params"][name])):
                 new_config["simulator_params"][name][i] = param_vector[i + at] 
                 at += 1

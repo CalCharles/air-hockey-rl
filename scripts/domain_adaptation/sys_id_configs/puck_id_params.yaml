@@ -3,8 +3,8 @@ gravity:
   upper: -0.3
   start: -0.5
 puck_damping: 
-  lower: 0.2
-  upper: 1.0
+  lower: 0.3
+  upper: 0.7
   start: 0.5
 puck_density: 
   lower: 200
@@ -14,3 +14,15 @@ wall_bounce_scale:
   lower: 0.0
   upper: 0.05
   start: 0.02
+x_offset:
+  lower: -0.05
+  upper: 0.05
+  start: -0.05
+y_offset:
+  lower: -0.05
+  upper: 0.05
+  start: -0.05
+puck_restitution:
+  lower: 0.9
+  upper: 1.1
+  start: 1.0

@@ -84,31 +84,65 @@ if False:
     import faulthandler
     faulthandler.enable()
 
+def evaluate_reset(i, task_name, eval_env, trajectories):
+    # start the trajectory at a random time before num_steps from the end if rand_start, 0 otherwise 
+    start = 0
+
+    evaluated_states = list()
+    if 'goal' in task_name:
+        eval_env.reset_from_state_and_goal(trajectories['observations'][i, 0, :-2], trajectories['observations'][i, 0, -2:])  ## todo, make this more general
+    else:
+        eval_env.reset_from_state(trajectories['observations'][i, start])
+    images = list()
+    # renderer = AirHockeyRenderer(eval_env)
+    for j in range(start, trajectories['actions'].shape[1] - start - 1):
+        # images.append(renderer.get_frame())
+        act = trajectories['actions'][i, j]
+        evaluated_state = eval_env.step(act)[0]
+        evaluated_states.append(evaluated_state)
+    # print("start", trajectories['observations'][i, start, :2], np.concatenate([trajectories['observations'][i, :10, :2],trajectories['observations'][i, :10, 4:6], np.stack(evaluated_states[:10], axis=0)[:, :2]], axis=-1))
+    # cv2.imshow("frame", trajectories['images'][i,start])
+    # cv2.imshow("img", frames[0])
+    # cv2.waitKey(10000)
+    # error
+    # print("start", trajectories['observations'][i, start, 4:8], np.concatenate([trajectories['observations'][i, :10, 4:8], np.stack(evaluated_states[:10], axis=0)[:, 4:8]], axis=-1))
+    return evaluated_states
+
+def compute_comparison(evaluated_states, trajectories, object_name, comp_type, new_config):
+    # modify states by the offset
+    if object_name == "paddle":
+        evaluated_states = evaluated_states[:, :4]
+        target_states = np.concatenate(trajectories['observations'][:, 1:, :4], axis=0)
+        if "x_offset" in new_config["simulator_params"]: evaluated_states[:,0] += new_config["simulator_params"]["x_offset"]
+        if "y_offset" in new_config["simulator_params"]: evaluated_states[:,1] += new_config["simulator_params"]["y_offset"]
+    elif object_name == "puck":
+        target_states = np.concatenate(trajectories['observations'][:, 1:, 4:], axis=0)
+        evaluated_states = evaluated_states[:, 4:8]
+        if "x_offset" in new_config["simulator_params"]: evaluated_states[:,0] += new_config["simulator_params"]["x_offset"]
+        if "y_offset" in new_config["simulator_params"]: evaluated_states[:,1] += new_config["simulator_params"]["y_offset"]
+    elif object_name == "all":
+        target_states = np.concatenate(trajectories['observations'][:, 1:], axis=0)
+        if "x_offset" in new_config["simulator_params"]: evaluated_states[:,:,0] += new_config["simulator_params"]["x_offset"]
+        if "y_offset" in new_config["simulator_params"]: evaluated_states[:,:,1] += new_config["simulator_params"]["y_offset"]
+        if "x_offset" in new_config["simulator_params"]: evaluated_states[:,:,4] += new_config["simulator_params"]["x_offset"]
+        if "y_offset" in new_config["simulator_params"]: evaluated_states[:,:,5] += new_config["simulator_params"]["y_offset"]
+    
+    # compare based on comp_type and the object name
+    value = compare_trajectories(evaluated_states, target_states, comp_type=comp_type)
+    return value
+
 def get_value(param_vector, param_names, base_config, trajectories, task_name, comp_type="l2", object_name="paddle"):
     new_config = assign_values(param_vector, param_names, base_config)
     eval_env = AirHockeyEnv(new_config)
+
     
     evaluated_states = list()
     for i in range(len(trajectories['observations'])):
-        if 'goal' in task_name:
-            eval_env.reset_from_state_and_goal(trajectories['observations'][i, 0, :-2], trajectories['observations'][i, 0, -2:])  ## todo, make this more general
-        else:
-            eval_env.reset_from_state(trajectories['observations'][i, 0]) # TODO: need to be able to reset from state
-        for j in range(trajectories['actions'].shape[1] - 1):
-            act = trajectories['actions'][i, j]
-            evaluated_state = eval_env.step(act)[0]
-            evaluated_states.append(evaluated_state)
-    
+        evaluated_states += evaluate_reset(i, task_name, eval_env, trajectories)
+
     evaluated_states = np.array(evaluated_states)
-    if object_name == "paddle":
-        target_states = np.concatenate(trajectories['observations'][:, 1:, :4], axis=0)
-        value = compare_trajectories(evaluated_states[:, :4], target_states, comp_type=comp_type)
-    elif object_name == "puck":
-        target_states = np.concatenate(trajectories['observations'][:, 1:, 4:], axis=0)
-        value = compare_trajectories(evaluated_states[:, 4:], target_states, comp_type=comp_type)
-    elif object_name == "all":
-        target_states = np.concatenate(trajectories['observations'][:, 1:], axis=0)
-        value = compare_trajectories(evaluated_states, target_states, comp_type=comp_type)
+    value = compute_comparison(evaluated_states, trajectories, object_name, comp_type, new_config)
+    
     return value
 
 def compare_trajectories(a_traj, b_traj, comp_type="l2"):
@@ -117,6 +151,8 @@ def compare_trajectories(a_traj, b_traj, comp_type="l2"):
         return - np.linalg.norm(a_traj - b_traj)
     if comp_type == "posl2":
         return - np.linalg.norm(a_traj[...,:2] - b_traj[...,:2])
+    if comp_type == "posl1":
+        return - np.linalg.norm(a_traj[...,:2] - b_traj[...,:2], ord=1)
     if comp_type == "last":
         return - np.linalg.norm(a_traj[-1] - b_traj[-1])
     if comp_type == "dtw":
@@ -134,11 +170,12 @@ def load_custom_dataset(dataset_pth):
             data[key] = dataset[key]
     return data
 
-def get_frames(renderer, env, states, actions, terminals, task_name):
+def get_frames(renderer, env, states, actions, terminals, task_name, start = 0):
         
         frames = []
+        eval_states = list()
         robosuite_frames = {}
-        i = 0
+        i = start
         while i < len(actions):
             if 'goal' in task_name:
                 eval_env.reset_from_state_and_goal(states[i, :-2], states[i, -2:])
@@ -157,11 +194,12 @@ def get_frames(renderer, env, states, actions, terminals, task_name):
                     
                 action = actions[i]
                 obs, rew, done, truncated, info = env.step(action)
+                eval_states.append(obs)
                 done = terminals[i]
                 i += 1
         # import pdb; pdb.set_trace()
 
-        return frames
+        return frames, eval_states
 
 def load_sys_id_yaml(pth):
     
@@ -179,6 +217,29 @@ def load_sys_id_yaml(pth):
             initial_params.append(id_config[n]["start"])
     return param_names, lower_bounds, upper_bounds, initial_params
 
+def generate_image_gif(new_config, data, air_hockey_cfg, filename, traj_idx=0, start = 20):
+    saved_frames = data['images'][traj_idx][start:]
+    eval_env = AirHockeyEnv(new_config)
+
+    renderer = AirHockeyRenderer(eval_env)
+    frames, states = get_frames(renderer, eval_env, data['observations'][traj_idx], data['actions'][traj_idx], data['terminals'][traj_idx], air_hockey_cfg['air_hockey']['task'], start= start)
+    gif_savepath = os.path.join(os.path.split(args.cfg)[traj_idx], filename + f'.gif')
+    def fps_to_duration(fps):
+        return int(1000 * 1/fps)
+    fps = 30 # slightly faster than 20 fps (simulation time), but makes rendering smooth
+
+    # rotate the saved_frames by -90 degrees and resize
+    frameshape = frames[0].shape
+    saved_frames = list(map(lambda f: cv2.resize(cv2.rotate(f, cv2.ROTATE_90_CLOCKWISE), (frameshape[1], frameshape[0])), saved_frames))
+    # plot the frame number on the image
+    for i, frame in enumerate(saved_frames):
+        cv2.putText(frame, "{:.2f} ".format(float(data['observations'][traj_idx][i][0])) + "{:.2f}".format(float(data['observations'][traj_idx][i][1])), (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+        cv2.putText(frame, "{:.2f} ".format(float(states[max(0,i-1)][0])) + "{:.2f}".format(float(states[max(0,i-1)][1])), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+        cv2.putText(frame, "{:.2f} ".format(float(data['actions'][traj_idx][i][0])) + "{:.2f}".format(float(data['actions'][traj_idx][i][1])), (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+    
+    side_by_side = [np.concatenate([saved_frames[i], frames[i]], axis=1) for i in range(min(len(frames), len(saved_frames)))]
+    imageio.mimsave(gif_savepath, side_by_side, format='GIF', loop=0, duration=fps_to_duration(fps))
+        
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Demonstrate the air hockey game.')
@@ -189,6 +250,11 @@ if __name__ == '__main__':
     parser.add_argument('--comp-type', type=str, default='l2', help='how to do comparisons.')
     parser.add_argument('--object-name', type=str, default='paddle', help='which object to do comparisons on. "all" compares the whole state')
     parser.add_argument('--run-id', type=str, default='', help="logging identification")
+    parser.add_argument('--num-resamples', type=int, default=20, help="number of subsequences to sample")
+    parser.add_argument('--max-length', type=int, default=50, help="maximum length of a subsequence")
+    parser.add_argument('--num-population', type=int, default=100, help="population size for CMA")
+    parser.add_argument('--num-iterations', type=int, default=50, help="number of steps for learning")
+    parser.add_argument('--variance', type=float, default=0.2, help="variance of the perturbation")
     args = parser.parse_args()
 
     # Dataset format:
@@ -196,7 +262,6 @@ if __name__ == '__main__':
         # observation with format: paddle pos vel, puck pos vel, goal pos (if goal based)
     # python scripts/domain_adaptation/system_identification.py --cfg scripts/domain_adaptation/realworld_paddle_config/model_cfg.yaml --dataset-pth /datastor1/calebc/public/data/mouse/state_data_all_new/ 
     # python scripts/domain_adaptation/system_identification.py --cfg scripts/domain_adaptation/realworld_paddle_config/optimal_paddle_config.yaml --dataset-pth /datastor1/calebc/public/data/mouse/state_data_all_new/ --sys-id-pth scripts/domain_adaptation/sys_id_configs/puck_id_params.yaml --comp-type posl2
-
 
     with open(args.cfg, 'r') as f:
         air_hockey_cfg = yaml.safe_load(f)
@@ -209,42 +274,47 @@ if __name__ == '__main__':
     ### dataset loading ### 
     new_config = assign_values(initial_params, param_names, air_hockey_cfg['air_hockey'])
     eval_env = AirHockeyEnv(new_config)
-    data = load_dataset(args.dataset_pth, "vel", eval_env, 10)
+    data = load_dataset(args.dataset_pth, "vel", eval_env, 10, frequency=10)
     # data = load_dataset("/datastor1/calebc/public/data/mouse/state_data_all/", "history", eval_env)
     # print(list(data.keys()), data["observations"].shape)
 
     # magic number to shift the observations
     # print(data["observations"][0][:30])
     # error
-    # for observations in data["observations"]:
-    #     observations[:, 0] += 1.2
+    for observations in data["observations"]:
+        observations[:, 0] += 1.2
     ###
 
     vis_before = True
     if vis_before:
         # gif_path = os.path.join(os.path.split(args.dataset_pth)[0], 'eval.gif')
         # saved_frames = imageio.mimread(gif_path)
-        saved_frames = data['images'][0]
         new_config = assign_values(initial_params, param_names, air_hockey_cfg['air_hockey'])
-        eval_env = AirHockeyEnv(new_config)
+        generate_image_gif(new_config, data, air_hockey_cfg, "pre_cem")
+        # saved_frames = data['images'][0]
+        # new_config = assign_values(initial_params, param_names, air_hockey_cfg['air_hockey'])
+        # eval_env = AirHockeyEnv(new_config)
 
-        renderer = AirHockeyRenderer(eval_env)
-        frames = get_frames(renderer, eval_env, data['observations'][0], data['actions'][0], data['terminals'][0], air_hockey_cfg['air_hockey']['task'])
-        gif_savepath = os.path.join(os.path.split(args.cfg)[0], f'pre_cem.gif')
-        def fps_to_duration(fps):
-            return int(1000 * 1/fps)
-        fps = 30 # slightly faster than 20 fps (simulation time), but makes rendering smooth
+        # renderer = AirHockeyRenderer(eval_env)
+        # frames, states = get_frames(renderer, eval_env, data['observations'][0], data['actions'][0], data['terminals'][0], air_hockey_cfg['air_hockey']['task'])
+        # gif_savepath = os.path.join(os.path.split(args.cfg)[0], f'pre_cem.gif')
+        # def fps_to_duration(fps):
+        #     return int(1000 * 1/fps)
+        # fps = 30 # slightly faster than 20 fps (simulation time), but makes rendering smooth
 
-        # rotate the saved_frames by -90 degrees and resize
-        frameshape = frames[0].shape
-        saved_frames = list(map(lambda f: cv2.resize(cv2.rotate(f, cv2.ROTATE_90_CLOCKWISE), (frameshape[1], frameshape[0])), saved_frames))
-        # plot the frame number on the image
-        for i, frame in enumerate(saved_frames):
-            cv2.putText(frame, f"Frame {i}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+        # # rotate the saved_frames by -90 degrees and resize
+        # frameshape = frames[0].shape
+        # saved_frames = list(map(lambda f: cv2.resize(cv2.rotate(f, cv2.ROTATE_90_CLOCKWISE), (frameshape[1], frameshape[0])), saved_frames))
+        # # plot the frame number on the image
+        # for i, frame in enumerate(saved_frames):
+        #     print(data['observations'][0][i][0])
+        #     cv2.putText(frame, "{:.3f} ".format(float(data['observations'][0][i][0])) + "{:.3f}".format(float(data['observations'][0][i][1])), (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+        #     cv2.putText(frame, "{:.3f} ".format(float(data['actions'][0][i][0])) + "{:.3f}".format(float(data['actions'][0][i][1])), (40, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+        #     cv2.putText(frame, "{:.3f} ".format(float(states[max(0,i-1)][0])) + "{:.3f}".format(float(states[max(0,i-1)][1])), (70, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
         
-        side_by_side = [np.concatenate([saved_frames[i], frames[i]], axis=1) for i in range(min(len(frames), len(saved_frames)))]
-        imageio.mimsave(gif_savepath, side_by_side, format='GIF', loop=0, duration=fps_to_duration(fps))
-    
+        # side_by_side = [np.concatenate([saved_frames[i], frames[i]], axis=1) for i in range(min(len(frames), len(saved_frames)))]
+        # imageio.mimsave(gif_savepath, side_by_side, format='GIF', loop=0, duration=fps_to_duration(fps))
+        
     if args.wdb_entity:
         import datetime
         timestamp = datetime.datetime.now()
@@ -255,8 +325,12 @@ if __name__ == '__main__':
                    name=os.path.basename(args.dataset_pth) + "_" + os.path.basename(args.sys_id_pth),
                    id=args.run_id + '_' + formatted_timestamp.replace(":", "_"))
 
-    planner = CEMPlanner(eval_fn=lambda params, trajs: get_value(params, param_names, air_hockey_cfg['air_hockey'], trajs, air_hockey_cfg['air_hockey']['task'], comp_type=args.comp_type, object_name=args.object_name), 
-                         trajectories=data, elite_frac=0.2, n_samples=100, n_iterations=50, variance=0.2, 
+    planner = CEMPlanner(eval_fn=lambda params, 
+                         trajs: get_value(params, param_names, air_hockey_cfg['air_hockey'], trajs, 
+                                          air_hockey_cfg['air_hockey']['task'], comp_type=args.comp_type, 
+                                          object_name=args.object_name), 
+                         trajectories=data, elite_frac=0.2, n_samples=args.num_population, n_iterations=args.num_iterations, variance=args.variance, 
+                         n_starts=args.num_resamples, traj_length=args.max_length,
                          lower_bounds=lower_bounds, upper_bounds=upper_bounds, param_names=param_names,
                          wdb_logging=len(args.wdb_entity) > 0)
     # TODO Implemetn CMA-ES planner also
@@ -268,19 +342,21 @@ if __name__ == '__main__':
 
     vis_after = True
     if vis_after:
-
         new_config = assign_values(optimal_parameters, param_names, air_hockey_cfg['air_hockey'])
-        ## save the new config with the optimal parameters
-        cfg_folder = os.path.split(args.cfg)[0]
-        with open(os.path.join(cfg_folder, 'optimal_config.yaml'), 'w') as f:
-            new_air_hockey_cfg = copy.deepcopy(air_hockey_cfg)
-            new_air_hockey_cfg['air_hockey']["simulator_params"] = new_config
-            yaml.dump(new_config, f)
-        eval_env = AirHockeyEnv(new_config)
+        generate_image_gif(new_config, data, air_hockey_cfg, "post_cem")
 
-        renderer = AirHockeyRenderer(eval_env)
-        post_frames = get_frames(renderer, eval_env, data['observations'][0], data['actions'][0], data['terminals'][0], air_hockey_cfg['air_hockey']['task'])
-        gif_savepath = os.path.join(os.path.split(args.cfg)[0], f'post_cem.gif')
+        # new_config = assign_values(optimal_parameters, param_names, air_hockey_cfg['air_hockey'])
+        # ## save the new config with the optimal parameters
+        # cfg_folder = os.path.split(args.cfg)[0]
+        # with open(os.path.join(cfg_folder, 'optimal_config.yaml'), 'w') as f:
+        #     new_air_hockey_cfg = copy.deepcopy(air_hockey_cfg)
+        #     new_air_hockey_cfg['air_hockey']["simulator_params"] = new_config
+        #     yaml.dump(new_config, f)
+        # eval_env = AirHockeyEnv(new_config)
 
-        side_by_side = [np.concatenate([saved_frames[i], post_frames[i]], axis=1) for i in range(min(len(post_frames), len(saved_frames)))]
-        imageio.mimsave(gif_savepath, side_by_side, format='GIF', loop=0, duration=fps_to_duration(fps))
+        # renderer = AirHockeyRenderer(eval_env)
+        # post_frames = get_frames(renderer, eval_env, data['observations'][0], data['actions'][0], data['terminals'][0], air_hockey_cfg['air_hockey']['task'])
+        # gif_savepath = os.path.join(os.path.split(args.cfg)[0], f'post_cem.gif')
+
+        # side_by_side = [np.concatenate([saved_frames[i], post_frames[i]], axis=1) for i in range(min(len(post_frames), len(saved_frames)))]
+        # imageio.mimsave(gif_savepath, side_by_side, format='GIF', loop=0, duration=fps_to_duration(fps))

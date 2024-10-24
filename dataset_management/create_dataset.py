@@ -7,17 +7,17 @@ import yaml
 from airhockey import AirHockeyEnv
 
 
-def get_observation(paddle, paddle_vel, puck, puck_history, obs_type):
+def get_observation(paddle, paddle_vel, puck, puck_history, obs_type, frequency=1):
     # uses the last puck history
     state_info = dict()
     state_info["paddles"] = dict()
     state_info["paddles"]["paddle_ego"] = {"position": paddle, "velocity": paddle_vel}
     state_info["pucks"] = list()
-    state_info["pucks"].append({"position": puck[:2], "velocity": puck[:2] - puck_history[-2][:2], "history": puck_history}) # # TODO: puck dataset does not handle occlusion at the moment
+    state_info["pucks"].append({"position": puck[:2], "velocity": (puck[:2] - puck_history[-2][:2]) * frequency, "history": puck_history}) # # TODO: puck dataset does not handle occlusion at the moment
     observation = get_observation_by_type(state_info, obs_type=obs_type, puck_history=puck_history)
     return observation, state_info
 
-def load_dataset(data_dir, obs_type, environment, num_trajectories=-1):
+def load_dataset(data_dir, obs_type, environment, num_trajectories=-1, frequency=1):
     # loads data into a dataset of observations based on the observation type
     dataset = dict()
     dataset["observations"] = list()
@@ -38,6 +38,7 @@ def load_dataset(data_dir, obs_type, environment, num_trajectories=-1):
                     paddle = f["pose"][:,:2]
                     paddle_vel = f["speed"][:,:2]
                     action = f["desired_pose"][:,:2] - paddle
+                    action[:,0], action[:,1] = action[:,0] / environment.action_x_ratio, action[:,1] / environment.action_y_ratio
                     puck = f["puck"] 
                     image = f["image"]
             except Exception as e:
@@ -45,12 +46,12 @@ def load_dataset(data_dir, obs_type, environment, num_trajectories=-1):
                 continue
             print("added trajectory ", file)
             puck_history = [(-2 + environment.center_offset_constant,0,1) for i in range(5)]
-            observation, state_info = get_observation(paddle[0], paddle_vel[0], puck[0], puck_history, obs_type=obs_type)
+            observation, state_info = get_observation(paddle[0], paddle_vel[0], puck[0], puck_history, obs_type=obs_type, frequency=frequency)
             observations = [observation]
             next_observations = list()
             rewards = [environment.get_base_reward(state_info)]
             for pa, pav, pu in zip(paddle[1:], paddle_vel[1:], puck[1:]):
-                next_observation, state_info = get_observation(pa, pav, pu, puck_history, obs_type=obs_type)
+                next_observation, state_info = get_observation(pa, pav, pu, puck_history, obs_type=obs_type, frequency=frequency)
                 observations.append(observation)
                 rewards.append(environment.get_base_reward(state_info))
                 next_observations.append(next_observation)
@@ -73,6 +74,7 @@ def load_dataset(data_dir, obs_type, environment, num_trajectories=-1):
     # dataset["next_observations"] = np.concatenate(dataset["next_observations"], axis=0)
     # dataset["terminals"] = np.concatenate(dataset["terminals"], axis=0)
     # dataset["images"] = np.concatenate(dataset["images"], axis=0)
+    print([dataset["observations"][i].shape for i in range(len(dataset["observations"]))])
 
     return dataset
 # read_new_real_data("/datastor1/calebc/public/data/mouse/cleaned_new/")
