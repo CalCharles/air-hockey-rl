@@ -5,6 +5,7 @@ from airhockey.airhockey_base import get_observation_by_type
 import argparse
 import yaml
 from airhockey import AirHockeyEnv
+import cv2
 
 
 def get_observation(paddle, paddle_vel, puck, puck_history, obs_type, frequency=1):
@@ -39,6 +40,10 @@ def load_dataset(data_dir, obs_type, environment, num_trajectories=-1, frequency
                     paddle_vel = f["speed"][:,:2]
                     action = f["desired_pose"][:,:2] - paddle
                     action[:,0], action[:,1] = action[:,0] / environment.action_x_ratio, action[:,1] / environment.action_y_ratio
+                    # for j in range(len(f["image"])):
+                    #     print(f["desired_pose"][j,:2], paddle[j], action[j])
+                    #     cv2.imshow("frame", f["image"][j])
+                    #     cv2.waitKey(1000)
                     puck = f["puck"] 
                     image = f["image"]
             except Exception as e:

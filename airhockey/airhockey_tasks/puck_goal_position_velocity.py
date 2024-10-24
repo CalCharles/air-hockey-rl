@@ -12,24 +12,7 @@ class AirHockeyPuckGoalPositionVelocityEnv(AirHockeyGoalEnv):
         
     def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
-        paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
-        paddle_obs_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
-        
-        puck_obs_low = [self.table_x_top, self.table_y_left, -self.max_puck_vel, -self.max_puck_vel]
-        puck_obs_high = [self.table_x_bot, self.table_y_right, self.max_puck_vel, self.max_puck_vel]
-
-        puck_hist_low = [self.table_x_top, self.table_y_left, 0] * 5
-        puck_hist_high = [self.table_x_bot, self.table_y_right, 0] * 5
-
-        if obs_type == "paddle":
-            low = paddle_obs_low
-            high = paddle_obs_high
-        elif obs_type == "vel":
-            low = paddle_obs_low + puck_obs_low
-            high = paddle_obs_high + puck_obs_high
-        elif obs_type == "history":
-            low = paddle_obs_low + puck_hist_low
-            high = paddle_obs_high + puck_hist_high
+        low, high = self.init_observation(obs_type)
 
         goal_low = [self.table_x_top, self.table_y_left, -self.max_puck_vel, -self.max_puck_vel]
         goal_high = [0, self.table_y_right, self.max_puck_vel, self.max_puck_vel]

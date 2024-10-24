@@ -66,11 +66,7 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
 
     def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
-        paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
-        paddle_obs_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
-        
-        puck_obs_low = [self.table_x_top, self.table_y_left, -self.max_puck_vel, -self.max_puck_vel]
-        puck_obs_high = [self.table_x_bot, self.table_y_right, self.max_puck_vel, self.max_puck_vel]
+        low, high = self.init_observation(obs_type.replace("negative_regions_", ""))
 
         goal_low = [self.table_x_top, self.table_y_left]        
         goal_high = [0, self.table_y_right]
@@ -78,23 +74,9 @@ class AirHockeyPuckGoalPositionDynamicNegRegionsEnv(AirHockeyGoalEnv):
         nrr_obs_low = [-math.inf] * 12 * self.num_negative_reward_regions
         nrr_obs_high = [-math.inf] * 12 * self.num_negative_reward_regions
 
-        puck_hist_low = [self.table_x_top, self.table_y_left, 0] * 5
-        puck_hist_high = [self.table_x_bot, self.table_y_right, 0] * 5
-
-        if obs_type == "paddle":
-            low = paddle_obs_low
-            high = paddle_obs_high
-        elif obs_type == "history":
-            low = paddle_obs_low + puck_hist_low
-            high = paddle_obs_high + puck_hist_high
-        elif obs_type == "negative_regions_puck_vel":
-            low = paddle_obs_low + puck_obs_low
-            high = paddle_obs_high + puck_obs_high
-        elif obs_type == "negative_regions_puck_history":
-            low = paddle_obs_low + puck_hist_low
-            high = paddle_obs_high + puck_hist_high
-
         if self.return_goal_obs:
+            low = low + nrr_obs_low
+            high = high + nrr_obs_high
             self.observation_space = self.get_goal_obs_space(low, high, goal_low, goal_high)
         else:
             low = low + nrr_obs_low + goal_low

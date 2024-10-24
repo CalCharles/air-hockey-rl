@@ -12,7 +12,8 @@ air_hockey:
   num_paddles: 1
   num_pucks: 1
   num_targets: 0
-  obs_type: history
+  obs_type: pos # history # vel
+  obs_type: pos
   simulator: box2d
   simulator_params:
     absorb_target: false

@@ -12,22 +12,15 @@ class AirHockeyPaddleReachPositionVelocityEnv(AirHockeyGoalEnv):
         
     def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
-        paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
-        paddle_obs_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
-
-        low = paddle_obs_low
-        high = paddle_obs_high
-
+        low, high = self.init_observation(obs_type)
         goal_low = [0, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
         goal_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
 
         if self.return_goal_obs:
-            low = paddle_obs_low
-            high = paddle_obs_high
             self.observation_space = self.get_goal_obs_space(low, high, goal_low, goal_high)
         else:
-            low = paddle_obs_low + goal_low
-            high = paddle_obs_high + goal_high
+            low = low + goal_low
+            high = high + goal_high
             self.observation_space = self.get_obs_space(low, high)
 
         self.min_goal_radius = self.width / 16

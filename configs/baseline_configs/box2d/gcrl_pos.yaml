@@ -13,7 +13,7 @@ air_hockey:
   num_paddles: 1
   num_pucks: 1
   num_targets: 0
-  obs_type: history
+  obs_type: pos # history # vel
   simulator: box2d
   simulator_params:
     absorb_target: false
@@ -33,6 +33,8 @@ air_hockey:
     wall_bounce_scale: 0.02
     width: 0.8636
   stand_still_rew: 0.01
+  puck_goal_success_bonus: 0.0
+  paddle_puck_success_bonus: 0.0
   task: puck_goal_position
   terminate_on_enemy_goal: true
   terminate_on_out_of_bounds: true

@@ -17,18 +17,26 @@ air_hockey:
     absorb_target: false
     block_density: 1000
     block_width: 0.0554
-    force_scaling: 1000
-    gravity: -0.5
     length: 1.9304
     max_force_timestep: 100
-    paddle_damping: 3
-    paddle_density: 2500
     paddle_radius: 0.0508
-    puck_damping: 0.5
-    puck_density: 250
+
+    action_x_scaling: 2.00021
+    action_y_scaling: 1.41727
+    force_scaling: 1.20005
+    paddle_damping: 9.99959
+    paddle_density: 2999.8954
+    
+    gravity: -0.68678
+    puck_damping: 0.34594
+    puck_density: 216.39361
+    puck_restitution: 1.09145
+    wall_bounce_scale: 0.0461
+    # x_offset: -0.01845
+    # y_offset: 0.01724
+
     puck_radius: 0.03175
     render_size: 360
-    wall_bounce_scale: 0.02
     width: 0.8636
   stand_still_rew: 0.01
   task: puck_strike

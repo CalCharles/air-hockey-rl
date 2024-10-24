@@ -18,7 +18,7 @@ air_hockey:
     absorb_target: false
     block_density: 500
     block_width: 0.0254
-    force_scaling: 2 # 0.7500992709388284 # 1000
+    force_scaling: 0.7500992709388284 # 1000
     action_x_scaling: 1.5002134499007753 # 1.108854046182425
     action_y_scaling: 1.282409981335295 # 0.7325506641500633
     max_force_timestep: 36.20022976369259

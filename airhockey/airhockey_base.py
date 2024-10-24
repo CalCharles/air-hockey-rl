@@ -9,6 +9,7 @@ from .utils import get_observation_by_type, dict_to_namespace
 
 from typing import Tuple
 from types import SimpleNamespace
+import copy
 
 def get_box2d_simulator_fn():
     from airhockey.sims import AirHockeyBox2D
@@ -207,6 +208,59 @@ class AirHockeyBaseEnv(ABC, Env):
     @abstractmethod
     def initialize_spaces(self, obs_type):
         pass
+    
+    def init_observation(self, obs_type):
+        paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
+        paddle_obs_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
+        
+        puck_obs_low = [self.table_x_top, self.table_y_left, -self.max_puck_vel, -self.max_puck_vel]
+        puck_obs_high = [self.table_x_bot, self.table_y_right, self.max_puck_vel, self.max_puck_vel]
+        
+        puck_hist_low = [self.table_x_top, self.table_y_left, 0] * 5
+        puck_hist_high = [self.table_x_bot, self.table_y_right, 0] * 5
+
+        paddle_accel_low = [-1000, -1000]
+        paddle_accel_high = [1000, 1000]
+        
+        paddle_force_low = [-1000, -1000]
+        paddle_force_high = [1000, 1000]
+
+        block_obs_low = [self.table_x_top, self.table_y_left, self.table_x_top, self.table_y_left]
+        block_obs_high = [self.table_x_bot, self.table_y_right, self.table_x_bot, self.table_y_right]
+
+        if obs_type == "paddle":
+            low = paddle_obs_low
+            high = paddle_obs_high
+        elif obs_type == "pos":
+            low = paddle_obs_low[:2] + puck_obs_low[:2]
+            high = paddle_obs_high[:2] + puck_obs_high[:2]
+        elif obs_type == "vel":
+            low = paddle_obs_low + puck_obs_low
+            high = paddle_obs_high + puck_obs_high
+        elif obs_type == "history":
+            low = paddle_obs_low + puck_hist_low
+            high = paddle_obs_high + puck_hist_high
+        elif obs_type == "paddle_acceleration_vel":
+            low = paddle_obs_low + paddle_accel_low + paddle_force_low + puck_obs_low
+            high = paddle_obs_high + paddle_accel_high + paddle_force_high + puck_obs_high
+        elif obs_type == "paddle_acceleration_history":
+            low = paddle_obs_low + paddle_accel_low + paddle_force_low + puck_hist_low
+            high = paddle_obs_high + paddle_accel_high + paddle_force_high + puck_hist_high
+        elif obs_type == "single_block_vel":
+            low = paddle_obs_low + puck_obs_low + block_obs_low
+            high = paddle_obs_high + puck_obs_high + block_obs_high
+        elif obs_type == "single_block_history":
+            low = paddle_obs_low + block_obs_low + puck_hist_low
+            high = paddle_obs_high + block_obs_high + puck_hist_high
+        elif obs_type == "many_blocks_vel":
+            low = paddle_obs_low + puck_obs_low + [block_obs_low[0], block_obs_low[1]] * self.num_blocks
+            high = paddle_obs_high + puck_obs_high + [block_obs_high[0], block_obs_high[1]] * self.num_blocks
+        elif obs_type == "many_blocks_history":
+            low = paddle_obs_low + [block_obs_low[0], block_obs_low[1]] * self.num_blocks + puck_hist_low
+            high = paddle_obs_high + [block_obs_high[0], block_obs_high[1]] * self.num_blocks + puck_hist_high
+
+        self.observation_space = self.single_observation_space = self.get_obs_space(low, high)
+        return low, high
     
     @abstractmethod
     def create_world_objects(self):
@@ -416,7 +470,7 @@ class AirHockeyBaseEnv(ABC, Env):
                     
         return terminated, truncated, puck_within_home, puck_within_alt_home, puck_within_ego_goal, puck_within_alt_goal
 
-    def get_reward_shaping(self, state_info):
+    def get_reward_shaping(self, state_info, action=None):
         additional_rew = 0.0
         
         # small negative reward for changing direction
@@ -449,7 +503,14 @@ class AirHockeyBaseEnv(ABC, Env):
         # small positive reward for keeping still
         if np.linalg.norm(state_info['paddles']['paddle_ego']['velocity']) < 0.01:
             additional_rew += self.stand_still_rew
-            
+
+        # TODO: small negative reward for acceleration with sign change significantly
+        # sign_change = (state_info['paddles']['paddle_ego']['velocity'] * action)
+        # sign_change[sign_change > 0] = 0
+        # sign_change[sign_change < 0] = 1
+        # velocity_change = np.abs(state_info['paddles']['paddle_ego']['velocity'] - action) * sign_change
+        # additional_rew += self.aceleration_penalty * velocity_change
+
         # determine if close to walls
         if self.wall_bumping_rew != 0:
             bump_right = state_info['paddles']['paddle_ego']['position'][1] > self.table_y_right - 2 * self.paddle_radius
@@ -476,7 +537,8 @@ class AirHockeyBaseEnv(ABC, Env):
             dvo.step(self.current_state, action)
         
 
-    def single_agent_step(self, action) -> Tuple[np.ndarray, float, bool, bool, dict]:
+    def single_agent_step(self, inp_action) -> Tuple[np.ndarray, float, bool, bool, dict]:
+        action = copy.deepcopy(inp_action)
         paddle_x_pos = self.current_state['paddles']['paddle_ego']['position'][0]
         paddle_y_pos = self.current_state['paddles']['paddle_ego']['position'][1]
         min_max_limits = get_clip_limits(paddle_x_pos,paddle_y_pos,self.boundary_lims, self.edge_lims)

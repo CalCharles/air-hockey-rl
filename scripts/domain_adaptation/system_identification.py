@@ -151,6 +151,8 @@ def compare_trajectories(a_traj, b_traj, comp_type="l2"):
         return - np.linalg.norm(a_traj - b_traj)
     if comp_type == "posl2":
         return - np.linalg.norm(a_traj[...,:2] - b_traj[...,:2])
+    if comp_type == "l1":
+        return - np.linalg.norm(a_traj - b_traj, ord=1)
     if comp_type == "posl1":
         return - np.linalg.norm(a_traj[...,:2] - b_traj[...,:2], ord=1)
     if comp_type == "last":
@@ -192,7 +194,7 @@ def get_frames(renderer, env, states, actions, terminals, task_name, start = 0):
                 frame = cv2.resize(frame, (160, int(160 / aspect_ratio)))
                 frames.append(frame)
                     
-                action = actions[i]
+                action = copy.deepcopy(actions[i])
                 obs, rew, done, truncated, info = env.step(action)
                 eval_states.append(obs)
                 done = terminals[i]
@@ -217,9 +219,18 @@ def load_sys_id_yaml(pth):
             initial_params.append(id_config[n]["start"])
     return param_names, lower_bounds, upper_bounds, initial_params
 
-def generate_image_gif(new_config, data, air_hockey_cfg, filename, traj_idx=0, start = 20):
+def generate_image_gif(new_config, data, air_hockey_cfg, filename, traj_idx=0, start = 0):
     saved_frames = data['images'][traj_idx][start:]
     eval_env = AirHockeyEnv(new_config)
+    # saved_frames = list(map(lambda f: cv2.rotate(f, cv2.ROTATE_90_CLOCKWISE), saved_frames))
+    # for idx, frame in enumerate(saved_frames):
+    #     i = idx + start
+    #     print(i,max(0,i-1-start), data['actions'][traj_idx][i], data['observations'][traj_idx][i][:2])
+    #     cv2.putText(frame, "{:.2f} ".format(float(data['observations'][traj_idx][i][0])) + "{:.2f}".format(float(data['observations'][traj_idx][i][1])), (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+    #     cv2.putText(frame, "{:.2f} ".format(float(states[max(0,i-1-start)][0])) + "{:.2f}".format(float(states[max(0,i-1-start)][1])), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+    #     cv2.putText(frame, "{:.2f} ".format(float(data['actions'][traj_idx][i][0])) + "{:.2f}".format(float(data['actions'][traj_idx][i][1])), (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+    #     cv2.imshow("frame", frame)
+    #     cv2.waitKey(1000)
 
     renderer = AirHockeyRenderer(eval_env)
     frames, states = get_frames(renderer, eval_env, data['observations'][traj_idx], data['actions'][traj_idx], data['terminals'][traj_idx], air_hockey_cfg['air_hockey']['task'], start= start)
@@ -232,10 +243,14 @@ def generate_image_gif(new_config, data, air_hockey_cfg, filename, traj_idx=0, s
     frameshape = frames[0].shape
     saved_frames = list(map(lambda f: cv2.resize(cv2.rotate(f, cv2.ROTATE_90_CLOCKWISE), (frameshape[1], frameshape[0])), saved_frames))
     # plot the frame number on the image
-    for i, frame in enumerate(saved_frames):
+    for idx, frame in enumerate(saved_frames):
+        i = idx + start
+        # print(i,max(0,i-1-start), data['actions'][traj_idx][i], data['observations'][traj_idx][i][:2])
         cv2.putText(frame, "{:.2f} ".format(float(data['observations'][traj_idx][i][0])) + "{:.2f}".format(float(data['observations'][traj_idx][i][1])), (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-        cv2.putText(frame, "{:.2f} ".format(float(states[max(0,i-1)][0])) + "{:.2f}".format(float(states[max(0,i-1)][1])), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+        cv2.putText(frame, "{:.2f} ".format(float(states[max(0,i-1-start)][0])) + "{:.2f}".format(float(states[max(0,i-1-start)][1])), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
         cv2.putText(frame, "{:.2f} ".format(float(data['actions'][traj_idx][i][0])) + "{:.2f}".format(float(data['actions'][traj_idx][i][1])), (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+        # cv2.imshow("frame", np.concatenate([frame, frames[idx]], axis=1))
+        # cv2.waitKey(1000)
     
     side_by_side = [np.concatenate([saved_frames[i], frames[i]], axis=1) for i in range(min(len(frames), len(saved_frames)))]
     imageio.mimsave(gif_savepath, side_by_side, format='GIF', loop=0, duration=fps_to_duration(fps))
@@ -262,6 +277,8 @@ if __name__ == '__main__':
         # observation with format: paddle pos vel, puck pos vel, goal pos (if goal based)
     # python scripts/domain_adaptation/system_identification.py --cfg scripts/domain_adaptation/realworld_paddle_config/model_cfg.yaml --dataset-pth /datastor1/calebc/public/data/mouse/state_data_all_new/ 
     # python scripts/domain_adaptation/system_identification.py --cfg scripts/domain_adaptation/realworld_paddle_config/optimal_paddle_config.yaml --dataset-pth /datastor1/calebc/public/data/mouse/state_data_all_new/ --sys-id-pth scripts/domain_adaptation/sys_id_configs/puck_id_params.yaml --comp-type posl2
+    # TODO: modify box2d/robosuite environment to apply forces according to a sigmoid with a parameterized activation value and saturation curve
+    # TODO: possibly add paddle action offset
 
     with open(args.cfg, 'r') as f:
         air_hockey_cfg = yaml.safe_load(f)

@@ -8,38 +8,7 @@ from .airhockey_rewards import AirHockeyPuckCatchReward, AirHockeyPuckVelReward,
 class AirHockeyPuckVelEnv(AirHockeyBaseEnv):
     def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
-        paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
-        paddle_obs_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
-        
-        puck_obs_low = [self.table_x_top, self.table_y_left, -self.max_puck_vel, -self.max_puck_vel]
-        puck_obs_high = [self.table_x_bot, self.table_y_right, self.max_puck_vel, self.max_puck_vel]
-
-        puck_hist_low = [self.table_x_top, self.table_y_left, 0] * 5
-        puck_hist_high = [self.table_x_bot, self.table_y_right, 0] * 5
-
-        paddle_accel_low = [float('-inf'), float('-inf')]
-        paddle_accel_high = [float('inf'), float('inf')]
-        
-        paddle_force_low = [float('-inf'), float('-inf')]
-        paddle_force_high = [float('inf'), float('inf')]
-
-        if obs_type == "paddle":
-            low = paddle_obs_low
-            high = paddle_obs_high
-        elif obs_type == "vel":
-            low = paddle_obs_low + puck_obs_low
-            high = paddle_obs_high + puck_obs_high
-        elif obs_type == "history":
-            low = paddle_obs_low + puck_hist_low
-            high = paddle_obs_high + puck_hist_high
-        elif obs_type == "paddle_acceleration_vel":
-            low = paddle_obs_low + paddle_accel_low + paddle_force_low + puck_obs_low
-            high = paddle_obs_high + paddle_accel_high + paddle_force_high + puck_obs_high
-        elif obs_type == "paddle_acceleration_history":
-            low = paddle_obs_low + paddle_accel_low + paddle_force_low + puck_hist_low
-            high = paddle_obs_high + paddle_accel_high + paddle_force_high + puck_hist_high
-
-        self.observation_space = self.single_observation_space = self.get_obs_space(low, high)
+        low, high = self.init_observation(obs_type)
         self.action_space = self.single_action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
         self.reward = AirHockeyPuckVelReward(self)
@@ -88,26 +57,7 @@ class AirHockeyPuckHeightEnv(AirHockeyBaseEnv):
 
     def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
-        paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
-        paddle_obs_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
-        
-        puck_obs_low = [self.table_x_top, self.table_y_left, -self.max_puck_vel, -self.max_puck_vel]
-        puck_obs_high = [self.table_x_bot, self.table_y_right, self.max_puck_vel, self.max_puck_vel]
-
-        puck_hist_low = [self.table_x_top, self.table_y_left, 0] * 5
-        puck_hist_high = [self.table_x_bot, self.table_y_right, 0] * 5
-
-        if obs_type == "paddle":
-            low = paddle_obs_low
-            high = paddle_obs_high
-        elif obs_type == "vel":
-            low = paddle_obs_low + puck_obs_low
-            high = paddle_obs_high + puck_obs_high
-        elif obs_type == "history":
-            low = paddle_obs_low + puck_hist_low
-            high = paddle_obs_high + puck_hist_high
-
-        self.observation_space = self.single_observation_space = self.get_obs_space(low, high)
+        low, high = self.init_observation(obs_type)
         self.action_space = self.single_action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
         self.reward = AirHockeyPuckHeightReward(self)
@@ -158,25 +108,7 @@ class AirHockeyPuckHeightEnv(AirHockeyBaseEnv):
 class AirHockeyPuckCatchEnv(AirHockeyBaseEnv):
     def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
-        paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
-        paddle_obs_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
-        
-        puck_obs_low = [self.table_x_top, self.table_y_left, -self.max_puck_vel, -self.max_puck_vel]
-        puck_obs_high = [self.table_x_bot, self.table_y_right, self.max_puck_vel, self.max_puck_vel]
-        puck_hist_low = [self.table_x_top, self.table_y_left, 0] * 5
-        puck_hist_high = [self.table_x_bot, self.table_y_right, 0] * 5
-
-        if obs_type == "paddle":
-            low = paddle_obs_low
-            high = paddle_obs_high
-        elif obs_type == "vel":
-            low = paddle_obs_low + puck_obs_low
-            high = paddle_obs_high + puck_obs_high
-        elif obs_type == "history":
-            low = paddle_obs_low + puck_hist_low
-            high = paddle_obs_high + puck_hist_high
-            
-        self.observation_space = self.single_observation_space = self.get_obs_space(low, high)
+        low, high = self.init_observation(obs_type)
         self.action_space = self.single_action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
         self.reward = AirHockeyPuckCatchReward(self)
@@ -221,26 +153,7 @@ class AirHockeyPuckCatchEnv(AirHockeyBaseEnv):
 class AirHockeyPuckJuggleEnv(AirHockeyBaseEnv):
     def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
-        paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
-        paddle_obs_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
-        
-        puck_obs_low = [self.table_x_top, self.table_y_left, -self.max_puck_vel, -self.max_puck_vel] * self.num_pucks
-        puck_obs_high = [self.table_x_bot, self.table_y_right, self.max_puck_vel, self.max_puck_vel] * self.num_pucks
-        
-        puck_hist_low = [self.table_x_top, self.table_y_left, 0] * 5
-        puck_hist_high = [self.table_x_bot, self.table_y_right, 0] * 5
-
-        if obs_type == "paddle":
-            low = paddle_obs_low
-            high = paddle_obs_high
-        elif obs_type == "vel" or obs_type == "multipuck_vel":
-            low = paddle_obs_low + puck_obs_low
-            high = paddle_obs_high + puck_obs_high
-        elif obs_type == "history":
-            low = paddle_obs_low + puck_hist_low
-            high = paddle_obs_high + puck_hist_high
-        
-        self.observation_space = self.single_observation_space = self.get_obs_space(low, high)
+        low, high = self.init_observation(obs_type)
         self.action_space = self.single_action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
         self.count_hit = False
@@ -288,26 +201,7 @@ class AirHockeyPuckJuggleEnv(AirHockeyBaseEnv):
 class AirHockeyPuckStrikeEnv(AirHockeyBaseEnv):
     def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
-        paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
-        paddle_obs_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
-        
-        puck_obs_low = [self.table_x_top, self.table_y_left, -self.max_puck_vel, -self.max_puck_vel]
-        puck_obs_high = [self.table_x_bot, self.table_y_right, self.max_puck_vel, self.max_puck_vel]
-        
-        puck_hist_low = [self.table_x_top, self.table_y_left, 0] * 5
-        puck_hist_high = [self.table_x_bot, self.table_y_right, 0] * 5
-
-        if obs_type == "paddle":
-            low = paddle_obs_low
-            high = paddle_obs_high
-        elif obs_type == "vel":
-            low = paddle_obs_low + puck_obs_low
-            high = paddle_obs_high + puck_obs_high
-        elif obs_type == "history":
-            low = paddle_obs_low + puck_hist_low
-            high = paddle_obs_high + puck_hist_high
-
-        self.observation_space = self.single_observation_space = self.get_obs_space(low, high)
+        low, high = self.init_observation(obs_type)
         self.action_space = self.single_action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
         self.reward = AirHockeyPuckStrikeReward(self)
@@ -361,23 +255,7 @@ class AirHockeyPuckStrikeEnv(AirHockeyBaseEnv):
 class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
     def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
-        paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
-        paddle_obs_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
-        puck_obs_low = [self.table_x_top, self.table_y_left, -self.max_puck_vel, -self.max_puck_vel]
-        puck_obs_high = [self.table_x_bot, self.table_y_right, self.max_puck_vel, self.max_puck_vel]
-        puck_hist_low = [self.table_x_top, self.table_y_left, 0] * 5
-        puck_hist_high = [self.table_x_bot, self.table_y_right, 0] * 5
-
-        if obs_type == "paddle":
-            low = paddle_obs_low
-            high = paddle_obs_high
-        elif obs_type == "vel":
-            low = paddle_obs_low + puck_obs_low
-            high = paddle_obs_high + puck_obs_high
-        elif obs_type == "history":
-            low = paddle_obs_low + puck_hist_low
-            high = paddle_obs_high + puck_hist_high
-        self.observation_space = self.single_observation_space = self.get_obs_space(low, high)
+        low, high = self.init_observation(obs_type)
         self.action_space = self.single_action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
         self.reward = AirHockeyPuckTouchReward(self)
