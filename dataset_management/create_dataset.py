@@ -18,7 +18,7 @@ def get_observation(paddle, paddle_vel, puck, puck_history, obs_type, frequency=
     observation = get_observation_by_type(state_info, obs_type=obs_type, puck_history=puck_history)
     return observation, state_info
 
-def load_dataset(data_dir, obs_type, environment, num_trajectories=-1, frequency=1):
+def load_dataset(data_dir, obs_type, environment, num_trajectories=-1, frequency=1, save_dir=None):
     # loads data into a dataset of observations based on the observation type
     dataset = dict()
     dataset["observations"] = list()
@@ -80,7 +80,10 @@ def load_dataset(data_dir, obs_type, environment, num_trajectories=-1, frequency
     # dataset["terminals"] = np.concatenate(dataset["terminals"], axis=0)
     # dataset["images"] = np.concatenate(dataset["images"], axis=0)
     print([dataset["observations"][i].shape for i in range(len(dataset["observations"]))])
-
+    if save_dir is not None:
+        import pickle
+        with open(save_dir, 'wb') as f:
+            pickle.dump(dataset, f)
     return dataset
 # read_new_real_data("/datastor1/calebc/public/data/mouse/cleaned_new/")
 if __name__ == "__main__":
