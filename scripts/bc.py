@@ -12,6 +12,9 @@ import cv2
 import gymnasium as gym
 import tqdm
 import imageio
+from stable_baselines3 import PPO
+import argparse
+from scripts.train import init_params
 
 class DeterministicPolicy(nn.Module):
     def __init__(self, state_dim, action_dim, hidden_dim=256):
@@ -64,47 +67,60 @@ def eval_actor(env: gym.Env, actor: nn.Module, dir, device: str, n_episodes: int
     actor.train()
     return np.asarray(episode_rewards)
 
-def train_bc(dataset, actor, optimizer, dir, env, renderer, epochs=10, batch_size=64):
+def train_bc(dataset, actor, optimizer, dir, env, renderer, epochs=500, batch_size=64, eval_freq=50, eval_actor=True, device='cpu'):
     best_rew = float('-inf')
-    states = torch.tensor(dataset["observations"], dtype=torch.float32)
-    actions = torch.tensor(dataset["actions"], dtype=torch.float32)
+    states = torch.tensor(np.vstack([obs[:-1] for obs in dataset["observations"]]), dtype=torch.float32)
+    actions = torch.tensor(np.vstack(dataset["actions"]), dtype=torch.float32)
     dataset = TensorDataset(states, actions)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-    
+    mse = nn.MSELoss()
     for epoch in tqdm.tqdm(range(epochs)):
         for states, actions in dataloader:
+            states, actions = states.to(device), actions.to(device)
             optimizer.zero_grad()
-            predictions = actor(states)
-            loss = nn.MSELoss()(predictions, actions)
+            predictions = actor.policy(states, deterministic=True)[0]
+            loss = mse(predictions, actions)
             loss.backward()
             optimizer.step()
-        rews = eval_actor(env, actor, dir, "cpu", 5, epoch, renderer=renderer, best_rew_so_far=best_rew)
-        avg_rew = np.mean(rews)
-        best_rew = max(best_rew, avg_rew)
         print(f"Epoch {epoch + 1}, Loss: {loss.item()}")
-
+        if epoch % eval_freq == 0:
+            model_fp = os.path.join(dir, f"model_finetune_{epoch}.zip")
+            PPO.save(actor, model_fp)
+            if eval_actor:
+                rews = eval_actor(env, actor, dir, "cpu", 5, epoch, renderer=renderer, best_rew_so_far=best_rew)
+                avg_rew = np.mean(rews)
+                best_rew = max(best_rew, avg_rew)
+        
 if __name__ == "__main__":
     # Load dataset and environment configurations
-    log_dir = 'baseline_models/Hit Goal/air_hockey_agent_1'
-    air_hockey_cfg_fp = os.path.join(log_dir, 'model_cfg.yaml')
-    with open(air_hockey_cfg_fp, 'r') as f:
-        air_hockey_cfg = yaml.safe_load(f)
-    air_hockey_params = air_hockey_cfg['air_hockey']
+    parser = argparse.ArgumentParser(description='Demonstrate the air hockey game.')
+    parser.add_argument('--log_dir', type=str, help='Directory to save the logs.')
+    parser.add_argument('--load_agent_chkpt', type=str, default='/datastor1/calebc/public/data/box2d_models/puck_vel/model.zip', help='Path to the agent checkpoint.')
+    parser.add_argument('--config_path', type=str, default='configs/baseline_configs/box2d/puck_vel.yaml', help='Path to the bc config.')
+    parser.add_argument('--data_dir', type=str, default='/datastor1/calebc/public/data/mouse/state_data_all_new/', help='Path to the data config.')
+    parser.add_argument('--eval_actor', type=bool, default=False, help='Whether to evaluate the actor.')
+    parser.add_argument('--device', type=str, default='cuda', help='Device to run the training on.')
+    args = parser.parse_args()
 
-    env = AirHockeyEnv.from_dict(air_hockey_params)
-    renderer = AirHockeyRenderer(env)
-    if env.goal_conditioned:
-        state_dim = env.observation_space['observation'].shape[0] + env.observation_space['desired_goal'].shape[0]
+    os.mkdir(args.log_dir)
+    if args.config_path is not None:
+        with open(args.config_path, 'r') as f:
+            air_hockey_cfg = yaml.safe_load(f)
+        air_hockey_params = init_params(air_hockey_cfg)
+        env = AirHockeyEnv(air_hockey_params)
+        renderer = AirHockeyRenderer(env)
+        if env.goal_conditioned:
+            state_dim = env.observation_space['observation'].shape[0] + env.observation_space['desired_goal'].shape[0]
+        else:
+            state_dim = env.observation_space.shape[0]
+        action_dim = env.action_space.shape[0]
+
+    from dataset_management.create_dataset import load_dataset
+    dataset = load_dataset(args.data_dir, "pos", env, num_trajectories=-1)
+    if args.load_agent_chkpt is not None:
+        actor = PPO.load(args.load_agent_chkpt, device=args.device)
     else:
-        state_dim = env.observation_space.shape[0]
-    action_dim = env.action_space.shape[0]
+        actor = DeterministicPolicy(state_dim, action_dim).to(args.device)
+    optimizer = optim.Adam(actor.policy.parameters(), lr=3e-4)
 
-    dataset_fp = os.path.join(log_dir, 'trajs.npy')
-    assert os.path.exists(dataset_fp)
-    np_dataset = np.load(dataset_fp, allow_pickle=True)
-    dataset = {"observations": np_dataset[:,:state_dim], "actions": np_dataset[:,state_dim:state_dim+action_dim]}
-
-    actor = DeterministicPolicy(state_dim, action_dim).to("cpu")
-    optimizer = optim.Adam(actor.parameters(), lr=3e-4)
-
-    train_bc(dataset, actor, optimizer, log_dir, env, renderer)
+    train_bc(dataset, actor, optimizer, args.log_dir, env, renderer, eval_actor=args.eval_actor, device=args.device)
