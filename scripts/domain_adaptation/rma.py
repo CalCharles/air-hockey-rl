@@ -48,10 +48,7 @@ from numpy.typing import NDArray
 import pyrallis
 import cv2
 import imageio
-from scripts.rl.buffer import RolloutRMABuffer
-from scripts.rl.ppo import ppo
 
-# TODO: assume one dim key info
 priv_keys = ["puck_density", "puck_damping", "gravity"]
 
 # priv_keys = ["puck_density"]
@@ -138,7 +135,6 @@ class Args:
     phase_2_batch_size: int = 256
     phase_2_data_size: int = 4000
     checkpoint: str = None
-    eval_epi: int = 10
 
 
 
@@ -262,16 +258,17 @@ def get_intereact_history(next_done, next_obs, action, old_obs, old_action, last
     
     return old_obs, old_action, last_action
 
-def get_priv_info(infos):
+def get_priv_info(infos, device):
     """
     Get the private information from the environment.
     """
 
-    priv_info = np.zeros((len(infos), len(priv_keys)))
+    priv_info = torch.zeros(len(infos), len(priv_keys))
     for i in range(len(infos)):
         for j, key in enumerate(priv_keys):
             priv_info[i, j] = infos[i][key]
 
+    priv_info = priv_info.to(device)
     return priv_info
 
 class SubprocVecEnv_domain_random_eval(SubprocVecEnv_domain_random):
@@ -298,9 +295,7 @@ class SubprocVecEnv_domain_random_eval(SubprocVecEnv_domain_random):
         
 
 def evaluate(
-    eval_envs,
     agent: torch.nn.Module,
-    eval_buffer,
     eval_episodes: int,
     device: torch.device = torch.device("cpu"),
     air_hockey_cfg: Dict[str, Any] = None,
@@ -310,11 +305,37 @@ def evaluate(
     gif_savepath = "./rma_gifs"
 ):
     
-    
+    air_hockey_params = air_hockey_cfg['air_hockey']
+    curr_seed = [0]
+    def get_airhockey_env_for_parallel():
+        """
+        Utility function for multiprocessed env.
+
+        :param env_id: (str) the environment ID
+        :param num_env: (int) the number of environments you wish to have in subprocesses
+        :param seed: (int) the inital seed for RNG
+        :param rank: (int) index of the subprocess
+        """
+        def _init():
+            air_hockey_params['seed'] = curr_seed[0]
+            curr_seed[0] += 1
+            # Note: With this seed, an individual rng is created for each env
+            # It does not affect the global rng!
+            env = AirHockeyEnv(air_hockey_params)
+            return Monitor(env)
+        return _init()
+	
+    envs = SubprocVecEnv_domain_random_eval([get_airhockey_env_for_parallel for _ in range(eval_episodes)])
+
     agent.eval()
 
-    next_obs, infos = eval_envs.reset(seed=args.seed)
-   
+    next_obs, infos = envs.reset(seed=args.seed)
+    # infos = sort_info(infos)
+    next_priv_info = get_priv_info(infos, device)
+    next_obs = torch.Tensor(next_obs).to(device)
+    old_obs = torch.zeros((eval_episodes,) + (args.history_len,) + envs.observation_space.shape).to(device)
+    old_action = torch.zeros((eval_episodes,) + (args.history_len,) + envs.action_space.shape).to(device)
+    last_action = torch.zeros((eval_episodes,) + envs.action_space.shape).to(device)
 
     episodic_returns = []
     # if all end, then break and count the number of successful episodes
@@ -387,7 +408,7 @@ def evaluate(
         for key in robosuite_frames:
             frames = robosuite_frames[key]
             gif_savepath = os.path.join(gif_savepath, f'feval_robosuite_{key}.gif')
-            imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(fps))
+            imageio.mimsave(gif_savepath, (np.array(frames) * 255).astype(np.uint8), format='GIF', loop=0, duration=fps_to_duration(fps))
 
     # import pdb; pdb.set_trace()
     agent.train()
@@ -547,40 +568,9 @@ def phase_2_train(envs, writer, run_name, args, air_hockey_cfg, device):
                 torch.save(agent.state_dict(), model_path)
                 print(f"model saved to {model_path}")
 
-def collect(buffer, next_obs, infos, agent, envs, args):
-    
-    next_priv_info = get_priv_info(infos)
-
-    for step in range(0, args.num_steps):
-        batch = buffer.get_curr()
-
-        # ALGO LOGIC: action logic
-        with torch.no_grad():
-            action, logprob, _, value = agent.get_action_and_value(obs = torch.Tensor(next_obs).to(args.device),
-                                                                    priv_info = torch.Tensor(next_priv_info).to(args.device),
-                                                                    last_action =  batch.last_action_history,
-                                                                    old_obs =  batch.obs_history,
-                                                                    old_action =  batch.actions_history,)
 
 
-        # TRY NOT TO MODIFY: execute the game and log data.
-        step_ret = envs.step(action.cpu().numpy())
-        next_priv_info = get_priv_info(step_ret[3])
-        buffer.add(obs = next_obs,
-                    action = action,
-                    reward = step_ret[1],
-                    episode_start = step_ret[2],
-                    priv_info = next_priv_info,
-                    log_prob = logprob,
-                    value = value,
-                    )
-        next_obs = step_ret[0]
-    
-    return next_obs, infos
-        
-
-
-def train(envs, eval_envs, writer, run_name, args, device):
+def train(envs, writer, run_name, args, air_hockey_cfg, device):
     if args.phase == 1:
         agent = Agent(envs, args.phase).to(device)
         optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
@@ -590,52 +580,29 @@ def train(envs, eval_envs, writer, run_name, args, device):
         agent = agent.to(device)
         optimizer = optim.Adam(agent.shared_history_encoder.parameters(), lr=args.learning_rate, eps=1e-5)
 
+    # ALGO Logic: Storage setup
+    obs = torch.zeros((args.num_steps, args.num_envs) + envs.observation_space.shape).to(device)
+    actions = torch.zeros((args.num_steps, args.num_envs) + envs.action_space.shape).to(device)
+    logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    values = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    obs_history = torch.zeros((args.num_steps, args.num_envs, args.history_len) + envs.observation_space.shape).to(device)
+    actions_history = torch.zeros((args.num_steps, args.num_envs, args.history_len) + envs.action_space.shape).to(device)
+    last_action_history = torch.zeros((args.num_steps, args.num_envs) + envs.action_space.shape).to(device)
+    priv_info = torch.zeros((args.num_steps, args.num_envs, len(priv_keys))).to(device)
+
 
     # TRY NOT TO MODIFY: start the game
+    global_step = 0
     start_time = time.time()
     next_obs, infos = envs.reset(seed=args.seed)
-
-    # TODO buffer size only for ppo
-    buffer = RolloutRMABuffer(buffer_size=args.num_steps,
-                            observation_space=envs.observation_space,
-                            action_space=envs.action_space,
-                            device=args.device,
-                            gae_lambda=args.gae_lambda,
-                            gamma=args.gamma,
-                            n_envs=args.num_envs,
-                            history_len=args.history_len,
-                            priv_info_dim=len(priv_keys),
-                            envs=envs,
-                        )
-
-    eval_buffer = RolloutRMABuffer(buffer_size=args.num_steps,
-                            observation_space=envs.observation_space,
-                            action_space=envs.action_space,
-                            device=args.device,
-                            gae_lambda=args.gae_lambda,
-                            gamma=args.gamma,
-                            n_envs=args.num_envs,
-                            history_len=args.history_len,
-                            priv_info_dim=len(priv_keys),
-                            envs=eval_envs,
-                        )
-
-
-    trainer = ppo(
-        agent,
-        minibatch_size=args.minibatch_size,
-        update_epochs=args.update_epochs,
-        clip_coef=args.clip_coef,
-        norm_adv=args.norm_adv,
-        clip_vloss=args.clip_vloss,
-        ent_coef=args.ent_coef,
-        vf_coef=args.vf_coef,
-        max_grad_norm=args.max_grad_norm,
-        target_kl=args.target_kl,
-        optimizer=optimizer,
-        writer=writer,
-        start_time=start_time,
-        )
+    next_priv_info = get_priv_info(infos, device)
+    next_obs = torch.Tensor(next_obs).to(device)
+    next_done = torch.zeros(args.num_envs).to(device)
+    old_obs = torch.zeros((args.num_envs,) + (args.history_len,) + envs.observation_space.shape).to(device)
+    old_action = torch.zeros((args.num_envs,) + (args.history_len,) + envs.action_space.shape).to(device)
+    last_action = torch.zeros((args.num_envs,) + envs.action_space.shape).to(device)
 
     for iteration in range(1, args.num_iterations + 1):
         # Annealing the rate if instructed to do so.
@@ -644,77 +611,170 @@ def train(envs, eval_envs, writer, run_name, args, device):
             lrnow = frac * args.learning_rate
             optimizer.param_groups[0]["lr"] = lrnow
 
+        for step in range(0, args.num_steps):
+            global_step += args.num_envs
+            obs[step] = next_obs
+            dones[step] = next_done
+            obs_history[step] = old_obs
+            actions_history[step] = old_action
+            last_action_history[step] = last_action
+            priv_info[step] = next_priv_info
 
-        next_obs, infos = collect(buffer, next_obs, infos, agent, envs, args)
-        global_step = iteration * args.num_steps
-        print(f"buffer pos={buffer.pos}")
-        trainer.update(buffer, global_step)
-        next_obs, infos = envs.reset(seed=args.seed)
-        buffer.reset()
-        print(f"global_step={global_step}")
-        # import pdb; pdb.set_trace()
 
-        # import pdb; pdb.set_trace()
+            # ALGO LOGIC: action logic
+            with torch.no_grad():
+                action, logprob, _, value = agent.get_action_and_value(obs = next_obs,
+                                                                       priv_info = next_priv_info,
+                                                                       last_action = last_action,
+                                                                       old_obs = old_obs,
+                                                                       old_action = old_action,)
+                values[step] = value.flatten()
+            actions[step] = action
+            logprobs[step] = logprob
 
-        # evaluate(eval_envs=eval_envs, 
-        #          agent=agent,
-        #          eval_buffer=eval_buffer,
-        #          args=args, 
-        #          writer=writer, 
-        #          global_step=global_step)
 
-        # if args.save_model and global_step % (args.num_envs * args.num_steps * 4) == 0:
-        #     model_path = f"runs/{run_name}/phase_{args.phase}/global_step_{global_step}.pth"
-        #     torch.save(agent.state_dict(), model_path)
-        #     print(f"model saved to {model_path}")
+            # TRY NOT TO MODIFY: execute the game and log data.
+            # next_obs, reward, terminations, truncations, infos = envs.step(action.cpu().numpy())
+            step_ret = envs.step(action.cpu().numpy())
+
+            old_obs, old_action, last_action = get_intereact_history(step_ret[2], next_obs, action, old_obs, old_action, last_action, args.history_len)
+
+            next_obs = step_ret[0] 
+            reward = step_ret[1]
+            terminations = step_ret[2]
+            truncations = np.copy(terminations)
+            infos = step_ret[3]
+            next_priv_info = get_priv_info(infos, device)
+
+            next_done = np.logical_or(terminations, truncations)
+            rewards[step] = torch.tensor(reward).to(device).view(-1)
+            next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(next_done).to(device)
+            
+
+        # bootstrap value if not done
+        with torch.no_grad():
+            next_value = agent.get_value(obs = next_obs,
+                                         priv_info = next_priv_info,
+                                         last_action = last_action,
+                                         old_obs = old_obs,
+                                         old_action = old_action,
+                                         ).reshape(1, -1)
+            advantages = torch.zeros_like(rewards).to(device)
+            lastgaelam = 0
+            for t in reversed(range(args.num_steps)):
+                if t == args.num_steps - 1:
+                    nextnonterminal = 1.0 - next_done
+                    nextvalues = next_value
+                else:
+                    nextnonterminal = 1.0 - dones[t + 1]
+                    nextvalues = values[t + 1]
+                delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
+                advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+            returns = advantages + values
+
+        # flatten the batch
+        b_obs = obs.reshape((-1,) + envs.observation_space.shape)
+        b_logprobs = logprobs.reshape(-1)
+        b_actions = actions.reshape((-1,) + envs.action_space.shape)
+        b_advantages = advantages.reshape(-1)
+        b_returns = returns.reshape(-1)
+        b_values = values.reshape(-1)
+        b_obs_history = obs_history.reshape((-1,) + (args.history_len,) + envs.observation_space.shape)
+        b_actions_history = actions_history.reshape((-1,) + (args.history_len,) + envs.action_space.shape)
+        b_last_action_history = last_action_history.reshape((-1,) + envs.action_space.shape)
+        b_priv_info = priv_info.reshape((-1, len(priv_keys)))
+
+
+        # Optimizing the policy and value network
+        b_inds = np.arange(args.batch_size)
+        clipfracs = []
+        for epoch in range(args.update_epochs):
+            np.random.shuffle(b_inds)
+            for start in range(0, args.batch_size, args.minibatch_size):
+                end = start + args.minibatch_size
+                mb_inds = b_inds[start:end]
+
+                _, newlogprob, entropy, newvalue = agent.get_action_and_value(obs = b_obs[mb_inds],
+                                                                            priv_info = b_priv_info[mb_inds],
+                                                                            last_action = b_last_action_history[mb_inds], 
+                                                                            action = b_actions[mb_inds],
+                                                                            old_action = b_actions_history[mb_inds],
+                                                                            old_obs = b_obs_history[mb_inds],
+                                                                            )
+                
+                logratio = newlogprob - b_logprobs[mb_inds]
+                ratio = logratio.exp()
+
+                with torch.no_grad():
+                    # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                    old_approx_kl = (-logratio).mean()
+                    approx_kl = ((ratio - 1) - logratio).mean()
+                    clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
+
+                mb_advantages = b_advantages[mb_inds]
+                if args.norm_adv:
+                    mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
+
+                # Policy loss
+                pg_loss1 = -mb_advantages * ratio
+                pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+
+                # Value loss
+                newvalue = newvalue.view(-1)
+                if args.clip_vloss:
+                    v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
+                    v_clipped = b_values[mb_inds] + torch.clamp(
+                        newvalue - b_values[mb_inds],
+                        -args.clip_coef,
+                        args.clip_coef,
+                    )
+                    v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
+                    v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
+                    v_loss = 0.5 * v_loss_max.mean()
+                else:
+                    v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
+
+                entropy_loss = entropy.mean()
+                loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+
+                optimizer.zero_grad()
+                loss.backward()
+                nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
+                optimizer.step()
+
+            if args.target_kl is not None and approx_kl > args.target_kl:
+                break
+
+        y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
+        var_y = np.var(y_true)
+        explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+
+        # TRY NOT TO MODIFY: record rewards for plotting purposes
+        writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
+        writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
+        writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
+        writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
+        writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
+        writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
+        writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
+        writer.add_scalar("losses/explained_variance", explained_var, global_step)
+        # print("SPS:", int(global_step / (time.time() - start_time)))
+        print("global_step: ", global_step)
+        writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+
+        evaluate(agent=agent, eval_episodes=10, device=device, air_hockey_cfg=air_hockey_cfg, args=args, writer=writer, global_step=global_step)
+
+        if args.save_model and global_step % (args.num_envs * args.num_steps * 4) == 0:
+            model_path = f"runs/{run_name}/phase_{args.phase}/global_step_{global_step}.pth"
+            torch.save(agent.state_dict(), model_path)
+            print(f"model saved to {model_path}")
             
 
     envs.close()
     writer.close()
-
-def make_env(air_hockey_cfg):
-    air_hockey_params = air_hockey_cfg['air_hockey']
-    air_hockey_params['n_training_steps'] = air_hockey_cfg['n_training_steps']
-
-    if 'sac' == air_hockey_cfg['algorithm']:
-        if 'goal' in air_hockey_cfg['air_hockey']['task']:
-            air_hockey_cfg['air_hockey']['return_goal_obs'] = True
-        else:
-            air_hockey_cfg['air_hockey']['return_goal_obs'] = False
-    else:
-        air_hockey_cfg['air_hockey']['return_goal_obs'] = False
-    
-    
-    def get_airhockey_env_for_parallel():
-        """
-        Utility function for multiprocessed env.
-
-        :param env_id: (str) the environment ID
-        :param num_env: (int) the number of environments you wish to have in subprocesses
-        :param seed: (int) the inital seed for RNG
-        :param rank: (int) index of the subprocess
-        """
-        def _init():
-            curr_seed = random.randint(0, int(1e8))
-            air_hockey_params['seed'] = curr_seed
-            # Note: With this seed, an individual rng is created for each env
-            # It does not affect the global rng!
-            env = AirHockeyEnv(air_hockey_params)
-            return Monitor(env)
-        return _init()
-
-    # set seed for reproducibility
-    seed = air_hockey_params['seed']
-    random.seed(seed)
-    # get number of threads
-    n_threads = air_hockey_cfg['n_threads']
-    env = SubprocVecEnv_domain_random([get_airhockey_env_for_parallel for _ in range(n_threads)])
-
-    return env
-
-    
-
-def init_air_hockey(air_hockey_cfg, args):
+            
+def train_air_hockey_model(air_hockey_cfg, use_wandb=False, device='cpu', clear_prior_task_results=False, progress_bar=False):
     """
     Train an air hockey paddle model using stable baselines.
 
@@ -723,29 +783,80 @@ def init_air_hockey(air_hockey_cfg, args):
     and saves the trained model and environment statistics.
     """
     
+    air_hockey_params = air_hockey_cfg['air_hockey']
+    air_hockey_params['n_training_steps'] = air_hockey_cfg['n_training_steps']
     
+    if 'sac' == air_hockey_cfg['algorithm']:
+        if 'goal' in air_hockey_cfg['air_hockey']['task']:
+            air_hockey_cfg['air_hockey']['return_goal_obs'] = True
+        else:
+            air_hockey_cfg['air_hockey']['return_goal_obs'] = False
+    else:
+        air_hockey_cfg['air_hockey']['return_goal_obs'] = False
+    
+    air_hockey_params_cp = air_hockey_params.copy()
+    air_hockey_params_cp['seed'] = 42
+    air_hockey_params_cp['max_timesteps'] = 200
+    
+    eval_env = AirHockeyEnv(air_hockey_params_cp)
+    
+    if type(air_hockey_cfg['seed']) is not list:
+        seeds = [int(air_hockey_cfg['seed'])]
+    else:
+        seeds = [int(s) for s in air_hockey_cfg['seed']]
+        del air_hockey_cfg['seed'] # otherwise it will be saved in the model cfg when copied over
         
-    
+    # Train different seeds. If one seed in config, this is just one iteration.
+    for seed in seeds:
+        air_hockey_cfg['seed'] = seed # since it it used as training seed
+        air_hockey_params['seed'] = seed # and environment seed
+        
+        wandb_run = None
+        if use_wandb:
+            wandb_run = wandb.init(
+                project="air-hockey",
+                config=air_hockey_cfg,
+                sync_tensorboard=True,
+                save_code=True)
+        
+        def get_airhockey_env_for_parallel():
+            """
+            Utility function for multiprocessed env.
 
-    os.makedirs(air_hockey_cfg['tb_log_dir'], exist_ok=True)
-    log_parent_dir = os.path.join(air_hockey_cfg['tb_log_dir'], air_hockey_cfg['air_hockey']['task'])
-    if args.clear and os.path.exists(log_parent_dir):
-        shutil.rmtree(log_parent_dir)
-    os.makedirs(log_parent_dir, exist_ok=True)
-    
-    # determine the actual log dir
-    subdirs = [x for x in os.listdir(log_parent_dir) if os.path.isdir(os.path.join(log_parent_dir, x))]
-    subdir_nums = [int(x.split(air_hockey_cfg['tb_log_name'] + '_')[1]) for x in subdirs]
-    next_num = max(subdir_nums) + 1 if subdir_nums else 1
-    log_dir = os.path.join(log_parent_dir, air_hockey_cfg['tb_log_name'] + f'_{next_num}')
-    
-    # TODO: SEED and thread for eval
-    envs = make_env(air_hockey_cfg)
-    air_hockey_cfg["seed"] = air_hockey_cfg["seed"] + 1
-    air_hockey_cfg["n_threads"] = args.eval_epi
-    eval_envs = make_env(air_hockey_cfg)
+            :param env_id: (str) the environment ID
+            :param num_env: (int) the number of environments you wish to have in subprocesses
+            :param seed: (int) the inital seed for RNG
+            :param rank: (int) index of the subprocess
+            """
+            def _init():
+                curr_seed = random.randint(0, int(1e8))
+                air_hockey_params['seed'] = curr_seed
+                # Note: With this seed, an individual rng is created for each env
+                # It does not affect the global rng!
+                env = AirHockeyEnv(air_hockey_params)
+                return Monitor(env)
+            return _init()
 
-    return envs, eval_envs, log_dir, air_hockey_cfg
+        # set seed for reproducibility
+        seed = air_hockey_params['seed']
+        random.seed(seed)
+        # get number of threads
+        n_threads = air_hockey_cfg['n_threads']
+        env = SubprocVecEnv_domain_random([get_airhockey_env_for_parallel for _ in range(n_threads)])
+
+        os.makedirs(air_hockey_cfg['tb_log_dir'], exist_ok=True)
+        log_parent_dir = os.path.join(air_hockey_cfg['tb_log_dir'], air_hockey_cfg['air_hockey']['task'])
+        if clear_prior_task_results and os.path.exists(log_parent_dir):
+            shutil.rmtree(log_parent_dir)
+        os.makedirs(log_parent_dir, exist_ok=True)
+        
+        # determine the actual log dir
+        subdirs = [x for x in os.listdir(log_parent_dir) if os.path.isdir(os.path.join(log_parent_dir, x))]
+        subdir_nums = [int(x.split(air_hockey_cfg['tb_log_name'] + '_')[1]) for x in subdirs]
+        next_num = max(subdir_nums) + 1 if subdir_nums else 1
+        log_dir = os.path.join(log_parent_dir, air_hockey_cfg['tb_log_name'] + f'_{next_num}')
+    
+    return env, eval_env, log_dir, air_hockey_cfg, wandb_run
 
 @pyrallis.wrap()
 def main(args: Args):
@@ -753,7 +864,9 @@ def main(args: Args):
 
     if args.cfg is None:
         dir_path = os.path.dirname(os.path.realpath(__file__))
-        air_hockey_cfg_fp = os.path.join(dir_path, '../configs', 'default_train_puck_vel.yaml')
+        # air_hockey_cfg_fp = os.path.join(dir_path, '../configs', 'default_train_puck_vel.yaml')
+        # air_hockey_cfg_fp = "/data/shuozhe/air_hockey/air_hockey_0/configs/default_train_puck_vel.yaml"
+        air_hockey_cfg_fp = "configs/baseline_configs/robosuite/puck_vel_robosuite.yaml"
     else:
         air_hockey_cfg_fp = args.cfg
     
@@ -763,15 +876,20 @@ def main(args: Args):
     assert 'n_threads' in air_hockey_cfg, "Please specify the number of threads to use for training."
     assert 'algorithm' in air_hockey_cfg, "Please specify the algorithm to use for training."
 
+    air_hockey_cfg["air_hockey"]["domain_random"] = True
+    use_wandb = args.wandb
+    device = args.device
+    clear_prior_task_results = args.clear
+    progress_bar = args.progress_bar
+    envs, eval_env, log_dir, air_hockey_cfg, wandb_run = train_air_hockey_model(air_hockey_cfg, use_wandb, device, clear_prior_task_results, progress_bar)
+    
+    # train prep
+    # args = tyro.cli(Args)
     args.num_envs = air_hockey_cfg['n_threads']
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
     run_name = args.run_name
-
-    air_hockey_cfg["air_hockey"]["domain_random"] = True
-    envs, eval_envs, log_dir, air_hockey_cfg = init_air_hockey(air_hockey_cfg, args)
-
     os.makedirs(f"runs/{run_name}", exist_ok=True)
     if args.save_model:
         os.makedirs(f"runs/{run_name}/phase_{args.phase}", exist_ok=True)
@@ -803,13 +921,14 @@ def main(args: Args):
     os.environ["PYTHONHASHSEED"] = str(args.seed)
     torch.backends.cudnn.deterministic = args.torch_deterministic
 
+    device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
     assert isinstance(envs.action_space, gym.spaces.Box), "only continuous action space is supported"
 
     if args.phase == 1 or args.phase == 3:
-        train(envs, eval_envs, writer, run_name, args, args.device)
+        train(envs, writer, run_name, args, air_hockey_cfg, device)
 
     elif args.phase == 2:
-        phase_2_train(envs, writer, run_name, args, air_hockey_cfg, args.device)
+        phase_2_train(envs, writer, run_name, args, air_hockey_cfg, device)
 
 if __name__ == "__main__":
     main()
