@@ -50,8 +50,8 @@ import cv2
 import imageio
 
 priv_keys = ["puck_density", "puck_damping", "gravity"]
+random_variable_ranges = {"puck_density":(100, 400), "puck_damping":(0.1, 1.0), "gravity":(-0.3, -0.7)}
 
-# priv_keys = ["puck_density"]
 
 @dataclass
 class Args:
@@ -864,9 +864,8 @@ def main(args: Args):
 
     if args.cfg is None:
         dir_path = os.path.dirname(os.path.realpath(__file__))
-        # air_hockey_cfg_fp = os.path.join(dir_path, '../configs', 'default_train_puck_vel.yaml')
-        # air_hockey_cfg_fp = "/data/shuozhe/air_hockey/air_hockey_0/configs/default_train_puck_vel.yaml"
-        air_hockey_cfg_fp = "configs/baseline_configs/robosuite/puck_vel_robosuite.yaml"
+        # air_hockey_cfg_fp = "configs/baseline_configs/robosuite/puck_vel_robosuite.yaml"
+        air_hockey_cfg_fp = "configs/baseline_configs/box2d/puck_vel.yaml"
     else:
         air_hockey_cfg_fp = args.cfg
     
@@ -876,7 +875,12 @@ def main(args: Args):
     assert 'n_threads' in air_hockey_cfg, "Please specify the number of threads to use for training."
     assert 'algorithm' in air_hockey_cfg, "Please specify the algorithm to use for training."
 
+    
+    # domain_random
     air_hockey_cfg["air_hockey"]["domain_random"] = True
+    air_hockey_cfg["air_hockey"]["random_variables"] = priv_keys
+    air_hockey_cfg["air_hockey"]["random_variable_ranges"] = random_variable_ranges
+
     use_wandb = args.wandb
     device = args.device
     clear_prior_task_results = args.clear

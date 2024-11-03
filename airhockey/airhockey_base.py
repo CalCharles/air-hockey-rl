@@ -62,6 +62,8 @@ class AirHockeyBaseEnv(ABC, Env):
             'goal_selector': 'stationary',
             'max_timesteps': 1000,
             'domain_random': False,
+            'random_variables': [],
+            'random_variable_ranges': {},
             'initialization_description_pth': "",
             'solrefs': [None, None, None, None],
             'obs_type': "vel",
@@ -72,9 +74,13 @@ class AirHockeyBaseEnv(ABC, Env):
         
         # handle defaults, keeps values for duplicate keys from right side!
         kwargs = {**self.defaults, **kwargs}
-        # print("initializing with", kwargs)
 
         config = dict_to_namespace(kwargs)
+
+        # domain randomization
+        self.domain_random = config.domain_random
+        self.random_variables = config.random_variables
+        self.random_variable_ranges = config.random_variable_ranges
 
         if config.simulator == 'box2d':
             simulator_fn = get_box2d_simulator_fn()
@@ -305,19 +311,11 @@ class AirHockeyBaseEnv(ABC, Env):
             else:
                 raise ValueError("Invalid simulator type. Must be 'box2d' or 'robosuite'.")
 
-            # puck_damping: 0.1-1.0
-            # puck_density: 100-400
-            # gravity: -0.3-0.7
-            if self.puck_damping is None:
-                self.simulator_params.puck_damping = np.random.uniform(0.1, 1.0)
 
-            self.simulator_params.puck_density = np.random.uniform(100, 400)
-            self.simulator_params.gravity = np.random.uniform(-0.3, -0.7)
+            if self.domain_random:
+                for counter, var in enumerate(self.random_variables):
+                    setattr(self.simulator_params, var, np.random.uniform(*getattr(self.random_variable_ranges, var)))
 
-            # print("self.simulator_params['gravity']: ", self.simulator_params['gravity'])
-            # print("reset -> domain_random")
-
-            # import pdb; pdb.set_trace()
 
             self.simulator = simulator_fn.from_dict(vars(self.simulator_params))
             self.render_length = self.simulator.render_length
