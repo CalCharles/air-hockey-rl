@@ -9,10 +9,35 @@ from stable_baselines3 import PPO, SAC
 from airhockey import AirHockeyEnv
 from airhockey.renderers import AirHockeyRenderer
 import argparse
+import h5py
 from utils import save_evaluation_gifs
 
+def save_pose_dataset(pose_dataset, target_path):
+    # TODO: do this properly
+    os.makedirs(target_path, exist_ok=True)
+    print(len(pose_dataset), target_path)
+    for i in range(len(pose_dataset)):
+        with h5py.File(os.path.join(target_path, 'trajectory_data' + str(i) + '.hdf5'), 'w') as hf:
+            for k in pose_dataset[i].keys():
+                hf.create_dataset(k,
+                                shape=pose_dataset[i][k].shape,
+                                compression="gzip",
+                                compression_opts=9,
+                                data = pose_dataset[i][k])
 
-def get_frames(renderer, env, model, n_eps_viz, n_eval_eps, cfg):
+def register_pose_dataset(obs, action, done, image, obs_type="vel"):
+    if obs_type == "vel":
+        pose = obs[...,:2]
+        speed = obs[...,2:4]
+        desired_pose = action+pose # TODO: may need to transform action space
+        puck = obs[...,4:6]
+        image = image
+        done = done
+    else:
+        raise NotImplementedError("Obs type: "+ obs_type + " not supported")
+    return pose, speed, desired_pose, puck, image, done
+
+def get_frames(renderer, env_test, model, n_eps_viz, n_eval_eps, cfg, get_pose_dataset=False):
         
         dataset = {}
         observations = []
@@ -23,6 +48,8 @@ def get_frames(renderer, env, model, n_eps_viz, n_eval_eps, cfg):
         frames = []
         robosuite_frames = {}
         env = env_test.envs[0]
+        successes = 0
+
         for ep_idx in range(n_eval_eps):
             obs = env_test.reset()
             done = False
@@ -48,29 +75,51 @@ def get_frames(renderer, env, model, n_eps_viz, n_eval_eps, cfg):
                                 robosuite_frames[key] = [current_img]
                             else:
                                 robosuite_frames[key].append(current_img)
+                elif get_pose_dataset:
+                    frames.append(np.zeros(frame.shape)) # assumes at least one render
                 observations.append(obs)
                 action, _ = model.predict(obs)
+                # action = np.random.uniform(-1, 1, size=(1,6))
                 actions.append(action)
                 obs, rew, done, info = env_test.step(action)
                 rewards.append(rew)
                 dones.append(done[0] or info[0]['TimeLimit.truncated'])
-                done = done[0] or info[0]['TimeLimit.truncated']
+                if done:
+                    print(info[0]["success"])
+                    successes += 1 if info[0]["success"] else 0
         
-        dataset['observations'] = np.array(observations)
+        dataset['states'] = np.array(observations)
         dataset['actions'] = np.array(actions)
         dataset['rewards'] = np.array(rewards)
         dataset['dones'] = np.array(dones)
+        dataset["frames"] = np.array(frames)
+        
+        success_rate = successes / n_eval_eps
+        print("Run complete with success rate: " + str(success_rate))
+
+        pose_dataset = list()
+        if get_pose_dataset:
+            pose, speed, desired_pose, puck, image, done = register_pose_dataset(dataset["states"], dataset["actions"], dataset["dones"], dataset["frames"])
+            traj_idxes = np.nonzero(done.astype(int))[0]
+            sidx = 0
+            for i in range(len(traj_idxes)):
+                eidx = traj_idxes[i]
+                pose_traj = dict(pose=pose[sidx:eidx], speed=speed[sidx:eidx], desired_pose=desired_pose[sidx:eidx], puck=puck[sidx:eidx], image=image[sidx:eidx])
+                sidx = eidx
+                pose_dataset.append(pose_traj)
 
         # import pdb; pdb.set_trace()
 
-        return frames, robosuite_frames, dataset
+        return frames, robosuite_frames, dataset, pose_dataset
 
 # Takes in a folder with a model zip and the config for the model, and uses it to generate evaluation gifs.
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Save an evaluation gif of a trained model.')
     parser.add_argument('--model', type=str, default="", help='Folder that contains model and model_cfg.')
     parser.add_argument('--save-dir', type=str, default="", help='Path to save the evaluation gifs to.')
-    parser.add_argument('--seed', type=int, default=0, help='The random seed for the environment')
+    parser.add_argument('--save-pose-dir', type=str, default="", help='Path to save the pose dataset.')
+    parser.add_argument('--eval-eps', type=int, default=30, help='number of episodes of evaluation to run.')
+    parser.add_argument('--seed', type=int, default=42, help='The random seed for the environment')
     args = parser.parse_args()
 
     with open(os.path.join(args.model, "model_cfg.yaml"), 'r') as f:
@@ -100,24 +149,31 @@ if __name__ == '__main__':
     else:
         model = PPO.load(os.path.join(args.model, "model.zip"))
 
-    frames, robosuite_frames, dataset = get_frames(renderer=renderer, env=env_test, model=model, n_eps_viz=5, n_eval_eps=3, cfg=model_cfg)
+    frames, robosuite_frames, dataset, pose_dataset = get_frames(renderer=renderer, env_test=env_test, model=model, n_eps_viz=5, n_eval_eps=args.eval_eps, cfg=model_cfg, get_pose_dataset=len(args.save_pose_dir) > 0)
 
     # save dataset to disk
+    os.makedirs(args.save_dir, exist_ok=True)
     dataset_savepath = os.path.join(args.save_dir, f'eval_dataset.npz')
     np.savez(dataset_savepath, **dataset)
+
+    # save pose dataset to disk
+    if len(args.save_pose_dir) > 0:
+        os.makedirs(args.save_pose_dir, exist_ok=True)
+        save_pose_dataset(pose_dataset, args.save_pose_dir)
 
     # make a subfolder in log dir for latest progress
     os.makedirs(args.save_dir, exist_ok=True)
     
-    # save gif
+    # save gif, sample onl yfrom the live frames
     assert len(frames) > 0
     gif_savepath = os.path.join(args.save_dir, f'eval.gif')
     def fps_to_duration(fps):
         return int(1000 * 1/fps)
     fps = 30 # slightly faster than 20 fps (simulation time), but makes rendering smooth
-    imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(fps))
+    control_freq = air_hockey_params["simulator_params"].get("control_freq", 20)
+    imageio.mimsave(gif_savepath, frames[::int(control_freq/20)], format='GIF', loop=0, duration=fps_to_duration(fps))
     if len(robosuite_frames) > 0:
         for key in robosuite_frames:
             frames = robosuite_frames[key]
             gif_savepath = os.path.join(args.save_dir, f'feval_robosuite_{key}.gif')
-            imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(fps))
+            imageio.mimsave(gif_savepath, frames[::int(control_freq/20)], format='GIF', loop=0, duration=fps_to_duration(fps))

@@ -1,12 +1,14 @@
 import cv2
 import imageio
-import time
+import time, os
 import numpy as np
-from sims.real import find_red_hockey_paddle
+from .image_detection import find_red_hockey_paddle, find_red_hockey_puck
+from .draw_regions import visualize_regions
 
 
 mousepos = (0,0,1)
-Mimg = np.load('Mimg.npy')
+base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")
+Mimg = np.load(os.path.join(base_dir, 'assets', 'real' ,'Mimg.npy'))
 
 upscale_constant = 3
 original_size = np.array([640, 480])
@@ -14,6 +16,12 @@ visual_downscale_constant = 2
 save_downscale_constant = 2
 offset_constants = np.array((2100, 500))
 
+def single_point_homography(matrix, point):
+    x,y = point
+    return np.array([matrix[0,0] * x + matrix[0,1] * y + matrix[0,2] /
+                    (matrix[2,0] * x + matrix[2,1] * y + matrix[2,2]), 
+                     matrix[1,0] * x + matrix[1,1] * y + matrix[1,2] /
+                    (matrix[2,0] * x + matrix[2,1] * y + matrix[2,2])])
 
 def homography_transform(image, get_save=True, rotate=False):
     image = cv2.rotate(image, cv2.ROTATE_180)
@@ -33,10 +41,8 @@ def homography_transform(image, get_save=True, rotate=False):
                 interpolation = cv2.INTER_LINEAR)
     return showdst, save_image
 
-
-def camera_callback(shared_array, save_image_check):
+def camera_callback(shared_array, save_image_check, puck_array, paddle_info, region_info, goal_info):
     cap = cv2.VideoCapture(1)
-
     while True:
         start = time.time()
         ret, image = cap.read()
@@ -56,8 +62,13 @@ def camera_callback(shared_array, save_image_check):
         # dst = cv2.resize(dst, original_size.astype(int).tolist(), 
         #             interpolation = cv2.INTER_LINEAR)
         # cv2.imshow('image',image)
+        puck = find_red_hockey_puck(showdst, rotate=False)
+        if region_info is not None: showdst = visualize_regions(showdst, region_info, goal_info, paddle_info)
         cv2.imshow('image',showdst)
         cv2.setMouseCallback('image', move_event)
+        puck_array[0] = puck[0]
+        puck_array[1] = puck[1]
+        puck_array[2] = puck[2]
         shared_array[0] = mousepos[0] * visual_downscale_constant
         shared_array[1] = mousepos[1] * visual_downscale_constant
         shared_array[2] = mousepos[2] * visual_downscale_constant
@@ -82,7 +93,7 @@ def move_event(event, x, y, flags, params):
 def mimic_control(shared_array):
     cap = cv2.VideoCapture(0)
 
-    Mimg_tele = np.load('Mimg_tele.npy')
+    Mimg_tele = np.load(os.path.join(base_dir, 'assets', 'real' ,'Mimg_tele.npy'))
 
     while True:
         start = time.time()
@@ -127,12 +138,25 @@ def save_callback(save_image_check):
         cv2.imshow('showdst',showdst)
         cv2.waitKey(1)
 
-
 # performs saving without multiprocessing
-def save_collect(cap):
+def save_collect(cap, paddle_info, region_info, goal_info, show = True):
     start = time.time()
     ret, image = cap.read()
-    showdst, save_image = homography_transform(image, get_save=True, rotate=True)
-    # cv2.imshow('showdst',showdst)
-    # cv2.waitKey(1)
+    showdst, save_image = homography_transform(image, get_save=True, rotate=False)
+    if region_info is not None: showdst = visualize_regions(showdst, region_info, goal_info, paddle_info)
+    if show:
+        cv2.imshow('showdst',showdst)
+        cv2.waitKey(1)
     return showdst, save_image
+
+def observe_collect(showdst, paddle_info, region_info, goal_info):
+    result, changed_image = find_red_hockey_paddle(showdst)
+    x,y,detected = result
+    showdst[x-3:x+3, y-3:y+3, :] = 0
+    x,y = (np.array([y * 2,x * 2]) - offset_constants)/ 1000
+    y = - y 
+    print(x,y)
+    if region_info is not None: showdst = visualize_regions(showdst, region_info, goal_info, (x, y, paddle_info[-1]))
+    cv2.imshow('image',showdst)
+    cv2.waitKey(1)
+    return x,y, detected

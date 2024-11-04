@@ -1,0 +1,16 @@
+gravity: 
+  lower: -0.7
+  upper: -0.3
+  start: -0.5
+puck_damping: 
+  lower: 0.2
+  upper: 1.0
+  start: 0.5
+puck_density: 
+  lower: 200
+  upper: 300
+  start: 250
+wall_bounce_scale: 
+  lower: 0.0
+  upper: 0.05
+  start: 0.02

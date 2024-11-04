@@ -8,7 +8,7 @@ import yaml
 import os
 
 class Demonstrator:
-    def __init__(self, air_hockey_cfg):
+    def __init__(self, air_hockey_cfg, robo_view=""):
         """
         Initializes the Demonstrator class.
 
@@ -29,7 +29,7 @@ class Demonstrator:
         else:
             air_hockey_params['return_goal_obs'] = False
         self.air_hockey = AirHockeyEnv(air_hockey_params)
-        self.renderer = AirHockeyRenderer(self.air_hockey)
+        self.renderer = AirHockeyRenderer(self.air_hockey, robosuite_view=robo_view)
         self.keyboard_scheme = 'wasd'
         self.print_reward = air_hockey_cfg['print_reward']
     
@@ -51,7 +51,7 @@ class Demonstrator:
         frame = self.renderer.get_frame()
         cv2.imshow('Air Hockey 2D Demonstration',frame)
         key = cv2.waitKey(20)
-        DEMOFORCE = 0.005
+        DEMOFORCE = 0.5
         if self.keyboard_scheme == 'qweasdzxc':
             if key == ord('k'):
                 action = -1
@@ -82,7 +82,9 @@ class Demonstrator:
                 action = np.array([DEMOFORCE,0])
             elif key == ord('d'):
                 action = np.array([0,DEMOFORCE])
-            print(action)
+            elif key == ord('r'):
+                action = np.array([-10.1, 0])
+            # print(action)
         else:
             raise ValueError("Invalid keyboard scheme")
         if self.renderer.orientation == 'vertical':
@@ -109,7 +111,12 @@ class Demonstrator:
                 print("fps", 1000 / (time.time() - start))
                 start = time.time()
             action = self.demonstrate()
-            _, rew, _, _, _ = self.air_hockey.step(action)
+            if np.any(action == -10.1):
+                self.air_hockey.reset()
+                continue
+            obs, rew, _, _, _ = self.air_hockey.step(action)
+            # print(obs['observation'][:2], obs['observation'][-3:-1])
+            time.sleep(0.05)
             # if self.print_reward:
             print("reward: ", rew)
             if i % 2000 == 0:
@@ -160,6 +167,6 @@ if __name__ == "__main__":
     with open(air_hockey_cfg_fp, 'r') as f:
         air_hockey_cfg = yaml.safe_load(f)
 
-    demonstrator = Demonstrator(air_hockey_cfg)
+    demonstrator = Demonstrator(air_hockey_cfg, robo_view="sideview_image")
     demonstrator.run()
     cv2.destroyAllWindows()

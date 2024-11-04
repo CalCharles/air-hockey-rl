@@ -1,5 +1,5 @@
 import numpy as np
-from sims.real.coordinate_transform import clip_limits
+from .coordinate_transform import clip_limits
 
 def apply_negative_z_force(ctrl, rcv=None):
     if rcv is None:
@@ -14,6 +14,7 @@ def apply_negative_z_force(ctrl, rcv=None):
     # TODO: Modify control type 
 
     ctrl.forceMode(task_frame, selection_vector, wrench_down, ctrl_type, limits)
+
 
 def filter_update(vel, pose_hist, dpose_hist):
     pose_vel = np.array(dpose_hist[-1]) - np.array(pose_hist[-1])
@@ -35,7 +36,7 @@ class MotionPrimitive:
         self.slow_strike_speed = 0.70
         self.is_fast = False
 
-    def compute_primitive(self, val, true_pose, lims, move_lims):
+    def compute_primitive(self, val, true_pose, lims, move_lims, edge_lims):
         # takes an action based on the current position, the keyboard input and whether we are currently taking an action
         delta = np.zeros((2,))
         if val == 'a':
@@ -71,6 +72,6 @@ class MotionPrimitive:
                 delta[0] = -move_lims[0] * self.slow_strike_speed # strike at basically maximum speed
             else: delta[0] = 0.05
         x, y = true_pose[0] + delta[0], true_pose[1] + delta[1]
-        x,y = clip_limits(x,y,lims)
+        x,y = clip_limits(x,y,lims, edge_lims)
         return x,y
                 

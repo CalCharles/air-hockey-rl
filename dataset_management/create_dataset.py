@@ -12,35 +12,41 @@ def get_observation(paddle, paddle_vel, puck, puck_history, obs_type):
     state_info = dict()
     state_info["paddles"] = dict()
     state_info["paddles"]["paddle_ego"] = {"position": paddle, "velocity": paddle_vel}
-    state_info["pucks"] = dict()
     state_info["pucks"] = list()
-    state_info["pucks"].append({"position": puck, "velocity": puck - puck_history[-2], "history": puck_history})
+    state_info["pucks"].append({"position": puck[:2], "velocity": puck[:2] - puck_history[-2][:2], "history": puck_history}) # # TODO: puck dataset does not handle occlusion at the moment
     observation = get_observation_by_type(state_info, obs_type=obs_type, puck_history=puck_history)
     return observation, state_info
 
-def load_dataset(data_dir, obs_type, environment):
+def load_dataset(data_dir, obs_type, environment, num_trajectories=-1):
     # loads data into a dataset of observations based on the observation type
     dataset = dict()
     dataset["observations"] = list()
     dataset["actions"] = list()
     dataset["rewards"] = list()
+    dataset["success"] = list()
     dataset["next_observations"] = list()
     dataset["terminals"] = list()
+    dataset["images"] = list()
 
-    for file in os.listdir(data_dir):
+    for i, file in enumerate(os.listdir(data_dir)):
+        if i == num_trajectories: break # we only need num_trajectory trajectories
         with h5py.File(os.path.join(data_dir, file), 'r') as f:
             try:
-                paddle = f["pose"][:,:2]
-                paddle_vel = f["speed"][:,:2]
-                action = f["desired_pose"][:,:2]
-                puck = f["puck"]
+                if f['pose'].shape[0] < 50:
+                    continue
+                else:
+                    paddle = f["pose"][:,:2]
+                    paddle_vel = f["speed"][:,:2]
+                    action = f["desired_pose"][:,:2] - paddle
+                    puck = f["puck"] 
+                    image = f["image"]
             except Exception as e:
                 print('Error in file:', file, e)
                 continue
             print("added trajectory ", file)
-            puck_history = [(-1,0,0) for i in range(5)]
+            puck_history = [(-2 + environment.center_offset_constant,0,1) for i in range(5)]
             observation, state_info = get_observation(paddle[0], paddle_vel[0], puck[0], puck_history, obs_type=obs_type)
-            observations = []
+            observations = [observation]
             next_observations = list()
             rewards = [environment.get_base_reward(state_info)]
             for pa, pav, pu in zip(paddle[1:], paddle_vel[1:], puck[1:]):
@@ -50,19 +56,23 @@ def load_dataset(data_dir, obs_type, environment):
                 next_observations.append(next_observation)
                 observation = copy.deepcopy(next_observation)
                 puck_history.append(pu)
-            next_observations.append(copy.deepcopy(next_observation)) # TODO: see if we want to append the same observation twice and use the terminal
+            # next_observations.append(copy.deepcopy(next_observation)) # TODO: see if we want to append the same observation twice and use the terminal
             dataset["observations"].append(np.array(observations))
-            dataset["actions"].append(action)
-            dataset["rewards"].append(np.array(rewards))
+            dataset["actions"].append(action[:-1])
+            dataset["rewards"].append(np.array([r[0] for r in rewards]))
+            dataset["success"].append(np.array([r[1] for r in rewards]))
             dataset["next_observations"].append(np.array(next_observations))
-            terminals = np.zeros(len(action))
+            terminals = np.zeros(len(action)-1)
             terminals[-1] = 1
             dataset["terminals"].append(terminals)
-    dataset["observations"] = np.concatenate(dataset["observations"], axis=0)
-    dataset["actions"] = np.concatenate(dataset["actions"], axis=0)
-    dataset["rewards"] = np.concatenate(dataset["rewards"], axis=0)
-    dataset["next_observations"] = np.concatenate(dataset["next_observations"], axis=0)
-    dataset["terminals"] = np.concatenate(dataset["terminals"], axis=0)
+            dataset["images"].append(copy.deepcopy(image[:-1]))
+    # dataset["observations"] = np.concatenate(dataset["observations"], axis=0)
+    # dataset["actions"] = np.concatenate(dataset["actions"], axis=0)
+    # dataset["rewards"] = np.concatenate(dataset["rewards"], axis=0)
+    # dataset["success"] = np.concatenate(dataset["success"], axis=0)
+    # dataset["next_observations"] = np.concatenate(dataset["next_observations"], axis=0)
+    # dataset["terminals"] = np.concatenate(dataset["terminals"], axis=0)
+    # dataset["images"] = np.concatenate(dataset["images"], axis=0)
 
     return dataset
 # read_new_real_data("/datastor1/calebc/public/data/mouse/cleaned_new/")
@@ -103,4 +113,5 @@ if __name__ == "__main__":
     print(dataset["next_observations"].shape)
     print(dataset["actions"].shape)
     print(dataset["rewards"].shape)
+    print(dataset["success"].shape)
     print(dataset["terminals"].shape)

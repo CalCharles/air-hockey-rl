@@ -1,10 +1,10 @@
 import numpy as np
 from gymnasium.spaces import Box
 from .airhockey_base import AirHockeyBaseEnv
-
+from .airhockey_rewards import AirHockeyMoveBlockReward, AirHockeyStrikeCrowdReward
 
 class AirHockeyMoveBlockEnv(AirHockeyBaseEnv):
-    def initialize_spaces(self):
+    def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
         paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
         paddle_obs_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
@@ -15,12 +15,29 @@ class AirHockeyMoveBlockEnv(AirHockeyBaseEnv):
         block_obs_low = [self.table_x_top, self.table_y_left, self.table_x_top, self.table_y_left]
         block_obs_high = [self.table_x_bot, self.table_y_right, self.table_x_bot, self.table_y_right]
 
-        low = paddle_obs_low + puck_obs_low + block_obs_low
-        high = paddle_obs_high + puck_obs_high + block_obs_high
+        puck_hist_low = [self.table_x_top, self.table_y_left, 0] * 5
+        puck_hist_high = [self.table_x_bot, self.table_y_right, 0] * 5
+
+        if obs_type == "paddle":
+            low = paddle_obs_low
+            high = paddle_obs_high
+        elif obs_type == "vel":
+            low = paddle_obs_low + puck_obs_low
+            high = paddle_obs_high + puck_obs_high
+        elif obs_type == "history":
+            low = paddle_obs_low + puck_hist_low
+            high = paddle_obs_high + puck_hist_high
+        if obs_type == "single_block_vel":
+            low = paddle_obs_low + puck_obs_low + block_obs_low
+            high = paddle_obs_high + puck_obs_high + block_obs_high
+        if obs_type == "single_block_history":
+            low = paddle_obs_low + block_obs_low + puck_hist_low
+            high = paddle_obs_high + block_obs_high + puck_hist_high
 
         self.observation_space = self.get_obs_space(low, high)
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
+        self.reward = AirHockeyMoveBlockReward(self)
         
     @staticmethod
     def from_dict(state_dict):
@@ -53,46 +70,32 @@ class AirHockeyMoveBlockEnv(AirHockeyBaseEnv):
         assert self.num_targets == 0
         assert self.num_paddles == 1
 
-    def get_observation(self, state_info):
-        ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
-        ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
-        ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
-        ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
-        
-        puck_x_pos = state_info['pucks'][0]['position'][0]
-        puck_y_pos = state_info['pucks'][0]['position'][1]
-        puck_x_vel = state_info['pucks'][0]['velocity'][0]
-        puck_y_vel = state_info['pucks'][0]['velocity'][1]       
+    def get_observation(self, state_info, **kwargs):
+        return self.get_observation_by_type(state_info, obs_type=self.obs_type, **kwargs)
 
-        block_x_pos = state_info['blocks'][0]['current_position'][0]
-        block_y_pos = state_info['blocks'][0]['current_position'][1]
-        block_initial_x_pos = state_info['blocks'][0]['initial_position'][0]
-        block_initial_y_pos = state_info['blocks'][0]['initial_position'][1]
-        obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel, block_x_pos, block_y_pos, block_initial_x_pos, block_initial_y_pos])
-        return obs
+    def get_observation(self, state_info, obs_type='single_block', **kwargs):
+        return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)
 
-    def get_base_reward(self, state_info):
-        # also reward hitting puck! some shaping here :)
-        vel_reward = -state_info['pucks'][0]['velocity'][0]
-        max_rew = 2 # estimated max vel
-        min_rew = 0  # min acceptable good velocity
-        if vel_reward <= min_rew:
-            vel_reward = 0
-        else:
-            vel_reward = min(vel_reward, max_rew)
-            vel_reward = (vel_reward - min_rew) / (vel_reward - min_rew)
+    # def get_observation(self, state_info):
+    #     ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
+    #     ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
+    #     ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
+    #     ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
         
-        # more reward if we move the block away from initial position
-        block_initial_pos = state_info['blocks'][0]['initial_position']
-        block_pos = state_info['blocks'][0]['current_position']
-        dist = np.linalg.norm(np.array(block_pos) - np.array(block_initial_pos))
-        max_euclidean_distance = np.linalg.norm(np.array([self.table_x_bot, self.table_y_right]) - np.array([self.table_x_top, self.table_y_left]))
-        reward = 5000 * dist / max_euclidean_distance # big reward since its sparse!
-        success = reward > 1 and self.current_timestep > 5
-        return vel_reward + reward, success
+    #     puck_x_pos = state_info['pucks'][0]['position'][0]
+    #     puck_y_pos = state_info['pucks'][0]['position'][1]
+    #     puck_x_vel = state_info['pucks'][0]['velocity'][0]
+    #     puck_y_vel = state_info['pucks'][0]['velocity'][1]       
+
+    #     block_x_pos = state_info['blocks'][0]['current_position'][0]
+    #     block_y_pos = state_info['blocks'][0]['current_position'][1]
+    #     block_initial_x_pos = state_info['blocks'][0]['initial_position'][0]
+    #     block_initial_y_pos = state_info['blocks'][0]['initial_position'][1]
+    #     obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel, block_x_pos, block_y_pos, block_initial_x_pos, block_initial_y_pos])
+    #     return obs
 
 class AirHockeyStrikeCrowdEnv(AirHockeyBaseEnv):
-    def initialize_spaces(self):
+    def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
         paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
         paddle_obs_high = [self.table_x_bot, self.table_y_right, self.max_paddle_vel, self.max_paddle_vel]
@@ -103,12 +106,29 @@ class AirHockeyStrikeCrowdEnv(AirHockeyBaseEnv):
         block_obs_low = [self.table_x_top, self.table_y_left, self.table_x_top, self.table_y_left]
         block_obs_high = [self.table_x_bot, self.table_y_right, self.table_x_bot, self.table_y_right]
 
-        low = paddle_obs_low + puck_obs_low + [block_obs_low[0], block_obs_low[1]] * self.num_blocks
-        high = paddle_obs_high + puck_obs_high + [block_obs_high[0], block_obs_high[1]] * self.num_blocks
+        puck_hist_low = [self.table_x_top, self.table_y_left, 0] * 5
+        puck_hist_high = [self.table_x_bot, self.table_y_right, 0] * 5
+
+        if obs_type == "paddle":
+            low = paddle_obs_low
+            high = paddle_obs_high
+        elif obs_type == "vel":
+            low = paddle_obs_low + puck_obs_low
+            high = paddle_obs_high + puck_obs_high
+        elif obs_type == "history":
+            low = paddle_obs_low + puck_hist_low
+            high = paddle_obs_high + puck_hist_high
+        elif obs_type == "many_blocks_vel":
+            low = paddle_obs_low + puck_obs_low + [block_obs_low[0], block_obs_low[1]] * self.num_blocks
+            high = paddle_obs_high + puck_obs_high + [block_obs_high[0], block_obs_high[1]] * self.num_blocks
+        elif obs_type == "many_blocks_history":
+            low = paddle_obs_low + [block_obs_low[0], block_obs_low[1]] * self.num_blocks + puck_hist_low
+            high = paddle_obs_high + [block_obs_high[0], block_obs_high[1]] * self.num_blocks + puck_hist_high
 
         self.observation_space = self.get_obs_space(low, high)
         self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
+        self.reward = AirHockeyStrikeCrowdReward(self)
         
     @staticmethod
     def from_dict(state_dict):
@@ -194,34 +214,24 @@ class AirHockeyStrikeCrowdEnv(AirHockeyBaseEnv):
         assert self.num_targets == 0
         assert self.num_paddles == 1
 
-    def get_observation(self, state_info):
-        ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
-        ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
-        ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
-        ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
+    def get_observation(self, state_info, obs_type='many_blocks', **kwargs):
+        return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)
+
+    # def get_observation(self, state_info):
+    #     ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
+    #     ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
+    #     ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
+    #     ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
         
-        puck_x_pos = state_info['pucks'][0]['position'][0]
-        puck_y_pos = state_info['pucks'][0]['position'][1]
-        puck_x_vel = state_info['pucks'][0]['velocity'][0]
-        puck_y_vel = state_info['pucks'][0]['velocity'][1]       
+    #     puck_x_pos = state_info['pucks'][0]['position'][0]
+    #     puck_y_pos = state_info['pucks'][0]['position'][1]
+    #     puck_x_vel = state_info['pucks'][0]['velocity'][0]
+    #     puck_y_vel = state_info['pucks'][0]['velocity'][1]       
 
-        blocks = state_info['blocks']
-        block_initial_positions = []
-        for block in blocks:
-            block_initial_positions.append(block['initial_position'])
-        block_initial_positions = np.array(block_initial_positions).flatten()
-        obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel] + block_initial_positions.tolist())
-        return obs
-
-    def get_base_reward(self, state_info):
-        # check how much blocks deviate from initial position
-        reward = 0.0
-        for block in state_info['blocks']:
-            initial_pos = block['initial_position']
-            current_pos = block['current_position']
-            dist = np.linalg.norm(np.array(initial_pos) - np.array(current_pos))
-            max_euclidean_distance = np.linalg.norm(np.array([self.table_x_bot, self.table_y_right]) - np.array([self.table_x_top, self.table_y_left]))
-            reward += 10 * dist / max_euclidean_distance
-        success = reward > 1 and self.current_timestep > 3
-        return reward, success
-
+    #     blocks = state_info['blocks']
+    #     block_initial_positions = []
+    #     for block in blocks:
+    #         block_initial_positions.append(block['initial_position'])
+    #     block_initial_positions = np.array(block_initial_positions).flatten()
+    #     obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel] + block_initial_positions.tolist())
+    #     return obs

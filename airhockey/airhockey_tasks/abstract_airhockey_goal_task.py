@@ -3,11 +3,11 @@ from gymnasium.spaces import Box
 from gymnasium import spaces
 from airhockey.airhockey_base import AirHockeyBaseEnv
 from abc import ABC, abstractmethod
-from collections import Iterable
+from collections.abc import Iterable
 
 class AirHockeyGoalEnv(AirHockeyBaseEnv, ABC):        
     @abstractmethod
-    def initialize_spaces(self):
+    def initialize_spaces(self, obs_type):
         pass
 
     @abstractmethod
@@ -20,10 +20,6 @@ class AirHockeyGoalEnv(AirHockeyBaseEnv, ABC):
     
     @abstractmethod
     def get_desired_goal(self):
-        pass
-    
-    @abstractmethod
-    def compute_reward(self, achieved_goal, desired_goal, info):
         pass
 
     @abstractmethod
@@ -42,9 +38,11 @@ class AirHockeyGoalEnv(AirHockeyBaseEnv, ABC):
     def from_dict(state_dict):
         pass
     
-    @abstractmethod
+    def compute_reward(self, achieved_goal, desired_goal, info):
+        return self.reward.compute_reward(achieved_goal, desired_goal, info)
+    
     def get_base_reward(self, state_info):
-        pass
+        return self.reward.get_base_reward(state_info)
         
     def get_goal_obs_space(self, low: list, high: list, goal_low: list, goal_high: list):
         return spaces.Dict(dict(
@@ -53,9 +51,9 @@ class AirHockeyGoalEnv(AirHockeyBaseEnv, ABC):
             achieved_goal=Box(low=np.array(goal_low), high=np.array(goal_high), dtype=float)
         ))
         
-    def reset(self, seed=None):
+    def reset(self, seed=None, **kwargs):
         self.set_goals(self.goal_radius_type)
-        obs, success = super().reset(seed)
+        obs, success = super().reset(seed, **kwargs)
         achieved_goal = self.get_achieved_goal(self.current_state)
         desired_goal = self.get_desired_goal()
         if self.return_goal_obs:
@@ -63,6 +61,20 @@ class AirHockeyGoalEnv(AirHockeyBaseEnv, ABC):
         else:
             obs = np.concatenate([obs, desired_goal])
             return obs, success
+
+    def reset_from_state_and_goal(self, state_vector, goal_vector, seed=None):
+        self.set_goals(None, goal_pos=goal_vector)
+
+        obs, success = super().reset_from_state(state_vector, seed)
+
+        achieved_goal = self.get_achieved_goal(self.current_state)
+        desired_goal = self.get_desired_goal()
+        if self.return_goal_obs:
+            return {"observation": obs, "desired_goal": desired_goal, "achieved_goal": achieved_goal}, success
+        else:
+            obs = np.concatenate([obs, desired_goal])
+            return obs, success
+
         
     def set_goal_set(self, goal_set):
         self.goal_set = goal_set

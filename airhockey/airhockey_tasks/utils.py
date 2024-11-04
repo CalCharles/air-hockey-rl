@@ -61,7 +61,7 @@ class DynamicRewardRegion(RewardRegion):
         self.movement = self.movement_patterns[self.movement_idx]
 
     def get_state(self):
-        radius_obs = [self.radius] if not isinstance(self.radius, Iterable) else self.radius
+        radius_obs = [self.radius, self.radius] if not isinstance(self.radius, Iterable) else self.radius
         return np.concatenate([self.state, self.velocity, [self.scale], [self.reward_value], radius_obs, self.shape_onehot_helper[self.shape_idx], self.movement_onehot_helper[self.movement_idx]])
 
     def get_pose(self):

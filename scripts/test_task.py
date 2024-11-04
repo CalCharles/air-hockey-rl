@@ -1,0 +1,148 @@
+from stable_baselines3 import PPO 
+from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
+from stable_baselines3 import HerReplayBuffer, SAC
+from airhockey import AirHockeyEnv
+from airhockey.renderers.render import AirHockeyRenderer
+import argparse
+import yaml
+import os
+import random
+import wandb
+import argparse
+import shutil
+import os
+import yaml
+from utils import EvalCallback, save_evaluation_gifs, save_tensorboard_plots, save_task_gif
+from curriculum.classifier_curriculum import CurriculumCallback
+import h5py
+            
+def visualize_task(air_hockey_cfg, use_wandb=False, device='cpu', clear_prior_task_results=False, progress_bar=True):
+    """
+    Train an air hockey paddle model using stable baselines.
+
+    This script loads the configuration file, creates an AirHockey2D environment,
+    wraps the environment with necessary components, trains the model,
+    and saves the trained model and environment statistics.
+    """
+    
+    air_hockey_params = air_hockey_cfg['air_hockey']
+    print("air_hockey_params", air_hockey_params)
+    air_hockey_params['n_training_steps'] = air_hockey_cfg['n_training_steps']
+    
+    if 'sac' == air_hockey_cfg['algorithm']:
+        if 'goal' in air_hockey_cfg['air_hockey']['task']:
+            air_hockey_cfg['air_hockey']['return_goal_obs'] = True
+        else:
+            air_hockey_cfg['air_hockey']['return_goal_obs'] = False
+    else:
+        air_hockey_cfg['air_hockey']['return_goal_obs'] = False
+    
+    air_hockey_params_cp = air_hockey_params.copy()
+    air_hockey_params_cp['seed'] = 42
+    air_hockey_params_cp['max_timesteps'] = 200
+    
+    eval_env = AirHockeyEnv(air_hockey_params_cp)
+    
+
+    air_hockey_cfg['seed'] = 0 # since it it used as training seed
+    air_hockey_params['seed'] = 0 # and environment seed
+    
+
+    if air_hockey_cfg['n_threads'] > 1:
+
+        # set seed for reproducibility
+        seed = air_hockey_params['seed']
+        random.seed(seed)
+        
+        # get number of threads
+        n_threads = air_hockey_cfg['n_threads']
+        
+        def get_airhockey_env_for_parallel():
+            """
+            Utility function for multiprocessed env.
+
+            :param env_id: (str) the environment ID
+            :param num_env: (int) the number of environments you wish to have in subprocesses
+            :param seed: (int) the inital seed for RNG
+            :param rank: (int) index of the subprocess
+            """
+            def _init():
+                curr_seed = random.randint(0, int(1e8))
+                air_hockey_params['seed'] = curr_seed
+                # Note: With this seed, an individual rng is created for each env
+                # It does not affect the global rng!
+                env = AirHockeyEnv(air_hockey_params)
+                return Monitor(env)
+            return _init()
+
+        # check_env(env)
+        env = SubprocVecEnv([get_airhockey_env_for_parallel for _ in range(n_threads)])
+        # env = VecNormalize(env) # probably something to try when tuning
+    else:
+        env = AirHockeyEnv(air_hockey_params)
+        def wrap_env(env):
+            import pdb; pdb.set_trace()
+            
+            wrapped_env = Monitor(env) # needed for extracting eprewmean and eplenmean
+            wrapped_env = DummyVecEnv([lambda: wrapped_env]) # Needed for all environments (e.g. used for multi-processing)
+            # wrapped_env = VecNormalize(wrapped_env) # probably something to try when tuning
+            return wrapped_env
+        # env = wrap_env(env)
+
+        os.makedirs(air_hockey_cfg['tb_log_dir'], exist_ok=True)
+        log_parent_dir = os.path.join(air_hockey_cfg['tb_log_dir'], air_hockey_cfg['air_hockey']['task'] + '_test')
+        if clear_prior_task_results and os.path.exists(log_parent_dir):
+            shutil.rmtree(log_parent_dir)
+        os.makedirs(log_parent_dir, exist_ok=True)
+        
+        # determine the actual log dir
+        subdirs = [x for x in os.listdir(log_parent_dir) if os.path.isdir(os.path.join(log_parent_dir, x))]
+        subdir_nums = [int(x.split(air_hockey_cfg['tb_log_name'] + '_')[1]) for x in subdirs]
+        next_num = max(subdir_nums) + 1 if subdir_nums else 1
+        log_dir = os.path.join(log_parent_dir, air_hockey_cfg['tb_log_name'] + f'_{next_num}')
+        
+        os.makedirs(log_parent_dir, exist_ok=True)
+        
+        # let's save model and vec normalize here too
+        model_filepath = os.path.join(log_dir, air_hockey_cfg['model_save_filepath'])
+        env_filepath = os.path.join(log_dir, air_hockey_cfg['vec_normalize_save_filepath'])
+        # copy cfg to same folder
+        cfg_filepath = os.path.join(log_dir, 'model_cfg.yaml')
+
+        # env.save(env_filepath)
+        
+        # let's also evaluate the policy and save the results!
+        air_hockey_cfg['air_hockey']['max_timesteps'] = 200
+        
+        air_hockey_params = air_hockey_cfg['air_hockey']
+        air_hockey_params['n_training_steps'] = air_hockey_cfg['n_training_steps']
+        env_test = AirHockeyEnv(air_hockey_params)
+        renderer = AirHockeyRenderer(env_test)
+        policy = lambda x : eval_env.action_space.sample()
+        # renderer = AirHockeyRenderer(env_test)
+        os.makedirs(log_dir, exist_ok=True)
+        save_task_gif(5, 3, env_test, policy, renderer, log_dir, )
+        
+        
+
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Demonstrate the air hockey game.')
+    parser.add_argument('--cfg', type=str, default=None, help='Path to the configuration file.')
+    args = parser.parse_args()
+    
+    if args.cfg is None:
+        dir_path = os.path.dirname(os.path.realpath(__file__))
+        air_hockey_cfg_fp = os.path.join(dir_path, '../configs', 'default_train_puck_vel.yaml')
+    else:
+        air_hockey_cfg_fp = args.cfg
+    
+    with open(air_hockey_cfg_fp, 'r') as f:
+        air_hockey_cfg = yaml.safe_load(f)
+        
+    assert 'n_threads' in air_hockey_cfg, "Please specify the number of threads to use for training."
+    assert 'algorithm' in air_hockey_cfg, "Please specify the algorithm to use for training."
+    
+    visualize_task(air_hockey_cfg)

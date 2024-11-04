@@ -8,7 +8,7 @@ try:
     import airhockey.sims.grippers # this registers the roundgripper!
     import airhockey.sims.utils.RobosuiteTransforms # this registers the transformations utility!
 except:
-    print('Some air hockey shit not installed. Does not work on Apple Silicon')
+    print('Some air hockey components not installed. Does not work on Apple Silicon')
 from airhockey.airhockey_simple_tasks import AirHockeyPuckVelEnv, AirHockeyPuckHeightEnv, AirHockeyPuckCatchEnv 
 from airhockey.airhockey_simple_tasks import AirHockeyPuckJuggleEnv, AirHockeyPuckStrikeEnv, AirHockeyPuckTouchEnv
 from airhockey.airhockey_hierarchical_tasks  import AirHockeyMoveBlockEnv, AirHockeyStrikeCrowdEnv
@@ -21,7 +21,7 @@ from airhockey.airhockey_tasks.paddle_reach_position_velocity import AirHockeyPa
 from airhockey.airhockey_tasks.puck_goal_position_velocity import AirHockeyPuckGoalPositionVelocityEnv
 from airhockey.airhockey_tasks.paddle_reach_position_negative_regions import AirHockeyPaddleReachPositionNegRegionsEnv
 from airhockey.airhockey_tasks.puck_goal_position_dynamic_negative_regions import AirHockeyPuckGoalPositionDynamicNegRegionsEnv
-
+from airhockey.airhockey_tasks.puck_goal_position_obstacles import AirHockeyPuckGoalPositionObstaclesEnv
 
 
 ASSETS_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../assets"))
@@ -63,7 +63,7 @@ def AirHockeyEnv(cfg):
         task_env = AirHockeyPuckHeightEnv
     elif task == "puck_catch":
         task_env = AirHockeyPuckCatchEnv
-    elif task == "puck_juggle":
+    elif task == "puck_juggle" or task == "multipuck_juggle":
         task_env = AirHockeyPuckJuggleEnv
     elif task == "puck_strike":
         task_env = AirHockeyPuckStrikeEnv
@@ -77,14 +77,16 @@ def AirHockeyEnv(cfg):
         task_env = AirHockeyPuckGoalPositionEnv
     elif task == "puck_goal_position_velocity":
         task_env = AirHockeyPuckGoalPositionVelocityEnv
-    elif task == "paddle_goal_position":
+    elif task == "paddle_reach_position":
         task_env = AirHockeyPaddleReachPositionEnv
-    elif task == "paddle_goal_position_velocity":
+    elif task == "paddle_reach_position_velocity":
         task_env = AirHockeyPaddleReachPositionVelocityEnv
-    elif task == "paddle_goal_position_neg":
+    elif task == "paddle_reach_position_neg":
         task_env = AirHockeyPaddleReachPositionNegRegionsEnv
     elif task == "puck_goal_position_dynamic_neg":
         task_env = AirHockeyPuckGoalPositionDynamicNegRegionsEnv
+    elif task == "puck_goal_position_obstacles":
+        task_env = AirHockeyPuckGoalPositionObstaclesEnv
     else:
         raise ValueError("Task {} not recognized".format(task))
     return task_env.from_dict(cfg)

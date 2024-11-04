@@ -11,7 +11,6 @@ import sys
 import argparse
 sys.path.append('../')
 sys.path.append('../..')
-print(sys.path)
 
 def create_video_from_frames(frame_array, output_path, fps=30):
     """
@@ -240,18 +239,23 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Extract puck data from trajectory data')
     parser.add_argument('--start-id', type=int, default=0, help='Trajectory number to extract puck data from')
     parser.add_argument('--end-id', type=int, default=1000, help='Trajectory number to extract puck data from')
+    parser.add_argument('--path', type=str, default="/datastor1/calebc/public/data/mouse/", help='path to extract puck information from')
+    parser.add_argument('--name', type=str, default="cleaned_all", help='target folder inside of path')
 
     args = parser.parse_args()
 
     for traj in range(args.start_id, args.end_id):
-        if traj < 100:
-            color = 'green'
-        elif traj < 250:
-            color = 'red_with_glare'
-        else:
+        if args.path.find("/datastor1/calebc/public/data/mouse/") != -1: # all mouse data has the following cutoffs hardcoded
+            if traj < 100:
+                color = 'green'
+            elif traj < 250:
+                color = 'red_with_glare'
+            else:
+                color = 'red_without_glare'
+        else: # otherwise, we settled on this
             color = 'red_without_glare'
         try:
-            path = f'/datastor1/calebc/public/data/mouse/cleaned_all/trajectory_data{traj}.hdf5'
+            path = os.path.join(args.path, args.name, f'trajectory_data{traj}.hdf5')
             dataset_dict = {}
             dataset_dict = load_hdf5_to_dict(path)
             print(f'loading {traj}')
@@ -311,20 +315,31 @@ if __name__ == "__main__":
             plt.imshow(img_puck_traj)
             plt.subplot(2,2,4)
             plt.imshow(total_mask)
-            plt.savefig(f'/datastor1/calebc/public/data/mouse/all_cleaned_state_trajectories_5-25-2024_imgs/traj_videos/traj_plot{traj}.png')
+            img_save_path = os.path.join(args.path, args.name + '_state_trajectories_imgs/traj_videos/')
+            try:  
+                os.makedirs(img_save_path)
+                print("made ", img_save_path)
+            except OSError as error:
+                pass
+                
+            plt.savefig(os.path.join(img_save_path, f'traj_plot{traj}.png'))
             # plt.show()
             # Create a new HDF5 file
-            save_dir = '/datastor1/calebc/public/data/mouse/all_cleaned_state_trajectories_5-25-2024/'
+            save_dir = os.path.join(args.path, args.name + '_state_trajectories/')
+            try:  
+                os.makedirs(save_dir)
+                print("made ", save_dir)
+            except OSError as error:
+                pass
             
             save_path = os.path.join(save_dir, f'state_trajectory_data{traj}.hdf5')
             dataset_dict['puck_state'] = xy_robot_frame
             dataset_dict['puck_state_nan_mask'] = np.isnan(xy_robot_frame)
             # import pdb; pdb.set_trace()
             with h5py.File(save_path, 'w') as hdf5_file:
-                print(dataset_dict.keys())
                 save_dict_to_hdf5(dataset_dict, hdf5_file)
                 
             print(f'finished traj {traj}')
         except Exception as e:
-            print("doesn't work, you fuck")
+            print("doesn't work")
             print(e)

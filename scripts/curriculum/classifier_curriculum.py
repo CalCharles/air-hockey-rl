@@ -5,7 +5,7 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
-from curriculum.mlp import MLP, init_weights
+from scripts.curriculum.mlp import MLP, init_weights
 import torch
 import matplotlib.pyplot as plt
 class CurriculumCallback(EvalCallback):
