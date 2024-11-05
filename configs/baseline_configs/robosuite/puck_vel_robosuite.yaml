@@ -38,6 +38,8 @@ air_hockey:
     table_tilt: 0.09
     top_solref: -50000
     width: 1.0436
+    action_x_scaling: 0.5
+    action_y_scaling: 0.5
   stand_still_rew: 0.01
   task: puck_velocity
   terminate_on_enemy_goal: false

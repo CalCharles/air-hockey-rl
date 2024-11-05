@@ -60,6 +60,8 @@ class AirHockeyBox2D:
             'block_density': 1000,
             'max_paddle_vel': 2,
             'time_frequency': 20,
+            'step_frequency': 20,
+            'action_step_lag': 0,
             'paddle_bounds': [],
             'paddle_edge_bounds': [],
             'center_offset_constant': 1.2,
@@ -76,7 +78,8 @@ class AirHockeyBox2D:
         self.puck_radius = config.puck_radius
         self.block_width = config.block_width
         self.max_force_timestep = config.max_force_timestep
-        self.time_frequency = config.time_frequency
+        self.step_frequency = config.step_frequency # number of action steps per second
+        self.time_frequency = config.time_frequency # number of simulation steps per second
         self.time_per_step = 1 / self.time_frequency
         self.force_scaling = config.force_scaling
         self.absorb_target = config.absorb_target
@@ -96,6 +99,7 @@ class AirHockeyBox2D:
         self.action_y_scaling = config.action_y_scaling
         self.center_offset_constant = config.center_offset_constant
         self.wall_bounce_scale = config.wall_bounce_scale
+        self.last_action = np.zeros(2) # keep the last action taken, used for action lag
 
         # these assume 2d, in 3d since we have height it would be higher mass
         self.paddle_mass = self.paddle_density * np.pi * self.paddle_radius ** 2
@@ -180,6 +184,7 @@ class AirHockeyBox2D:
         self.target_attrs = None
 
         self.object_dict = dict()
+        self.last_action = np.zeros(2) # keep the last action taken
         state_info = self.get_current_state()
         return state_info
     
@@ -364,6 +369,9 @@ class AirHockeyBox2D:
 
     # @mprofile
     def get_singleagent_transition(self, action):
+        # TODO: use self.last_action, self.step_frequency, self.time_frequency to implement action_lag
+        # number of steps to take: self.time_frequency / self.step_frequency 
+        # also need to set self.last_action properly
 
         # self.profiler.enable()  # Start profiling
         # check if out of bounds and correct

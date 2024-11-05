@@ -178,6 +178,7 @@ class AirHockeyRobosuite(AirHockeySim):
             'render_visual_mesh': True,
             'render_gpu_device_id': -1,
             'control_freq': 20,
+            'step_frequency': 20,
             'horizon': 400,
             'ignore_done': False,
             'hard_reset': True,
@@ -261,6 +262,8 @@ class AirHockeyRobosuite(AirHockeySim):
         self.puck_density = config.puck_density
         self.puck_height = 0.009
         self.puck_z_offset = math.sin(self.table_tilt) * self.puck_radius
+        self.action_x_scaling = config.action_x_scaling
+        self.action_y_scaling = config.action_y_scaling
 
         # FIXME make these parameters do something, right now it's a placeholder to make calls to robosuite work
         self.seed = config.seed
@@ -268,6 +271,9 @@ class AirHockeyRobosuite(AirHockeySim):
         self.block_width = config.block_width
         self.max_paddle_vel = config.max_paddle_vel
         self.max_puck_vel = config.max_puck_vel
+        self.control_freq = config.control_freq
+        self.step_frequency = config.step_frequency
+        self.last_action = np.zeros(2)
         
         self.robosuite_env = None
         self.robosuite_env_cfg = {'robots': config.robots, 'env_configuration': config.env_configuration, 'controller_configs': config.controller_configs,
@@ -307,7 +313,8 @@ class AirHockeyRobosuite(AirHockeySim):
         
         self.timestep = 0
         self.puck_history = [(-2 + self.center_offset_constant,0,1) for i in range(5)]
-        
+        self.last_action = np.zeros(2)
+
         if not self.initialized_objects:
             self.puck_names = {}
             self.block_names = {}
@@ -664,9 +671,9 @@ class AirHockeyRobosuite(AirHockeySim):
         """
         Converts 2D action to 3D robot action
         """
-        delta_pos_x = -action[0] * self.x_to_x_prime_ratio
-        delta_pos_y = - action[1]
-        delta_pos_z = self.transform_z(- action[0]) #  * self.x_to_z_ratio
+        delta_pos_x = -action[0] * self.x_to_x_prime_ratio * self.action_x_scaling
+        delta_pos_y = - action[1] * self.action_y_scaling
+        delta_pos_z = self.transform_z(- action[0]  * self.action_x_scaling) #  * self.x_to_z_ratio
         
         return np.array([delta_pos_x, delta_pos_y, delta_pos_z])
 
@@ -681,6 +688,12 @@ class AirHockeyRobosuite(AirHockeySim):
         Raises:
             ValueError: [Steps past episode termination]
         """
+        # TODO: use self.last_action, self.step_frequency, self.time_frequency to implement action_lag
+        # number of steps to take: self.time_frequency / self.step_frequency 
+        # also need to set self.last_action properly
+        # This may require some recalibrating of the gains, though hopefully not
+
+
         action = self.translate_action(action)
         # Since the env.step frequency is slower than the mjsim timestep frequency, the internal controller will output
         # multiple torque commands in between new high level action commands. Therefore, we need to denote via
