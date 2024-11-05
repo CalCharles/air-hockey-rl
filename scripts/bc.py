@@ -67,11 +67,8 @@ def eval_actor(env: gym.Env, actor: nn.Module, dir, device: str, n_episodes: int
     actor.train()
     return np.asarray(episode_rewards)
 
-def train_bc(dataset, actor, optimizer, dir, env, renderer, epochs=500, batch_size=64, eval_freq=50, eval_actor=True, device='cpu'):
+def train_bc(dataset, actor, optimizer, dir, env, renderer, epochs=500, batch_size=1024, eval_freq=50, eval_actor=True, device='cpu'):
     best_rew = float('-inf')
-    states = torch.tensor(np.vstack([obs[:-1] for obs in dataset["observations"]]), dtype=torch.float32)
-    actions = torch.tensor(np.vstack(dataset["actions"]), dtype=torch.float32)
-    dataset = TensorDataset(states, actions)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
     mse = nn.MSELoss()
     for epoch in tqdm.tqdm(range(epochs)):
@@ -95,14 +92,14 @@ if __name__ == "__main__":
     # Load dataset and environment configurations
     parser = argparse.ArgumentParser(description='Demonstrate the air hockey game.')
     parser.add_argument('--log_dir', type=str, help='Directory to save the logs.')
-    parser.add_argument('--load_agent_chkpt', type=str, default='/datastor1/calebc/public/data/box2d_models/puck_vel/model.zip', help='Path to the agent checkpoint.')
-    parser.add_argument('--config_path', type=str, default='configs/baseline_configs/box2d/puck_vel.yaml', help='Path to the bc config.')
-    parser.add_argument('--data_dir', type=str, default='/datastor1/calebc/public/data/mouse/state_data_all_new/', help='Path to the data config.')
+    parser.add_argument('--load_agent_chkpt', type=str, default='/datastor1/calebc/public/data/box2d_models/puck_strike/model.zip', help='Path to the agent checkpoint.')
+    parser.add_argument('--config_path', type=str, default='configs/baseline_configs/box2d/strike.yaml', help='Path to the bc config.')
+    parser.add_argument('--data_dir', type=str, default='/datastor1/calebc/public/data/mouse/state_data_all_new/puck_strike_dataset.pkl', help='Path to the data config.')
     parser.add_argument('--eval_actor', type=bool, default=False, help='Whether to evaluate the actor.')
     parser.add_argument('--device', type=str, default='cuda', help='Device to run the training on.')
     args = parser.parse_args()
 
-    os.mkdir(args.log_dir)
+    os.makedirs(args.log_dir, exist_ok=True)
     if args.config_path is not None:
         with open(args.config_path, 'r') as f:
             air_hockey_cfg = yaml.safe_load(f)
@@ -116,7 +113,16 @@ if __name__ == "__main__":
         action_dim = env.action_space.shape[0]
 
     from dataset_management.create_dataset import load_dataset
-    dataset = load_dataset(args.data_dir, "pos", env, num_trajectories=-1)
+    import pickle
+    if args.data_dir.endswith('pkl'):
+        with open(args.data_dir, 'rb') as f:
+            dataset = pickle.load(f)
+    else:
+        dataset = load_dataset(args.data_dir, "pos", env, num_trajectories=-1, save_dir=os.path.join(args.data_dir, 'puck_strike_dataset.pkl'))
+    states = torch.tensor(np.vstack([obs[:-1] for obs in dataset["observations"]]), dtype=torch.float32)
+    actions = torch.tensor(np.vstack(dataset["actions"]), dtype=torch.float32)
+    dataset = TensorDataset(states, actions)
+
     if args.load_agent_chkpt is not None:
         actor = PPO.load(args.load_agent_chkpt, device=args.device)
     else:

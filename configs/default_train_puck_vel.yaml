@@ -29,7 +29,7 @@ air_hockey:
     render_size: 360
     width: 0.8636
   stand_still_rew: 0.01
-  task: puck_vel
+  task: puck_velocity
   terminate_on_enemy_goal: true
   terminate_on_out_of_bounds: true
   terminate_on_puck_stop: true
@@ -44,3 +44,4 @@ n_threads: 1
 tb_log_dir: baseline_models
 tb_log_name: air_hockey_agent
 vec_normalize_save_filepath: vec_normalize.pkl
+algorithm: ppo
