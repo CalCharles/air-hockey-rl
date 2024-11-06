@@ -1,5 +1,8 @@
 import argparse
 import os
+import sys
+sys.path.insert(0,'/home/air_hockey/cathy-air-hockey-rl/air-hockey-rl/')
+print(sys.path)
 import yaml
 from airhockey import AirHockeyEnv
 import gymnasium as gym
@@ -26,6 +29,8 @@ import numpy as np
 from dataset_management.create_dataset import load_dataset
 from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR, ReduceLROnPlateau
 from stable_baselines3.common.logger import configure
+import wandb
+
 
 
 # set up matplotlib
@@ -61,44 +66,116 @@ class TrainingLossCallback(BaseCallback):
         np.save(loss_file_path, np.array(self.losses))
         print(f"Training losses saved to {loss_file_path}")
 
+# def plot_losses(log_dir, i):
+#     # Load the training losses
+#     loss_file = os.path.join(log_dir, 'monitor/training_losses.npy')
+#     if os.path.exists(loss_file):
+#         losses = np.load(loss_file)
+#         iteration_numbers = np.arange(1, len(losses) + 1)
+#         # print('Training loss', losses)
+#         plt.plot(iteration_numbers, losses, '-o')
+#         plt.title('PPO Training Loss')
+#         plt.xlabel('Iteration')
+#         plt.ylabel('Loss')
+#         plt.legend()
+#         plt.savefig(log_dir + 'monitor/loss_'+str(i)) #file_path
+#         plt.close()
+#     else:
+#         print("No loss data found.")
+
 def plot_losses(log_dir, i):
     # Load the training losses
     loss_file = os.path.join(log_dir, 'monitor/training_losses.npy')
     if os.path.exists(loss_file):
         losses = np.load(loss_file)
         iteration_numbers = np.arange(1, len(losses) + 1)
-        # print('Training loss', losses)
-        plt.plot(iteration_numbers, losses, '-o')
-        plt.title('PPO Training Loss')
-        plt.xlabel('Iteration')
-        plt.ylabel('Loss')
-        plt.legend()
-        plt.savefig(log_dir + 'monitor/loss_'+str(i)) #file_path
-        plt.close()
-    else:
-        print("No loss data found.")
+
+        # data = list(zip(iteration_numbers, losses))
+        # table = wandb.Table(data=data, columns=["step_loss", "RL Training Loss " + str(i)])
+        # # Log the table to WandB
+        # wandb.log({"Loss Data Table " + str(i): table})
+
+        # # Optionally, you can also plot the data as custom plots
+        # wandb.log({"rl_training_loss_" + str(i): wandb.plot.line_series(
+        #     xs=iteration_numbers, ys=[losses], keys=["RL Training Loss " + str(i)], title="RL Training Loss: Iteration "+ str(i), xname="step_loss")
+        # })
+        for step, loss in zip(iteration_numbers, losses):
+            wandb.log({"PPO Training Loss " + str(i): loss})
+
+def plot_reward(log_dir, i):
+    # reward
+    results = load_results(log_dir + 'monitor')  # Load results from monitor files
+    x, y = ts2xy(results, results_plotter.X_TIMESTEPS)
+
+    # Clean the data by removing any NaN values from x and y
+    print('x', x, 'y', y)
+    valid_indices = ~np.isnan(x) & ~np.isnan(y)
+    clean_x = x[valid_indices]
+    clean_y = y[valid_indices]
+
+    # data = list(zip(clean_x, clean_y))
+    # table = wandb.Table(data=data, columns=["step_reward", "RL Training Rewards " + str(i)])
+    # # Log the table to WandB
+    # wandb.log({"Reward Data Table " + str(i): table})
+
+    # # Optionally, you can also plot the data as custom plots
+    # wandb.log({"rl_training_rewards_" + str(i): wandb.plot.line_series(
+    #     xs=clean_x, ys=[clean_y], keys=["RL Training Rewards " + str(i)], title="RL Training Rewards: Iteration "+ str(i), xname="step_reward")
+    # })
+    for step, reward in zip(clean_x, clean_y):
+        wandb.log({"PPO Training Reward " + str(i): reward})
+
+
+
+from scipy.interpolate import interp1d
+def plot_action_error(log_dir, i, results, downsample_rate=1000):
+    # Ensure results and iteration_numbers are NumPy arrays
+    results = np.array(results)
+    iteration_numbers = np.arange(1, len(results) + 1)
+
+    # Downsample the data
+    downsampled_indices = np.arange(0, len(results), downsample_rate)
+    downsampled_iterations = iteration_numbers[downsampled_indices]
+    downsampled_results = results[downsampled_indices]
+
+    # Create line series plot with wandb
+    data = list(zip(downsampled_iterations, downsampled_results))
+    table = wandb.Table(data=data, columns=["step_action_error", "Grounded Action Error " + str(i)])
+    # Log the table to WandB
+    wandb.log({"Grounded Action Error Table " + str(i): table})
+
+    # Optionally, you can also plot the data as custom plots
+    wandb.log({"grounded_action_error_" + str(i): wandb.plot.line_series(
+        xs=downsampled_iterations, ys=[downsampled_results], keys=["Grounded Action Error " + str(i)], title="Grounded Action Error: Iteration "+ str(i), xname="step_action_error")
+    })
+
 
 # plot_reward([self.log_dir + 'monitor'], num_iters, results_plotter.X_TIMESTEPS, "RL training rewards")
-def plot_reward(log_dir, i, results):
-    iteration_numbers = np.arange(1, len(results) + 1)
-    plt.plot(iteration_numbers, results, '-o')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title("RL training rewards")
-    plt.legend()
-    plt.savefig(log_dir + 'monitor/reward_'+str(i)) #file_path
-    plt.close()
+# def plot_reward(log_dir, i, results):
+#     results2 = load_results(log_dir + 'monitor') # location of the monitor files
+#     x, y = ts2xy(results2, results_plotter.X_TIMESTEPS)
+#     # print(x,y)
+    
+#     # iteration_numbers = np.arange(1, len(results) + 1)
+#     plt.plot(x, y, '-o', markersize=5)
+#     plt.xlabel('Epoch')
+#     plt.ylabel('Loss')
+#     plt.title("RL training rewards")
+#     plt.legend()
+#     plt.savefig(log_dir + 'monitor/reward_'+str(i)) #file_path
+#     plt.close()
 
 
-def plot_action_error(log_dir, i, results):
-    iteration_numbers = np.arange(1, len(results) + 1)
-    plt.plot(iteration_numbers, results, '-o')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title("Grounded Action Error")
-    plt.legend()
-    plt.savefig(log_dir + 'monitor/action_error_'+str(i)) #file_path
-    plt.close()
+# def plot_action_error(log_dir, i, results):
+#     iteration_numbers = np.arange(1, len(results) + 1)
+#     plt.plot(iteration_numbers, results, '-o')
+#     plt.xlabel('Epoch')
+#     plt.ylabel('Loss')
+#     plt.title("Grounded Action Error")
+#     plt.legend()
+#     plt.savefig(log_dir + 'monitor/action_error_'+str(i)) #file_path
+#     plt.close()
+
 
 class SaveOnBestTrainingRewardCallback(BaseCallback):
     """
@@ -128,6 +205,7 @@ class SaveOnBestTrainingRewardCallback(BaseCallback):
           # Retrieve training reward
           x, y = ts2xy(load_results(self.log_dir), "timesteps")
           if len(x) > 0:
+              y = np.array(y, dtype=np.float64)  # or np.float32 depending on your needs
               # Mean training reward over the last 100 episodes
               mean_reward = np.mean(y[-100:])
               if self.verbose >= 1:
@@ -289,31 +367,15 @@ class GATWrapper(gym.Env):
     def step(self, action):
         s = torch.tensor(self.current_state) # self.env.get_observation(self.env.simulator.get_current_state()))
         a = torch.tensor(action)
-        
-        # random_indices = np.random.randint(0, 1048, 1)[0]
-        # print(random_indices)
-        # s = torch.tensor(self.s)[random_indices]
-        # a = torch.tensor(self.a)[random_indices]
-        # s_prime = self.s_prime[random_indices]
 
         with torch.no_grad():
             predicted_normalized_delta = self.forward_model(torch.unsqueeze(s, dim=0), torch.unsqueeze(a, dim=0))
-        # normalized_delta, _, _ = normalize(self.s_prime - self.s)
-        # print('normalized_delta', normalized_delta) # next_state torch.Size([1, 8])
-        # print("---------------------")
-        # print("s", s.numpy())
-        # print("predicted_normalized_delta", predicted_normalized_delta)
-        # grounded_action_true = self.inverse_model(torch.unsqueeze(s, dim=0), torch.unsqueeze(torch.tensor(s_prime), dim=0))
         with torch.no_grad():
-            # normalized_delta, _, _ = normalize_tensor(torch.unsqueeze(s, dim=0) - next_state)
             grounded_action = self.inverse_model(torch.unsqueeze(s, dim=0), predicted_normalized_delta)
         grounded_action = torch.squeeze(grounded_action, dim=0)
-        # print("a", a.numpy(), "a'", grounded_action.detach().numpy())
         self.error.append((grounded_action - a).abs().sum().detach().numpy().item())
-        # print("self.error", self.error[-1])
 
         state_dict, A, B, C, D = self.env.step(a)
-        # print('state_dict', state_dict)
         self.current_state = state_dict
         return state_dict, A, B, C, D
 
@@ -450,17 +512,22 @@ class GroundedActionTransformation():
         self.real_env = real_env
         self.sim_current_state_dict, info = self.sim_env.reset()
         self.real_current_state_dict, info = self.real_env.reset()
-        # self.sim_current_state = self.sim_env.simulator.get_current_state() # or self.sim_env.current_state
-        # self.real_current_state = self.real_env.simulator.get_current_state() # or self.real_env.current_state
-        # print("self.sim_current_state", self.sim_current_state)
-        # print("self.real_current_state", self.real_current_state)
+        print('sim_current_state_dict', self.sim_current_state_dict)
         self.sim_current_state = self.sim_env.simulator.get_current_state() # or self.sim_env.current_state
         self.real_current_state = self.real_env.simulator.get_current_state() # or self.real_env.current_state
+        print("self.sim_current_state", self.sim_current_state)
+        # equivalent to self.sim_current_state_dict
+        print("get_observation", self.sim_env.get_observation(self.sim_env.simulator.get_current_state()))
+        # input()
+        # print("self.real_current_state", self.real_current_state)
+        self.sim_current_state = self.sim_current_state_dict # self.sim_env.simulator.get_current_state() # or self.sim_env.current_state
+        self.real_current_state = self.real_current_state_dict # self.real_env.simulator.get_current_state() # or self.real_env.current_state
 
         print("data['state']", data['state'].shape)
+        print( data['state'][:5])
         print("data['action']", data['action'].shape)
 
-        self.n_observations_sim = data['state'].shape[1] # observations is paddle x y vx vy + puck last 5 x y (occ0/1), actions is dx dy
+        self.n_observations_sim = data['state'].shape[1] # observations is paddle x y vx vy + puck last 5 x y (occ0/1), 4+5*3=19 actions is dx dy 
         self.n_actions =  data['action'].shape[1]
         # print(self.n_observations, self.n_actions)
         self.forward_model = init_forward_model(self.n_observations_sim, self.n_actions) # for real
@@ -522,13 +589,12 @@ class GroundedActionTransformation():
         for i in range(num_frames):
             if (num_frames > 10 and i % 1000 == 0) or num_frames == 10:
                 print("In rollout_sim, num_frames processed:", i)
-            obs_dict = self.sim_current_state_dict # self.real_env.get_observation(self.real_current_state)
-            obs = self.sim_env.get_observation(self.sim_current_state)
+            obs = self.sim_env.get_observation(self.sim_env.simulator.get_current_state())
             model = PPO.load(self.policy, env=self.sim_env)
-            act, _states = model.predict(obs_dict) # apply policy to sim_env
+            act, _states = model.predict(obs) # apply policy to sim_env
             # print(self.sim_env.step(act))
             obs_next, reward, is_finished, truncated, info = self.sim_env.step(act)
-            self.sim_current_state = self.sim_env.simulator.get_current_state() # self.sim_env.simulator.get_current_state()
+            self.sim_current_state = obs_next # self.sim_env.simulator.get_current_state() # self.sim_env.simulator.get_current_state()
             self.sim_current_state_dict = obs_next
             data['state'].append(np.array(obs))
             data['next_state'].append(np.array(obs_next))
@@ -557,7 +623,7 @@ class GroundedActionTransformation():
         # self.scheduler_inverse = ReduceLROnPlateau(self.inverse_optimizer, mode='min', factor=0.5, patience=5)
 
 
-    def rollout_real(self, num_frames):
+    def rollout_real(self, num_frames, useWandb=False):
         data = {
             'state': [],
             'next_state':  [],
@@ -568,17 +634,24 @@ class GroundedActionTransformation():
             'trunc': [],
             'info':  [],
         }
+        avg_reward = [] # avg reward per trajectory, logged for the last itr
+        reward_cur_trajectory = 0
+        count = 0
+
         for i in range(num_frames):
             if (num_frames > 10 and i % 1000 == 0) or num_frames == 10:
                 print("In rollout_real, num_frames processed:", i)
-            obs_dict = self.real_current_state_dict # self.real_env.get_observation(self.real_current_state)
-            obs = self.real_env.get_observation(self.real_current_state)
+            # obs_dict = self.real_current_state_dict # self.real_env.get_observation(self.real_current_state)
+            obs = self.real_env.get_observation(self.real_env.simulator.get_current_state())
             model = PPO.load(self.policy, env=self.real_env)
-            act, _states = model.predict(obs_dict) # apply policy to real_env
+            act, _states = model.predict(obs) # apply policy to real_env
             # print(self.real_env.step(act))
             obs_next, reward, is_finished, truncated, info = self.real_env.step(act)
+            if useWandb:
+                reward_cur_trajectory += reward
+                count += 1
             # print('is_finished', is_finished, truncated)
-            self.real_current_state = self.real_env.simulator.get_current_state() # self.real_env.simulator.get_current_state()
+            self.real_current_state = obs_next # self.real_env.simulator.get_current_state() # self.real_env.simulator.get_current_state()
             self.real_current_state_dict = obs_next
             # print(type(obs), obs, type(obs_next), obs_next)
             data['state'].append(np.array(obs))
@@ -590,8 +663,13 @@ class GroundedActionTransformation():
             data['trunc'].append(np.array([int(truncated)]))
             data['info'].append(np.array([info]))
             if is_finished or truncated:
-                self.real_current_state_dict, info = self.real_env.reset()            
-                print('we just reset')
+                self.real_current_state_dict, info = self.real_env.reset()          
+                if useWandb and count != 0:
+                    print("Logging Evaluation Reward")
+                    avg_reward.append(reward_cur_trajectory/count)
+                    wandb.log({"Eval Reward": reward_cur_trajectory/count})
+                    reward_cur_trajectory = 0
+                    count = 0
         data['state'] = np.array(data['state'])# not taking goal_x goal_y
         data['next_state'] = np.array(data['next_state'])
         data['delta'] = np.array(data['delta'])
@@ -609,7 +687,20 @@ class GroundedActionTransformation():
         # self.scheduler_forward = optim.lr_scheduler.ReduceLROnPlateau(self.forward_optimizer, mode='min', factor=0.5, patience=10, verbose=True)
 
         # TODO: might need to make this actually work
-    
+
+        if useWandb and len(avg_reward) > 0:
+            # Create line series plot with wandb
+            iteration_numbers = np.arange(1, len(avg_reward) + 1)
+            data = list(zip(iteration_numbers, avg_reward))
+            table = wandb.Table(data=data, columns=["step_eval_reward", "eval_reward"])
+            # Log the table to WandB
+            wandb.log({"PPO Evaluation Reward Table": table})
+
+            # Optionally, you can also plot the data as custom plots
+            wandb.log({"grounded_action_error_" + str(i): wandb.plot.line_series(
+                xs=iteration_numbers, ys=[avg_reward], keys=["eval_reward"], title="PPO Evaluation Rewards", xname="step_eval_reward")
+            })
+        
     def evaluate_on_dataset(self):
         """Sample a batch size of 500 once, then return the mean action_recovery_error"""
         batch_size = 500
@@ -652,10 +743,13 @@ class GroundedActionTransformation():
             # print("self.sim_current_state",self.sim_current_state)
             # print("current sim buffer index:", self.sim_buffer.current_index)
             state, info = self.sim_env.reset() # before training every iteration, reset simulator
-            self.sim_current_state = self.sim_env.simulator.get_current_state() # udpate current state
+            self.sim_current_state = state # self.sim_env.simulator.get_current_state() # udpate current state
             action_error = []
-            grounded_sim_env = GATWrapper(self.sim_env, self.sim_env.get_observation(self.sim_current_state), self.forward_model, self.inverse_model, action_error, self.sim_buffer.sample(self.sim_batch_size))
+            grounded_sim_env = GATWrapper(self.sim_env, self.sim_env.get_observation(self.sim_env.simulator.get_current_state()), \
+                                self.forward_model, self.inverse_model, action_error, self.sim_buffer.sample(self.sim_batch_size))
             model = PPO.load(self.policy, env=grounded_sim_env)
+            # how frequently is PPO training
+            # use wandb plotting
             # model.learn(num_iters, callback=SaveOnBestTrainingRewardCallback(check_freq=5000, log_dir=self.log_dir + 'monitor'))
             training_callback = TrainingLossCallback(log_dir=log_dir + '/monitor')
             callback = [SaveOnBestTrainingRewardCallback(check_freq=5000, log_dir=self.log_dir + 'monitor'),
@@ -665,17 +759,18 @@ class GroundedActionTransformation():
             # print('action_error', action_error)
             plot_losses(log_dir, i) # plot trainig loss
             # plot training rewards
-            plot_reward(self.log_dir, i, results_plotter.X_TIMESTEPS)
-            plot_action_error(self.log_dir, i, action_error)
-        if i != 0:
-            print("Action transform error:", np.mean(grounded_sim_env.error))
+            plot_reward(log_dir, i)
+            plot_action_error(log_dir, i, action_error) # freq is every 1k steps
+
+        # if i != 0:
+        #     print("Action transform error:", np.mean(grounded_sim_env.error))
         self.policy = self.log_dir + "/optimized_policy" + str(i) # self.policy stores the current model name
         model.save(self.policy)
         state, info = self.sim_env.reset() # reset after training RL
         return
     
 
-    def train_forward(self, num_iters, verbose=True):
+    def train_forward(self, num_iters, verbose=True, iter_i=-1):
         self.forward_model.train()
         loss_values = []
         for i in range(num_iters):
@@ -699,13 +794,14 @@ class GroundedActionTransformation():
             nn.utils.clip_grad_norm_(self.forward_model.parameters(), max_norm=1.0)
             self.forward_optimizer.step()
             self.scheduler_forward.step()
-            loss_values.append(loss.item())
+            wandb.log({"Forward Model Loss " + str(iter_i): loss.item()})
+            # loss_values.append(loss.item())
         return loss_values, self.forward_model
     
 
 # forward(state, action) -> normalized_delta
 # inverse(state, normalized_delta) -> action
-    def train_inverse(self, num_iters, verbose=True):
+    def train_inverse(self, num_iters, verbose=True, iter_i=-1):
         self.inverse_model.train()
         loss_values = []
         for i in range(num_iters):
@@ -726,12 +822,12 @@ class GroundedActionTransformation():
             nn.utils.clip_grad_norm_(self.inverse_model.parameters(), max_norm=1.0)
             self.inverse_optimizer.step()
             self.scheduler_inverse.step()
-            loss_values.append(loss.item())
+            # loss_values.append(loss.item())
+            wandb.log({"Inverse Model Loss " + str(iter_i): loss.item()})
         return loss_values, self.inverse_model
 
 
 def load_dataset0(dataset_pth): # TODO
-    avg_delta = np.zeros(300) # len should be 300
     import h5py
     import os
     import ast
@@ -759,7 +855,6 @@ def load_dataset0(dataset_pth): # TODO
             data['term'] = np.array(data['term'])
             data['trunc'] = np.array(data['trunc'])
             data['info'] = np.expand_dims(np.array(data['info']),axis=1)
- 
             data['delta'] = np.array(data['delta'])
 
             return data
@@ -984,8 +1079,8 @@ def train_GAT(args, log_dir):
         sim_air_hockey_cfg = yaml.safe_load(f)
     with open(args.real_cfg, 'r') as f:
         real_air_hockey_cfg = yaml.safe_load(f)
-    train_forward = False
-    train_inverse = False
+    train_forward = True
+    train_inverse = True
     pth_dir_inverse = 'gat_log/AirHockey/'
     pth_dir_forward = 'gat_log/AirHockey/'
     os.makedirs(log_dir, exist_ok=True)
@@ -1028,20 +1123,23 @@ def train_GAT(args, log_dir):
         print("Loading pretrained forward models from", pth_dir_forward)
         gat.load_forward(pth_dir_forward + 'forward_model_pt.pth')    
 
-    for i in range(1, args.num_real_sim_iters):
-        print('Iteration', i, 'started.')
+    for i in range(1, args.num_real_sim_iters + 1):
+        print('Iteration', i, 'train_sim started.')
         gat.train_sim(args.n_rl_timesteps, i)
         print('rollout_real', i, 'started.')
-        gat.rollout_real(args.num_real_steps)
+        if i == args.num_real_sim_iters: # in last iteration, no training f/i model, get the final policy, evaluate in rollout_real then break
+            gat.rollout_real(args.num_real_steps, useWandb=True)
+        else:
+            gat.rollout_real(args.num_real_steps)
         
         print('rollout_sim', i, 'started.')
         gat.rollout_sim(args.num_sim_steps)
         print('Iteration', i, 'training started.')
-        if i > 3:
-            loss_values_i, inverse_model_i = gat.train_inverse(10000)
+        if i > 3: # when inverse is harder to train
+            loss_values_i, inverse_model_i = gat.train_inverse(10000, iter_i=i)
         else:
-            loss_values_i, inverse_model_i = gat.train_inverse(args.inverse_iters)
-        loss_values_f, forward_model_i = gat.train_forward(args.forward_iters)
+            loss_values_i, inverse_model_i = gat.train_inverse(args.inverse_iters, iter_i=i)
+        loss_values_f, forward_model_i = gat.train_forward(args.forward_iters, iter_i=i)
         print('Iteration', i, 'finished.')
 
         plot_fp = log_dir + 'training_summary/training_summary_i'+str(i)+'.png'
@@ -1060,26 +1158,37 @@ def train_GAT(args, log_dir):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Demonstrate the air hockey game.')
-    parser.add_argument('--sim-cfg', type=str, default='configs/gat/puck_height3.yaml', help='Path to the configuration file.')
-    parser.add_argument('--real-cfg', type=str, default='configs/gat/puck_height_real.yaml', help='Path to the configuration file.')
+    parser.add_argument('--sim-cfg', type=str, default='configs/gat/puck_height0.yaml', help='Path to the configuration file.')
+    parser.add_argument('--real-cfg', type=str, default='configs/gat/puck_height1.yaml', help='Path to the configuration file.')
     parser.add_argument('--dataset_pth', type=str, default=None, help='Path to the dataset file.') # real-cfg
     parser.add_argument('--dataset_pth1', type=str, default='/nfs/homes/air_hockey/cathy_air_hockey/AirHockeyRandomAction/trajectory_data', help='Path to the dataset file.')
     parser.add_argument('--dataset_pth2', type=str, default='/nfs/homes/air_hockey/cathy_air_hockey/AirHockeyRandomNetwork/trajectory_data', help='Path to the dataset file.')
     parser.add_argument('--dataset_pth3', type=str, default='/nfs/homes/air_hockey/cathy_air_hockey/AirHockeyTrainedNetwork/trajectory_data', help='Path to the dataset file.')
     parser.add_argument('--initial_rl_training', type=int, default=10000, help='initial_rl_training')
-    parser.add_argument('--initial_inverse_training', type=int, default=6000, help='initial_inverse_training') #20000
-    parser.add_argument('--initial_forward_training', type=int, default=6000, help='initial_forward_training') #22000
+    parser.add_argument('--initial_inverse_training', type=int, default=1000, help='initial_inverse_training') #6000 #20000
+    parser.add_argument('--initial_forward_training', type=int, default=1000, help='initial_forward_training') #22000
     parser.add_argument('--num_real_sim_iters', type=int, default=10, help='num_real_sim_iters')
-    parser.add_argument('--num_real_steps', type=int, default=20000, help='num_real_steps') # 20000
-    parser.add_argument('--num_sim_steps', type=int, default=20000, help='num_sim_steps')
-    parser.add_argument('--n_rl_timesteps', type=int, default=100000, help='n_rl_timesteps') # 100000 in sim #10000 in real
-    parser.add_argument('--inverse_iters', type=int, default=10000, help='inverse_iters') #3000
-    parser.add_argument('--forward_iters', type=int, default=3000, help='forward_iters')
+    parser.add_argument('--num_real_steps', type=int, default=1000, help='num_real_steps') # 20000
+    parser.add_argument('--num_sim_steps', type=int, default=1000, help='num_sim_steps')
+    parser.add_argument('--n_rl_timesteps', type=int, default=1000, help='n_rl_timesteps') # 100000 in sim #10000 in real
+    parser.add_argument('--inverse_iters', type=int, default=1000, help='inverse_iters') #3000
+    parser.add_argument('--forward_iters', type=int, default=1000, help='forward_iters')
     parser.add_argument('--inverse_pt_pth', type=str, default='inverse_model.pth', help='forward_iters')
     parser.add_argument('--forward_pt_pth', type=str, default='forward_model.pth', help='forward_iters')
 
     args = parser.parse_args()
 
+    wandb.login()
+
+    api = wandb.Api()
+    if api.artifact_exists('entity/project/artifact_name:latest'):
+        artifact = api.artifact('entity/project/artifact_name:latest')
+    # Initialize wandb if not already initialized
+    session_name = args.sim_cfg[args.sim_cfg.index('puck'):] + " and " + args.real_cfg[args.real_cfg.index('puck'):]
+    if not wandb.run:
+        # wandb.init(settings=wandb.Settings(start_method="fork"))
+
+        wandb.init(project="ppo-training", name=f"Training Session " + session_name, reinit=True)
     # with open(args.sim_cfg, 'r') as f:
     #     sim_air_hockey_cfg = yaml.safe_load(f)
 
@@ -1096,6 +1205,9 @@ if __name__ == '__main__':
     # readDataset(args)
 
     train_GAT(args, log_dir)
+
+    # Finish the wandb run
+    wandb.finish()
 
     # evaluate_GAT(args, '11')
     # evaluate_GAT(args, '12')
