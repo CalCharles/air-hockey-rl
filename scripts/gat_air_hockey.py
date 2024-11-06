@@ -31,6 +31,8 @@ from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR, ReduceLROnPlatea
 from stable_baselines3.common.logger import configure
 import wandb
 
+import wandb
+
 
 
 # set up matplotlib
@@ -102,35 +104,19 @@ def plot_losses(log_dir, i):
         for step, loss in zip(iteration_numbers, losses):
             wandb.log({"PPO Training Loss " + str(i): loss})
 
-def plot_reward(log_dir, i):
-    # reward
-    results = load_results(log_dir + 'monitor')  # Load results from monitor files
-    x, y = ts2xy(results, results_plotter.X_TIMESTEPS)
-
-    # Clean the data by removing any NaN values from x and y
-    print('x', x, 'y', y)
-    valid_indices = ~np.isnan(x) & ~np.isnan(y)
-    clean_x = x[valid_indices]
-    clean_y = y[valid_indices]
-
-    # data = list(zip(clean_x, clean_y))
-    # table = wandb.Table(data=data, columns=["step_reward", "RL Training Rewards " + str(i)])
-    # # Log the table to WandB
-    # wandb.log({"Reward Data Table " + str(i): table})
-
-    # # Optionally, you can also plot the data as custom plots
-    # wandb.log({"rl_training_rewards_" + str(i): wandb.plot.line_series(
-    #     xs=clean_x, ys=[clean_y], keys=["RL Training Rewards " + str(i)], title="RL Training Rewards: Iteration "+ str(i), xname="step_reward")
-    # })
-    for step, reward in zip(clean_x, clean_y):
-        wandb.log({"PPO Training Reward " + str(i): reward})
+# plot_reward([self.log_dir + 'monitor'], num_iters, results_plotter.X_TIMESTEPS, "RL training rewards")
+def plot_reward(log_dir, i, results):
+    iteration_numbers = np.arange(1, len(results) + 1)
+    plt.plot(iteration_numbers, results, '-o')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title("RL training rewards")
+    plt.legend()
+    plt.savefig(log_dir + 'monitor/reward_'+str(i)) #file_path
+    plt.close()
 
 
-
-from scipy.interpolate import interp1d
-def plot_action_error(log_dir, i, results, downsample_rate=1000):
-    # Ensure results and iteration_numbers are NumPy arrays
-    results = np.array(results)
+def plot_action_error(log_dir, i, results):
     iteration_numbers = np.arange(1, len(results) + 1)
 
     # Downsample the data
@@ -623,7 +609,7 @@ class GroundedActionTransformation():
         # self.scheduler_inverse = ReduceLROnPlateau(self.inverse_optimizer, mode='min', factor=0.5, patience=5)
 
 
-    def rollout_real(self, num_frames, useWandb=False):
+    def rollout_real(self, num_frames):
         data = {
             'state': [],
             'next_state':  [],
@@ -634,10 +620,6 @@ class GroundedActionTransformation():
             'trunc': [],
             'info':  [],
         }
-        avg_reward = [] # avg reward per trajectory, logged for the last itr
-        reward_cur_trajectory = 0
-        count = 0
-
         for i in range(num_frames):
             if (num_frames > 10 and i % 1000 == 0) or num_frames == 10:
                 print("In rollout_real, num_frames processed:", i)
@@ -647,9 +629,6 @@ class GroundedActionTransformation():
             act, _states = model.predict(obs) # apply policy to real_env
             # print(self.real_env.step(act))
             obs_next, reward, is_finished, truncated, info = self.real_env.step(act)
-            if useWandb:
-                reward_cur_trajectory += reward
-                count += 1
             # print('is_finished', is_finished, truncated)
             self.real_current_state = obs_next # self.real_env.simulator.get_current_state() # self.real_env.simulator.get_current_state()
             self.real_current_state_dict = obs_next
@@ -663,13 +642,8 @@ class GroundedActionTransformation():
             data['trunc'].append(np.array([int(truncated)]))
             data['info'].append(np.array([info]))
             if is_finished or truncated:
-                self.real_current_state_dict, info = self.real_env.reset()          
-                if useWandb and count != 0:
-                    print("Logging Evaluation Reward")
-                    avg_reward.append(reward_cur_trajectory/count)
-                    wandb.log({"Eval Reward": reward_cur_trajectory/count})
-                    reward_cur_trajectory = 0
-                    count = 0
+                self.real_current_state_dict, info = self.real_env.reset()            
+                print('we just reset')
         data['state'] = np.array(data['state'])# not taking goal_x goal_y
         data['next_state'] = np.array(data['next_state'])
         data['delta'] = np.array(data['delta'])
@@ -1123,14 +1097,11 @@ def train_GAT(args, log_dir):
         print("Loading pretrained forward models from", pth_dir_forward)
         gat.load_forward(pth_dir_forward + 'forward_model_pt.pth')    
 
-    for i in range(1, args.num_real_sim_iters + 1):
-        print('Iteration', i, 'train_sim started.')
+    for i in range(1, args.num_real_sim_iters):
+        print('Iteration', i, 'started.')
         gat.train_sim(args.n_rl_timesteps, i)
         print('rollout_real', i, 'started.')
-        if i == args.num_real_sim_iters: # in last iteration, no training f/i model, get the final policy, evaluate in rollout_real then break
-            gat.rollout_real(args.num_real_steps, useWandb=True)
-        else:
-            gat.rollout_real(args.num_real_steps)
+        gat.rollout_real(args.num_real_steps)
         
         print('rollout_sim', i, 'started.')
         gat.rollout_sim(args.num_sim_steps)
@@ -1168,27 +1139,16 @@ if __name__ == '__main__':
     parser.add_argument('--initial_inverse_training', type=int, default=1000, help='initial_inverse_training') #6000 #20000
     parser.add_argument('--initial_forward_training', type=int, default=1000, help='initial_forward_training') #22000
     parser.add_argument('--num_real_sim_iters', type=int, default=10, help='num_real_sim_iters')
-    parser.add_argument('--num_real_steps', type=int, default=1000, help='num_real_steps') # 20000
-    parser.add_argument('--num_sim_steps', type=int, default=1000, help='num_sim_steps')
-    parser.add_argument('--n_rl_timesteps', type=int, default=1000, help='n_rl_timesteps') # 100000 in sim #10000 in real
-    parser.add_argument('--inverse_iters', type=int, default=1000, help='inverse_iters') #3000
-    parser.add_argument('--forward_iters', type=int, default=1000, help='forward_iters')
+    parser.add_argument('--num_real_steps', type=int, default=20000, help='num_real_steps') # 20000
+    parser.add_argument('--num_sim_steps', type=int, default=20000, help='num_sim_steps')
+    parser.add_argument('--n_rl_timesteps', type=int, default=100000, help='n_rl_timesteps') # 100000 in sim #10000 in real
+    parser.add_argument('--inverse_iters', type=int, default=10000, help='inverse_iters') #3000
+    parser.add_argument('--forward_iters', type=int, default=3000, help='forward_iters')
     parser.add_argument('--inverse_pt_pth', type=str, default='inverse_model.pth', help='forward_iters')
     parser.add_argument('--forward_pt_pth', type=str, default='forward_model.pth', help='forward_iters')
 
     args = parser.parse_args()
 
-    wandb.login()
-
-    api = wandb.Api()
-    if api.artifact_exists('entity/project/artifact_name:latest'):
-        artifact = api.artifact('entity/project/artifact_name:latest')
-    # Initialize wandb if not already initialized
-    session_name = args.sim_cfg[args.sim_cfg.index('puck'):] + " and " + args.real_cfg[args.real_cfg.index('puck'):]
-    if not wandb.run:
-        # wandb.init(settings=wandb.Settings(start_method="fork"))
-
-        wandb.init(project="ppo-training", name=f"Training Session " + session_name, reinit=True)
     # with open(args.sim_cfg, 'r') as f:
     #     sim_air_hockey_cfg = yaml.safe_load(f)
 
