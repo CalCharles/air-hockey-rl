@@ -8,8 +8,6 @@ from types import SimpleNamespace
 from ..utils import dict_to_namespace
 
 from matplotlib import pyplot as plt
-import pstats
-
 class CollisionForceListener(contactListener):
     def __init__(self, wall_bounce_scale=0.01):
         contactListener.__init__(self)
@@ -66,6 +64,7 @@ class AirHockeyBox2D:
             'paddle_edge_bounds': [],
             'center_offset_constant': 1.2,
             'puck_restitution': 1.0,
+            'action_lag': 0.0,
         }
 
         kwargs = {**defaults, **kwargs}
@@ -99,6 +98,8 @@ class AirHockeyBox2D:
         self.action_y_scaling = config.action_y_scaling
         self.center_offset_constant = config.center_offset_constant
         self.wall_bounce_scale = config.wall_bounce_scale
+        self.action_lag = config.action_lag 
+        assert self.action_lag >= 0 and self.action_lag <= 1, "Action lag must be between 0 and 1"
         self.last_action = np.zeros(2) # keep the last action taken, used for action lag
 
         # these assume 2d, in 3d since we have height it would be higher mass
@@ -366,149 +367,102 @@ class AirHockeyBox2D:
         else:
             action = self.convert_to_box2d_coords(action)
             return self.get_singleagent_transition(action)
-
-    # @mprofile
+    
     def get_singleagent_transition(self, action):
-        # TODO: use self.last_action, self.step_frequency, self.time_frequency to implement action_lag
-        # number of steps to take: self.time_frequency / self.step_frequency 
-        # also need to set self.last_action properly
 
-        # self.profiler.enable()  # Start profiling
-        # check if out of bounds and correct
-        pos = [self.paddles['paddle_ego'].position[0], self.paddles['paddle_ego'].position[1]]
-        if pos[1] > 0 - 3 * self.paddle_radius:
-            action[1] = min(action[1], 0)
-        
-        # action is delta position
-        # let's use simple time-optimal control to figure out the force to apply
-        delta_pos = np.array([action[0], action[1]])
-        # if delta_pos[0] == 0 and delta_pos[1] == 0:
-        #     force = np.array([0, 0])
-        # else:
-        current_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0], self.paddles['paddle_ego'].linearVelocity[1]])
-        
-        # force = np.array([self.paddles['paddle_ego'][0].mass * accel[0], self.paddles['paddle_ego'][0].mass * accel[1]])
-        
-        # # first let's determine velocity
-        vel = delta_pos / self.time_per_step
-        vel_mag = np.linalg.norm(vel)
-        vel_unit = vel / (vel_mag + 1e-8)
+        action_list = [np.copy(self.last_action), np.copy(action)]
+        time_to_sim = [self.time_per_step * self.action_lag, self.time_per_step * (1 - self.action_lag)]
 
-        if vel_mag > self.max_paddle_vel:
-            vel = vel_unit * self.max_paddle_vel
-
-        force = self.paddles['paddle_ego'].mass * vel / self.time_per_step
-        force_mag = np.linalg.norm(force)
-        force_unit = force / (force_mag + 1e-8)
-        if force_mag > self.max_force_timestep:
-            force = force_unit * self.max_force_timestep
-        if self.force_scaling > 0:
-            force = force * self.force_scaling
+        for act, sim_time in zip(action_list, time_to_sim):
+            pos = [self.paddles['paddle_ego'].position[0], self.paddles['paddle_ego'].position[1]]
+            if pos[1] > 0 - 3 * self.paddle_radius:
+                act[1] = min(act[1], 0)
             
-        force = force.astype(float)
-        if self.paddles['paddle_ego'].position[1] > 0: 
-            new_force = self.force_scaling * self.paddles['paddle_ego'].mass * action[1]
-            if new_force < -self.max_force_timestep:
-                new_force = -self.max_force_timestep
-            force[1] = min(new_force, 0)
-        else:
-            force = force * np.array([self.action_x_scaling, self.action_y_scaling])
-        if 'paddle_ego' in self.paddles:
-            self.paddles['paddle_ego'].ApplyForceToCenter(force, True)
-        self.world.Step(self.time_per_step, 10, 10)
-        
-        # correct blocks for t=0
-        if self.timestep == 0 and len(self.blocks) > 0:
-            for block_name in self.blocks:
-                block = self.blocks[block_name]
-                x, y = self.block_initial_positions[block_name]
-                block.position = (x, y)
-        
-        vel = np.array([self.paddles['paddle_ego'].linearVelocity[0], self.paddles['paddle_ego'].linearVelocity[1]])
-        vel_mag = np.linalg.norm(vel)
-
-        # keep velocity at a maximum value
-        if vel_mag > self.max_paddle_vel:
-            self.paddles['paddle_ego'].linearVelocity = b2Vec2(vel[0] / vel_mag * self.max_paddle_vel, vel[1] / vel_mag * self.max_paddle_vel)
+            # action is delta position
+            # let's use simple time-optimal control to figure out the force to apply
+            delta_pos = np.array([act[0], act[1]])
+            current_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0], self.paddles['paddle_ego'].linearVelocity[1]])
             
-        # check if out of bounds and correct
-        pos = [self.paddles['paddle_ego'].position[0], self.paddles['paddle_ego'].position[1]]
-        if pos[0] < self.table_x_min:
-            pos[0] = self.table_x_min
-        if pos[0] > self.table_x_max:
-            pos[0] = self.table_x_max
-        if pos[1] > 0:
-            pos[1] = 0
-        if pos[1] > self.table_y_max:
-            pos[1] = self.table_y_max
-        self.paddles['paddle_ego'].position = (pos[0], pos[1])
+            # # first let's determine velocity
+            vel = delta_pos / sim_time # self.time_per_step
+            vel_mag = np.linalg.norm(vel)
+            vel_unit = vel / (vel_mag + 1e-8)
+
+            if vel_mag > self.max_paddle_vel:
+                vel = vel_unit * self.max_paddle_vel
+
+            force = self.paddles['paddle_ego'].mass * vel / sim_time #self.time_per_step
+            force_mag = np.linalg.norm(force)
+            force_unit = force / (force_mag + 1e-8)
+            if force_mag > self.max_force_timestep:
+                force = force_unit * self.max_force_timestep
+            if self.force_scaling > 0:
+                force = force * self.force_scaling
+            force = force.astype(float)
+            if self.paddles['paddle_ego'].position[1] > 0: 
+                new_force = self.force_scaling * self.paddles['paddle_ego'].mass * act[1]
+                if new_force < -self.max_force_timestep:
+                    new_force = -self.max_force_timestep
+                force[1] = min(new_force, 0)
+            else:
+                force = force * np.array([self.action_x_scaling, self.action_y_scaling])
+            if 'paddle_ego' in self.paddles:
+                self.paddles['paddle_ego'].ApplyForceToCenter(force, True)
+
+            self.world.Step(sim_time, 100, 100)
+            
+            # correct blocks for t=0
+            if self.timestep == 0 and len(self.blocks) > 0:
+                for block_name in self.blocks:
+                    block = self.blocks[block_name]
+                    x, y = self.block_initial_positions[block_name]
+                    block.position = (x, y)
+            
+            vel = np.array([self.paddles['paddle_ego'].linearVelocity[0], self.paddles['paddle_ego'].linearVelocity[1]])
+            vel_mag = np.linalg.norm(vel)
+
+            # keep velocity at a maximum value
+            if vel_mag > self.max_paddle_vel:
+                self.paddles['paddle_ego'].linearVelocity = b2Vec2(vel[0] / vel_mag * self.max_paddle_vel, vel[1] / vel_mag * self.max_paddle_vel)
+                
+            # check if out of bounds and correct
+            pos = [self.paddles['paddle_ego'].position[0], self.paddles['paddle_ego'].position[1]]
+            if pos[0] < self.table_x_min:
+                pos[0] = self.table_x_min
+            if pos[0] > self.table_x_max:
+                pos[0] = self.table_x_max
+            if pos[1] > 0:
+                pos[1] = 0
+            if pos[1] > self.table_y_max:
+                pos[1] = self.table_y_max
+            self.paddles['paddle_ego'].position = (pos[0], pos[1])
+            
+            state_info = self.get_current_state()
+            if 'pucks' in state_info:
+                for puck in state_info['pucks']:
+                    self.puck_history.append(list(puck["position"]) + [0])
+            else:
+                for i in range(len(self.pucks.keys())):
+                    self.puck_history.append([-2 + self.center_offset_constant,0,1])
+            
+            self.paddles['paddle_ego_acceleration'] = vel - current_vel
+
+            total_force = np.array(force)
+
+            collision_forces = self.get_collision_forces()
+            for collision in collision_forces:
+                if collision['bodyA'] == 'paddle_ego':
+                    total_force[0] += collision['normal_force'] * collision['contact_normal'][0]
+                    total_force[1] += collision['normal_force'] * collision['contact_normal'][1]
+                elif collision['bodyB'] == 'paddle_ego':
+                    total_force[0] -= collision['normal_force'] * collision['contact_normal'][0]
+                    total_force[1] -= collision['normal_force'] * collision['contact_normal'][1]
+
+                self.paddles['paddle_ego_force'] = total_force
         
-        state_info = self.get_current_state()
-        if 'pucks' in state_info:
-            for puck in state_info['pucks']:
-                self.puck_history.append(list(puck["position"]) + [0])
-        else:
-            for i in range(len(self.pucks.keys())):
-                self.puck_history.append([-2 + self.center_offset_constant,0,1])
-        
-        self.paddles['paddle_ego_acceleration'] = vel - current_vel
-
-        total_force = np.array(force)
-
-        collision_forces = self.get_collision_forces()
-        for collision in collision_forces:
-            if collision['bodyA'] == 'paddle_ego':
-                total_force[0] += collision['normal_force'] * collision['contact_normal'][0]
-                total_force[1] += collision['normal_force'] * collision['contact_normal'][1]
-            elif collision['bodyB'] == 'paddle_ego':
-                total_force[0] -= collision['normal_force'] * collision['contact_normal'][0]
-                total_force[1] -= collision['normal_force'] * collision['contact_normal'][1]
-
-        self.paddles['paddle_ego_force'] = total_force
-
-
-
         self.timestep += 1
-        # self.total_timesteps += 1
+        self.last_action = action
 
-        
-
-        # self.profiler.disable()  # Stop profiling
-        
-        # # # if self.total_timesteps % 1000 == 0:
-        # # #     # self.profiler.print_stats(sort='time')  # Print the statistics sorted by time
-        # # #     # Save the statistics to a file
-        
-        # if self.total_timesteps % 1000 == 0:
-        #     with open('single_agent_transition_profile.txt', 'w' if self.total_timesteps <= 1000 else 'a') as f:
-        #         f.write(f'timesteps: {self.total_timesteps}\n')
-        #         stats = pstats.Stats(self.profiler, stream=f)
-            
-        #         stats.sort_stats('time')
-        #         # stats.print_stats()
-        #         keys = stats.stats.keys()
-                
-        #         for key in keys:
-        #             cbdk = ''.join([str(k) for k in key])
-        #             self.chump_dict[cbdk].append(stats.stats[key][3]) if cbdk in self.chump_dict else self.chump_dict.update({cbdk: [stats.stats[key][3]]})
-        #         stats.strip_dirs().sort_stats("cumtime").print_stats()
-                
-        #         f.write(f'------------------------------------\n')
-        #     with open('data.yaml', 'w') as file:
-        #         yaml.dump(self.chump_dict, file)
-                
-        #     # Plot the data
-        #     plt.figure(figsize=(12, 8))
-
-        #     for key, values in self.chump_dict.items():
-        #         plt.plot(values, label=key)
-
-        #     plt.xlabel('Index')
-        #     plt.ylabel('Value')
-        #     plt.title('cumulative run times in single agent transition function')
-        #     plt.legend()
-        #     plt.grid(True)
-        #     plt.savefig('fuckmejeans.png')
         return state_info
     
     def get_multiagent_transition(self, joint_action):
