@@ -1,7 +1,12 @@
 from types import SimpleNamespace
 import numpy as np
 import math
-from robosuite.environments.manipulation.single_arm_env import SingleArmEnv
+# Compatibility fix for newer Robosuite versions
+try:
+    from robosuite.environments.manipulation.single_arm_env import SingleArmEnv
+except ImportError:
+    # Fallback to ManipulationEnv for newer Robosuite versions
+    from robosuite.environments.manipulation.manipulation_env import ManipulationEnv as SingleArmEnv
 from .airhockey_sim import AirHockeySim
 from robosuite.models.objects import BoxObject, CylinderObject
 from robosuite.models.tasks import ManipulationTask
@@ -164,10 +169,10 @@ class AirHockeyRobosuite(AirHockeySim):
             'paddle_bounds': [],
             'paddle_edge_bounds': [],
             'center_offset_constant': 1.2,
-            'robots': ['AirHockeyUR5e'],
+            'robots': ['UR5e'],  # Use standard UR5e instead of AirHockeyUR5e
             'env_configuration': "default",
-            'controller_configs': None,
-            'gripper_types': "RoundGripper",
+            'controller_configs': {'arm': 'OSC_POSE'},  # Use OSC controller for position-based control
+            'gripper_types': None,  # Disable gripper to avoid joint name conflicts
             'initialization_noise': "default",
             'table_friction': (1.0, 5e-3, 1e-4),
             'use_camera_obs': True,
@@ -192,7 +197,7 @@ class AirHockeyRobosuite(AirHockeySim):
             'task': "JUGGLE_PUCK",
             'table_xml': "arenas/air_hockey_table.xml",  # relative to assets dir
             'puck_radius': 0.03165,
-            'puck_damping': 0.8,
+            'puck_damping': 0.01,
             'puck_density': 30,
             'seed': 0,
             'absorb_target': False,
@@ -204,7 +209,30 @@ class AirHockeyRobosuite(AirHockeySim):
             'max_force_timestep': 1,
             'paddle_bounds': [],
             'paddle_edge_bounds': [],
-            'center_offset_constant': 1.2
+            'center_offset_constant': 1.2,
+            'depth': 0.0505,  # Table depth from XML comment
+            'table_elevation': 0.0,  # Table elevation
+            'table_tilt': 0.0,  # Table tilt angle
+            'rim_width': 0.05,  # Rim width for table offsets
+            'max_puck_vel': 10.0,  # Maximum puck velocity
+            'max_paddle_vel': 2.0,  # Maximum paddle velocity
+            'time_frequency': 20,  # Time frequency
+            'render_size': 360,  # Render size
+            
+            # OSC Controller Parameters
+            'osc_kp': 150,  # Position gain
+            'osc_damping_ratio': 1,  # Damping ratio
+            'osc_input_max': 1,  # Maximum input value
+            'osc_input_min': -1,  # Minimum input value
+            'osc_output_max_pos': [0.05, 0.05, 0.05],  # Max position output [x, y, z]
+            'osc_output_min_pos': [-0.05, -0.05, -0.05],  # Min position output [x, y, z]
+            'osc_output_max_ori': [0.5, 0.5, 0.5],  # Max orientation output [roll, pitch, yaw]
+            'osc_output_min_ori': [-0.5, -0.5, -0.5],  # Min orientation output [roll, pitch, yaw]
+            'osc_uncouple_pos_ori': True,  # Uncouple position and orientation
+            'osc_input_type': 'delta',  # Input type (delta or absolute)
+            'osc_input_ref_frame': 'base',  # Reference frame
+            'osc_ramp_ratio': 0.2,  # Ramp ratio for smooth transitions
+            'osc_impedance_mode': 'fixed'  # Impedance mode
         }
 
         kwargs = {**defaults, **kwargs}
@@ -276,8 +304,9 @@ class AirHockeyRobosuite(AirHockeySim):
         self.last_action = np.zeros(2)
         
         self.robosuite_env = None
-        self.robosuite_env_cfg = {'robots': config.robots, 'env_configuration': config.env_configuration, 'controller_configs': config.controller_configs,
-                              'mount_types': "default", 'gripper_types': config.gripper_types, 'initialization_noise': config.initialization_noise,
+        self.robosuite_env_cfg = {'robots': config.robots, 'env_configuration': config.env_configuration, 
+                              'controller_configs': self._build_controller_config(config),  # Build custom OSC controller config
+                              'base_types': "default", 'gripper_types': config.gripper_types, 'initialization_noise': config.initialization_noise,
                               'use_camera_obs': config.use_camera_obs, 'has_renderer': config.has_renderer, 'has_offscreen_renderer': config.has_offscreen_renderer,
                               'render_camera': config.render_camera, 'render_collision_mesh': config.render_collision_mesh, 'render_visual_mesh': config.render_visual_mesh,
                               'render_gpu_device_id': config.render_gpu_device_id, 'control_freq': config.control_freq, 'horizon': config.horizon, 'ignore_done': config.ignore_done,
@@ -289,6 +318,48 @@ class AirHockeyRobosuite(AirHockeySim):
         # formatted_time = current_time.strftime('%Y%m%d_%H%M%S')
         formatted_time = np.random.randint(1000000000000000000)
         self.tmp_xml_fp = robosuite_xml_path_completion(self.table_xml + f"_{formatted_time}.xml")
+        
+    def _build_controller_config(self, config):
+        """
+        Build OSC controller configuration from config parameters.
+        
+        Args:
+            config: Configuration namespace with OSC parameters
+            
+        Returns:
+            dict: Controller configuration compatible with Robosuite
+        """
+        # Build OSC controller configuration for the right arm
+        osc_config = {
+            'type': 'OSC_POSE',
+            'input_max': config.osc_input_max,
+            'input_min': config.osc_input_min,
+            'output_max': config.osc_output_max_pos + config.osc_output_max_ori,
+            'output_min': config.osc_output_min_pos + config.osc_output_min_ori,
+            'kp': config.osc_kp,
+            'damping_ratio': config.osc_damping_ratio,
+            'impedance_mode': config.osc_impedance_mode,
+            'kp_limits': [0, 300],  # Standard limits
+            'damping_ratio_limits': [0, 10],  # Standard limits
+            'position_limits': None,
+            'orientation_limits': None,
+            'uncouple_pos_ori': config.osc_uncouple_pos_ori,
+            'input_type': config.osc_input_type,
+            'input_ref_frame': config.osc_input_ref_frame,
+            'interpolation': None,
+            'ramp_ratio': config.osc_ramp_ratio,
+            'gripper': {'type': 'GRIP'} if config.gripper_types is not None else None
+        }
+        
+        # Build the complete controller configuration
+        controller_config = {
+            'type': 'BASIC',
+            'body_parts': {
+                'right': osc_config
+            }
+        }
+        
+        return controller_config
         
     def __del__(self):
         if self.robosuite_env is not None:
@@ -319,8 +390,9 @@ class AirHockeyRobosuite(AirHockeySim):
             self.puck_names = {}
             self.block_names = {}
             self.initial_obj_configurations = {'paddles': {}, 'pucks': {}, 'blocks': {}}
-            xml_fp = custom_xml_path_completion(self.table_xml)
             
+            # Load and configure XML
+            xml_fp = custom_xml_path_completion(self.table_xml)
             with open(xml_fp, "r") as file:
                 self.xml_config = xmltodict.parse(file.read())
 
@@ -335,7 +407,6 @@ class AirHockeyRobosuite(AirHockeySim):
                     table_surface_idx = i
                     break
             self.xml_config['mujoco']['worldbody']['body']['body'][table_surface_idx]['geom']['@size'] = f"{self.table_full_size[0]} {self.table_full_size[1]} {self.table_full_size[2]}"
-            return {}
     
     def set_obj_configs(self):
         for name in self.initial_obj_configurations['pucks'].keys():
@@ -373,7 +444,7 @@ class AirHockeyRobosuite(AirHockeySim):
 
     def set_object_links(self):
         # set up object names TODO: might not be working
-        self.paddle_name_list = ["gripper0_eef"] # TODO: doesn't handle multiple paddles or gripper force/acceleration
+        self.paddle_name_list = ["gripper0_right_eef"] # Updated to match actual body name
 
         
         self.puck_name_list = list(self.puck_names.keys())
@@ -551,7 +622,7 @@ class AirHockeyRobosuite(AirHockeySim):
         vel = self.high_level_to_robosuite_vel(vel, object_type='puck')
         
         puck_mass = self.puck_density * math.pi * (self.puck_radius ** 2) * self.puck_height
-        z_pos = self.transform_z(pos[0]) + 0.025
+        z_pos = self.table_elevation + self.puck_height/2
         x_pos = self.transform_x(pos[0])
         y_pos = pos[1]
         pos = np.array([x_pos, y_pos, z_pos])
@@ -608,8 +679,7 @@ class AirHockeyRobosuite(AirHockeySim):
                 ],
                 "inertial": {
                     "@pos": "0 0 0",
-                    # "@mass": f"{puck_mass}",
-                    "@mass": 0.001,
+                    "@mass": f"{puck_mass}",
                     "@diaginertia": "2.5e-6 2.5e-6 5e-6",
                 },
             }
@@ -669,13 +739,20 @@ class AirHockeyRobosuite(AirHockeySim):
     
     def translate_action(self, action):
         """
-        Converts 2D action to 3D robot action
+        Converts 2D action to 6D robot action for OSC controller
+        OSC expects [x, y, z, roll, pitch, yaw] or [x, y, z, qx, qy, qz, qw]
         """
         delta_pos_x = -action[0] * self.x_to_x_prime_ratio * self.action_x_scaling
         delta_pos_y = - action[1] * self.action_y_scaling
         delta_pos_z = self.transform_z(- action[0]  * self.action_x_scaling) #  * self.x_to_z_ratio
         
-        return np.array([delta_pos_x, delta_pos_y, delta_pos_z])
+        # For OSC controller, we need 6D actions: [x, y, z, roll, pitch, yaw]
+        # Set orientation changes to 0 for now (no rotation)
+        delta_roll = 0.0
+        delta_pitch = 0.0
+        delta_yaw = 0.0
+        
+        return np.array([delta_pos_x, delta_pos_y, delta_pos_z, delta_roll, delta_pitch, delta_yaw])
 
     def get_transition(self, action):
         """
@@ -718,7 +795,7 @@ class AirHockeyRobosuite(AirHockeySim):
 
         current_state = self.get_current_state()
         contact_forces = self.robosuite_env.sim.data.cfrc_ext
-        eef_index = self.robosuite_env.sim.model.body_name2id('gripper0_eef')
+        eef_index = self.robosuite_env.sim.model.body_name2id('gripper0_right_eef')
         current_state['paddles']['paddle_ego']['force'] = contact_forces[eef_index][:2] # exclude torques and z force
         
         if 'pucks' in current_state: self.puck_history.append(list(current_state['pucks'][0]["position"]) + [0])
@@ -849,10 +926,10 @@ class RobosuiteEnv(SingleArmEnv):
         self.num_robots = len(robots)
         robot_names = self.input2list(robots, self.num_robots)
         controller_configs = self.input2list(robosuite_env_params['controller_configs'], self.num_robots)
-        mount_types = self.input2list(robosuite_env_params['mount_types'], self.num_robots)
+        base_types = self.input2list(robosuite_env_params['base_types'], self.num_robots)
         initialization_noise = self.input2list(robosuite_env_params['initialization_noise'], self.num_robots)
         control_freq = self.input2list(robosuite_env_params['control_freq'], self.num_robots)
-        robot_configs = self.load_robots_configs(robot_names, controller_configs, mount_types, initialization_noise, control_freq)
+        robot_configs = self.load_robots_configs(robot_names, controller_configs, base_types, initialization_noise, control_freq)
         self.robots = self.get_robots(robot_names, robot_configs)
 
         # task includes arena, robot, and objects of interest
@@ -876,7 +953,7 @@ class RobosuiteEnv(SingleArmEnv):
         super()._load_model()
         self.model = self.task_model # Prevents the super call from making this None
             
-    def load_robots_configs(self, robot_names, controller_configs, mount_types, initialization_noise, control_freq, robot_configs=None):
+    def load_robots_configs(self, robot_names, controller_configs, base_types, initialization_noise, control_freq, robot_configs=None):
         num_robots = len(robot_names)
         if robot_configs is None:
             robot_configs = [{} for _ in range(num_robots)]
@@ -884,7 +961,7 @@ class RobosuiteEnv(SingleArmEnv):
             dict(
                 **{
                     "controller_config": controller_configs[idx],
-                    "mount_type": mount_types[idx],
+                    "mount_type": base_types[idx],
                     "initialization_noise": initialization_noise[idx],
                     "control_freq": control_freq,
                 },
@@ -915,10 +992,10 @@ class RobosuiteEnv(SingleArmEnv):
             return self.sim.data.get_body_xvelp(obj_name)
 
         def gripper_eef_vel(obs_cache):
-            return self.sim.data.get_body_xvelp("gripper0_eef")
+            return self.sim.data.get_body_xvelp("gripper0_right_eef")
         
         def gripper_eef_pos(obs_cache):
-            return self.sim.data.get_body_xpos("gripper0_eef")
+            return self.sim.data.get_body_xpos("gripper0_right_eef")
         
         gripper_eef_vel.__modality__ = modality
         gripper_eef_pos.__modality__ = modality
