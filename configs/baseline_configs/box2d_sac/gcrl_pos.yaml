@@ -1,0 +1,62 @@
+air_hockey:
+  diagonal_motion_rew: -0.1
+  direction_change_rew: -0.05
+  goal_max_x_velocity: 1
+  goal_max_y_velocity: 5
+  goal_min_y_velocity: 1
+  goal_radius_type: linear_decay
+  base_goal_radius: 0.15
+  horizontal_vel_rew: -0.1
+  max_timesteps: 300
+  num_blocks: 0
+  num_obstacles: 0
+  num_paddles: 1
+  num_pucks: 1
+  num_targets: 0
+  obs_type: pos # history # vel
+  simulator: box2d
+  simulator_params:
+    absorb_target: false
+    block_density: 500
+    block_width: 0.0254
+    force_scaling: 1000
+    gravity: -0.5
+    length: 1.9304
+    max_force_timestep: 100
+    paddle_damping: 3
+    paddle_density: 2500
+    paddle_radius: 0.0508
+    puck_damping: 0.5
+    puck_density: 250
+    puck_radius: 0.03175
+    render_size: 360
+    wall_bounce_scale: 0.02
+    width: 0.8636
+  stand_still_rew: 0.01
+  puck_goal_success_bonus: 0.0
+  paddle_puck_success_bonus: 0.0
+  task: puck_goal_position
+  terminate_on_enemy_goal: true
+  terminate_on_out_of_bounds: true
+  terminate_on_puck_hit_bottom: true
+  terminate_on_puck_pass_paddle: true
+  terminate_on_puck_stop: false
+  truncate_rew: -1
+  wall_bumping_rew: -1
+algorithm: sac
+eval_freq: 5000
+gamma: 0.99
+model_save_filepath: model
+n_eval_eps: 30
+n_threads: 1
+n_training_steps: 1000000
+print_reward: false
+seed:
+- 0
+- 1
+- 2
+- 3
+- 4
+tb_log_dir: baseline_models
+tb_log_name: air_hockey_agent
+vec_normalize_save_filepath: vec_normalize.pkl
