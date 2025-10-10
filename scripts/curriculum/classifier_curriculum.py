@@ -1,6 +1,6 @@
 import sys
 sys.path.append('..')
-from utils import EvalCallback
+from scripts.utils import EvalCallback
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split

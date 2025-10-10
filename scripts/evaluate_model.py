@@ -10,7 +10,7 @@ from airhockey import AirHockeyEnv
 from airhockey.renderers import AirHockeyRenderer
 import argparse
 import h5py
-from utils import save_evaluation_gifs
+from scripts.utils import save_evaluation_gifs
 
 def save_pose_dataset(pose_dataset, target_path):
     # TODO: do this properly

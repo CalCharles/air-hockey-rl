@@ -5,60 +5,54 @@ air_hockey:
   goal_max_y_velocity: 5
   goal_min_y_velocity: 1
   horizontal_vel_rew: -0.1
-  max_timesteps: 600
-  n_training_steps: 1000000
+  max_timesteps: 300
   num_blocks: 0
   num_obstacles: 0
   num_paddles: 1
   num_pucks: 1
   num_targets: 0
-  obs_type: pos # history # vel
-  return_goal_obs: false
-  seed: [0, 1, 2, 3, 4]
+  obs_type: history
   simulator: box2d
   simulator_params:
     absorb_target: false
-    block_density: 1000
-    block_width: 0.0554
+    block_density: 500
+    block_width: 0.0254
+    force_scaling: 1000
+    gravity: -0.5
     length: 1.9304
     max_force_timestep: 100
+    paddle_damping: 3
+    paddle_density: 2500
     paddle_radius: 0.0508
-
-    action_x_scaling: 2.00021
-    action_y_scaling: 1.41727
-    force_scaling: 1.20005
-    paddle_damping: 9.99959
-    paddle_density: 2999.8954
-    
-    gravity: -0.68678
-    puck_damping: 0.34594
-    puck_density: 216.39361
-    puck_restitution: 1.09145
-    wall_bounce_scale: 0.0461
-    # x_offset: -0.01845
-    # y_offset: 0.01724
-
+    puck_damping: 0.5
+    puck_density: 250
     puck_radius: 0.03175
     render_size: 360
+    wall_bounce_scale: 0.02
     width: 0.8636
-  stand_still_rew: -0.05
-  task: puck_juggle
+  stand_still_rew: 0.01
+  task: puck_catch
   terminate_on_enemy_goal: true
   terminate_on_out_of_bounds: true
   terminate_on_puck_hit_bottom: true
   terminate_on_puck_pass_paddle: true
   terminate_on_puck_stop: false
-  truncate_rew: -10
+  truncate_rew: -1
   wall_bumping_rew: -1
-algorithm: ppo
+algorithm: sac
 eval_freq: 5000
 gamma: 0.99
-model_save_filepath: baseline_models
+model_save_filepath: model
 n_eval_eps: 30
-n_threads: 8
+n_threads: 1
 n_training_steps: 1000000
 print_reward: false
-seed: 0
+seed:
+- 0
+- 1
+- 2
+- 3
+- 4
 tb_log_dir: baseline_models
-tb_log_name: puck_juggle
+tb_log_name: air_hockey_agent
 vec_normalize_save_filepath: vec_normalize.pkl

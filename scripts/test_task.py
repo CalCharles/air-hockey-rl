@@ -13,8 +13,8 @@ import argparse
 import shutil
 import os
 import yaml
-from utils import EvalCallback, save_evaluation_gifs, save_tensorboard_plots, save_task_gif
-from curriculum.classifier_curriculum import CurriculumCallback
+from scripts.utils import EvalCallback, save_evaluation_gifs, save_tensorboard_plots, save_task_gif
+from scripts.curriculum.classifier_curriculum import CurriculumCallback
 import h5py
             
 def visualize_task(air_hockey_cfg, use_wandb=False, device='cpu', clear_prior_task_results=False, progress_bar=True):
