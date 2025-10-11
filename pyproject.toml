@@ -20,7 +20,7 @@ dependencies = [
     "gymnasium",
     "gym==0.25.1",
     "swig",
-    "box2d-py",
+    "box2d",
     "tqdm",
     "h5py",
     "xmltodict",
