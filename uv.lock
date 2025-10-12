@@ -24,7 +24,7 @@ name = "airhockey"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "box2d-py" },
+    { name = "box2d" },
     { name = "gym" },
     { name = "gymnasium" },
     { name = "h5py" },
@@ -51,7 +51,7 @@ train = [
 
 [package.metadata]
 requires-dist = [
-    { name = "box2d-py" },
+    { name = "box2d" },
     { name = "gym", specifier = "==0.25.1" },
     { name = "gymnasium" },
     { name = "h5py" },
@@ -83,10 +83,48 @@ wheels = [
 ]
 
 [[package]]
-name = "box2d-py"
-version = "2.3.8"
+name = "box2d"
+version = "2.3.10"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/98/c2/ab05b5329dc4416b5ee5530f0625a79c394a3e3c10abe0812b9345256451/box2d-py-2.3.8.tar.gz", hash = "sha256:bdacfbbc56079bb317548efe49d3d5a86646885cc27f4a2ee97e4b2960921ab7", size = 374458, upload-time = "2018-11-17T00:50:51.363Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c7/80/c69c8f4cfae829863037556594e4b454d30e5f05d390e1b4a3756df194b1/Box2D-2.3.10-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:a6e967009d658f9d92c1d44339a6d3c456ab97678526d998f54a7b7cb6e8034b", size = 1322971, upload-time = "2024-11-29T17:57:29.067Z" },
+    { url = "https://files.pythonhosted.org/packages/ad/e3/692b6963f7e4bbf465b030db85f0191c2e60198acef2b9c750b4593f82e9/Box2D-2.3.10-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:dd42fd4e73d8fec3b3b8538fca43bba4971bf476ccf0d43adb5b020e76a65721", size = 1286840, upload-time = "2024-11-29T17:57:36.014Z" },
+    { url = "https://files.pythonhosted.org/packages/20/76/9443b4fb1cbda7d1c51e191c64a77a3920a1d8b24c34428c9b195283627e/Box2D-2.3.10-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a1359afc20f9d9d5ab86310d0f4fb73f1cf2e0bacf7285afb8ec248175584d04", size = 3670766, upload-time = "2024-11-29T17:57:37.751Z" },
+    { url = "https://files.pythonhosted.org/packages/81/29/e40e53e896d065fc5b281596c905a3c2fe1277071318a30165d5d8193868/Box2D-2.3.10-cp310-cp310-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:835f8f80b0e0c7e711ef3ed5e07ee9e64555c4d5e37025db11392085ee8e4d35", size = 3374209, upload-time = "2024-11-29T17:58:01.705Z" },
+    { url = "https://files.pythonhosted.org/packages/32/6f/db17115793a5eeefb07428d63d143a4f01293e252df2b58b3568fd79933b/Box2D-2.3.10-cp310-cp310-musllinux_1_2_i686.whl", hash = "sha256:f572738f52394e36fd24e892e8f220a60aa5e1c415ca0d07edbfe0049a61a118", size = 4332771, upload-time = "2024-11-29T17:58:20.104Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/46/3ebc703bbc69d18ec94cce32cb51e5b00d4b16ae77afe5201993a42aa248/Box2D-2.3.10-cp310-cp310-musllinux_1_2_x86_64.whl", hash = "sha256:2e08fcb33555b41b721314f4ea60eddeaa84cfa9f2ec75a62006628803f84b9d", size = 4389031, upload-time = "2024-11-29T17:58:44.48Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/bd/9c7651c4fce5545552306c160f276905d5bfaface9011b693ed1665fd6a0/Box2D-2.3.10-cp310-cp310-win32.whl", hash = "sha256:76fa0c6ab0091ce2f81d5165f53f483b57e50bf0bd22e66dcab461aca49d37aa", size = 1191187, upload-time = "2024-11-29T17:58:59.372Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/6c/182819bf988d13f2f1c1e6851fb47ffd4d41b3acf6f4ca92abd7f3b2abba/Box2D-2.3.10-cp310-cp310-win_amd64.whl", hash = "sha256:edf6b50de84c0f26646868d0169c863501cd8f4c6e4780dcbb12246fc9ba7eb6", size = 1310822, upload-time = "2024-11-29T17:59:02.027Z" },
+    { url = "https://files.pythonhosted.org/packages/57/60/8e6e1b00a1ad671774c3f22d4835b73c182ff8873b76a09398ceb4000a04/Box2D-2.3.10-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:9d6ef55bb2d41bab0e5d332aa7bdeaa8ba3ef6f8d67842d8120f9629c9f98e9e", size = 1322973, upload-time = "2024-11-29T17:59:21.788Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/68/7475fc901b4f6d7a1f9a03e8027833212994560677b8a6817ec71eb9ab59/Box2D-2.3.10-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:ac0cb3f0de8c8d44c4ffbf395a9447c4598ce5548fef3fd5a53ae45f3c24bc2e", size = 1286845, upload-time = "2024-11-29T17:59:24.506Z" },
+    { url = "https://files.pythonhosted.org/packages/27/e8/98181c614df95de4dc6dd3f3901ffeca459aa71caadcde6f8860baf8aa36/Box2D-2.3.10-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:1b27a17424c6860c2b80b0cbf46a460059beb21e8ea920c177b635be2406e18d", size = 3717486, upload-time = "2024-11-29T17:59:42.67Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/8f/ac359ced6b1ae4834a7d572ffd8c525206f900c494b884aaf22f90f76375/Box2D-2.3.10-cp311-cp311-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:1971ab37f67593ad77b068184b699ac414f5d590da8fd85e2d99edb89ecf86f1", size = 3421803, upload-time = "2024-11-29T18:00:17.96Z" },
+    { url = "https://files.pythonhosted.org/packages/78/a9/d9216ac83b9f2f4e8dfd837cb64c0e4cc340fac10771df16af635cb52d6c/Box2D-2.3.10-cp311-cp311-musllinux_1_2_i686.whl", hash = "sha256:b2999e5d17a452bd9ef2f40832c775cb4ca69429ff0dcd16c1159f89087e2329", size = 4373144, upload-time = "2024-11-29T18:00:20.58Z" },
+    { url = "https://files.pythonhosted.org/packages/60/c2/b01ca4a52e376349a989e53109b53e4c060b92c4ad9076360998519f12da/Box2D-2.3.10-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:b1c45ae2a296e9b0f8b8b27248d3d0920ef459f89f25bf3333c7847c900017d0", size = 4432849, upload-time = "2024-11-29T18:00:32.801Z" },
+    { url = "https://files.pythonhosted.org/packages/3f/93/757dd2ce9e70ff29dd653cd4a5d8af6b9b54570480840e45eb4820bdc15f/Box2D-2.3.10-cp311-cp311-win32.whl", hash = "sha256:230acaa22ec66c7910700461b9a9617ec1d205ffff28f2d55e2b31762852e287", size = 1191194, upload-time = "2024-11-29T18:00:34.628Z" },
+    { url = "https://files.pythonhosted.org/packages/b1/5c/e0d29175cf8e155f168fb7e31c3be7a25f264f65e4814300911e3e80b0de/Box2D-2.3.10-cp311-cp311-win_amd64.whl", hash = "sha256:5f71f2402abe014fc615571dededd11f213e04a6190753a4f92e0cb659ae16eb", size = 1310823, upload-time = "2024-11-29T18:00:57.99Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/50/978d24d7d9e236f75f6663a32dc71bfeb72b237acb3e410ede6bd7330014/Box2D-2.3.10-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:4dfba4a0639084bdf8eca0ed686ec16419538d5722b54ea1398998de9a705ab2", size = 1324164, upload-time = "2024-11-29T18:01:09.918Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/33/303c8e540516eebd38e2d117c3a5b151e0ae8cf9b76d05ff266a29d361b1/Box2D-2.3.10-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:b00a2edd8561d34cb88bd8818f1243b8fed030c8ad10b60181e8e57a45a74795", size = 1280204, upload-time = "2024-11-29T18:01:12.276Z" },
+    { url = "https://files.pythonhosted.org/packages/f9/d3/857a8806d6639df07c911c5b1a64b093445f4d58ebe3a076f5daaa11fc38/Box2D-2.3.10-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:041bdec01bb31d5e795af262d2bf8cc158929e149212dbfbbf4dcdcfd6de5f99", size = 3691487, upload-time = "2024-11-29T18:01:35.699Z" },
+    { url = "https://files.pythonhosted.org/packages/a2/b7/093042694a6a844666180fff74d294a672c87e91285c460d22973a0b4e08/Box2D-2.3.10-cp312-cp312-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:e97afcd97834524b7d3a1cf9f14a5b68da8c536c6002b4edf87ff1715ddccc5c", size = 3376935, upload-time = "2024-11-29T18:01:50.341Z" },
+    { url = "https://files.pythonhosted.org/packages/fb/3a/0656495f88af573660bb6de5240e500fa96ede5e7adaf2b4ae1a55afe615/Box2D-2.3.10-cp312-cp312-musllinux_1_2_i686.whl", hash = "sha256:d4083933c43ad01049e0315ff8217eb463567b8f68eb37d250fc88be9d52ae42", size = 4342608, upload-time = "2024-11-29T18:02:12.655Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/87/c5fc979827d555ab9b9803d7f0b043b5a6108f8de8c7184be385b24fd3c0/Box2D-2.3.10-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:6b0d1cb60b917297b0c9d770b3a7f152aa112f7d0f2a4c1634c5cc060f898c4f", size = 4423303, upload-time = "2024-11-29T18:02:28.32Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/a8/8ac50aafca7e5e466d712dd24e7dc1337935eb4661560294f115333bfc18/Box2D-2.3.10-cp312-cp312-win32.whl", hash = "sha256:b8d3d237de7caf729268687e3e7b0f8c13d509a67b6bb693d314f440c963f006", size = 1193198, upload-time = "2024-11-29T18:02:31.009Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/48/a3fde47fa3c2f5e32873e4cebc5ed5f663f434698dca1f0197c674e2f66c/Box2D-2.3.10-cp312-cp312-win_amd64.whl", hash = "sha256:ff9f434b61d2d9bf5c274aaa81a11ecd717441f64491bc22fda8151f3c35d78c", size = 1312692, upload-time = "2024-11-29T18:02:50.602Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/19/1306ce0c5a7f95b4f16fd748f5040ccadc590753a4acd0e7f393ef970a47/Box2D-2.3.10-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:0bd976f03bb08ffc86172bbf687afdd6e499a34f7d0ebf9da65f7a9c0ff62ba9", size = 1324189, upload-time = "2024-11-29T18:03:07.169Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/2c/33285e6fe35dc8aa8d44be0905b8a202abba11474d57d1b1dfa81b5779f6/Box2D-2.3.10-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:047d4faae2dc53c408970e494831361fce0460faaa2ed9544824dd3ea5321e7e", size = 1280162, upload-time = "2024-11-29T18:03:11.696Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/50/141a420f97920c4cac12037c7cb9ced2631d7d04e33a59b32bea97a846b6/Box2D-2.3.10-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:ffa4f7955147dd64d33dbb1d360486984d13cda6e566c7c0c5bea348a8b172b4", size = 3689335, upload-time = "2024-11-29T18:03:34.314Z" },
+    { url = "https://files.pythonhosted.org/packages/12/bf/791c594e5fd8a9e930e4672761e2a5d00bf9fbb60cddfe5e2233eafa6e22/Box2D-2.3.10-cp313-cp313-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:f460cb51926ffa9897070f3e7a4a30389da47946c8287ae36bd34b72590b9a99", size = 3373916, upload-time = "2024-11-29T18:03:44.799Z" },
+    { url = "https://files.pythonhosted.org/packages/9f/f8/4ccc3422f985639ee4120d3503d6263b9fa2e382a250c8ede444399b76e1/Box2D-2.3.10-cp313-cp313-musllinux_1_2_i686.whl", hash = "sha256:90a48c81e5dc3667ee376d5f1986b645b0b5140644f39032ad2853ff760dd84a", size = 4340307, upload-time = "2024-11-29T18:04:14.854Z" },
+    { url = "https://files.pythonhosted.org/packages/e2/c8/3ed795c0e920b461eec500798d2247ac3ba38cf20bb6497c28a9891ee9a2/Box2D-2.3.10-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:a09ded6f5a4b55f0188af2ad63a6f7d60adc7154671e9f32cef4a0cabf5ed542", size = 4419706, upload-time = "2024-11-29T18:04:28.446Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/2e/8b95f2779467c9af0ee62105f105a96e1b5a1380dbf5c546a09af5c51d4e/Box2D-2.3.10-cp313-cp313-win32.whl", hash = "sha256:6d4b0bd0e118e0449eadbadc6cf4617b1dbf72b411fbdccab4921108b3c2b768", size = 1193206, upload-time = "2024-11-29T18:05:01.167Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/90/230643c42763a1f5eb0554fbb6729befe6730f6dd9a9e4ec61cd470b94be/Box2D-2.3.10-cp313-cp313-win_amd64.whl", hash = "sha256:49f9d3d0d5956d360e25cd9733a29a3f0018297a3b554a401f19ed2c9499a507", size = 1312703, upload-time = "2024-11-29T18:05:45.749Z" },
+    { url = "https://files.pythonhosted.org/packages/94/b9/6bb76d736e38e8c3b88c35390b6546e24de7de926e0ee2e59d37d4b05311/Box2D-2.3.10-pp310-pypy310_pp73-macosx_10_15_x86_64.whl", hash = "sha256:0eaae4c066a9bce079c2bb1ecc67b89ab30bb81381b1ed96118fada43b52f3e7", size = 1285641, upload-time = "2024-11-29T18:27:35.918Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/e3/214c76168271383f5a3700e07bddd3785a16c6e683c21ff612067cf672f2/Box2D-2.3.10-pp310-pypy310_pp73-macosx_11_0_arm64.whl", hash = "sha256:f64d8bfea2d1e0bbf00c7777099617644ae7ef60457645d35fb608d2cbde01ac", size = 1239394, upload-time = "2024-11-29T18:28:07.763Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/e1/8a2560ef4756c9677fb0a0e10197dbdcb8ad04ca60e8a5070f828a3ab6fd/Box2D-2.3.10-pp310-pypy310_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:27802979e12b904bdfd28373963020be0b42a0bc2f019e8f4f0dad30da71e506", size = 1336400, upload-time = "2024-11-29T18:28:10.431Z" },
+    { url = "https://files.pythonhosted.org/packages/4a/4a/7231163bc86cd1f76561c2afde360f478d9ef3766295868059230c5c248e/Box2D-2.3.10-pp310-pypy310_pp73-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:d3c4f4d853e2f351fabb1ed113f1527b987ab1b944112090cf5fa5368a116455", size = 1295547, upload-time = "2024-11-29T18:28:23.296Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/c1/a4d8bd2f28466fb0f6973e3eff8c691bdfd5a7cb15bbe69afa2bcda271b0/Box2D-2.3.10-pp310-pypy310_pp73-win_amd64.whl", hash = "sha256:003456c0edb68cae3d7a0064d9564c6845f37285a42d75428cb4425567d569d9", size = 1315214, upload-time = "2024-11-29T18:28:24.702Z" },
+]
 
 [[package]]
 name = "certifi"
@@ -1450,7 +1488,7 @@ name = "nvidia-cudnn-cu12"
 version = "9.10.2.21"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12" },
+    { name = "nvidia-cublas-cu12", marker = "sys_platform == 'linux'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ba/51/e123d997aa098c61d029f76663dedbfb9bc8dcf8c60cbd6adbe42f76d049/nvidia_cudnn_cu12-9.10.2.21-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:949452be657fa16687d0930933f032835951ef0892b37d2d53824d1a84dc97a8", size = 706758467, upload-time = "2025-06-06T21:54:08.597Z" },
@@ -1461,7 +1499,7 @@ name = "nvidia-cufft-cu12"
 version = "11.3.3.83"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12" },
+    { name = "nvidia-nvjitlink-cu12", marker = "sys_platform == 'linux'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1f/13/ee4e00f30e676b66ae65b4f08cb5bcbb8392c03f54f2d5413ea99a5d1c80/nvidia_cufft_cu12-11.3.3.83-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:4d2dd21ec0b88cf61b62e6b43564355e5222e4a3fb394cac0db101f2dd0d4f74", size = 193118695, upload-time = "2025-03-07T01:45:27.821Z" },
@@ -1488,9 +1526,9 @@ name = "nvidia-cusolver-cu12"
 version = "11.7.3.90"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12" },
-    { name = "nvidia-cusparse-cu12" },
-    { name = "nvidia-nvjitlink-cu12" },
+    { name = "nvidia-cublas-cu12", marker = "sys_platform == 'linux'" },
+    { name = "nvidia-cusparse-cu12", marker = "sys_platform == 'linux'" },
+    { name = "nvidia-nvjitlink-cu12", marker = "sys_platform == 'linux'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/85/48/9a13d2975803e8cf2777d5ed57b87a0b6ca2cc795f9a4f59796a910bfb80/nvidia_cusolver_cu12-11.7.3.90-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:4376c11ad263152bd50ea295c05370360776f8c3427b30991df774f9fb26c450", size = 267506905, upload-time = "2025-03-07T01:47:16.273Z" },
@@ -1501,7 +1539,7 @@ name = "nvidia-cusparse-cu12"
 version = "12.5.8.93"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12" },
+    { name = "nvidia-nvjitlink-cu12", marker = "sys_platform == 'linux'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c2/f5/e1854cb2f2bcd4280c44736c93550cc300ff4b8c95ebe370d0aa7d2b473d/nvidia_cusparse_cu12-12.5.8.93-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:1ec05d76bbbd8b61b06a80e1eaf8cf4959c3d4ce8e711b65ebd0443bb0ebb13b", size = 288216466, upload-time = "2025-03-07T01:48:13.779Z" },
@@ -2657,7 +2695,7 @@ name = "triton"
 version = "3.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "setuptools" },
+    { name = "setuptools", marker = "sys_platform == 'linux'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/62/ee/0ee5f64a87eeda19bbad9bc54ae5ca5b98186ed00055281fd40fb4beb10e/triton-3.4.0-cp310-cp310-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:7ff2785de9bc02f500e085420273bb5cc9c9bb767584a4aa28d6e360cec70128", size = 155430069, upload-time = "2025-07-30T19:58:21.715Z" },
