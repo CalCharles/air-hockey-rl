@@ -17,7 +17,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v1
 
-      - name: Sync dependencies
+      - name: Build environment from pyproject.toml
         run: |
-          echo "Running uv sync on ${{ matrix.os }}"
-          uv sync --frozen
+          echo "Building uv environment from pyproject.toml on ${{ matrix.os }}"
+          uv sync --refresh --locked=false
