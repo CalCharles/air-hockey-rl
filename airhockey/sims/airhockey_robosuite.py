@@ -492,7 +492,8 @@ class AirHockeyRobosuite(AirHockeySim):
             xpos = self.robosuite_env.sim.data.body_xpos[self.robosuite_env.sim.model.body_name2id(name)]
             
             pos = self.initial_block_positions[name]
-            desired_qpos = pos - xpos
+            # Only use x,y components of xpos since pos is 2D
+            desired_qpos = pos - xpos[:2]
             
             joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_x")
             self.robosuite_env.sim.data.qpos[joint_key] = desired_qpos[0]
