@@ -1,0 +1,47 @@
+# TODO: build-system may need additional configuration
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "airhockey"
+version = "0.1.0"
+description = "Environment for Air Hockey"
+readme = "README.md"
+authors = [
+    {name = "Michael Munje", email = "michaelmunje@utexas.edu"}
+]
+requires-python = ">=3.10"
+
+dependencies = [
+    "mujoco",
+    "mujoco-py",
+    "gymnasium",
+    "gym==0.25.1",
+    "swig",
+    "box2d",
+    "tqdm",
+    "h5py",
+    "xmltodict",
+    "robosuite",
+    "pyyaml",
+    "ur-rtde",
+]
+
+[project.optional-dependencies]
+train = [
+    "opencv-python",
+    "tensorboard",
+    "wandb",
+    "stable-baselines3==2.2.1",
+    "pyrallis",
+    "torch",
+    "scikit-learn",
+]
+
+[project.urls]
+Repository = "https://github.com/CalCharles/air-hockey-rl"
+
+[tool.setuptools.packages.find]
+# This ensures find_packages() behavior is preserved - automatically discovers packages
