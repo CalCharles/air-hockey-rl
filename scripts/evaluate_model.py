@@ -76,7 +76,14 @@ def get_frames(renderer, env_test, model, n_eps_viz, n_eval_eps, cfg, get_pose_d
                             else:
                                 robosuite_frames[key].append(current_img)
                 elif get_pose_dataset:
-                    frames.append(np.zeros(frame.shape)) # assumes at least one render
+                    if len(frames) > 0:
+                        # Use the shape and dtype from existing frames
+                        dummy_frame = np.zeros(frames[0].shape, dtype=frames[0].dtype)
+                    else:
+                        # Create a default dummy frame with proper uint8 dtype
+                        dummy_frame = np.zeros((120, 160, 3), dtype=np.uint8)  # reasonable default size
+                    frames.append(dummy_frame)
+                    
                 observations.append(obs)
                 action, _ = model.predict(obs)
                 # action = np.random.uniform(-1, 1, size=(1,6))
@@ -116,13 +123,16 @@ def get_frames(renderer, env_test, model, n_eps_viz, n_eval_eps, cfg, get_pose_d
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Save an evaluation gif of a trained model.')
     parser.add_argument('--model', type=str, default="", help='Folder that contains model and model_cfg.')
+    parser.add_argument('--config-path', type=str, default="", help='Custom directory containing model_cfg.yaml (if not specified, uses --model directory).')
     parser.add_argument('--save-dir', type=str, default="", help='Path to save the evaluation gifs to.')
     parser.add_argument('--save-pose-dir', type=str, default="", help='Path to save the pose dataset.')
     parser.add_argument('--eval-eps', type=int, default=30, help='number of episodes of evaluation to run.')
     parser.add_argument('--seed', type=int, default=42, help='The random seed for the environment')
     args = parser.parse_args()
 
-    with open(os.path.join(args.model, "model_cfg.yaml"), 'r') as f:
+    # Use custom config directory if specified, otherwise use model directory
+    config_path = args.config_path if args.config_path else os.path.join(args.model, "model_cfg.yaml")
+    with open(config_path, 'r') as f:
         model_cfg = yaml.safe_load(f)
 
     air_hockey_params = model_cfg['air_hockey']
