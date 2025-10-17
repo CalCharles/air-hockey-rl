@@ -25,16 +25,6 @@ class BaseTrainer(ABC):
     """
     
     def __init__(self, config, use_wandb=False, device='cpu', clear_prior_task_results=False, progress_bar=True):
-        """
-        Initialize the base trainer.
-        
-        Args:
-            config (dict): Training configuration
-            use_wandb (bool): Whether to use Weights & Biases for logging
-            device (str): Device to use for training ('cpu' or 'cuda')
-            clear_prior_task_results (bool): Whether to clear previous results
-            progress_bar (bool): Whether to show progress bar during training
-        """
         self.config = config
         self.use_wandb = use_wandb
         self.device = device
@@ -45,56 +35,18 @@ class BaseTrainer(ABC):
         self.wandb_run = None
         
     @abstractmethod
-    def _create_model(self, env, log_parent_dir, seed):
-        """
-        Create and return the RL model.
-        
-        Args:
-            env: Training environment
-            log_parent_dir (str): Parent directory for logging
-            seed (int): Random seed
-            
-        Returns:
-            Model instance for the specific algorithm
-        """
-        pass
-        
-    @abstractmethod
-    def _get_policy_type(self):
-        """
-        Return the policy type string for the algorithm.
-        
-        Returns:
-            str: Policy type (e.g., 'MlpPolicy', 'MultiInputPolicy')
-        """
+    def _create_model(self, env, log_parent_dir, seed): 
         pass
         
     @abstractmethod
     def _setup_algorithm_specific_config(self):
-        """
-        Setup algorithm-specific configuration parameters.
-        
-        This method should be implemented by each algorithm trainer
-        to handle any algorithm-specific configuration needs.
-        """
         pass
         
     @abstractmethod
     def _load_model_for_evaluation(self, model_filepath, env):
-        """
-        Load the trained model for evaluation.
-        
-        Args:
-            model_filepath (str): Path to the saved model
-            env: Environment for evaluation
-            
-        Returns:
-            Loaded model instance
-        """
         pass
         
     def _init_params(self):
-        """Initialize air hockey parameters from config."""
         air_hockey_params = self.config['air_hockey'].copy()
         air_hockey_params['n_training_steps'] = self.config['n_training_steps']
         
@@ -108,18 +60,6 @@ class BaseTrainer(ABC):
         return air_hockey_params
         
     def _setup_environment(self, air_hockey_params):
-        """
-        Setup training environment (single or multi-threaded).
-        
-        Args:
-            air_hockey_params (dict): Air hockey environment parameters
-            
-        Returns:
-            Environment instance
-        """
-
-
-        breakpoint()
         if self.config['n_threads'] > 1:
             # Multi-threaded environment setup
             seed = air_hockey_params['seed']
@@ -139,15 +79,11 @@ class BaseTrainer(ABC):
             
             env = SubprocVecEnv([get_airhockey_env_for_parallel() for _ in range(n_threads)])
         else:
-            # Single-threaded environment setup
             env = AirHockeyEnv(air_hockey_params)
-            # Note: The original code had a wrap_env function with pdb.set_trace()
-            # We'll skip the wrapping for now as it seems to be for debugging
             
         return env
         
     def _setup_logging(self):
-        """Setup logging directories with proper numbering."""
         os.makedirs(self.config['tb_log_dir'], exist_ok=True)
         log_parent_dir = os.path.join(self.config['tb_log_dir'], self.config['air_hockey']['task'])
         
@@ -165,16 +101,6 @@ class BaseTrainer(ABC):
         return log_parent_dir, log_dir
         
     def _setup_callbacks(self, eval_env, log_dir):
-        """
-        Setup evaluation callbacks based on curriculum config.
-        
-        Args:
-            eval_env: Evaluation environment
-            log_dir (str): Logging directory
-            
-        Returns:
-            Callback instance
-        """
         if 'curriculum' in self.config.keys() and len(self.config['curriculum']['model']) > 0:
             callback = CurriculumCallback(
                 eval_env, 
@@ -184,13 +110,6 @@ class BaseTrainer(ABC):
                 eval_freq=self.config['eval_freq']
             )
         else:
-
-            ### DEBUGGING
-            print("================== EvalCallback ==================")
-            print(self.config['n_eval_eps'])
-            print(self.config['eval_freq'])
-            print("================== ============ ==================")
-
             callback = EvalCallback(
                 eval_env, 
                 log_dir=log_dir, 
@@ -218,13 +137,6 @@ class BaseTrainer(ABC):
             )
             
     def _evaluate_and_save(self, model, log_dir):
-        """
-        Evaluate model and save results including GIFs.
-        
-        Args:
-            model: Trained model
-            log_dir (str): Directory to save results
-        """
         # Setup evaluation environment
         eval_config = self.config['air_hockey'].copy()
         eval_config['max_timesteps'] = 200
@@ -246,13 +158,6 @@ class BaseTrainer(ABC):
         env_test.close()
         
     def _save_model_and_config(self, model, log_dir):
-        """
-        Save model and configuration files.
-        
-        Args:
-            model: Trained model
-            log_dir (str): Directory to save files
-        """
         os.makedirs(log_dir, exist_ok=True)
         
         # Save model
@@ -265,7 +170,6 @@ class BaseTrainer(ABC):
             yaml.dump(self.config, f)
             
     def train(self):
-        """Main training orchestration method."""
         # Initialize parameters
         air_hockey_params = self._init_params()
         
@@ -304,12 +208,12 @@ class BaseTrainer(ABC):
             # Create model
             model = self._create_model(env, log_parent_dir, seed)
             
-            breakpoint()
             # Train the model
             model.learn(
                 total_timesteps=self.config['n_training_steps'],
                 tb_log_name=self.config['tb_log_name'], 
                 callback=callback,
+                log_interval=1000,
                 progress_bar=self.progress_bar
             )
             
