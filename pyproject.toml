@@ -38,6 +38,7 @@ train = [
     "pyrallis",
     "torch",
     "scikit-learn",
+    "tyro>=0.8.0"
 ]
 
 [project.urls]

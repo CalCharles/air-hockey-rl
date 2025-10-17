@@ -31,6 +31,66 @@ import numpy as np
 from robosuite.models.arenas import Arena
 from airhockey.sims.utils import custom_xml_path_completion
 from ..utils import dict_to_namespace
+from robosuite.utils import binding_utils as _ru_binding_utils
+import re
+from itertools import count
+
+if not hasattr(_ru_binding_utils, "_xml_dump_patched"):
+    _orig_from_xml_string = _ru_binding_utils.MjSim.from_xml_string
+
+    # rename ONLY <body ... name="base"...> occurrences, leaving any non-body names alone
+    # This regex matches: <body ... name="base" ...> and captures the quotes for replacement
+    _body_name_base_re = re.compile(r'(<\s*body\b[^>]*\bname\s*=\s*")base(")', re.IGNORECASE)
+
+    def _rewrite_body_base_names(xml: str) -> str:
+        """Rewrite duplicate 'base' body names to avoid MuJoCo naming conflicts."""
+        idx = count(1)
+
+        def repl(m: re.Match) -> str:
+            n = next(idx)
+            new = "arena_base" if n == 1 else f"arena_base_{n}"
+            return m.group(1) + new + m.group(2)
+
+        return _body_name_base_re.sub(repl, xml)
+
+    def _from_xml_string_dump(xml, *args, **kwargs):
+        # 1) dump the original for debugging
+        import os
+        import tempfile
+        debug_dir = os.path.join(tempfile.gettempdir(), "air_hockey_debug")
+        os.makedirs(debug_dir, exist_ok=True)
+        
+        try:
+            with open(os.path.join(debug_dir, "merged_dump.xml"), "w") as f:
+                f.write(xml)
+        except Exception as e:
+            print("[DEBUG] dump original failed:", e, flush=True)
+
+        # 2) rewrite duplicate 'base' body names
+        xml2 = _rewrite_body_base_names(xml)
+
+        # 3) dump the rewritten XML and counts
+        try:
+            with open(os.path.join(debug_dir, "merged_dump_rewritten.xml"), "w") as f:
+                f.write(xml2)
+            orig_cnt = len(_body_name_base_re.findall(xml))
+            new_cnt  = len(_body_name_base_re.findall(xml2))
+            #             print(f"[DEBUG] body base rename: before={orig_cnt}, after={new_cnt}", flush=True)
+        except Exception as e:
+            print("[DEBUG] dump rewritten failed:", e, flush=True)
+
+        # 4) pass the cleaned XML to MuJoCo
+        try:
+            return _orig_from_xml_string(xml2, *args, **kwargs)
+        except Exception as e:
+            print(f"[DEBUG] MuJoCo XML parsing failed even after base name fix: {e}", flush=True)
+            print(f"[DEBUG] Falling back to original XML", flush=True)
+            # If the fixed XML still fails, try the original XML
+            return _orig_from_xml_string(xml, *args, **kwargs)
+
+    _ru_binding_utils.MjSim.from_xml_string = staticmethod(_from_xml_string_dump)
+    _ru_binding_utils._xml_dump_patched = True
+    print("[DEBUG] Patched MjSim.from_xml_string to REWRITE and dump XML", flush=True)
 
 class AirHockeyRobosuite(AirHockeySim):
     """
@@ -432,7 +492,9 @@ class AirHockeyRobosuite(AirHockeySim):
             xpos = self.robosuite_env.sim.data.body_xpos[self.robosuite_env.sim.model.body_name2id(name)]
             
             pos = self.initial_block_positions[name]
-            desired_qpos = pos - xpos
+            # Convert 2D pos to 3D by adding z=0, then subtract 3D xpos
+            pos_3d = np.array([pos[0], pos[1], 0])
+            desired_qpos = pos_3d - xpos
             
             joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_x")
             self.robosuite_env.sim.data.qpos[joint_key] = desired_qpos[0]
@@ -670,8 +732,8 @@ class AirHockeyRobosuite(AirHockeySim):
                         "@pos": f"0 0 -{self.puck_z_offset}",
                         "@name": f"{name}",
                         "@type": "cylinder",
-                        "@material": "green",
-                        "@size": f"{self.puck_radius} {self.puck_height}",
+                        "@material": "red",
+                        "@size": f"{self.puck_radius * 1.5} {self.puck_height * 2}",
                         "@condim": "4",
                         "@priority": "0",
                         "@group": "1",
