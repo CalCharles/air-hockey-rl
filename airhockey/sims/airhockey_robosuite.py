@@ -75,7 +75,7 @@ if not hasattr(_ru_binding_utils, "_xml_dump_patched"):
                 f.write(xml2)
             orig_cnt = len(_body_name_base_re.findall(xml))
             new_cnt  = len(_body_name_base_re.findall(xml2))
-            print(f"[DEBUG] body base rename: before={orig_cnt}, after={new_cnt}", flush=True)
+            #             print(f"[DEBUG] body base rename: before={orig_cnt}, after={new_cnt}", flush=True)
         except Exception as e:
             print("[DEBUG] dump rewritten failed:", e, flush=True)
 
