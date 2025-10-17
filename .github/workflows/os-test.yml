@@ -20,4 +20,4 @@ jobs:
       - name: Build environment from pyproject.toml
         run: |
           echo "Building uv environment from pyproject.toml on ${{ matrix.os }}"
-          uv sync
+          uv sync --refresh --locked=false
