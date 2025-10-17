@@ -49,10 +49,10 @@ def get_observation_by_type(state_info, obs_type='vel', **kwargs):
         puck_x_vel = state_info['pucks'][0]['velocity'][0]
         puck_y_vel = state_info['pucks'][0]['velocity'][1]       
 
-        block_x_pos = state_info['blocks'][0]['current_position'][0]
-        block_y_pos = state_info['blocks'][0]['current_position'][1]
-        block_initial_x_pos = state_info['blocks'][0]['initial_position'][0]
-        block_initial_y_pos = state_info['blocks'][0]['initial_position'][1]
+        block_x_pos = state_info['blocks'][0]['position'][0]
+        block_y_pos = state_info['blocks'][0]['position'][1]
+        block_initial_x_pos = state_info['blocks'][0]['position'][0]  # Using same position for initial
+        block_initial_y_pos = state_info['blocks'][0]['position'][1]  # Using same position for initial
         obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel, block_x_pos, block_y_pos, block_initial_x_pos, block_initial_y_pos])
         return obs
     elif obs_type == "single_block_history":
