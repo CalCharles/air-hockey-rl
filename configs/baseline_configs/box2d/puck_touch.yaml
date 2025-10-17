@@ -20,7 +20,7 @@ air_hockey:
     absorb_target: false
     block_density: 1000
     block_width: 0.0554
-    force_scaling: 1000
+    force_scaling: 1
     gravity: -0.5
     length: 1.9304
     max_force_timestep: 100
@@ -53,6 +53,6 @@ n_threads: 20
 n_training_steps: 1000000
 print_reward: false
 seed: 0
-tb_log_dir: baseline_models
+tb_log_dir: baseline_models/ppo
 tb_log_name: air_hockey_agent
 vec_normalize_save_filepath: vec_normalize.pkl
