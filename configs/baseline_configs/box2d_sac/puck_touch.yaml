@@ -16,6 +16,7 @@ air_hockey:
   return_goal_obs: false
   seed: 0
   simulator: box2d
+  
   simulator_params:
     absorb_target: false
     block_density: 1000

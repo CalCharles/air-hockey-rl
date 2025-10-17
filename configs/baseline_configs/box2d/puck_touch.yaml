@@ -16,24 +16,32 @@ air_hockey:
   return_goal_obs: false
   seed: 0
   simulator: box2d
+
   simulator_params:
     absorb_target: false
     block_density: 1000
     block_width: 0.0554
-    force_scaling: 1
-    gravity: -0.5
     length: 1.9304
     max_force_timestep: 100
+    paddle_radius: 0.0508
+
+    force_scaling: 1
     paddle_damping: 3
     paddle_density: 2500
-    paddle_radius: 0.0508
+
+    gravity: -0.5
     puck_damping: 0.5
     puck_density: 250
+    puck_restitution: 1.09145
+    wall_bounce_scale: 0.02
+    # x_offset: -0.01845
+    # y_offset: 0.01724
+
     puck_radius: 0.03175
     render_size: 360
     seed: 0
-    wall_bounce_scale: 0.02
     width: 0.8636
+
   stand_still_rew: 0.01
   task: puck_touch
   terminate_on_enemy_goal: true
