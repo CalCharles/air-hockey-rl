@@ -1,0 +1,1132 @@
+from types import SimpleNamespace
+import numpy as np
+import math
+# Compatibility fix for newer Robosuite versions
+try:
+    from robosuite.environments.manipulation.single_arm_env import SingleArmEnv
+except ImportError:
+    # Fallback to ManipulationEnv for newer Robosuite versions
+    from robosuite.environments.manipulation.manipulation_env import ManipulationEnv as SingleArmEnv
+from .airhockey_sim import AirHockeySim
+from robosuite.models.objects import BoxObject, CylinderObject
+from robosuite.models.tasks import ManipulationTask
+from robosuite.utils.mjcf_utils import CustomMaterial
+from robosuite.utils.observables import Observable, sensor
+from robosuite.utils.placement_samplers import UniformRandomSampler
+import robosuite.utils.transform_utils as T
+from robosuite.utils.transform_utils import convert_quat
+from robosuite.utils.mjmod import DynamicsModder
+from robosuite.utils.mjcf_utils import xml_path_completion as robosuite_xml_path_completion
+from robosuite.robots import ROBOT_CLASS_MAPPING
+import yaml
+import xmltodict
+import time
+import datetime
+from collections import namedtuple
+from robosuite.utils.control_utils import trans
+import inspect
+import os
+
+import numpy as np
+from robosuite.models.arenas import Arena
+from airhockey.sims.utils import custom_xml_path_completion
+from ..utils import dict_to_namespace
+from robosuite.utils import binding_utils as _ru_binding_utils
+import re
+from itertools import count
+
+if not hasattr(_ru_binding_utils, "_xml_dump_patched"):
+    _orig_from_xml_string = _ru_binding_utils.MjSim.from_xml_string
+
+    # rename ONLY <body ... name="base"...> occurrences, leaving any non-body names alone
+    # This regex matches: <body ... name="base" ...> and captures the quotes for replacement
+    _body_name_base_re = re.compile(r'(<\s*body\b[^>]*\bname\s*=\s*")base(")', re.IGNORECASE)
+
+    def _rewrite_body_base_names(xml: str) -> str:
+        """Rewrite duplicate 'base' body names to avoid MuJoCo naming conflicts."""
+        idx = count(1)
+
+        def repl(m: re.Match) -> str:
+            n = next(idx)
+            new = "arena_base" if n == 1 else f"arena_base_{n}"
+            return m.group(1) + new + m.group(2)
+
+        return _body_name_base_re.sub(repl, xml)
+
+    def _from_xml_string_dump(xml, *args, **kwargs):
+        # 1) dump the original for debugging
+        import os
+        import tempfile
+        debug_dir = os.path.join(tempfile.gettempdir(), "air_hockey_debug")
+        os.makedirs(debug_dir, exist_ok=True)
+        
+        try:
+            with open(os.path.join(debug_dir, "merged_dump.xml"), "w") as f:
+                f.write(xml)
+        except Exception as e:
+            print("[DEBUG] dump original failed:", e, flush=True)
+
+        # 2) rewrite duplicate 'base' body names
+        xml2 = _rewrite_body_base_names(xml)
+
+        # 3) dump the rewritten XML and counts
+        try:
+            with open(os.path.join(debug_dir, "merged_dump_rewritten.xml"), "w") as f:
+                f.write(xml2)
+            orig_cnt = len(_body_name_base_re.findall(xml))
+            new_cnt  = len(_body_name_base_re.findall(xml2))
+            #             print(f"[DEBUG] body base rename: before={orig_cnt}, after={new_cnt}", flush=True)
+        except Exception as e:
+            print("[DEBUG] dump rewritten failed:", e, flush=True)
+
+        # 4) pass the cleaned XML to MuJoCo
+        try:
+            return _orig_from_xml_string(xml2, *args, **kwargs)
+        except Exception as e:
+            print(f"[DEBUG] MuJoCo XML parsing failed even after base name fix: {e}", flush=True)
+            print(f"[DEBUG] Falling back to original XML", flush=True)
+            # If the fixed XML still fails, try the original XML
+            return _orig_from_xml_string(xml, *args, **kwargs)
+
+    _ru_binding_utils.MjSim.from_xml_string = staticmethod(_from_xml_string_dump)
+    _ru_binding_utils._xml_dump_patched = True
+    print("[DEBUG] Patched MjSim.from_xml_string to REWRITE and dump XML", flush=True)
+
+class AirHockeyRobosuite(AirHockeySim):
+    """
+    This class corresponds to the lifting task for a single robot arm.
+
+    Args:
+        robots (str or list of str): Specification for specific robot arm(s) to be instantiated within this env
+            (e.g: "Sawyer" would generate one arm; ["Panda", "Panda", "Sawyer"] would generate three robot arms)
+            Note: Must be a single single-arm robot!
+
+        env_configuration (str): Specifies how to position the robots within the environment (default is "default").
+            For most single arm environments, this argument has no impact on the robot setup.
+
+        controller_configs (str or list of dict): If set, contains relevant controller parameters for creating a
+            custom controller. Else, uses the default controller for this specific task. Should either be single
+            dict if same controller is to be used for all robots or else it should be a list of the same length as
+            "robots" param
+
+        gripper_types (str or list of str): type of gripper, used to instantiate
+            gripper models from gripper factory. Default is "default", which is the default grippers(s) associated
+            with the robot(s) the 'robots' specification. None removes the gripper, and any other (valid) model
+            overrides the default gripper. Should either be single str if same gripper type is to be used for all
+            robots or else it should be a list of the same length as "robots" param
+
+        initialization_noise (dict or list of dict): Dict containing the initialization noise parameters.
+            The expected keys and corresponding value types are specified below:
+
+            :`'magnitude'`: The scale factor of uni-variate random noise applied to each of a robot's given initial
+                joint positions. Setting this value to `None` or 0.0 results in no noise being applied.
+                If "gaussian" type of noise is applied then this magnitude scales the standard deviation applied,
+                If "uniform" type of noise is applied then this magnitude sets the bounds of the sampling range
+            :`'type'`: Type of noise to apply. Can either specify "gaussian" or "uniform"
+
+            Should either be single dict if same noise value is to be used for all robots or else it should be a
+            list of the same length as "robots" param
+
+            :Note: Specifying "default" will automatically use the default noise settings.
+                Specifying None will automatically create the required dict with "magnitude" set to 0.0.
+
+        table_full_size (3-tuple): x, y, and z dimensions of the table.
+
+        table_friction (3-tuple): the three mujoco friction parameters for
+            the table.
+
+        use_camera_obs (bool): if True, every observation includes rendered image(s)
+
+        use_object_obs (bool): if True, include object (puck) information in
+            the observation.
+        # Get robot prefix and define observables modality
+
+        reward_scale (None or float): Scales the normalized reward function by the amount specified.
+            If None, environment reward remains unnormalized
+
+        reward_shaping (bool): if True, use dense rewards.
+
+        placement_initializer (ObjectPositionSampler): if provided, will
+            be used to place objects on every reset, else a UniformRandomSampler
+            is used by default.
+
+        has_renderer (bool): If true, render the simulation state in
+            a viewer instead of headless mode.
+
+        has_offscreen_renderer (bool): True if using off-screen rendering
+
+        render_camera (str): Name of camera to render if `has_renderer` is True. Setting this value to 'None'
+            will result in the default angle being applied, which is useful as it can be dragged / panned by
+            the user using the mouse
+
+        render_collision_mesh (bool): True if rendering collision meshes in camera. False otherwise.
+
+        render_visual_mesh (bool): True if rendering visual meshes in camera. False otherwise.
+
+        render_gpu_device_id (int): corresponds to the GPU device id to use for offscreen rendering.
+            Defaults to -1, in which case the device will be inferred from environment variables
+            (GPUS or CUDA_VISIBLE_DEVICES).
+
+        control_freq (float): how many control signals to receive in every second. This sets the amount of
+            simulation time that passes between every action input.
+
+        horizon (int): Every episode lasts for exactly @horizon timesteps.
+
+        ignore_done (bool): True if never terminating the environment (ignore @horizon).
+
+        hard_reset (bool): If True, re-loads model, sim, and render object upon a reset call, else,
+            only calls sim.reset and resets all robosuite-internal variables
+
+        camera_names (str or list of str): name of camera to be rendered. Should either be single str if
+            same name is to be used for all cameras' rendering or else it should be a list of cameras to render.
+
+            :Note: At least one camera must be specified if @use_camera_obs is True.
+
+            :Note: To render all robots' cameras of a certain type (e.g.: "robotview" or "eye_in_hand"), use the
+                convention "all-{name}" (e.g.: "all-robotview") to automatically render all camera images from each
+                robot's camera list).
+
+        camera_heights (int or list of int): height of camera frame. Should either be single int if
+            same height is to be used for all cameras' frames or else it should be a list of the same length as
+            "camera names" param.
+
+        camera_widths (int or list of int): width of camera frame. Should either be single int if
+            same width is to be used for all cameras' frames or else it should be a list of the same length as
+            "camera names" param.
+
+        camera_depths (bool or list of bool): True if rendering RGB-D, and RGB otherwise. Should either be single
+            bool if same depth setting is to be used for all cameras or else it should be a list of the same length as
+            "camera names" param.
+
+        camera_segmentations (None or str or list of str or list of list of str): Camera segmentation(s) to use
+            for each camera. Valid options are:
+
+                `None`: no segmentation sensor used
+                `'instance'`: segmentation at the class-instance level
+                `'class'`: segmentation at the class level
+                `'element'`: segmentation at the per-geom level
+
+            If not None, multiple types of segmentations can be specified. A [list of str / str or None] specifies
+            [multiple / a single] segmentation(s) to use for all cameras. A list of list of str specifies per-camera
+            segmentation setting(s) to use.
+
+    Raises:
+        AssertionError: [Invalid number of robots specified]
+    """
+
+    def __init__(self, **kwargs):
+
+        defaults = {
+            'action_x_scaling': 1.0,
+            'action_y_scaling': 1.0,
+            'render_masks': False,
+            'gravity': -5,
+            'paddle_density': 1000,
+            'puck_density': 250,
+            'block_density': 1000,
+            'max_paddle_vel': 2,
+            'time_frequency': 20,
+            'paddle_bounds': [],
+            'paddle_edge_bounds': [],
+            'center_offset_constant': 1.2,
+            'robots': ['UR5e'],  # Use standard UR5e instead of AirHockeyUR5e
+            'env_configuration': "default",
+            'controller_configs': {'arm': 'OSC_POSE'},  # Use OSC controller for position-based control
+            'gripper_types': None,  # Disable gripper to avoid joint name conflicts
+            'initialization_noise': "default",
+            'table_friction': (1.0, 5e-3, 1e-4),
+            'use_camera_obs': True,
+            'has_renderer': False,
+            'has_offscreen_renderer': True,
+            'render_camera': "frontview",
+            'render_collision_mesh': False,
+            'render_visual_mesh': True,
+            'render_gpu_device_id': -1,
+            'control_freq': 20,
+            'step_frequency': 20,
+            'horizon': 400,
+            'ignore_done': False,
+            'hard_reset': True,
+            'camera_names': ["birdview", "sideview"],
+            'camera_heights': 512,
+            'camera_widths': 512,
+            'camera_depths': False,
+            'camera_segmentations': None,  # {None, instance, class, element}
+            'renderer': "mujoco",
+            'renderer_config': None,
+            'task': "JUGGLE_PUCK",
+            'table_xml': "arenas/air_hockey_table.xml",  # relative to assets dir
+            'puck_radius': 0.03165,
+            'puck_damping': 0.01,
+            'puck_density': 30,
+            'seed': 0,
+            'absorb_target': False,
+            'force_scaling': 1000,
+            'paddle_damping': 1,
+            'paddle_density': 1,
+            'block_density': 1,
+            'gravity': 1,
+            'max_force_timestep': 1,
+            'paddle_bounds': [],
+            'paddle_edge_bounds': [],
+            'center_offset_constant': 1.2,
+            'depth': 0.0505,  # Table depth from XML comment
+            'table_elevation': 0.0,  # Table elevation
+            'table_tilt': 0.0,  # Table tilt angle
+            'rim_width': 0.05,  # Rim width for table offsets
+            'max_puck_vel': 10.0,  # Maximum puck velocity
+            'max_paddle_vel': 2.0,  # Maximum paddle velocity
+            'time_frequency': 20,  # Time frequency
+            'render_size': 360,  # Render size
+            
+            # OSC Controller Parameters
+            'osc_kp': 150,  # Position gain
+            'osc_damping_ratio': 1,  # Damping ratio
+            'osc_input_max': 1,  # Maximum input value
+            'osc_input_min': -1,  # Minimum input value
+            'osc_output_max_pos': [0.05, 0.05, 0.05],  # Max position output [x, y, z]
+            'osc_output_min_pos': [-0.05, -0.05, -0.05],  # Min position output [x, y, z]
+            'osc_output_max_ori': [0.5, 0.5, 0.5],  # Max orientation output [roll, pitch, yaw]
+            'osc_output_min_ori': [-0.5, -0.5, -0.5],  # Min orientation output [roll, pitch, yaw]
+            'osc_uncouple_pos_ori': True,  # Uncouple position and orientation
+            'osc_input_type': 'delta',  # Input type (delta or absolute)
+            'osc_input_ref_frame': 'base',  # Reference frame
+            'osc_ramp_ratio': 0.2,  # Ramp ratio for smooth transitions
+            'osc_impedance_mode': 'fixed'  # Impedance mode
+        }
+
+        kwargs = {**defaults, **kwargs}
+        config = dict_to_namespace(kwargs)
+        # settings for table top
+        table_full_size = (config.length / 2, config.width / 2, config.depth / 2)
+        self.table_full_size = table_full_size
+        self.table_friction = config.table_friction
+        self.table_offset = np.array((0, 0, config.table_elevation))
+        
+        self.length = config.length
+        self.width = config.width
+        self.ppm = config.render_size / self.width
+        self.render_width = int(config.render_size)
+        self.render_length = int(self.ppm * self.length)
+        self.render_masks = False
+
+        self.gripper_types = config.gripper_types
+
+        self.table_tilt = config.table_tilt
+        self.table_elevation = config.table_elevation
+        self.table_depth = config.depth
+        self.x_to_x_prime_ratio = math.cos(self.table_tilt)
+        self.x_prime_to_x_ratio = 1 / self.x_to_x_prime_ratio
+        self.x_to_z_ratio = math.sin(self.table_tilt)
+        self.transform_z = lambda x: self.x_to_z_ratio * x + self.table_elevation - config.depth
+        self.transform_x = lambda x: self.x_to_x_prime_ratio * x
+        self.inverse_transform_x = lambda x: self.x_prime_to_x_ratio * x
+        
+        self.high_level_table_x_top = -self.length / 2
+        self.high_level_table_x_bot = self.length / 2
+        self.high_level_table_y_right = self.width / 2
+        self.high_level_table_y_left = -self.width / 2
+        self.center_offset_constant = config.center_offset_constant
+        
+        self.table_x_offset = 2 * config.rim_width
+        self.table_y_offset = 2 * config.rim_width
+        
+        # where the playable area starts
+        self.table_x_top = self.length - self.table_x_offset
+        self.table_x_bot = self.table_x_offset
+        self.table_y_right = -self.width / 2 + self.table_y_offset
+        self.table_y_left = self.width / 2 - self.table_y_offset
+
+        self.table_q = T.axisangle2quat(np.array([0, self.table_tilt, 0]))
+        self.table_transform = T.quat2mat(self.table_q)
+        self.inv_table_transform = np.linalg.inv(self.table_transform)
+
+        self.initial_puck_vels = dict()
+        self.initial_block_positions = dict()
+        self.table_xml = config.table_xml
+
+        self.puck_radius = config.puck_radius
+        self.puck_damping = config.puck_damping
+        self.puck_density = config.puck_density
+        self.puck_height = 0.009
+        self.puck_z_offset = math.sin(self.table_tilt) * self.puck_radius
+        self.action_x_scaling = config.action_x_scaling
+        self.action_y_scaling = config.action_y_scaling
+
+        # FIXME make these parameters do something, right now it's a placeholder to make calls to robosuite work
+        self.seed = config.seed
+        self.paddle_radius = config.paddle_radius
+        self.block_width = config.block_width
+        self.max_paddle_vel = config.max_paddle_vel
+        self.max_puck_vel = config.max_puck_vel
+        self.control_freq = config.control_freq
+        self.step_frequency = config.step_frequency
+        self.last_action = np.zeros(2)
+        
+        self.robosuite_env = None
+        self.robosuite_env_cfg = {'robots': config.robots, 'env_configuration': config.env_configuration, 
+                              'controller_configs': self._build_controller_config(config),  # Build custom OSC controller config
+                              'base_types': "default", 'gripper_types': config.gripper_types, 'initialization_noise': config.initialization_noise,
+                              'use_camera_obs': config.use_camera_obs, 'has_renderer': config.has_renderer, 'has_offscreen_renderer': config.has_offscreen_renderer,
+                              'render_camera': config.render_camera, 'render_collision_mesh': config.render_collision_mesh, 'render_visual_mesh': config.render_visual_mesh,
+                              'render_gpu_device_id': config.render_gpu_device_id, 'control_freq': config.control_freq, 'horizon': config.horizon, 'ignore_done': config.ignore_done,
+                              'hard_reset': config.hard_reset, 'camera_names': config.camera_names, 'camera_heights': config.camera_heights, 'camera_widths': config.camera_widths,
+                              'camera_depths': config.camera_depths, 'camera_segmentations': config.camera_segmentations, 'renderer': config.renderer, 'renderer_config': config.renderer_config}
+        
+        self.initialized_objects = False
+        current_time = datetime.datetime.fromtimestamp(time.time())
+        # formatted_time = current_time.strftime('%Y%m%d_%H%M%S')
+        formatted_time = np.random.randint(1000000000000000000)
+        self.tmp_xml_fp = robosuite_xml_path_completion(self.table_xml + f"_{formatted_time}.xml")
+        
+    def _build_controller_config(self, config):
+        """
+        Build OSC controller configuration from config parameters.
+        
+        Args:
+            config: Configuration namespace with OSC parameters
+            
+        Returns:
+            dict: Controller configuration compatible with Robosuite
+        """
+        # Build OSC controller configuration for the right arm
+        osc_config = {
+            'type': 'OSC_POSE',
+            'input_max': config.osc_input_max,
+            'input_min': config.osc_input_min,
+            'output_max': config.osc_output_max_pos + config.osc_output_max_ori,
+            'output_min': config.osc_output_min_pos + config.osc_output_min_ori,
+            'kp': config.osc_kp,
+            'damping_ratio': config.osc_damping_ratio,
+            'impedance_mode': config.osc_impedance_mode,
+            'kp_limits': [0, 300],  # Standard limits
+            'damping_ratio_limits': [0, 10],  # Standard limits
+            'position_limits': None,
+            'orientation_limits': None,
+            'uncouple_pos_ori': config.osc_uncouple_pos_ori,
+            'input_type': config.osc_input_type,
+            'input_ref_frame': config.osc_input_ref_frame,
+            'interpolation': None,
+            'ramp_ratio': config.osc_ramp_ratio,
+            'gripper': {'type': 'GRIP'} if config.gripper_types is not None else None
+        }
+        
+        # Build the complete controller configuration
+        controller_config = {
+            'type': 'BASIC',
+            'body_parts': {
+                'right': osc_config
+            }
+        }
+        
+        return controller_config
+        
+    def __del__(self):
+        if self.robosuite_env is not None:
+            self.robosuite_env.close()
+        if self.initialized_objects and os.path.exists(self.tmp_xml_fp):
+            os.remove(self.tmp_xml_fp)
+
+    @staticmethod
+    def from_dict(state_dict):
+        # create a dictionary of only the relevant parameters
+        return AirHockeyRobosuite(**state_dict)
+
+    def get_contacts(self):
+        return self.robosuite_env.get_contacts() if self.robosuite_env is not None else None
+
+    def start_callbacks(self, **kwargs):
+        return
+
+    def reset(self, seed=None, **kwargs):
+        if self.robosuite_env is not None:
+            self.robosuite_env.reset()
+        
+        self.timestep = 0
+        self.puck_history = [(-2 + self.center_offset_constant,0,1) for i in range(5)]
+        self.last_action = np.zeros(2)
+
+        if not self.initialized_objects:
+            self.puck_names = {}
+            self.block_names = {}
+            self.initial_obj_configurations = {'paddles': {}, 'pucks': {}, 'blocks': {}}
+            
+            # Load and configure XML
+            xml_fp = custom_xml_path_completion(self.table_xml)
+            with open(xml_fp, "r") as file:
+                self.xml_config = xmltodict.parse(file.read())
+
+            # update table config
+            assert self.xml_config['mujoco']['worldbody']['body']['@name'] == 'table'
+            self.xml_config['mujoco']['worldbody']['body']['@pos'] = f"{self.table_full_size[0]} 0 {self.table_elevation}"
+
+            # update table surface config
+            table_surface_idx = None
+            for i, body in enumerate(self.xml_config['mujoco']['worldbody']['body']['body']):
+                if body['@name'] == 'table_surface':
+                    table_surface_idx = i
+                    break
+            self.xml_config['mujoco']['worldbody']['body']['body'][table_surface_idx]['geom']['@size'] = f"{self.table_full_size[0]} {self.table_full_size[1]} {self.table_full_size[2]}"
+    
+    def set_obj_configs(self):
+        for name in self.initial_obj_configurations['pucks'].keys():
+            body_id = self.robosuite_env.sim.model.body_name2id(name)
+            
+            xpos = self.robosuite_env.sim.data.body_xpos[body_id]
+            pos = self.initial_obj_configurations['pucks'][name]['position']
+            desired_qpos = pos - xpos
+            
+            xvel = self.robosuite_env.sim.data.get_body_xvelp(name)[:2]
+            vel = self.initial_obj_configurations['pucks'][name]['velocity']
+            desired_qvel = vel - xvel
+            
+            joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_x")
+            self.robosuite_env.sim.data.qpos[joint_key] = desired_qpos[0]
+            self.robosuite_env.sim.data.qvel[joint_key] = desired_qvel[0]
+            joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_y")
+            self.robosuite_env.sim.data.qpos[joint_key] = desired_qpos[1]
+            self.robosuite_env.sim.data.qvel[joint_key] = desired_qvel[1]
+            joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_yaw")
+            self.robosuite_env.sim.data.qpos[joint_key] = desired_qpos[2]
+        for name in self.initial_block_positions.keys():
+            xpos = self.robosuite_env.sim.data.body_xpos[self.robosuite_env.sim.model.body_name2id(name)]
+            
+            pos = self.initial_block_positions[name]
+            # Convert 2D pos to 3D by adding z=0, then subtract 3D xpos
+            pos_3d = np.array([pos[0], pos[1], 0])
+            desired_qpos = pos_3d - xpos
+            
+            joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_x")
+            self.robosuite_env.sim.data.qpos[joint_key] = desired_qpos[0]
+            joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_y")
+            self.robosuite_env.sim.data.qpos[joint_key] = desired_qpos[1]
+            joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_yaw")
+            self.robosuite_env.sim.data.qpos[joint_key] = desired_qpos[2]
+        self.robosuite_env.sim.step()
+
+    def set_object_links(self):
+        # set up object names TODO: might not be working
+        self.paddle_name_list = ["gripper0_right_eef"] # Updated to match actual body name
+
+        
+        self.puck_name_list = list(self.puck_names.keys())
+        self.block_name_list = list(self.block_names.keys())
+
+        self.paddle_name_list.sort()
+        self.puck_name_list.sort()
+        self.block_name_list.sort()
+
+    def instantiate_objects(self):
+        if self.initialized_objects:
+            self.set_obj_configs()
+            return
+        # this is only for the first time
+        with open(self.tmp_xml_fp, 'w') as file:
+            file.write(xmltodict.unparse(self.xml_config, pretty=True))
+        self.robosuite_env = RobosuiteEnv(xml_fp=self.tmp_xml_fp, 
+                                          table_full_size=self.table_full_size,
+                                          table_friction=self.table_friction,
+                                          table_offset=self.table_offset,
+                                          puck_names=self.puck_names,
+                                          block_names=self.block_names,
+                                          robosuite_env_params=self.robosuite_env_cfg)
+
+        # Adjust base pose accordingly
+        # TODO: uncomment and use this code, it is currently done in the xml
+        # xpos = self.robosuite_env.robots[0].robot_model.base_xpos_offset["table"](self.table_full_size[0])
+        # xpos = (-0.48, 0, 0)
+        # self.robosuite_env.robots[0].robot_model.set_base_xpos(xpos)
+
+        self.set_obj_configs()
+        self.initialized_objects = True
+        
+    def high_level_to_robosuite_coords(self, pos, object_type):
+        # uses high_level_table_x_top, high_level_table_x_bot, high_level_table_y_right, high_level_table_y_left
+        # and table_x_top, table_x_bot, table_y_right, table_y_left
+        # first convert both to negative
+        # pos = -pos
+        
+        x = (pos[0] - self.high_level_table_x_top) / (self.high_level_table_x_bot - self.high_level_table_x_top) * (self.table_x_bot - self.table_x_top) + self.table_x_top
+        y = (pos[1] - self.high_level_table_y_left) / (self.high_level_table_y_right - self.high_level_table_y_left) * (self.table_y_right - self.table_y_left) + self.table_y_left
+        if object_type == 'puck':
+            x -= self.puck_radius
+            y -= self.puck_radius
+        elif object_type == 'block':
+            x -= self.block_width / 2
+            y -= self.block_width / 2
+        elif object_type == 'paddle':
+            x -= 0 # self.paddle_radius
+            y -= 0 # self.paddle_radius
+        else:
+            raise ValueError("Invalid object type")
+        x = self.inverse_transform_x(x)
+        
+        return np.array([x, y])
+    
+    def robosuite_to_high_level_coords(self, pos, object_type):
+        # uses high_level_table_x_top, high_level_table_x_bot, high_level_table_y_right, high_level_table_y_left
+        # and table_x_top, table_x_bot, table_y_right, table_y_left
+        x = (pos[0] - self.table_x_top) / (self.table_x_bot - self.table_x_top) * (self.high_level_table_x_bot - self.high_level_table_x_top) + self.high_level_table_x_top
+        y = (pos[1] - self.table_y_left) / (self.table_y_right - self.table_y_left) * (self.high_level_table_y_right - self.high_level_table_y_left) + self.high_level_table_y_left
+        if object_type == 'puck':
+            # x += self.puck_radius
+            # y += self.puck_radius
+            x += 0
+            y += 0
+        elif object_type == 'block':
+            x += self.block_width / 2
+            y += self.block_width / 2
+        elif object_type == 'paddle':
+            x += 0 # self.paddle_radius
+            y += 0 # self.paddle_radius
+        else:
+            raise ValueError("Invalid object type")
+        return np.array([x, y])
+    
+    def high_level_to_robosuite_vel(self, vel, object_type):
+        return np.array([-vel[0], -vel[1]])
+
+    def robosuite_to_high_level_vel(self, vel, object_type):
+        return np.array([-vel[0], -vel[1]])
+
+    def spawn_block(self, pos, vel, name, affected_by_gravity=False, movable=True):
+        self.initial_block_positions[name] = pos
+        self.initial_obj_configurations['blocks'][name] = {'position': pos}
+        if self.initialized_objects:
+            return
+        
+        # create puck object to add
+        puck_mass = self.puck_density * math.pi * (self.puck_radius ** 2) * 0.009
+        z_pos = self.transform_z(pos[0])
+        x_pos = self.transform_x(pos[0])
+        y_pos = pos[1]
+        self.block_names[name] = name
+        puck_dict = {
+            "@name": "base",
+            "@pos": f"{x_pos} {y_pos} {z_pos}",
+            "@axisangle": "0 1 0 -0.09",
+            "joint": [
+                {
+                    "@name": f"{name}_x",
+                    "@type": "slide",
+                    "@axis": "1 0 0",
+                    "@damping": f"{self.puck_damping}",
+                    "@limited": "false",
+                },
+                {
+                    "@name": f"{name}_y",
+                    "@type": "slide",
+                    "@axis": "0 1 0",
+                    "@damping": f"{self.puck_damping}",
+                    "@limited": "false",
+                },
+                {
+                    "@name": f"{name}_yaw",
+                    "@type": "hinge",
+                    "@axis": "0 0 1",
+                    "@damping": "2e-6",
+                    "@limited": "false",
+                },
+            ],
+            "body": {
+                "@name": f"{name}",
+                "geom": [
+                    {
+                        "@pos": "0 0 -0.2", # believe this is relative to the base
+                        "@name": f"{name}",
+                        "@type": "cylinder",
+                        "@material": "red",
+                        "@size": f"{self.puck_radius} 0.009",
+                        "@condim": "4",
+                        "@priority": "0",
+                        # "@contype": "0",
+                        # "@conaffinity": "0",
+                        "@group": "1",
+                    }
+                ],
+                "inertial": {
+                    "@pos": "0 0 0", # believe this is relative to the base
+                    "@mass": f"{puck_mass}",
+                    "@diaginertia": "2.5e-6 2.5e-6 5e-6",
+                },
+            }
+        }
+        
+        if isinstance(self.xml_config['mujoco']['worldbody']['body'], list):
+            self.xml_config['mujoco']['worldbody']['body'].append(puck_dict)
+        else:
+            self.xml_config['mujoco']['worldbody']['body'] = [self.xml_config['mujoco']['worldbody']['body'], puck_dict]
+            
+        # add contact
+        if 'contact' in self.xml_config['mujoco']:
+            if 'exclude' in self.xml_config['mujoco']['contact']:
+                self.xml_config['mujoco']['contact']['exclude'].append({
+                    "@body1": f"{name}",
+                    "@body2": f"table_surface"
+                })
+            else:
+                self.xml_config['mujoco']['contact']['exclude'] = {
+                    "@body1": f"{name}",
+                    "@body2": f"table_surface"
+                }
+        else:
+            self.xml_config['mujoco']['contact'] = {
+                "exclude": [{
+                    "@body1": f"{name}",
+                    "@body2": f"table_surface"
+                }]
+            }
+
+    def spawn_puck(self, pos, vel, name, affected_by_gravity=False, movable=True):
+        pos = self.high_level_to_robosuite_coords(pos, object_type='puck')
+        assert pos[0] >= self.table_x_bot and pos[0] <= self.table_x_top, f"pos[0]: {pos[0]}, table_x_bot: {self.table_x_bot}, table_x_top: {self.table_x_top}"
+        assert pos[1] <= self.table_y_left and pos[1] >= self.table_y_right, f"pos[1]: {pos[1]}, table_y_left: {self.table_y_left}, table_y_right: {self.table_y_right}"
+        vel = self.high_level_to_robosuite_vel(vel, object_type='puck')
+        
+        puck_mass = self.puck_density * math.pi * (self.puck_radius ** 2) * self.puck_height
+        z_pos = self.table_elevation + self.puck_height/2
+        x_pos = self.transform_x(pos[0])
+        y_pos = pos[1]
+        pos = np.array([x_pos, y_pos, z_pos])
+        self.initial_obj_configurations['pucks'][name] = {'position': pos, 'velocity': vel}
+        self.initial_puck_vels[name] = vel
+        self.puck_names[name] = name
+        if self.initialized_objects:
+            return
+        
+        puck_dict = {
+            "@name": "base",
+            "@pos": f"{x_pos} {y_pos} {z_pos}",
+            "@axisangle": f"0 1 0 {-self.table_tilt}",
+            "joint": [
+                {
+                    "@name": f"{name}_x",
+                    "@type": "slide",
+                    "@axis": "1 0 0",
+                    "@damping": f"{self.puck_damping}",
+                    # "@damping": "0.01",
+                    "@limited": "false",
+                    "@frictionloss": "0.00000000000001",
+                },
+                {
+                    "@name": f"{name}_y",
+                    "@type": "slide",
+                    "@axis": "0 1 0",
+                    "@damping": f"{self.puck_damping}",
+                    "@limited": "false",
+                    "@frictionloss": "0.00000000000001",
+                },
+                {
+                    "@name": f"{name}_yaw",
+                    "@type": "hinge",
+                    "@axis": "0 0 1",
+                    "@damping": "2e-6",
+                    "@limited": "false",
+                    "@frictionloss": "0.00000000000001",
+                },
+            ],
+            "body": {
+                "@name": f"{name}",
+                "geom": [
+                    {
+                        "@pos": f"0 0 -{self.puck_z_offset}",
+                        "@name": f"{name}",
+                        "@type": "cylinder",
+                        "@material": "red",
+                        "@size": f"{self.puck_radius * 1.5} {self.puck_height * 2}",
+                        "@condim": "4",
+                        "@priority": "0",
+                        "@group": "1",
+                    }
+                ],
+                "inertial": {
+                    "@pos": "0 0 0",
+                    "@mass": f"{puck_mass}",
+                    "@diaginertia": "2.5e-6 2.5e-6 5e-6",
+                },
+            }
+        }
+        
+        if isinstance(self.xml_config['mujoco']['worldbody']['body'], list):
+            self.xml_config['mujoco']['worldbody']['body'].append(puck_dict)
+        else:
+            self.xml_config['mujoco']['worldbody']['body'] = [self.xml_config['mujoco']['worldbody']['body'], puck_dict]
+            
+        # add contact
+        # if 'contact' in self.xml_config['mujoco']:
+        #     if 'exclude' in self.xml_config['mujoco']['contact']:
+        #         self.xml_config['mujoco']['contact']['exclude'].append({
+        #             "@body1": f"{name}",
+        #             "@body2": f"table_surface"
+        #         })
+        #     else:
+        #         self.xml_config['mujoco']['contact']['exclude'] = {
+        #             "@body1": f"{name}",
+        #             "@body2": f"table_surface"
+        #         }
+        # else:
+        #     self.xml_config['mujoco']['contact'] = {
+        #         "exclude": [{
+        #             "@body1": f"{name}",
+        #             "@body2": f"table_surface"
+        #         }]
+        #     }
+
+    def update_table(self, top_solref=None, bot_solref=None, left_solref=None, right_solref=None):
+
+        if isinstance(self.xml_config['mujoco']['worldbody']['body'], list):
+            geoms = self.xml_config['mujoco']['worldbody']['body'][0]['body'][1]['geom']
+        else:
+            geoms = self.xml_config['mujoco']['worldbody']['body']['body'][1]['geom']
+
+        for geom in geoms:
+            geom_name = geom.get('@name', '') 
+            if 'home' in geom_name:
+                geom['@solref'] = f"{bot_solref} -250" if bot_solref is not None else "-80000 -250"
+            elif 'away' in geom_name:
+                geom['@solref'] = f"{top_solref} -250" if top_solref is not None else "-80000 -250"
+            elif 'left' in geom_name:
+                    geom['@solref'] = f"{left_solref} -250" if left_solref is not None else "-100000 -250"
+            elif 'right' in geom_name:
+                geom['@solref'] = f"{right_solref} -250" if right_solref is not None else "-100000 -250"
+
+        if isinstance(self.xml_config['mujoco']['worldbody']['body'], list):
+            self.xml_config['mujoco']['worldbody']['body'][0]['body'][1]['geom'] = geoms
+        else:
+            self.xml_config['mujoco']['worldbody']['body']['body'][1]['geom'] = geoms
+
+    def spawn_paddle(self, pos, vel, name):
+        # put the eef in pos
+        self.initial_obj_configurations['paddles'][name] = {'position': pos, 'velocity': vel}
+    
+    def translate_action(self, action):
+        """
+        Converts 2D action to 6D robot action for OSC controller
+        OSC expects [x, y, z, roll, pitch, yaw] or [x, y, z, qx, qy, qz, qw]
+        """
+        delta_pos_x = -action[0] * self.x_to_x_prime_ratio * self.action_x_scaling
+        delta_pos_y = - action[1] * self.action_y_scaling
+        delta_pos_z = self.transform_z(- action[0]  * self.action_x_scaling) #  * self.x_to_z_ratio
+        
+        # For OSC controller, we need 6D actions: [x, y, z, roll, pitch, yaw]
+        # Set orientation changes to 0 for now (no rotation)
+        delta_roll = 0.0
+        delta_pitch = 0.0
+        delta_yaw = 0.0
+        
+        return np.array([delta_pos_x, delta_pos_y, delta_pos_z, delta_roll, delta_pitch, delta_yaw])
+
+    def get_transition(self, action):
+        """
+        Takes a step in simulation with control command @action and returns the resulting transition.
+        Args:
+            action (np.array): Action to execute within the environment
+        Returns:
+            4-tuple:
+                - (OrderedDict) observations from the environment
+        Raises:
+            ValueError: [Steps past episode termination]
+        """
+        # TODO: use self.last_action, self.step_frequency, self.time_frequency to implement action_lag
+        # number of steps to take: self.time_frequency / self.step_frequency 
+        # also need to set self.last_action properly
+        # This may require some recalibrating of the gains, though hopefully not
+
+
+        action = self.translate_action(action)
+        # Since the env.step frequency is slower than the mjsim timestep frequency, the internal controller will output
+        # multiple torque commands in between new high level action commands. Therefore, we need to denote via
+        # 'policy_step' whether the current step we're taking is simply an internal update of the controller,
+        # or an actual policy update
+        policy_step = True
+        initial_vel = self.robosuite_env._get_observations()['gripper_eef_vel']
+
+        # Loop through the simulation at the model timestep rate until we're ready to take the next policy step
+        # (as defined by the control frequency specified at the environment level)
+        for i in range(int(self.robosuite_env.control_timestep / self.robosuite_env.model_timestep)):
+            self.robosuite_env.sim.forward()
+            self.robosuite_env._pre_action(action, policy_step)
+            self.robosuite_env.sim.step()
+
+            self.robosuite_env._update_observables()
+            policy_step = False
+
+        # Note: this is done all at once to avoid floating point inaccuracies
+        self.robosuite_env.cur_time += self.robosuite_env.control_timestep
+        self.timestep += 1
+
+        current_state = self.get_current_state()
+        contact_forces = self.robosuite_env.sim.data.cfrc_ext
+        eef_index = self.robosuite_env.sim.model.body_name2id('gripper0_right_eef')
+        current_state['paddles']['paddle_ego']['force'] = contact_forces[eef_index][:2] # exclude torques and z force
+        
+        if 'pucks' in current_state: self.puck_history.append(list(current_state['pucks'][0]["position"]) + [0])
+        else: self.puck_history.append([-2 + self.center_offset_constant,0,1])
+        
+        final_vel = current_state['paddles']['paddle_ego']['velocity']
+        
+        current_state['paddles']['paddle_ego']['acceleration'] = final_vel - initial_vel[:1]
+
+        return current_state
+
+    def get_current_state(self):
+        """
+        Returns the current state of the environment
+        """
+        obs = self.robosuite_env._get_observations()
+        state_info = {}
+        # eef position and vel become paddle position and vel
+        ego_paddle_pos = obs['gripper_eef_pos']
+        ego_paddle_pos = self.robosuite_to_high_level_coords(ego_paddle_pos, object_type='paddle')
+        ego_paddle_vel = obs['gripper_eef_vel']
+        ego_paddle_vel = self.robosuite_to_high_level_vel(ego_paddle_vel, object_type='paddle')
+        ego_paddle_x_pos = ego_paddle_pos[0]
+        ego_paddle_y_pos = ego_paddle_pos[1]
+        ego_paddle_x_vel = ego_paddle_vel[0]
+        ego_paddle_y_vel = ego_paddle_vel[1]
+        
+        state_info['paddles'] = {'paddle_ego': {'position': (ego_paddle_x_pos, ego_paddle_y_pos),
+                                                'velocity': (ego_paddle_x_vel, ego_paddle_y_vel),
+                                                'acceleration': (0, 0),
+                                                'force': [0, 0]}}
+        if len(self.puck_names) > 0:
+            state_info['pucks'] = []
+            for puck_name in self.puck_names:
+                puck_pos = obs[puck_name + '_pos']
+                puck_pos = self.robosuite_to_high_level_coords(puck_pos, object_type='puck')
+                puck_vel = obs[puck_name + '_vel']
+                puck_vel = self.robosuite_to_high_level_vel(puck_vel, object_type='puck')
+                puck_x_pos = puck_pos[0]
+                puck_y_pos = puck_pos[1]
+                puck_x_vel = puck_vel[0]
+                puck_y_vel = puck_vel[1]
+                state_info['pucks'].append({'position': (puck_x_pos, puck_y_pos), 
+                                'velocity': (puck_x_vel, puck_y_vel)})
+
+        if len(self.block_names) > 0:
+            state_info['blocks'] = []
+            for block_name in self.block_names:
+                block_pos = obs[block_name + '_pos']
+                block_pos = self.robosuite_to_high_level_coords(block_pos, object_type='block')
+                block_x_pos = block_pos[0]
+                block_y_pos = block_pos[1]
+                state_info['blocks'].append({'position': (block_x_pos, block_y_pos)})
+                
+        for key in obs.keys():
+            if 'image' in key:
+                state_info[key] = obs[key]
+        return state_info
+
+    def quat2axisangle(self, quat):
+        """
+        Converts quaternion to axis-angle format.
+        Returns a unit vector direction scaled by its angle in radians.
+
+        Args:
+            quat (np.array): (x,y,z,w) vec4 float angles
+
+        Returns:
+            np.array: (ax,ay,az) axis-angle exponential coordinates
+        """
+        quat = np.array(quat)
+        # clip quaternion
+        if quat[3] > 1.0:
+            quat[3] = 1.0
+        elif quat[3] < -1.0:
+            quat[3] = -1.0
+
+        den = np.sqrt(1.0 - quat[3] * quat[3])
+        if math.isclose(den, 0.0):
+            # This is (close to) a zero degree rotation, immediately return
+            return np.zeros(3)
+
+        return (quat[:3] * 2.0 * math.acos(quat[3])) / den
+    
+
+class AirHockeyTableArena(Arena):
+    """
+    Workspace that contains an empty table.
+
+
+    Args:
+        table_full_size (3-tuple): (L,W,H) full dimensions of the table
+        table_friction (3-tuple): (sliding, torsional, rolling) friction parameters of the table
+        table_offset (3-tuple): (x,y,z) offset from center of arena when placing table.
+            Note that the z value sets the upper limit of the table
+        has_legs (bool): whether the table has legs or not
+        xml (str): xml file to load arena
+    """
+
+    def __init__(self, table_offset, xml):
+        arena_fp = robosuite_xml_path_completion(xml)
+        super().__init__(arena_fp)
+        self.center_pos = self.bottom_pos + np.array([0, 0, 0.0]) + table_offset
+        self.table_body = self.worldbody.find("./body[@name='table']")
+        self.configure_location()
+        # pass
+
+    def configure_location(self):
+        """Configures correct locations for this arena"""
+        pass
+    
+class RobosuiteEnv(SingleArmEnv):
+    def __init__(self, xml_fp, table_full_size, table_friction, table_offset, puck_names, block_names, robosuite_env_params):
+        # load model for table top workspace
+        mujoco_arena = AirHockeyTableArena(
+            table_offset=table_offset,
+            xml=xml_fp,
+        )
+        
+        self.puck_names = puck_names
+        self.block_names = block_names
+        
+        # Arena always gets set to zero origin
+        mujoco_arena.set_origin([0, 0, 0])
+        
+        robots = robosuite_env_params['robots']
+        robots = list(robots) if type(robots) is list or type(robots) is tuple else [robots]
+        self.num_robots = len(robots)
+        robot_names = self.input2list(robots, self.num_robots)
+        controller_configs = self.input2list(robosuite_env_params['controller_configs'], self.num_robots)
+        base_types = self.input2list(robosuite_env_params['base_types'], self.num_robots)
+        initialization_noise = self.input2list(robosuite_env_params['initialization_noise'], self.num_robots)
+        control_freq = self.input2list(robosuite_env_params['control_freq'], self.num_robots)
+        robot_configs = self.load_robots_configs(robot_names, controller_configs, base_types, initialization_noise, control_freq)
+        self.robots = self.get_robots(robot_names, robot_configs)
+
+        # task includes arena, robot, and objects of interest
+        self.task_model = ManipulationTask(mujoco_arena=mujoco_arena, mujoco_robots=[robot.robot_model for robot in self.robots])
+        super().__init__(**robosuite_env_params)
+    
+    def get_robots(self, robot_names, robot_configs):
+        """
+        Instantiates robots and stores them within the self.robots attribute
+        """
+        # Loop through robots and instantiate Robot object for each
+        robots_out = [None for _ in range(len(robot_names))]
+        for idx, (name, config) in enumerate(zip(robot_names, robot_configs)):
+            # Create the robot instance
+            robots_out[idx] = ROBOT_CLASS_MAPPING[name](robot_type=name, idn=idx, **config)
+            # Now, load the robot models
+            robots_out[idx].load_model()
+        return robots_out
+    
+    def _load_model(self):
+        super()._load_model()
+        self.model = self.task_model # Prevents the super call from making this None
+            
+    def load_robots_configs(self, robot_names, controller_configs, base_types, initialization_noise, control_freq, robot_configs=None):
+        num_robots = len(robot_names)
+        if robot_configs is None:
+            robot_configs = [{} for _ in range(num_robots)]
+        self.robot_configs = [
+            dict(
+                **{
+                    "controller_config": controller_configs[idx],
+                    "mount_type": base_types[idx],
+                    "initialization_noise": initialization_noise[idx],
+                    "control_freq": control_freq,
+                },
+                **robot_config,
+            )
+            for idx, robot_config in enumerate(robot_configs)
+        ]
+        return robot_configs
+    
+    def _setup_observables(self):
+        """
+        Sets up observables to be used for this environment. Creates object-based observables if enabled
+
+        Returns:
+            OrderedDict: Dictionary mapping observable names to its corresponding Observable object
+        """
+        observables = super()._setup_observables()
+
+        # low-level object information
+        pf = self.robots[0].robot_model.naming_prefix
+        modality = "object"
+
+        from functools import partial
+        def obj_pos(obs_cache, obj_name):
+            return self.sim.data.get_body_xpos(obj_name)
+        
+        def obj_vel(obs_cache, obj_name):
+            return self.sim.data.get_body_xvelp(obj_name)
+
+        def gripper_eef_vel(obs_cache):
+            return self.sim.data.get_body_xvelp("gripper0_right_eef")
+        
+        def gripper_eef_pos(obs_cache):
+            return self.sim.data.get_body_xpos("gripper0_right_eef")
+        
+        gripper_eef_vel.__modality__ = modality
+        gripper_eef_pos.__modality__ = modality
+
+        sensors = [gripper_eef_vel,
+                   gripper_eef_pos]
+        
+        def add_sensor(name, sensors):
+            pos_fn = partial(obj_pos, obj_name=name)
+            pos_fn.__name__ = f"{name}_pos"
+            pos_fn.__modality__ = modality
+            vel_fn = partial(obj_vel, obj_name=name)
+            vel_fn.__name__ = f"{name}_vel"
+            vel_fn.__modality__ = modality
+            sensors.append(pos_fn)
+            sensors.append(vel_fn)
+        
+        for name in self.puck_names:
+            add_sensor(name, sensors)
+        for name in self.block_names:
+            add_sensor(name, sensors)
+
+        names = [s.__name__ for s in sensors]
+
+        # Create observables
+        for name, s in zip(names, sensors):
+            observables[name] = Observable(
+                name=name,
+                sensor=s,
+                sampling_rate=self.control_freq,
+            )
+
+        return observables
+    
+    def input2list(self, inp, length):
+        """
+        Helper function that converts an input that is either a single value or a list into a list
+
+        Args:
+            inp (None or str or list): Input value to be converted to list
+            length (int): Length of list to broadcast input to
+
+        Returns:
+            list: input @inp converted into a list of length @length
+        """
+        # convert to list if necessary
+        return list(inp) if type(inp) is list or type(inp) is tuple else [inp for _ in range(length)]
+    
+    def visualize(self, vis_settings):
+        """
+        Super call to visualize.
+
+        Args:
+            vis_settings (dict): Visualization keywords mapped to T/F, determining whether that specific
+                component should be visualized. Should have "grippers" keyword as well as any other relevant
+                options specified.
+        """
+        # Run superclass method first
+        super().visualize(vis_settings=vis_settings)
+    
+    # def _reset_internal(self):
+    #     """
+    #     Resets simulation internal configurations.
+    #     """
+    #     super()._reset_internal()
+
+    #     # Reset all object positions using initializer sampler if we're not directly loading from an xml
+    #     if not self.deterministic_reset:
+    #         self.modder = DynamicsModder(sim=self.robosuite_env.sim)
+    #         self.modder.mod_position("base", [0.8, np.random.uniform(-0.3, 0.3), 1.2])
+    #         self.modder.update()
+    

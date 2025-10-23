@@ -1,0 +1,23 @@
+# .github/workflows/test-matrix.yml
+name: Cross-Platform Test (macOS + Linux)
+
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v1
+
+      - name: Build environment from pyproject.toml
+        run: |
+          echo "Building uv environment from pyproject.toml on ${{ matrix.os }}"
+          uv sync --refresh --locked=false

@@ -1,0 +1,24 @@
+action_x_scaling:
+  lower: 2
+  upper: 5
+  start: 3
+action_y_scaling:
+  lower: 0.5
+  upper: 1.5
+  start: 1.0
+force_scaling:
+  lower: 1.2
+  upper: 10
+  start: 2
+paddle_damping:
+  lower: 1
+  upper: 10
+  start: 5
+paddle_density: 
+  lower: 1500
+  upper: 3000
+  start: 2000
+# max_force_timestep:
+#   lower: 10
+#   upper: 200
+#   start: 50

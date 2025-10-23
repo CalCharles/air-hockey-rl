@@ -1,0 +1,3 @@
+# This is where we save offline data
+n_episodes: 1000 # one ep is ~500-1000 timesteps
+save_dir: offline_data
