@@ -70,6 +70,9 @@ class AirHockeyBaseEnv(ABC, Env):
             'base_goal_radius': 0.15,
             'puck_goal_success_bonus': 0.0,
             'paddle_puck_success_bonus': 0.0,
+
+            'use_smooth_penalty': False,
+            'use_reward_shaping': True,
         }
         
         # handle defaults, keeps values for duplicate keys from right side!
@@ -138,7 +141,9 @@ class AirHockeyBaseEnv(ABC, Env):
         self.horizontal_vel_rew = config.horizontal_vel_rew
         self.diagonal_motion_rew = config.diagonal_motion_rew
         self.stand_still_rew = config.stand_still_rew
-        
+        self.use_reward_shaping = config.use_reward_shaping
+        self.use_smooth_penalty = config.use_smooth_penalty
+
         self.simulator_params = simulator_params
         self.width = simulator_params.width
         self.length = simulator_params.length
@@ -345,7 +350,9 @@ class AirHockeyBaseEnv(ABC, Env):
         self.success_in_ep = False
         self.max_reward_in_single_step = -np.inf
         self.min_reward_in_single_step = np.inf
-        
+        self.episode_return = 0.0
+        self.episode_length = 0
+
         if 'pucks' in state_info and len(state_info['pucks']) > 0:
             self.puck_initial_position = state_info['pucks'][0]['position']
             
@@ -468,6 +475,10 @@ class AirHockeyBaseEnv(ABC, Env):
                     
         return terminated, truncated, puck_within_home, puck_within_alt_home, puck_within_ego_goal, puck_within_alt_goal
 
+
+    def get_smooth_penalty(self, state_info, action=None):
+        pass
+
     def get_reward_shaping(self, state_info, action=None):
         additional_rew = 0.0
         
@@ -481,6 +492,10 @@ class AirHockeyBaseEnv(ABC, Env):
             norm_cosine_sim = (cosine_sim + 1) / 2
             max_change_dir_rew = self.direction_change_rew
             direction_rew = max_change_dir_rew * (1 - norm_cosine_sim)
+
+            additional_rew += direction_rew
+
+
         # small negative reward for moving too fast in horizontal direction
         max_vel = self.max_paddle_vel
         max_vel_rew = self.horizontal_vel_rew
@@ -569,13 +584,23 @@ class AirHockeyBaseEnv(ABC, Env):
                 self.success_in_ep = success
         else:
             reward = self.truncate_rew
-        reward += self.get_reward_shaping(next_state)
+        
+        if self.use_reward_shaping:
+            reward += self.get_reward_shaping(next_state)
+        if self.use_smooth_penalty:
+            pass # TODO: implement smooth penalty
         
         self.max_reward_in_single_step = max(self.max_reward_in_single_step, reward)
         self.min_reward_in_single_step = min(self.min_reward_in_single_step, reward)        
-        
+        self.episode_return += reward
+        self.episode_length += 1
+
         info['max_reward'] = self.max_reward_in_single_step
         info['min_reward'] = self.min_reward_in_single_step
+
+        if truncated or is_finished:
+            info['episode_return'] = self.episode_return
+            info['episode_length'] = self.episode_length
 
         self.current_timestep += 1
         
