@@ -230,6 +230,15 @@ class AirHockeyBaseEnv(ABC, Env):
         puck_hist_low = [self.table_x_top, self.table_y_left, 0] * 5
         puck_hist_high = [self.table_x_bot, self.table_y_right, 0] * 5
 
+        # history: deltas
+        paddle_hist_low = [self.table_x_top, self.table_y_left, 0] * 5
+        paddle_hist_high = [self.table_x_bot, self.table_y_right, 0] * 5
+        paddle_deltas_low = [self.table_x_top - self.table_x_bot, self.table_y_left - self.table_y_right, 0] * (5 - 1)
+        paddle_deltas_high = [self.table_x_bot - self.table_x_top, self.table_y_right - self.table_y_left, 0] * (5 - 1)
+        puck_deltas_low = [self.table_x_top - self.table_x_bot, self.table_y_left - self.table_y_right, 0] * (5 - 1)
+        puck_deltas_high = [self.table_x_bot - self.table_x_top, self.table_y_right - self.table_y_left, 0] * (5 - 1)
+
+
         paddle_accel_low = [-1000, -1000]
         paddle_accel_high = [1000, 1000]
         
@@ -249,8 +258,8 @@ class AirHockeyBaseEnv(ABC, Env):
             low = paddle_obs_low + puck_obs_low
             high = paddle_obs_high + puck_obs_high
         elif obs_type == "history":
-            low = paddle_obs_low + puck_hist_low
-            high = paddle_obs_high + puck_hist_high
+            low = puck_hist_low + puck_deltas_low + paddle_hist_low + paddle_deltas_low
+            high = puck_hist_high + puck_deltas_high + paddle_hist_high + paddle_deltas_high
         elif obs_type == "paddle_acceleration_vel":
             low = paddle_obs_low + paddle_accel_low + paddle_force_low + puck_obs_low
             high = paddle_obs_high + paddle_accel_high + paddle_force_high + puck_obs_high
@@ -291,7 +300,7 @@ class AirHockeyBaseEnv(ABC, Env):
     def get_current_state(self): 
         # gets the current state and info
         state_info = self.simulator.get_current_state()
-        obs = self.get_observation(state_info, obs_type=self.obs_type, puck_history=self.simulator.puck_history)
+        obs = self.get_observation(state_info, obs_type=self.obs_type, puck_history=self.simulator.puck_history, paddle_history=self.simulator.paddle_history)
         return obs, state_info
 
     def define_get_observation(self, getter, obs_type=""):
@@ -343,7 +352,7 @@ class AirHockeyBaseEnv(ABC, Env):
         state_info = self.simulator.get_current_state()
         self.simulator.set_object_links()
         self.current_state = state_info
-        obs = self.get_observation(state_info, obs_type=self.obs_type, puck_history=self.simulator.puck_history)
+        obs = self.get_observation(state_info, obs_type=self.obs_type, puck_history=self.simulator.puck_history, paddle_history=self.simulator.paddle_history)
         
         self.n_timesteps_so_far += self.current_timestep
         self.current_timestep = 0
@@ -369,7 +378,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.simulator.instantiate_objects()
         state_info = self.simulator.get_current_state()
         self.current_state = state_info
-        obs = self.get_observation(state_info, obs_type=self.obs_type, puck_history=self.simulator.puck_history)
+        obs = self.get_observation(state_info, obs_type=self.obs_type, puck_history=self.simulator.puck_history, paddle_history=self.simulator.paddle_history)
         return obs, {'success': False}
 
     def get_puck_configuration(self, bad_regions=None):
@@ -611,7 +620,7 @@ class AirHockeyBaseEnv(ABC, Env):
         # if self.current_timestep >= self.max_timesteps:
         #     is_finished = True
 
-        obs = self.get_observation(next_state, obs_type=self.obs_type, puck_history=self.simulator.puck_history)
+        obs = self.get_observation(next_state, obs_type=self.obs_type, puck_history=self.simulator.puck_history, paddle_history=self.simulator.paddle_history)
         info.update(vars(self.simulator_params))
         return obs, reward, is_finished, truncated, info
     

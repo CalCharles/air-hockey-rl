@@ -40,8 +40,15 @@ def get_observation_by_type(state_info, obs_type='vel', **kwargs):
         obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, puck_x_pos, puck_y_pos])
         return obs
     elif obs_type == "history":        
-        puck_hist = np.array(kwargs["puck_history"][-5:]).flatten().tolist()
-        obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel] + puck_hist)
+        puck_hist_array = np.array(kwargs["puck_history"][-5:])
+        paddle_hist_array = np.array(kwargs["paddle_history"][-5:])
+        puck_hist = puck_hist_array.flatten().tolist()
+        paddle_hist = paddle_hist_array.flatten().tolist()
+
+        puck_deltas = np.diff(puck_hist_array, axis=0).flatten().tolist()
+        paddle_deltas = np.diff(paddle_hist_array, axis=0).flatten().tolist()
+
+        obs = np.array(puck_hist + puck_deltas + paddle_hist + paddle_deltas)
         return obs
     elif obs_type == "single_block_vel":
         puck_x_pos = state_info['pucks'][0]['position'][0]

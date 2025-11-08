@@ -181,6 +181,7 @@ class AirHockeyBox2D:
         self.multiagent = False
 
         self.puck_history = list()
+        self.paddle_history = list()
         self.paddle_attrs = None
         self.target_attrs = None
 
@@ -306,6 +307,7 @@ class AirHockeyBox2D:
             self.paddles['paddle_ego_acceleration'] = (0, 0)
             self.paddles['paddle_ego_force'] = (0, 0)
         self.object_dict[name] = paddle
+        self.paddle_history += [(-2 + self.center_offset_constant,0,1) for i in range(5)]
         
         if 'paddle_ego' in self.paddles and 'paddle_alt' in self.paddles:
             self.multiagent = True
@@ -444,6 +446,14 @@ class AirHockeyBox2D:
             else:
                 for i in range(len(self.pucks.keys())):
                     self.puck_history.append([-2 + self.center_offset_constant,0,1])
+            
+            if 'paddles' in state_info:
+                for paddle_name, paddle_data in state_info['paddles'].items():
+                    self.paddle_history.append(list(paddle_data["position"]) + [0])
+            else:
+                for i in range(len(self.paddles.keys())):
+                    if 'paddle_ego_acceleration' not in self.paddles or 'paddle_ego_force' not in self.paddles:
+                        self.paddle_history.append([-2 + self.center_offset_constant,0,1])
             
             self.paddles['paddle_ego_acceleration'] = vel - current_vel
 
