@@ -1,3 +1,4 @@
+import torch
 from yaml import ScalarEvent
 from stable_baselines3.common.callbacks import BaseCallback
 import imageio
@@ -15,7 +16,7 @@ import time
 import pstats
 
 
-def save_tensorboard_plots(log_dir, air_hockey_cfg):
+def save_tensorboard_plots(log_dir, air_hockey_cfg, metrics=None):
     # env_test.training = False
     # env_test.norm_reward = False
     
@@ -36,60 +37,70 @@ def save_tensorboard_plots(log_dir, air_hockey_cfg):
     # print("Available tags: ", ea.Tags()['scalars'])
     #
     
-    if 'goal' in air_hockey_cfg['air_hockey']['task']:
-        metrics = [
-            'rollout/ep_rew_mean',
-            'eval/ep_return',
-            'eval/success_rate',
-            'eval/best_success_rate',
-            'eval/max_reward',
-            'eval/min_reward']
-    else:
-        metrics = [
-            'rollout/ep_rew_mean',
-            'eval/ep_return',
-            'eval/success_rate',
-            'eval/best_success_rate',
-            'eval/max_reward',
-            'eval/min_reward']
-    
-    # Create a 2x3 subplot
-    fig, axs = plt.subplots(2, 3, figsize=(18, 12))
-    fig.suptitle('Air Hockey Training Summary')
-
-    # Flatten the axs array for easy iteration
-    axs = axs.flatten()
-
-    for i, metric in enumerate(metrics):
-        if metric in ea.Tags()['scalars']:
-            # Extract time steps and values for the metric
-            # times, step_nums, values = zip(*ea.Scalars(metric))
-            scalar_events = ea.Scalars(metric)
-            # Ensure scalar_events is an iterable
-            if isinstance(scalar_events, ScalarEvent):
-                scalar_events = [scalar_events]
-            # Unpack the values
-            times, step_nums, values = zip(*[(event.wall_time, event.step, event.value) for event in scalar_events])
-
-
-            # Plot on the i-th subplot
-            axs[i].plot(step_nums, values, label=metric)
-            axs[i].set_title(metric)
-            axs[i].set_xlabel("Steps")
-            axs[i].set_ylabel("Value")
-            axs[i].legend()
+    if metrics is None:
+        if 'goal' in air_hockey_cfg['air_hockey']['task']:
+            metrics = [
+                'rollout/ep_rew_mean',
+                'eval/ep_return',
+                'eval/success_rate',
+                'eval/best_success_rate',
+                'eval/max_reward',
+                'eval/min_reward']
         else:
-            print(f"Metric {metric} not found in logs.")
-            axs[i].set_title(f"{metric} (not found)")
-            axs[i].set_xlabel("Steps")
-            axs[i].set_ylabel("Value")
+            metrics = [
+                'rollout/ep_rew_mean',
+                'eval/ep_return',
+                'eval/success_rate',
+                'eval/best_success_rate',
+                'eval/max_reward',
+                'eval/min_reward']
+    
+    # Plot up to 6 metrics per PNG, create multiple PNGs if needed
+    metrics_per_figure = 6
+    total_metrics = len(metrics)
+    num_figures = (total_metrics + metrics_per_figure - 1) // metrics_per_figure
 
-    # Adjust layout for better readability
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    # let's save in same folder
-    plot_fp = os.path.join(log_dir, 'training_summary.png')
-    plt.savefig(plot_fp)
-    plt.close()
+    for fig_idx in range(num_figures):
+        start = fig_idx * metrics_per_figure
+        end = min((fig_idx + 1) * metrics_per_figure, total_metrics)
+        group_metrics = metrics[start:end]
+
+        fig, axs = plt.subplots(2, 3, figsize=(18, 12))
+        fig.suptitle('Air Hockey Training Summary' + (f" (Part {fig_idx+1})" if num_figures > 1 else ""))
+        axs = axs.flatten()
+
+        for i, metric in enumerate(group_metrics):
+            ax = axs[i]
+            if metric in ea.Tags()['scalars']:
+                scalar_events = ea.Scalars(metric)
+                # Ensure scalar_events is an iterable
+                # Note: ScalarEvent is available in event_accumulator, but we will check type as before if available
+                if hasattr(event_accumulator, "ScalarEvent") and isinstance(scalar_events, event_accumulator.ScalarEvent):
+                    scalar_events = [scalar_events]
+                times, step_nums, values = zip(*[(event.wall_time, event.step, event.value) for event in scalar_events])
+                ax.plot(step_nums, values, label=metric)
+                ax.set_title(metric)
+                ax.set_xlabel("Steps")
+                ax.set_ylabel("Value")
+                ax.legend()
+            else:
+                print(f"Metric {metric} not found in logs.")
+                ax.set_title(f"{metric} (not found)")
+                ax.set_xlabel("Steps")
+                ax.set_ylabel("Value")
+
+        # Hide unused subplots in the last figure if necessary
+        for j in range(len(group_metrics), metrics_per_figure):
+            fig.delaxes(axs[j])
+
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+        # Save with index if there are multiple figures
+        if num_figures == 1:
+            plot_fp = os.path.join(log_dir, 'training_summary.png')
+        else:
+            plot_fp = os.path.join(log_dir, f'training_summary_{fig_idx+1}.png')
+        plt.savefig(plot_fp)
+        plt.close()
 
 def save_evaluation_gifs(n_eps_viz, n_gifs, env_test, model, renderer, log_dir, use_wandb, wandb_run=None):
     env_test.max_timesteps = 200
@@ -121,7 +132,7 @@ def save_task_gif(n_eps_viz, n_gifs, env_test, policy, renderer, log_dir):
     for gif_idx in range(n_gifs):
         frames = []
         for i in tqdm.tqdm(range(n_eps_viz)):
-            obs = env_test.reset()
+            obs, _ = env_test.reset()
             done = False
             rew = 0
             while not done:
@@ -141,14 +152,14 @@ def save_task_gif(n_eps_viz, n_gifs, env_test, policy, renderer, log_dir):
                 cv2.putText(frame, f"Reward: {rew}", text_position, font, font_scale, font_color, line_type)
                             
                 frames.append(frame)
-                action = policy(obs)
+                action = policy(obs).numpy().squeeze()
                 obs, rew, term, trunc, info = env_test.step(action)
                 done = term or trunc
                 
         gif_savepath = os.path.join(log_dir, f'eval_{gif_idx}.gif')
         def fps_to_duration(fps):
             return int(1000 * 1/fps)
-        fps = 30 # slightly faster than 20 fps (simulation time), but makes rendering smooth
+        fps = 20 # slightly faster than 20 fps (simulation time), but makes rendering smooth
         imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=fps_to_duration(fps))
 
 
