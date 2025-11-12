@@ -3,7 +3,9 @@ Null Gripper (if we don't want to attach gripper to robot eef).
 """
 from robosuite.models.grippers.gripper_model import GripperModel
 import os
-
+#from robosuite.models.grippers import Gripper
+ASSETS_ROOT = os.path.join(os.path.dirname(__file__), "../../../assets")
+ASSETS_ROOT = os.path.abspath(ASSETS_ROOT)
 def custom_xml_path_completion(xml_path):
     """
     Takes in a local xml path and returns a full path.
@@ -15,13 +17,15 @@ def custom_xml_path_completion(xml_path):
 
     Returns:
         str: Full (absolute) xml path
-    """
     from airhockey import ASSETS_ROOT
     if xml_path.startswith("/"):
         full_path = xml_path
     else:
         full_path = os.path.join(ASSETS_ROOT, xml_path)
-    return full_path
+    return full_path"""
+    if xml_path.startswith("/"):
+        return xml_path
+    return os.path.join(ASSETS_ROOT, xml_path)
 
 class RoundGripper(GripperModel):
     """

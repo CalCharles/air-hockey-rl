@@ -375,7 +375,7 @@ class AirHockeyBaseEnv(ABC, Env):
                         y_pos = proposed_y_pos
         else:
             y_pos = self.rng.uniform(low=-self.width / 3, high=self.width / 3)
-        pos = (self.table_x_top + 0.01, y_pos)
+        pos = (0, y_pos)
         vel = (1, 0)
         return pos, vel
     

@@ -1,6 +1,22 @@
 from types import SimpleNamespace
 import numpy as np
 import math
+import os
+
+try:
+    from robosuite.models.grippers import GRIPPER_MAPPING, gripper_factory
+except ImportError:
+    from robosuite.models.grippers import gripper_factory
+    try:
+        from robosuite.models.grippers.gripper_factory import GRIPPER_MAPPING
+    except ImportError:
+        print("⚠️ robosuite GRIPPER_MAPPING not found — creating fallback mapping")
+        GRIPPER_MAPPING = {}
+
+from airhockey.sims.grippers.round_gripper import RoundGripper
+if "RoundGripper" not in GRIPPER_MAPPING:
+    GRIPPER_MAPPING["RoundGripper"] = RoundGripper
+
 # Compatibility fix for newer Robosuite versions
 try:
     from robosuite.environments.manipulation.single_arm_env import SingleArmEnv
@@ -25,8 +41,6 @@ import datetime
 from collections import namedtuple
 from robosuite.utils.control_utils import trans
 import inspect
-import os
-
 import numpy as np
 from robosuite.models.arenas import Arena
 from airhockey.sims.utils import custom_xml_path_completion
@@ -34,6 +48,14 @@ from ..utils import dict_to_namespace
 from robosuite.utils import binding_utils as _ru_binding_utils
 import re
 from itertools import count
+
+from airhockey.sims.grippers.round_gripper import RoundGripper
+if "RoundGripper" not in GRIPPER_MAPPING:
+    GRIPPER_MAPPING["RoundGripper"] = RoundGripper
+
+from robosuite.models.robots.manipulators import UR5e
+if hasattr(UR5e, "default_gripper"):
+    UR5e.default_gripper ={"right": "RoundGripper"}
 
 if not hasattr(_ru_binding_utils, "_xml_dump_patched"):
     _orig_from_xml_string = _ru_binding_utils.MjSim.from_xml_string
@@ -232,7 +254,7 @@ class AirHockeyRobosuite(AirHockeySim):
             'robots': ['UR5e'],  # Use standard UR5e instead of AirHockeyUR5e
             'env_configuration': "default",
             'controller_configs': {'arm': 'OSC_POSE'},  # Use OSC controller for position-based control
-            'gripper_types': None,  # Disable gripper to avoid joint name conflicts
+            'gripper_types': 'RoundGripper',  # Disable gripper to avoid joint name conflicts
             'initialization_noise': "default",
             'table_friction': (1.0, 5e-3, 1e-4),
             'use_camera_obs': True,
@@ -366,7 +388,7 @@ class AirHockeyRobosuite(AirHockeySim):
         self.robosuite_env = None
         self.robosuite_env_cfg = {'robots': config.robots, 'env_configuration': config.env_configuration, 
                               'controller_configs': self._build_controller_config(config),  # Build custom OSC controller config
-                              'base_types': "default", 'gripper_types': config.gripper_types, 'initialization_noise': config.initialization_noise,
+                              'base_types': "default", 'gripper_types': 'RoundGripper', 'initialization_noise': config.initialization_noise,
                               'use_camera_obs': config.use_camera_obs, 'has_renderer': config.has_renderer, 'has_offscreen_renderer': config.has_offscreen_renderer,
                               'render_camera': config.render_camera, 'render_collision_mesh': config.render_collision_mesh, 'render_visual_mesh': config.render_visual_mesh,
                               'render_gpu_device_id': config.render_gpu_device_id, 'control_freq': config.control_freq, 'horizon': config.horizon, 'ignore_done': config.ignore_done,
@@ -517,12 +539,14 @@ class AirHockeyRobosuite(AirHockeySim):
         self.block_name_list.sort()
 
     def instantiate_objects(self):
+        print("[DEBUG] Robosuite env cfg gripper_types:", self.robosuite_env_cfg.get("gripper_types"))
         if self.initialized_objects:
             self.set_obj_configs()
             return
         # this is only for the first time
         with open(self.tmp_xml_fp, 'w') as file:
             file.write(xmltodict.unparse(self.xml_config, pretty=True))
+        print("DEBUG GRIPPER TYPES:", self.robosuite_env_cfg.get("gripper_types", None))
         self.robosuite_env = RobosuiteEnv(xml_fp=self.tmp_xml_fp, 
                                           table_full_size=self.table_full_size,
                                           table_friction=self.table_friction,
@@ -597,7 +621,7 @@ class AirHockeyRobosuite(AirHockeySim):
         
         # create puck object to add
         puck_mass = self.puck_density * math.pi * (self.puck_radius ** 2) * 0.009
-        z_pos = self.transform_z(pos[0])
+        z_pos = self.transform_z(pos[0]) + 0.5
         x_pos = self.transform_x(pos[0])
         y_pos = pos[1]
         self.block_names[name] = name
@@ -636,7 +660,7 @@ class AirHockeyRobosuite(AirHockeySim):
                         "@name": f"{name}",
                         "@type": "cylinder",
                         "@material": "red",
-                        "@size": f"{self.puck_radius} 0.009",
+                        "@size": f"{self.puck_radius * 0.75} {self.puck_height * 0.5}",
                         "@condim": "4",
                         "@priority": "0",
                         # "@contype": "0",
@@ -676,15 +700,15 @@ class AirHockeyRobosuite(AirHockeySim):
                     "@body2": f"table_surface"
                 }]
             }
-
-    def spawn_puck(self, pos, vel, name, affected_by_gravity=False, movable=True):
+    def spawn_puck(self, pos, vel, name, affected_by_gravity=False, movable=True, z_offset=0):
         pos = self.high_level_to_robosuite_coords(pos, object_type='puck')
         assert pos[0] >= self.table_x_bot and pos[0] <= self.table_x_top, f"pos[0]: {pos[0]}, table_x_bot: {self.table_x_bot}, table_x_top: {self.table_x_top}"
         assert pos[1] <= self.table_y_left and pos[1] >= self.table_y_right, f"pos[1]: {pos[1]}, table_y_left: {self.table_y_left}, table_y_right: {self.table_y_right}"
         vel = self.high_level_to_robosuite_vel(vel, object_type='puck')
-        
+    
         puck_mass = self.puck_density * math.pi * (self.puck_radius ** 2) * self.puck_height
-        z_pos = self.table_elevation + self.puck_height/2
+        z_pos = self.table_elevation + self.puck_height/2 + z_offset - 0.004 # Add z_offset here!
+        print(f"[SPAWN_PUCK] z_pos={z_pos:.3f}, table_elevation={self.table_elevation:.3f}, z_offset={z_offset}, gravity={affected_by_gravity}")
         x_pos = self.transform_x(pos[0])
         y_pos = pos[1]
         pos = np.array([x_pos, y_pos, z_pos])
@@ -703,18 +727,21 @@ class AirHockeyRobosuite(AirHockeySim):
                     "@name": f"{name}_x",
                     "@type": "slide",
                     "@axis": "1 0 0",
-                    "@damping": f"{self.puck_damping}",
-                    # "@damping": "0.01",
+                    # "@damping": f"{self.puck_damping}",
+                    "@damping": "0.0001",
                     "@limited": "false",
                     "@frictionloss": "0.00000000000001",
+		    "@armature": "0.0001",
                 },
                 {
                     "@name": f"{name}_y",
                     "@type": "slide",
                     "@axis": "0 1 0",
-                    "@damping": f"{self.puck_damping}",
+                    # "@damping": f"{self.puck_damping}",
+		    "@damping" : "0.0001",
                     "@limited": "false",
                     "@frictionloss": "0.00000000000001",
+		    "@armature": "0.0001",
                 },
                 {
                     "@name": f"{name}_yaw",
@@ -723,18 +750,22 @@ class AirHockeyRobosuite(AirHockeySim):
                     "@damping": "2e-6",
                     "@limited": "false",
                     "@frictionloss": "0.00000000000001",
+		    "@armature": "0.0001",
                 },
-            ],
+            ], 
             "body": {
                 "@name": f"{name}",
                 "geom": [
                     {
-                        "@pos": f"0 0 -{self.puck_z_offset}",
+                        "@pos": f"0 0 {self.puck_z_offset - 0.01}",
                         "@name": f"{name}",
                         "@type": "cylinder",
                         "@material": "red",
-                        "@size": f"{self.puck_radius * 1.5} {self.puck_height * 2}",
+                        "@size": f"{self.puck_radius * 1.5} {self.puck_height * 0.5}",
                         "@condim": "4",
+                        "@friction": "0.02 0.001 0.0001",
+		        "@solref": "-3000 -100",
+			"@solimp": "0.99 0.999 0.001 0.5 2",
                         "@priority": "0",
                         "@group": "1",
                     }
@@ -1014,7 +1045,8 @@ class RobosuiteEnv(SingleArmEnv):
     def _load_model(self):
         super()._load_model()
         self.model = self.task_model # Prevents the super call from making this None
-            
+        print("[DEBUG] Loaded gripper type:", self.robots[0].gripper_type)
+    
     def load_robots_configs(self, robot_names, controller_configs, base_types, initialization_noise, control_freq, robot_configs=None):
         num_robots = len(robot_names)
         if robot_configs is None:
@@ -1130,3 +1162,4 @@ class RobosuiteEnv(SingleArmEnv):
     #         self.modder.mod_position("base", [0.8, np.random.uniform(-0.3, 0.3), 1.2])
     #         self.modder.update()
     
+

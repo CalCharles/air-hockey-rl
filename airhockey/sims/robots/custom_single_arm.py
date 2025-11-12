@@ -1,5 +1,5 @@
 import os
-from robosuite.controllers import load_controller_config
+from robosuite.controllers import load_composite_controller_config
 from airhockey.sims.controllers.custom_controller_factory import custom_controller_factory
 from robosuite.robots import SingleArm
 
@@ -55,7 +55,7 @@ class AirHockeySingleArm(SingleArm):
                 "..",
                 "controllers/config/{}.json".format(self.robot_model.default_controller_config),
             )
-            self.controller_config = load_controller_config(custom_fpath=controller_path)
+            self.controller_config = load_composite_controller_config(custom_fpath=controller_path)
 
         # Assert that the controller config is a dict file:
         #             NOTE: "type" must be one of: {JOINT_POSITION, JOINT_TORQUE, JOINT_VELOCITY,

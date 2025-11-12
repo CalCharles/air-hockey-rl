@@ -19,6 +19,8 @@ air_hockey:
   - 0.558
   simulator: robosuite
   simulator_params:
+    robots : ["UR5e"]
+    gripper_types : ["RoundGripper"]
     block_width: 0.0254
     depth: 0.101
     has_renderer: true

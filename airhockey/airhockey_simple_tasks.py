@@ -20,8 +20,10 @@ class AirHockeyPuckVelEnv(AirHockeyBaseEnv):
     def create_world_objects(self):
         name = 'puck_{}'.format(0)
         pos, vel = self.get_puck_configuration()
-        self.simulator.spawn_puck(pos, vel, name)
-        
+        print(f"[PUCK HEIGHT] Spawning puck with gravity=True, z_offset=0.5")
+        print(f"[PUCK HEIGHT] Position: {pos}, Velocity: {vel}")
+        self.simulator.spawn_puck(pos, vel, name, affected_by_gravity=True, z_offset=0.5)
+    
         name = 'paddle_ego'
         pos, vel = self.get_paddle_configuration(name)
         self.simulator.spawn_paddle(pos, vel, name)
@@ -34,8 +36,7 @@ class AirHockeyPuckVelEnv(AirHockeyBaseEnv):
         assert self.num_paddles == 1
 
     def get_observation(self, state_info, obs_type ="vel", **kwargs):
-        return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)
-        # ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
+        return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)        # ego_paddle_x_pos = state_info['paddles']['paddle_ego']['position'][0]
         # ego_paddle_y_pos = state_info['paddles']['paddle_ego']['position'][1]
         # ego_paddle_x_vel = state_info['paddles']['paddle_ego']['velocity'][0]
         # ego_paddle_y_vel = state_info['paddles']['paddle_ego']['velocity'][1]
@@ -46,14 +47,58 @@ class AirHockeyPuckVelEnv(AirHockeyBaseEnv):
         # puck_y_vel = state_info['pucks'][0]['velocity'][1]       
 
         # obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
-        # return obs
+        # return obs	 
 
 class AirHockeyPuckHeightEnv(AirHockeyBaseEnv):
-
     def __init__(self, **kwargs):
         super(AirHockeyPuckHeightEnv, self).__init__(**kwargs)
         self.num_touches = 0
         self.touching = False
+
+    """def get_puck_configuration(self, bad_regions=None):
+        #Spawn puck slightly above the left edge within world bounds.
+        # Real world coordinate limits (from env logs)
+        X_min, X_max, Y_min, Y_max = 0.6008, 0.9562, -0.471, 0.471
+        x_pos = X_min + 0.10   # 10 cm inside left edge
+        y_pos = 0.0            # centerline
+        pos = (x_pos, y_pos)
+        vel = (0.0, 0.0)
+        print(f"[DEBUG] Using world-aligned puck pos={pos}")
+        return pos, vel
+        pos = (x_left + margin, y_pos)              # 2D (x,y) in "high-level" coords
+        vel = (0.0, 0.0)
+        return pos, vel
+    def create_world_objects(self):
+        #Override to enable gravity for puck
+        #name = 'puck_{}'.format(0)
+        #pos, vel = self.get_puck_configuration()
+        #print(f"[PUCK HEIGHT] Spawning puck with gravity=True, z_offset=0.5")
+        #print(f"[PUCK HEIGHT] Position: {pos}, Velocity: {vel}")
+        #self.simulator.spawn_puck(pos, vel, name, affected_by_gravity=True, z_offset=0.5)
+    
+        #name = 'paddle_ego'
+        #pos, vel = self.get_paddle_configuration(name)
+        #self.simulator.spawn_paddle(pos, vel, name)""" 
+    def get_puck_configuration(self, bad_regions=None):
+        x_pos = self.table_x_top + 0.15  # Near the top edge
+        y_pos = self.rng.uniform(low=-self.width / 3, high=self.width / 3)
+        pos = (x_pos, y_pos)
+        
+        # Give it some initial velocity toward the robot (downward in your view)
+        x_vel = self.rng.uniform(low=0.8, high=1.5)  
+        y_vel = 0.0
+        vel = (x_vel, y_vel)
+        return pos, vel
+    
+    def create_world_objects(self):
+        name = 'puck_{}'.format(0)
+        pos, vel = self.get_puck_configuration()
+        print(f"[PUCK HEIGHT] Spawning at table position {pos} with velocity {vel}")
+        self.simulator.spawn_puck(pos, vel, name, affected_by_gravity=True, z_offset=0.1)
+        
+        name = 'paddle_ego'
+        pos, vel = self.get_paddle_configuration(name)
+        self.simulator.spawn_paddle(pos, vel, name)
 
     def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
@@ -66,15 +111,6 @@ class AirHockeyPuckHeightEnv(AirHockeyBaseEnv):
     def from_dict(state_dict):
         # print("state_dict", state_dict)
         return AirHockeyPuckHeightEnv(**state_dict)
-
-    def create_world_objects(self):
-        name = 'puck_{}'.format(0)
-        pos, vel = self.get_puck_configuration()
-        self.simulator.spawn_puck(pos, vel, name)
-        
-        name = 'paddle_ego'
-        pos, vel = self.get_paddle_configuration(name)
-        self.simulator.spawn_paddle(pos, vel, name)
     
     def validate_configuration(self):
         assert self.num_pucks == 1
@@ -305,3 +341,14 @@ class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
 
         # obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
         # return obs
+
+
+def create_world_objects(self):
+    """Spawn puck with gravity and small z-offset."""
+    name = "puck_0"
+    pos, vel = self.get_puck_configuration()
+    print(f"[PUCK] gravity=True, z_offset=0.02, position={pos}")
+    self.simulator.spawn_puck(pos, vel, name, affected_by_gravity=True, z_offset=0.02)
+    name = "paddle_ego"
+    pos, vel = self.get_paddle_configuration(name)
+    self.simulator.spawn_paddle(pos, vel, name)

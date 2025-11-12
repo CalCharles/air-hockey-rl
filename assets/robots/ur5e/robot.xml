@@ -59,7 +59,8 @@
         <mesh name="wrist3" file="meshes/wrist3.stl" />
     </asset>
     <worldbody>
-        <body name="base" pos="0 0 0.65">
+        <body name="base" pos="-0.10 0 0.365">
+            <site name="right_center" pos="0 0 0" size="0.01"/>
             <!-- robot view -->
             <camera mode="fixed" name="robotview" pos="1.0 0 0.4" quat="0.653 0.271 0.271 0.653"/>
             <inertial diaginertia="0 0 0" mass="0" pos="0 0 0"/>
@@ -68,7 +69,7 @@
 	    <geom mesh="base_vis_1" material="JointGrey" type="mesh" contype="0" conaffinity="0" group="1"/>
  
             <geom type="mesh" rgba="0.7 0.7 0.7 1" mesh="base" name="base_col"/>
-            <body name="shoulder_link" pos="0 0 0.167">
+            <body name="shoulder_link" pos="-0.10 0 0.42">
                 <inertial pos="0 0 0" mass="3.7" diaginertia="0.0102675 0.0102675 0.00666" />
                 <joint name="shoulder_pan_joint" pos="0 0 0" axis="0 0 1" limited="true" range="-6.28319 6.28319" damping="0.001" frictionloss="0.01" />
 		<geom mesh="shoulder_vis_0" material="URBlue" type="mesh" contype="0" conaffinity="0" group="1"/>
@@ -78,7 +79,7 @@
                 <geom type="mesh" rgba="0.7 0.7 0.7 1" mesh="shoulder" name="shoulder_col" />
                 <body name="upper_arm_link" pos="0 0.138 0" quat="0.707107 0 0.707107 0">
                     <inertial pos="0 0 0.2125" mass="8.393" diaginertia="0.133886 0.133886 0.0151074" />
-                    <joint name="shoulder_lift_joint" pos="0 0 0" axis="0 1 0" limited="true" range="-6.28319 6.28319" damping="0.001" frictionloss="0.01" />
+                    <joint name="shoulder_lift_joint" pos="0 0 0" axis="0 1 0" limited="true" range="-0.4 0.4" damping="0.001" frictionloss="0.01" />
 		    <geom mesh="upperarm_vis_0" material="LinkGrey" type="mesh" contype="0" conaffinity="0" group="1"/>
 		    <geom mesh="upperarm_vis_1" material="Black" type="mesh" contype="0" conaffinity="0" group="1"/>
 		    <geom mesh="upperarm_vis_2" material="JointGrey" type="mesh" contype="0" conaffinity="0" group="1"/>

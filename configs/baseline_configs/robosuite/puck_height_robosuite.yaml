@@ -19,6 +19,8 @@ air_hockey:
   - 0.558
   simulator: robosuite
   simulator_params:
+    robots: ["UR5e"]
+    gripper_types: ["RoundGripper"]
     block_width: 0.0254
     bot_solref: -50000
     depth: 0.101
@@ -48,7 +50,7 @@ air_hockey:
   truncate_rew: -1
   wall_bumping_rew: -1
 algorithm: ppo
-eval_freq: 5000
+eval_freq: 500
 gamma: 0.99
 model_save_filepath: model
 n_eval_eps: 30
