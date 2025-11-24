@@ -1,10 +1,14 @@
 air_hockey:
-  diagonal_motion_rew: -0.1
-  direction_change_rew: -0.05
-  truncate_rew: -10
+# no reward except for jerk penalty
+  diagonal_motion_rew: 0
+  direction_change_rew: 0
+  truncate_rew: -5
   wall_bumping_rew: -1
-  stand_still_rew: -0.05  # looks like a BUG
-  horizontal_vel_rew: -0.1
+  stand_still_rew: 0
+  horizontal_vel_rew: 0
+
+  jerk_penalty_coeff: 0.00075 # jerk is usually about 120 at the beginning
+  velocity_penalty_coeff: 0.75 # velocity is usually about 0.4 at the beginning
 
   goal_max_x_velocity: 1
   goal_max_y_velocity: 5

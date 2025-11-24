@@ -17,48 +17,9 @@ import tyro
 import os
 from datetime import datetime
 
-from scripts.smooth_policy.evaluate import evaluate_iterative_smoothing
+from scripts.smooth_policy.evaluate import evaluate_agent
 from scripts.smooth_policy.agent import Agent
 from scripts.utils import save_tensorboard_plots
-
-
-
-class RewardNormalizer:
-    def __init__(self, epsilon=1e-8):
-        self.epsilon = epsilon
-        self.count = 0
-        self.mean = 0.0
-        self.var = 1.0
-        
-    def update(self, rewards):
-        if isinstance(rewards, torch.Tensor):
-            rewards = rewards.cpu().numpy()
-        
-        batch_count = len(rewards)
-        batch_mean = np.mean(rewards)
-        batch_var = np.var(rewards)
-        
-        # Update count
-        new_count = self.count + batch_count
-        
-        # Update mean using Welford's online algorithm
-        delta = batch_mean - self.mean
-        self.mean += delta * batch_count / new_count
-        
-        # Update variance using Welford's online algorithm
-        if self.count > 0:
-            delta2 = batch_mean - self.mean
-            self.var = (self.count * self.var + batch_count * batch_var + 
-                       delta * delta2 * self.count * batch_count / new_count) / new_count
-        else:
-            self.var = batch_var
-            
-        self.count = new_count
-    
-    def normalize(self, rewards):
-        if isinstance(rewards, torch.Tensor):
-            rewards = rewards.cpu().numpy()
-        return (rewards - self.mean) / (np.sqrt(self.var) + self.epsilon)
 
 
 @dataclass
@@ -76,32 +37,27 @@ class Args:
     clip_vloss: bool = False
     ent_coef: float = 0.0
     vf_coef: float = 0.5
-    caps_coef_nearby: float = 0.0 # disable CAPS
-    caps_coef_consecutive: float = 0.0
-    action_coef: float = 0.0 # disable action regularization
     max_grad_norm: float = 0.5
     target_kl: float = None
     minibatch_size: int = 64
-    batch_size: int = 0 # computed in runtime
+    batch_size: int = 0 # computed at runtime
+    norm_adv: bool = True
 
+    # CAPS hyperparameters
+    caps_coef_nearby: float = 0.0
+    caps_coef_consecutive: float = 0.0
+
+    # Paths
     config: str = "scripts/smooth_policy/configs/puck_touch/default_config.yaml"
     args_file: str = None
     model_path: str = None  # Path to pre-trained model state dict
+    log_parent_dir: str = None
     run_name: str = "default"
 
-    # Hyperparameters to vary
+    # Others
     seed: int = 0
-    norm_adv: bool = True
-    reward_scaling: bool = True
-    reward_normalization: bool = False
     device: str = "cuda:0"
-    log_parent_dir: str = None
-    dynamic_reward_scaling: bool = False
-    dynamic_freeze_policy: bool = False
-
-    finetune: bool = False
-
-
+    
 
 def make_env(env_id):
     def _thunk():
@@ -124,27 +80,10 @@ if __name__ == "__main__":
 
     # command line args override file args
     args = tyro.cli(Args, default=default_args)
-
     args.batch_size = args.num_envs * args.num_steps
 
-    if args.finetune: # finetune mode has some preset hyperparameters
-        args.learning_rate = 1e-5 # lower learning rate
-        args.clip_coef = 0.1 # lower clip coef
-        args.clip_vloss = True # use clipped value loss
-        args.max_grad_norm = 0.25 # lower max grad norm
-        args.action_coef = 0.5 # action regularization
-        args.num_iterations = 500
-
-        # args.caps_coef_nearby = 20
-        # args.caps_coef_consecutive = 20
-        # args.num_envs = 8
-        # args.num_steps = 1024
-        # args.device = "cuda:0"
     with open(args.config, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
-
-    if args.dynamic_reward_scaling:
-        args.vf_coef = 0.5
 
     # should just create parallel envs for future use (can just use sync, async as placeholders)
     envs = gym.vector.AsyncVectorEnv([make_env(i) for i in range(args.num_envs)])
@@ -156,7 +95,7 @@ if __name__ == "__main__":
 
     log_parent_dir = args.log_parent_dir
     if log_parent_dir is None:
-        log_parent_dir = f"runs/iterative_smoothing/{task_name}/{run_name}_{timestamp}"
+        log_parent_dir = f"runs/default_training/{task_name}/{run_name}_{timestamp}"
     if os.path.exists(log_parent_dir):
         raise FileExistsError(f"Log directory {log_parent_dir} already exists.")
     os.makedirs(log_parent_dir, exist_ok=True)
@@ -167,26 +106,23 @@ if __name__ == "__main__":
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
     
-    # save yaml config into log_parent_dir
+    # save yaml args and config into log_parent_dir
     with open(f"{log_parent_dir}/config.yaml", "w") as f:
         yaml.dump(config, f)
-    # save args into log_parent_dir
     with open(f"{log_parent_dir}/args.yaml", "w") as f:
         yaml.dump(vars(args), f)
     
-    agent = Agent(envs, init_reward_scaling=0.1).to(args.device) # prevent initial blowup
-    
+    agent = Agent(envs, action_scale=0.02, action_bias=0.0).to(args.device)
     # Load pre-trained model if path is provided
-    if args.model_path is not None and os.path.exists(args.model_path):
+    if args.model_path is not None:
+        if not os.path.exists(args.model_path):
+            raise FileNotFoundError(f"Model path {args.model_path} does not exist.")
         print(f"Loading pre-trained model from {args.model_path}")
         agent.load_state_dict(torch.load(args.model_path, map_location=args.device))
         print("Model loaded successfully")
     
-    # TODO: save the optimizer state dict
-    optimizer = torch.optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
-    reward_normalizer = RewardNormalizer()
+    optimizer = torch.optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-6)
 
-    # TAKEN FROM CLEANRL
     # main training loop
     obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(args.device)
     actions = torch.zeros((args.num_steps, args.num_envs) + envs.single_action_space.shape).to(args.device)
@@ -201,8 +137,11 @@ if __name__ == "__main__":
     next_obs, _ = envs.reset(seed=args.seed)
     next_obs = torch.Tensor(next_obs).to(args.device)
     next_done = torch.zeros(args.num_envs).to(args.device)
-
-    freeze_policy_iterations = 0
+    
+    # Tracking lists for motion metrics
+    velocity_magnitudes = []
+    acceleration_magnitudes = []
+    jerk_magnitudes = []
     
     for iteration in range(1, args.num_iterations + 1):
         # Reset episodic return tracking for this iteration
@@ -214,7 +153,6 @@ if __name__ == "__main__":
             lrnow = frac * args.learning_rate
             optimizer.param_groups[0]["lr"] = lrnow
 
-        reward_scaling = agent.reward_scaling.item()
         for step in range(0, args.num_steps):
             global_step += args.num_envs
             obs[step] = next_obs
@@ -230,15 +168,8 @@ if __name__ == "__main__":
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, terminations, truncations, infos = envs.step(action.cpu().numpy())
 
-            if args.dynamic_reward_scaling:
-                reward = reward * reward_scaling
-            elif args.reward_scaling:
-                reward *= 0.1 # manually scale down
+            # REWARD SCALING is done on the environment level, not here
 
-            if args.reward_normalization:
-                reward_normalizer.update(reward)
-                reward = reward_normalizer.normalize(reward)
-            
             next_done = np.logical_or(terminations, truncations)
             rewards[step] = torch.tensor(reward).to(args.device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(args.device), torch.Tensor(next_done).to(args.device)
@@ -251,6 +182,12 @@ if __name__ == "__main__":
                         # print(f"global_step={global_step}, episodic_return={info['episode_return']}")
                         writer.add_scalar("charts/episodic_return", info['episode_return'], global_step)
                         writer.add_scalar("charts/episodic_length", info['episode_length'], global_step)
+                        
+                        # Extract motion data if available
+                        if 'motion_data' in info:
+                            velocity_magnitudes.extend(info['motion_data']['velocity_mags'])
+                            acceleration_magnitudes.extend(info['motion_data']['acceleration_mags'])
+                            jerk_magnitudes.extend(info['motion_data']['jerk_mags'])
 
         # bootstrap value if not done
         with torch.no_grad():
@@ -268,21 +205,11 @@ if __name__ == "__main__":
                 advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
             returns = advantages + values
 
-            # log statistics of the returns, advantages, values
-            writer.add_scalar("charts/return_mean", returns.mean().item(), global_step)
-            writer.add_scalar("charts/return_std", returns.std().item(), global_step)
+            # log statistics of the advantages, values
             writer.add_scalar("charts/advantage_mean", advantages.mean().item(), global_step)
             writer.add_scalar("charts/advantage_std", advantages.std().item(), global_step)
             writer.add_scalar("charts/value_mean", values.mean().item(), global_step)
             writer.add_scalar("charts/value_std", values.std().item(), global_step)
-        
-        # adjust reward scaling (if not already frozen)
-        if freeze_policy_iterations == 0 and args.dynamic_reward_scaling and values.mean().item() >= 5:
-            agent.reward_scaling *= 0.9
-            # running only value iterations for a few iterations until value loss is more stable
-            if args.dynamic_freeze_policy: # freeze on a parameter
-                freeze_policy_iterations = 3
-                print("Freezing policy iterations for 3 iterations")
 
         # flatten the batch
         b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
@@ -295,30 +222,32 @@ if __name__ == "__main__":
 
         
         # EVALUATE the loss before optimization
-        noise_std = 0.01
-        nearby_obs = b_obs + torch.randn_like(b_obs) * noise_std # new sample of noise
-        nearby_actions_mean = agent.get_action_mean(nearby_obs)
+        with torch.no_grad():
+            noise_std = 0.01
+            nearby_obs = b_obs + torch.randn_like(b_obs) * noise_std # new sample of noise
+            nearby_actions, _, _, _ = agent.get_action_and_value(nearby_obs)
+            next_actions = b_actions[np.clip(np.arange(args.batch_size) + 1, 0, args.batch_size - 1)] # ignore bias from the last action
+            non_done_mask = ~b_dones
 
-        consecutive_action_loss = 0.0
-        nearby_action_loss = 0.0
-        cnt_consecutive = 0
-        for i in range(args.batch_size):
-            if i < args.batch_size - 1 and not b_dones[i].item():
-                cnt_consecutive += 1
-                consecutive_action_loss += (b_actions[i] - b_actions[i+1]) ** 2
-            nearby_action_loss += (b_actions[i] - nearby_actions_mean[i]) ** 2
-        consecutive_action_loss /= cnt_consecutive
-        nearby_action_loss /= args.batch_size
-        consecutive_action_loss = consecutive_action_loss.mean()
-        nearby_action_loss = nearby_action_loss.mean()
+            # L2 losses
+            nearby_action_loss_l2 = ((nearby_actions - b_actions) ** 2.0).mean()
+            consecutive_action_loss_l2 = ((next_actions - b_actions) ** 2.0)[non_done_mask].sum() / non_done_mask.sum() # average over non-done steps
+            action_loss_l2 = (b_actions ** 2.0).mean()
+            caps_loss = nearby_action_loss_l2 * args.caps_coef_nearby + consecutive_action_loss_l2 * args.caps_coef_consecutive
 
-        caps_loss = nearby_action_loss * args.caps_coef_nearby + consecutive_action_loss * args.caps_coef_consecutive
-        action_loss = (b_actions ** 2.0).mean()
-        writer.add_scalar("losses/consecutive_action_loss", consecutive_action_loss.item(), global_step)
-        writer.add_scalar("losses/nearby_action_loss", nearby_action_loss.item(), global_step)
-        writer.add_scalar("losses/caps_loss", caps_loss.item(), global_step)
-        writer.add_scalar("losses/action_loss", action_loss.item(), global_step)
-        
+            # L1 losses
+            nearby_action_loss_l1 = ((nearby_actions - b_actions).abs()).mean()
+            consecutive_action_loss_l1 = ((next_actions - b_actions).abs())[non_done_mask].sum() / non_done_mask.sum() # average over non-done steps
+            action_loss_l1 = (b_actions.abs()).mean()
+
+            writer.add_scalar("losses/consecutive_action_loss_l2", consecutive_action_loss_l2.item(), global_step)
+            writer.add_scalar("losses/nearby_action_loss_l2", nearby_action_loss_l2.item(), global_step)
+            writer.add_scalar("losses/caps_loss", caps_loss.item(), global_step)
+            writer.add_scalar("losses/action_loss_l2", action_loss_l2.item(), global_step) # plot out, but not used in training
+            writer.add_scalar("losses/consecutive_action_loss_l1", consecutive_action_loss_l1.item(), global_step)
+            writer.add_scalar("losses/nearby_action_loss_l1", nearby_action_loss_l1.item(), global_step)
+            writer.add_scalar("losses/action_loss_l1", action_loss_l1.item(), global_step) # plot out, but not used in training
+            
 
         # Optimizing the policy and value network
         b_inds = np.arange(args.batch_size)
@@ -331,7 +260,7 @@ if __name__ == "__main__":
                 end = start + args.minibatch_size
                 mb_inds = b_inds[start:end]
 
-                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
+                _, newlogprob, _, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
@@ -350,7 +279,7 @@ if __name__ == "__main__":
                 pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
                 pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
-                # Value loss
+                # value loss
                 newvalue = newvalue.view(-1)
                 if args.clip_vloss:
                     v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
@@ -365,31 +294,27 @@ if __name__ == "__main__":
                 else:
                     v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
 
-                # ADDITION: penalize large actions (movements can still be jerky, but magnitude is controlled)
+                # action loss
                 action_loss = (b_actions[mb_inds] ** 2.0).mean() 
 
-                # ADDITION: CAPS loss (regularize consecutive states and nearby states)
-                curr_actions_mean = agent.get_action_mean(b_obs[mb_inds])
-                nearby_actions_mean = agent.get_action_mean(nearby_obs[mb_inds]) # for now just use sample from gaussian
-                # Ensure indices do not go out of bounds for next actions (shift by 1, but clip at batch length)
-                next_inds = mb_inds + 1
-                next_inds = np.clip(next_inds, 0, len(b_obs) - 1)
-                next_actions_mean = agent.get_action_mean(b_obs[next_inds])
-                # calculate losses
+                # caps loss
+                if args.caps_coef_nearby > 0 or args.caps_coef_consecutive > 0:
+                    next_inds = np.clip(mb_inds + 1, 0, len(b_obs) - 1)
+                    curr_actions, _, _, _ = agent.get_action_and_value(b_obs[mb_inds])
+                    nearby_actions, _, _, _ = agent.get_action_and_value(nearby_obs[mb_inds]) # for now just use sample from gaussian
+                    next_actions, _, _, _ = agent.get_action_and_value(b_obs[next_inds])
 
-                # BUG: sampled actions are not differentiable, and don't have requires grad
-                # solution: use the action mean
-                nearby_action_loss = ((nearby_actions_mean - curr_actions_mean) ** 2.0).mean()
-                non_done_mask = ~b_dones[mb_inds]
-                consecutive_action_loss = ((next_actions_mean - curr_actions_mean) ** 2.0)[non_done_mask].mean()
-                caps_loss = nearby_action_loss * args.caps_coef_nearby + consecutive_action_loss * args.caps_coef_consecutive
+                    nearby_action_loss = ((nearby_actions - curr_actions) ** 2.0).mean()
+                    non_done_mask = ~b_dones[mb_inds]
+                    consecutive_action_loss = ((next_actions - curr_actions) ** 2.0)[non_done_mask].sum() / non_done_mask.sum() # average over non-done steps
 
-                entropy_loss = entropy.mean()
-                loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef + args.action_coef * action_loss + caps_loss
+                    caps_loss = nearby_action_loss * args.caps_coef_nearby + consecutive_action_loss * args.caps_coef_consecutive
+                else:
+                    caps_loss = 0.0
 
-
-                if freeze_policy_iterations > 0:
-                    loss = v_loss * args.vf_coef
+                entropy_loss = (-newlogprob).mean() # unbiased estimate of entropy
+                # entropy_loss = entropy.mean()
+                loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef + caps_loss
     
                 optimizer.zero_grad()
                 loss.backward()
@@ -406,7 +331,6 @@ if __name__ == "__main__":
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
-        writer.add_scalar("charts/reward_scaling", agent.reward_scaling.item(), global_step)
         writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
         writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
         writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
@@ -417,10 +341,6 @@ if __name__ == "__main__":
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
-        
-        writer.add_scalar("charts/policy_frozen", int(freeze_policy_iterations > 0), global_step)
-        if freeze_policy_iterations > 0:
-            freeze_policy_iterations -= 1 # decrement the counter
         
         # Calculate and log episodic return statistics for this iteration
         if episodic_returns:
@@ -439,25 +359,42 @@ if __name__ == "__main__":
             success_rates = []
         else:
             print(f"Iteration {iteration}: No episodes completed")
+        
+        # Calculate and log motion statistics
+        if velocity_magnitudes:
+            avg_vel_mag = np.mean(velocity_magnitudes)
+            avg_acc_mag = np.mean(acceleration_magnitudes) 
+            avg_jerk_mag = np.mean(jerk_magnitudes)
+            
+            print(f"Iteration {iteration}: Avg Velocity Mag: {avg_vel_mag:.4f}, Avg Acceleration Mag: {avg_acc_mag:.4f}, Avg Jerk Mag: {avg_jerk_mag:.4f}")
+            
+            writer.add_scalar("motion/avg_velocity_magnitude", avg_vel_mag, iteration)
+            writer.add_scalar("motion/avg_acceleration_magnitude", avg_acc_mag, iteration)
+            writer.add_scalar("motion/avg_jerk_magnitude", avg_jerk_mag, iteration)
+            
+            # Clear lists for next iteration
+            velocity_magnitudes.clear()
+            acceleration_magnitudes.clear()
+            jerk_magnitudes.clear()
 
-        if iteration % 10 == 0 or min_return >= 3500: # start cherry-picking good policies
+        if iteration % 10 == 0 or min_return >= 5000: # start cherry-picking good policies
             # save a checkpoint of the model
             # create a subfolder for the checkpoint
             checkpoint_dir = os.path.join(log_parent_dir, f"checkpoint_{iteration}")
             os.makedirs(checkpoint_dir, exist_ok=True)
-            model_path = f"{checkpoint_dir}/iterative_smoothing_model.pth"
+            model_path = f"{checkpoint_dir}/model.pth"
             torch.save(agent.state_dict(), model_path)
 
             # evaluate the model
-            evaluate_iterative_smoothing(model_path, checkpoint_dir, config["air_hockey"], n_eps=6, n_gifs=1)
+            evaluate_agent(model_path, checkpoint_dir, config["air_hockey"], n_eps=4, n_gifs=1)
             
             print(f"Iteration {iteration} complete")
 
     # save model
-    torch.save(agent.state_dict(), f"{log_parent_dir}/iterative_smoothing_model.pth")
+    torch.save(agent.state_dict(), f"{log_parent_dir}/model.pth")
 
     # evaluate the model and save results
-    evaluate_iterative_smoothing(f"{log_parent_dir}/iterative_smoothing_model.pth", log_parent_dir, config["air_hockey"])
+    evaluate_agent(f"{log_parent_dir}/model.pth", log_parent_dir, config["air_hockey"])
     save_tensorboard_plots(log_parent_dir, config, 
     metrics=['charts/avg_episodic_return', 
     'charts/max_episodic_return', 
@@ -468,10 +405,7 @@ if __name__ == "__main__":
     'losses/policy_loss', 
     'charts/avg_success_rate',
     'losses/action_loss',
-    'losses/caps_loss'])
-
-
-
-
-
-
+    'losses/caps_loss',
+    'motion/avg_velocity_magnitude',
+    'motion/avg_acceleration_magnitude',
+    'motion/avg_jerk_magnitude'])
