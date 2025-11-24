@@ -101,6 +101,8 @@ class AirHockeyBox2D:
         self.action_lag = config.action_lag 
         assert self.action_lag >= 0 and self.action_lag <= 1, "Action lag must be between 0 and 1"
         self.last_action = np.zeros(2) # keep the last action taken, used for action lag
+        self.previous_acceleration = np.zeros(2)  # for jerk calculation
+        self.jerk = np.zeros(2)
 
         # these assume 2d, in 3d since we have height it would be higher mass
         self.paddle_mass = self.paddle_density * np.pi * self.paddle_radius ** 2
@@ -187,6 +189,8 @@ class AirHockeyBox2D:
 
         self.object_dict = dict()
         self.last_action = np.zeros(2) # keep the last action taken
+        self.previous_acceleration = np.zeros(2)  # reset for jerk calculation
+        self.jerk = np.zeros(2)
         state_info = self.get_current_state()
         return state_info
     
@@ -195,6 +199,7 @@ class AirHockeyBox2D:
         self.paddle_names = list(self.paddles.keys())
         if "paddle_ego_acceleration" in self.paddle_names: self.paddle_names.pop(self.paddle_names.index("paddle_ego_acceleration"))
         if "paddle_ego_force" in self.paddle_names: self.paddle_names.pop(self.paddle_names.index("paddle_ego_force"))
+        if "paddle_ego_jerk" in self.paddle_names: self.paddle_names.pop(self.paddle_names.index("paddle_ego_jerk"))
 
         
         self.puck_names = list(self.pucks.keys())
@@ -237,14 +242,17 @@ class AirHockeyBox2D:
             ego_paddle_x_vel = self.paddles['paddle_ego'].linearVelocity[0]
             ego_paddle_y_vel = self.paddles['paddle_ego'].linearVelocity[1]
             ego_paddle_x_acc = self.paddles['paddle_ego_acceleration'][0]
-            ego_paddle_y_acc = self.paddles['paddle_ego_acceleration'][0]
+            ego_paddle_y_acc = self.paddles['paddle_ego_acceleration'][1]
             ego_paddle_x_force = self.paddles['paddle_ego_force'][0]
-            ego_paddle_y_force = self.paddles['paddle_ego_force'][0]
+            ego_paddle_y_force = self.paddles['paddle_ego_force'][1]
+            ego_paddle_x_jerk = self.paddles['paddle_ego_jerk'][0]
+            ego_paddle_y_jerk = self.paddles['paddle_ego_jerk'][1]
             
             state_info['paddles'] = {'paddle_ego': {'position': (ego_paddle_x_pos, ego_paddle_y_pos),
                                                     'velocity': (ego_paddle_x_vel, ego_paddle_y_vel),
                                                     'acceleration': (ego_paddle_x_acc, ego_paddle_y_acc),
-                                                    'force': (ego_paddle_x_force, ego_paddle_y_force)
+                                                    'force': (ego_paddle_x_force, ego_paddle_y_force),
+                                                    'jerk': (ego_paddle_x_jerk, ego_paddle_y_jerk)
                                                     }}
 
         if 'paddle_alt' in self.paddles:
@@ -306,6 +314,7 @@ class AirHockeyBox2D:
         if name == "paddle_ego":
             self.paddles['paddle_ego_acceleration'] = (0, 0)
             self.paddles['paddle_ego_force'] = (0, 0)
+            self.paddles['paddle_ego_jerk'] = (0, 0)
         self.object_dict[name] = paddle
         self.paddle_history += [(-2 + self.center_offset_constant,0,1) for i in range(5)]
         
@@ -374,6 +383,9 @@ class AirHockeyBox2D:
 
         action_list = [np.copy(self.last_action), np.copy(action)]
         time_to_sim = [self.time_per_step * self.action_lag, self.time_per_step * (1 - self.action_lag)]
+        
+        # Store initial velocity for acceleration calculation over the entire step
+        initial_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0], self.paddles['paddle_ego'].linearVelocity[1]])
 
         for act, sim_time in zip(action_list, time_to_sim):
             pos = [self.paddles['paddle_ego'].position[0], self.paddles['paddle_ego'].position[1]]
@@ -390,14 +402,28 @@ class AirHockeyBox2D:
             vel_mag = np.linalg.norm(vel)
             vel_unit = vel / (vel_mag + 1e-8)
 
+            # print("--------------------------------")
+            # print("delta_pos x:", delta_pos[0], "delta_pos y:", delta_pos[1], "delta_pos mag:", np.linalg.norm(delta_pos))
+            # print("vel_mag:", vel_mag, "max_paddle_vel:", self.max_paddle_vel)
+            # first clipping
             if vel_mag > self.max_paddle_vel:
                 vel = vel_unit * self.max_paddle_vel
 
+            # print("mass:", self.paddles['paddle_ego'].mass, "sim_time:", sim_time)
             force = self.paddles['paddle_ego'].mass * vel / sim_time #self.time_per_step
             force_mag = np.linalg.norm(force)
             force_unit = force / (force_mag + 1e-8)
+
+            # print(f"force_mag: {force_mag}, max_force_timestep: {self.max_force_timestep}")
+            
+            # print("--------------------------------")
+
+            # second clipping
             if force_mag > self.max_force_timestep:
                 force = force_unit * self.max_force_timestep
+
+            # everything above are the calculations we are concerned with
+
             if self.force_scaling > 0:
                 force = force * self.force_scaling
             force = force.astype(float)
@@ -452,11 +478,9 @@ class AirHockeyBox2D:
                     self.paddle_history.append(list(paddle_data["position"]) + [0])
             else:
                 for i in range(len(self.paddles.keys())):
-                    if 'paddle_ego_acceleration' not in self.paddles or 'paddle_ego_force' not in self.paddles:
+                    if 'paddle_ego_acceleration' not in self.paddles or 'paddle_ego_force' not in self.paddles or 'paddle_ego_jerk' not in self.paddles:
                         self.paddle_history.append([-2 + self.center_offset_constant,0,1])
             
-            self.paddles['paddle_ego_acceleration'] = vel - current_vel
-
             total_force = np.array(force)
 
             collision_forces = self.get_collision_forces()
@@ -469,6 +493,22 @@ class AirHockeyBox2D:
                     total_force[1] -= collision['normal_force'] * collision['contact_normal'][1]
 
                 self.paddles['paddle_ego_force'] = total_force
+        
+        # Calculate acceleration and jerk AFTER the entire action step
+        # Use the total time step and initial velocity for proper acceleration calculation
+        final_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0], self.paddles['paddle_ego'].linearVelocity[1]])
+        current_acceleration = (final_vel - initial_vel) / self.time_per_step
+        self.paddles['paddle_ego_acceleration'] = current_acceleration
+        
+        # Calculate jerk (derivative of acceleration)
+        self.jerk = (current_acceleration - self.previous_acceleration) / self.time_per_step
+        self.paddles['paddle_ego_jerk'] = self.jerk
+        self.previous_acceleration = current_acceleration.copy()
+        
+        # Debug: Print acceleration values occasionally (remove this after testing)
+        # if self.timestep % 100 == 0 and np.linalg.norm(current_acceleration) > 0:
+        #     print(f"Debug - Timestep {self.timestep}: initial_vel={initial_vel}, final_vel={final_vel}, time_per_step={self.time_per_step}")
+        #     print(f"Debug - Acceleration: {current_acceleration}, magnitude: {np.linalg.norm(current_acceleration):.6f}")
         
         self.timestep += 1
         self.last_action = action

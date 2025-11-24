@@ -73,6 +73,9 @@ class AirHockeyBaseEnv(ABC, Env):
 
             'use_smooth_penalty': False,
             'use_reward_shaping': True,
+            'base_reward_scaling': 1.0,
+            'jerk_penalty_coeff': 0.0,
+            'velocity_penalty_coeff': 0.0,
         }
         
         # handle defaults, keeps values for duplicate keys from right side!
@@ -143,7 +146,9 @@ class AirHockeyBaseEnv(ABC, Env):
         self.stand_still_rew = config.stand_still_rew
         self.use_reward_shaping = config.use_reward_shaping
         self.use_smooth_penalty = config.use_smooth_penalty
-
+        self.base_reward_scaling = config.base_reward_scaling
+        self.jerk_penalty_coeff = config.jerk_penalty_coeff
+        self.velocity_penalty_coeff = config.velocity_penalty_coeff
         self.simulator_params = simulator_params
         self.width = simulator_params.width
         self.length = simulator_params.length
@@ -361,6 +366,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.min_reward_in_single_step = np.inf
         self.episode_return = 0.0
         self.episode_length = 0
+        self.episode_motion_data = {'velocity_mags': [], 'acceleration_mags': [], 'jerk_mags': []}
 
         if 'pucks' in state_info and len(state_info['pucks']) > 0:
             self.puck_initial_position = state_info['pucks'][0]['position']
@@ -542,6 +548,18 @@ class AirHockeyBaseEnv(ABC, Env):
             if bump_left or bump_right or bump_top or bump_bottom:
                 additional_rew += self.wall_bumping_rew
         
+        # jerk penalty - negative reward for high jerk (if jerk data is available)
+        if self.jerk_penalty_coeff != 0.0 and 'jerk' in state_info['paddles']['paddle_ego']:
+            jerk_magnitude = np.linalg.norm(state_info['paddles']['paddle_ego']['jerk'])
+            jerk_penalty = -self.jerk_penalty_coeff * jerk_magnitude
+            additional_rew += jerk_penalty
+        
+        # velocity penalty - negative reward for high velocity
+        if self.velocity_penalty_coeff != 0.0 and 'velocity' in state_info['paddles']['paddle_ego']:
+            velocity_magnitude = np.linalg.norm(state_info['paddles']['paddle_ego']['velocity'])
+            velocity_penalty = -self.velocity_penalty_coeff * velocity_magnitude
+            additional_rew += velocity_penalty
+        
         # TODO: require simulators to send contact info in state
         return additional_rew
 
@@ -579,6 +597,18 @@ class AirHockeyBaseEnv(ABC, Env):
         if self.current_timestep > 0:
             self.old_state = self.current_state
         self.current_state = next_state
+        
+        # Collect motion data
+        if 'paddles' in next_state and 'paddle_ego' in next_state['paddles']:
+            paddle_data = next_state['paddles']['paddle_ego']
+            
+            vel_mag = np.linalg.norm(paddle_data['velocity'])
+            acc_mag = np.linalg.norm(paddle_data['acceleration']) if 'acceleration' in paddle_data else 0
+            jerk_mag = np.linalg.norm(paddle_data['jerk']) if 'jerk' in paddle_data else 0
+            
+            self.episode_motion_data['velocity_mags'].append(vel_mag)
+            self.episode_motion_data['acceleration_mags'].append(acc_mag)
+            self.episode_motion_data['jerk_mags'].append(jerk_mag)
         success = self.success_in_ep 
         info = {}
         info['success'] = success
@@ -587,6 +617,9 @@ class AirHockeyBaseEnv(ABC, Env):
         is_finished, truncated, puck_within_home, puck_within_alt_home, puck_within_goal, _ = self.has_finished(next_state)
         if not truncated:
             reward, success = self.get_base_reward(next_state)
+            # scale reward
+            reward = reward * self.base_reward_scaling
+
             # import pdb; pdb.set_trace()
             if not info['success'] and success:
                 info['success'] = success
@@ -610,6 +643,9 @@ class AirHockeyBaseEnv(ABC, Env):
         if truncated or is_finished:
             info['episode_return'] = self.episode_return
             info['episode_length'] = self.episode_length
+            info['motion_data'] = self.episode_motion_data.copy()
+            # Reset for next episode
+            self.episode_motion_data = {'velocity_mags': [], 'acceleration_mags': [], 'jerk_mags': []}
 
         self.current_timestep += 1
         
@@ -644,6 +680,18 @@ class AirHockeyBaseEnv(ABC, Env):
         # paddle_pos, paddle_vel = state_vector[4:6], state_vector[6:]
         paddle_pos, paddle_vel = state_vector[:2], state_vector[2:4]
         self.simulator.spawn_paddle(paddle_pos, paddle_vel, name)
+    
+
+    # functions to adjust base reward scaling
+    def set_base_reward_scaling(self, scaling_factor):
+        self.base_reward_scaling = scaling_factor
+
+    def multiplicative_scale_base_reward(self, factor):
+        self.base_reward_scaling = self.base_reward_scaling * factor
+
+    def get_base_reward_scaling(self):
+        return self.base_reward_scaling
+
 
 
 def populate_state_info(paddles, pucks, blocks):
