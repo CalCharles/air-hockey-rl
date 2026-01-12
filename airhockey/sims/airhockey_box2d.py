@@ -8,6 +8,91 @@ from types import SimpleNamespace
 from ..utils import dict_to_namespace
 
 from matplotlib import pyplot as plt
+
+class PIDController:
+    """
+    PID controller for paddle position control.
+    
+    The controller computes a force based on position error (P), accumulated error (I),
+    and error derivative (D) to smoothly reach target positions.
+    """
+    def __init__(self, Kp=1000.0, Ki=50.0, Kd=100.0, dt=0.05):
+        """
+        Initialize PID controller.
+        
+        Args:
+            Kp: Proportional gain (default: 1000.0)
+            Ki: Integral gain (default: 50.0)
+            Kd: Derivative gain (default: 100.0)
+            dt: Time step in seconds (default: 0.05)
+        """
+        self.Kp = Kp
+        self.Ki = Ki
+        self.Kd = Kd
+        self.dt = dt
+        
+        # State variables for integral and derivative terms
+        self.integral_error = np.zeros(2)
+        self.previous_error = np.zeros(2)
+        
+        # Anti-windup limits for integral term
+        self.integral_limit = 1.0  # Maximum accumulated error (meters * seconds)
+    
+    def reset(self):
+        """Reset the controller state (integral and derivative terms)."""
+        self.integral_error = np.zeros(2)
+        self.previous_error = np.zeros(2)
+    
+    def compute(self, target_pos, current_pos, current_vel=None):
+        """
+        Compute control force based on PID control law.
+        
+        Args:
+            target_pos: Target position (2D numpy array or tuple)
+            current_pos: Current position (2D numpy array or tuple)
+            current_vel: Current velocity (2D numpy array or tuple, optional)
+                        If provided, used for derivative term instead of error derivative
+        
+        Returns:
+            force: 2D numpy array of forces to apply
+        """
+        # Convert to numpy arrays
+        target_pos = np.array(target_pos, dtype=float)
+        current_pos = np.array(current_pos, dtype=float)
+        
+        # Compute position error
+        error = target_pos - current_pos
+        
+        # Proportional term
+        P_term = self.Kp * error
+        
+        # Integral term with anti-windup
+        self.integral_error += error * self.dt
+        # Clamp integral error to prevent windup
+        self.integral_error = np.clip(self.integral_error, 
+                                     -self.integral_limit, 
+                                     self.integral_limit)
+        I_term = self.Ki * self.integral_error
+        
+        # Derivative term
+        if current_vel is not None:
+            # Use velocity directly (derivative of position is velocity)
+            # We want to dampen velocity, so negative sign
+            current_vel = np.array(current_vel, dtype=float)
+            D_term = -self.Kd * current_vel
+        else:
+            # Use error derivative
+            error_derivative = (error - self.previous_error) / self.dt
+            D_term = self.Kd * error_derivative
+        
+        # Update previous error
+        self.previous_error = error.copy()
+        
+        # Compute total force
+        force = P_term + I_term + D_term
+        
+        return force
+
 class CollisionForceListener(contactListener):
     def __init__(self, wall_bounce_scale=0.01):
         contactListener.__init__(self)
@@ -103,6 +188,14 @@ class AirHockeyBox2D:
         self.last_action = np.zeros(2) # keep the last action taken, used for action lag
         self.previous_acceleration = np.zeros(2)  # for jerk calculation
         self.jerk = np.zeros(2)
+        
+        # Initialize PID controller with configurable gains
+        # Default values are tuned for the air hockey environment
+        pid_kp = kwargs.get('pid_kp', 1000.0)
+        pid_ki = kwargs.get('pid_ki', 50.0)
+        pid_kd = kwargs.get('pid_kd', 100.0)
+        self.use_pid = kwargs.get('use_pid', False)  # Flag to enable/disable PID control
+        self.pid_controller = PIDController(Kp=pid_kp, Ki=pid_ki, Kd=pid_kd, dt=self.time_per_step)
 
         # these assume 2d, in 3d since we have height it would be higher mass
         self.paddle_mass = self.paddle_density * np.pi * self.paddle_radius ** 2
@@ -191,6 +284,11 @@ class AirHockeyBox2D:
         self.last_action = np.zeros(2) # keep the last action taken
         self.previous_acceleration = np.zeros(2)  # reset for jerk calculation
         self.jerk = np.zeros(2)
+        
+        # Reset PID controller
+        if hasattr(self, 'pid_controller'):
+            self.pid_controller.reset()
+        
         state_info = self.get_current_state()
         return state_info
     
@@ -388,41 +486,47 @@ class AirHockeyBox2D:
         initial_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0], self.paddles['paddle_ego'].linearVelocity[1]])
 
         for act, sim_time in zip(action_list, time_to_sim):
-            pos = [self.paddles['paddle_ego'].position[0], self.paddles['paddle_ego'].position[1]]
+            pos = np.array([self.paddles['paddle_ego'].position[0], self.paddles['paddle_ego'].position[1]])
+            
+            # Boundary constraint: prevent paddle from going into opponent's side
             if pos[1] > 0 - 3 * self.paddle_radius:
                 act[1] = min(act[1], 0)
             
-            # action is delta position
-            # let's use simple time-optimal control to figure out the force to apply
-            delta_pos = np.array([act[0], act[1]])
-            current_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0], self.paddles['paddle_ego'].linearVelocity[1]])
-            
-            # # first let's determine velocity
-            vel = delta_pos / sim_time # self.time_per_step
-            vel_mag = np.linalg.norm(vel)
-            vel_unit = vel / (vel_mag + 1e-8)
+            # Compute force using either PID controller or legacy controller
+            if self.use_pid:
+                # PID controller: action is delta position from current position
+                target_pos = pos + np.array([act[0], act[1]])
+                current_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0], 
+                                       self.paddles['paddle_ego'].linearVelocity[1]])
+                
+                # Compute force using PID controller
+                force = self.pid_controller.compute(target_pos, pos, current_vel)
+                
+            else:
+                # Legacy controller: action is delta position
+                # let's use simple time-optimal control to figure out the force to apply
+                delta_pos = np.array([act[0], act[1]])
+                current_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0], 
+                                       self.paddles['paddle_ego'].linearVelocity[1]])
+                
+                # first let's determine velocity
+                vel = delta_pos / sim_time
+                vel_mag = np.linalg.norm(vel)
+                vel_unit = vel / (vel_mag + 1e-8)
 
-            # print("--------------------------------")
-            # print("delta_pos x:", delta_pos[0], "delta_pos y:", delta_pos[1], "delta_pos mag:", np.linalg.norm(delta_pos))
-            # print("vel_mag:", vel_mag, "max_paddle_vel:", self.max_paddle_vel)
-            # first clipping
-            if vel_mag > self.max_paddle_vel:
-                vel = vel_unit * self.max_paddle_vel
+                # first clipping
+                if vel_mag > self.max_paddle_vel:
+                    vel = vel_unit * self.max_paddle_vel
 
-            # print("mass:", self.paddles['paddle_ego'].mass, "sim_time:", sim_time)
-            force = self.paddles['paddle_ego'].mass * vel / sim_time #self.time_per_step
+                force = self.paddles['paddle_ego'].mass * vel / sim_time
+
+            # clipping/normalization applies to both controllers
             force_mag = np.linalg.norm(force)
             force_unit = force / (force_mag + 1e-8)
-
-            # print(f"force_mag: {force_mag}, max_force_timestep: {self.max_force_timestep}")
-            
-            # print("--------------------------------")
 
             # second clipping
             if force_mag > self.max_force_timestep:
                 force = force_unit * self.max_force_timestep
-
-            # everything above are the calculations we are concerned with
 
             if self.force_scaling > 0:
                 force = force * self.force_scaling
@@ -434,8 +538,15 @@ class AirHockeyBox2D:
                 force[1] = min(new_force, 0)
             else:
                 force = force * np.array([self.action_x_scaling, self.action_y_scaling])
+            
+            # Clip force to maximum allowed
+            force_mag = np.linalg.norm(force)
+            if force_mag > self.max_force_timestep:
+                force = force / force_mag * self.max_force_timestep
+            
+            # Apply force to paddle
             if 'paddle_ego' in self.paddles:
-                self.paddles['paddle_ego'].ApplyForceToCenter(force, True)
+                self.paddles['paddle_ego'].ApplyForceToCenter(force.astype(float), True)
 
             self.world.Step(sim_time, 100, 100)
             

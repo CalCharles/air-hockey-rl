@@ -67,14 +67,91 @@ class AirHockeyRenderer:
         # Track previous paddle velocities for acceleration calculation
         self.prev_paddle_velocities = {}
         
+        # Store current action for target position visualization
+        self.current_action = None
+        
     def convert_to_render_coords_sys(self, pos):
         return np.array((pos[1], -pos[0]))  # coords -> box2d
+    
+    def set_action(self, action):
+        """
+        Set the current action for visualization purposes.
+        
+        Args:
+            action: Action vector (typically 2D delta position for paddle)
+        """
+        self.current_action = action
+    
+    def draw_target_position(self, current_pos, action, color=(255, 165, 0)):
+        """
+        Draws the target position (current position + action delta).
+        If the target goes outside the screen, it's clamped to the edge.
+        
+        Args:
+            current_pos: Current position in base coordinates (x, y)
+            action: Action delta in base coordinates (dx, dy)
+            color: Color of the target marker (BGR format), default is orange
+        """
+        if action is None or len(action) < 2:
+            return
+            
+        # Calculate target position in base coordinates
+        target_pos = np.array(current_pos) + np.array(action[:2])
+        
+        # Clamp target position to stay within bounds
+        # Base coordinates: x is vertical, y is horizontal
+        # Bounds: x in [-length/2, length/2], y in [-width/2, width/2]
+        clamped_target = np.array(target_pos)
+        clamped_target[0] = np.clip(clamped_target[0], -self.length / 2, self.length / 2)
+        clamped_target[1] = np.clip(clamped_target[1], -self.width / 2, self.width / 2)
+        
+        # Convert to render coordinates (same as paddle rendering)
+        target_render = self.convert_to_render_coords_sys(clamped_target)
+        
+        # Convert to pixel coordinates (same as draw_circle_with_image)
+        center = np.array(target_render) + np.array((self.width / 2, self.length / 2))
+        center = np.array((center[1], center[0])) * self.ppm
+        
+        # No special vertical orientation handling needed - the frame rotation
+        # at the end of get_frame() handles orientation for all elements uniformly
+        
+        center_int = tuple(center.astype(int))
+        
+        # Draw target marker as a cross with circle
+        marker_size = 15
+        thickness = 3
+        
+        # Draw outer circle (black outline)
+        cv2.circle(self.frame, center_int, marker_size, (0, 0, 0), thickness + 2)
+        # Draw inner circle (colored)
+        cv2.circle(self.frame, center_int, marker_size, color, thickness)
+        
+        # Draw cross lines (black outline)
+        cv2.line(self.frame, 
+                (center_int[0] - marker_size, center_int[1]), 
+                (center_int[0] + marker_size, center_int[1]), 
+                (0, 0, 0), thickness + 2)
+        cv2.line(self.frame, 
+                (center_int[0], center_int[1] - marker_size), 
+                (center_int[0], center_int[1] + marker_size), 
+                (0, 0, 0), thickness + 2)
+        
+        # Draw cross lines (colored)
+        cv2.line(self.frame, 
+                (center_int[0] - marker_size, center_int[1]), 
+                (center_int[0] + marker_size, center_int[1]), 
+                color, thickness)
+        cv2.line(self.frame, 
+                (center_int[0], center_int[1] - marker_size), 
+                (center_int[0], center_int[1] + marker_size), 
+                color, thickness)
     
     def draw_acceleration_arrow(self, pos, acceleration, max_arrow_length=1000, color=(0, 140, 255)):
         """
         Args:
             pos: Position of the paddle in render coordinates
-            acceleration: Acceleration vector (ax, ay)
+            acceleration: Acceleration vector (ax, ay) in base coordinates
+                Base coords: X is vertical (down positive), Y is horizontal
             max_arrow_length: Maximum length of the arrow in pixels
             color: Color of the arrow (BGR format)
         """
@@ -82,11 +159,13 @@ class AirHockeyRenderer:
         if hasattr(pos, '__len__') and len(pos) == 2:
             # pos is already in render coordinates from the caller
             center = np.array(pos) + np.array((self.width / 2, self.length / 2))
-            center = np.array((center[1], center[0])) * self.ppm
+            center = np.array((center[1], center[0])) * self.ppm  # Default horizontal orientation
         else:
             return
             
+        # Convert acceleration vector from base coords to render coords
         acc_render = self.convert_to_render_coords_sys(acceleration)
+        acc_render = np.array([acc_render[1], acc_render[0]]) # use the same transformation, without the translation or the scaling
         
         # Calculate arrow length based on acceleration magnitude
         acc_magnitude = np.linalg.norm(acc_render)
@@ -398,6 +477,10 @@ class AirHockeyRenderer:
                 
                 # Draw acceleration arrow on top of the paddle
                 self.draw_acceleration_arrow(pos_render, acceleration)
+                
+                # Draw target position if action is available
+                if self.current_action is not None:
+                    self.draw_target_position(pos, self.current_action)
             
         # if self.airhockey_env.paddle[1] is not None: self.draw_circle_with_image(self.airhockey_env.paddle[1], circle_type='paddle')
         if self.orientation == 'vertical':
