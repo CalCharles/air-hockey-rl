@@ -38,8 +38,8 @@ air_hockey:
     render_size: 360
     wall_bounce_scale: 0.02
     width: 0.8636
-    # use_pid: true
-    # pid_ki: 0.0 # disable integral term
+    use_pid: true
+    pid_ki: 0.0 # disable integral term
   
   task: puck_juggle
   terminate_on_enemy_goal: true

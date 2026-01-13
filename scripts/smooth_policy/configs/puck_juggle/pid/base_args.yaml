@@ -3,7 +3,7 @@ batch_size: 4096
 clip_coef: 0.2
 clip_vloss: false
 config: scripts/smooth_policy/configs/puck_juggle/pid/velocity.yaml
-device: cuda:1
+device: cuda:2
 ent_coef: 0.02
 gae_lambda: 0.95
 gamma: 0.99
@@ -21,4 +21,4 @@ seed: 0
 target_kl: null
 update_epochs: 5
 vf_coef: 0.5
-# action_scale: 0.2
+action_scale: 0.2
