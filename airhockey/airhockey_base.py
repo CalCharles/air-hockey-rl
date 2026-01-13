@@ -592,6 +592,8 @@ class AirHockeyBaseEnv(ABC, Env):
         if paddle_y_pos > paddle_y_max + self.paddle_radius:
             action[1] = min(action[1], 0)
 
+        self.last_action = action
+
         next_state = self.simulator.get_transition(action)
         # print(action, min_max_limits, next_state['paddles']['paddle_ego']['position'], self.paddle_radius)
         if self.current_timestep > 0:

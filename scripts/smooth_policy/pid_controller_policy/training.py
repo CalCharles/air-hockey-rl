@@ -17,8 +17,8 @@ import tyro
 import os
 from datetime import datetime
 
-from scripts.smooth_policy.evaluate import evaluate_agent
-from scripts.smooth_policy.agent import Agent
+from scripts.smooth_policy.pid_controller_policy.evaluate import evaluate_agent
+from scripts.smooth_policy.pid_controller_policy.agent import Agent
 from scripts.utils import save_tensorboard_plots
 
 
@@ -39,27 +39,19 @@ class Args:
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
     target_kl: float = None
-    minibatch_size: int = 64
     batch_size: int = 0 # computed at runtime
     norm_adv: bool = True
-
-    # CAPS hyperparameters
-    caps_coef_nearby: float = 0.0
-    caps_coef_consecutive: float = 0.0
 
     # Paths
     config: str = "scripts/smooth_policy/configs/puck_touch/default_config.yaml"
     args_file: str = None
     model_path: str = None  # Path to pre-trained model state dict
     log_parent_dir: str = None
-    run_name: str = "default"
+    run_name: str = "pid_default"
 
     # Others
     seed: int = 0
     device: str = "cuda:0"
-
-    # action scale for the agent
-    action_scale: float = 0.02
     
 
 def make_env(env_id):
@@ -98,7 +90,7 @@ if __name__ == "__main__":
 
     log_parent_dir = args.log_parent_dir
     if log_parent_dir is None:
-        log_parent_dir = f"runs/default_training/{task_name}/{run_name}_{timestamp}"
+        log_parent_dir = f"runs/pid_training/{task_name}/{run_name}_{timestamp}"
     if os.path.exists(log_parent_dir):
         raise FileExistsError(f"Log directory {log_parent_dir} already exists.")
     os.makedirs(log_parent_dir, exist_ok=True)
@@ -115,7 +107,15 @@ if __name__ == "__main__":
     with open(f"{log_parent_dir}/args.yaml", "w") as f:
         yaml.dump(vars(args), f)
     
-    agent = Agent(envs, action_scale=args.action_scale, action_bias=0.0).to(args.device)
+    # Get dimensions
+    obs_dim = int(np.prod(envs.single_observation_space.shape))
+    act_dim = int(np.prod(envs.single_action_space.shape))
+    
+    # Agent takes augmented observation: [obs, target_position]
+    augmented_obs_dim = obs_dim + act_dim
+    
+    agent = Agent(obs_dim=augmented_obs_dim, act_dim=act_dim, action_scale=0.02, action_bias=0.0).to(args.device)
+    
     # Load pre-trained model if path is provided
     if args.model_path is not None:
         if not os.path.exists(args.model_path):
@@ -126,9 +126,10 @@ if __name__ == "__main__":
     
     optimizer = torch.optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-6)
 
-    # main training loop
-    obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(args.device)
-    actions = torch.zeros((args.num_steps, args.num_envs) + envs.single_action_space.shape).to(args.device)
+    # main training loop - storage for augmented observations
+    obs = torch.zeros((args.num_steps, args.num_envs, augmented_obs_dim)).to(args.device)
+    delta_targets = torch.zeros((args.num_steps, args.num_envs, act_dim)).to(args.device)  # what agent outputs
+    actions = torch.zeros((args.num_steps, args.num_envs, act_dim)).to(args.device)  # target positions sent to env
     logprobs = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     rewards = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     dones = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
@@ -140,6 +141,10 @@ if __name__ == "__main__":
     next_obs, _ = envs.reset(seed=args.seed)
     next_obs = torch.Tensor(next_obs).to(args.device)
     next_done = torch.zeros(args.num_envs).to(args.device)
+    
+    # Initialize target positions to current paddle positions
+    # Assuming paddle position is in the first act_dim elements of observation
+    target_positions = next_obs[:, :act_dim].clone()
     
     # Tracking lists for motion metrics
     velocity_magnitudes = []
@@ -158,31 +163,38 @@ if __name__ == "__main__":
 
         for step in range(0, args.num_steps):
             global_step += args.num_envs
-            obs[step] = next_obs
+            
+            # Create augmented observation
+            augmented_obs = torch.cat([next_obs, target_positions], dim=-1)
+            obs[step] = augmented_obs
             dones[step] = next_done
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                action, logprob, _, value = agent.get_action_and_value(next_obs)
+                delta_target, logprob, _, value = agent.get_action_and_value(augmented_obs)
                 values[step] = value.flatten()
-            actions[step] = action
+            
+            delta_targets[step] = delta_target
             logprobs[step] = logprob
+            
+            # Update target positions
+            target_positions = target_positions + delta_target
+            actions[step] = target_positions
 
             # TRY NOT TO MODIFY: execute the game and log data.
-            next_obs, reward, terminations, truncations, infos = envs.step(action.cpu().numpy())
-
-            # REWARD SCALING is done on the environment level, not here
+            next_obs, reward, terminations, truncations, infos = envs.step(target_positions.cpu().numpy())
 
             next_done = np.logical_or(terminations, truncations)
             rewards[step] = torch.tensor(reward).to(args.device).view(-1)
-            next_obs, next_done = torch.Tensor(next_obs).to(args.device), torch.Tensor(next_done).to(args.device)
+            next_obs = torch.Tensor(next_obs).to(args.device)
+            next_done_tensor = torch.Tensor(next_done).to(args.device)
 
+            # Handle resets - when an episode ends, reset target position to current paddle position
             if "final_info" in infos:
-                for info in infos["final_info"]:
+                for idx, info in enumerate(infos["final_info"]):
                     if info and "episode_return" in info:
                         episodic_returns.append(info['episode_return'])
                         success_rates.append(1.0 if info['success'] else 0.0)
-                        # print(f"global_step={global_step}, episodic_return={info['episode_return']}")
                         writer.add_scalar("charts/episodic_return", info['episode_return'], global_step)
                         writer.add_scalar("charts/episodic_length", info['episode_length'], global_step)
                         
@@ -191,10 +203,19 @@ if __name__ == "__main__":
                             velocity_magnitudes.extend(info['motion_data']['velocity_mags'])
                             acceleration_magnitudes.extend(info['motion_data']['acceleration_mags'])
                             jerk_magnitudes.extend(info['motion_data']['jerk_mags'])
+            
+            # Reset target positions for done environments
+            for env_idx in range(args.num_envs):
+                if next_done[env_idx]:
+                    # Reset to current paddle position (first act_dim elements of obs)
+                    target_positions[env_idx] = next_obs[env_idx, :act_dim].clone()
+            
+            next_done = next_done_tensor
 
         # bootstrap value if not done
         with torch.no_grad():
-            next_value = agent.get_value(next_obs).reshape(1, -1)
+            augmented_next_obs = torch.cat([next_obs, target_positions], dim=-1)
+            next_value = agent.get_value(augmented_next_obs).reshape(1, -1)
             advantages = torch.zeros_like(rewards).to(args.device)
             lastgaelam = 0
             for t in reversed(range(args.num_steps)):
@@ -215,55 +236,25 @@ if __name__ == "__main__":
             writer.add_scalar("charts/value_std", values.std().item(), global_step)
 
         # flatten the batch
-        b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
+        b_obs = obs.reshape((-1, augmented_obs_dim))
         b_logprobs = logprobs.reshape(-1)
-        b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
+        b_delta_targets = delta_targets.reshape((-1, act_dim))
+        b_actions = actions.reshape((-1, act_dim))
         b_advantages = advantages.reshape(-1)
         b_returns = returns.reshape(-1)
         b_values = values.reshape(-1)
         b_dones = dones.reshape(-1).bool()
-
-        
-        # EVALUATE the loss before optimization
-        with torch.no_grad():
-            noise_std = 0.01
-            nearby_obs = b_obs + torch.randn_like(b_obs) * noise_std # new sample of noise
-            nearby_actions, _, _, _ = agent.get_action_and_value(nearby_obs)
-            next_actions = b_actions[np.clip(np.arange(args.batch_size) + 1, 0, args.batch_size - 1)] # ignore bias from the last action
-            non_done_mask = ~b_dones
-
-            # L2 losses
-            nearby_action_loss_l2 = ((nearby_actions - b_actions) ** 2.0).mean()
-            consecutive_action_loss_l2 = ((next_actions - b_actions) ** 2.0)[non_done_mask].sum() / non_done_mask.sum() # average over non-done steps
-            action_loss_l2 = (b_actions ** 2.0).mean()
-            caps_loss = nearby_action_loss_l2 * args.caps_coef_nearby + consecutive_action_loss_l2 * args.caps_coef_consecutive
-
-            # L1 losses
-            nearby_action_loss_l1 = ((nearby_actions - b_actions).abs()).mean()
-            consecutive_action_loss_l1 = ((next_actions - b_actions).abs())[non_done_mask].sum() / non_done_mask.sum() # average over non-done steps
-            action_loss_l1 = (b_actions.abs()).mean()
-
-            writer.add_scalar("losses/consecutive_action_loss_l2", consecutive_action_loss_l2.item(), global_step)
-            writer.add_scalar("losses/nearby_action_loss_l2", nearby_action_loss_l2.item(), global_step)
-            writer.add_scalar("losses/caps_loss", caps_loss.item(), global_step)
-            writer.add_scalar("losses/action_loss_l2", action_loss_l2.item(), global_step) # plot out, but not used in training
-            writer.add_scalar("losses/consecutive_action_loss_l1", consecutive_action_loss_l1.item(), global_step)
-            writer.add_scalar("losses/nearby_action_loss_l1", nearby_action_loss_l1.item(), global_step)
-            writer.add_scalar("losses/action_loss_l1", action_loss_l1.item(), global_step) # plot out, but not used in training
-            
 
         # Optimizing the policy and value network
         b_inds = np.arange(args.batch_size)
         clipfracs = []
         for epoch in range(args.update_epochs):
             np.random.shuffle(b_inds)
-            noise_std = 0.01
-            nearby_obs = b_obs + torch.randn_like(b_obs) * noise_std # new sample of noise
             for start in range(0, args.batch_size, args.minibatch_size):
                 end = start + args.minibatch_size
                 mb_inds = b_inds[start:end]
 
-                _, newlogprob, _, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
+                _, newlogprob, _, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_delta_targets[mb_inds])
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
@@ -297,27 +288,8 @@ if __name__ == "__main__":
                 else:
                     v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
 
-                # action loss
-                action_loss = (b_actions[mb_inds] ** 2.0).mean() 
-
-                # caps loss
-                if args.caps_coef_nearby > 0 or args.caps_coef_consecutive > 0:
-                    next_inds = np.clip(mb_inds + 1, 0, len(b_obs) - 1)
-                    curr_actions, _, _, _ = agent.get_action_and_value(b_obs[mb_inds])
-                    nearby_actions, _, _, _ = agent.get_action_and_value(nearby_obs[mb_inds]) # for now just use sample from gaussian
-                    next_actions, _, _, _ = agent.get_action_and_value(b_obs[next_inds])
-
-                    nearby_action_loss = ((nearby_actions - curr_actions) ** 2.0).mean()
-                    non_done_mask = ~b_dones[mb_inds]
-                    consecutive_action_loss = ((next_actions - curr_actions) ** 2.0)[non_done_mask].sum() / non_done_mask.sum() # average over non-done steps
-
-                    caps_loss = nearby_action_loss * args.caps_coef_nearby + consecutive_action_loss * args.caps_coef_consecutive
-                else:
-                    caps_loss = 0.0
-
                 entropy_loss = (-newlogprob).mean() # unbiased estimate of entropy
-                # entropy_loss = entropy.mean()
-                loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef + caps_loss
+                loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
     
                 optimizer.zero_grad()
                 loss.backward()
@@ -326,8 +298,6 @@ if __name__ == "__main__":
 
             if args.target_kl is not None and approx_kl > args.target_kl:
                 break
-        
-        
         
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
         var_y = np.var(y_true)
@@ -342,6 +312,11 @@ if __name__ == "__main__":
         writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
         writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
+        
+        # Log delta target statistics
+        writer.add_scalar("motion/avg_delta_target_magnitude", b_delta_targets.abs().mean().item(), global_step)
+        writer.add_scalar("motion/delta_target_std", b_delta_targets.std().item(), global_step)
+        
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
         
@@ -380,7 +355,7 @@ if __name__ == "__main__":
             acceleration_magnitudes.clear()
             jerk_magnitudes.clear()
 
-        if iteration % 10 == 0 or min_return >= 5000: # start cherry-picking good policies
+        if iteration % 10 == 0 or (episodic_returns and min_return >= 5000): # start cherry-picking good policies
             # save a checkpoint of the model
             # create a subfolder for the checkpoint
             checkpoint_dir = os.path.join(log_parent_dir, f"checkpoint_{iteration}")
@@ -407,8 +382,8 @@ if __name__ == "__main__":
     'losses/value_loss', 
     'losses/policy_loss', 
     'charts/avg_success_rate',
-    'losses/action_loss',
-    'losses/caps_loss',
     'motion/avg_velocity_magnitude',
     'motion/avg_acceleration_magnitude',
-    'motion/avg_jerk_magnitude'])
+    'motion/avg_jerk_magnitude',
+    'motion/avg_delta_target_magnitude'])
+

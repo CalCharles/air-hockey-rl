@@ -479,8 +479,8 @@ class AirHockeyRenderer:
                 self.draw_acceleration_arrow(pos_render, acceleration)
                 
                 # Draw target position if action is available
-                if self.current_action is not None:
-                    self.draw_target_position(pos, self.current_action)
+                if hasattr(self.airhockey_env, "last_action"):
+                    self.draw_target_position(pos, self.airhockey_env.last_action)
             
         # if self.airhockey_env.paddle[1] is not None: self.draw_circle_with_image(self.airhockey_env.paddle[1], circle_type='paddle')
         if self.orientation == 'vertical':
