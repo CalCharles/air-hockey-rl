@@ -31,8 +31,8 @@ air_hockey:
     render_size: 360
     wall_bounce_scale: 0.02
     width: 0.8636
-    control_mode: mouse
-    save_path: ./data/rollout/temp_saving/mouse_test
+    control_mode: RL
+    save_path: ./data/rollout/temp_saving/RL_test
   stand_still_rew: 0.01
   task: puck_velocity
   terminate_on_enemy_goal: true
