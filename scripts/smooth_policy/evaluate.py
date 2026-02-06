@@ -33,7 +33,7 @@ class ReferenceStateWrapper(gym.Wrapper):
         
         return self.env.reset(**kwargs)
 
-def evaluate_agent(model_path, save_dir, air_hockey_params, air_hockey_config_path=None, n_eps=5, n_gifs=3, base_reward_scaling=1.0, reference_states=None, ref_max_episode_steps=None):
+def evaluate_agent(model_path, save_dir, air_hockey_params, air_hockey_config_path=None, n_eps=5, n_gifs=3, base_reward_scaling=1.0, reference_states=None, ref_max_episode_steps=None, action_scale=0.02, agent_hidden_size=64):
     # save an action plot
     if air_hockey_config_path is not None:
         run_single_episode(model_path, air_hockey_config_path, plot_dir=save_dir, max_steps=100)
@@ -52,7 +52,7 @@ def evaluate_agent(model_path, save_dir, air_hockey_params, air_hockey_config_pa
         return env
     
     envs = gym.vector.SyncVectorEnv([make_eval_env])
-    model = Agent(envs)
+    model = Agent(envs, action_scale=action_scale, action_bias=0.0, hidden_size=agent_hidden_size)
     state_dict = torch.load(model_path)
     model.load_state_dict(state_dict)
 

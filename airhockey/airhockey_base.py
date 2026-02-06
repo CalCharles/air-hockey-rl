@@ -238,10 +238,6 @@ class AirHockeyBaseEnv(ABC, Env):
         # history: deltas
         paddle_hist_low = [self.table_x_top, self.table_y_left, 0] * 5
         paddle_hist_high = [self.table_x_bot, self.table_y_right, 0] * 5
-        paddle_deltas_low = [self.table_x_top - self.table_x_bot, self.table_y_left - self.table_y_right, 0] * (5 - 1)
-        paddle_deltas_high = [self.table_x_bot - self.table_x_top, self.table_y_right - self.table_y_left, 0] * (5 - 1)
-        puck_deltas_low = [self.table_x_top - self.table_x_bot, self.table_y_left - self.table_y_right, 0] * (5 - 1)
-        puck_deltas_high = [self.table_x_bot - self.table_x_top, self.table_y_right - self.table_y_left, 0] * (5 - 1)
 
 
         paddle_accel_low = [-1000, -1000]
@@ -358,7 +354,6 @@ class AirHockeyBaseEnv(ABC, Env):
         self.simulator.set_object_links()
         self.current_state = state_info
         obs = self.get_observation(state_info, obs_type=self.obs_type, puck_history=self.simulator.puck_history, paddle_history=self.simulator.paddle_history)
-        
         self.n_timesteps_so_far += self.current_timestep
         self.current_timestep = 0
         self.success_in_ep = False
@@ -370,7 +365,7 @@ class AirHockeyBaseEnv(ABC, Env):
 
         if 'pucks' in state_info and len(state_info['pucks']) > 0:
             self.puck_initial_position = state_info['pucks'][0]['position']
-            
+        
         return obs, {**{'success': False}, **vars(self.simulator_params)}
 
     def reset_from_state(self, state_vector, seed=None):
