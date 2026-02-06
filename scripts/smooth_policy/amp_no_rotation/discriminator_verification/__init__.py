@@ -1,0 +1,1 @@
+"""Discriminator verification module."""

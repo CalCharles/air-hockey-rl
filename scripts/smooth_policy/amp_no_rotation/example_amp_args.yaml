@@ -1,0 +1,52 @@
+# Example configuration for AMP training
+# Usage: python amp_training.py --args-file scripts/smooth_policy/amp/example_amp_args.yaml
+
+# Basic training parameters
+num_envs: 8
+num_steps: 512
+learning_rate: 0.0001
+num_iterations: 200
+anneal_lr: false
+gamma: 0.99
+gae_lambda: 0.95
+minibatch_size: 64
+update_epochs: 10
+clip_coef: 0.2
+clip_vloss: false
+ent_coef: 0.0
+vf_coef: 0.5
+max_grad_norm: 0.5
+target_kl: null
+batch_size: 0
+norm_adv: true
+
+# CAPS hyperparameters (set to 0 to disable)
+caps_coef_nearby: 0.0
+caps_coef_consecutive: 0.0
+
+# AMP hyperparameters
+amp_enabled: true
+disc_replay_buffer_size: 100000
+disc_replay_samples: 1024
+disc_batch_size: 512
+disc_learning_rate: 0.0001
+disc_loss_weight: 1.0
+disc_logit_reg: 0.01
+disc_grad_penalty: 5.0
+disc_weight_decay: 0.0001
+disc_reward_scale: 2.0
+task_reward_weight: 0.5
+disc_reward_weight: 0.5
+
+# Paths
+config: "scripts/smooth_policy/configs/puck_touch/default_config.yaml"
+args_file: null
+model_path: null
+log_parent_dir: null
+run_name: "amp_training"
+demo_data_path: "scripts/smooth_policy/amp_data/amp_dataset.pt"
+
+# Others
+seed: 0
+device: "cuda:0"
+action_scale: 0.02
