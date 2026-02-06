@@ -174,8 +174,7 @@ class RewardScalingManager:
     def _update_env_reward_scaling(self, envs, new_scaling):
         """Update reward scaling for all environments"""
         try:
-            envs.call_async('set_base_reward_scaling', new_scaling)
-            envs.call_wait()
+            envs.call('set_base_reward_scaling', new_scaling)
         except Exception as e:
             print(f"Warning: Could not update environment reward scaling: {e}")
             print("This may be due to vectorized environment limitations.")

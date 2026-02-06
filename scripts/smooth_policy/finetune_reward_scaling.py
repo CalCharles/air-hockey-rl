@@ -27,7 +27,7 @@ class FinetuneRewardScalingArgs:
     # Core training parameters
     num_envs: int = 8
     num_steps: int = 512
-    learning_rate: float = 1e-5  # Lower learning rate for finetuning
+    learning_rate: float = 1e-4
     num_iterations: int = 500
     anneal_lr: bool = False
     gamma: float = 0.99
@@ -36,7 +36,7 @@ class FinetuneRewardScalingArgs:
     update_epochs: int = 10
     clip_coef: float = 0.1  # Lower clip coefficient for finetuning
     clip_vloss: bool = True  # Use clipped value loss for stability
-    ent_coef: float = 0.0
+    ent_coef: float = 0.02
     vf_coef: float = 0.5
     action_coef: float = 0.0
     max_grad_norm: float = 0.25  # Lower max grad norm for stability
@@ -67,6 +67,9 @@ class FinetuneRewardScalingArgs:
     # Others
     seed: int = 0
     device: str = "cuda:0"
+
+    # PID
+    action_scale: float = 0.02
 
 
 def make_env(env_id, initial_reward_scaling=1.0):
@@ -214,8 +217,7 @@ class RewardScalingManager:
     def _update_env_reward_scaling(self, envs, new_scaling):
         """Update reward scaling for all environments"""
         try:
-            envs.call_async('set_base_reward_scaling', new_scaling)
-            envs.call_wait()
+            envs.call('set_base_reward_scaling', new_scaling)
         except Exception as e:
             print(f"Warning: Could not update environment reward scaling: {e}")
             print("This may be due to vectorized environment limitations.")
@@ -273,7 +275,7 @@ if __name__ == "__main__":
         yaml.dump(vars(args), f)
     
     # Initialize agent and load pre-trained model
-    agent = Agent(envs, action_scale=0.02, action_bias=0.0).to(args.device)
+    agent = Agent(envs, action_scale=args.action_scale, action_bias=0.0).to(args.device)
     print(f"Loading pre-trained model from {args.model_path}")
     agent.load_state_dict(torch.load(args.model_path, map_location=args.device))
     print("Model loaded successfully")
