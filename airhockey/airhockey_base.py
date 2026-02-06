@@ -263,8 +263,8 @@ class AirHockeyBaseEnv(ABC, Env):
             low = paddle_obs_low + puck_obs_low
             high = paddle_obs_high + puck_obs_high
         elif obs_type == "history":
-            low = puck_hist_low + puck_deltas_low + paddle_hist_low + paddle_deltas_low
-            high = puck_hist_high + puck_deltas_high + paddle_hist_high + paddle_deltas_high
+            low = paddle_hist_low + puck_hist_low
+            high = paddle_hist_high + puck_hist_high
         elif obs_type == "paddle_acceleration_vel":
             low = paddle_obs_low + paddle_accel_low + paddle_force_low + puck_obs_low
             high = paddle_obs_high + paddle_accel_high + paddle_force_high + puck_obs_high

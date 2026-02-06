@@ -17,7 +17,8 @@ class AirHockeyRenderer:
         orientation (str, optional): The orientation of the game table. Defaults to 'vertical'.
     """
 
-    def __init__(self, airhockey_env, orientation='vertical', robosuite_view=""):
+    def __init__(self, airhockey_env, orientation='vertical', robosuite_view="",
+                 show_target_position=True, show_acceleration_arrow=False):
         """
         Initializes the AirHockeyRenderer object.
 
@@ -25,9 +26,13 @@ class AirHockeyRenderer:
             airhockey_env (AirHockeySimulator): The air hockey simulator object.
             orientation (str, optional): The orientation of the game table. Defaults to 'vertical'.
             robosuite_view: which view to take from robosuite. options: empty (none), sideview, topview
+            show_target_position (bool): Whether to draw target position marker. Defaults to True.
+            show_acceleration_arrow (bool): Whether to draw acceleration arrows. Defaults to False.
         """
         self.airhockey_env = airhockey_env
         self.orientation = orientation
+        self.show_target_position = show_target_position
+        self.show_acceleration_arrow = show_acceleration_arrow
         # Adjust dimensions based on the specified orientation
         self.render_width = self.airhockey_env.render_width
         self.render_length = self.airhockey_env.render_length
@@ -475,11 +480,12 @@ class AirHockeyRenderer:
                 radius = self.airhockey_env.paddle_radius
                 self.draw_circle_with_image(pos_render, radius, circle_type='paddle')
                 
-                # Draw acceleration arrow on top of the paddle
-                self.draw_acceleration_arrow(pos_render, acceleration)
+                # Draw acceleration arrow on top of the paddle (if enabled)
+                if self.show_acceleration_arrow:
+                    self.draw_acceleration_arrow(pos_render, acceleration)
                 
-                # Draw target position if action is available
-                if hasattr(self.airhockey_env, "last_action"):
+                # Draw target position if action is available (and if enabled)
+                if self.show_target_position and hasattr(self.airhockey_env, "last_action"):
                     self.draw_target_position(pos, self.airhockey_env.last_action)
             
         # if self.airhockey_env.paddle[1] is not None: self.draw_circle_with_image(self.airhockey_env.paddle[1], circle_type='paddle')

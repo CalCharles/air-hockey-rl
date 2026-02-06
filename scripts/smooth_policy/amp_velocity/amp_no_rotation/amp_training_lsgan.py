@@ -35,6 +35,7 @@ from scripts.smooth_policy.amp_no_rotation.discriminator import Discriminator
 from scripts.smooth_policy.amp_no_rotation.replay_buffer import ReplayBuffer
 from scripts.smooth_policy.amp_no_rotation.normalizer import Normalizer
 from scripts.smooth_policy.amp_no_rotation.demo_loader import DemoLoader
+from scripts.smooth_policy.amp_no_rotation.demo_loader_triplet import DemoLoaderTriplet, normalize_state_triplet_batch
 
 
 class ReferenceStateWrapper(gym.Wrapper):
@@ -154,6 +155,10 @@ class Args:
     reference_data_path: str = None  # Path to raw demo data (defaults to demo_data_path)
     ref_max_episode_steps: int = 20  # Episode length when using reference init
     
+    # Triplet discriminator (3 consecutive states instead of 2)
+    use_triplet_discriminator: bool = False  # Enable/disable triplet mode
+    triplet_demo_data_path: str = None  # Path to triplet dataset (if different from demo_data_path)
+    
 
 def make_env(env_id, reference_states=None, max_episode_steps=20):
     def _thunk():
@@ -260,9 +265,17 @@ if __name__ == "__main__":
     print("Initializing AMP (Adversarial Motion Priors) components")
     print("="*80)
     
-    # Discriminator observation dimension: normalized state pairs = 6D
-    # [vel1_x, vel1_y, relative_pos_x, relative_pos_y, relative_vel_x, relative_vel_y]
-    disc_obs_dim = 6
+    # Determine discriminator mode and observation dimension
+    if args.use_triplet_discriminator:
+        print("  Mode: TRIPLET (3 consecutive states)")
+        # Discriminator observation dimension: normalized state triplets = 10D
+        # [vel1_x, vel1_y, pos2_x, pos2_y, vel2_x, vel2_y, pos3_x, pos3_y, vel3_x, vel3_y]
+        disc_obs_dim = 10
+    else:
+        print("  Mode: PAIR (2 consecutive states)")
+        # Discriminator observation dimension: normalized state pairs = 6D
+        # [vel1_x, vel1_y, relative_pos_x, relative_pos_y, relative_vel_x, relative_vel_y]
+        disc_obs_dim = 6
     
     # Initialize discriminator
     discriminator = Discriminator(disc_obs_dim, hidden_dims=[64, 64], activation='leaky_relu').to(args.device)
@@ -282,8 +295,13 @@ if __name__ == "__main__":
     print(f"✓ Replay buffer initialized (capacity={args.disc_replay_buffer_size:,})")
     
     # Load demonstration data
-    demo_loader = DemoLoader(args.demo_data_path, device=args.device)
-    print(f"✓ Demo loader initialized ({len(demo_loader):,} demonstrations)")
+    if args.use_triplet_discriminator:
+        demo_data_path = args.triplet_demo_data_path or args.demo_data_path
+        demo_loader = DemoLoaderTriplet(demo_data_path, device=args.device)
+        print(f"✓ Triplet demo loader initialized ({len(demo_loader):,} demonstrations)")
+    else:
+        demo_loader = DemoLoader(args.demo_data_path, device=args.device)
+        print(f"✓ Demo loader initialized ({len(demo_loader):,} demonstrations)")
     
     # Load pre-trained discriminator if path is provided
     if args.discriminator_path is not None:
@@ -306,7 +324,10 @@ if __name__ == "__main__":
     print("="*80 + "\n")
 
     # Component-wise statistics tracking
-    component_names = ['vel1_x', 'vel1_y', 'rel_pos_x', 'rel_pos_y', 'rel_vel_x', 'rel_vel_y']
+    if args.use_triplet_discriminator:
+        component_names = ['vel1_x', 'vel1_y', 'pos2_x', 'pos2_y', 'vel2_x', 'vel2_y', 'pos3_x', 'pos3_y', 'vel3_x', 'vel3_y']
+    else:
+        component_names = ['vel1_x', 'vel1_y', 'rel_pos_x', 'rel_pos_y', 'rel_vel_x', 'rel_vel_y']
     agent_stats = {name: {'sum': 0.0, 'sum_sq': 0.0, 'count': 0, 'min': float('inf'), 'max': float('-inf')} 
                    for name in component_names}
     demo_stats = {name: {'sum': 0.0, 'sum_sq': 0.0, 'count': 0, 'min': float('inf'), 'max': float('-inf')} 
@@ -321,8 +342,10 @@ if __name__ == "__main__":
     values = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     
     # AMP: Storage for discriminator observations
-    disc_obs = torch.zeros((args.num_steps, args.num_envs, 6)).to(args.device)
+    disc_obs = torch.zeros((args.num_steps, args.num_envs, disc_obs_dim)).to(args.device)
     prev_paddle_state = torch.zeros((args.num_envs, 4)).to(args.device)
+    if args.use_triplet_discriminator:
+        prev_prev_paddle_state = torch.zeros((args.num_envs, 4)).to(args.device)
     valid_transition = torch.zeros((args.num_steps, args.num_envs), dtype=torch.bool).to(args.device)
 
     # TRY NOT TO MODIFY: start the game
@@ -375,38 +398,73 @@ if __name__ == "__main__":
             rewards[step] = torch.tensor(reward).to(args.device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(args.device), torch.Tensor(next_done).to(args.device)
             
-            # AMP: Construct discriminator observations (consecutive paddle state pairs)
+            # AMP: Construct discriminator observations (consecutive paddle states)
             # Extract current paddle state (position + velocity) from observation
             # Assuming obs_type="vel": [paddle_x, paddle_y, paddle_vx, paddle_vy, puck_x, puck_y, puck_vx, puck_vy]
             current_paddle_state = next_obs[:, :4]  # [batch, 4]
             
-            # Create state pairs [prev_state, current_state]
-            if step == 0:
-                # First step: initialize prev_paddle_state with current state
+            if args.use_triplet_discriminator:
+                # Create state triplets [prev_prev_state, prev_state, current_state]
+                if step == 0:
+                    # First step: initialize both prev states with current state
+                    prev_prev_paddle_state = current_paddle_state.clone()
+                    prev_paddle_state = current_paddle_state.clone()
+                    valid_transition[step] = False  # Invalid: identical states
+                elif step == 1:
+                    # Second step: still invalid (only have 2 unique states)
+                    valid_transition[step] = False
+                else:
+                    valid_transition[step] = True  # Valid by default
+                
+                # Invalidate post-reset transitions (need 2 consecutive non-reset steps)
+                if step > 1:
+                    valid_transition[step, just_reset] = False
+                
+                # Create raw state triplets [batch, 3, 4]
+                raw_state_triplets = torch.stack([prev_prev_paddle_state, prev_paddle_state, current_paddle_state], dim=1)
+                
+                # Apply normalization to get [batch, 10]
+                normalized_state_triplets = normalize_state_triplet_batch(raw_state_triplets)
+                
+                # Store the normalized state triplets
+                disc_obs[step] = normalized_state_triplets
+                
+                # Update states for next step (but reset on done)
+                prev_prev_paddle_state = prev_paddle_state.clone()
                 prev_paddle_state = current_paddle_state.clone()
-                valid_transition[step] = False  # Invalid: identical states
+                
+                # Reset states for environments that are done
+                if next_done.any():
+                    prev_prev_paddle_state[next_done.bool()] = current_paddle_state[next_done.bool()]
+                    prev_paddle_state[next_done.bool()] = current_paddle_state[next_done.bool()]
             else:
-                valid_transition[step] = True  # Valid by default
-            
-            # Invalidate post-reset transitions (where prev_state was just reset to current_state)
-            if step > 0:
-                valid_transition[step, just_reset] = False
-            
-            # Create raw state pairs [batch, 2, 4]
-            raw_state_pairs = torch.stack([prev_paddle_state, current_paddle_state], dim=1)
-            
-            # Apply normalization to get [batch, 6]
-            normalized_state_pairs = normalize_state_pair_batch(raw_state_pairs)
-            
-            # Store the normalized state pairs
-            disc_obs[step] = normalized_state_pairs
-            
-            # Update prev_paddle_state for next step (but reset on done)
-            prev_paddle_state = current_paddle_state.clone()
-            
-            # Reset prev_paddle_state for environments that are done
-            if next_done.any():
-                prev_paddle_state[next_done.bool()] = current_paddle_state[next_done.bool()]
+                # Create state pairs [prev_state, current_state]
+                if step == 0:
+                    # First step: initialize prev_paddle_state with current state
+                    prev_paddle_state = current_paddle_state.clone()
+                    valid_transition[step] = False  # Invalid: identical states
+                else:
+                    valid_transition[step] = True  # Valid by default
+                
+                # Invalidate post-reset transitions (where prev_state was just reset to current_state)
+                if step > 0:
+                    valid_transition[step, just_reset] = False
+                
+                # Create raw state pairs [batch, 2, 4]
+                raw_state_pairs = torch.stack([prev_paddle_state, current_paddle_state], dim=1)
+                
+                # Apply normalization to get [batch, 6]
+                normalized_state_pairs = normalize_state_pair_batch(raw_state_pairs)
+                
+                # Store the normalized state pairs
+                disc_obs[step] = normalized_state_pairs
+                
+                # Update prev_paddle_state for next step (but reset on done)
+                prev_paddle_state = current_paddle_state.clone()
+                
+                # Reset prev_paddle_state for environments that are done
+                if next_done.any():
+                    prev_paddle_state[next_done.bool()] = current_paddle_state[next_done.bool()]
             
             # Track which environments just reset for next step
             just_reset = next_done.bool()
@@ -432,7 +490,7 @@ if __name__ == "__main__":
             
             # AMP: Compute discriminator rewards and combine with task rewards
             # Flatten discriminator observations
-            b_disc_obs = disc_obs.reshape(-1, 6)
+            b_disc_obs = disc_obs.reshape(-1, disc_obs_dim)
             
             # Normalize discriminator observations
             norm_disc_obs = disc_normalizer.normalize(b_disc_obs)
@@ -804,7 +862,15 @@ if __name__ == "__main__":
             }, f"{checkpoint_dir}/amp_components.pth")
 
             # evaluate the model
-            evaluate_agent(model_path, checkpoint_dir, config["air_hockey"], n_eps=4, n_gifs=1)
+            evaluate_agent(
+                model_path, 
+                checkpoint_dir, 
+                config["air_hockey"], 
+                n_eps=4, 
+                n_gifs=1,
+                reference_states=reference_states,
+                ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None
+            )
             
             print(f"Iteration {iteration} complete")
 
@@ -820,7 +886,13 @@ if __name__ == "__main__":
     print(f"✓ Saved discriminator and AMP components")
 
     # evaluate the model and save results
-    evaluate_agent(f"{log_parent_dir}/model.pth", log_parent_dir, config["air_hockey"])
+    evaluate_agent(
+        f"{log_parent_dir}/model.pth", 
+        log_parent_dir, 
+        config["air_hockey"],
+        reference_states=reference_states,
+        ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None
+    )
     
     # Define metrics to plot
     base_metrics = [

@@ -10,19 +10,54 @@ import gymnasium as gym
 from tensorboard.backend.event_processing import event_accumulator
 from scripts.utils import save_tensorboard_plots
 from scripts.smooth_policy.running.run_single_episode import run_single_episode
+import numpy as np
 
-def evaluate_agent(model_path, save_dir, air_hockey_params, air_hockey_config_path=None, n_eps=5, n_gifs=3, base_reward_scaling=1.0):
+
+class ReferenceStateWrapper(gym.Wrapper):
+    """Wrapper that initializes paddle from demonstration states."""
+    
+    def __init__(self, env, reference_states):
+        super().__init__(env)
+        self.reference_states = reference_states  # numpy array [N, 4]
+    
+    def reset(self, **kwargs):
+        # Sample random reference state [x, y, vx, vy]
+        idx = np.random.randint(0, len(self.reference_states))
+        ref_state = self.reference_states[idx]
+        
+        # Set reference state on underlying environment
+        self.env.unwrapped._ref_paddle_state = (
+            (float(ref_state[0]), float(ref_state[1])),  # pos
+            (float(ref_state[2]), float(ref_state[3]))   # vel
+        )
+        
+        return self.env.reset(**kwargs)
+
+def evaluate_agent(model_path, save_dir, air_hockey_params, air_hockey_config_path=None, n_eps=5, n_gifs=3, base_reward_scaling=1.0, reference_states=None, ref_max_episode_steps=None):
     # save an action plot
     if air_hockey_config_path is not None:
         run_single_episode(model_path, air_hockey_config_path, plot_dir=save_dir, max_steps=100)
 
-    envs = gym.vector.SyncVectorEnv([lambda : AirHockeyEnv(air_hockey_params)])
+    # Override max_timesteps if reference state initialization is enabled
+    eval_air_hockey_params = air_hockey_params.copy()
+    if ref_max_episode_steps is not None:
+        eval_air_hockey_params['max_timesteps'] = ref_max_episode_steps
+    
+    # Create environment factory function
+    def make_eval_env():
+        env = AirHockeyEnv(eval_air_hockey_params)
+        # Wrap with reference state initialization if enabled
+        if reference_states is not None:
+            env = ReferenceStateWrapper(env, reference_states)
+        return env
+    
+    envs = gym.vector.SyncVectorEnv([make_eval_env])
     model = Agent(envs)
     state_dict = torch.load(model_path)
     model.load_state_dict(state_dict)
 
     env = envs.envs[0]
-    renderer = AirHockeyRenderer(env)
+    renderer = AirHockeyRenderer(env, show_target_position=False, show_acceleration_arrow=False)
 
     env.set_base_reward_scaling(base_reward_scaling)
 

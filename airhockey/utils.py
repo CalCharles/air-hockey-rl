@@ -42,16 +42,16 @@ def get_observation_by_type(state_info, obs_type='vel', **kwargs):
     elif obs_type == "history":        
         puck_hist_array = np.array(kwargs["puck_history"][-5:])
         paddle_hist_array = np.array(kwargs["paddle_history"][-5:])
-        # add guassian noise with standard deviation 0.01 to the histories (model error)
-        puck_hist_array = puck_hist_array + np.random.normal(0, 0.01, puck_hist_array.shape)
-        paddle_hist_array = paddle_hist_array + np.random.normal(0, 0.01, paddle_hist_array.shape)
+        # add guassian noise with standard deviation 0.01 to the histories (model error) --- this is very bad
+        # puck_hist_array = puck_hist_array + np.random.normal(0, 0.01, puck_hist_array.shape)
+        # paddle_hist_array = paddle_hist_array + np.random.normal(0, 0.01, paddle_hist_array.shape)
 
         puck_hist = puck_hist_array.flatten().tolist()
         paddle_hist = paddle_hist_array.flatten().tolist()
 
         puck_deltas = np.diff(puck_hist_array, axis=0).flatten().tolist()
         paddle_deltas = np.diff(paddle_hist_array, axis=0).flatten().tolist()
-        obs = np.array(puck_hist + puck_deltas + paddle_hist + paddle_deltas)
+        obs = np.array(paddle_hist + puck_hist)
         return obs
     elif obs_type == "single_block_vel":
         puck_x_pos = state_info['pucks'][0]['position'][0]
