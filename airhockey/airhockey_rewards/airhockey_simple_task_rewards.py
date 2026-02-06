@@ -227,3 +227,12 @@ class AirHockeyPuckTouchReward(AirHockeyRewardBase):
             reward *= 20  # make it more significant
 
         return reward, success
+
+
+class AirHockeyPaddleFreeMovementReward(AirHockeyRewardBase):
+    def __init__(self, task_env):
+        super().__init__(task_env)
+
+    def get_base_reward(self, state_info):
+        # Return zero reward - pure AMP learning without task rewards
+        return 0.0, False

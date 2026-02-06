@@ -418,6 +418,13 @@ class AirHockeyBaseEnv(ABC, Env):
         return pos, vel
     
     def get_paddle_configuration(self, name):
+        # Check for reference state (set by ReferenceStateWrapper)
+        if name == 'paddle_ego' and hasattr(self, '_ref_paddle_state') and self._ref_paddle_state is not None:
+            pos, vel = self._ref_paddle_state
+            self._ref_paddle_state = None  # Clear after use
+            return pos, vel
+        
+        # Default behavior
         if name == 'paddle_ego':
             x_pos = self.table_x_bot * 3/4
         elif name == 'paddle_alt':
