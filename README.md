@@ -63,3 +63,14 @@ Most of the files use a configuration file (--cfg cmd argument), but is defaulte
 Legacy:
 - `demonstrate.py`: user plays a self-play air hockey environment using keyboard
 - `play_trained_agent`: run after training, you can play against the trained agent
+
+## Running on the Physical UR5
+- Boot up the robot through the touchpad
+    - Press physical power button
+    - Press red power on touchpad in bottom left corner
+    - power on the robot with touch button in the middle
+    - open program "external_control.urp"
+- run desired script in scripts/real
+    - ex: python scripts/real/teleoperate.py --cfg configs/baseline_configs/puck_vel_real.yaml
+- When prompted in the terminal, run the program using the play button in the bottom middle of the touchpad
+- follow prompts on the terminal. Hold 'q' to end trajectories 

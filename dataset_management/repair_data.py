@@ -62,12 +62,17 @@ def repair_old_real_data(data_dir, target_dir):
 # repair_old_real_data("/datastor1/calebc/public/data/mouse/cleaned/", "/datastor1/calebc/public/data/mouse/updated_old/")
 # after this, move from updated_old to cleaned_all
 
-def read_new_real_data(data_dir, num_load=-1):
+def read_new_real_data(data_dir, num_load=-1, show=True):
     values = list()
     images = list()
     dones = list()
+    files = list()
     itr = 0
-    for file in os.listdir(data_dir):
+    all_files = os.listdir(data_dir)
+    all_files.sort(key = lambda x: int(x[len("trajectory_data"):-5]))
+    print(files)
+
+    for file in all_files:
         traj = list()
         print(file)
         with h5py.File(os.path.join(data_dir, file), 'r') as f:
@@ -88,10 +93,15 @@ def read_new_real_data(data_dir, num_load=-1):
             except Exception as e:
                 print('Error in file:', file, e)
                 continue
+            files.append(file)
             print("added trajectory ", file)
         itr += 1
         if itr > num_load and num_load > 0: break
-    return values, images, dones
+    if show:
+        for im in images:
+            cv2.imshow("frame", im)
+            cv2.waitKey(20)
+    return values, images, dones, files
 # read_new_real_data("/datastor1/calebc/public/data/mouse/cleaned_new/")
 
 '''
@@ -274,6 +284,10 @@ if __name__ == "__main__":
     
     # collect_new_state_data("/datastor1/calebc/public/data/dilo/single_drop_expert/", "", "/datastor1/calebc/public/data/dilo/single_drop_expert_all_new/")
     # collect_new_state_data("/datastor1/calebc/public/data/dilo/single_drop_random/", "/datastor1/calebc/public/data/dilo/single_drop_random_state_trajectories/", "/datastor1/calebc/public/data/dilo/single_drop_random_all_new/")
+    # collect_new_state_data("/datastor1/calebc/public/data/dilo/multi_drop_expert/", "", "/datastor1/calebc/public/data/dilo/multi_drop_expert_all_new/")
+    # read_real_data("/datastor1/calebc/public/data/dilo/single_drop_random_all_new/", 20)
+    # read_new_real_data("./data/rollout/puck_hitting_dilo15/", 20)
+    # read_new_real_data("./data/rollout/puck_hitting_bco/", 20)
     # collect_new_state_data("/datastor1/calebc/public/data/dilo/multi_drop_expert/", "", "/datastor1d/", "", "/datastor1/calebc/public/data/dilo/observe/observe_reaching_expert_fixed_all_new/", skip_start = True)
     
     # collect_new_state_data("/datastor1/calebc/public/data/dilo/observe/observe_reaching_expert_random/", "", "/datastor1/calebc/public/data/dilo/observe/observe_reaching_expert_random_all_new/", skip_start = True)
@@ -297,4 +311,4 @@ if __name__ == "__main__":
     # read_real_data("/datastor1/calebc/public/data/mouse/expert_avoid_random_start_random_goal_all_new/")
     # read_real_data("/datastor1/calebc/public/data/mouse/expert_no_avoid_random_start_random_goal_all_new/")
     # read_real_data("/datastor1/calebc/public/data/mouse/state_data_all_new", num_load=5)
-    read_real_data("/datastor1/calebc/public/data/dilo/stationary/hitting_expert_all", num_load=10)
+    # read_real_data("/datastor1/calebc/public/data/dilo/stationary/hitting_expert_all", num_load=10)

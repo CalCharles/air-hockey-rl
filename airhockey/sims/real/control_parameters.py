@@ -42,7 +42,7 @@ def homography_transform(image, get_save=True, rotate=False):
     return showdst, save_image
 
 def camera_callback(shared_array, save_image_check, puck_array, paddle_info, region_info, goal_info):
-    cap = cv2.VideoCapture(1)
+    cap = cv2.VideoCapture(0)
     while True:
         start = time.time()
         ret, image = cap.read()
@@ -149,7 +149,7 @@ def save_collect(cap, paddle_info, region_info, goal_info, show = True):
         cv2.waitKey(1)
     return showdst, save_image
 
-def observe_collect(showdst, paddle_info, region_info, goal_info):
+def observe_collect(showdst, paddle_info, region_info, goal_info, save_image=False):
     result, changed_image = find_red_hockey_paddle(showdst)
     x,y,detected = result
     showdst[x-3:x+3, y-3:y+3, :] = 0
@@ -159,4 +159,7 @@ def observe_collect(showdst, paddle_info, region_info, goal_info):
     if region_info is not None: showdst = visualize_regions(showdst, region_info, goal_info, (x, y, paddle_info[-1]))
     cv2.imshow('image',showdst)
     cv2.waitKey(1)
+    if save_image: 
+        imageio.imsave("./data/observe/img" + str(time.time()) + ".jpg", showdst)
+
     return x,y, detected

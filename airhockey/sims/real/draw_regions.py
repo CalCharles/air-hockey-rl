@@ -24,6 +24,7 @@ def visualize_regions(frame, reward_region_info, goal_info, paddle_info):
         # print("reward_regions", center_coordinates_new, pixel_radius)
         # Draw the circle on the frame
         cv2.ellipse(frame, center_coordinates_new, pixel_radius, angle=0, startAngle=0, endAngle=360, color=color, thickness=thickness)
+        # image_new = cv2.addWeighted(overlay, alpha, image, 1 - alpha, 0)
     goal = goal_info[:2]
     goal = copy.deepcopy(goal)
     goal_coord = (((goal[0] - 1)*1000, (-goal[1])*1000 ) + offset_constants) /2

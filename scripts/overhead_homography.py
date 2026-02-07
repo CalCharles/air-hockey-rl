@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 
 
-cap = cv2.VideoCapture(1)
+cap = cv2.VideoCapture(0)
 
 ret, image = cap.read()
 image = cv2.rotate(image, cv2.ROTATE_180)
@@ -33,7 +33,7 @@ Mimg = cv2.getPerspectiveTransform(pts1,pts2)
 
 dst = cv2.warpPerspective(image,Mimg,original_size * upscale_constant)
 
-for i in range(100):
+for i in range(1000):
     image = cv2.resize(image, (int(640 * upscale_constant / visual_downscale_constant), int(480 * upscale_constant / visual_downscale_constant)), 
                 interpolation = cv2.INTER_LINEAR)
     cv2.imshow('image',image)
@@ -42,5 +42,5 @@ for i in range(100):
     cv2.imshow("transformed", dst)
     cv2.waitKey(10)
 # Save calibration data
-np.save('Mimg.npy', Mimg)
-np.save('Mrob.npy', Mrob)
+# np.save('Mimg.npy', Mimg)
+# np.save('Mrob.npy', Mrob)
