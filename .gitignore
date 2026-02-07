@@ -208,3 +208,9 @@ traj_videos/
 
 # pytorch
 *.pth
+
+# more data folders
+gifs/
+plots/
+pid/
+datasets/

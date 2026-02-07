@@ -3,7 +3,7 @@ import math
 import numpy as np
 from gymnasium.spaces import Box
 from .airhockey_base import AirHockeyBaseEnv
-from .airhockey_rewards import AirHockeyPuckCatchReward, AirHockeyPuckVelReward, AirHockeyPuckTouchReward, AirHockeyPuckHeightReward, AirHockeyPuckJuggleReward, AirHockeyPuckStrikeReward, AirHockeyStrikeCrowdReward
+from .airhockey_rewards import AirHockeyPuckCatchReward, AirHockeyPuckVelReward, AirHockeyPuckTouchReward, AirHockeyPuckHeightReward, AirHockeyPuckJuggleReward, AirHockeyPuckStrikeReward, AirHockeyStrikeCrowdReward, AirHockeyPaddleFreeMovementReward
 
 class AirHockeyPuckVelEnv(AirHockeyBaseEnv):
     def initialize_spaces(self, obs_type):
@@ -305,3 +305,69 @@ class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
 
         # obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
         # return obs
+
+
+class AirHockeyPaddleFreeMovementEnv(AirHockeyBaseEnv):
+    def initialize_spaces(self, obs_type):
+        # setup observation / action / reward spaces
+        low, high = self.init_observation(obs_type)
+        self.action_space = self.single_action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
+        self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
+        self.reward = AirHockeyPaddleFreeMovementReward(self)
+        
+    @staticmethod
+    def from_dict(state_dict):
+        return AirHockeyPaddleFreeMovementEnv(**state_dict)
+
+    def get_paddle_configuration(self, name):
+        """
+        Initialize paddle with random position in lower half of table and random velocity.
+        
+        Position ranges:
+        - x: From center (0) to bottom of table (table_x_bot), staying away from edges
+        - y: Across the width of the table, staying away from edges
+        
+        Velocity ranges:
+        - Reasonable velocities up to 50% of max_paddle_vel
+        """
+        if name == 'paddle_ego':
+            # Position: lower half of table (x from 0 to table_x_bot)
+            # Leave some margin from edges (2 * paddle_radius)
+            x_min = 0 + 2 * self.paddle_radius
+            x_max = self.table_x_bot - 2 * self.paddle_radius
+            y_min = self.table_y_left + 2 * self.paddle_radius
+            y_max = self.table_y_right - 2 * self.paddle_radius
+            
+            x_pos = self.rng.uniform(low=x_min, high=x_max)
+            y_pos = self.rng.uniform(low=y_min, high=y_max)
+            pos = (x_pos, y_pos)
+            
+            # Velocity: reasonable range (up to 50% of max velocity)
+            max_init_vel = 0.5 * self.max_paddle_vel
+            vx = self.rng.uniform(low=-max_init_vel, high=max_init_vel)
+            vy = self.rng.uniform(low=-max_init_vel, high=max_init_vel)
+            vel = (vx, vy)
+            
+            return pos, vel
+        elif name == 'paddle_alt':
+            x_pos = self.table_x_top + self.paddle_radius
+            vel = (0, 0)
+            return (x_pos, 0), vel
+        else:
+            raise ValueError("Invalid paddle name")
+
+    def create_world_objects(self):
+        # Only spawn a paddle, no puck or other objects
+        name = 'paddle_ego'
+        pos, vel = self.get_paddle_configuration(name)
+        self.simulator.spawn_paddle(pos, vel, name)
+    
+    def validate_configuration(self):
+        assert self.num_pucks == 0
+        assert self.num_blocks == 0
+        assert self.num_obstacles == 0
+        assert self.num_targets == 0
+        assert self.num_paddles == 1
+
+    def get_observation(self, state_info, obs_type="vel", **kwargs):
+        return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)

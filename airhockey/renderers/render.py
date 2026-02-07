@@ -17,7 +17,8 @@ class AirHockeyRenderer:
         orientation (str, optional): The orientation of the game table. Defaults to 'vertical'.
     """
 
-    def __init__(self, airhockey_env, orientation='vertical', robosuite_view=""):
+    def __init__(self, airhockey_env, orientation='vertical', robosuite_view="",
+                 show_target_position=True, show_acceleration_arrow=False):
         """
         Initializes the AirHockeyRenderer object.
 
@@ -25,9 +26,13 @@ class AirHockeyRenderer:
             airhockey_env (AirHockeySimulator): The air hockey simulator object.
             orientation (str, optional): The orientation of the game table. Defaults to 'vertical'.
             robosuite_view: which view to take from robosuite. options: empty (none), sideview, topview
+            show_target_position (bool): Whether to draw target position marker. Defaults to True.
+            show_acceleration_arrow (bool): Whether to draw acceleration arrows. Defaults to False.
         """
         self.airhockey_env = airhockey_env
         self.orientation = orientation
+        self.show_target_position = show_target_position
+        self.show_acceleration_arrow = show_acceleration_arrow
         # Adjust dimensions based on the specified orientation
         self.render_width = self.airhockey_env.render_width
         self.render_length = self.airhockey_env.render_length
@@ -64,8 +69,170 @@ class AirHockeyRenderer:
         self.air_hockey_table_img = cv2.rotate(self.air_hockey_table_img, cv2.ROTATE_90_CLOCKWISE)
         self.air_hockey_table_img = cv2.resize(self.air_hockey_table_img, (self.render_length, self.render_width))
         
+        # Track previous paddle velocities for acceleration calculation
+        self.prev_paddle_velocities = {}
+        
+        # Store current action for target position visualization
+        self.current_action = None
+        
     def convert_to_render_coords_sys(self, pos):
         return np.array((pos[1], -pos[0]))  # coords -> box2d
+    
+    def set_action(self, action):
+        """
+        Set the current action for visualization purposes.
+        
+        Args:
+            action: Action vector (typically 2D delta position for paddle)
+        """
+        self.current_action = action
+    
+    def draw_target_position(self, current_pos, action, color=(255, 165, 0)):
+        """
+        Draws the target position (current position + action delta).
+        If the target goes outside the screen, it's clamped to the edge.
+        
+        Args:
+            current_pos: Current position in base coordinates (x, y)
+            action: Action delta in base coordinates (dx, dy)
+            color: Color of the target marker (BGR format), default is orange
+        """
+        if action is None or len(action) < 2:
+            return
+            
+        # Calculate target position in base coordinates
+        target_pos = np.array(current_pos) + np.array(action[:2])
+        
+        # Clamp target position to stay within bounds
+        # Base coordinates: x is vertical, y is horizontal
+        # Bounds: x in [-length/2, length/2], y in [-width/2, width/2]
+        clamped_target = np.array(target_pos)
+        clamped_target[0] = np.clip(clamped_target[0], -self.length / 2, self.length / 2)
+        clamped_target[1] = np.clip(clamped_target[1], -self.width / 2, self.width / 2)
+        
+        # Convert to render coordinates (same as paddle rendering)
+        target_render = self.convert_to_render_coords_sys(clamped_target)
+        
+        # Convert to pixel coordinates (same as draw_circle_with_image)
+        center = np.array(target_render) + np.array((self.width / 2, self.length / 2))
+        center = np.array((center[1], center[0])) * self.ppm
+        
+        # No special vertical orientation handling needed - the frame rotation
+        # at the end of get_frame() handles orientation for all elements uniformly
+        
+        center_int = tuple(center.astype(int))
+        
+        # Draw target marker as a cross with circle
+        marker_size = 15
+        thickness = 3
+        
+        # Draw outer circle (black outline)
+        cv2.circle(self.frame, center_int, marker_size, (0, 0, 0), thickness + 2)
+        # Draw inner circle (colored)
+        cv2.circle(self.frame, center_int, marker_size, color, thickness)
+        
+        # Draw cross lines (black outline)
+        cv2.line(self.frame, 
+                (center_int[0] - marker_size, center_int[1]), 
+                (center_int[0] + marker_size, center_int[1]), 
+                (0, 0, 0), thickness + 2)
+        cv2.line(self.frame, 
+                (center_int[0], center_int[1] - marker_size), 
+                (center_int[0], center_int[1] + marker_size), 
+                (0, 0, 0), thickness + 2)
+        
+        # Draw cross lines (colored)
+        cv2.line(self.frame, 
+                (center_int[0] - marker_size, center_int[1]), 
+                (center_int[0] + marker_size, center_int[1]), 
+                color, thickness)
+        cv2.line(self.frame, 
+                (center_int[0], center_int[1] - marker_size), 
+                (center_int[0], center_int[1] + marker_size), 
+                color, thickness)
+    
+    def draw_acceleration_arrow(self, pos, acceleration, max_arrow_length=1000, color=(0, 140, 255)):
+        """
+        Args:
+            pos: Position of the paddle in render coordinates
+            acceleration: Acceleration vector (ax, ay) in base coordinates
+                Base coords: X is vertical (down positive), Y is horizontal
+            max_arrow_length: Maximum length of the arrow in pixels
+            color: Color of the arrow (BGR format)
+        """
+        # Convert acceleration to render coordinates if needed
+        if hasattr(pos, '__len__') and len(pos) == 2:
+            # pos is already in render coordinates from the caller
+            center = np.array(pos) + np.array((self.width / 2, self.length / 2))
+            center = np.array((center[1], center[0])) * self.ppm  # Default horizontal orientation
+        else:
+            return
+            
+        # Convert acceleration vector from base coords to render coords
+        acc_render = self.convert_to_render_coords_sys(acceleration)
+        acc_render = np.array([acc_render[1], acc_render[0]]) # use the same transformation, without the translation or the scaling
+        
+        # Calculate arrow length based on acceleration magnitude
+        acc_magnitude = np.linalg.norm(acc_render)
+        if acc_magnitude < 1e-6:  # Very small acceleration, don't draw arrow
+            return
+            
+        # Scale arrow length with better scaling
+        arrow_scale = 200.0  # Slightly smaller for better proportions
+        arrow_length = min(acc_magnitude * arrow_scale, max_arrow_length)
+        
+        # Minimum arrow length for visibility
+        if arrow_length < 15:
+            arrow_length = 15
+        
+        # Normalize acceleration direction
+        acc_direction = acc_render / acc_magnitude
+        
+        # Calculate arrow end point
+        arrow_end = center + acc_direction * arrow_length
+        
+        # Draw arrow with outline for better visibility
+        outline_color = (0, 0, 0)  # Black outline
+        
+        # Draw outline (thicker, black)
+        cv2.arrowedLine(self.frame, 
+                       tuple(center.astype(int)), 
+                       tuple(arrow_end.astype(int)), 
+                       outline_color, 
+                       thickness=5, 
+                       tipLength=0.25)
+        
+        # Draw main arrow (thinner, colored)
+        cv2.arrowedLine(self.frame, 
+                       tuple(center.astype(int)), 
+                       tuple(arrow_end.astype(int)), 
+                       color, 
+                       thickness=3, 
+                       tipLength=0.25)
+        
+        # Add acceleration magnitude text with background for readability
+        if acc_magnitude > 0.5:  # Only show text for significant acceleration
+            text = f"{acc_magnitude:.1f}"
+            
+            # Position text to the side of the arrow to avoid overlap
+            perpendicular = np.array([-acc_direction[1], acc_direction[0]])  # Perpendicular vector
+            text_offset = perpendicular * 20  # Offset to the side
+            text_pos = tuple((arrow_end + text_offset).astype(int))
+            
+            # Get text size for background rectangle
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.4
+            font_thickness = 1
+            (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, font_thickness)
+            
+            # Draw background rectangle for text
+            bg_top_left = (text_pos[0] - 2, text_pos[1] - text_height - 2)
+            bg_bottom_right = (text_pos[0] + text_width + 2, text_pos[1] + baseline + 2)
+            cv2.rectangle(self.frame, bg_top_left, bg_bottom_right, (255, 255, 255), -1)
+            cv2.rectangle(self.frame, bg_top_left, bg_bottom_right, (0, 0, 0), 1)
+            
+            # Draw text
+            cv2.putText(self.frame, text, text_pos, font, font_scale, (0, 0, 0), font_thickness, cv2.LINE_AA)
             
     def draw_circle_with_image(self, pos, circle_radius, circle_type='puck'):
         """
@@ -296,10 +463,30 @@ class AirHockeyRenderer:
         if 'paddles' in state_info:
             for paddle_name in state_info['paddles']:
                 pos = state_info['paddles'][paddle_name]['position']
+                velocity = state_info['paddles'][paddle_name]['velocity']
+                
+                # Calculate acceleration from velocity change
+                if paddle_name in self.prev_paddle_velocities:
+                    prev_velocity = self.prev_paddle_velocities[paddle_name]
+                    acceleration = np.array(velocity) - np.array(prev_velocity)
+                else:
+                    acceleration = np.array([0.0, 0.0])  # No previous velocity, assume zero acceleration
+                
+                # Update previous velocity for next frame
+                self.prev_paddle_velocities[paddle_name] = velocity
+                
                 # self.check_position(pos, self.length, self.width)
-                pos = self.convert_to_render_coords_sys(pos)
+                pos_render = self.convert_to_render_coords_sys(pos)
                 radius = self.airhockey_env.paddle_radius
-                self.draw_circle_with_image(pos, radius, circle_type='paddle')
+                self.draw_circle_with_image(pos_render, radius, circle_type='paddle')
+                
+                # Draw acceleration arrow on top of the paddle (if enabled)
+                if self.show_acceleration_arrow:
+                    self.draw_acceleration_arrow(pos_render, acceleration)
+                
+                # Draw target position if action is available (and if enabled)
+                if self.show_target_position and hasattr(self.airhockey_env, "last_action"):
+                    self.draw_target_position(pos, self.airhockey_env.last_action)
             
         # if self.airhockey_env.paddle[1] is not None: self.draw_circle_with_image(self.airhockey_env.paddle[1], circle_type='paddle')
         if self.orientation == 'vertical':

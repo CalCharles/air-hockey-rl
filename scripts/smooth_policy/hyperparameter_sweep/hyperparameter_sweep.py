@@ -38,9 +38,8 @@ def main():
     # TODO: this is where hyperparameters are specified
     # Define hyperparameter combinations
     hyperparams = {
-        "dynamic_reward_scaling": [True, False],
-        "caps_coef_consecutive": [0.001, 0.0003, 0.003, 0.01],
-        "caps_coef_nearby": [0.001, 0.0003, 0.003, 0.01]
+        "norm_adv": [True, False],
+        "reward_scaling": [True, False],
     }
 
     exclude_combinations = [
@@ -57,7 +56,7 @@ def main():
     
     # Seeds to run
     # seeds = [0, 1, 2, 3]
-    seeds = [0]
+    seeds = [0, 1, 2, 3, 4, 5, 6, 7]
     
     # GPU devices
     gpus = [f"cuda:{i}" for i in range(args.num_gpus)]
@@ -123,7 +122,7 @@ def main():
                         cmd.append(f"--{param}")
                         cmd.append(str(value))
             else:
-                # finetuning, so disregard all others
+                # finetuning, so disregard all others except 
                 args_file = os.path.join(args.finetune_directory, combo_name, f"seed_{seed}", "args.yaml")
                 model_path = os.path.join(args.finetune_directory, combo_name, f"seed_{seed}", "iterative_smoothing_model.pth")
                 cmd = [
@@ -134,7 +133,8 @@ def main():
                     "--run_name", f"sweep_{combo_name}_seed_{seed}",
                     "--args_file", args_file, # all hyperparameters are in the args file
                     "--model_path", model_path,
-                    "--finetune",
+                    "--num_iterations", str(args.num_iterations),
+                    # "--finetune",
                 ]
 
             cmd_str = ' '.join(cmd)

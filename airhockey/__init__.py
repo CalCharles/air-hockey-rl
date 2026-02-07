@@ -10,7 +10,7 @@ try:
 except:
     print('Some air hockey components not installed. Does not work on Apple Silicon')
 from airhockey.airhockey_simple_tasks import AirHockeyPuckVelEnv, AirHockeyPuckHeightEnv, AirHockeyPuckCatchEnv 
-from airhockey.airhockey_simple_tasks import AirHockeyPuckJuggleEnv, AirHockeyPuckStrikeEnv, AirHockeyPuckTouchEnv
+from airhockey.airhockey_simple_tasks import AirHockeyPuckJuggleEnv, AirHockeyPuckStrikeEnv, AirHockeyPuckTouchEnv, AirHockeyPaddleFreeMovementEnv
 from airhockey.airhockey_hierarchical_tasks  import AirHockeyMoveBlockEnv, AirHockeyStrikeCrowdEnv
 from robosuite.utils.mjcf_utils import xml_path_completion as robosuite_xml_path_completion
 # from airhockey.airhockey_goal_tasks import AirHockeyPuckGoalPositionEnv, AirHockeyPuckGoalPositionVelocityEnv, AirHockeyPuckReachPositionDynamicNegRegionsEnv
@@ -87,6 +87,8 @@ def AirHockeyEnv(cfg):
         task_env = AirHockeyPuckGoalPositionDynamicNegRegionsEnv
     elif task == "puck_goal_position_obstacles":
         task_env = AirHockeyPuckGoalPositionObstaclesEnv
+    elif task == "paddle_free_movement":
+        task_env = AirHockeyPaddleFreeMovementEnv
     else:
         raise ValueError("Task {} not recognized".format(task))
     return task_env.from_dict(cfg)

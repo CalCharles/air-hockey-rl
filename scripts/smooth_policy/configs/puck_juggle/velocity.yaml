@@ -3,12 +3,13 @@ air_hockey:
   direction_change_rew: -0.05
   truncate_rew: -10
   wall_bumping_rew: -1
-  stand_still_rew: -0.05
-  
+  stand_still_rew: -0.05  # looks like a BUG
+  horizontal_vel_rew: -0.1
+
   goal_max_x_velocity: 1
   goal_max_y_velocity: 5
   goal_min_y_velocity: 1
-  horizontal_vel_rew: -0.1
+  
   max_timesteps: 600
   n_training_steps: 1000000
   num_blocks: 0

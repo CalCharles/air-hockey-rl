@@ -135,6 +135,7 @@ def save_task_gif(n_eps_viz, n_gifs, env_test, policy, renderer, log_dir):
             obs, _ = env_test.reset()
             done = False
             rew = 0
+            cum_rew = 0
             while not done:
                 frame = renderer.get_frame()
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -149,13 +150,17 @@ def save_task_gif(n_eps_viz, n_gifs, env_test, policy, renderer, log_dir):
                 line_type = 2
                 text_position = (frame.shape[1] - 150, 30)  # Position near the top right corner
 
-                cv2.putText(frame, f"Reward: {rew}", text_position, font, font_scale, font_color, line_type)
+                cv2.putText(frame, f"Reward: {rew:.2f}", text_position, font, font_scale, font_color, line_type)
+
+                # Display cumulative reward below the reward
+                text_position = (frame.shape[1] - 150, 60)
+                cv2.putText(frame, f"Return: {cum_rew:.2f}", text_position, font, font_scale, font_color, line_type)
                             
                 frames.append(frame)
                 action = policy(obs).numpy().squeeze()
                 obs, rew, term, trunc, info = env_test.step(action)
                 done = term or trunc
-                
+                cum_rew += rew
         gif_savepath = os.path.join(log_dir, f'eval_{gif_idx}.gif')
         def fps_to_duration(fps):
             return int(1000 * 1/fps)
