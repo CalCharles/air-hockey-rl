@@ -4,7 +4,7 @@
 for i in {0..3}
 do
     echo "Starting training on cuda:$i"
-    python scripts/smooth_policy/amp_history/amp_training/amp_training_lsgan.py --args-file scripts/smooth_policy/amp_history/configs/puck_juggle/amp_better_reward.yaml \
+    python scripts/smooth_policy/amp_history/amp_training/amp_training_lsgan.py --args-file scripts/smooth_policy/amp_history/configs/pid/amp_better_reward.yaml \
         --device cuda:$i &
     
     # Store the process ID

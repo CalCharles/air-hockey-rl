@@ -57,7 +57,7 @@ def evaluate_agent(model_path, save_dir, air_hockey_params, air_hockey_config_pa
     model.load_state_dict(state_dict)
 
     env = envs.envs[0]
-    renderer = AirHockeyRenderer(env, show_target_position=False, show_acceleration_arrow=False)
+    renderer = AirHockeyRenderer(env, show_target_position=True, show_acceleration_arrow=False)
 
     env.set_base_reward_scaling(base_reward_scaling)
 
