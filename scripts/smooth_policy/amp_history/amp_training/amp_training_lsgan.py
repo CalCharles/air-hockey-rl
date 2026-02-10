@@ -7,6 +7,11 @@ Least Squares GAN (LSGAN) objective instead of the typical binary cross-entropy 
 LSGAN uses MSE loss: 0.5 * E[(D(x_real) - 1)^2] + 0.5 * E[(D(x_fake) - (-1))^2]
 This variant uses [-1, 1] targets instead of [0, 1] for better gradient flow.
 This often provides more stable gradients compared to standard GAN training.
+
+Supports two discriminator modes:
+1. Position-only (default): Discriminator input is 8D (4 relative positions x 2 coords)
+2. Position + Action: Discriminator input is 10D (8 positions + 2 action dims)
+   Enable with --use_action_discriminator flag and provide a dataset with action_sequences.
 """
 
 import random
@@ -149,6 +154,9 @@ class Args:
     reference_data_path: str = None  # Path to raw demo data (defaults to demo_data_path)
     ref_max_episode_steps: int = 20  # Episode length when using reference init
     
+    # Action-conditioned discriminator
+    use_action_discriminator: bool = False  # If True, discriminator also uses action (10D instead of 8D)
+    
 
 def make_env(env_id, reference_states=None, max_episode_steps=20):
     def _thunk():
@@ -264,12 +272,27 @@ if __name__ == "__main__":
     print("Initializing AMP (Adversarial Motion Priors) components")
     print("="*80)
     
-    # Discriminator uses 5 position history, translated to origin
-    # After translation, first position is (0,0) and removed
-    # Remaining 4 positions × 2 (x, y) = 8 dimensions
-    print("  Mode: POSITION HISTORY (5 positions → 4 relative positions)")
-    disc_obs_dim = 8
+    # Load demonstration data first to determine observation dimension
+    demo_loader = DemoLoaderPositionHistory(args.demo_data_path, device=args.device)
+    print(f"✓ Demo loader initialized ({len(demo_loader):,} demonstrations)")
+    
+    # Check if demo data has actions and if we should use them
+    use_action_disc = args.use_action_discriminator
+    if use_action_disc and not demo_loader.has_actions:
+        print("  ⚠ WARNING: --use_action_discriminator is True but demo data has no actions!")
+        print("    Falling back to position-only discriminator.")
+        use_action_disc = False
+    
+    # Get discriminator observation dimension from demo loader
+    disc_obs_dim = demo_loader.get_obs_dim()
     history_len = 5  # Number of positions to track
+    
+    if use_action_disc:
+        print(f"  Mode: POSITION + ACTION (5 positions → 4 relative positions + 1 action)")
+        print(f"  Discriminator input dim: {disc_obs_dim} (8 position + 2 action)")
+    else:
+        print(f"  Mode: POSITION HISTORY (5 positions → 4 relative positions)")
+        print(f"  Discriminator input dim: {disc_obs_dim}")
     
     # Initialize discriminator
     discriminator = Discriminator(disc_obs_dim, hidden_dims=[64, 64], activation='leaky_relu').to(args.device)
@@ -287,10 +310,6 @@ if __name__ == "__main__":
         device=args.device
     )
     print(f"✓ Replay buffer initialized (capacity={args.disc_replay_buffer_size:,})")
-    
-    # Load demonstration data (position history format)
-    demo_loader = DemoLoaderPositionHistory(args.demo_data_path, device=args.device)
-    print(f"✓ Demo loader initialized ({len(demo_loader):,} demonstrations)")
     
     # Load pre-trained discriminator if path is provided
     if args.discriminator_path is not None:
@@ -394,8 +413,16 @@ if __name__ == "__main__":
             # Result: [batch, 8] = 4 relative positions × 2 coords
             normalized_positions = normalize_position_history_batch(position_history)
             
-            # Store the normalized positions
-            disc_obs[step] = normalized_positions
+            # Store the discriminator observations
+            if use_action_disc:
+                # Normalize action to unit norm for consistent scale
+                action_norm = torch.norm(action, dim=-1, keepdim=True)
+                normalized_action = action / (action_norm + 1e-8)
+                # Concatenate normalized positions with normalized action: [batch, 8] + [batch, 2] -> [batch, 10]
+                disc_obs[step] = torch.cat([normalized_positions, normalized_action], dim=-1)
+            else:
+                # Position-only mode: [batch, 8]
+                disc_obs[step] = normalized_positions
             
             # Reset position history and count for environments that are done
             if next_done.any():
