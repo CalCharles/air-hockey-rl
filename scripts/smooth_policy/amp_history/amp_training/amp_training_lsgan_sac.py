@@ -16,7 +16,7 @@ The Bellman target becomes: Q_target = h(r + γ * h_inv(Q_target_value))
 import os
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 import gymnasium as gym
@@ -123,6 +123,31 @@ def normalize_position_history_batch(position_history):
     return normalized_state
 
 
+def normalize_action_history_batch(action_history):
+    """
+    Normalize batched transition action history to unit norm and flatten.
+
+    Args:
+        action_history: Tensor of shape [batch, 4, 2]
+
+    Returns:
+        torch.Tensor: Normalized flattened actions of shape [batch, 8]
+    """
+    action_norms = torch.norm(action_history, dim=-1, keepdim=True)
+    normalized_actions = action_history / (action_norms + 1e-8)
+    return normalized_actions.reshape(action_history.shape[0], 8)
+
+
+def parse_discriminator_hidden_dims(hidden_sizes):
+    """Validate and normalize discriminator hidden layer sizes."""
+    hidden_dims = [int(size) for size in hidden_sizes]
+    if len(hidden_dims) == 0:
+        raise ValueError("disc_hidden_sizes must contain at least one layer size.")
+    if any(size <= 0 for size in hidden_dims):
+        raise ValueError(f"disc_hidden_sizes must be positive, got: {hidden_dims}")
+    return hidden_dims
+
+
 @dataclass
 class Args:
     """the environment id of the task"""
@@ -171,6 +196,7 @@ class Args:
     task_reward_weight: float = 0.5
     disc_reward_weight: float = 0.5
     num_discriminator_updates: int = 1
+    disc_hidden_sizes: list[int] = field(default_factory=lambda: [64, 64])
     
     # Paths
     config: str = "scripts/smooth_policy/configs/puck_touch/default_config.yaml"
@@ -199,6 +225,10 @@ class Args:
     
     # Transformed Bellman operator
     h_transform_eps: float = 1e-3  # Epsilon for h transformation (ensures invertibility)
+    
+    # Action-conditioned discriminator
+    use_action_discriminator: bool = False  # If True, discriminator uses position + 4 transition actions (16D)
+    disc_debug_interval: int = 5000  # Print discriminator feature samples every N env steps (<=0 disables)
 
 
 def make_env(env_id, reference_states=None, max_episode_steps=20):
@@ -378,23 +408,42 @@ if __name__ == "__main__":
 
     # Initialize AMP components (only if disc_reward_weight > 0)
     use_amp = args.disc_reward_weight > 0
-    disc_obs_dim = 8  # Used for replay buffer even when AMP is disabled
+    disc_hidden_dims = parse_discriminator_hidden_dims(args.disc_hidden_sizes)
+    disc_obs_dim = 8  # Position-only discriminator input dim
     history_len = 5  # Number of positions to track
+    use_action_disc = False
     
     if use_amp:
         print("\n" + "="*80)
         print("Initializing AMP (Adversarial Motion Priors) components")
         print("="*80)
         
-        # Discriminator uses 5 position history, translated to origin
-        # After translation, first position is (0,0) and removed
-        # Remaining 4 positions × 2 (x, y) = 8 dimensions
-        print("  Mode: POSITION HISTORY (5 positions → 4 relative positions)")
+        # Load demonstration data first so action-conditioned mode can infer observation dim.
+        demo_loader = DemoLoaderPositionHistory(args.demo_data_path, device=args.device)
+        print(f"✓ Demo loader initialized ({len(demo_loader):,} demonstrations)")
+
+        use_action_disc = args.use_action_discriminator
+        if use_action_disc and not demo_loader.has_actions:
+            print("  ⚠ WARNING: --use_action_discriminator is True but demo data has no actions!")
+            print("    Falling back to position-only discriminator.")
+            use_action_disc = False
+
+        disc_obs_dim = demo_loader.get_obs_dim() if use_action_disc else 8
+        if use_action_disc:
+            print("  Mode: POSITION + ACTION HISTORY (5 positions + 4 transition actions)")
+            print(f"  Discriminator input dim: {disc_obs_dim} (8 position + 8 action)")
+        else:
+            print("  Mode: POSITION HISTORY (5 positions → 4 relative positions)")
+            print(f"  Discriminator input dim: {disc_obs_dim}")
         
         # Initialize discriminator
-        discriminator = Discriminator(disc_obs_dim, hidden_dims=[64, 64], activation='leaky_relu').to(args.device)
+        discriminator = Discriminator(
+            disc_obs_dim,
+            hidden_dims=disc_hidden_dims,
+            activation='leaky_relu'
+        ).to(args.device)
         disc_optimizer = torch.optim.Adam(discriminator.parameters(), lr=args.disc_learning_rate, eps=1e-6)
-        print(f"✓ Discriminator initialized (input_dim={disc_obs_dim}, hidden=[64, 64])")
+        print(f"✓ Discriminator initialized (input_dim={disc_obs_dim}, hidden={disc_hidden_dims})")
         
         # Initialize normalizer
         disc_normalizer = Normalizer(shape=(disc_obs_dim,), clip=10.0, device=args.device)
@@ -407,10 +456,6 @@ if __name__ == "__main__":
             device=args.device
         )
         print(f"✓ Replay buffer initialized (capacity={args.disc_replay_buffer_size:,})")
-        
-        # Load demonstration data (position history format)
-        demo_loader = DemoLoaderPositionHistory(args.demo_data_path, device=args.device)
-        print(f"✓ Demo loader initialized ({len(demo_loader):,} demonstrations)")
         
         # Load pre-trained discriminator if path is provided
         if args.discriminator_path is not None:
@@ -452,8 +497,11 @@ if __name__ == "__main__":
     if use_amp:
         # Position history buffer: [num_envs, history_len, 2] for (x, y) positions
         position_history = torch.zeros((args.num_envs, history_len, 2)).to(args.device)
+        action_history_len = history_len - 1
+        action_history = torch.zeros((args.num_envs, action_history_len, 2)).to(args.device)
         # Track how many valid positions we have per environment (need history_len before valid)
         position_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device)
+        action_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device)
     
     # Tracking lists for motion metrics
     velocity_magnitudes = []
@@ -517,26 +565,68 @@ if __name__ == "__main__":
         if use_amp:
             obs_tensor = torch.Tensor(next_obs).to(args.device)
             current_paddle_pos = obs_tensor[:, 12:14]  # [batch, 2] - just x, y position
+            action_tensor = torch.tensor(actions, dtype=torch.float32, device=args.device)
             
             # Update position history buffer (rolling buffer: shift left, add new position at end)
             position_history = torch.roll(position_history, shifts=-1, dims=1)
             position_history[:, -1, :] = current_paddle_pos
+            action_history = torch.roll(action_history, shifts=-1, dims=1)
+            action_history[:, -1, :] = action_tensor
             
             # Increment position count (capped at history_len)
             position_count = torch.clamp(position_count + 1, max=history_len)
+            action_count = torch.clamp(action_count + 1, max=action_history_len)
             
             # Valid transition only if we have history_len positions AND not just reset
             has_enough_history = position_count >= history_len
+            has_enough_actions = action_count >= action_history_len
             valid_transition_mask = has_enough_history & (~just_reset)
+            if use_action_disc:
+                valid_transition_mask = valid_transition_mask & has_enough_actions
             
             # Normalize the position history to get relative positions
             # Result: [batch, 8] = 4 relative positions × 2 coords
             normalized_positions = normalize_position_history_batch(position_history)
+            if use_action_disc:
+                normalized_actions = normalize_action_history_batch(action_history)
+                current_disc_obs = torch.cat([normalized_positions, normalized_actions], dim=-1)
+            else:
+                current_disc_obs = normalized_positions
             
             # Store all valid discriminator observations in AMP replay buffer
             if valid_transition_mask.any():
-                valid_disc_obs = normalized_positions[valid_transition_mask]
+                valid_disc_obs = current_disc_obs[valid_transition_mask]
                 amp_replay_buffer.push(valid_disc_obs)
+
+            # Occasional debug logging for discriminator feature formatting.
+            if args.disc_debug_interval > 0 and global_step % args.disc_debug_interval == 0:
+                sample_idx = 0
+                sample_pos = normalized_positions[sample_idx].detach().cpu().numpy()
+                if use_action_disc:
+                    sample_action = normalize_action_history_batch(action_history)[sample_idx].detach().cpu().numpy()
+                    sample_disc = current_disc_obs[sample_idx].detach().cpu().numpy()
+                    print(
+                        f"[disc-debug][step={global_step}] pos_shape={normalized_positions.shape}, "
+                        f"action_shape={action_history.shape}, disc_shape={current_disc_obs.shape}, "
+                        f"valid={bool(valid_transition_mask[sample_idx].item())}"
+                    )
+                    print(
+                        "  sample pos[0:4]="
+                        f"{np.array2string(sample_pos[:4], precision=4, suppress_small=True)} "
+                        "action[0:4]="
+                        f"{np.array2string(sample_action[:4], precision=4, suppress_small=True)} "
+                        "disc[0:8]="
+                        f"{np.array2string(sample_disc[:8], precision=4, suppress_small=True)}"
+                    )
+                else:
+                    print(
+                        f"[disc-debug][step={global_step}] pos_shape={normalized_positions.shape}, "
+                        f"disc_shape={current_disc_obs.shape}, valid={bool(valid_transition_mask[sample_idx].item())}"
+                    )
+                    print(
+                        "  sample pos[0:4]="
+                        f"{np.array2string(sample_pos[:4], precision=4, suppress_small=True)}"
+                    )
             
             # Reset position history and count for environments that are done
             if dones.any():
@@ -544,6 +634,8 @@ if __name__ == "__main__":
                 position_history[done_mask] = 0
                 position_history[done_mask, -1, :] = current_paddle_pos[done_mask]
                 position_count[done_mask] = 1  # We have 1 position after reset
+                action_history[done_mask] = 0
+                action_count[done_mask] = 0
             
             # Track which environments just reset for next step
             just_reset = torch.tensor(dones, device=args.device).bool()
@@ -579,7 +671,7 @@ if __name__ == "__main__":
                 actions, 
                 rewards,  # Task rewards only (discriminator rewards recomputed on sampling)
                 terminations,
-                disc_obs=normalized_positions.cpu().numpy(),
+                disc_obs=current_disc_obs.cpu().numpy(),
                 disc_valid=valid_transition_mask.cpu().numpy()
             )
         else:
@@ -748,7 +840,7 @@ if __name__ == "__main__":
                 else:
                     # If replay buffer is empty, sample from current valid transitions
                     if valid_transition_mask.any():
-                        valid_disc_obs = normalized_positions[valid_transition_mask]
+                        valid_disc_obs = current_disc_obs[valid_transition_mask]
                         if len(valid_disc_obs) >= args.disc_batch_size:
                             perm_indices = torch.randperm(len(valid_disc_obs), device=args.device)[:args.disc_batch_size]
                             agent_disc_obs = valid_disc_obs[perm_indices]
@@ -806,7 +898,7 @@ if __name__ == "__main__":
                     
                     # Update normalizer statistics (only with valid transitions)
                     if valid_transition_mask.any():
-                        valid_disc_obs = normalized_positions[valid_transition_mask]
+                        valid_disc_obs = current_disc_obs[valid_transition_mask]
                         disc_normalizer.record(valid_disc_obs)
                     disc_normalizer.record(demo_disc_obs)
                     disc_normalizer.update()

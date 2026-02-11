@@ -25,7 +25,7 @@ import yaml
 from airhockey import AirHockeyEnv
 import gymnasium as gym
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import tyro
 
 import os
@@ -92,6 +92,31 @@ def normalize_position_history_batch(position_history):
     return normalized_state
 
 
+def normalize_action_history_batch(action_history):
+    """
+    Normalize batched transition action history to unit norm and flatten.
+
+    Args:
+        action_history: Tensor of shape [batch, 4, 2]
+
+    Returns:
+        torch.Tensor: Normalized flattened actions of shape [batch, 8]
+    """
+    action_norms = torch.norm(action_history, dim=-1, keepdim=True)
+    normalized_actions = action_history / (action_norms + 1e-8)
+    return normalized_actions.reshape(action_history.shape[0], 8)
+
+
+def parse_discriminator_hidden_dims(hidden_sizes):
+    """Validate and normalize discriminator hidden layer sizes."""
+    hidden_dims = [int(size) for size in hidden_sizes]
+    if len(hidden_dims) == 0:
+        raise ValueError("disc_hidden_sizes must contain at least one layer size.")
+    if any(size <= 0 for size in hidden_dims):
+        raise ValueError(f"disc_hidden_sizes must be positive, got: {hidden_dims}")
+    return hidden_dims
+
+
 @dataclass
 class Args:
     num_envs: int = 8
@@ -128,6 +153,7 @@ class Args:
     task_reward_weight: float = 0.5
     disc_reward_weight: float = 0.5
     num_discriminator_updates: int = 1
+    disc_hidden_sizes: list[int] = field(default_factory=lambda: [64, 64])
 
     # Paths
     config: str = "scripts/smooth_policy/configs/puck_touch/default_config.yaml"
@@ -155,7 +181,8 @@ class Args:
     ref_max_episode_steps: int = 20  # Episode length when using reference init
     
     # Action-conditioned discriminator
-    use_action_discriminator: bool = False  # If True, discriminator also uses action (10D instead of 8D)
+    use_action_discriminator: bool = False  # If True, discriminator uses position + 4 transition actions (16D)
+    disc_debug_interval: int = 5000  # Print discriminator feature samples every N env steps (<=0 disables)
     
 
 def make_env(env_id, reference_states=None, max_episode_steps=20):
@@ -283,21 +310,26 @@ if __name__ == "__main__":
         print("    Falling back to position-only discriminator.")
         use_action_disc = False
     
-    # Get discriminator observation dimension from demo loader
-    disc_obs_dim = demo_loader.get_obs_dim()
+    # Get discriminator observation dimension (position-only is always 8D)
+    disc_obs_dim = demo_loader.get_obs_dim() if use_action_disc else 8
+    disc_hidden_dims = parse_discriminator_hidden_dims(args.disc_hidden_sizes)
     history_len = 5  # Number of positions to track
     
     if use_action_disc:
-        print(f"  Mode: POSITION + ACTION (5 positions → 4 relative positions + 1 action)")
-        print(f"  Discriminator input dim: {disc_obs_dim} (8 position + 2 action)")
+        print("  Mode: POSITION + ACTION HISTORY (5 positions + 4 transition actions)")
+        print(f"  Discriminator input dim: {disc_obs_dim} (8 position + 8 action)")
     else:
         print(f"  Mode: POSITION HISTORY (5 positions → 4 relative positions)")
         print(f"  Discriminator input dim: {disc_obs_dim}")
     
     # Initialize discriminator
-    discriminator = Discriminator(disc_obs_dim, hidden_dims=[64, 64], activation='leaky_relu').to(args.device)
+    discriminator = Discriminator(
+        disc_obs_dim,
+        hidden_dims=disc_hidden_dims,
+        activation='leaky_relu'
+    ).to(args.device)
     disc_optimizer = torch.optim.Adam(discriminator.parameters(), lr=args.disc_learning_rate, eps=1e-6)
-    print(f"✓ Discriminator initialized (input_dim={disc_obs_dim}, hidden=[64, 64])")
+    print(f"✓ Discriminator initialized (input_dim={disc_obs_dim}, hidden={disc_hidden_dims})")
     
     # Initialize normalizer
     disc_normalizer = Normalizer(shape=(disc_obs_dim,), clip=10.0, device=args.device)
@@ -344,8 +376,12 @@ if __name__ == "__main__":
     disc_obs = torch.zeros((args.num_steps, args.num_envs, disc_obs_dim)).to(args.device)
     # Position history buffer: [num_envs, history_len, 2] for (x, y) positions
     position_history = torch.zeros((args.num_envs, history_len, 2)).to(args.device)
+    # Action history buffer: [num_envs, 4, 2] for transition actions between 5 states
+    action_history_len = history_len - 1
+    action_history = torch.zeros((args.num_envs, action_history_len, 2)).to(args.device)
     # Track how many valid positions we have per environment (need history_len before valid)
     position_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device)
+    action_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device)
     valid_transition = torch.zeros((args.num_steps, args.num_envs), dtype=torch.bool).to(args.device)
 
     # TRY NOT TO MODIFY: start the game
@@ -398,13 +434,21 @@ if __name__ == "__main__":
             # Update position history buffer (rolling buffer: shift left, add new position at end)
             position_history = torch.roll(position_history, shifts=-1, dims=1)
             position_history[:, -1, :] = current_paddle_pos
+
+            # Update action history buffer with current transition action (aligned with next_obs)
+            action_history = torch.roll(action_history, shifts=-1, dims=1)
+            action_history[:, -1, :] = action
             
             # Increment position count (capped at history_len)
             position_count = torch.clamp(position_count + 1, max=history_len)
+            action_count = torch.clamp(action_count + 1, max=action_history_len)
             
             # Valid transition only if we have history_len positions AND not just reset
             has_enough_history = position_count >= history_len
+            has_enough_actions = action_count >= action_history_len
             valid_transition[step] = has_enough_history
+            if use_action_disc:
+                valid_transition[step] = valid_transition[step] & has_enough_actions
             
             # Invalidate for environments that just reset
             valid_transition[step, just_reset] = False
@@ -415,14 +459,42 @@ if __name__ == "__main__":
             
             # Store the discriminator observations
             if use_action_disc:
-                # Normalize action to unit norm for consistent scale
-                action_norm = torch.norm(action, dim=-1, keepdim=True)
-                normalized_action = action / (action_norm + 1e-8)
-                # Concatenate normalized positions with normalized action: [batch, 8] + [batch, 2] -> [batch, 10]
-                disc_obs[step] = torch.cat([normalized_positions, normalized_action], dim=-1)
+                # Concatenate positions with normalized transition action history: [batch, 8] + [batch, 8] -> [batch, 16]
+                normalized_actions = normalize_action_history_batch(action_history)
+                disc_obs[step] = torch.cat([normalized_positions, normalized_actions], dim=-1)
             else:
                 # Position-only mode: [batch, 8]
                 disc_obs[step] = normalized_positions
+
+            # Occasional debug logging for discriminator feature formatting.
+            if args.disc_debug_interval > 0 and global_step % args.disc_debug_interval == 0:
+                sample_idx = 0
+                sample_pos = normalized_positions[sample_idx].detach().cpu().numpy()
+                if use_action_disc:
+                    sample_action = normalize_action_history_batch(action_history)[sample_idx].detach().cpu().numpy()
+                    sample_disc = disc_obs[step, sample_idx].detach().cpu().numpy()
+                    print(
+                        f"[disc-debug][step={global_step}] pos_shape={normalized_positions.shape}, "
+                        f"action_shape={action_history.shape}, disc_shape={disc_obs[step].shape}, "
+                        f"valid={bool(valid_transition[step, sample_idx].item())}"
+                    )
+                    print(
+                        "  sample pos[0:4]="
+                        f"{np.array2string(sample_pos[:4], precision=4, suppress_small=True)} "
+                        "action[0:4]="
+                        f"{np.array2string(sample_action[:4], precision=4, suppress_small=True)} "
+                        "disc[0:8]="
+                        f"{np.array2string(sample_disc[:8], precision=4, suppress_small=True)}"
+                    )
+                else:
+                    print(
+                        f"[disc-debug][step={global_step}] pos_shape={normalized_positions.shape}, "
+                        f"disc_shape={disc_obs[step].shape}, valid={bool(valid_transition[step, sample_idx].item())}"
+                    )
+                    print(
+                        "  sample pos[0:4]="
+                        f"{np.array2string(sample_pos[:4], precision=4, suppress_small=True)}"
+                    )
             
             # Reset position history and count for environments that are done
             if next_done.any():
@@ -430,6 +502,8 @@ if __name__ == "__main__":
                 position_history[done_mask] = 0
                 position_history[done_mask, -1, :] = current_paddle_pos[done_mask]
                 position_count[done_mask] = 1  # We have 1 position after reset
+                action_history[done_mask] = 0
+                action_count[done_mask] = 0
             
             # Track which environments just reset for next step
             just_reset = next_done.bool()

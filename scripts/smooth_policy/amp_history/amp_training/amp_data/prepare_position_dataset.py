@@ -13,9 +13,10 @@ Output format (position only): PyTorch tensor of shape [N, 5, 2] where:
     - 5 = five consecutive states (t, t+1, t+2, t+3, t+4)
     - 2 = [x_pos, y_pos]
 
-Output format (with actions): Additional tensor of shape [N, 5, 2] where:
+Output format (with actions): Additional tensor of shape [N, 4, 2] where:
     - N = total number of consecutive state sequences across all trajectories
-    - 5 = five consecutive actions corresponding to each state
+    - 4 = actions for transitions between consecutive states in the 5-state window
+          (s1→s2, s2→s3, s3→s4, s4→s5)
     - 2 = [delta_x, delta_y]
 
 Action data source (per FIELD_DOCUMENTATION.md):
@@ -165,7 +166,7 @@ def extract_position_sequences(train_vals, sequence_length=5, include_actions=Fa
         If include_actions=True:
             tuple: (position_sequences, action_sequences)
                 - position_sequences: shape (T-sequence_length+1, sequence_length, 2)
-                - action_sequences: shape (T-sequence_length+1, sequence_length, 2)
+                - action_sequences: shape (T-sequence_length+1, sequence_length-1, 2)
     """
     n_timesteps = train_vals.shape[0]
     position_sequences = []
@@ -180,7 +181,10 @@ def extract_position_sequences(train_vals, sequence_length=5, include_actions=Fa
             position = extract_position_vector(train_vals, t + i)
             position_seq.append(position)
             
-            if include_actions:
+            if include_actions and i < (sequence_length - 1):
+                # Use only transition actions between states in the sequence.
+                # For states [s1, s2, s3, s4, s5], keep actions [s1→s2, s2→s3, s3→s4, s4→s5].
+                # Excludes the action at s5, which corresponds to the next transition.
                 action = extract_action_vector(train_vals, t + i)
                 action_seq.append(action)
         
@@ -234,7 +238,7 @@ def filter_trajectory(train_vals, min_length=50, safety_check=True, include_acti
     return True
 
 
-def process_all_trajectories(data_dir, min_length=50, max_trajectories=None, 
+def process_all_trajectories(data_dir, min_length=50, max_trajectories=None,
                             safety_check=True, demo_list=None, sequence_length=5,
                             include_actions=False):
     """
@@ -257,7 +261,7 @@ def process_all_trajectories(data_dir, min_length=50, max_trajectories=None,
         If include_actions=True:
             tuple: (position_dataset, action_dataset, stats)
                 - position_dataset: np.ndarray of shape (N, sequence_length, 2)
-                - action_dataset: np.ndarray of shape (N, sequence_length, 2)
+                - action_dataset: np.ndarray of shape (N, sequence_length-1, 2)
                 - stats: dict with processing statistics
     """
     trajectory_files = find_trajectory_files(data_dir, demo_list)
@@ -333,7 +337,7 @@ def save_dataset(position_dataset, output_path, stats=None, action_dataset=None)
         position_dataset: np.ndarray of shape (N, 5, 2) for positions
         output_path: Where to save the .pt file
         stats: Optional statistics dictionary
-        action_dataset: Optional np.ndarray of shape (N, 5, 2) for actions
+        action_dataset: Optional np.ndarray of shape (N, 4, 2) for transition actions
     """
     # Convert to torch tensor
     position_tensor = torch.from_numpy(position_dataset).float()
@@ -455,7 +459,10 @@ def validate_dataset(position_dataset, sequence_length=5, action_dataset=None):
         
         assert len(action_dataset.shape) == 3, f"Expected 3D action array, got {len(action_dataset.shape)}D"
         assert action_dataset.shape[0] == position_dataset.shape[0], "Position and action counts must match"
-        assert action_dataset.shape[1] == sequence_length, f"Expected {sequence_length} actions per sequence, got {action_dataset.shape[1]}"
+        expected_action_len = sequence_length - 1
+        assert action_dataset.shape[1] == expected_action_len, (
+            f"Expected {expected_action_len} transition actions per sequence, got {action_dataset.shape[1]}"
+        )
         assert action_dataset.shape[2] == 2, f"Expected 2D action vector, got {action_dataset.shape[2]}D"
         
         print("  ✓ Action validation checks passed")
@@ -502,7 +509,7 @@ def parse_args():
     parser.add_argument(
         '--demo-list',
         type=str,
-        default=None,
+        default='scripts/smooth_policy/amp_history/amp_training/amp_data/good_demos.txt',
         help='Path to text file containing list of trajectory names to process (one per line)'
     )
     parser.add_argument(
@@ -589,9 +596,10 @@ def main():
     
     if args.include_actions:
         print("\n  # With --include-actions flag:")
-        print("  action_sequences = data['action_sequences']  # Shape: (N, 5, 2)")
-        print("  action1 = action_sequences[:, 0, :]  # (N, 2) - delta target at state1")
-        print("  action5 = action_sequences[:, 4, :]  # (N, 2) - delta target at state5")
+        print("  action_sequences = data['action_sequences']  # Shape: (N, 4, 2)")
+        print("  # transition actions aligned with state transitions in each 5-state window")
+        print("  action12 = action_sequences[:, 0, :]  # (N, 2) - action s1->s2")
+        print("  action45 = action_sequences[:, 3, :]  # (N, 2) - action s4->s5")
 
 
 if __name__ == '__main__':
