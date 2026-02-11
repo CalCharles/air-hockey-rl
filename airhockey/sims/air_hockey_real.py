@@ -51,6 +51,7 @@ class AirHockeyReal:
             "control_mode": 'mouse',
             "control_type": "rect",
             "puck_history_len": 5,
+            "paddle_history_len": 5,
             "puck_detector": "red_puck",
             "image_path": "./temp/images/",
             "save_path": "./data/rollout/temp_saving",
@@ -158,6 +159,7 @@ class AirHockeyReal:
 
         # TODO: we should have these come in as parameters
         self.puck_history_len = 5
+        self.paddle_history_len = 5
         self.puck_detector = puck_detectors[config.puck_detector]
         self.image_path = "./temp/images/"
         # self.save_path = "./data/rollout/reaching_cups_cross_embodiment"
@@ -343,6 +345,7 @@ class AirHockeyReal:
         state_info['paddles']['paddle_ego']['position'] = copy.deepcopy(self.pose[:2])
         state_info['paddles']['paddle_ego']['position'][0] += self.x_offset
         state_info['paddles']['paddle_ego']['velocity'] = copy.deepcopy(self.speed[:2])
+        state_info['paddles']['paddle_ego']['history'] = self.paddle_history[- self.paddle_history_len :]
         state_info["pucks"] = list()
         state_info["pucks"].append({"history": self.puck_history[- self.puck_history_len:], 
                                     "position": copy.deepcopy(self.puck), 

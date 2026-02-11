@@ -3,6 +3,7 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 from stable_baselines3 import HerReplayBuffer, SAC
 from airhockey import AirHockeyEnv
+
 from airhockey.sims.real.multiprocessing import NonBlockingConsole
 from airhockey.renderers.render import AirHockeyRenderer
 import argparse
@@ -41,13 +42,23 @@ def run_teleop(air_hockey_cfg, use_wandb=False, device='cpu', clear_prior_task_r
 
     eval_env = AirHockeyEnv(air_hockey_params_cp)
     with NonBlockingConsole() as nbc:
+        print("Press 'y' to collect data (write trajectory), 'q' to reset without saving, 'x' to exit")
         while True:
             eval_env.step(np.array([0,0]))
 
-            if nbc.get_data() == 'y':
-                eval_env.reset(seed=None, write_traj = True)
-            if nbc.get_data() == 'q':  
-                eval_env.reset(seed=None, write_traj = False)
+            # Store the keypress to avoid calling get_data() twice
+            key = nbc.get_data()
+            if key:
+                print(f"Key pressed: {repr(key)}")  # Debug output
+                if key == 'y':
+                    print("Collecting data - writing trajectory")
+                    eval_env.reset(seed=None, write_traj = True)
+                elif key == 'q':
+                    print("Resetting without saving trajectory")
+                    eval_env.reset(seed=None, write_traj = False)
+                elif key == 'x':
+                    print("Exiting...")
+                    break
 
 
 

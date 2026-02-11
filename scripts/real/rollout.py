@@ -105,17 +105,24 @@ def run_policy(air_hockey_cfg, model, use_wandb=False, device='cpu', clear_prior
             # action[0,1] = 0
 
             obs, reward, is_finished, truncated, info = eval_env.step(action.squeeze().detach().cpu().numpy())
-            
+
             # for puck hitting observations
             state_dict = eval_env.simulator.get_current_state()
             obs = get_observation_by_type(state_dict, obs_type=obs_type, puck_history=state_dict["pucks"][0]["history"])
 
-            if nbc.get_data() == 'y':
+            # Store the keypress to avoid calling get_data() twice
+            key = nbc.get_data()
+            if key == 'y':
+                print("Saving trajectory and resetting...")
                 eval_env.reset(seed=None, write_traj = True)
                 delay_counter = 0
-            if nbc.get_data() == 'q':  
+            elif key == 'q':
+                print("Resetting without saving...")
                 eval_env.reset(seed=None, write_traj = False)
                 delay_counter = 0
+            elif key == 'x':
+                print("Exiting...")
+                break
 
 def load_model(pth):
 
@@ -130,7 +137,7 @@ def load_model(pth):
 
     # obs_dim = 19 # TODO: change this to the correct observation dimension
     # act_dim = 2
-    
+
     # if agent_path.find("dilo") != -1:
     #     agent = RECOIL_V_ODICE(qf=TwinQ(state_dim=obs_dim,act_dim=obs_dim),vf = ValueFunction(state_dim=obs_dim),policy=DeterministicPolicy(obs_dim,act_dim),
     #                                                     optimizer_factory=torch.optim.Adam,
@@ -161,16 +168,16 @@ if __name__ == "__main__":
     parser.add_argument('--model', type=str, default=None, help='Path to the model file.')
     parser.add_argument('--obs-type', type=str, default="pos", help='what kind of observatiosn to pass, should match model TODO: set automatically')
     args = parser.parse_args()
-    
+
     if args.cfg is None:
         dir_path = os.path.dirname(os.path.realpath(__file__))
         air_hockey_cfg_fp = os.path.join(dir_path, '../configs', 'configs/baseline_configs/paddle_pos_neg_regions_real_preset.yaml')
     else:
         air_hockey_cfg_fp = args.cfg
-    
+
     with open(air_hockey_cfg_fp, 'r') as f:
         air_hockey_cfg = yaml.safe_load(f)
             
     model = load_model(args.model)
 
-    run_policy(air_hockey_cfg, model, args.obs_type)
+    run_policy(air_hockey_cfg, model, obs_type=args.obs_type)
