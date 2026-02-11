@@ -395,6 +395,7 @@ class AirHockeyReal:
         self.timestep = 0
         self.pose_hist, self.dpose_hist = deque(maxlen=self.hist_len), deque(maxlen=self.hist_len)
         self.puck_history = [(-2 + self.center_offset_constant,0,1) for i in range(5)] # pretend that the puck starts at the other end of the table, but is occluded, for 5 frames
+        self.paddle_history = [(-2 + self.center_offset_constant,0,1) for i in range(5)]
         self.total = time.time()
         self.runtime = 0.0
 
@@ -561,13 +562,19 @@ class AirHockeyReal:
         # print("unnorm_delta", x- true_pose[0],y - true_pose[1], safety_check, self.rcv.isProtectiveStopped())# srvpose[0][:2], x,y, true_pose[:2], rcv.isProtectiveStopped())# , true_speed, true_force, measured_acc, )
         if safety_check and self.control_mode not in ["observe"]: self.ctrl.servoL(srvpose[0], self.vel, self.acc, self.block_time, self.lookahead, self.gain)
         if self.rcv.isProtectiveStopped():
-            return self._compute_state(srvpose[0], true_speed, self.timestep, self.puck_history)
+            next_state = self._compute_state(srvpose[0], true_speed, self.timestep, self.puck_history)
+            paddle_position = next_state["paddles"]["paddle_ego"]["position"]
+            self.paddle_history.append(list(paddle_position) + [0])
+            return next_state
 
         # print("servl", np.abs(polx - true_pose[0]), np.abs(poly - true_pose[1]), pixel_coord, srvpose[0], rcv.isProtectiveStopped())# , true_speed, true_force, measured_acc, )
         # print("time", time.time() - start)
         self.timestep += 1
         self.runtime = time.time() - self.transition_start
-        return self._compute_state(srvpose[0], true_speed, self.timestep, self.puck_history) # TODO: populate this with the names of objects
+        next_state = self._compute_state(srvpose[0], true_speed, self.timestep, self.puck_history) # TODO: populate this with the names of objects
+        paddle_position = next_state["paddles"]["paddle_ego"]["position"]
+        self.paddle_history.append(list(paddle_position) + [0])
+        return next_state
 
     def spawn_puck(self, pos, vel, name, affected_by_gravity=False, movable=True):
         pass
