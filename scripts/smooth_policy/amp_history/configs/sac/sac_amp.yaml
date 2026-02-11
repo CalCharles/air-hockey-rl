@@ -46,7 +46,7 @@ demo_data_path: "scripts/smooth_policy/amp_history/amp_training/amp_data/amp_pos
 # Others
 seed: 0
 device: "cuda:0"
-action_scale: 0.2
+action_scale: 1
 agent_hidden_size: 128
 
 # Reference state initialization - disabled

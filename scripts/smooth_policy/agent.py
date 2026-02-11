@@ -15,7 +15,7 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
 
 # Simple MLP Gaussian Policy + Critic for PPO (actions clipped into some pre-determined range)
 class Agent(nn.Module):
-    def __init__(self, envs, action_scale=0.02, action_bias=0.0, hidden_size=64): # preliminary calculation
+    def __init__(self, envs, action_scale=1.0, action_bias=0.0, hidden_size=64): # preliminary calculation
         super().__init__()
         obs_dim = int(np.prod(envs.single_observation_space.shape))
         act_dim = int(np.prod(envs.single_action_space.shape))
