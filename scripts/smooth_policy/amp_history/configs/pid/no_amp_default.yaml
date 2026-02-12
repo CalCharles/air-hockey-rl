@@ -39,11 +39,11 @@ num_discriminator_updates: 3
 disc_hidden_sizes: [96, 96]
 
 # Reward weighting
-task_reward_weight: 0.5
-disc_reward_weight: 0.5
+task_reward_weight: 1.0
+disc_reward_weight: 0
 
 # Paths
-config: "scripts/smooth_policy/amp_history/configs/pid/amp_better_reward_config.yaml"
+config: "scripts/smooth_policy/amp_history/configs/pid/pid_default_config.yaml"
 args_file: null
 model_path: null  # Start from scratch
 discriminator_path: null  # Start from scratch
@@ -55,7 +55,7 @@ demo_data_path: "scripts/smooth_policy/amp_history/amp_training/amp_data/amp_pos
 # Others
 seed: 0
 device: "cuda:0"
-action_scale: 1.0
+action_scale: 0.25
 
 # Reference state initialization - CRITICAL for overfitting
 # This ensures the agent starts from states similar to the demonstrations
