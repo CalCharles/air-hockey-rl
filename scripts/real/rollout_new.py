@@ -2,6 +2,7 @@ import torch
 import argparse
 import yaml
 import os
+from pathlib import Path
 from airhockey import AirHockeyEnv
 import numpy as np
 from airhockey.airhockey_base import get_observation_by_type
@@ -25,6 +26,49 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)
     torch.nn.init.constant_(layer.bias, bias_const)
     return layer
+
+
+def maybe_generate_gifs_for_saved_trajectory(
+    simulator,
+    auto_gif: bool,
+    gif_fps: int,
+    gif_max_frames_per_file: int,
+):
+    if not auto_gif:
+        return
+
+    saved_idx = simulator.tidx - 1
+    if saved_idx < 0:
+        print("No saved trajectory index found for GIF generation.")
+        return
+
+    hdf5_path = (Path(simulator.save_path) / f"trajectory_data{saved_idx}.hdf5").resolve()
+    if not hdf5_path.exists():
+        print(f"Skipping GIF generation; missing file: {hdf5_path}")
+        return
+
+    output_dir = hdf5_path.parent / f"{hdf5_path.stem}_gifs"
+    try:
+        from visualize_saved_trajectory import generate_gifs_from_hdf5
+    except ModuleNotFoundError as exc:
+        print(f"Skipping GIF generation; dependency missing: {exc}")
+        return
+
+    try:
+        outputs = generate_gifs_from_hdf5(
+            input_hdf5=hdf5_path,
+            output_dir=output_dir,
+            fps=gif_fps,
+            max_frames_per_gif=gif_max_frames_per_file,
+        )
+    except Exception as exc:
+        print(f"GIF generation failed for {hdf5_path}: {exc}")
+        return
+
+    if outputs:
+        print(f"Generated {len(outputs)} GIF(s) in {output_dir}")
+    else:
+        print(f"No GIF frames produced for {hdf5_path}")
 
 # Simple MLP Gaussian Policy + Critic for PPO (actions clipped into some pre-determined range)
 class Agent(nn.Module):
@@ -113,8 +157,12 @@ if __name__ == '__main__':
     # optional arguments if use-parent-log-dir is False
     parser.add_argument('--model', type=str, default="ex_model/model.pth", help='Path to the model to evaluate.')
     parser.add_argument('--config-path', type=str, default="configs/real_configs/rollout_config.yaml", help='Path to the config file.')
+    parser.add_argument('--save-path', type=str, default=None, help='Override trajectory save path (defaults to config value).')
     parser.add_argument('--action-scale', type=float, default=0.2, help='action scale')
     parser.add_argument('--agent-hidden-size', type=int, default=128, help='agent size')
+    parser.add_argument('--auto-gif', action='store_true', help='Generate GIF visualization(s) after each saved trajectory.')
+    parser.add_argument('--gif-fps', type=int, default=20, help='GIF playback FPS used when --auto-gif is enabled.')
+    parser.add_argument('--gif-max-frames-per-file', type=int, default=250, help='Maximum rendered frames per GIF when --auto-gif is enabled.')
 
     args = parser.parse_args()
     
@@ -136,8 +184,12 @@ if __name__ == '__main__':
     air_hockey_params_cp = air_hockey_params.copy()
     air_hockey_params_cp['seed'] = 42
     air_hockey_params_cp['max_timesteps'] = 200
+
+    if args.save_path is not None:
+        air_hockey_params_cp['simulator_params']['save_path'] = args.save_path
     
     eval_air_hockey_params = air_hockey_params_cp.copy()
+    print("trajectory save path:", eval_air_hockey_params['simulator_params']['save_path'])
     
     # Create environment factory function
     def make_eval_env():
@@ -151,7 +203,8 @@ if __name__ == '__main__':
     model = model.to(device="cuda:0")
 
     print("model action scale: ", model.action_scale)
-    model.action_scale = torch.tensor(0.2) # something went wrong during saving
+    # model.action_scale = torch.tensor(0.2) # manually scaling just for testing a model
+    
     state_dict = eval_env.simulator.get_current_state()
     obs_type = "history"
     
@@ -169,7 +222,7 @@ if __name__ == '__main__':
             else:
                 # action = model.policy(obs)
                 # action = action.mean
-                action = action.clip(-1,1)
+                action = action / model.action_scale.item() # normalizes to [-1, 1]
                 # action[0,0] = action[0,0] * 0.5
             delay_counter += 1
             print("action", action, obs)
@@ -188,6 +241,12 @@ if __name__ == '__main__':
             if key == 'y':
                 print("Saving trajectory and resetting...")
                 eval_env.reset(seed=None, write_traj = True)
+                maybe_generate_gifs_for_saved_trajectory(
+                    simulator=eval_env.simulator,
+                    auto_gif=args.auto_gif,
+                    gif_fps=args.gif_fps,
+                    gif_max_frames_per_file=args.gif_max_frames_per_file,
+                )
                 delay_counter = 0
             elif key == 'q':
                 print("Resetting without saving...")

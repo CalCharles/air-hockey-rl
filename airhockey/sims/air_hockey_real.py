@@ -161,11 +161,8 @@ class AirHockeyReal:
         self.puck_history_len = 5
         self.paddle_history_len = 5
         self.puck_detector = puck_detectors[config.puck_detector]
-        self.image_path = "./temp/images/"
-        # self.save_path = "./data/rollout/reaching_cups_cross_embodiment"
-        # self.save_path = "./data/rollout/puck_hitting_smodice15"
-        self.save_path = "./data/observe/observe_reaching_expert_cups_hand"
-        # self.save_path = "data/mouse/striking"
+        self.image_path = config.image_path
+        self.save_path = config.save_path
         self.tidx = get_trajectory_idx(self.save_path)
 
 
