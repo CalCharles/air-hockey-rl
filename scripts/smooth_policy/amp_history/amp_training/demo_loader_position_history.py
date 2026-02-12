@@ -6,6 +6,12 @@ Uses only paddle (x, y) positions, not velocities.
 
 Supports position history format: [N, 5, 2] where each entry contains 5 consecutive (x, y) positions.
 Compatible with datasets using keys: 'position_sequences', 'position_history', 'normalized_position_history', or 'state_pairs'.
+
+Optionally supports action-conditioned discrimination:
+- If dataset contains 'action_sequences' key, loads actions and appends to observations
+- Actions are delta target positions: action = desired_pose - pose
+- Uses 4 transition actions for a 5-state window (s1->s2, s2->s3, s3->s4, s4->s5)
+- Output format becomes [N, 16] = 8 relative positions + 8 action dims
 """
 
 import torch
@@ -47,6 +53,9 @@ class DemoLoaderPositionHistory:
     
     Loads position sequences from .pt files and provides random sampling for 
     training the discriminator.
+    
+    Optionally supports action-conditioned discrimination when dataset contains
+    'action_sequences' key. In this mode, outputs are [N, 16] = 8 positions + 8 action dims.
     """
     
     def __init__(self, demo_path, device='cuda'):
@@ -59,6 +68,8 @@ class DemoLoaderPositionHistory:
         """
         self.demo_path = Path(demo_path)
         self.device = device
+        self.has_actions = False  # Will be set to True if action data is available
+        self.action_sequences = None
         
         if not self.demo_path.exists():
             raise FileNotFoundError(f"Demo data not found at: {demo_path}")
@@ -67,6 +78,12 @@ class DemoLoaderPositionHistory:
         print(f"Loading demonstration position history data from: {demo_path}")
         data = torch.load(demo_path, map_location=device)
         
+        # Check for action sequences
+        if 'action_sequences' in data:
+            self.has_actions = True
+            self.action_sequences = data['action_sequences'].to(device=device, dtype=torch.float32)
+            print(f"  ✓ Detected action sequences: {self.action_sequences.shape}")
+        
         # Auto-detect dataset format
         if 'normalized_position_history' in data:
             # Pre-normalized dataset [N, 8]
@@ -74,9 +91,13 @@ class DemoLoaderPositionHistory:
             self.demo_obs = data['normalized_position_history'].to(device=device, dtype=torch.float32)
             self.is_normalized = True
             
-            if self.demo_obs.dim() != 2 or self.demo_obs.shape[1] != 8:
-                raise ValueError(f"Unexpected normalized data shape: {self.demo_obs.shape}. "
-                               f"Expected [N, 8]")
+            expected_dim = 16 if self.has_actions else 8
+            if self.demo_obs.dim() != 2 or self.demo_obs.shape[1] != expected_dim:
+                # If we have actions but pre-normalized doesn't include them, that's okay
+                # We'll append them below
+                if not (self.has_actions and self.demo_obs.shape[1] == 8):
+                    raise ValueError(f"Unexpected normalized data shape: {self.demo_obs.shape}. "
+                                   f"Expected [N, {expected_dim}]")
         
         elif 'position_history' in data or 'position_sequences' in data:
             # Non-normalized dataset [N, 5, 2] - apply normalization
@@ -137,6 +158,31 @@ class DemoLoaderPositionHistory:
         else:
             raise ValueError("Dataset must contain 'normalized_position_history', 'position_history', 'position_sequences', or 'state_pairs' key")
         
+        # If we have action sequences, append all transition actions for the 5-state window.
+        # For a 5-position sequence [p1, p2, p3, p4, p5], use actions [a12, a23, a34, a45].
+        if self.has_actions:
+            # Extract transition actions and drop the final-state action:
+            # [N, 5, 2] -> [N, 4, 2], or keep [N, 4, 2] if already transition-only.
+            if self.action_sequences.dim() != 3 or self.action_sequences.shape[-1] != 2:
+                raise ValueError(f"Unexpected action sequence shape: {self.action_sequences.shape}. Expected [N, T, 2]")
+            if self.action_sequences.shape[1] < 4:
+                raise ValueError(
+                    f"Action sequence length must be at least 4 for transition features, got {self.action_sequences.shape[1]}"
+                )
+            if self.action_sequences.shape[1] == 5:
+                transition_actions = self.action_sequences[:, :-1, :]  # [N, 4, 2]
+            else:
+                transition_actions = self.action_sequences[:, :4, :]  # [N, 4, 2]
+
+            # Normalize each transition action to unit norm for consistent scale.
+            action_norms = torch.norm(transition_actions, dim=-1, keepdim=True)
+            normalized_actions = transition_actions / (action_norms + 1e-8)
+            flattened_actions = normalized_actions.reshape(normalized_actions.shape[0], 8)  # [N, 8]
+
+            # Concatenate with normalized positions: [N, 8] + [N, 8] -> [N, 16]
+            self.demo_obs = torch.cat([self.demo_obs, flattened_actions], dim=-1)
+            print("  ✓ Appended 4 transition actions to observations (each normalized to unit norm)")
+        
         self.num_demos = self.demo_obs.shape[0]
         
         # Store statistics if available
@@ -144,6 +190,7 @@ class DemoLoaderPositionHistory:
         
         print(f"✓ Loaded {self.num_demos:,} demonstration position history observations")
         print(f"  Observation shape: {self.demo_obs.shape}")
+        print(f"  Has actions: {self.has_actions}")
         
         # Print data statistics
         self._print_statistics()
@@ -156,7 +203,9 @@ class DemoLoaderPositionHistory:
             batch_size: Number of observations to sample
             
         Returns:
-            Tensor of shape [batch_size, 8] (4 relative positions × 2 coords)
+            Tensor of shape [batch_size, obs_dim] where obs_dim is:
+                - 8 (4 relative positions × 2 coords) if no actions
+                - 16 (4 relative positions × 2 + 4 transition actions × 2) if has_actions=True
         """
         if batch_size > self.num_demos:
             # Sample with replacement if requesting more than available
@@ -175,6 +224,15 @@ class DemoLoaderPositionHistory:
         """Return dataset statistics if available."""
         return self.stats
     
+    def get_obs_dim(self):
+        """
+        Return the observation dimension.
+        
+        Returns:
+            int: 8 for position-only, 16 for position+action
+        """
+        return self.demo_obs.shape[1]
+    
     def __len__(self):
         """Return number of demonstration observations."""
         return self.num_demos
@@ -183,7 +241,7 @@ class DemoLoaderPositionHistory:
         """Print statistics about the demonstration data."""
         print(f"\n  Demonstration position history data statistics:")
         
-        # Statistics for normalized 8D format
+        # Statistics for normalized position format
         # [pos2_x, pos2_y, pos3_x, pos3_y, pos4_x, pos4_y, pos5_x, pos5_y]
         dim_names = [
             'Position 2 Relative X',
@@ -196,7 +254,17 @@ class DemoLoaderPositionHistory:
             'Position 5 Relative Y'
         ]
         
-        print(f"\n  Normalized observations (8D - relative positions):")
+        # Add action dimension names if we have actions
+        if self.has_actions:
+            dim_names.extend([
+                'Action 1->2 Delta X', 'Action 1->2 Delta Y',
+                'Action 2->3 Delta X', 'Action 2->3 Delta Y',
+                'Action 3->4 Delta X', 'Action 3->4 Delta Y',
+                'Action 4->5 Delta X', 'Action 4->5 Delta Y',
+            ])
+        
+        obs_type = f"{len(dim_names)}D - relative positions" + (" + action" if self.has_actions else "")
+        print(f"\n  Normalized observations ({obs_type}):")
         for dim_idx, dim_name in enumerate(dim_names):
             values = self.demo_obs[:, dim_idx]
             print(f"    {dim_name}: "
@@ -213,6 +281,12 @@ class DemoLoaderPositionHistory:
         print(f"\n  Displacement check:")
         print(f"    Position 1→2 displacement (average): {disp_12:.6f}")
         print(f"    Position 1→5 displacement (average): {disp_15:.6f}")
+        
+        # Action magnitude if available
+        if self.has_actions:
+            action_vectors = self.demo_obs[:, 8:].reshape(-1, 2)
+            action_mag = torch.sqrt(action_vectors[:, 0]**2 + action_vectors[:, 1]**2).mean()
+            print(f"    Transition action magnitude (average): {action_mag:.6f}")
         
         # Check for any NaN or Inf
         if not torch.isfinite(self.demo_obs).all():
