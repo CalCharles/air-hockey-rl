@@ -1,0 +1,22 @@
+inputs:
+  model_path: /home/air-hockey/daliu/air-hockey-rl/runs/sac_training/puck_juggle_purer4/checkpoint_980000/model.pth
+  config_path: /home/air-hockey/daliu/air-hockey-rl/runs/sac_training/puck_juggle_purer4/config.yaml
+collection:
+  requested_num_episodes: null
+  requested_total_timesteps: 20000
+  stop_rule: whichever_first
+  action_scale_loaded_from_model: 0.20000000298023224
+  episodes_started: 80
+  episodes_completed: 79
+  total_timesteps_collected: 20000
+shapes:
+  observation_dim: 30
+  action_dim: 2
+  num_rows_csv: 20000
+outputs:
+  per_timestep_csv: per_timestep.csv
+  trajectory_npz: trajectory.npz
+  model_copy: model_used.pth
+  config_copy: config_used.yaml
+  example_gif: example_episode.gif
+  example_gif_frames: 250
