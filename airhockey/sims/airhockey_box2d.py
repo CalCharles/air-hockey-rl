@@ -136,6 +136,8 @@ class AirHockeyBox2D:
         defaults = {
             'action_x_scaling': 1.0,
             'action_y_scaling': 1.0,
+            'rmax_x': 0.26,
+            'rmax_y': 0.12,
             'render_masks': False,
             'gravity': -5,
             'paddle_density': 1000,
@@ -181,6 +183,9 @@ class AirHockeyBox2D:
         self.block_density = config.block_density
         self.action_x_scaling = config.action_x_scaling
         self.action_y_scaling = config.action_y_scaling
+        self.rmax_x = config.rmax_x
+        self.rmax_y = config.rmax_y
+        self.move_lims = np.array([self.rmax_x, self.rmax_y], dtype=float)
         self.center_offset_constant = config.center_offset_constant
         self.wall_bounce_scale = config.wall_bounce_scale
         self.action_lag = config.action_lag 
@@ -469,6 +474,32 @@ class AirHockeyBox2D:
         action = np.array((action[1], -action[0]))
         return action
 
+    def _clip_pid_target_to_workspace(self, target_pos):
+        """Clip PID target to the same single-agent workspace constraints used in simulation."""
+        clipped = np.array(target_pos, dtype=float)
+        clipped[0] = np.clip(clipped[0], self.table_x_min, self.table_x_max)
+        clipped[1] = np.clip(clipped[1], self.table_y_min, min(self.table_y_max, 0.0))
+        return clipped
+
+    def _compute_pid_target_pos(self, pos, act):
+        """
+        Mirror real-env target logic for PID:
+        - scale normalized action by move limits
+        - construct raw target from current pose + move vector
+        - project with a rectangular per-step movement bound
+        - clip to workspace bounds
+        """
+        move_vector = np.array(act, dtype=float) * self.move_lims
+        target_raw = np.array(pos, dtype=float) + move_vector
+
+        # Rectangular projection equivalent to real compute_rect(): preserve direction
+        # while constraining movement within [-rmax_x, rmax_x] x [-rmax_y, rmax_y].
+        rel = target_raw - np.array(pos, dtype=float)
+        denom = np.maximum(self.move_lims, 1e-8)
+        scale = max(1.0, np.max(np.abs(rel) / denom))
+        target_rect = np.array(pos, dtype=float) + (rel / scale)
+        return self._clip_pid_target_to_workspace(target_rect)
+
     # s, a -> s'
     def get_transition(self, action, other_action=None):
         if self.multiagent:
@@ -494,8 +525,8 @@ class AirHockeyBox2D:
             
             # Compute force using either PID controller or legacy controller
             if self.use_pid:
-                # PID controller: action is delta position from current position
-                target_pos = pos + np.array([act[0], act[1]])
+                # PID controller target uses real-like scaled delta + rect projection + clipping.
+                target_pos = self._compute_pid_target_pos(pos, act)
                 current_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0], 
                                        self.paddles['paddle_ego'].linearVelocity[1]])
                 
