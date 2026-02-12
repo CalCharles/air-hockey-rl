@@ -34,7 +34,7 @@ task_reward_weight: 1.0
 disc_reward_weight: 0.0
 
 # Paths
-config: "scripts/smooth_policy/amp_history/configs/sac/sac_puck_juggle_config.yaml"
+config: "scripts/smooth_policy/amp_history/configs/pid/puck_juggle_original_config.yaml"
 args_file: null
 model_path: null
 discriminator_path: null

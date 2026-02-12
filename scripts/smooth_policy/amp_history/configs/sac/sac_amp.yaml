@@ -34,7 +34,7 @@ task_reward_weight: 0.5
 disc_reward_weight: 0.5
 
 # Paths
-config: "scripts/smooth_policy/amp_history/configs/pid/amp_better_reward_config.yaml"
+config: "scripts/smooth_policy/amp_history/configs/pid/pid_default_config.yaml"
 args_file: null
 model_path: null
 discriminator_path: null
