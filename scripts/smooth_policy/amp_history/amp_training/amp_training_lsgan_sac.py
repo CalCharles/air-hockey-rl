@@ -198,6 +198,11 @@ class Args:
     num_discriminator_updates: int = 1
     disc_hidden_sizes: list[int] = field(default_factory=lambda: [64, 64])
     
+    # Optional auxiliary rewards (default disabled)
+    temporal_alignment_reward_scale: float = 0.0
+    action_magnitude_reward_scale: float = 0.0
+    temporal_alignment_horizon: int = 4
+    
     # Paths
     config: str = "scripts/smooth_policy/configs/puck_touch/default_config.yaml"
     args_file: str = None
@@ -337,9 +342,9 @@ if __name__ == "__main__":
     class SoftQNetwork(nn.Module):
         def __init__(self, obs_dim, act_dim):
             super().__init__()
-            self.fc1 = nn.Linear(obs_dim + act_dim, 64)
-            self.fc2 = nn.Linear(64, 64)
-            self.fc3 = nn.Linear(64, 1)
+            self.fc1 = nn.Linear(obs_dim + act_dim, 128)
+            self.fc2 = nn.Linear(128, 128)
+            self.fc3 = nn.Linear(128, 1)
 
         def forward(self, x, a):
             x = torch.cat([x, a], 1)
@@ -518,6 +523,24 @@ if __name__ == "__main__":
     success_rates = []
     just_reset = torch.zeros(args.num_envs, dtype=torch.bool).to(args.device)
     
+    # Auxiliary reward histories (temporal alignment / action magnitude)
+    use_auxiliary_rewards = (
+        args.temporal_alignment_reward_scale > 0.0
+        or args.action_magnitude_reward_scale > 0.0
+    )
+    if use_auxiliary_rewards and args.temporal_alignment_horizon > 0:
+        temporal_horizon = args.temporal_alignment_horizon
+        temporal_position_history = torch.zeros((args.num_envs, temporal_horizon + 1, 2), device=args.device)
+        temporal_action_history = torch.zeros((args.num_envs, temporal_horizon, 2), device=args.device)
+        temporal_done_history = torch.zeros((args.num_envs, temporal_horizon), dtype=torch.bool, device=args.device)
+        temporal_position_count = torch.zeros(args.num_envs, dtype=torch.long, device=args.device)
+        temporal_action_count = torch.zeros(args.num_envs, dtype=torch.long, device=args.device)
+        
+        # Seed history with the initial post-reset paddle position.
+        initial_obs_tensor = torch.tensor(obs, dtype=torch.float32, device=args.device)
+        temporal_position_history[:, -1, :] = initial_obs_tensor[:, 12:14]
+        temporal_position_count[:] = 1
+    
     # Track last loss values for logging (to avoid undefined variable errors)
     actor_loss_val = 0.0
     alpha_loss_val = 0.0
@@ -533,6 +556,10 @@ if __name__ == "__main__":
     qf2_a_values_mean = 0.0
     sampled_task_rewards_mean = 0.0
     sampled_combined_rewards_mean = 0.0
+    temporal_alignment_reward_raw_mean = 0.0
+    temporal_alignment_reward_scaled_mean = 0.0
+    action_magnitude_reward_raw_mean = 0.0
+    action_magnitude_reward_scaled_mean = 0.0
     
     # AMP logging variables (only used if AMP enabled)
     disc_loss_val = None
@@ -558,15 +585,73 @@ if __name__ == "__main__":
         
         # Track dones for all cases
         dones = np.logical_or(terminations, truncations)
+        next_obs_tensor = torch.tensor(next_obs, dtype=torch.float32, device=args.device)
+        current_paddle_pos = next_obs_tensor[:, 12:14]  # [batch, 2]
+        action_tensor = torch.tensor(actions, dtype=torch.float32, device=args.device)
+        done_tensor = torch.tensor(dones, dtype=torch.bool, device=args.device)
+        
+        # Optional action magnitude reward (raw value is independent of scale)
+        action_magnitude = action_tensor.abs().sum(dim=-1)
+        action_magnitude_reward_raw = (
+            torch.maximum(-action_magnitude, torch.full_like(action_magnitude, -0.25)) + 0.125
+        ) * 8.0
+        action_magnitude_reward_scaled = action_magnitude_reward_raw * args.action_magnitude_reward_scale
+        
+        # Optional temporal alignment reward:
+        # compare realized movement over horizon vs commanded action direction from horizon steps ago.
+        temporal_alignment_reward_raw = torch.zeros(args.num_envs, device=args.device)
+        temporal_alignment_reward_scaled = torch.zeros(args.num_envs, device=args.device)
+        if use_auxiliary_rewards and args.temporal_alignment_horizon > 0:
+            temporal_position_history = torch.roll(temporal_position_history, shifts=-1, dims=1)
+            temporal_position_history[:, -1, :] = current_paddle_pos
+            temporal_action_history = torch.roll(temporal_action_history, shifts=-1, dims=1)
+            temporal_action_history[:, -1, :] = action_tensor
+            temporal_done_history = torch.roll(temporal_done_history, shifts=-1, dims=1)
+            temporal_done_history[:, -1] = done_tensor
+            
+            temporal_position_count = torch.clamp(temporal_position_count + 1, max=args.temporal_alignment_horizon + 1)
+            temporal_action_count = torch.clamp(temporal_action_count + 1, max=args.temporal_alignment_horizon)
+            
+            realized_movement = temporal_position_history[:, -1, :] - temporal_position_history[:, 0, :]
+            target_direction = temporal_action_history[:, 0, :]
+            eps = 1e-8
+            movement_norm = torch.norm(realized_movement, dim=-1).clamp_min(eps)
+            target_norm = torch.norm(target_direction, dim=-1).clamp_min(eps)
+            cosine_sim = (realized_movement * target_direction).sum(dim=-1) / (movement_norm * target_norm)
+            
+            # Apply fallback reward per environment when target direction is near zero.
+            small_target_mask = torch.norm(target_direction, dim=-1) < 0.03  # hard-coded threshold for now
+            cosine_sim = torch.where(
+                small_target_mask,
+                torch.full_like(cosine_sim, 0.75),  # hard-coded reward
+                cosine_sim,
+            )
+            
+            temporal_valid = (
+                (temporal_position_count >= args.temporal_alignment_horizon + 1)
+                & (temporal_action_count >= args.temporal_alignment_horizon)
+                & (~temporal_done_history.any(dim=1))
+            )
+            temporal_alignment_reward_raw = cosine_sim * temporal_valid.float()
+            temporal_alignment_reward_scaled = temporal_alignment_reward_raw * args.temporal_alignment_reward_scale
+        
+        # Merge auxiliary rewards into the environment task reward during collection.
+        rewards = (
+            rewards
+            + temporal_alignment_reward_scaled.detach().cpu().numpy()
+            + action_magnitude_reward_scaled.detach().cpu().numpy()
+        )
+        
+        # Cache auxiliary reward means for scalar logging.
+        temporal_alignment_reward_raw_mean = temporal_alignment_reward_raw.mean().item()
+        temporal_alignment_reward_scaled_mean = temporal_alignment_reward_scaled.mean().item()
+        action_magnitude_reward_raw_mean = action_magnitude_reward_raw.mean().item()
+        action_magnitude_reward_scaled_mean = action_magnitude_reward_scaled.mean().item()
     
         # ================================================
         # AMP: Track position history (only if AMP enabled)
         # ================================================
         if use_amp:
-            obs_tensor = torch.Tensor(next_obs).to(args.device)
-            current_paddle_pos = obs_tensor[:, 12:14]  # [batch, 2] - just x, y position
-            action_tensor = torch.tensor(actions, dtype=torch.float32, device=args.device)
-            
             # Update position history buffer (rolling buffer: shift left, add new position at end)
             position_history = torch.roll(position_history, shifts=-1, dims=1)
             position_history[:, -1, :] = current_paddle_pos
@@ -630,7 +715,7 @@ if __name__ == "__main__":
             
             # Reset position history and count for environments that are done
             if dones.any():
-                done_mask = torch.tensor(dones, device=args.device).bool()
+                done_mask = done_tensor
                 position_history[done_mask] = 0
                 position_history[done_mask, -1, :] = current_paddle_pos[done_mask]
                 position_count[done_mask] = 1  # We have 1 position after reset
@@ -638,7 +723,16 @@ if __name__ == "__main__":
                 action_count[done_mask] = 0
             
             # Track which environments just reset for next step
-            just_reset = torch.tensor(dones, device=args.device).bool()
+            just_reset = done_tensor
+        
+        # Reset auxiliary histories for environments that are done.
+        if use_auxiliary_rewards and args.temporal_alignment_horizon > 0 and dones.any():
+            temporal_position_history[done_tensor] = 0
+            temporal_position_history[done_tensor, -1, :] = current_paddle_pos[done_tensor]
+            temporal_action_history[done_tensor] = 0
+            temporal_done_history[done_tensor] = False
+            temporal_position_count[done_tensor] = 1
+            temporal_action_count[done_tensor] = 0
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         if "final_info" in infos:
@@ -669,7 +763,7 @@ if __name__ == "__main__":
                 obs, 
                 real_next_obs, 
                 actions, 
-                rewards,  # Task rewards only (discriminator rewards recomputed on sampling)
+                rewards,  # Environment reward + auxiliary rewards (disc reward recomputed on sampling)
                 terminations,
                 disc_obs=current_disc_obs.cpu().numpy(),
                 disc_valid=valid_transition_mask.cpu().numpy()
@@ -698,7 +792,7 @@ if __name__ == "__main__":
                     sampled_observations = data['observations']
                     sampled_next_observations = data['next_observations']
                     sampled_actions = data['actions']
-                    sampled_task_rewards = data['rewards']  # Task rewards only
+                    sampled_task_rewards = data['rewards']  # Environment reward + auxiliary rewards
                     sampled_dones = data['dones']
                     
                     # Compute combined rewards (with or without AMP)
@@ -943,6 +1037,10 @@ if __name__ == "__main__":
                 # Log sampled batch task reward for reference
                 writer.add_scalar("rewards/sampled_task_reward_mean", sampled_task_rewards_mean, global_step)
                 writer.add_scalar("rewards/sampled_combined_reward_mean", sampled_combined_rewards_mean, global_step)
+                writer.add_scalar("amp/temporal_alignment_reward_raw_mean", temporal_alignment_reward_raw_mean, global_step)
+                writer.add_scalar("amp/temporal_alignment_reward_scaled_mean", temporal_alignment_reward_scaled_mean, global_step)
+                writer.add_scalar("amp/action_magnitude_reward_raw_mean", action_magnitude_reward_raw_mean, global_step)
+                writer.add_scalar("amp/action_magnitude_reward_scaled_mean", action_magnitude_reward_scaled_mean, global_step)
                 
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar(

@@ -9,7 +9,6 @@ from scripts.smooth_policy.agent import Agent
 import gymnasium as gym
 from tensorboard.backend.event_processing import event_accumulator
 from scripts.utils import save_tensorboard_plots
-from scripts.smooth_policy.running.run_single_episode import run_single_episode
 import numpy as np
 
 
@@ -34,9 +33,6 @@ class ReferenceStateWrapper(gym.Wrapper):
         return self.env.reset(**kwargs)
 
 def evaluate_agent(model_path, save_dir, air_hockey_params, air_hockey_config_path=None, n_eps=5, n_gifs=3, base_reward_scaling=1.0, reference_states=None, ref_max_episode_steps=None, action_scale=0.02, agent_hidden_size=64):
-    # save an action plot
-    if air_hockey_config_path is not None:
-        run_single_episode(model_path, air_hockey_config_path, plot_dir=save_dir, max_steps=100)
 
     # Override max_timesteps if reference state initialization is enabled
     eval_air_hockey_params = air_hockey_params.copy()
