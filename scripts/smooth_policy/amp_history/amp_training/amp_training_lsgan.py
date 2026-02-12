@@ -288,7 +288,12 @@ if __name__ == "__main__":
     with open(f"{log_parent_dir}/args.yaml", "w") as f:
         yaml.dump(vars(args), f)
     
-    agent = Agent(envs, action_scale=args.action_scale, action_bias=0.0, hidden_size=args.agent_hidden_size).to(args.device)
+    if 'use_pid' in config["air_hockey"] and config["air_hockey"]["use_pid"]:
+        action_scale = 1
+    else:
+        action_scale = args.action_scale # use whatever action scale specified
+
+    agent = Agent(envs, action_scale=action_scale, action_bias=0.0, hidden_size=args.agent_hidden_size).to(args.device)
     # Load pre-trained model if path is provided
     if args.model_path is not None:
         if not os.path.exists(args.model_path):
@@ -952,7 +957,7 @@ if __name__ == "__main__":
                 n_gifs=1,
                 reference_states=reference_states,
                 ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None,
-                action_scale=args.action_scale,
+                action_scale=action_scale,
                 agent_hidden_size=args.agent_hidden_size
             )
             
@@ -977,7 +982,7 @@ if __name__ == "__main__":
         config["air_hockey"],
         reference_states=reference_states,
         ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None,
-        action_scale=args.action_scale,
+        action_scale=action_scale,
         agent_hidden_size=args.agent_hidden_size
     )
     

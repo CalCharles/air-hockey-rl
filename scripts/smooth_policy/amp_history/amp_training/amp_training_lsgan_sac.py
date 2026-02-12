@@ -333,10 +333,13 @@ if __name__ == "__main__":
 
     print("envs.single_observation_space.shape:", envs.single_observation_space.shape)
 
-    max_action = float(envs.single_action_space.high[0])
+    if 'use_pid' in config["air_hockey"] and config["air_hockey"]["use_pid"]:
+        action_scale = 1
+    else:
+        action_scale = args.action_scale # use whatever action scale specified
 
     # SAC networks: Use Agent for actor (PPO-style), add Q-networks for SAC
-    actor = Agent(envs, action_scale=args.action_scale, action_bias=0.0, hidden_size=args.agent_hidden_size).to(args.device)
+    actor = Agent(envs, action_scale=action_scale, action_bias=0.0, hidden_size=args.agent_hidden_size).to(args.device)
     
     # Q-networks for SAC (simple MLPs)
     class SoftQNetwork(nn.Module):
@@ -391,7 +394,7 @@ if __name__ == "__main__":
         #   H = ln(2πe * action_scale² / 16)
         #
         action_dim = 2  # Assume 2D actions (x, y movement)
-        desired_std = args.action_scale / 4.0  # Target std is 1/4 of action scale
+        desired_std = action_scale / 4.0  # Target std is 1/4 of action scale
         
         # Entropy of multivariate Gaussian: H = (d/2) * ln(2πe * σ²)
         target_entropy = (action_dim / 2.0) * np.log(2 * np.pi * np.e * (desired_std ** 2))
@@ -399,7 +402,7 @@ if __name__ == "__main__":
         print(f"\n{'='*60}")
         print(f"Entropy Autotune Configuration:")
         print(f"  Action dimension: {action_dim}")
-        print(f"  Action scale: {args.action_scale}")
+        print(f"  Action scale: {action_scale}")
         print(f"  Desired policy std: {desired_std:.6f} (= action_scale / 4)")
         print(f"  Target entropy: {target_entropy:.4f}")
         print(f"  (Original heuristic would be: {-action_dim})")
@@ -1119,7 +1122,7 @@ if __name__ == "__main__":
                     n_gifs=1,
                     reference_states=reference_states,
                     ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None,
-                    action_scale=args.action_scale,
+                    action_scale=action_scale,
                     agent_hidden_size=args.agent_hidden_size
                 )
             except Exception as e:
@@ -1159,7 +1162,7 @@ if __name__ == "__main__":
             config["air_hockey"],
             reference_states=reference_states,
             ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None,
-            action_scale=args.action_scale,
+            action_scale=action_scale,
             agent_hidden_size=args.agent_hidden_size
         )
     except Exception as e:
