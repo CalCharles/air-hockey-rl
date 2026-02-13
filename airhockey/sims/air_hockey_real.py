@@ -79,6 +79,8 @@ class AirHockeyReal:
             "hist_len": 2,
             "camera_index": 0,
             "wait_for_space_to_start": True,
+            "debug_control": False,
+            "debug_control_every": 1,
         }
         kwargs = {**defaults, **kwargs}
         config = dict_to_namespace(kwargs)
@@ -230,13 +232,23 @@ class AirHockeyReal:
         self.x_offset = config.x_offset
         self.x_min_lim = -0.8
         self.x_max_lim = -0.33
+
+        # self.x_min_lim = -0.8
+        # self.x_max_lim = -0.26
+
         # y_min = -0.3382
         # y_max = 0.388
         # y_min = -0.3782
         # y_max = 0.360
-        self.y_min = -0.3582
+
+
+        # self.y_min = -0.3582
+        self.y_min = -0.36 # temporary for right now
         self.y_max = 0.350
-    
+        # self.y_min = -0.42
+        # self.y_max = 0.42
+
+
         self.bot_abs = config.bot_abs
         self.top_abs = config.top_abs
         self.max_bias_p = config.max_bias_p
@@ -301,6 +313,8 @@ class AirHockeyReal:
         self.hist_len = config.hist_len
         self.camera_index = config.camera_index
         self.wait_for_space_to_start = config.wait_for_space_to_start
+        self.debug_control = bool(config.debug_control)
+        self.debug_control_every = max(1, int(config.debug_control_every))
 
 
         # creating the ground -- need to only call once! otherwise it can be laggy
@@ -309,6 +323,10 @@ class AirHockeyReal:
     @staticmethod
     def from_dict(state_dict):
         return AirHockeyReal(**state_dict)
+
+    def _should_debug_control(self):
+        timestep = getattr(self, "timestep", 0)
+        return self.debug_control and timestep % self.debug_control_every == 0
 
 
     def start_callbacks(self, **kwargs):
@@ -534,28 +552,46 @@ class AirHockeyReal:
             puck = np.array(puck)
             # print("puck", puck)
             self.puck_history.append(puck)
-            srvpose = [[x, y, 0.30] + self.angle, self.vel,self.acc]
+            srvpose = [[x, y, 0.31] + self.angle, self.vel,self.acc]
         ###### servoL #####
+        requested_target_xy = (x, y)
+
         if self.control_type == "pol":
             polx, poly = compute_pol(x, y, true_pose, self.lims, self.move_lims, self.edge_lims)
-            srvpose = [[polx, poly, 0.30] + self.angle, self.vel,self.acc]
+            srvpose = [[polx, poly, 0.31] + self.angle, self.vel,self.acc]
         elif self.control_type == "rect":
             # x,y = true_pose[:2] + (np.random.rand(2) * ((np.random.randint(2) - 0.5) * 2)) # uncomment to test random actions
             recx, recy = compute_rect(x, y, true_pose, self.lims, self.move_lims, self.edge_lims)
             # print(recx - true_pose[0], recy -true_pose[1], true_pose[:2],recx, recy,  x,y)
             if self.above_table :srvpose = [[recx, recy, self.high_reset_val] + self.angle, self.vel,self.acc]
-            else: srvpose = [[recx, recy, 0.30] + self.angle, self.vel,self.acc]
+            else: srvpose = [[recx, recy, 0.31] + self.angle, self.vel,self.acc]
         elif self.control_type == "prim":
             x, y = self.motion_primitive.compute_primitive(action, true_pose, self.lims, self.move_lims, self.edge_lims)
-            srvpose = [[x, y, 0.30] + self.angle, self.vel,self.acc]
+            srvpose = [[x, y, 0.31] + self.angle, self.vel,self.acc]
         
         # TODO: change of direction is currently very sudden, we need to tune that
         # print("servl", srvpose[0][1], true_speed, true_force, measured_acc, ctrl.servoL(srvpose[0], vel, acc, block_time, lookahead, gain))
         
+        pre_filter_srvpose = copy.deepcopy(srvpose[0])
         self.pose_hist.append(true_pose)
         self.dpose_hist.append(srvpose[0])
         srvpose[0] = filter_update(true_speed, self.pose_hist, self.dpose_hist)
         safety_check = self.ctrl.isPoseWithinSafetyLimits(srvpose[0])
+        if self._should_debug_control():
+            if self.control_mode in ["mouse", "mimic"]:
+                action_repr = "mouse/mimic_absolute_target"
+            else:
+                action_repr = np.array(action).tolist() if action is not None else None
+            print(
+                "[control_debug] "
+                f"step={self.timestep} mode={self.control_mode} type={self.control_type} "
+                f"true_pose_xy=({true_pose[0]:.4f},{true_pose[1]:.4f}) "
+                f"requested_target_xy=({requested_target_xy[0]:.4f},{requested_target_xy[1]:.4f}) "
+                f"pre_filter_target_xy=({pre_filter_srvpose[0]:.4f},{pre_filter_srvpose[1]:.4f}) "
+                f"post_filter_target_xy=({srvpose[0][0]:.4f},{srvpose[0][1]:.4f}) "
+                f"action={action_repr} "
+                f"safety_check={safety_check} protective_stop={self.rcv.isProtectiveStopped()}"
+            )
         values = get_state_array(time.time(), self.tidx, self.timestep, true_pose, true_speed, true_force, measured_acc, srvpose, self.rcv.isProtectiveStopped(), safety_check, puck)
         self.vals.append(values), #frames.append(np.array(protected_img[:]).reshape(640,480,3))
 
@@ -563,11 +599,29 @@ class AirHockeyReal:
         # print("desired_pose", srvpose[0][:2])
         # print("delta desired", np.array(srvpose[0][:2]) - true_pose[:2])
         # print("unnorm_delta", x- true_pose[0],y - true_pose[1], safety_check, self.rcv.isProtectiveStopped())# srvpose[0][:2], x,y, true_pose[:2], rcv.isProtectiveStopped())# , true_speed, true_force, measured_acc, )
-        if safety_check and self.control_mode not in ["observe"]: self.ctrl.servoL(srvpose[0], self.vel, self.acc, self.block_time, self.lookahead, self.gain)
+        if safety_check and self.control_mode not in ["observe"]:
+            self.ctrl.servoL(srvpose[0], self.vel, self.acc, self.block_time, self.lookahead, self.gain)
+            if self._should_debug_control():
+                print(
+                    "[control_debug] "
+                    f"step={self.timestep} servoL_sent=True vel={self.vel:.3f} acc={self.acc:.3f} "
+                    f"block_time={self.block_time:.4f} lookahead={self.lookahead:.3f} gain={self.gain}"
+                )
+        elif self._should_debug_control():
+            print(
+                "[control_debug] "
+                f"step={self.timestep} servoL_sent=False reason={'safety_check_failed' if not safety_check else 'observe_mode'}"
+            )
         if self.rcv.isProtectiveStopped():
             next_state = self._compute_state(srvpose[0], true_speed, self.timestep, self.puck_history)
             paddle_position = next_state["paddles"]["paddle_ego"]["position"]
             self.paddle_history.append(list(paddle_position) + [0])
+            if self._should_debug_control():
+                print(
+                    "[control_debug] "
+                    f"step={self.timestep} returned_state_xy=({paddle_position[0]:.4f},{paddle_position[1]:.4f}) "
+                    f"state_source=commanded_pose protective_stop=True"
+                )
             return next_state
 
         # print("servl", np.abs(polx - true_pose[0]), np.abs(poly - true_pose[1]), pixel_coord, srvpose[0], rcv.isProtectiveStopped())# , true_speed, true_force, measured_acc, )
@@ -577,6 +631,12 @@ class AirHockeyReal:
         next_state = self._compute_state(srvpose[0], true_speed, self.timestep, self.puck_history) # TODO: populate this with the names of objects
         paddle_position = next_state["paddles"]["paddle_ego"]["position"]
         self.paddle_history.append(list(paddle_position) + [0])
+        if self._should_debug_control():
+            print(
+                "[control_debug] "
+                f"step={self.timestep} returned_state_xy=({paddle_position[0]:.4f},{paddle_position[1]:.4f}) "
+                f"state_source=commanded_pose protective_stop=False"
+            )
         return next_state
 
     def spawn_puck(self, pos, vel, name, affected_by_gravity=False, movable=True):

@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--final-tol",
         type=float,
-        default=0.01,
+        default=0.001,
         help="Distance tolerance (m) to consider final state reached.",
     )
     parser.add_argument(
@@ -67,6 +67,18 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=4,
         help="Allow nearest-index lookup this many frames behind latest progress.",
+    )
+    parser.add_argument(
+        "--lookahead-steps",
+        type=int,
+        default=2,
+        help="Number of demo positions to target ahead of nearest index.",
+    )
+    parser.add_argument(
+        "--nearest-recovery-threshold",
+        type=float,
+        default=0.02,
+        help="If farther than this (m) from nearest demo pose, target nearest pose first.",
     )
     parser.add_argument(
         "--dry-run",
@@ -189,7 +201,6 @@ def run_dry_preview(demo_actions: np.ndarray, demo_pose_xy: np.ndarray, preview_
 def run_imitation(
     env: AirHockeyEnv,
     demo_pose_xy: np.ndarray,
-    demo_actions: np.ndarray,
     rmax_x: float,
     rmax_y: float,
     start_tol: float,
@@ -197,10 +208,58 @@ def run_imitation(
     max_align_steps: int,
     max_imitation_steps: int,
     backtrack_window: int,
+    lookahead_steps: int,
+    nearest_recovery_threshold: float,
     verbose: bool,
 ) -> None:
     start_target = demo_pose_xy[0]
     final_target = demo_pose_xy[-1]
+    upward_stop_x = -0.8
+    final_stage_progress_ratio = 0.9
+    upward_direction_ratio = 0.9
+    final_stage_action_boost = 2.0
+    post_stop_upward_steps = 7
+    post_stop_upward_action_sequence = [
+        np.array([-0.5, 0.0], dtype=np.float32),
+        np.array([-1, 0.0], dtype=np.float32),
+        np.array([-1, 0.0], dtype=np.float32),
+    ]
+
+    def run_post_stop_upward_burst(reason: str) -> None:
+        simulator = env.simulator
+        original_move_lims = tuple(simulator.move_lims)
+        original_lims = tuple(simulator.lims)
+        original_edge_lims = tuple(simulator.edge_lims)
+        burst_move_lims = (1.0, 1.0) # 1-1 scale
+        burst_lims = (-10.0, 10.0, -10.0, 10.0)
+        burst_edge_lims = (0.0, 0.0, 1e6, 1e6)
+        print(
+            f"{reason} Executing {post_stop_upward_steps} additional upward steps "
+        )
+        if verbose:
+            print(
+                "Temporarily overriding simulator limits for burst: "
+                f"move_lims={burst_move_lims}, lims={burst_lims}, edge_lims={burst_edge_lims}"
+            )
+        try:
+            simulator.move_lims = burst_move_lims
+            simulator.lims = burst_lims
+            simulator.edge_lims = burst_edge_lims
+            for burst_step in range(post_stop_upward_steps):
+                if burst_step < len(post_stop_upward_action_sequence):
+                    burst_action = post_stop_upward_action_sequence[burst_step]
+                else:
+                    burst_action = post_stop_upward_action_sequence[-1]
+                env.step(burst_action)
+        finally:
+            simulator.move_lims = original_move_lims
+            simulator.lims = original_lims
+            simulator.edge_lims = original_edge_lims
+            if verbose:
+                print(
+                    "Restored simulator limits after burst: "
+                    f"move_lims={original_move_lims}, lims={original_lims}, edge_lims={original_edge_lims}"
+                )
 
     print("Phase A: align to demo start position.")
     aligned = False
@@ -242,9 +301,12 @@ def run_imitation(
                 f"Continuing imitation from dist={dist_to_start:.4f}m."
             )
 
-        print("Phase B: nearest-neighbor imitation.")
+        print("Phase B: position-target imitation with lookahead.")
         terminal_idx = demo_pose_xy.shape[0] - 1
         last_progress_idx = 0
+        lookahead_steps = max(0, int(lookahead_steps))
+        nearest_recovery_threshold = max(0.0, float(nearest_recovery_threshold))
+        has_seen_mostly_upward_motion = False
 
         for step in range(max_imitation_steps):
             key = nbc.get_data()
@@ -256,10 +318,9 @@ def run_imitation(
             dist_to_final = float(np.linalg.norm(live_xy - final_target))
 
             if dist_to_final <= final_tol:
-                env.step(np.zeros(2, dtype=np.float32))
-                print(
+                run_post_stop_upward_burst(
                     f"Reached final pose tolerance in {step} imitation steps "
-                    f"(dist={dist_to_final:.4f}m). Stopping immediately."
+                    f"(dist={dist_to_final:.4f}m)."
                 )
                 return
 
@@ -268,27 +329,60 @@ def run_imitation(
             nearest_local_idx = int(np.argmin(np.linalg.norm(search_pose - live_xy, axis=1)))
             nearest_idx = search_start + nearest_local_idx
             last_progress_idx = max(last_progress_idx, nearest_idx)
+            nearest_pose = demo_pose_xy[nearest_idx]
+            nearest_dist = float(np.linalg.norm(nearest_pose - live_xy))
 
             if nearest_idx >= terminal_idx:
-                env.step(np.zeros(2, dtype=np.float32))
-                print(
-                    f"Nearest demo index reached terminal frame ({terminal_idx}). "
-                    "Stopping immediately."
+                run_post_stop_upward_burst(
+                    f"Nearest demo index reached terminal frame ({terminal_idx})."
                 )
                 return
 
-            action = demo_actions[nearest_idx]
+            # Normal case: aim a few steps ahead of the closest demo pose.
+            # Recovery case: if we drift too far from the nearest pose, first
+            # drive back to that nearest pose before resuming lookahead.
+            if nearest_dist > nearest_recovery_threshold:
+                target_idx = nearest_idx
+                target_mode = "recover_nearest"
+            else:
+                target_idx = min(nearest_idx + lookahead_steps, terminal_idx)
+                target_mode = "lookahead"
+            target_pose = demo_pose_xy[target_idx]
+            action = target_position_to_action(live_xy, target_pose, rmax_x, rmax_y)
+            target_delta = target_pose - live_xy
+            target_delta_norm = float(np.linalg.norm(target_delta))
+            if target_delta_norm > 1e-8:
+                upward_alignment = float(target_delta[0] / target_delta_norm)
+            else:
+                upward_alignment = 0.0
+            if upward_alignment <= -upward_direction_ratio:
+                has_seen_mostly_upward_motion = True
+            in_final_stage = target_idx >= int(final_stage_progress_ratio * terminal_idx)
+            should_boost = in_final_stage and upward_alignment <= -upward_direction_ratio
+            if should_boost:
+                action = np.clip(action * final_stage_action_boost, -1.0, 1.0).astype(np.float32)
+            if (
+                step >= 50
+                and has_seen_mostly_upward_motion
+                and live_xy[0] < upward_stop_x
+            ):
+                run_post_stop_upward_burst(
+                    f"Reached upward stop threshold in x (x={live_xy[0]:.4f} < {upward_stop_x:.4f}) "
+                    f"after mostly upward motion at step {step}."
+                )
+                return
             env.step(action)
 
             if verbose and step % 5 == 0:
-                nearest_dist = float(np.linalg.norm(demo_pose_xy[nearest_idx] - live_xy))
-                nearest_pose = demo_pose_xy[nearest_idx]
                 print(
                     f"[imit] step={step:04d} nearest_idx={nearest_idx:04d} "
                     f"live=({live_xy[0]: .4f}, {live_xy[1]: .4f}) "
                     f"nearest_demo_pose=({nearest_pose[0]: .4f}, {nearest_pose[1]: .4f}) "
+                    f"target_idx={target_idx:04d} target_mode={target_mode} "
+                    f"target_pose=({target_pose[0]: .4f}, {target_pose[1]: .4f}) "
                     f"final_target=({final_target[0]: .4f}, {final_target[1]: .4f}) "
                     f"nearest_dist={nearest_dist:.4f} dist_to_final={dist_to_final:.4f} "
+                    f"upward_alignment={upward_alignment:.4f} boosted={should_boost} "
                     f"action=({action[0]: .4f}, {action[1]: .4f})"
                 )
 
@@ -319,7 +413,7 @@ def main() -> None:
     simulator = env.simulator
     rmax_x = float(getattr(simulator, "rmax_x", 0.26))
     rmax_y = float(getattr(simulator, "rmax_y", 0.12))
-    demo_pose_xy, demo_actions = extract_demo_pose_and_actions(vals, rmax_x=rmax_x, rmax_y=rmax_y)
+    demo_pose_xy, _ = extract_demo_pose_and_actions(vals, rmax_x=rmax_x, rmax_y=rmax_y)
 
     print(f"Trajectory save path: {simulator.save_path}")
     print(f"Loaded demo frames: {demo_pose_xy.shape[0]}")
@@ -329,7 +423,6 @@ def main() -> None:
     run_imitation(
         env=env,
         demo_pose_xy=demo_pose_xy,
-        demo_actions=demo_actions,
         rmax_x=rmax_x,
         rmax_y=rmax_y,
         start_tol=args.start_tol,
@@ -337,6 +430,8 @@ def main() -> None:
         max_align_steps=args.max_align_steps,
         max_imitation_steps=args.max_imitation_steps,
         backtrack_window=args.backtrack_window,
+        lookahead_steps=args.lookahead_steps,
+        nearest_recovery_threshold=args.nearest_recovery_threshold,
         verbose=args.verbose,
     )
 

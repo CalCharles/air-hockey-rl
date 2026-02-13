@@ -34,6 +34,8 @@ air_hockey:
     control_mode: RL
     wait_for_space_to_start: true
     save_path: ./data/rollout/temp_saving/RL_test
+    debug_control: true
+    debug_control_every: 3
   stand_still_rew: 0.01
   task: puck_velocity
   terminate_on_enemy_goal: true
