@@ -78,6 +78,7 @@ class AirHockeyReal:
             "yv_max": 0.3,
             "hist_len": 2,
             "camera_index": 0,
+            "wait_for_space_to_start": True,
         }
         kwargs = {**defaults, **kwargs}
         config = dict_to_namespace(kwargs)
@@ -299,6 +300,7 @@ class AirHockeyReal:
         # smooth_history
         self.hist_len = config.hist_len
         self.camera_index = config.camera_index
+        self.wait_for_space_to_start = config.wait_for_space_to_start
 
 
         # creating the ground -- need to only call once! otherwise it can be laggy
@@ -431,12 +433,13 @@ class AirHockeyReal:
                 print("reset to initial pose:", reset_success)
             count = 0
             time.sleep(0.7)
-            # wait to start moving
-            print("Press space to start")
-            for j in range(10000):
-                time.sleep(0.01)  # To prevent high CPU usage
-                if nbc.get_data() == ' ':  # x1b is ESC
-                    break
+            # wait to start moving unless disabled by config
+            if self.wait_for_space_to_start:
+                print("Press space to start")
+                for j in range(10000):
+                    time.sleep(0.01)  # To prevent high CPU usage
+                    if nbc.get_data() == ' ':  # x1b is ESC
+                        break
         self.protected_img_check[0] = 1 and bool(self.save_path)
         # time.sleep(0.1)
         if self.random_reset: self.reset_pose[0][0], self.reset_pose[0][1] = np.random.rand(2) * np.array([self.x_max_lim - self.x_min_lim, self.y_max - self.y_min]) + np.array([self.x_min_lim, self.y_min])

@@ -41,6 +41,7 @@ def run_teleop(air_hockey_cfg, use_wandb=False, device='cpu', clear_prior_task_r
     air_hockey_params_cp['max_timesteps'] = 200
 
     eval_env = AirHockeyEnv(air_hockey_params_cp)
+    print(f"Trajectory save path: {eval_env.simulator.save_path}")
     with NonBlockingConsole() as nbc:
         print("Press 'y' to collect data (write trajectory), 'q' to reset without saving, 'x' to exit")
         while True:
@@ -64,7 +65,8 @@ def run_teleop(air_hockey_cfg, use_wandb=False, device='cpu', clear_prior_task_r
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Demonstrate the air hockey game.')
-    parser.add_argument('--cfg', type=str, default=None, help='Path to the configuration file.')
+    parser.add_argument('--cfg', type=str, default='configs/real_configs/mouse_config.yaml', help='Path to the configuration file.')
+    parser.add_argument('--save-path', type=str, default=None, help='Override trajectory save path (defaults to config value).')
     # Note: You probably don't want this argument, only if you are retraining frequently
     # and task folder is getting too big
     args = parser.parse_args()
@@ -77,5 +79,8 @@ if __name__ == "__main__":
     
     with open(air_hockey_cfg_fp, 'r') as f:
         air_hockey_cfg = yaml.safe_load(f)
+
+    if args.save_path is not None:
+        air_hockey_cfg["air_hockey"]["simulator_params"]["save_path"] = args.save_path
             
     run_teleop(air_hockey_cfg)
