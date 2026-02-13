@@ -208,6 +208,7 @@ traj_videos/
 
 # pytorch
 *.pth
+*.pt
 
 # more data folders
 gifs/

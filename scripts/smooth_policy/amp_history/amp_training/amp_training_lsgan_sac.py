@@ -172,6 +172,8 @@ class Args:
     """the learning rate of the Q network network optimizer"""
     q_weight_decay: float = 1e-4
     """L2 regularization (weight decay) for Q networks"""
+    q_hidden_size: int = 128
+    """hidden layer size for Q networks (2-layer MLP)"""
     q_frequency: int = 1
     """Q-network update frequency (update every q_frequency iterations)"""
     q_updates: int = 1
@@ -343,11 +345,11 @@ if __name__ == "__main__":
     
     # Q-networks for SAC (simple MLPs)
     class SoftQNetwork(nn.Module):
-        def __init__(self, obs_dim, act_dim):
+        def __init__(self, obs_dim, act_dim, hidden_size):
             super().__init__()
-            self.fc1 = nn.Linear(obs_dim + act_dim, 128)
-            self.fc2 = nn.Linear(128, 128)
-            self.fc3 = nn.Linear(128, 1)
+            self.fc1 = nn.Linear(obs_dim + act_dim, hidden_size)
+            self.fc2 = nn.Linear(hidden_size, hidden_size)
+            self.fc3 = nn.Linear(hidden_size, 1)
 
         def forward(self, x, a):
             x = torch.cat([x, a], 1)
@@ -359,10 +361,10 @@ if __name__ == "__main__":
     obs_dim = np.array(envs.single_observation_space.shape).prod()
     act_dim = np.prod(envs.single_action_space.shape)
     
-    qf1 = SoftQNetwork(obs_dim, act_dim).to(args.device)
-    qf2 = SoftQNetwork(obs_dim, act_dim).to(args.device)
-    qf1_target = SoftQNetwork(obs_dim, act_dim).to(args.device)
-    qf2_target = SoftQNetwork(obs_dim, act_dim).to(args.device)
+    qf1 = SoftQNetwork(obs_dim, act_dim, args.q_hidden_size).to(args.device)
+    qf2 = SoftQNetwork(obs_dim, act_dim, args.q_hidden_size).to(args.device)
+    qf1_target = SoftQNetwork(obs_dim, act_dim, args.q_hidden_size).to(args.device)
+    qf2_target = SoftQNetwork(obs_dim, act_dim, args.q_hidden_size).to(args.device)
     qf1_target.load_state_dict(qf1.state_dict())
     qf2_target.load_state_dict(qf2.state_dict())
     
