@@ -2,6 +2,7 @@ from Box2D.b2 import world, contactListener
 from Box2D import (b2CircleShape, b2FixtureDef, b2LoopShape, b2PolygonShape,
                    b2_dynamicBody, b2_staticBody, b2Filter, b2Vec2)
 import numpy as np
+from collections import deque
 import yaml
 import inspect
 from types import SimpleNamespace
@@ -138,6 +139,16 @@ class AirHockeyBox2D:
             'action_y_scaling': 1.0,
             'rmax_x': 0.26,
             'rmax_y': 0.12,
+            # Real-equivalent workspace and edge shaping limits (base frame).
+            'x_min_lim': -0.8,
+            'x_max_lim': -0.33,
+            'y_min': -0.3582,
+            'y_max': 0.350,
+            'top_abs': 0.8,
+            'bot_abs': 0.1,
+            'max_bias_p': -0.15,
+            'max_bias_m': -0.15,
+            'hist_len': 2,
             'render_masks': False,
             'gravity': -5,
             'paddle_density': 1000,
@@ -186,6 +197,18 @@ class AirHockeyBox2D:
         self.rmax_x = config.rmax_x
         self.rmax_y = config.rmax_y
         self.move_lims = np.array([self.rmax_x, self.rmax_y], dtype=float)
+        self.x_min_lim = config.x_min_lim
+        self.x_max_lim = config.x_max_lim
+        self.y_min = config.y_min
+        self.y_max = config.y_max
+        self.top_abs = config.top_abs
+        self.bot_abs = config.bot_abs
+        self.max_bias_p = config.max_bias_p
+        self.max_bias_m = config.max_bias_m
+        self.lims = (self.x_min_lim, self.x_max_lim, self.y_min, self.y_max)
+        # Keep tuple ordering consistent with real environment construction.
+        self.edge_lims = (self.top_abs, self.bot_abs, self.max_bias_p, self.max_bias_m)
+        self.hist_len = config.hist_len
         self.center_offset_constant = config.center_offset_constant
         self.wall_bounce_scale = config.wall_bounce_scale
         self.action_lag = config.action_lag 
@@ -193,6 +216,8 @@ class AirHockeyBox2D:
         self.last_action = np.zeros(2) # keep the last action taken, used for action lag
         self.previous_acceleration = np.zeros(2)  # for jerk calculation
         self.jerk = np.zeros(2)
+        self.pose_hist = deque(maxlen=self.hist_len)
+        self.dpose_hist = deque(maxlen=self.hist_len)
         
         # Initialize PID controller with configurable gains
         # Default values are tuned for the air hockey environment
@@ -289,6 +314,8 @@ class AirHockeyBox2D:
         self.last_action = np.zeros(2) # keep the last action taken
         self.previous_acceleration = np.zeros(2)  # reset for jerk calculation
         self.jerk = np.zeros(2)
+        self.pose_hist = deque(maxlen=self.hist_len)
+        self.dpose_hist = deque(maxlen=self.hist_len)
         
         # Reset PID controller
         if hasattr(self, 'pid_controller'):
@@ -474,31 +501,82 @@ class AirHockeyBox2D:
         action = np.array((action[1], -action[0]))
         return action
 
+    def _box2d_to_base_coords(self, coord):
+        return np.array((-coord[1], coord[0]), dtype=float)
+
+    def _base_to_box2d_coords(self, coord):
+        return np.array((coord[1], -coord[0]), dtype=float)
+
+    def _get_edge(self, x, y, w, h):
+        # Mirror the real environment's rectangular projection with numerical guards.
+        if np.abs(x) <= w and np.abs(y) <= h:
+            return np.array([x, y], dtype=float)
+
+        eps = 1e-8
+        if np.abs(x) < eps:
+            return np.array([0.0, np.sign(y) * h], dtype=float)
+        if np.abs(y) < eps:
+            return np.array([np.sign(x) * w, 0.0], dtype=float)
+
+        s = y / x
+        if -h / 2 <= s * w / 2 <= h / 2:
+            if x > 0:
+                return np.array([w, s * w], dtype=float)
+            return np.array([-w, -s * w], dtype=float)
+
+        s_r = x / y
+        if y > 0:
+            return np.array([h * s_r, h], dtype=float)
+        return np.array([-h * s_r, -h], dtype=float)
+
+    def _clip_limits(self, x, y):
+        # Mirror real coordinate_transform.clip_limits behavior.
+        x_min_lim, x_max_lim, y_min, y_max = self.lims
+        top_abs, bot_abs, max_bias_m, max_bias_p = self.edge_lims
+        y = np.clip(y, y_min, y_max)
+        x_min = x_min_lim
+        x_max = min(x_max_lim, max_bias_m - top_abs * y, max_bias_p + top_abs * y)
+        x = np.clip(x, x_min, x_max)
+        return np.array([x, y], dtype=float)
+
     def _clip_pid_target_to_workspace(self, target_pos):
-        """Clip PID target to the same single-agent workspace constraints used in simulation."""
-        clipped = np.array(target_pos, dtype=float)
-        clipped[0] = np.clip(clipped[0], self.table_x_min, self.table_x_max)
-        clipped[1] = np.clip(clipped[1], self.table_y_min, min(self.table_y_max, 0.0))
-        return clipped
+        """Clip PID target with real-equivalent workspace + edge limits."""
+        target_base = self._box2d_to_base_coords(target_pos)
+        clipped_base = self._clip_limits(target_base[0], target_base[1])
+        return self._base_to_box2d_coords(clipped_base)
+
+    def _filter_update(self):
+        """
+        Real-equivalent low-pass update on commanded pose deltas.
+        desired = current_pose + mean(desired_i - current_i) over history window.
+        """
+        pose_vel = np.array(self.dpose_hist[-1], dtype=float) - np.array(self.pose_hist[-1], dtype=float)
+        transform_vel = pose_vel
+        if len(self.dpose_hist) > 1:
+            pose_vels = [
+                np.array(self.dpose_hist[i], dtype=float) - np.array(self.pose_hist[i], dtype=float)
+                for i in range(len(self.dpose_hist))
+            ]
+            transform_vel = np.mean(pose_vels, axis=0)
+        return np.array(self.pose_hist[-1], dtype=float) + transform_vel
 
     def _compute_pid_target_pos(self, pos, act):
         """
-        Mirror real-env target logic for PID:
+        Mirror real-env target logic for PID in base frame:
         - scale normalized action by move limits
         - construct raw target from current pose + move vector
         - project with a rectangular per-step movement bound
-        - clip to workspace bounds
+        - clip to workspace + edge bounds
         """
-        move_vector = np.array(act, dtype=float) * self.move_lims
-        target_raw = np.array(pos, dtype=float) + move_vector
-
-        # Rectangular projection equivalent to real compute_rect(): preserve direction
-        # while constraining movement within [-rmax_x, rmax_x] x [-rmax_y, rmax_y].
-        rel = target_raw - np.array(pos, dtype=float)
-        denom = np.maximum(self.move_lims, 1e-8)
-        scale = max(1.0, np.max(np.abs(rel) / denom))
-        target_rect = np.array(pos, dtype=float) + (rel / scale)
-        return self._clip_pid_target_to_workspace(target_rect)
+        pos_base = self._box2d_to_base_coords(pos)
+        act_base = self._box2d_to_base_coords(act)
+        move_vector_base = np.array(act_base, dtype=float) * self.move_lims
+        target_raw_base = pos_base + move_vector_base
+        rel_base = target_raw_base - pos_base
+        edge_rel = self._get_edge(rel_base[0], rel_base[1], self.move_lims[0], self.move_lims[1])
+        target_rect_base = pos_base + edge_rel
+        target_clipped_base = self._clip_limits(target_rect_base[0], target_rect_base[1])
+        return self._base_to_box2d_coords(target_clipped_base)
 
     # s, a -> s'
     def get_transition(self, action, other_action=None):
@@ -527,6 +605,9 @@ class AirHockeyBox2D:
             if self.use_pid:
                 # PID controller target uses real-like scaled delta + rect projection + clipping.
                 target_pos = self._compute_pid_target_pos(pos, act)
+                self.pose_hist.append(np.array(pos, dtype=float))
+                self.dpose_hist.append(np.array(target_pos, dtype=float))
+                target_pos = self._filter_update()
                 current_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0], 
                                        self.paddles['paddle_ego'].linearVelocity[1]])
                 
@@ -596,15 +677,18 @@ class AirHockeyBox2D:
                 self.paddles['paddle_ego'].linearVelocity = b2Vec2(vel[0] / vel_mag * self.max_paddle_vel, vel[1] / vel_mag * self.max_paddle_vel)
                 
             # check if out of bounds and correct
-            pos = [self.paddles['paddle_ego'].position[0], self.paddles['paddle_ego'].position[1]]
-            if pos[0] < self.table_x_min:
-                pos[0] = self.table_x_min
-            if pos[0] > self.table_x_max:
-                pos[0] = self.table_x_max
-            if pos[1] > 0:
-                pos[1] = 0
-            if pos[1] > self.table_y_max:
-                pos[1] = self.table_y_max
+            pos = np.array([self.paddles['paddle_ego'].position[0], self.paddles['paddle_ego'].position[1]], dtype=float)
+            if self.use_pid:
+                pos = self._clip_pid_target_to_workspace(pos)
+            else:
+                if pos[0] < self.table_x_min:
+                    pos[0] = self.table_x_min
+                if pos[0] > self.table_x_max:
+                    pos[0] = self.table_x_max
+                if pos[1] > 0:
+                    pos[1] = 0
+                if pos[1] > self.table_y_max:
+                    pos[1] = self.table_y_max
             self.paddles['paddle_ego'].position = (pos[0], pos[1])
             
             state_info = self.get_current_state()

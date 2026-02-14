@@ -175,6 +175,26 @@ class AirHockeyPuckJuggleReward(AirHockeyRewardBase):
             reward = 5 * (self.hit_counter - 1)
         return reward
 
+class AirHockeyPuckJuggleLinearTopReward(AirHockeyPuckJuggleReward):
+    def original_region_reward(self, state_info):
+        reward = 0
+
+        for puck in state_info["pucks"]:
+            x_pos = puck["position"][0]
+            x_higher = self.task_env.table_x_top
+            x_optimal_start = x_higher / 4
+
+            if x_optimal_start < x_pos < 0:
+                reward += 3 / len(state_info["pucks"])
+            elif x_pos <= x_optimal_start:
+                # Linear shaping over the top band: x_higher -> -1 and x_higher/4 -> +3.
+                t = (x_pos - x_higher) / (x_optimal_start - x_higher)
+                t = np.clip(t, 0.0, 1.0)
+                shaped_reward = -1 + 4 * t
+                reward += shaped_reward / len(state_info["pucks"])
+
+        return reward
+
 class AirHockeyPuckStrikeReward(AirHockeyRewardBase):
     def __init__(self, task_env):
         super().__init__(task_env)
