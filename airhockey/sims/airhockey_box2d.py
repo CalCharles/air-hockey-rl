@@ -214,6 +214,7 @@ class AirHockeyBox2D:
         self.action_lag = config.action_lag 
         assert self.action_lag >= 0 and self.action_lag <= 1, "Action lag must be between 0 and 1"
         self.last_action = np.zeros(2) # keep the last action taken, used for action lag
+        self.last_target_position = None  # base-frame target used for visualization/debugging
         self.previous_acceleration = np.zeros(2)  # for jerk calculation
         self.jerk = np.zeros(2)
         self.pose_hist = deque(maxlen=self.hist_len)
@@ -312,6 +313,7 @@ class AirHockeyBox2D:
 
         self.object_dict = dict()
         self.last_action = np.zeros(2) # keep the last action taken
+        self.last_target_position = None
         self.previous_acceleration = np.zeros(2)  # reset for jerk calculation
         self.jerk = np.zeros(2)
         self.pose_hist = deque(maxlen=self.hist_len)
@@ -531,13 +533,17 @@ class AirHockeyBox2D:
 
     def _clip_limits(self, x, y):
         # Mirror real coordinate_transform.clip_limits behavior.
+        # Box2D/base observations use centered x, while real clip limits are in raw robot x.
+        # Convert to raw-x for clipping, then shift back to centered frame.
         x_min_lim, x_max_lim, y_min, y_max = self.lims
         top_abs, bot_abs, max_bias_m, max_bias_p = self.edge_lims
+        x_raw = x - self.center_offset_constant
         y = np.clip(y, y_min, y_max)
         x_min = x_min_lim
         x_max = min(x_max_lim, max_bias_m - top_abs * y, max_bias_p + top_abs * y)
-        x = np.clip(x, x_min, x_max)
-        return np.array([x, y], dtype=float)
+        x_raw = np.clip(x_raw, x_min, x_max)
+        x_centered = x_raw + self.center_offset_constant
+        return np.array([x_centered, y], dtype=float)
 
     def _clip_pid_target_to_workspace(self, target_pos):
         """Clip PID target with real-equivalent workspace + edge limits."""
@@ -608,6 +614,7 @@ class AirHockeyBox2D:
                 self.pose_hist.append(np.array(pos, dtype=float))
                 self.dpose_hist.append(np.array(target_pos, dtype=float))
                 target_pos = self._filter_update()
+                self.last_target_position = self._box2d_to_base_coords(target_pos)
                 current_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0], 
                                        self.paddles['paddle_ego'].linearVelocity[1]])
                 
@@ -615,6 +622,7 @@ class AirHockeyBox2D:
                 force = self.pid_controller.compute(target_pos, pos, current_vel)
                 
             else:
+                self.last_target_position = None
                 # Legacy controller: action is delta position
                 # let's use simple time-optimal control to figure out the force to apply
                 delta_pos = np.array([act[0], act[1]])

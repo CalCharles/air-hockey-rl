@@ -206,6 +206,10 @@ class AirHockeyPuckJuggleLinearTopEnv(AirHockeyPuckJuggleEnv):
         self.count_hit = False
         self.hits = 0
         self.reward = AirHockeyPuckJuggleLinearTopReward(self)
+    
+    @staticmethod
+    def from_dict(state_dict):
+        return AirHockeyPuckJuggleLinearTopEnv(**state_dict)
 
 class AirHockeyPuckStrikeEnv(AirHockeyBaseEnv):
     def initialize_spaces(self, obs_type):

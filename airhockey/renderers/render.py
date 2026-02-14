@@ -102,11 +102,20 @@ class AirHockeyRenderer:
             
         # Calculate target position in base coordinates
         target_pos = np.array(current_pos) + np.array(action[:2])
+        self.draw_target_marker(target_pos, color=color)
+
+    def draw_target_marker(self, target_pos, color=(255, 165, 0)):
+        """
+        Draw an explicit target position in base coordinates.
+        If the target goes outside the screen, it's clamped to the edge.
+        """
+        if target_pos is None or len(target_pos) < 2:
+            return
         
         # Clamp target position to stay within bounds
         # Base coordinates: x is vertical, y is horizontal
         # Bounds: x in [-length/2, length/2], y in [-width/2, width/2]
-        clamped_target = np.array(target_pos)
+        clamped_target = np.array(target_pos[:2], dtype=float)
         clamped_target[0] = np.clip(clamped_target[0], -self.length / 2, self.length / 2)
         clamped_target[1] = np.clip(clamped_target[1], -self.width / 2, self.width / 2)
         
@@ -484,9 +493,16 @@ class AirHockeyRenderer:
                 if self.show_acceleration_arrow:
                     self.draw_acceleration_arrow(pos_render, acceleration)
                 
-                # Draw target position if action is available (and if enabled)
-                if self.show_target_position and hasattr(self.airhockey_env, "last_action"):
-                    self.draw_target_position(pos, self.airhockey_env.last_action)
+                # Draw target position if enabled:
+                # prefer explicit simulator target, fallback to action-based approximation.
+                if self.show_target_position:
+                    sim_target = None
+                    if hasattr(self.airhockey_env, "simulator"):
+                        sim_target = getattr(self.airhockey_env.simulator, "last_target_position", None)
+                    if sim_target is not None:
+                        self.draw_target_marker(sim_target)
+                    elif hasattr(self.airhockey_env, "last_action"):
+                        self.draw_target_position(pos, self.airhockey_env.last_action)
             
         # if self.airhockey_env.paddle[1] is not None: self.draw_circle_with_image(self.airhockey_env.paddle[1], circle_type='paddle')
         if self.orientation == 'vertical':
