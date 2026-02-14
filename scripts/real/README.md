@@ -70,6 +70,70 @@ Total `train_vals` width is 35 per timestep.
 Rolling out a constant policy:
 python scripts/real/rollout_constant.py --config-path configs/real_configs/rollout_config.yaml --timesteps 150 --action 0.05 -0.02 --clip --save-path data/constant/action --auto-gif
 
+### Demonstration imitation rollout
+
+`rollout_imitation.py` replays a saved demonstration without any learned policy.
+Control behavior is:
+
+1. Move from current paddle position to the first demo paddle pose.
+2. During rollout, find the closest demo paddle pose and apply the action used there.
+3. Stop immediately when the final demo state is reached.
+
+Example:
+
+```bash
+python scripts/real/rollout_imitation.py \
+  --demo-hdf5 new_data/reset/demo1/trajectory_data0_timesteps_90_200.hdf5 \
+  --config-path configs/real_configs/rollout_config.yaml \
+  --verbose
+```
+
+Quick non-robot preview (no environment stepping):
+
+```bash
+python scripts/real/rollout_imitation.py \
+  --demo-hdf5 new_data/reset/demo1/trajectory_data0_timesteps_90_200.hdf5 \
+  --config-path configs/real_configs/rollout_config.yaml \
+  --dry-run --dry-run-steps 12
+```
+
+### Real workspace bounds in meters
+
+In `airhockey/sims/air_hockey_real.py`, the active real-controller limits are:
+
+- `x_min_lim = -0.8`
+- `x_max_lim = -0.33`
+- `y_min = -0.3582`
+- `y_max = 0.350`
+
+These values are in the robot frame (same frame as `pose` and `desired_pose` in `train_vals`).
+
+#### Conversion to table-centered coordinates
+
+The simulator uses `x_offset = 1.2` to convert robot-frame X to table-frame X:
+
+- `table_x = robot_x + x_offset`
+- `table_y = robot_y`
+
+With that offset, the workspace above maps to:
+
+- `table_x in [0.40, 0.87]`
+- `table_y in [-0.3582, 0.350]`
+
+For reference, table dimensions in this config are:
+
+- `length = 1.9304` -> `table_x in [-0.9652, 0.9652]`
+- `width = 0.8636` -> `table_y in [-0.4318, 0.4318]`
+
+#### Additional edge restriction on `x_max`
+
+`clip_limits(...)` applies a y-dependent near-edge cap:
+
+- `x_max = min(x_max_lim, max_bias_m - top_abs * y, max_bias_p + top_abs * y)`
+
+So the allowed near-edge X can shrink at high `|y|` (corner cut-in), even if `x_max_lim` is unchanged.
+Also note `x_min` is currently a fixed hard line (`x_min = x_min_lim`).
+
 ### Action scaling: real vs Box2D
 
 How the same 2D policy action `[ax, ay]` is handled differs between simulators.
