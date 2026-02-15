@@ -105,6 +105,65 @@ def get_env_spec_ranges():
     }
 
 
+def get_env_spec_ordered_keys():
+    """Canonical environment parameter ordering for env-var vector encoding."""
+    return [
+        "paddle_density",
+        "paddle_damping",
+        "puck_density",
+        "puck_damping",
+        "force_scaling",
+    ]
+
+
+def validate_env_spec_pool(env_spec_pool):
+    """Validate and coerce env spec pool entries into a consistent format."""
+    if not isinstance(env_spec_pool, list) or len(env_spec_pool) == 0:
+        raise ValueError("Environment spec pool must be a non-empty list.")
+
+    required_keys = {"env_id", *get_env_spec_ordered_keys()}
+    validated_pool = []
+    for idx, spec in enumerate(env_spec_pool):
+        if not isinstance(spec, dict):
+            raise ValueError(f"Environment spec at index {idx} must be a dict.")
+        missing = required_keys - set(spec.keys())
+        if missing:
+            raise ValueError(f"Environment spec at index {idx} is missing keys: {sorted(missing)}")
+        spec_out = dict(spec)
+        spec_out["env_id"] = int(spec["env_id"])
+        for key in get_env_spec_ordered_keys():
+            spec_out[key] = float(spec[key])
+        validated_pool.append(spec_out)
+    return validated_pool
+
+
+def load_env_spec_pool(env_spec_pool_path):
+    """Load env spec pool from disk (.pt preferred, YAML fallback)."""
+    if not os.path.exists(env_spec_pool_path):
+        raise FileNotFoundError(f"env_spec_pool_path does not exist: {env_spec_pool_path}")
+
+    raw_pool = None
+    load_errors = []
+    try:
+        raw_pool = torch.load(env_spec_pool_path, map_location="cpu")
+    except Exception as exc:
+        load_errors.append(f"torch.load failed: {exc}")
+
+    if raw_pool is None:
+        try:
+            with open(env_spec_pool_path, "r") as f:
+                raw_pool = yaml.safe_load(f)
+        except Exception as exc:
+            load_errors.append(f"yaml.safe_load failed: {exc}")
+
+    if raw_pool is None:
+        raise ValueError(
+            "Could not load env spec pool from path "
+            f"{env_spec_pool_path}. Errors: {' | '.join(load_errors)}"
+        )
+    return validate_env_spec_pool(raw_pool)
+
+
 def build_env_spec_pool(num_randomized_envs_total, seed):
     """Create placeholder environment specs for domain randomization."""
     rng = np.random.default_rng(seed)
@@ -133,6 +192,30 @@ def save_env_spec_pool_artifacts(env_spec_pool, output_dir):
         yaml.dump(env_spec_pool, f, sort_keys=False)
     torch.save(env_spec_pool, pt_path)
     print(f"✓ Saved env spec pool artifacts: {yaml_path}, {pt_path}")
+
+
+def save_training_env_setup_manifest(env_spec_pool, output_dir, args, source_mode, source_path):
+    """Persist startup env setup metadata for reproducibility and resumed training."""
+    os.makedirs(output_dir, exist_ok=True)
+    manifest_path = os.path.join(output_dir, "training_env_setup.yaml")
+    manifest = {
+        "env_spec_pool_source": source_mode,
+        "env_spec_pool_source_path": source_path,
+        "randomization_ranges": get_env_spec_ranges(),
+        "env_var_representation": {
+            "env_var_dim": int(args.env_var_dim),
+            "env_latent_dim": int(args.env_latent_dim),
+            "ordered_keys": get_env_spec_ordered_keys(),
+        },
+        "env_spec_pool_summary": {
+            "configured_num_randomized_envs_total": int(args.num_randomized_envs_total),
+            "actual_pool_size": int(len(env_spec_pool)),
+            "seed": int(args.seed),
+        },
+    }
+    with open(manifest_path, "w") as f:
+        yaml.dump(manifest, f, sort_keys=False)
+    print(f"✓ Saved training env setup manifest: {manifest_path}")
 
 
 def build_edge_eval_specs():
@@ -185,13 +268,7 @@ def extract_env_var_vector_from_spec(spec, env_var_dim):
     uniform-randomization ranges: mean=(low+high)/2, std=(high-low)/sqrt(12).
     """
     ranges = get_env_spec_ranges()
-    ordered_keys = [
-        "paddle_density",
-        "paddle_damping",
-        "puck_density",
-        "puck_damping",
-        "force_scaling",
-    ]
+    ordered_keys = get_env_spec_ordered_keys()
 
     normalized = []
     for key in ordered_keys:
@@ -342,6 +419,7 @@ class Args:
 
     # RMA randomization + encoder args
     num_randomized_envs_total: int = 500
+    env_spec_pool_path: str = None  # Optional path to saved env pool (.pt or .yaml) for continued training
     env_var_dim: int = 8
     env_latent_dim: int = 8
     env_encoder_hidden_size: int = 64
@@ -518,7 +596,7 @@ if __name__ == "__main__":
 
     # command line args override file args
     args = tyro.cli(Args, default=default_args)
-    if args.num_randomized_envs_total < args.num_envs:
+    if args.env_spec_pool_path is None and args.num_randomized_envs_total < args.num_envs:
         raise ValueError(
             f"num_randomized_envs_total ({args.num_randomized_envs_total}) must be >= num_envs ({args.num_envs})."
         )
@@ -529,7 +607,21 @@ if __name__ == "__main__":
     with open(args.config, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
 
-    env_spec_pool = build_env_spec_pool(args.num_randomized_envs_total, args.seed)
+    if args.env_spec_pool_path is not None:
+        env_spec_pool = load_env_spec_pool(args.env_spec_pool_path)
+        env_spec_pool_source_mode = "loaded"
+        env_spec_pool_source_path = os.path.abspath(args.env_spec_pool_path)
+        print(f"Loaded env spec pool from: {env_spec_pool_source_path} (size={len(env_spec_pool)})")
+    else:
+        env_spec_pool = build_env_spec_pool(args.num_randomized_envs_total, args.seed)
+        env_spec_pool_source_mode = "generated"
+        env_spec_pool_source_path = None
+        print(f"Generated env spec pool from seed={args.seed} (size={len(env_spec_pool)})")
+    if len(env_spec_pool) < args.num_envs:
+        raise ValueError(
+            f"Environment spec pool size ({len(env_spec_pool)}) must be >= num_envs ({args.num_envs})."
+        )
+
     validation_env_spec = build_edge_eval_specs()[0]  # fixed validation environment across checkpoints
     # Persistent vector env: each worker re-samples from the pool inside reset().
     envs = gym.vector.AsyncVectorEnv(
@@ -577,6 +669,13 @@ if __name__ == "__main__":
     with open(f"{log_parent_dir}/args.yaml", "w") as f:
         yaml.dump(vars(args), f)
     save_env_spec_pool_artifacts(env_spec_pool=env_spec_pool, output_dir=log_parent_dir)
+    save_training_env_setup_manifest(
+        env_spec_pool=env_spec_pool,
+        output_dir=log_parent_dir,
+        args=args,
+        source_mode=env_spec_pool_source_mode,
+        source_path=env_spec_pool_source_path,
+    )
     
     if 'use_pid' in config["air_hockey"] and config["air_hockey"]["use_pid"]:
         action_scale = 1
@@ -1263,12 +1362,7 @@ if __name__ == "__main__":
             for entry in edge_eval_results:
                 spec_name = entry["name"]
                 writer.add_scalar(f"edge_eval/{spec_name}/avg_return", entry["avg_return"], iteration)
-                writer.add_scalar(f"edge_eval/{spec_name}/min_return", entry["min_return"], iteration)
-                writer.add_scalar(f"edge_eval/{spec_name}/max_return", entry["max_return"], iteration)
                 writer.add_scalar(f"edge_eval/{spec_name}/avg_length", entry["avg_length"], iteration)
-            edge_eval_path_iter = os.path.join(log_parent_dir, f"edge_eval_results_iter_{iteration}.yaml")
-            with open(edge_eval_path_iter, "w") as f:
-                yaml.dump(edge_eval_results, f, sort_keys=False)
 
         if iteration % args.model_save_interval == 0:
             # save a checkpoint of the model
@@ -1321,10 +1415,15 @@ if __name__ == "__main__":
         args=args,
         device=args.device,
     )
-    edge_eval_path = os.path.join(log_parent_dir, "edge_eval_results.yaml")
-    with open(edge_eval_path, "w") as f:
-        yaml.dump(edge_eval_results, f, sort_keys=False)
-    print(f"✓ Saved edge evaluation results to {edge_eval_path}")
+    writer.add_scalar(
+        "edge_eval/overall_avg_return",
+        float(np.mean([entry["avg_return"] for entry in edge_eval_results])),
+        args.num_iterations,
+    )
+    for entry in edge_eval_results:
+        spec_name = entry["name"]
+        writer.add_scalar(f"edge_eval/{spec_name}/avg_return", entry["avg_return"], args.num_iterations)
+        writer.add_scalar(f"edge_eval/{spec_name}/avg_length", entry["avg_length"], args.num_iterations)
 
     writer.close()
     envs.close()

@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from scripts.smooth_policy.agent import layer_init
 
@@ -73,6 +74,43 @@ class TemporalConvEncoder(nn.Module):
         x = self.network(temporal_features)
         return x.mean(dim=-1)  # [B, C_out]
 
+    def forward_masked(self, temporal_features, valid_mask):
+        """
+        Mask-aware temporal encoding and pooling.
+        valid_mask: [B, T] (1 for valid timestep, 0 for padded timestep).
+        """
+        if temporal_features.ndim != 3:
+            raise ValueError("temporal_features must be rank-3 tensor [batch, channels, time].")
+        if valid_mask.ndim != 2:
+            raise ValueError("valid_mask must be rank-2 tensor [batch, time].")
+        if temporal_features.shape[0] != valid_mask.shape[0] or temporal_features.shape[-1] != valid_mask.shape[-1]:
+            raise ValueError("valid_mask must match temporal_features on [batch, time].")
+
+        x = temporal_features
+        mask = valid_mask.to(dtype=x.dtype).unsqueeze(1)  # [B, 1, T]
+
+        # Zero padded inputs before temporal convolutions.
+        x = x * mask
+
+        for layer in self.network:
+            x = layer(x)
+            if isinstance(layer, nn.Conv1d):
+                k = int(layer.kernel_size[0])
+                s = int(layer.stride[0])
+                p = int(layer.padding[0])
+                d = int(layer.dilation[0])
+
+                kernel = torch.ones((1, 1, k), dtype=mask.dtype, device=mask.device)
+                mask = F.conv1d(mask, kernel, stride=s, padding=p, dilation=d)
+
+                # A timestep remains valid only if the entire receptive field was valid.
+                mask = (mask >= float(k)).to(dtype=x.dtype)
+                x = x * mask  # Drop invalid outputs (including conv bias-only responses).
+
+        valid_count = mask.sum(dim=-1).clamp_min(1.0)  # [B, 1]
+        pooled = x.sum(dim=-1) / valid_count  # [B, C_out]
+        return pooled
+
 
 class RMAAdaptationModule(nn.Module):
     """
@@ -107,11 +145,14 @@ class RMAAdaptationModule(nn.Module):
         )
         self.latent_head = layer_init(nn.Linear(8, latent_dim), std=1.0)
 
-    def forward(self, actions, states, return_intermediates=False):
+    def forward(self, actions, states, valid_mask=None, return_intermediates=False):
         embedded = self.embedder(actions, states)  # [B, T, 16]
         projected = self.pre_conv_projection(embedded)  # [B, T, 8]
         temporal_in = projected.transpose(1, 2)  # [B, 8, T]
-        pooled = self.temporal_encoder(temporal_in)  # [B, 8]
+        if valid_mask is None:
+            pooled = self.temporal_encoder(temporal_in)  # [B, 8]
+        else:
+            pooled = self.temporal_encoder.forward_masked(temporal_in, valid_mask=valid_mask)  # [B, 8]
         latent = self.latent_head(pooled)  # [B, 8]
 
         if not return_intermediates:

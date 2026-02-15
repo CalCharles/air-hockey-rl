@@ -32,7 +32,7 @@ adaptation_hidden_size: 64
 train_env_count: 500
 eval_env_count: 100
 rollout_len: 200
-prior_min: 10
+prior_min: 50 # 10 is too short and unreasonable for convolution
 prior_max: 100
 min_model_context_len: 16
 latent_noise_std: 0.10

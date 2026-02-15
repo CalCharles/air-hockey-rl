@@ -43,15 +43,132 @@ def get_env_spec_ranges():
     }
 
 
-def extract_env_var_vector_from_spec(spec, env_var_dim):
-    ranges = get_env_spec_ranges()
-    ordered_keys = [
+def get_env_spec_ordered_keys():
+    return [
         "paddle_density",
         "paddle_damping",
         "puck_density",
         "puck_damping",
         "force_scaling",
     ]
+
+
+def validate_env_spec_pool(env_spec_pool):
+    if not isinstance(env_spec_pool, list) or len(env_spec_pool) == 0:
+        raise ValueError("Loaded env_spec_pool must be a non-empty list.")
+
+    required_keys = {"env_id", *get_env_spec_ordered_keys()}
+    validated_pool = []
+    for idx, spec in enumerate(env_spec_pool):
+        if not isinstance(spec, dict):
+            raise ValueError(f"Environment spec at index {idx} must be a dict.")
+        missing = required_keys - set(spec.keys())
+        if missing:
+            raise ValueError(f"Environment spec at index {idx} is missing keys: {sorted(missing)}")
+        out = dict(spec)
+        out["env_id"] = int(spec["env_id"])
+        for key in get_env_spec_ordered_keys():
+            out[key] = float(spec[key])
+        validated_pool.append(out)
+    return validated_pool
+
+
+def _load_yaml(path):
+    with open(path, "r") as f:
+        return yaml.safe_load(f)
+
+
+def _resolve_env_artifact_paths(env_spec_pool_path):
+    """
+    Accept either:
+    - direct env pool file path (.pt/.yaml), or
+    - run/checkpoint directory containing env_spec_pool.pt/yaml and optional training_env_setup.yaml, or
+    - direct path to training_env_setup.yaml.
+    """
+    input_path = os.path.abspath(env_spec_pool_path)
+    manifest_path = None
+    pool_path = None
+
+    if os.path.isdir(input_path):
+        manifest_candidate = os.path.join(input_path, "training_env_setup.yaml")
+        pt_candidate = os.path.join(input_path, "env_spec_pool.pt")
+        yaml_candidate = os.path.join(input_path, "env_spec_pool.yaml")
+        if os.path.exists(manifest_candidate):
+            manifest_path = manifest_candidate
+        if os.path.exists(pt_candidate):
+            pool_path = pt_candidate
+        elif os.path.exists(yaml_candidate):
+            pool_path = yaml_candidate
+        else:
+            raise FileNotFoundError(
+                f"No env_spec_pool artifact found in directory '{input_path}'. "
+                "Expected env_spec_pool.pt or env_spec_pool.yaml."
+            )
+        return pool_path, manifest_path
+
+    if not os.path.exists(input_path):
+        raise FileNotFoundError(
+            f"env_spec_pool_path '{env_spec_pool_path}' does not exist. "
+            "Use a stage-1 run/checkpoint directory or env_spec_pool(.pt/.yaml) artifact."
+        )
+
+    if os.path.basename(input_path) == "training_env_setup.yaml":
+        manifest_path = input_path
+        manifest = _load_yaml(manifest_path) or {}
+        source_path = manifest.get("env_spec_pool_source_path")
+        if source_path:
+            source_path = os.path.abspath(source_path)
+            if os.path.exists(source_path):
+                pool_path = source_path
+        if pool_path is None:
+            parent = os.path.dirname(manifest_path)
+            pt_candidate = os.path.join(parent, "env_spec_pool.pt")
+            yaml_candidate = os.path.join(parent, "env_spec_pool.yaml")
+            if os.path.exists(pt_candidate):
+                pool_path = pt_candidate
+            elif os.path.exists(yaml_candidate):
+                pool_path = yaml_candidate
+            else:
+                raise FileNotFoundError(
+                    f"Could not resolve env pool path from manifest '{manifest_path}'. "
+                    "Neither source path nor sibling env_spec_pool artifacts exist."
+                )
+        return pool_path, manifest_path
+
+    if input_path.endswith(".pt") or input_path.endswith(".yaml") or input_path.endswith(".yml"):
+        return input_path, None
+
+    raise ValueError(
+        f"Unsupported env_spec_pool_path format: '{env_spec_pool_path}'. "
+        "Use a directory, training_env_setup.yaml, env_spec_pool.pt, or env_spec_pool.yaml."
+    )
+
+
+def _validate_manifest_compatibility(manifest, args):
+    env_repr = manifest.get("env_var_representation", {}) if isinstance(manifest, dict) else {}
+    manifest_env_var_dim = env_repr.get("env_var_dim")
+    manifest_env_latent_dim = env_repr.get("env_latent_dim")
+    manifest_order = env_repr.get("ordered_keys")
+
+    if manifest_env_var_dim is not None and int(manifest_env_var_dim) != int(args.env_var_dim):
+        raise ValueError(
+            f"env_var_dim mismatch: args={args.env_var_dim}, manifest={manifest_env_var_dim}. "
+            "Use matching dimensions from stage-1 training."
+        )
+    if manifest_env_latent_dim is not None and int(manifest_env_latent_dim) != int(args.env_latent_dim):
+        raise ValueError(
+            f"env_latent_dim mismatch: args={args.env_latent_dim}, manifest={manifest_env_latent_dim}. "
+            "Use matching dimensions from stage-1 training."
+        )
+    if manifest_order is not None and list(manifest_order) != get_env_spec_ordered_keys():
+        raise ValueError(
+            f"ordered_keys mismatch: manifest={manifest_order}, expected={get_env_spec_ordered_keys()}."
+        )
+
+
+def extract_env_var_vector_from_spec(spec, env_var_dim):
+    ranges = get_env_spec_ranges()
+    ordered_keys = get_env_spec_ordered_keys()
     normalized = []
     for key in ordered_keys:
         value = float(spec[key])
@@ -142,31 +259,33 @@ def make_env(env_id, env_spec_pool, env_var_dim, air_hockey_config, seed):
 
 
 def load_env_spec_pool(env_spec_pool_path):
-    if not os.path.exists(env_spec_pool_path):
-        raise FileNotFoundError(
-            f"env_spec_pool_path '{env_spec_pool_path}' does not exist. "
-            "Use stage-1 artifacts that contain env_spec_pool.yaml or env_spec_pool.pt."
-        )
-    if env_spec_pool_path.endswith(".pt"):
-        pool = torch.load(env_spec_pool_path, map_location="cpu")
+    pool_path, manifest_path = _resolve_env_artifact_paths(env_spec_pool_path)
+    if pool_path.endswith(".pt"):
+        pool = torch.load(pool_path, map_location="cpu")
     else:
-        with open(env_spec_pool_path, "r") as f:
-            pool = yaml.load(f, Loader=yaml.FullLoader)
-    if not isinstance(pool, list) or len(pool) == 0:
-        raise ValueError("Loaded env_spec_pool is empty or invalid.")
-    return pool
+        pool = _load_yaml(pool_path)
+    return validate_env_spec_pool(pool), manifest_path, pool_path
 
 
 def split_env_pool(env_spec_pool, train_env_count, eval_env_count, seed):
-    if train_env_count > len(env_spec_pool):
-        raise ValueError(f"train_env_count={train_env_count} exceeds pool size={len(env_spec_pool)}.")
+    pool_size = len(env_spec_pool)
+    if eval_env_count < 0:
+        raise ValueError("eval_env_count must be >= 0.")
+    if train_env_count <= 0:
+        raise ValueError("train_env_count must be > 0.")
+    if train_env_count + eval_env_count > pool_size:
+        raise ValueError(
+            f"train_env_count + eval_env_count ({train_env_count + eval_env_count}) "
+            f"exceeds pool size ({pool_size})."
+        )
     rng = np.random.default_rng(seed)
-    idxs = rng.permutation(len(env_spec_pool))
-    train_idxs = idxs[:train_env_count]
+    idxs = rng.permutation(pool_size)
+    eval_idxs = idxs[:eval_env_count]
+    train_idxs = idxs[eval_env_count : eval_env_count + train_env_count]
+
     train_specs = [env_spec_pool[int(i)] for i in train_idxs]
     if eval_env_count <= 0:
         return train_specs, train_specs
-    eval_idxs = idxs[: min(eval_env_count, len(env_spec_pool))]
     eval_specs = [env_spec_pool[int(i)] for i in eval_idxs]
     return train_specs, eval_specs
 
@@ -183,18 +302,34 @@ def compute_context_lengths(done_flags):
     return context
 
 
-def build_window(states, actions, start_idx, end_idx, env_idx, min_context_len):
+def build_window(states, actions, start_idx, end_idx, env_idx, fixed_context_len):
     # Inclusive [start_idx, end_idx]
     state_seq = states[start_idx : end_idx + 1, env_idx]
     action_seq = actions[start_idx : end_idx + 1, env_idx]
     curr_len = state_seq.shape[0]
-    if curr_len < min_context_len:
-        pad = min_context_len - curr_len
+
+    if curr_len > fixed_context_len:
+        # Keep the most recent context when sequence is longer than fixed size.
+        state_seq = state_seq[-fixed_context_len:]
+        action_seq = action_seq[-fixed_context_len:]
+        curr_len = fixed_context_len
+
+    if curr_len < fixed_context_len:
+        pad = fixed_context_len - curr_len
         state_pad = state_seq[:1].repeat(pad, 1)
         action_pad = action_seq[:1].repeat(pad, 1)
         state_seq = torch.cat([state_pad, state_seq], dim=0)
         action_seq = torch.cat([action_pad, action_seq], dim=0)
-    return state_seq, action_seq
+        valid_mask = torch.cat(
+            [
+                torch.zeros(pad, dtype=torch.float32, device=state_seq.device),
+                torch.ones(curr_len, dtype=torch.float32, device=state_seq.device),
+            ],
+            dim=0,
+        )
+    else:
+        valid_mask = torch.ones(fixed_context_len, dtype=torch.float32, device=state_seq.device)
+    return state_seq, action_seq, valid_mask
 
 
 def collect_rollout_dataset(envs, agent, env_encoder, args, device):
@@ -270,13 +405,14 @@ def sample_batch_from_rollout(rollout, batch_size, args, mode):
     t_steps, n_envs = context_lengths.shape
     min_k = args.prior_min
     max_k = args.prior_max
-    min_model_context = max(args.min_model_context_len, 16)
+    fixed_context_len = 100
 
     sampled_states = []
     sampled_actions = []
     sampled_targets = []
     sampled_k = []
     sampled_available = []
+    sampled_masks = []
 
     max_tries = batch_size * 30
     tries = 0
@@ -296,16 +432,17 @@ def sample_batch_from_rollout(rollout, batch_size, args, mode):
             raise ValueError(f"Unknown mode: {mode}")
 
         start = t - k + 1
-        state_seq, action_seq = build_window(
+        state_seq, action_seq, valid_mask = build_window(
             states=states,
             actions=actions,
             start_idx=start,
             end_idx=t,
             env_idx=e,
-            min_context_len=min_model_context,
+            fixed_context_len=fixed_context_len,
         )
         sampled_states.append(state_seq)
         sampled_actions.append(action_seq)
+        sampled_masks.append(valid_mask)
         sampled_targets.append(targets[t, e])
         sampled_k.append(k)
         sampled_available.append(available)
@@ -319,6 +456,7 @@ def sample_batch_from_rollout(rollout, batch_size, args, mode):
     return {
         "states": torch.stack(sampled_states, dim=0),
         "actions": torch.stack(sampled_actions, dim=0),
+        "valid_mask": torch.stack(sampled_masks, dim=0),
         "targets": torch.stack(sampled_targets, dim=0),
         "k": torch.tensor(sampled_k, dtype=torch.float32, device=targets.device),
         "available": torch.tensor(sampled_available, dtype=torch.float32, device=targets.device),
@@ -386,10 +524,10 @@ class Args:
     adaptation_hidden_size: int = 64
 
     # Data collection and supervision.
-    train_env_count: int = 500
-    eval_env_count: int = 100
+    train_env_count: int = 450
+    eval_env_count: int = 50
     rollout_len: int = 200
-    prior_min: int = 10
+    prior_min: int = 50
     prior_max: int = 100
     min_model_context_len: int = 16
     latent_noise_std: float = 0.10
@@ -435,7 +573,12 @@ if __name__ == "__main__":
     with open(args.config, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
 
-    full_env_pool = load_env_spec_pool(args.env_spec_pool_path)
+    full_env_pool, manifest_path, resolved_pool_path = load_env_spec_pool(args.env_spec_pool_path)
+    if manifest_path is not None:
+        manifest = _load_yaml(manifest_path) or {}
+        _validate_manifest_compatibility(manifest, args)
+        print(f"Loaded stage-1 env manifest: {manifest_path}")
+    print(f"Loaded env spec pool artifact: {resolved_pool_path} (size={len(full_env_pool)})")
     train_env_specs, eval_env_specs = split_env_pool(
         env_spec_pool=full_env_pool,
         train_env_count=args.train_env_count,
@@ -491,6 +634,17 @@ if __name__ == "__main__":
         yaml.dump(config, f)
     with open(f"{log_parent_dir}/args.yaml", "w") as f:
         yaml.dump(vars(args), f)
+    env_artifact_usage = {
+        "input_env_spec_pool_path": os.path.abspath(args.env_spec_pool_path),
+        "resolved_env_spec_pool_path": resolved_pool_path,
+        "resolved_training_manifest_path": manifest_path,
+        "loaded_env_pool_size": int(len(full_env_pool)),
+        "train_env_count": int(args.train_env_count),
+        "eval_env_count": int(args.eval_env_count),
+        "split_seed": int(args.seed),
+    }
+    with open(f"{log_parent_dir}/env_spec_pool_usage.yaml", "w") as f:
+        yaml.dump(env_artifact_usage, f, sort_keys=False)
 
     base_policy_obs_dim = int(np.prod(train_envs.single_observation_space.shape))
     action_dim = int(np.prod(train_envs.single_action_space.shape))
@@ -563,7 +717,7 @@ if __name__ == "__main__":
                 args=args,
                 mode="train",
             )
-            preds = adaptation_module(batch["actions"], batch["states"])
+            preds = adaptation_module(batch["actions"], batch["states"], valid_mask=batch["valid_mask"])
             metrics = latent_metrics(preds, batch["targets"])
             loss = metrics["mse"]
 
@@ -600,7 +754,12 @@ if __name__ == "__main__":
             )
 
             with torch.no_grad():
-                inter = adaptation_module(batch["actions"], batch["states"], return_intermediates=True)
+                inter = adaptation_module(
+                    batch["actions"],
+                    batch["states"],
+                    valid_mask=batch["valid_mask"],
+                    return_intermediates=True,
+                )
                 emb_stats = tensor_stats(inter["embedded"])
                 proj_stats = tensor_stats(inter["projected"])
                 pooled_stats = tensor_stats(inter["pooled"])
@@ -638,7 +797,9 @@ if __name__ == "__main__":
                     args=args,
                     mode="eval_max",
                 )
-                eval_preds = adaptation_module(eval_batch["actions"], eval_batch["states"])
+                eval_preds = adaptation_module(
+                    eval_batch["actions"], eval_batch["states"], valid_mask=eval_batch["valid_mask"]
+                )
                 eval_metrics = latent_metrics(eval_preds, eval_batch["targets"])
                 writer.add_scalar("eval/loss_mse", eval_metrics["mse"].item(), global_step)
                 writer.add_scalar("eval/loss_mae", eval_metrics["mae"].item(), global_step)
