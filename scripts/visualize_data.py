@@ -141,7 +141,7 @@ class Visualizer:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Demonstrate the air hockey game.')
-    parser.add_argument('--cfg', type=str, default=None, help='Path to the configuration file.')
+    parser.add_argument('--cfg', type=str, default="/home/air-hockey/air-hockey-rl/agents/static_scaling/config.yaml", help='Path to the configuration file.')
     parser.add_argument('--data', type=str, default="/datastor1/calebc/public/data/mouse/cleaned_new/", help='Path to the trajectories folder.')
     parser.add_argument('--num-load', type=int, default=2, help='number of trajectories to load.')
     # /datastor1/calebc/public/data/mouse/cleaned_new/

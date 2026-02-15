@@ -62,12 +62,12 @@ n_eval_eps: 30
 n_threads: 1
 n_training_steps: 1000000
 print_reward: false
-seed:
-- 0
-- 1
-- 2
-- 3
-- 4
+# seed:
+# - 0
+# - 1
+# - 2
+# - 3
+# - 4
 tb_log_dir: baseline_models
 tb_log_name: air_hockey_agent
 vec_normalize_save_filepath: vec_normalize.pkl

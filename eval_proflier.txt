@@ -1,0 +1,519 @@
+         8738456 function calls (8732846 primitive calls) in 16.826 seconds
+
+   Ordered by: internal time
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+     2124    1.744    0.001    1.744    0.001 {built-in method mujoco._render.mjr_readPixels}
+    26550    1.512    0.000    1.512    0.000 {built-in method mujoco._functions.mj_step}
+    26550    1.176    0.000    1.176    0.000 {built-in method mujoco._functions.mj_forward}
+    26550    1.139    0.000    5.783    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/parts/arm/osc.py:403(run_controller)
+    26550    1.062    0.000    1.102    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/control_utils.py:43(opspace_matrices)
+     2124    0.873    0.000    0.873    0.000 {built-in method mujoco._render.mjr_render}
+    79650    0.813    0.000    0.971    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/composite/composite_controller.py:142(action_limits)
+   664866    0.695    0.000    0.695    0.000 {built-in method numpy.array}
+    26550    0.689    0.000    9.170    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/robots/fixed_base_robot.py:121(control)
+    26460    0.643    0.000    1.781    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/parts/controller.py:177(_update_single_reference)
+    27612    0.595    0.000    2.684    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/parts/controller.py:199(update)
+   966930    0.495    0.000    0.495    0.000 {built-in method builtins.getattr}
+    26550    0.286    0.000    0.817    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/parts/gripper/simple_grip.py:150(run_controller)
+   158940    0.250    0.000    0.250    0.000 {built-in method mujoco._functions.mj_jacSite}
+   398250    0.204    0.000    3.212    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/observables.py:214(update)
+    53100    0.182    0.000    0.415    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/composite/composite_controller.py:125(get_controller_base_pose)
+    26550    0.170    0.000    3.387    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/environments/base.py:371(_update_observables)
+    26550    0.168    0.000    0.269    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/shape_base.py:380(stack)
+    79470    0.165    0.000    0.475    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/binding_utils.py:821(get_site_jacp)
+    26550    0.161    0.000    0.196    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/parts/controller.py:303(torque_compensation)
+    27612    0.151    0.000    0.220    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/parts/gripper/gripper_controller.py:118(update)
+    79470    0.150    0.000    0.402    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/binding_utils.py:835(get_site_jacr)
+   554436    0.143    0.000    0.445    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/binding_utils.py:569(<lambda>)
+    53010    0.137    0.000    0.536    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/binding_utils.py:849(get_site_xvelp)
+    26550    0.135    0.000    6.960    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/composite/composite_controller.py:110(run_controller)
+    56286    0.124    0.000    0.124    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/_methods.py:99(_clip)
+    26550    0.114    0.000   10.064    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/environments/robot_env.py:564(_pre_action)
+    27522    0.108    0.000    0.202    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/shape_base.py:220(vstack)
+    53010    0.102    0.000    0.418    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/binding_utils.py:862(get_site_xvelr)
+     2124    0.101    0.000    0.321    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/environments/base.py:382(_get_observations)
+   160002    0.096    0.000    0.096    0.000 {method 'reshape' of 'numpy.ndarray' objects}
+     1062    0.093    0.000   16.637    0.016 /home/air-hockey/air-hockey-rl/airhockey/sims/airhockey_robosuite.py:833(get_transition)
+   167436    0.089    0.000    0.089    0.000 {built-in method numpy.zeros}
+   324432    0.086    0.000    0.264    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/binding_utils.py:260(<lambda>)
+    56286    0.081    0.000    0.292    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/fromnumeric.py:2241(clip)
+   163548    0.079    0.000    0.079    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/serialize.py:30(_numba_unpickle)
+   291600    0.078    0.000    0.078    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/binding_utils.py:400(site_name2id)
+    26550    0.072    0.000    0.094    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/control_utils.py:85(orientation_error)
+    82746    0.068    0.000    0.257    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/fromnumeric.py:51(_wrapfunc)
+    26550    0.065    0.000    0.079    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/control_utils.py:7(nullspace_torques)
+    53100    0.063    0.000    0.502    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/composite/composite_controller.py:134(update_state)
+    27522    0.063    0.000    0.081    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/shape_base.py:80(atleast_2d)
+    79650    0.061    0.000    1.075    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/robots/robot.py:569(action_dim)
+   486378    0.057    0.000    0.057    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/binding_utils.py:591(model)
+   407718    0.057    0.000    0.057    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/multiarray.py:180(concatenate)
+    26460    0.051    0.000    0.051    0.000 {built-in method mujoco._functions.mj_fullM}
+   159300    0.046    0.000    0.061    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/models/grippers/gripper_model.py:64(dof)
+    79650    0.044    0.000    1.014    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/robots/fixed_base_robot.py:191(action_limits)
+     3186    0.043    0.000    0.046    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/transform_utils.py:316(mat2quat)
+   365382    0.043    0.000    0.043    0.000 {built-in method builtins.len}
+   242928    0.037    0.000    0.037    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/multiarray.py:761(dot)
+    79650    0.034    0.000    0.034    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/parts/arm/osc.py:546(control_limits)
+     2124    0.031    0.000    0.923    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/binding_utils.py:127(render)
+    55224    0.030    0.000    0.149    0.000 {method 'clip' of 'numpy.ndarray' objects}
+     1062    0.030    0.000    0.055    0.000 /home/air-hockey/air-hockey-rl/airhockey/airhockey_base.py:495(get_reward_shaping)
+    54072    0.029    0.000    0.043    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/shape_base.py:208(_arrays_for_stack_dispatcher)
+     1062    0.028    0.000    0.073    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/robots/fixed_base_robot.py:176(<listcomp>)
+     8082    0.027    0.000    0.047    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/linalg/_linalg.py:2575(norm)
+    26460    0.027    0.000    0.074    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/fromnumeric.py:211(reshape)
+    26550    0.027    0.000    0.027    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/shape_base.py:458(<setcomp>)
+    26550    0.026    0.000    0.026    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/shape_base.py:466(<listcomp>)
+    26550    0.025    0.000    1.536    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/binding_utils.py:1092(step)
+     1062    0.023    0.000   16.824    0.016 /home/air-hockey/air-hockey-rl/airhockey/airhockey_base.py:566(single_agent_step)
+    53100    0.023    0.000    0.023    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/parts/arm/osc.py:497(update_origin)
+    26550    0.022    0.000    0.029    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/shape_base.py:454(<listcomp>)
+    26550    0.021    0.000    1.197    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/binding_utils.py:1088(forward)
+     2124    0.019    0.000    0.019    0.000 {built-in method mujoco._functions.mjv_updateScene}
+    12330    0.019    0.000    0.019    0.000 {method 'dot' of 'numpy.ndarray' objects}
+     3186    0.018    0.000    0.018    0.000 {method 'reduce' of 'numpy.ufunc' objects}
+    26460    0.018    0.000    1.799    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/parts/controller.py:170(update_reference_data)
+1898/1894    0.016    0.000    0.037    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/ffi.py:195(__call__)
+   109206    0.014    0.000    0.014    0.000 {built-in method numpy.asanyarray}
+    26550    0.014    0.000    0.035    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/shape_base.py:370(_stack_dispatcher)
+   111510    0.014    0.000    0.014    0.000 {method 'items' of 'collections.OrderedDict' objects}
+    54302    0.014    0.000    0.014    0.000 {built-in method builtins.hasattr}
+     1062    0.014    0.000    0.190    0.000 /home/air-hockey/air-hockey-rl/airhockey/sims/airhockey_robosuite.py:886(get_current_state)
+    56286    0.013    0.000    0.013    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/fromnumeric.py:2236(_clip_dispatcher)
+     2124    0.013    0.000    2.700    0.001 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/binding_utils.py:1104(render)
+     6372    0.013    0.000    0.017    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/numeric.py:137(ones)
+8496/3186    0.012    0.000    0.021    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/models/base.py:274(correct_naming)
+    55480    0.012    0.000    0.012    0.000 {method 'get' of 'dict' objects}
+     2124    0.012    0.000    0.040    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/robots/robot.py:679(get_sensor_measurement)
+    90115    0.012    0.000    0.012    0.000 {method 'append' of 'list' objects}
+     6372    0.011    0.000    0.027    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/numeric.py:772(convolve)
+     2124    0.011    0.000    1.762    0.001 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/binding_utils.py:165(read_pixels)
+     6372    0.011    0.000    0.011    0.000 {built-in method numpy._core._multiarray_umath.correlate}
+    82836    0.011    0.000    0.011    0.000 {method 'keys' of 'dict' objects}
+     2124    0.011    0.000    0.016    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/transform_utils.py:562(pose_inv)
+     1062    0.011    0.000    0.051    0.000 /home/air-hockey/air-hockey-rl/airhockey/airhockey_base.py:428(has_finished)
+    27522    0.011    0.000    0.033    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/shape_base.py:216(_vhstack_dispatcher)
+    27612    0.010    0.000    0.010    0.000 {built-in method numpy.lib.array_utils.normalize_axis_index}
+     1062    0.010    0.000    0.061    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/parts/arm/osc.py:351(compute_goal_ori)
+     8496    0.010    0.000    0.010    0.000 {built-in method numpy.empty}
+     1062    0.010    0.000    0.011    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/lib/_function_base_impl.py:1369(diff)
+    26550    0.008    0.000    0.008    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/parts/gripper/gripper_controller.py:88(run_controller)
+     1062    0.008    0.000    0.040    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/transform_utils.py:298(mat2pose)
+    26550    0.008    0.000    0.008    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/parts/controller.py:140(run_controller)
+     2124    0.007    0.000    0.010    0.000 /home/air-hockey/air-hockey-rl/airhockey/sims/airhockey_robosuite.py:578(robosuite_to_high_level_coords)
+     1062    0.007    0.000    0.015    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/parts/controller.py:149(scale_action)
+    31860    0.007    0.000    0.007    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/observables.py:395(modality)
+     1062    0.007    0.000    0.009    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/lib/_twodim_base_impl.py:163(eye)
+     3186    0.007    0.000    0.009    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/transform_utils.py:784(make_pose)
+     2124    0.007    0.000    0.027    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/binding_utils.py:693(get_body_xvelp)
+     1062    0.007    0.000    0.306    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/composite/composite_controller.py:98(set_goal)
+    26554    0.007    0.000    0.007    0.000 {method 'clear' of 'dict' objects}
+     1062    0.006    0.000    0.072    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/parts/arm/osc.py:285(world_to_origin_frame)
+     1062    0.006    0.000    0.273    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/parts/arm/osc.py:227(set_goal)
+     2124    0.006    0.000    2.706    0.001 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/environments/robot_env.py:411(camera_rgb)
+     7434    0.006    0.000    0.010    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/buffers.py:113(push)
+     1062    0.006    0.000    0.007    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/transform_utils.py:461(quat2mat)
+     1008    0.005    0.000    0.013    0.000 /home/air-hockey/air-hockey-rl/airhockey/airhockey_rewards/airhockey_simple_task_rewards.py:27(get_base_reward)
+     2124    0.005    0.000    0.017    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/binding_utils.py:665(get_body_jacp)
+     1062    0.005    0.000    0.011    0.000 /usr/lib/python3.10/copy.py:128(deepcopy)
+    26460    0.005    0.000    0.005    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/fromnumeric.py:206(_reshape_dispatcher)
+     1062    0.005    0.000    0.019    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/robots/robot.py:432(eef_quat_site)
+     2124    0.005    0.000    0.005    0.000 {built-in method mujoco._functions.mj_jacBody}
+    31864    0.005    0.000    0.005    0.000 {method 'items' of 'dict' objects}
+     1062    0.005    0.000    0.017    0.000 /home/air-hockey/air-hockey-rl/airhockey/sims/real/coordinate_transform.py:19(get_clip_limits)
+    26550    0.005    0.000    0.005    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/environments/robot_env.py:282(action_dim)
+     1062    0.005    0.000    0.011    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/parts/gripper/gripper_controller.py:97(scale_action)
+    30039    0.005    0.000    0.005    0.000 {built-in method builtins.isinstance}
+     1062    0.005    0.000    0.005    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/robots/robot.py:647(_joint_positions)
+    31860    0.005    0.000    0.005    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/observables.py:385(obs)
+     1062    0.004    0.000    0.009    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/robots/robot.py:345(<listcomp>)
+    27522    0.004    0.000    0.004    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/shape_base.py:76(_atleast_2d_dispatcher)
+     2124    0.004    0.000    0.014    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/fromnumeric.py:69(_wrapreduction)
+    31860    0.004    0.000    0.004    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/observables.py:269(is_enabled)
+    26554    0.004    0.000    0.004    0.000 {method 'values' of 'collections.OrderedDict' objects}
+     1062    0.004    0.000    0.009    0.000 /home/air-hockey/air-hockey-rl/airhockey/sims/airhockey_robosuite.py:816(translate_action)
+     2124    0.004    0.000    0.018    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/fromnumeric.py:2338(sum)
+     5310    0.004    0.000    0.004    0.000 {method 'format' of 'str' objects}
+     1062    0.004    0.000    0.076    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/parts/arm/osc.py:306(compute_goal_pos)
+     1092    0.004    0.000    0.004    0.000 {method 'update' of 'dict' objects}
+     1062    0.004    0.000    0.014    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/transform_utils.py:515(axisangle2quat)
+     2124    0.003    0.000    0.020    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/models/base.py:627(important_sensors)
+    31860    0.003    0.000    0.003    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/observables.py:279(is_active)
+     1062    0.003    0.000    0.007    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/robots/robot.py:357(<listcomp>)
+     1062    0.003    0.000    0.003    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/robots/robot.py:347(joint_pos_cos)
+     1062    0.003    0.000    0.003    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/transform_utils.py:50(convert_quat)
+     1062    0.003    0.000    0.003    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/buffers.py:53(push)
+     8082    0.003    0.000    0.003    0.000 {method 'ravel' of 'numpy.ndarray' objects}
+      756    0.003    0.000    0.024    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/wandb/sdk/lib/console_capture.py:172(write_with_callbacks)
+     1062    0.003    0.000    0.018    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/robots/robot.py:408(eef_quat)
+     2124    0.003    0.000    0.005    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/binding_utils.py:629(get_body_xpos)
+     1062    0.003    0.000    0.025    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/parts/gripper/simple_grip.py:110(set_goal)
+     8082    0.003    0.000    0.003    0.000 {built-in method numpy.asarray}
+    17226    0.003    0.000    0.003    0.000 {built-in method builtins.issubclass}
+     1062    0.003    0.000    0.003    0.000 /usr/lib/python3.10/copy.py:243(_keep_alive)
+     1062    0.003    0.000    0.054    0.000 /home/air-hockey/air-hockey-rl/airhockey/airhockey_simple_tasks.py:103(has_finished)
+     8082    0.003    0.000    0.004    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/linalg/_linalg.py:128(isComplexType)
+     1062    0.003    0.000    0.004    0.000 /home/air-hockey/air-hockey-rl/airhockey/utils.py:16(get_observation_by_type)
+     6372    0.003    0.000    0.003    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/binding_utils.py:364(body_name2id)
+     1062    0.003    0.000    0.040    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/robots/robot.py:734(ee_force)
+     3812    0.002    0.000    0.007    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/event.py:243(notify)
+     2124    0.002    0.000    0.004    0.000 /home/air-hockey/air-hockey-rl/airhockey/sims/airhockey_robosuite.py:601(robosuite_to_high_level_vel)
+     1062    0.002    0.000    0.007    0.000 {method 'clip' of 'numpy.generic' objects}
+      756    0.002    0.000    0.002    0.000 {method 'write' of '_io.TextIOWrapper' objects}
+     3812    0.002    0.000    0.009    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/event.py:209(broadcast)
+      760    0.002    0.000    0.006    0.000 /usr/lib/python3.10/contextlib.py:533(__exit__)
+     1062    0.002    0.000    0.006    0.000 /home/air-hockey/air-hockey-rl/airhockey/airhockey_simple_tasks.py:86(get_observation)
+     1512    0.002    0.000    0.003    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/wandb/sdk/lib/console_capture.py:193(_enter_callbacks)
+     1062    0.002    0.000    0.016    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/controllers/parts/arm/osc.py:300(goal_origin_to_eef_pose)
+    15930    0.002    0.000    0.002    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/observables.py:152(<lambda>)
+     2934    0.002    0.000    0.002    0.000 {built-in method builtins.min}
+      108    0.002    0.000    0.026    0.000 {built-in method builtins.print}
+    15930    0.002    0.000    0.002    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/observables.py:154(<lambda>)
+     3812    0.002    0.000    0.004    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/event.py:100(__init__)
+     1062    0.002    0.000    0.002    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/robots/robot.py:351(joint_pos_sin)
+     4248    0.002    0.000    0.005    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/models/grippers/gripper_model.py:50(naming_prefix)
+     1062    0.002    0.000    0.012    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/robots/robot.py:343(joint_pos)
+     1062    0.002    0.000   16.825    0.016 /home/air-hockey/air-hockey-rl/airhockey/airhockey_base.py:552(step)
+     1906    0.002    0.000    0.009    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/event.py:404(end_event)
+     4248    0.002    0.000    0.002    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/binding_utils.py:456(sensor_name2id)
+     2292    0.002    0.000    0.002    0.000 /usr/lib/python3.10/contextlib.py:102(__init__)
+     1062    0.002    0.000    0.002    0.000 /home/air-hockey/air-hockey-rl/airhockey/sims/airhockey_robosuite.py:324(<lambda>)
+     1906    0.002    0.000    0.008    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/event.py:390(start_event)
+     2280    0.002    0.000    0.010    0.000 /usr/lib/python3.10/contextlib.py:482(enter_context)
+     1062    0.002    0.000    0.008    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/models/robots/manipulators/manipulator_model.py:142(eef_name)
+     1062    0.002    0.000    0.025    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/robots/robot.py:745(ee_torque)
+     1062    0.002    0.000    0.002    0.000 {method '__deepcopy__' of 'numpy.ndarray' objects}
+    15930    0.002    0.000    0.002    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/observables.py:153(<lambda>)
+     1062    0.002    0.000    0.003    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/robots/robot.py:404(eef_pos)
+     1062    0.002    0.000    0.003    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/binding_utils.py:641(get_body_xquat)
+     2124    0.002    0.000    0.003    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/models/grippers/gripper_model.py:150(_important_sensors)
+4858/4842    0.002    0.000    0.007    0.000 {built-in method builtins.next}
+     8082    0.001    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/linalg/_linalg.py:2571(_norm_dispatcher)
+     2124    0.001    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/binding_utils.py:426(camera_name2id)
+     1062    0.001    0.000    0.002    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/robots/robot.py:465(gripper_qpos)
+     1008    0.001    0.000    0.014    0.000 /home/air-hockey/air-hockey-rl/airhockey/airhockey_base.py:288(get_base_reward)
+     1062    0.001    0.000    0.019    0.000 /home/air-hockey/air-hockey-rl/airhockey/sims/airhockey_robosuite.py:1070(gripper_eef_vel)
+     2124    0.001    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/fromnumeric.py:70(<dictcomp>)
+     2070    0.001    0.000    0.001    0.000 {built-in method builtins.max}
+     2280    0.001    0.000    0.003    0.000 /usr/lib/python3.10/contextlib.py:509(_push_cm_exit)
+     1906    0.001    0.000    0.002    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/event.py:270(on_end)
+     1898    0.001    0.000    0.010    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/ffi.py:77(__enter__)
+2292/2284    0.001    0.000    0.004    0.000 /usr/lib/python3.10/contextlib.py:139(__exit__)
+     3828    0.001    0.000    0.002    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/event.py:66(_guard_kind)
+     1898    0.001    0.000    0.011    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/ffi.py:83(__exit__)
+     1062    0.001    0.000    0.009    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/robots/robot.py:355(joint_vel)
+     1062    0.001    0.000    0.011    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/_methods.py:58(_any)
+     2268    0.001    0.000    0.001    0.000 {method 'set' of '_contextvars.ContextVar' objects}
+     6372    0.001    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/numeric.py:768(_convolve_dispatcher)
+     3812    0.001    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/event.py:138(is_start)
+     2124    0.001    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/models/grippers/gripper_model.py:161(<dictcomp>)
+     1062    0.001    0.000    0.002    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/robots/robot.py:469(gripper_qvel)
+     3856    0.001    0.000    0.001    0.000 {method '__exit__' of '_thread.lock' objects}
+     1062    0.001    0.000    0.012    0.000 {method 'any' of 'numpy.ndarray' objects}
+2292/2284    0.001    0.000    0.005    0.000 /usr/lib/python3.10/contextlib.py:130(__enter__)
+     6372    0.001    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/multiarray.py:1098(copyto)
+     1062    0.001    0.000    0.001    0.000 {built-in method builtins.vars}
+     2124    0.001    0.000    0.007    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/utils/transform_utils.py:541(pose_in_A_to_pose_in_B)
+     2292    0.001    0.000    0.003    0.000 /usr/lib/python3.10/contextlib.py:279(helper)
+      589    0.001    0.000    0.009    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/value.py:231(is_declaration)
+     1422    0.001    0.000    0.001    0.000 {built-in method builtins.abs}
+     1906    0.001    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/event.py:265(on_start)
+     1062    0.001    0.000    0.002    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/models/robots/robot_model.py:283(naming_prefix)
+     2280    0.001    0.000    0.001    0.000 /usr/lib/python3.10/contextlib.py:514(_push_exit_callback)
+     1898    0.001    0.000    0.008    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/base.py:1252(enter_fn)
+     5310    0.001    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/models/base.py:563(exclude_from_prefixing)
+     1898    0.001    0.000    0.010    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/base.py:1255(exit_fn)
+     3271    0.001    0.000    0.001    0.000 {built-in method builtins.id}
+       16    0.001    0.000    0.027    0.002 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:1098(<setcomp>)
+     3186    0.001    0.000    0.001    0.000 {method 'copy' of 'dict' objects}
+     1512    0.001    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/wandb/sdk/lib/wb_logging.py:93(log_to_all_runs)
+     1062    0.001    0.000    0.004    0.000 /home/air-hockey/air-hockey-rl/airhockey/sims/airhockey_robosuite.py:1073(gripper_eef_pos)
+     3895    0.001    0.000    0.001    0.000 {method 'startswith' of 'str' objects}
+      475    0.001    0.000    0.007    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/value.py:157(name)
+     1062    0.001    0.000    0.010    0.000 /home/air-hockey/air-hockey-rl/airhockey/sims/airhockey_robosuite.py:1067(obj_vel)
+     1062    0.001    0.000    0.001    0.000 {built-in method math.isclose}
+     1062    0.001    0.000    0.001    0.000 {method 'transpose' of 'numpy.ndarray' objects}
+     1062    0.001    0.000    0.003    0.000 /home/air-hockey/air-hockey-rl/airhockey/sims/airhockey_robosuite.py:1064(obj_pos)
+      454    0.001    0.000    0.006    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/module.py:240(_next)
+     2280    0.001    0.000    0.001    0.000 /usr/lib/python3.10/contextlib.py:442(_create_exit_wrapper)
+      621    0.001    0.000    0.010    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/module.py:220(__next__)
+     3812    0.001    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/event.py:108(kind)
+     2124    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/_core/fromnumeric.py:2333(_sum_dispatcher)
+      621    0.000    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/ffi.py:334(close)
+     1062    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/robots/robot.py:999(part_controllers)
+     1062    0.000    0.000    0.000    0.000 {method 'disable' of '_lsprof.Profiler' objects}
+     1898    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/ffi.py:139(__getattr__)
+     3796    0.000    0.000    0.000    0.000 {built-in method time.perf_counter}
+     2124    0.000    0.000    0.000    0.000 {built-in method _operator.index}
+     1906    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/event.py:148(is_end)
+      621    0.000    0.000    0.002    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/ffi.py:377(__del__)
+       12    0.000    0.000    0.002    0.000 {built-in method _pickle.loads}
+      589    0.000    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/value.py:87(__init__)
+     1062    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/models/robots/manipulators/manipulator_model.py:175(_eef_name)
+      760    0.000    0.000    0.000    0.000 /usr/lib/python3.10/contextlib.py:452(__init__)
+     1062    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/airhockey/sims/grippers/round_gripper.py:37(format_action)
+     1906    0.000    0.000    0.000    0.000 {method 'acquire' of '_thread.RLock' objects}
+      621    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/ffi.py:344(detach)
+     1062    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numpy/lib/_function_base_impl.py:1365(_diff_dispatcher)
+      756    0.000    0.000    0.000    0.000 {method 'reset' of '_contextvars.ContextVar' objects}
+     1906    0.000    0.000    0.000    0.000 {method 'release' of '_thread.RLock' objects}
+      760    0.000    0.000    0.000    0.000 {built-in method sys.exc_info}
+     1062    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/robots/robot.py:467(<listcomp>)
+     2280    0.000    0.000    0.000    0.000 {method 'pop' of 'collections.deque' objects}
+     2280    0.000    0.000    0.000    0.000 {method 'append' of 'collections.deque' objects}
+      637    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/ffi.py:327(__init__)
+     1512    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/wandb/sdk/lib/console_capture.py:240(_reset_on_exception)
+      167    0.000    0.000    0.002    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/module.py:251(_next)
+       85    0.000    0.000    0.002    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:1406(set_env)
+     1062    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/robosuite/robots/robot.py:471(<listcomp>)
+      110    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:179(_get_module_lock)
+      487    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/common.py:9(_decode_string)
+     1062    0.000    0.000    0.000    0.000 {method 'keys' of 'collections.OrderedDict' objects}
+       55    0.000    0.000    0.001    0.000 <frozen importlib._bootstrap>:1022(_find_and_load)
+       85    0.000    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/executionengine.py:73(get_global_value_address)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:1020(scan_unresolved_symbols)
+        8    0.000    0.000    0.000    0.000 {built-in method io.open}
+      268    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/utils.py:475(stream_list)
+  266/140    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/types/abstract.py:121(__hash__)
+      760    0.000    0.000    0.000    0.000 {method 'values' of 'dict' objects}
+        8    0.000    0.000    0.000    0.000 {method 'read' of '_io.BufferedReader' objects}
+      110    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:100(acquire)
+      756    0.000    0.000    0.000    0.000 {method 'get' of '_contextvars.ContextVar' objects}
+      495    0.000    0.000    0.000    0.000 {method 'decode' of 'bytes' objects}
+      760    0.000    0.000    0.000    0.000 /usr/lib/python3.10/contextlib.py:530(__enter__)
+      110    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:125(release)
+       81    0.000    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/environment.py:46(_rebuild_env)
+      268    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/typing/templates.py:1322(new_registrations)
+      641    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/common.py:27(_is_shutting_down)
+      589    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/value.py:125(is_global)
+        4    0.000    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/cpu.py:60(load_additional_registries)
+       36    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/typing/context.py:495(install_registry)
+       72    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:1053(_handle_fromlist)
+      110    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:71(__init__)
+        4    0.000    0.000    0.050    0.012 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/dispatcher.py:862(compile)
+      110    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:198(cb)
+        4    0.000    0.000    0.045    0.011 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/compiler.py:227(_rebuild)
+       32    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/base.py:352(install_registry)
+        8    0.000    0.000    0.028    0.003 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:1094(_load_defined_symbols)
+      589    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/ffi.py:353(_dispose)
+      268    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/utils.py:484(sublist_iterator)
+      180    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/types/npytypes.py:482(key)
+  277/151    0.000    0.000    0.000    0.000 {built-in method builtins.hash}
+       93    0.000    0.000    0.003    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:1065(wrapper)
+       14    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/types/common.py:49(__init__)
+       81    0.000    0.000    0.000    0.000 /usr/lib/python3.10/weakref.py:195(get)
+       51    0.000    0.000    0.000    0.000 /usr/lib/python3.10/weakref.py:165(__setitem__)
+       14    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/typing/typeof.py:258(_typeof_ndarray)
+       30    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/types/abstract.py:71(_type_reconstructor)
+       34    0.000    0.000    0.000    0.000 /usr/lib/python3.10/ctypes/__init__.py:509(cast)
+       40    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/ffi.py:265(close)
+       47    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/types/abstract.py:49(_intern)
+       55    0.000    0.000    0.001    0.000 /usr/lib/python3.10/importlib/__init__.py:108(import_module)
+       55    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:216(_lock_unlock_module)
+       14    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/types/npytypes.py:444(__init__)
+       17    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/types/abstract.py:61(__call__)
+        4    0.000    0.000    0.000    0.000 {built-in method _pickle.load}
+       16    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/module.py:189(functions)
+       55    0.000    0.000    0.001    0.000 <frozen importlib._bootstrap>:1038(_gcd_import)
+       16    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/module.py:176(global_variables)
+        4    0.000    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:643(__init__)
+       55    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:169(__enter__)
+       36    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/target_extension.py:53(get_local_target)
+       81    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/environment.py:60(lookup_environment)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/caching.py:581(_load_index)
+        4    0.000    0.000    0.050    0.012 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/dispatcher.py:344(_compile_for_args)
+       41    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/types/abstract.py:124(__eq__)
+      220    0.000    0.000    0.000    0.000 {built-in method _thread.allocate_lock}
+        8    0.000    0.000    0.000    0.000 {built-in method _hashlib.openssl_sha256}
+       20    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/ffi.py:260(__init__)
+       71    0.000    0.000    0.000    0.000 {built-in method _abc._abc_instancecheck}
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/cpu.py:225(get_executable)
+        4    0.000    0.000    0.043    0.011 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:932(_unserialize)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/typing/context.py:811(load_additional_registries)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/module.py:151(triple)
+       14    0.000    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/dispatcher.py:680(typeof_pyval)
+       16    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/event.py:337(install_timer)
+       32    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/module.py:215(__init__)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/executionengine.py:196(_raw_object_cache_getbuffer)
+      9/3    0.000    0.000    0.000    0.000 {built-in method _abc._abc_subclasscheck}
+       51    0.000    0.000    0.000    0.000 /usr/lib/python3.10/weakref.py:353(__init__)
+        8    0.000    0.000    0.000    0.000 {method '__exit__' of '_io._IOBase' objects}
+       55    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:968(_sanity_check)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/module.py:11(parse_assembly)
+      220    0.000    0.000    0.000    0.000 {built-in method _imp.acquire_lock}
+      150    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/types/abstract.py:96(key)
+      220    0.000    0.000    0.000    0.000 {built-in method _thread.get_ident}
+      151    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/value.py:129(is_function)
+      268    0.000    0.000    0.000    0.000 {built-in method builtins.iter}
+       51    0.000    0.000    0.000    0.000 /usr/lib/python3.10/weakref.py:348(__new__)
+       99    0.000    0.000    0.000    0.000 {built-in method __new__ of type object at 0x5563ddf369a0}
+      220    0.000    0.000    0.000    0.000 {built-in method _imp.release_lock}
+        4    0.000    0.000    0.048    0.012 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/caching.py:724(_load_overload)
+       55    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:173(__exit__)
+        4    0.000    0.000    0.011    0.003 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/module.py:29(parse_bitcode)
+       16    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/module.py:237(_dispose)
+      105    0.000    0.000    0.000    0.000 {method 'encode' of 'str' objects}
+       71    0.000    0.000    0.000    0.000 /usr/lib/python3.10/abc.py:117(__instancecheck__)
+        4    0.000    0.000    0.003    0.001 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:788(_finalize_final_module)
+       16    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/module.py:248(_dispose)
+       14    0.000    0.000    0.000    0.000 /usr/lib/python3.10/functools.py:818(dispatch)
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/context.py:9(get_global_context)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/targets.py:18(get_process_triple)
+       14    0.000    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/typing/typeof.py:27(typeof)
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/caching.py:780(<lambda>)
+       20    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/ffi.py:278(__del__)
+       85    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:546(codegen)
+       85    0.000    0.000    0.000    0.000 {method 'from_address' of '_ctypes.PyCArrayType' objects}
+       14    0.000    0.000    0.000    0.000 <string>:1(<lambda>)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:1220(_create_empty_module)
+        4    0.000    0.000    0.002    0.001 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:1003(_finalize_specific)
+        4    0.000    0.000    0.002    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/caching.py:614(_load_data)
+       55    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:165(__init__)
+        4    0.000    0.000    0.000    0.000 /usr/lib/python3.10/posixpath.py:71(join)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/dispatcher.py:295(add_overload)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/executionengine.py:145(_find_module_ptr)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/itanium_mangler.py:127(mangle_identifier)
+       30    0.000    0.000    0.000    0.000 /usr/lib/python3.10/copyreg.py:47(_reconstructor)
+        4    0.000    0.000    0.049    0.012 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/caching.py:713(load_overload)
+        4    0.000    0.000    0.002    0.001 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/caching.py:567(load)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/targets.py:108(get_host_cpu_name)
+       14    0.000    0.000    0.000    0.000 /usr/lib/python3.10/functools.py:884(wrapper)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/ir/module.py:243(__repr__)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/executionengine.py:84(add_module)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/ir/module.py:7(__init__)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/ir/module.py:217(_get_body_lines)
+       14    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/np/numpy_support.py:109(from_dtype)
+       18    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:404(parent)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/base.py:388(insert_user_function)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/typing/context.py:482(_load_builtins)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:529(__init__)
+       12    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/ffi.py:285(__str__)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:774(_finalize_dynamic_globals)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:1294(magic_tuple)
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/compiler_lock.py:11(acquire)
+        4    0.000    0.000    0.000    0.000 {method 'sub' of 're.Pattern' objects}
+        8    0.000    0.000    0.000    0.000 {method 'hexdigest' of '_hashlib.HASH' objects}
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/caching.py:764(_index_key)
+        4    0.000    0.000    0.000    0.000 /usr/lib/python3.10/re.py:288(_compile)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/itanium_mangler.py:199(prepend_namespace)
+       36    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/target_extension.py:47(current_target)
+       14    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/np/numpy_support.py:245(map_layout)
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/module.py:52(__init__)
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/event.py:182(register)
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/ffi.py:394(__hash__)
+        4    0.000    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:1301(_scan_and_fix_unresolved_refs)
+        4    0.000    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/base.py:261(refresh)
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/event.py:195(unregister)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/sigutils.py:22(normalize_signature)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:780(_verify_declare_only_symbols)
+       20    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/ffi.py:275(__exit__)
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/compiler_lock.py:15(release)
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/context.py:15(__init__)
+       32    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/base.py:368(insert_func_defn)
+        4    0.000    0.000    0.045    0.011 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/caching.py:477(rebuild)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/executionengine.py:65(get_function_address)
+       14    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/types/misc.py:63(unliteral)
+       16    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/event.py:312(install_listener)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/module.py:124(name)
+        4    0.000    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:1101(add_module)
+       32    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/base.py:380(_insert_cast_defn)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/ir/_utils.py:9(__init__)
+       32    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/base.py:376(_insert_setattr_defn)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:1318(_get_host_cpu_name)
+       32    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/base.py:384(_insert_get_constant_defn)
+        3    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/types/misc.py:101(__init__)
+       32    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/base.py:372(_insert_getattr_defn)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:982(get_pointer_to_function)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/itanium_mangler.py:83(_escape_string)
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/cgutils.py:1186(normalize_ir_text)
+        4    0.000    0.000    0.000    0.000 {built-in method numba._dynfunc.make_function}
+       18    0.000    0.000    0.000    0.000 {method 'add' of 'set' objects}
+       14    0.000    0.000    0.000    0.000 /usr/lib/python3.10/weakref.py:415(__getitem__)
+        4    0.000    0.000    0.000    0.000 /usr/lib/python3.10/re.py:202(sub)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/compiler_lock.py:32(_acquire_compile_lock)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:1039(scan_defined_symbols)
+        4    0.000    0.000    0.002    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/executionengine.py:94(finalize_object)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/itanium_mangler.py:114(_len_encoded)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/base.py:138(append)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/caching.py:632(_data_path)
+       20    0.000    0.000    0.000    0.000 {built-in method _ctypes.byref}
+       17    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/types/misc.py:108(key)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:1047(resolve)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/typing/context.py:232(refresh)
+       13    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/sigutils.py:43(check_type)
+        4    0.000    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:1157(create_library)
+        4    0.000    0.000    0.043    0.011 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:1164(unserialize_library)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/dispatcher.py:237(_compilation_chain_init_hook)
+        6    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/types/abstract.py:20(_autoincr)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:900(_object_getbuffer_hook)
+        2    0.000    0.000    0.000    0.000 /usr/lib/python3.10/weakref.py:496(popitem)
+        4    0.000    0.000    0.001    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:1398(_add_module)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/itanium_mangler.py:138(<listcomp>)
+       18    0.000    0.000    0.000    0.000 {method 'rpartition' of 'str' objects}
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/compiler_lock.py:19(__enter__)
+       32    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/module.py:229(__iter__)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/funcdesc.py:87(lookup_module)
+        4    0.000    0.000    0.000    0.000 {method '_insert' of '_dispatcher.Dispatcher' objects}
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/imputils.py:187(user_function)
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/ffi.py:292(__bool__)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/misc/llvm_pass_timings.py:325(__init__)
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/caching.py:34(_cache_log)
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/compiler_lock.py:22(__exit__)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/funcdesc.py:117(llvm_cpython_wrapper_name)
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/caching.py:750(_guard_against_spurious_io_errors)
+       17    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/types/abstract.py:93(__init__)
+      9/3    0.000    0.000    0.000    0.000 /usr/lib/python3.10/abc.py:121(__subclasscheck__)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/ir/module.py:225(_get_metadata_lines)
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/misc/llvm_pass_timings.py:329(record_legacy)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/dispatcher.py:178(__enter__)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/dispatcher.py:712(_callback_add_llvm_timer)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/typing/templates.py:78(__setstate__)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:632(_set_compiled_object)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/itanium_mangler.py:104(_fix_lead_digit)
+       14    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/types/abstract.py:118(__str__)
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/common.py:4(_encode_string)
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/dispatcher.py:696(_callback_add_timer)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/dispatcher.py:297(<listcomp>)
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/event.py:262(__init__)
+       20    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/binding/ffi.py:272(__enter__)
+        4    0.000    0.000    0.000    0.000 /usr/lib/python3.10/posixpath.py:41(_get_sep)
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/cpu.py:113(codegen)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/dispatcher.py:870(cb_llvm)
+       14    0.000    0.000    0.000    0.000 {built-in method _abc.get_cache_token}
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:620(enable_object_caching)
+        1    0.000    0.000    0.000    0.000 /usr/lib/python3.10/_collections_abc.py:983(clear)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/dispatcher.py:182(__exit__)
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/event.py:276(done)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/dispatcher.py:866(cb_compiler)
+        8    0.000    0.000    0.000    0.000 {method 'split' of 'str' objects}
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/entrypoints.py:11(init_all)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/base.py:37(__init__)
+        8    0.000    0.000    0.000    0.000 {method 'join' of 'str' objects}
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:553(name)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:1089(is_symbol_defined)
+        2    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/dispatcher.py:38(_numba_type_)
+        8    0.000    0.000    0.000    0.000 {method 'remove' of 'list' objects}
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/dispatcher.py:708(_callback_add_compiler_timer)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/runtime/nrt.py:19(initialize)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/ir/module.py:214(get_identified_types)
+        3    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/utils.py:718(get_hashable_key)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/typing/templates.py:49(args)
+        4    0.000    0.000    0.000    0.000 {built-in method _weakref.proxy}
+        1    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/types/abstract.py:28(_on_type_disposal)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:565(_ensure_finalized)
+        8    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/event.py:286(duration)
+        4    0.000    0.000    0.000    0.000 {method 'clear' of 'set' objects}
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/ir/module.py:219(<listcomp>)
+        4    0.000    0.000    0.000    0.000 {method 'endswith' of 'str' objects}
+        1    0.000    0.000    0.000    0.000 /usr/lib/python3.10/weakref.py:428(__setitem__)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/codegen.py:1052(<listcomp>)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/base.py:290(get_env_name)
+        4    0.000    0.000    0.000    0.000 {built-in method posix.fspath}
+        4    0.000    0.000    0.000    0.000 {method 'isdigit' of 'str' objects}
+        2    0.000    0.000    0.000    0.000 {method 'popitem' of 'dict' objects}
+        4    0.000    0.000    0.000    0.000 /usr/lib/python3.10/collections/__init__.py:579(__missing__)
+        4    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/llvmlite/ir/module.py:222(<listcomp>)
+        1    0.000    0.000    0.000    0.000 /home/air-hockey/air-hockey-rl/.venv/lib/python3.10/site-packages/numba/core/types/containers.py:330(key)
+        1    0.000    0.000    0.000    0.000 {method 'pop' of 'dict' objects}
+
+

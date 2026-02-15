@@ -1,6 +1,6 @@
 <mujoco model="air_hockey_table">
 
-    <option timestep="0.001" cone="elliptic" impratio="1"/>
+    <option timestep="0.001" cone="elliptic" impratio="1" gravity="0 0 -5"/>
 
     <asset>
         <material name="grey" specular="0.5" shininess="0.25" rgba="0.8 0.8 0.8 1"/>
@@ -31,7 +31,7 @@
         <body name="table" pos="1.064 0 0.8" axisangle="0 1 0 -0.09">
             <body name="table_surface">
                 <geom name="surface" type="box" material="white" size="1.064 0.609 0.0505" pos="0 0 -0.0505"
-                condim="4" friction="0.08 0.08 0.0" priority="1"
+                condim="4" friction="0.01 0.001 0.0" priority="1"
                 group="1" contype="1" conaffinity="1"/>
             </body>
             <body name="rim">

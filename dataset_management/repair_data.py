@@ -1,5 +1,7 @@
 import os
+os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 import h5py
+import imageio
 from airhockey.sims.real.proprioceptive_state import slicer, flatten
 from airhockey.sims.real.trajectory_merging import write_trajectory
 from dataset_management.plot_trajectories import plot_trajectories
@@ -249,8 +251,9 @@ def read_real_data(data_dir, num_load=-1):
                 else:
                     data_dict["done"] = [dones]
                 for i in range(len(dones)):
-                    cv2.imshow("frame", data_dict["image"][i])
-                    cv2.waitKey(100)
+                    # cv2.imshow("frame", data_dict["image"][i])
+                    # cv2.waitKey(100)
+                    # cv2.imwrite(os.path.join(data_dir, "imgs", f"frame_{tidx}_{i}.png"), data_dict["image"][-1][i])
                     print(tidx, data_dict["puck"][-1][i][:2], data_dict["paddle"][-1][i][:2], data_dict["action"][-1][i][:2], data_dict["desired_pose"][-1][i][:2] - data_dict["pose"][-1][i][:2])
                 plot_trajectories(os.path.join(data_dir, "imgs"), tidx, data_dict["paddle"][-1][:,:2], data_dict["puck"][-1][:,:2])
             except Exception as e:
@@ -312,3 +315,4 @@ if __name__ == "__main__":
     # read_real_data("/datastor1/calebc/public/data/mouse/expert_no_avoid_random_start_random_goal_all_new/")
     # read_real_data("/datastor1/calebc/public/data/mouse/state_data_all_new", num_load=5)
     # read_real_data("/datastor1/calebc/public/data/dilo/stationary/hitting_expert_all", num_load=10)
+    read_real_data("/data2/air_hockey/air_hockey_state_data/datastor1/calebc/public/data/mouse/state_data_all_new/",  num_load = 5);

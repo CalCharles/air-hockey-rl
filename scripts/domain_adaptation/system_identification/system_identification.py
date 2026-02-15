@@ -5,7 +5,7 @@ import imageio
 import numpy as np
 import yaml
 from airhockey.renderers.render import AirHockeyRenderer
-from planners import CEMPlanner# TODO: using https://cma-es.github.io/ for CMA-ES
+from scripts.domain_adaptation.cemplanner import CEMPlanner  # TODO: using https://cma-es.github.io/ for CMA-ES
 from scripts.domain_adaptation.encode_env_params import assign_values, extract_value
 from airhockey import AirHockeyEnv
 from dataset_management.create_dataset import load_dataset

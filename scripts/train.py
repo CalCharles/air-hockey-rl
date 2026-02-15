@@ -56,8 +56,9 @@ def main():
         print("Training completed successfully!")
         return 0
     except Exception as e:
-        print(f"Training failed with error: {e}")
-        return 1
+        #print(f"Training failed with error: {e}")
+        #return 1
+        raise
 
 
 if __name__ == "__main__":

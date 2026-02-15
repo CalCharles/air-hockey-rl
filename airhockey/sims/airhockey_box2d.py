@@ -225,7 +225,7 @@ class AirHockeyBox2D:
         pid_kp = kwargs.get('pid_kp', 1000.0)
         pid_ki = kwargs.get('pid_ki', 50.0)
         pid_kd = kwargs.get('pid_kd', 100.0)
-        self.use_pid = kwargs.get('use_pid', False)  # Flag to enable/disable PID control
+        self.use_pid = kwargs.get('use_pid', True)  # Flag to enable/disable PID control
         self.pid_controller = PIDController(Kp=pid_kp, Ki=pid_ki, Kd=pid_kd, dt=self.time_per_step)
 
         # these assume 2d, in 3d since we have height it would be higher mass
@@ -426,6 +426,9 @@ class AirHockeyBox2D:
         assert name == 'paddle_ego' or name == 'paddle_alt'
         pos = self.base_coord_to_box2d(pos)
         vel = self.base_coord_to_box2d(vel)
+        #Added - fixed type issue for system identification pipeline
+        pos = tuple(float(x) for x in pos)
+        vel = tuple(float(x) for x in vel)
         radius = self.paddle_radius
         paddle = self.world.CreateDynamicBody(
             fixtures=b2FixtureDef(
@@ -457,6 +460,9 @@ class AirHockeyBox2D:
         pos = self.base_coord_to_box2d(pos)
         vel = self.base_coord_to_box2d(vel)
         radius = self.puck_radius
+        #Added - fixed type issue for system identification pipeline
+        pos = tuple(float(x) for x in pos)
+        vel = tuple(float(x) for x in vel)
         puck = self.world.CreateDynamicBody(
             fixtures=b2FixtureDef(
                 shape=b2CircleShape(radius=radius),
@@ -593,7 +599,6 @@ class AirHockeyBox2D:
             return self.get_singleagent_transition(action)
     
     def get_singleagent_transition(self, action):
-
         action_list = [np.copy(self.last_action), np.copy(action)]
         time_to_sim = [self.time_per_step * self.action_lag, self.time_per_step * (1 - self.action_lag)]
         

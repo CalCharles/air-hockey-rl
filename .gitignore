@@ -184,27 +184,17 @@ pyrightconfig.json
 # VSCode
 .vscode/
 
-<<<<<<< HEAD
-# End of https://www.toptal.com/developers/gitignore/api/py
+# End of https://www.toptal.com/developers/gitignore/api/python
 
 testt/
 traj_videos/
 data/
 temp/
 gat_log/
-<<<<<<< HEAD
 
 *.gif
 *.zip
 *.0
-=======
-*.txt
->>>>>>> d3bce21c8ed03150ce2b91407dc3fa5b6993943b
-=======
-# End of https://www.toptal.com/developers/gitignore/api/python
-testt/
-traj_videos/
->>>>>>> goal_cond_verify
 
 # pytorch
 *.pth
@@ -215,3 +205,14 @@ gifs/
 plots/
 datasets/
 new_data/
+
+# sys-id run outputs
+scripts/domain_adaptation/system_identification/paddle/real2sim_runs/
+scripts/domain_adaptation/system_identification/paddle/grid_search_runs/
+scripts/domain_adaptation/system_identification/puck/real2sim_runs/
+
+# real data transform outputs
+scripts/real_data_transforms/logs/
+scripts/real_data_transforms/gifs/
+scripts/real_data_transforms/inflection_gifs/
+scripts/domain_adaptation/system_identification/sim2sim

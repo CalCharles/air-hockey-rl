@@ -17,6 +17,7 @@ air_hockey:
   - 1.007
   - -0.558
   - 0.558
+  return_goal_obs : false
   simulator: robosuite
   simulator_params:
     block_width: 0.0254

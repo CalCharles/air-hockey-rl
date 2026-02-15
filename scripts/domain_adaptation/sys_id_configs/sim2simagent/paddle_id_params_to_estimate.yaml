@@ -1,0 +1,12 @@
+force_scaling:
+  lower: 0.33
+  upper: 1.67
+  start: 1
+paddle_damping:
+  lower: 1.0
+  upper: 5.0
+  start: 3.0
+paddle_density: 
+  lower: 500
+  upper: 2500
+  start: 1500

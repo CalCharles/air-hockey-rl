@@ -1,6 +1,18 @@
 from types import SimpleNamespace
 import numpy as np
 import math
+
+
+from robosuite.models.grippers import GRIPPER_MAPPING, gripper_factory
+
+from airhockey.sims.grippers.round_gripper import RoundGripper 
+if "RoundGripper" not in GRIPPER_MAPPING:
+    GRIPPER_MAPPING["RoundGripper"] = RoundGripper
+
+from robosuite.models.robots.manipulators import UR5e
+if hasattr(UR5e, "default_gripper"):
+    UR5e.default_gripper = {"right": "RoundGripper"}
+
 # Compatibility fix for newer Robosuite versions
 try:
     from robosuite.environments.manipulation.single_arm_env import SingleArmEnv
@@ -31,6 +43,57 @@ import numpy as np
 from robosuite.models.arenas import Arena
 from airhockey.sims.utils import custom_xml_path_completion
 from ..utils import dict_to_namespace
+from robosuite.utils import binding_utils as _ru_binding_utils
+import re
+from itertools import count
+
+if not hasattr(_ru_binding_utils, "_xml_dump_patched"):
+    _orig_from_xml_string = _ru_binding_utils.MjSim.from_xml_string
+
+    _body_name_base_re = re.compile(r'(<\s*body\b[^>]*\bname\s*=\s*")base(")', re.IGNORECASE)
+
+    def _rewrite_body_base_names(xml: str) -> str:
+        idx = count(1)
+
+        def repl(m: re.Match) -> str:
+            n = next(idx)
+            new = "arena_base" if n == 1 else f"arena_base_{n}"
+            return m.group(1) + new + m.group(2)
+
+        return _body_name_base_re.sub(repl, xml)
+
+    def _from_xml_string_dump(xml, *args, **kwargs):
+        import os
+        import tempfile
+        debug_dir = os.path.join(tempfile.gettempdir(), "air_hockey_debug")
+        os.makedirs(debug_dir, exist_ok=True)
+        
+        try:
+            with open(os.path.join(debug_dir, "merged_dump.xml"), "w") as f:
+                f.write(xml)
+        except Exception as e:
+            print("[DEBUG] dump original failed:", e, flush=True)
+
+        xml2 = _rewrite_body_base_names(xml)
+
+        try:
+            with open(os.path.join(debug_dir, "merged_dump_rewritten.xml"), "w") as f:
+                f.write(xml2)
+            orig_cnt = len(_body_name_base_re.findall(xml))
+            new_cnt  = len(_body_name_base_re.findall(xml2))
+        except Exception as e:
+            print("[DEBUG] dump rewritten failed:", e, flush=True)
+
+        try:
+            return _orig_from_xml_string(xml2, *args, **kwargs)
+        except Exception as e:
+            print(f"[DEBUG] MuJoCo XML parsing failed even after base name fix: {e}", flush=True)
+            print(f"[DEBUG] Falling back to original XML", flush=True)
+            return _orig_from_xml_string(xml, *args, **kwargs)
+
+    _ru_binding_utils.MjSim.from_xml_string = staticmethod(_from_xml_string_dump)
+    _ru_binding_utils._xml_dump_patched = True
+    print("[DEBUG] Patched MjSim.from_xml_string to REWRITE and dump XML", flush=True)
 
 class AirHockeyRobosuite(AirHockeySim):
     """
@@ -197,7 +260,7 @@ class AirHockeyRobosuite(AirHockeySim):
             'task': "JUGGLE_PUCK",
             'table_xml': "arenas/air_hockey_table.xml",  # relative to assets dir
             'puck_radius': 0.03165,
-            'puck_damping': 0.01,
+            'puck_damping': 0.0001,
             'puck_density': 30,
             'seed': 0,
             'absorb_target': False,
@@ -205,7 +268,6 @@ class AirHockeyRobosuite(AirHockeySim):
             'paddle_damping': 1,
             'paddle_density': 1,
             'block_density': 1,
-            'gravity': 1,
             'max_force_timestep': 1,
             'paddle_bounds': [],
             'paddle_edge_bounds': [],
@@ -251,6 +313,7 @@ class AirHockeyRobosuite(AirHockeySim):
         self.render_masks = False
 
         self.gripper_types = config.gripper_types
+        self.gravity = config.gravity
 
         self.table_tilt = config.table_tilt
         self.table_elevation = config.table_elevation
@@ -288,7 +351,7 @@ class AirHockeyRobosuite(AirHockeySim):
         self.puck_radius = config.puck_radius
         self.puck_damping = config.puck_damping
         self.puck_density = config.puck_density
-        self.puck_height = 0.009
+        self.puck_height = 0.05
         self.puck_z_offset = math.sin(self.table_tilt) * self.puck_radius
         self.action_x_scaling = config.action_x_scaling
         self.action_y_scaling = config.action_y_scaling
@@ -396,6 +459,10 @@ class AirHockeyRobosuite(AirHockeySim):
             with open(xml_fp, "r") as file:
                 self.xml_config = xmltodict.parse(file.read())
 
+            if 'option' not in self.xml_config['mujoco']:
+                self.xml_config['mujoco']['option'] = {}
+            self.xml_config['mujoco']['option']['@gravity'] = f"0 0 {self.gravity}"
+
             # update table config
             assert self.xml_config['mujoco']['worldbody']['body']['@name'] == 'table'
             self.xml_config['mujoco']['worldbody']['body']['@pos'] = f"{self.table_full_size[0]} 0 {self.table_elevation}"
@@ -476,6 +543,13 @@ class AirHockeyRobosuite(AirHockeySim):
         # self.robosuite_env.robots[0].robot_model.set_base_xpos(xpos)
 
         self.set_obj_configs()
+        # Set robot to initial position with paddle on table
+        # These joint angles put the end effector at approximately table height
+        desired_qpos = np.array([0.0, -2.0, 2.4, -2.0, -1.57, 0.0])
+        for i, joint_name in enumerate(self.robosuite_env.robots[0].robot_joints):
+            joint_index = self.robosuite_env.sim.model.get_joint_qpos_addr(joint_name)
+            self.robosuite_env.sim.data.qpos[joint_index] = desired_qpos[i]
+        self.robosuite_env.sim.forward()
         self.initialized_objects = True
         
     def high_level_to_robosuite_coords(self, pos, object_type):
@@ -527,7 +601,7 @@ class AirHockeyRobosuite(AirHockeySim):
     def robosuite_to_high_level_vel(self, vel, object_type):
         return np.array([-vel[0], -vel[1]])
 
-    def spawn_block(self, pos, vel, name, affected_by_gravity=False, movable=True):
+    def spawn_block(self, pos, vel, name, affected_by_gravity=True, movable=True):
         self.initial_block_positions[name] = pos
         self.initial_obj_configurations['blocks'][name] = {'position': pos}
         if self.initialized_objects:
@@ -615,14 +689,14 @@ class AirHockeyRobosuite(AirHockeySim):
                 }]
             }
 
-    def spawn_puck(self, pos, vel, name, affected_by_gravity=False, movable=True):
+    def spawn_puck(self, pos, vel, name, affected_by_gravity=True, z_offset = 0.1,  movable=True):
         pos = self.high_level_to_robosuite_coords(pos, object_type='puck')
         assert pos[0] >= self.table_x_bot and pos[0] <= self.table_x_top, f"pos[0]: {pos[0]}, table_x_bot: {self.table_x_bot}, table_x_top: {self.table_x_top}"
         assert pos[1] <= self.table_y_left and pos[1] >= self.table_y_right, f"pos[1]: {pos[1]}, table_y_left: {self.table_y_left}, table_y_right: {self.table_y_right}"
         vel = self.high_level_to_robosuite_vel(vel, object_type='puck')
         
         puck_mass = self.puck_density * math.pi * (self.puck_radius ** 2) * self.puck_height
-        z_pos = self.table_elevation + self.puck_height/2
+        z_pos = self.table_elevation + self.puck_height/2 + self.puck_z_offset - 0.004
         x_pos = self.transform_x(pos[0])
         y_pos = pos[1]
         pos = np.array([x_pos, y_pos, z_pos])
@@ -631,6 +705,8 @@ class AirHockeyRobosuite(AirHockeySim):
         self.puck_names[name] = name
         if self.initialized_objects:
             return
+       
+        gravcomp = "0" if affected_by_gravity else "1"
         
         puck_dict = {
             "@name": "base",
@@ -671,7 +747,7 @@ class AirHockeyRobosuite(AirHockeySim):
                         "@name": f"{name}",
                         "@type": "cylinder",
                         "@material": "green",
-                        "@size": f"{self.puck_radius} {self.puck_height}",
+                        "@size": f"{self.puck_radius * 1.5} {self.puck_height * 1.5}",
                         "@condim": "4",
                         "@priority": "0",
                         "@group": "1",

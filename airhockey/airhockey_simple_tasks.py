@@ -70,8 +70,8 @@ class AirHockeyPuckHeightEnv(AirHockeyBaseEnv):
     def create_world_objects(self):
         name = 'puck_{}'.format(0)
         pos, vel = self.get_puck_configuration()
-        self.simulator.spawn_puck(pos, vel, name)
-        
+        self.simulator.spawn_puck(pos, vel, name, affected_by_gravity=True, z_offset=0.1)
+
         name = 'paddle_ego'
         pos, vel = self.get_paddle_configuration(name)
         self.simulator.spawn_paddle(pos, vel, name)
@@ -235,7 +235,7 @@ class AirHockeyPuckStrikeEnv(AirHockeyBaseEnv):
         name = 'puck_{}'.format(0)
         pos = (puck_x, puck_y)
         vel = (0, 0)
-        self.simulator.spawn_puck(pos, vel, name, affected_by_gravity=False)
+        self.simulator.spawn_puck(pos, vel, name, affected_by_gravity=True, z_offset = 0.02)
         
         name = 'paddle_ego'
         pos, vel = self.get_paddle_configuration(name)

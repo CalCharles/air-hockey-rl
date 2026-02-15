@@ -12,6 +12,7 @@ air_hockey:
   num_pucks: 1
   num_targets: 0
   obs_type: vel
+  return_goal_obs: false
   paddle_bounds:
   - 0.55
   - 1.007
@@ -19,15 +20,18 @@ air_hockey:
   - 0.558
   simulator: robosuite
   simulator_params:
+    robots: ["UR5e"]
+    gripper_types: ["RoundGripper"]
     block_width: 0.0254
     bot_solref: -50000
     depth: 0.101
+    gravity: -9.81
     has_renderer: true
     left_solref: -50000
     length: 2.1104
     max_paddle_vel: 10
     max_puck_vel: 10
-    paddle_radius: 0.0508
+    paddle_radius: 0.1
     puck_damping: -0.0008
     puck_density: 250
     puck_radius: 0.03175

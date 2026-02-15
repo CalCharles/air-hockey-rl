@@ -3,9 +3,9 @@ import math
 import numpy as np
 
 import robosuite.utils.transform_utils as T
-from robosuite.controllers.base_controller import Controller
+from robosuite.controllers.parts.controller import Controller
 from robosuite.utils.control_utils import *
-from robosuite.controllers.osc import OperationalSpaceController
+from robosuite.controllers.parts.arm.osc import OperationalSpaceController
 
 # Supported impedance modes
 IMPEDANCE_MODES = {"fixed", "variable", "variable_kp"}

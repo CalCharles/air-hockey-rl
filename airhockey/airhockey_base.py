@@ -76,6 +76,7 @@ class AirHockeyBaseEnv(ABC, Env):
             'base_reward_scaling': 1.0,
             'jerk_penalty_coeff': 0.0,
             'velocity_penalty_coeff': 0.0,
+            'seed': None,
         }
         
         # handle defaults, keeps values for duplicate keys from right side!
@@ -134,7 +135,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.goal_max_x_velocity = config.goal_max_x_velocity
         self.goal_min_y_velocity = config.goal_min_y_velocity
         self.goal_max_y_velocity = config.goal_max_y_velocity
-        self.return_goal_obs = config.return_goal_obs
+        # self.return_goal_obs = config.return_goal_obs
         self.dense_goal = config.dense_goal
         self.task = config.task
         self.multiagent = config.num_paddles == 2
@@ -392,9 +393,22 @@ class AirHockeyBaseEnv(ABC, Env):
                         y_pos = proposed_y_pos
         else:
             y_pos = self.rng.uniform(low=-self.width / 3, high=self.width / 3)
-        pos = (self.table_x_top + 0.01, y_pos)
+        pos = (self.table_x_top + 0.15, y_pos)
+        #pos = (0, y_pos)
+        x_vel = self.rng.uniform(low=0.8, high=1.5)
         vel = (1, 0)
         return pos, vel
+
+    """def get_puck_configuration(self, bad_regions=None):
+        x_pos = self.table_x_top + 0.15  # Near the top edge
+        y_pos = self.rng.uniform(low=-self.width / 3, high=self.width / 3)
+        pos = (x_pos, y_pos)
+
+        # Give it some initial velocity toward the robot (downward in your view)
+        x_vel = self.rng.uniform(low=0.8, high=1.5)  
+        y_vel = 0.0
+        vel = (x_vel, y_vel)
+        return pos, vel"""
     
     def get_block_configuration(self, bad_regions=None):
         y_pos = None
