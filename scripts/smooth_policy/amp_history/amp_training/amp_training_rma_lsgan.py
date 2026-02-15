@@ -1,19 +1,3 @@
-"""
-AMP Training with LSGAN Objective
-
-This script implements Adversarial Motion Priors (AMP) using the 
-Least Squares GAN (LSGAN) objective instead of the typical binary cross-entropy loss.
-
-LSGAN uses MSE loss: 0.5 * E[(D(x_real) - 1)^2] + 0.5 * E[(D(x_fake) - (-1))^2]
-This variant uses [-1, 1] targets instead of [0, 1] for better gradient flow.
-This often provides more stable gradients compared to standard GAN training.
-
-Supports two discriminator modes:
-1. Position-only (default): Discriminator input is 8D (4 relative positions x 2 coords)
-2. Position + Action: Discriminator input is 10D (8 positions + 2 action dims)
-   Enable with --use_action_discriminator flag and provide a dataset with action_sequences.
-"""
-
 import random
 import time
 import torch
@@ -21,8 +5,12 @@ import torch.nn as nn
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 import yaml
+import cv2
+import imageio
+import tqdm
 
 from airhockey import AirHockeyEnv
+from airhockey.renderers import AirHockeyRenderer
 import gymnasium as gym
 
 from dataclasses import dataclass, field
@@ -34,33 +22,13 @@ from types import SimpleNamespace
 
 from scripts.smooth_policy.evaluate import evaluate_agent
 from scripts.smooth_policy.agent import Agent
+from scripts.smooth_policy.encoder import EnvEncoder
 
 # AMP components
 from scripts.smooth_policy.amp_history.amp_training.discriminator import Discriminator
 from scripts.smooth_policy.amp_history.amp_training.replay_buffer import ReplayBuffer
 from scripts.smooth_policy.amp_history.amp_training.normalizer import Normalizer
 from scripts.smooth_policy.amp_history.amp_training.demo_loader_position_history import DemoLoaderPositionHistory
-
-# used for possible reference state initialization from demonstrations
-class ReferenceStateWrapper(gym.Wrapper):
-    """Wrapper that initializes paddle from demonstration states."""
-    
-    def __init__(self, env, reference_states):
-        super().__init__(env)
-        self.reference_states = reference_states  # numpy array [N, 4]
-    
-    def reset(self, **kwargs):
-        # Sample random reference state [x, y, vx, vy]
-        idx = np.random.randint(0, len(self.reference_states))
-        ref_state = self.reference_states[idx]
-        
-        # Set reference state on underlying environment
-        self.env.unwrapped._ref_paddle_state = (
-            (float(ref_state[0]), float(ref_state[1])),  # pos
-            (float(ref_state[2]), float(ref_state[3]))   # vel
-        )
-        
-        return self.env.reset(**kwargs)
 
 
 def normalize_position_history_batch(position_history):
@@ -117,9 +85,204 @@ def augment_policy_observation(observation, last_action, use_last_action):
     return torch.cat([observation, last_action], dim=-1)
 
 
+def concat_env_latent_to_policy_obs(policy_obs_base, env_latent):
+    """Concatenate encoded environment latent to base policy observation."""
+    return torch.cat([policy_obs_base, env_latent], dim=-1)
+
+
+def inject_latent_noise(env_latent, noise_std, enabled):
+    return env_latent + torch.randn_like(env_latent) * noise_std
+
+
+def get_env_spec_ranges():
+    """Single source of truth for uniform randomization ranges."""
+    return {
+        "paddle_density": (2500 * 0.8, 2500 * 1.2),
+        "paddle_damping": (3 * 0.8, 3 * 1.2),
+        "puck_density": (250 * 0.8, 250 * 1.2),
+        "puck_damping": (0.5 * 0.8, 0.5 * 1.2),
+        "force_scaling": (1 * 0.8, 1 * 1.2),
+    }
+
+
+def build_env_spec_pool(num_randomized_envs_total, seed):
+    """Create placeholder environment specs for domain randomization."""
+    rng = np.random.default_rng(seed)
+    ranges = get_env_spec_ranges()
+    pool = []
+    for idx in range(num_randomized_envs_total):
+        pool.append(
+            {
+                "env_id": idx,
+                "paddle_density": float(rng.uniform(*ranges["paddle_density"])),
+                "paddle_damping": float(rng.uniform(*ranges["paddle_damping"])),
+                "puck_density": float(rng.uniform(*ranges["puck_density"])),
+                "puck_damping": float(rng.uniform(*ranges["puck_damping"])),
+                "force_scaling": float(rng.uniform(*ranges["force_scaling"])),
+            }
+        )
+    return pool
+
+
+def save_env_spec_pool_artifacts(env_spec_pool, output_dir):
+    """Persist sampled env spec pool so stage-2 adaptation can reuse exact matching specs."""
+    os.makedirs(output_dir, exist_ok=True)
+    yaml_path = os.path.join(output_dir, "env_spec_pool.yaml")
+    pt_path = os.path.join(output_dir, "env_spec_pool.pt")
+    with open(yaml_path, "w") as f:
+        yaml.dump(env_spec_pool, f, sort_keys=False)
+    torch.save(env_spec_pool, pt_path)
+    print(f"✓ Saved env spec pool artifacts: {yaml_path}, {pt_path}")
+
+
+def build_edge_eval_specs():
+    """
+    Build 5 fixed evaluation environments at range edges using the same
+    ranges as training randomization.
+    """
+    ranges = get_env_spec_ranges()
+    lows = {key: value[0] for key, value in ranges.items()}
+    highs = {key: value[1] for key, value in ranges.items()}
+
+    edge_specs = [
+        {"env_id": 10000, "name": "all_low", **lows},
+        {"env_id": 10001, "name": "all_high", **highs},
+        {
+            "env_id": 10002,
+            "name": "high_paddle_low_puck_high_force",
+            "paddle_density": highs["paddle_density"],
+            "paddle_damping": highs["paddle_damping"],
+            "puck_density": lows["puck_density"],
+            "puck_damping": lows["puck_damping"],
+            "force_scaling": highs["force_scaling"],
+        },
+        {
+            "env_id": 10003,
+            "name": "low_paddle_high_puck_low_force",
+            "paddle_density": lows["paddle_density"],
+            "paddle_damping": lows["paddle_damping"],
+            "puck_density": highs["puck_density"],
+            "puck_damping": highs["puck_damping"],
+            "force_scaling": lows["force_scaling"],
+        },
+        {
+            "env_id": 10004,
+            "name": "alternating_edges",
+            "paddle_density": highs["paddle_density"],
+            "paddle_damping": lows["paddle_damping"],
+            "puck_density": highs["puck_density"],
+            "puck_damping": lows["puck_damping"],
+            "force_scaling": highs["force_scaling"],
+        },
+    ]
+    return edge_specs
+
+
+def extract_env_var_vector_from_spec(spec, env_var_dim):
+    """
+    Pack a fixed-size env-variable vector from one sampled environment spec.
+    Variables are normalized to approximately mean 0 / std 1 using the
+    uniform-randomization ranges: mean=(low+high)/2, std=(high-low)/sqrt(12).
+    """
+    ranges = get_env_spec_ranges()
+    ordered_keys = [
+        "paddle_density",
+        "paddle_damping",
+        "puck_density",
+        "puck_damping",
+        "force_scaling",
+    ]
+
+    normalized = []
+    for key in ordered_keys:
+        value = float(spec[key])
+        low, high = ranges[key]
+        mean = 0.5 * (low + high)
+        std = (high - low) / np.sqrt(12.0)
+        if std <= 1e-8:
+            std = 1.0
+        normalized.append((value - mean) / std)
+
+    vec = np.zeros(env_var_dim, dtype=np.float32)
+    base = np.array(normalized, dtype=np.float32)
+    copy_len = min(env_var_dim, len(base))
+    vec[:copy_len] = base[:copy_len]
+    return vec
+
+
+def parse_env_vars_from_infos(infos, num_envs, env_var_dim, device, fallback_env_vars):
+    """Read per-worker env vars from vectorized infos; fallback if missing."""
+    if not (isinstance(infos, dict) and "rma_env_vars" in infos):
+        return fallback_env_vars
+
+    raw = infos["rma_env_vars"]
+    if isinstance(raw, np.ndarray) and raw.dtype == object:
+        raw = np.stack([np.asarray(x, dtype=np.float32).reshape(-1) for x in raw], axis=0)
+    else:
+        raw = np.asarray(raw, dtype=np.float32).reshape(-1, env_var_dim)
+
+    if raw.shape[0] == num_envs:
+        return torch.as_tensor(raw, dtype=torch.float32, device=device)
+
+    mask = infos.get("_rma_env_vars")
+    if mask is not None and raw.shape[0] == int(np.asarray(mask, dtype=bool).sum()):
+        out = fallback_env_vars.clone()
+        out[torch.as_tensor(np.asarray(mask, dtype=bool), dtype=torch.bool, device=device)] = torch.as_tensor(
+            raw, dtype=torch.float32, device=device
+        )
+        return out
+    return fallback_env_vars
+
+
+class ResetSampledEnvWrapper(gym.Wrapper):
+    """
+    Keeps one env process alive and re-samples env config on every reset.
+    This avoids process respawn overhead while still randomizing from a large pool.
+    """
+
+    def __init__(self, env, env_spec_pool, env_var_dim, rng_seed):
+        super().__init__(env)
+        self.env_spec_pool = env_spec_pool
+        self.env_var_dim = env_var_dim
+        self.rng = np.random.default_rng(rng_seed)
+        self.current_env_spec = None
+        self.current_env_var_vec = np.zeros(env_var_dim, dtype=np.float32)
+        self.current_env_id = -1
+
+    def _apply_env_spec(self, env_spec):
+        self.env.unwrapped.paddle_density = env_spec["paddle_density"]
+        self.env.unwrapped.paddle_damping = env_spec["paddle_damping"]
+        self.env.unwrapped.puck_density = env_spec["puck_density"]
+        self.env.unwrapped.puck_damping = env_spec["puck_damping"]
+        self.env.unwrapped.force_scaling = env_spec["force_scaling"]
+        
+        self.current_env_var_vec = extract_env_var_vector_from_spec(env_spec, self.env_var_dim)
+        self.current_env_id = int(env_spec["env_id"])
+
+    def _sample_and_apply_spec(self):
+        idx = int(self.rng.integers(0, len(self.env_spec_pool)))
+        self.current_env_spec = self.env_spec_pool[idx]
+        self._apply_env_spec(self.current_env_spec)
+
+    def reset(self, **kwargs):
+        self._sample_and_apply_spec()
+        obs, info = self.env.reset(**kwargs)
+        info = dict(info)
+        info["rma_env_vars"] = self.current_env_var_vec.copy()
+        info["rma_env_id"] = self.current_env_id
+        return obs, info
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        info = dict(info)
+        info["rma_env_vars"] = self.current_env_var_vec.copy()
+        info["rma_env_id"] = self.current_env_id
+        return obs, reward, terminated, truncated, info
+
+
 @dataclass
 class Args:
-    num_envs: int = 8
+    num_envs: int = 16
     num_steps: int = 512
     learning_rate: float = 1e-4
     num_iterations: int = 100
@@ -159,6 +322,7 @@ class Args:
     config: str = "scripts/smooth_policy/configs/puck_touch/default_config.yaml"
     args_file: str = None
     model_path: str = None  # Path to pre-trained model state dict
+    encoder_path: str = None  # Path to pre-trained environment encoder state dict
     discriminator_path: str = None  # Path to pre-trained discriminator state dict
     amp_components_path: str = None  # Path to AMP components (normalizer, replay buffer)
     log_parent_dir: str = None
@@ -174,12 +338,17 @@ class Args:
     action_scale: float = 1
     
     # agent hidden layer size (2 layers with this size)
-    agent_hidden_size: int = 128
-    
-    # Reference state initialization
-    use_reference_state_init: bool = False  # Enable/disable feature
-    reference_data_path: str = None  # Path to raw demo data (defaults to demo_data_path)
-    ref_max_episode_steps: int = 200  # Episode length when using reference init
+    agent_hidden_size: int = 512
+
+    # RMA randomization + encoder args
+    num_randomized_envs_total: int = 500
+    env_var_dim: int = 8
+    env_latent_dim: int = 8
+    env_encoder_hidden_size: int = 64
+    latent_noise_std: float = 0.05
+    edge_eval_episodes: int = 5
+    edge_eval_interval: int = 10
+    model_save_interval: int = 50
     
     # Action-conditioned discriminator
     use_action_discriminator: bool = False  # If True, discriminator uses position + 4 transition actions (16D)
@@ -187,23 +356,154 @@ class Args:
     
     
 
-def make_env(env_id, reference_states=None, max_episode_steps=20):
+def make_env(env_id, env_spec_pool, env_var_dim, seed=0):
     def _thunk():
         curr_seed = random.randint(0, int(1e8))
         config["air_hockey"]["seed"] = curr_seed
         
-        # Override max_timesteps if using reference state initialization
-        if reference_states is not None:
-            config["air_hockey"]["max_timesteps"] = max_episode_steps
-        
         env = AirHockeyEnv(config["air_hockey"])
-        
-        # Wrap with reference state initialization if provided
-        if reference_states is not None:
-            env = ReferenceStateWrapper(env, reference_states)
+        env = ResetSampledEnvWrapper(
+            env=env,
+            env_spec_pool=env_spec_pool,
+            env_var_dim=env_var_dim,
+            rng_seed=seed + env_id * 131,
+        )
         
         return env
     return _thunk
+
+
+def apply_env_spec_to_unwrapped_env(env, env_spec):
+    """Apply one environment spec directly to an environment instance."""
+    env.unwrapped.paddle_density = env_spec["paddle_density"]
+    env.unwrapped.paddle_damping = env_spec["paddle_damping"]
+    env.unwrapped.puck_density = env_spec["puck_density"]
+    env.unwrapped.puck_damping = env_spec["puck_damping"]
+    env.unwrapped.force_scaling = env_spec["force_scaling"]
+
+
+def evaluate_on_edge_specs(agent, env_encoder, air_hockey_config, args, device):
+    """
+    Evaluate the trained policy on five edge-of-range environment specs.
+    Runs args.edge_eval_episodes episodes per spec.
+    """
+    edge_specs = build_edge_eval_specs()
+    eval_env = AirHockeyEnv(air_hockey_config)
+    action_dim = int(np.prod(eval_env.action_space.shape))
+
+    results = []
+    agent.eval()
+    env_encoder.eval()
+    with torch.no_grad():
+        for spec in edge_specs:
+            apply_env_spec_to_unwrapped_env(eval_env, spec)
+            env_var_np = extract_env_var_vector_from_spec(spec, args.env_var_dim)
+            env_var_tensor = torch.tensor(env_var_np, dtype=torch.float32, device=device).unsqueeze(0)
+
+            episode_returns = []
+            episode_lengths = []
+            for episode_idx in range(args.edge_eval_episodes):
+                obs, _ = eval_env.reset(seed=args.seed + episode_idx)
+                obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+                done = False
+                ep_return = 0.0
+                ep_len = 0
+                last_action = torch.zeros((1, action_dim), dtype=torch.float32, device=device)
+                while not done:
+                    policy_obs_base = augment_policy_observation(
+                        obs_t, last_action, args.use_last_action_in_policy_state
+                    )
+                    latent = env_encoder(env_var_tensor)
+                    policy_obs = concat_env_latent_to_policy_obs(policy_obs_base, latent)
+                    action, _, _, _ = agent.get_action_and_value(policy_obs)
+                    action_np = action.squeeze(0).cpu().numpy()
+                    obs, reward, terminated, truncated, _ = eval_env.step(action_np)
+                    done = bool(terminated or truncated)
+                    ep_return += float(reward)
+                    ep_len += 1
+                    obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+                    last_action = action.detach()
+                    if done:
+                        last_action.zero_()
+
+                episode_returns.append(ep_return)
+                episode_lengths.append(ep_len)
+
+            results.append(
+                {
+                    "name": spec["name"],
+                    "spec": {k: float(v) if isinstance(v, (int, float)) else v for k, v in spec.items()},
+                    "avg_return": float(np.mean(episode_returns)),
+                    "min_return": float(np.min(episode_returns)),
+                    "max_return": float(np.max(episode_returns)),
+                    "avg_length": float(np.mean(episode_lengths)),
+                    "episodes": int(args.edge_eval_episodes),
+                }
+            )
+            print(
+                f"[edge-eval] {spec['name']}: "
+                f"avg={np.mean(episode_returns):.3f}, min={np.min(episode_returns):.3f}, max={np.max(episode_returns):.3f}"
+            )
+
+    eval_env.close()
+    agent.train()
+    env_encoder.train()
+    return results
+
+
+def save_validation_gif(agent, env_encoder, env_spec, air_hockey_config, args, gif_savepath):
+    """Save a validation GIF on a fixed environment spec."""
+    eval_env = AirHockeyEnv(air_hockey_config.copy())
+    apply_env_spec_to_unwrapped_env(eval_env, env_spec)
+    renderer = AirHockeyRenderer(eval_env, show_target_position=True, show_acceleration_arrow=False)
+    action_dim = int(np.prod(eval_env.action_space.shape))
+    env_var_np = extract_env_var_vector_from_spec(env_spec, args.env_var_dim)
+    env_var_tensor = torch.tensor(env_var_np, dtype=torch.float32, device=args.device).unsqueeze(0)
+
+    frames = []
+    agent.eval()
+    env_encoder.eval()
+    with torch.no_grad():
+        for _ in tqdm.tqdm(range(1), desc="validation-gif", leave=False):
+            obs, _ = eval_env.reset(seed=args.seed)
+            obs_tensor = torch.tensor(obs, dtype=torch.float32, device=args.device).unsqueeze(0)
+            last_action = torch.zeros((1, action_dim), dtype=torch.float32, device=args.device)
+            done = False
+            rew = 0.0
+            cum_rew = 0.0
+            while not done:
+                frame = renderer.get_frame()
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                aspect_ratio = frame.shape[1] / frame.shape[0]
+                frame = cv2.resize(frame, (160, int(160 / aspect_ratio)))
+
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.5
+                font_color = (0, 0, 0)
+                line_type = 2
+                cv2.putText(frame, f"Reward: {rew:.2f}", (frame.shape[1] - 150, 30), font, font_scale, font_color, line_type)
+                cv2.putText(frame, f"Return: {cum_rew:.2f}", (frame.shape[1] - 150, 60), font, font_scale, font_color, line_type)
+                frames.append(frame)
+
+                policy_obs_base = augment_policy_observation(
+                    obs_tensor, last_action, args.use_last_action_in_policy_state
+                )
+                env_latent = env_encoder(env_var_tensor)
+                policy_obs = concat_env_latent_to_policy_obs(policy_obs_base, env_latent)
+                action, _, _, _ = agent.get_action_and_value(policy_obs)
+                action_np = action.squeeze(0).cpu().numpy()
+                obs, rew, term, trunc, _ = eval_env.step(action_np)
+                done = bool(term or trunc)
+                cum_rew += float(rew)
+                obs_tensor = torch.tensor(obs, dtype=torch.float32, device=args.device).unsqueeze(0)
+                last_action = action.detach()
+                if done:
+                    last_action.zero_()
+
+    imageio.mimsave(gif_savepath, frames, format="GIF", loop=0, duration=50)
+    eval_env.close()
+    agent.train()
+    env_encoder.train()
 
 # Example usage:
 if __name__ == "__main__":
@@ -218,37 +518,31 @@ if __name__ == "__main__":
 
     # command line args override file args
     args = tyro.cli(Args, default=default_args)
+    if args.num_randomized_envs_total < args.num_envs:
+        raise ValueError(
+            f"num_randomized_envs_total ({args.num_randomized_envs_total}) must be >= num_envs ({args.num_envs})."
+        )
+    if args.env_var_dim <= 0 or args.env_latent_dim <= 0:
+        raise ValueError("env_var_dim and env_latent_dim must be positive.")
     args.batch_size = args.num_envs * args.num_steps
 
     with open(args.config, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
 
-    # Load reference states if enabled
-    reference_states = None
-    if args.use_reference_state_init:
-        ref_data_path = args.reference_data_path or args.demo_data_path
-        print(f"\n{'='*80}")
-        print(f"Loading reference states from: {ref_data_path}")
-        raw_data = torch.load(ref_data_path, map_location='cpu')
-        # Extract first position of each sequence: [N, 2] = [x, y]
-        # Note: We only have position data, not velocity, so we'll set velocity to 0
-        position_sequences = raw_data['position_sequences']  # Shape: [N, 5, 2]
-        first_positions = position_sequences[:, 0, :].numpy()  # [N, 2]
-        # Create reference states with zero velocity: [N, 4] = [x, y, 0, 0]
-        reference_states = np.concatenate([
-            first_positions,
-            np.zeros_like(first_positions)  # Zero velocity
-        ], axis=1)
-        print(f"✓ Loaded {len(reference_states):,} reference states (position-based)")
-        print(f"  Note: Velocities initialized to zero")
-        print(f"  Episode length will be {args.ref_max_episode_steps} timesteps")
-        print(f"{'='*80}\n")
-
-    # should just create parallel envs for future use (can just use sync, async as placeholders)
-    envs = gym.vector.AsyncVectorEnv([
-        make_env(i, reference_states, args.ref_max_episode_steps) 
-        for i in range(args.num_envs)
-    ])
+    env_spec_pool = build_env_spec_pool(args.num_randomized_envs_total, args.seed)
+    validation_env_spec = build_edge_eval_specs()[0]  # fixed validation environment across checkpoints
+    # Persistent vector env: each worker re-samples from the pool inside reset().
+    envs = gym.vector.AsyncVectorEnv(
+        [
+            make_env(
+                i,
+                env_spec_pool=env_spec_pool,
+                env_var_dim=args.env_var_dim,
+                seed=args.seed,
+            )
+            for i in range(args.num_envs)
+        ]
+    )
 
     print("envs.single_observation_space.shape:", envs.single_observation_space.shape)
 
@@ -282,16 +576,18 @@ if __name__ == "__main__":
         yaml.dump(config, f)
     with open(f"{log_parent_dir}/args.yaml", "w") as f:
         yaml.dump(vars(args), f)
+    save_env_spec_pool_artifacts(env_spec_pool=env_spec_pool, output_dir=log_parent_dir)
     
     if 'use_pid' in config["air_hockey"] and config["air_hockey"]["use_pid"]:
         action_scale = 1
     else:
         action_scale = args.action_scale # use whatever action scale specified
 
-    policy_obs_dim = int(np.prod(envs.single_observation_space.shape))
+    base_policy_obs_dim = int(np.prod(envs.single_observation_space.shape))
     action_dim = int(np.prod(envs.single_action_space.shape))
     if args.use_last_action_in_policy_state:
-        policy_obs_dim += action_dim
+        base_policy_obs_dim += action_dim
+    policy_obs_dim = base_policy_obs_dim + args.env_latent_dim
     policy_env_view = SimpleNamespace(
         single_observation_space=gym.spaces.Box(
             low=-np.inf,
@@ -302,6 +598,11 @@ if __name__ == "__main__":
         single_action_space=envs.single_action_space,
     )
     agent = Agent(policy_env_view, action_scale=action_scale, action_bias=0.0, hidden_size=args.agent_hidden_size).to(args.device)
+    env_encoder = EnvEncoder(
+        env_var_dim=args.env_var_dim,
+        latent_dim=args.env_latent_dim,
+        hidden_size=args.env_encoder_hidden_size,
+    ).to(args.device)
     # Load pre-trained model if path is provided
     if args.model_path is not None:
         if not os.path.exists(args.model_path):
@@ -309,8 +610,18 @@ if __name__ == "__main__":
         print(f"Loading pre-trained model from {args.model_path}")
         agent.load_state_dict(torch.load(args.model_path, map_location=args.device))
         print("Model loaded successfully")
+    if args.encoder_path is not None:
+        if not os.path.exists(args.encoder_path):
+            raise FileNotFoundError(f"Encoder path {args.encoder_path} does not exist.")
+        print(f"Loading pre-trained encoder from {args.encoder_path}")
+        env_encoder.load_state_dict(torch.load(args.encoder_path, map_location=args.device))
+        print("Encoder loaded successfully")
     
-    optimizer = torch.optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-6)
+    optimizer = torch.optim.Adam(
+        list(agent.parameters()) + list(env_encoder.parameters()),
+        lr=args.learning_rate,
+        eps=1e-6,
+    )
     use_discriminator_reward = args.disc_reward_weight > 0.0
 
     # Initialize AMP components (always enabled)
@@ -392,7 +703,8 @@ if __name__ == "__main__":
 
     # main training loop
     obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(args.device)
-    policy_obs = torch.zeros((args.num_steps, args.num_envs, policy_obs_dim), device=args.device)
+    policy_obs_base = torch.zeros((args.num_steps, args.num_envs, base_policy_obs_dim), device=args.device)
+    env_var_rollout = torch.zeros((args.num_steps, args.num_envs, args.env_var_dim), device=args.device)
     actions = torch.zeros((args.num_steps, args.num_envs) + envs.single_action_space.shape).to(args.device)
     logprobs = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     rewards = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
@@ -424,18 +736,25 @@ if __name__ == "__main__":
     # Start
     global_step = 0
     start_time = time.time()
-    next_obs, _ = envs.reset(seed=args.seed)
+    next_obs, infos = envs.reset(seed=args.seed)
     next_obs = torch.Tensor(next_obs).to(args.device)
     next_done = torch.zeros(args.num_envs).to(args.device)
     just_reset = torch.zeros(args.num_envs, dtype=torch.bool).to(args.device)
     last_action_for_policy = torch.zeros((args.num_envs, action_dim), device=args.device)
+    current_env_vars = parse_env_vars_from_infos(
+        infos=infos,
+        num_envs=args.num_envs,
+        env_var_dim=args.env_var_dim,
+        device=args.device,
+        fallback_env_vars=torch.zeros((args.num_envs, args.env_var_dim), device=args.device),
+    )
     
 
     for iteration in range(1, args.num_iterations + 1):
         # Reset episodic return tracking for this iteration
         episodic_returns = []
         success_rates = []
-        
+
         # Annealing the rate if instructed to do so.
         if args.anneal_lr:
             frac = 1.0 - (iteration - 1.0) / args.num_iterations
@@ -446,12 +765,18 @@ if __name__ == "__main__":
             global_step += args.num_envs
             obs[step] = next_obs
             dones[step] = next_done
-            policy_next_obs = augment_policy_observation(
+            policy_next_obs_base = augment_policy_observation(
                 next_obs, last_action_for_policy, args.use_last_action_in_policy_state
             )
-            policy_obs[step] = policy_next_obs
+            policy_obs_base[step] = policy_next_obs_base
+            env_var_rollout[step] = current_env_vars
 
             with torch.no_grad():
+                env_latent = env_encoder(current_env_vars)
+                env_latent = inject_latent_noise(
+                    env_latent, args.latent_noise_std, enabled=True
+                )
+                policy_next_obs = concat_env_latent_to_policy_obs(policy_next_obs_base, env_latent)
                 action, logprob, _, value = agent.get_action_and_value(policy_next_obs)
                 values[step] = value.flatten()
             actions[step] = action
@@ -463,6 +788,13 @@ if __name__ == "__main__":
             next_done = np.logical_or(terminations, truncations)
             rewards[step] = torch.tensor(reward).to(args.device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(args.device), torch.Tensor(next_done).to(args.device)
+            current_env_vars = parse_env_vars_from_infos(
+                infos=infos,
+                num_envs=args.num_envs,
+                env_var_dim=args.env_var_dim,
+                device=args.device,
+                fallback_env_vars=current_env_vars,
+            )
             last_action_for_policy = action.detach().clone()
             last_action_for_policy[next_done.bool()] = 0
             
@@ -557,23 +889,25 @@ if __name__ == "__main__":
             if "final_info" in infos:
                 for info in infos["final_info"]:
                     if info and "episode_return" in info:
-                        episodic_returns.append(info['episode_return'])
-                        success_rates.append(1.0 if info['success'] else 0.0)
-                        # print(f"global_step={global_step}, episodic_return={info['episode_return']}")
-                        writer.add_scalar("charts/episodic_return", info['episode_return'], global_step)
-                        writer.add_scalar("charts/episodic_length", info['episode_length'], global_step)
-                        
-                        # Extract motion data if available
-                        if 'motion_data' in info:
-                            velocity_magnitudes.extend(info['motion_data']['velocity_mags'])
-                            acceleration_magnitudes.extend(info['motion_data']['acceleration_mags'])
-                            jerk_magnitudes.extend(info['motion_data']['jerk_mags'])
+                        episodic_returns.append(info["episode_return"])
+                        success_rates.append(1.0 if info["success"] else 0.0)
+                        writer.add_scalar("charts/episodic_return", info["episode_return"], global_step)
+                        writer.add_scalar("charts/episodic_length", info["episode_length"], global_step)
+                        if "motion_data" in info:
+                            velocity_magnitudes.extend(info["motion_data"]["velocity_mags"])
+                            acceleration_magnitudes.extend(info["motion_data"]["acceleration_mags"])
+                            jerk_magnitudes.extend(info["motion_data"]["jerk_mags"])
 
         # bootstrap value if not done and compute advantages
         with torch.no_grad():
-            next_policy_obs = augment_policy_observation(
+            next_policy_obs_base = augment_policy_observation(
                 next_obs, last_action_for_policy, args.use_last_action_in_policy_state
             )
+            next_env_latent = env_encoder(current_env_vars)
+            next_env_latent = inject_latent_noise(
+                next_env_latent, args.latent_noise_std, enabled=True
+            )
+            next_policy_obs = concat_env_latent_to_policy_obs(next_policy_obs_base, next_env_latent)
             next_value = agent.get_value(next_policy_obs).reshape(1, -1)
             
             # Optional temporal alignment reward:
@@ -674,7 +1008,7 @@ if __name__ == "__main__":
             writer.add_scalar("amp/action_magnitude_reward_raw_std", action_magnitude_reward_raw.std().item(), global_step)
             writer.add_scalar("amp/action_magnitude_reward_scaled_mean", action_magnitude_reward_scaled.mean().item(), global_step)
             writer.add_scalar("amp/action_magnitude_reward_scaled_std", action_magnitude_reward_scaled.std().item(), global_step)
-            
+
             # Backward-compatible logs.
             if use_discriminator_reward:
                 writer.add_scalar("amp/disc_reward_mean", disc_r_raw.mean().item(), global_step)
@@ -689,14 +1023,13 @@ if __name__ == "__main__":
             writer.add_scalar("charts/value_std", values.std().item(), global_step)
 
         # flatten the batch
-        b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
-        b_policy_obs = policy_obs.reshape((-1, policy_obs_dim))
+        b_policy_obs_base = policy_obs_base.reshape((-1, base_policy_obs_dim))
+        b_env_vars = env_var_rollout.reshape((-1, args.env_var_dim))
         b_logprobs = logprobs.reshape(-1)
         b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
         b_advantages = advantages.reshape(-1)
         b_returns = returns.reshape(-1)
         b_values = values.reshape(-1)
-        b_dones = dones.reshape(-1).bool()
             
 
         # Optimizing the policy and value network
@@ -704,13 +1037,16 @@ if __name__ == "__main__":
         clipfracs = []
         for epoch in range(args.update_epochs):
             np.random.shuffle(b_inds)
-            noise_std = 0.01
-            nearby_policy_obs = b_policy_obs + torch.randn_like(b_policy_obs) * noise_std # new sample of noise
             for start in range(0, args.batch_size, args.minibatch_size):
                 end = start + args.minibatch_size
                 mb_inds = b_inds[start:end]
+                mb_env_latent = env_encoder(b_env_vars[mb_inds])
+                mb_env_latent = inject_latent_noise(
+                    mb_env_latent, args.latent_noise_std, enabled=True
+                )
+                mb_policy_obs = concat_env_latent_to_policy_obs(b_policy_obs_base[mb_inds], mb_env_latent)
 
-                _, newlogprob, _, newvalue = agent.get_action_and_value(b_policy_obs[mb_inds], b_actions[mb_inds])
+                _, newlogprob, _, newvalue = agent.get_action_and_value(mb_policy_obs, b_actions[mb_inds])
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
@@ -749,7 +1085,10 @@ if __name__ == "__main__":
     
                 optimizer.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
+                nn.utils.clip_grad_norm_(
+                    list(agent.parameters()) + list(env_encoder.parameters()),
+                    args.max_grad_norm,
+                )
                 optimizer.step()
 
             if args.target_kl is not None and approx_kl > args.target_kl:
@@ -850,7 +1189,7 @@ if __name__ == "__main__":
             writer.add_scalar("amp/disc_agent_logit_mean", disc_agent_logit.mean().item(), global_step)
             writer.add_scalar("amp/disc_demo_logit_mean", disc_demo_logit.mean().item(), global_step)
             writer.add_scalar("amp/replay_buffer_size", len(replay_buffer), global_step)
-        
+
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
@@ -866,13 +1205,13 @@ if __name__ == "__main__":
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
-        
+
         # Calculate and log episodic return statistics for this iteration
         if episodic_returns:
             avg_return = np.mean(episodic_returns)
             min_return = np.min(episodic_returns)
             max_return = np.max(episodic_returns)
-            
+
             print(f"Iteration {iteration}: Avg Return: {avg_return:.2f}, Min Return: {min_return:.2f}, Max Return: {max_return:.2f}")
             print(f"Iteration {iteration}: Avg Success Rate: {np.mean(success_rates):.2f}, Max Success Rate: {np.max(success_rates):.2f}")
             writer.add_scalar("charts/avg_episodic_return", avg_return, iteration)
@@ -887,31 +1226,59 @@ if __name__ == "__main__":
             max_return = 0.0
             avg_return = 0.0
             print(f"Iteration {iteration}: No episodes completed")
-        
+
         # Calculate and log motion statistics
         if velocity_magnitudes:
             avg_vel_mag = np.mean(velocity_magnitudes)
-            avg_acc_mag = np.mean(acceleration_magnitudes) 
+            avg_acc_mag = np.mean(acceleration_magnitudes)
             avg_jerk_mag = np.mean(jerk_magnitudes)
-            
-            print(f"Iteration {iteration}: Avg Velocity Mag: {avg_vel_mag:.4f}, Avg Acceleration Mag: {avg_acc_mag:.4f}, Avg Jerk Mag: {avg_jerk_mag:.4f}")
-            
+
+            print(
+                f"Iteration {iteration}: Avg Velocity Mag: {avg_vel_mag:.4f}, "
+                f"Avg Acceleration Mag: {avg_acc_mag:.4f}, Avg Jerk Mag: {avg_jerk_mag:.4f}"
+            )
+
             writer.add_scalar("motion/avg_velocity_magnitude", avg_vel_mag, iteration)
             writer.add_scalar("motion/avg_acceleration_magnitude", avg_acc_mag, iteration)
             writer.add_scalar("motion/avg_jerk_magnitude", avg_jerk_mag, iteration)
-            
+
             # Clear lists for next iteration
             velocity_magnitudes.clear()
             acceleration_magnitudes.clear()
             jerk_magnitudes.clear()
 
-        if iteration % 10 == 0 or min_return >= 5000: # start cherry-picking good policies
+        if args.edge_eval_interval > 0 and iteration % args.edge_eval_interval == 0:
+            edge_eval_results = evaluate_on_edge_specs(
+                agent=agent,
+                env_encoder=env_encoder,
+                air_hockey_config=config["air_hockey"],
+                args=args,
+                device=args.device,
+            )
+            writer.add_scalar(
+                "edge_eval/overall_avg_return",
+                float(np.mean([entry["avg_return"] for entry in edge_eval_results])),
+                iteration,
+            )
+            for entry in edge_eval_results:
+                spec_name = entry["name"]
+                writer.add_scalar(f"edge_eval/{spec_name}/avg_return", entry["avg_return"], iteration)
+                writer.add_scalar(f"edge_eval/{spec_name}/min_return", entry["min_return"], iteration)
+                writer.add_scalar(f"edge_eval/{spec_name}/max_return", entry["max_return"], iteration)
+                writer.add_scalar(f"edge_eval/{spec_name}/avg_length", entry["avg_length"], iteration)
+            edge_eval_path_iter = os.path.join(log_parent_dir, f"edge_eval_results_iter_{iteration}.yaml")
+            with open(edge_eval_path_iter, "w") as f:
+                yaml.dump(edge_eval_results, f, sort_keys=False)
+
+        if iteration % args.model_save_interval == 0:
             # save a checkpoint of the model
             # create a subfolder for the checkpoint
             checkpoint_dir = os.path.join(log_parent_dir, f"checkpoint_{iteration}")
             os.makedirs(checkpoint_dir, exist_ok=True)
             model_path = f"{checkpoint_dir}/model.pth"
             torch.save(agent.state_dict(), model_path)
+            torch.save(env_encoder.state_dict(), f"{checkpoint_dir}/encoder.pth")
+            save_env_spec_pool_artifacts(env_spec_pool=env_spec_pool, output_dir=checkpoint_dir)
             
             # Save AMP components in checkpoint when discriminator reward is active
             if use_discriminator_reward:
@@ -921,24 +1288,21 @@ if __name__ == "__main__":
                     'replay_buffer': replay_buffer.state_dict()
                 }, f"{checkpoint_dir}/amp_components.pth")
 
-            # evaluate the model
-            evaluate_agent(
-                model_path, 
-                checkpoint_dir, 
-                config["air_hockey"], 
-                n_eps=4, 
-                n_gifs=1,
-                reference_states=reference_states,
-                ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None,
-                action_scale=action_scale,
-                agent_hidden_size=args.agent_hidden_size,
-                use_last_action_in_policy_state=args.use_last_action_in_policy_state,
+            validation_gif_path = os.path.join(checkpoint_dir, "validation_fixed_env.gif")
+            save_validation_gif(
+                agent=agent,
+                env_encoder=env_encoder,
+                env_spec=validation_env_spec,
+                air_hockey_config=config["air_hockey"],
+                args=args,
+                gif_savepath=validation_gif_path,
             )
-            
+
             print(f"Iteration {iteration} complete")
 
     # save model
     torch.save(agent.state_dict(), f"{log_parent_dir}/model.pth")
+    torch.save(env_encoder.state_dict(), f"{log_parent_dir}/encoder.pth")
     
     # Save AMP components when discriminator reward is active
     if use_discriminator_reward:
@@ -949,16 +1313,20 @@ if __name__ == "__main__":
         }, f"{log_parent_dir}/amp_components.pth")
         print(f"✓ Saved discriminator and AMP components")
 
-    # evaluate the model and save results
-    evaluate_agent(
-        f"{log_parent_dir}/model.pth", 
-        log_parent_dir, 
-        config["air_hockey"],
-        reference_states=reference_states,
-        ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None,
-        action_scale=action_scale,
-        agent_hidden_size=args.agent_hidden_size,
-        use_last_action_in_policy_state=args.use_last_action_in_policy_state,
+    # Evaluate on 5 edge configurations derived from the training randomization ranges.
+    edge_eval_results = evaluate_on_edge_specs(
+        agent=agent,
+        env_encoder=env_encoder,
+        air_hockey_config=config["air_hockey"],
+        args=args,
+        device=args.device,
     )
+    edge_eval_path = os.path.join(log_parent_dir, "edge_eval_results.yaml")
+    with open(edge_eval_path, "w") as f:
+        yaml.dump(edge_eval_results, f, sort_keys=False)
+    print(f"✓ Saved edge evaluation results to {edge_eval_path}")
+
+    writer.close()
+    envs.close()
     
     # end of training
