@@ -40,6 +40,7 @@ class SACReplayBuffer:
         self.observations = torch.zeros((buffer_size, *obs_shape), dtype=torch.float32, device=device)
         self.next_observations = torch.zeros((buffer_size, *obs_shape), dtype=torch.float32, device=device)
         self.actions = torch.zeros((buffer_size, *action_shape), dtype=torch.float32, device=device)
+        self.prev_actions = torch.zeros((buffer_size, *action_shape), dtype=torch.float32, device=device)
         self.rewards = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
         self.dones = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
         
@@ -54,7 +55,7 @@ class SACReplayBuffer:
         self.position = 0
         self.size = 0
         
-    def add(self, obs, next_obs, actions, rewards, dones, disc_obs=None, disc_valid=None):
+    def add(self, obs, next_obs, actions, rewards, dones, prev_action=None, disc_obs=None, disc_valid=None):
         """
         Add transitions to the buffer.
         
@@ -64,6 +65,7 @@ class SACReplayBuffer:
             actions: Actions [n_envs, *action_shape] or [*action_shape]
             rewards: Rewards [n_envs,] or scalar (task rewards only, discriminator rewards computed later)
             dones: Done flags [n_envs,] or scalar
+            prev_action: Previous action appended to policy state [n_envs, *action_shape] (optional)
             disc_obs: Discriminator observations [n_envs, disc_obs_dim] (optional, for AMP)
             disc_valid: Validity mask for discriminator observations [n_envs,] (optional, for AMP)
         """
@@ -74,6 +76,10 @@ class SACReplayBuffer:
             next_obs = torch.tensor(next_obs, dtype=torch.float32, device=self.device)
         if not isinstance(actions, torch.Tensor):
             actions = torch.tensor(actions, dtype=torch.float32, device=self.device)
+        if prev_action is None:
+            prev_action = torch.zeros_like(actions)
+        if not isinstance(prev_action, torch.Tensor):
+            prev_action = torch.tensor(prev_action, dtype=torch.float32, device=self.device)
         if not isinstance(rewards, torch.Tensor):
             rewards = torch.tensor(rewards, dtype=torch.float32, device=self.device)
         if not isinstance(dones, torch.Tensor):
@@ -92,6 +98,7 @@ class SACReplayBuffer:
             obs = obs.unsqueeze(0)
             next_obs = next_obs.unsqueeze(0)
             actions = actions.unsqueeze(0)
+            prev_action = prev_action.unsqueeze(0) if prev_action.dim() == len(self.action_shape) else prev_action
             rewards = rewards.unsqueeze(0) if rewards.dim() == 0 else rewards
             dones = dones.unsqueeze(0) if dones.dim() == 0 else dones
             if disc_obs is not None:
@@ -107,6 +114,7 @@ class SACReplayBuffer:
             self.observations[idx] = obs[i]
             self.next_observations[idx] = next_obs[i]
             self.actions[idx] = actions[i]
+            self.prev_actions[idx] = prev_action[i]
             self.rewards[idx] = rewards[i]
             self.dones[idx] = dones[i]
             
@@ -130,7 +138,7 @@ class SACReplayBuffer:
             batch_size: Number of transitions to sample
             
         Returns:
-            Dictionary with keys: observations, next_observations, actions, rewards, dones, disc_obs, disc_valid
+            Dictionary with keys: observations, next_observations, actions, prev_actions, rewards, dones, disc_obs, disc_valid
         """
         if self.size == 0:
             raise ValueError("Cannot sample from empty buffer")
@@ -142,6 +150,7 @@ class SACReplayBuffer:
             'observations': self.observations[indices],
             'next_observations': self.next_observations[indices],
             'actions': self.actions[indices],
+            'prev_actions': self.prev_actions[indices],
             'rewards': self.rewards[indices],
             'dones': self.dones[indices],
         }
@@ -164,6 +173,7 @@ class SACReplayBuffer:
         self.observations.zero_()
         self.next_observations.zero_()
         self.actions.zero_()
+        self.prev_actions.zero_()
         self.rewards.zero_()
         self.dones.zero_()
         if self.use_amp:

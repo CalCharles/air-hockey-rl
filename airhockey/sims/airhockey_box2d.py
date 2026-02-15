@@ -163,6 +163,21 @@ class AirHockeyBox2D:
             'center_offset_constant': 1.2,
             'puck_restitution': 1.0,
             'action_lag': 0.0,
+            'puck_noise': False,
+            'puck_noise_std': 0.005,
+            # Optional stochastic puck occlusions in observations.
+            'enable_random_occlusions': False,
+            # Target occluded-frame rate approximation in bad regions:
+            # expected_run_length * start_probability ~= target_rate.
+            'random_occlusion_target_rate': 0.05,
+            # Start probability in non-bad regions.
+            'random_occlusion_other_region_rate': 0.01,
+            # Run-length weights for lengths 1..N (N also sets max consecutive occlusions).
+            'random_occlusion_length_weights': [75, 39, 18, 9, 4, 2, 1],
+            # Bad-region bounds in base-centered coordinates (same frame as analysis outputs).
+            'random_occlusion_bad_region_box_x': [-0.4, -0.35],
+            'random_occlusion_bad_region_box_y': [-0.3, 0.0],
+            'random_occlusion_bad_region_right_x': [0.35, 0.8],
         }
 
         kwargs = {**defaults, **kwargs}
@@ -213,6 +228,34 @@ class AirHockeyBox2D:
         self.wall_bounce_scale = config.wall_bounce_scale
         self.action_lag = config.action_lag 
         assert self.action_lag >= 0 and self.action_lag <= 1, "Action lag must be between 0 and 1"
+        self.puck_noise = config.puck_noise
+        self.puck_noise_std = float(config.puck_noise_std)
+        # random occlusion simulation
+        self.enable_random_occlusions = bool(config.enable_random_occlusions)
+        self.random_occlusion_target_rate = float(config.random_occlusion_target_rate)
+        self.random_occlusion_other_region_rate = float(config.random_occlusion_other_region_rate)
+        self.random_occlusion_length_weights = np.array(config.random_occlusion_length_weights, dtype=float).reshape(-1)
+        self.random_occlusion_bad_region_box_x = tuple(sorted([float(v) for v in config.random_occlusion_bad_region_box_x]))
+        self.random_occlusion_bad_region_box_y = tuple(sorted([float(v) for v in config.random_occlusion_bad_region_box_y]))
+        self.random_occlusion_bad_region_right_x = tuple(sorted([float(v) for v in config.random_occlusion_bad_region_right_x]))
+
+        if self.random_occlusion_length_weights.size == 0:
+            self.random_occlusion_length_weights = np.array([1.0], dtype=float)
+        self._occlusion_max_run = int(self.random_occlusion_length_weights.size)
+        run_lengths = np.arange(1, self._occlusion_max_run + 1, dtype=float)
+        weight_sum = float(np.sum(self.random_occlusion_length_weights))
+        if weight_sum <= 0:
+            weight_sum = 1.0
+        self._occlusion_expected_run = float(np.sum(run_lengths * self.random_occlusion_length_weights) / weight_sum)
+        if self._occlusion_expected_run <= 0:
+            self._occlusion_expected_run = 1.0
+        self.random_occlusion_bad_region_rate = float(
+            np.clip(self.random_occlusion_target_rate / self._occlusion_expected_run, 0.0, 1.0)
+        )
+        self._occlusion_run_remaining = {}
+        self._occlusion_last_visible_base = {}
+        self._occlusion_prev_occluded = {}
+
         self.last_action = np.zeros(2) # keep the last action taken, used for action lag
         self.last_target_position = None  # base-frame target used for visualization/debugging
         self.previous_acceleration = np.zeros(2)  # for jerk calculation
@@ -318,6 +361,9 @@ class AirHockeyBox2D:
         self.jerk = np.zeros(2)
         self.pose_hist = deque(maxlen=self.hist_len)
         self.dpose_hist = deque(maxlen=self.hist_len)
+        self._occlusion_run_remaining = {}
+        self._occlusion_last_visible_base = {}
+        self._occlusion_prev_occluded = {}
         
         # Reset PID controller
         if hasattr(self, 'pid_controller'):
@@ -410,14 +456,93 @@ class AirHockeyBox2D:
         if len(self.pucks) > 0:
             state_info['pucks'] = []
             for puck_name in self.pucks:
-                puck_x_pos = self.pucks[puck_name].position[0]
-                puck_y_pos = self.pucks[puck_name].position[1]
+                puck_x_pos_true = self.pucks[puck_name].position[0]
+                puck_y_pos_true = self.pucks[puck_name].position[1]
+                puck_x_pos_true, puck_y_pos_true = self._get_noisy_puck_position((puck_x_pos_true, puck_y_pos_true))
+                puck_base_xy_true = self._box2d_to_base_coords((puck_x_pos_true, puck_y_pos_true))
+                occluded, puck_base_xy_observed = self._update_random_occlusion(puck_name, puck_base_xy_true)
+                puck_box2d_observed = self._base_to_box2d_coords(puck_base_xy_observed)
                 puck_x_vel = self.pucks[puck_name].linearVelocity[0]
                 puck_y_vel = self.pucks[puck_name].linearVelocity[1]
-                state_info['pucks'].append({'position': (puck_x_pos, puck_y_pos), 
-                                'velocity': (puck_x_vel, puck_y_vel)})
+                state_info['pucks'].append({'position': (float(puck_box2d_observed[0]), float(puck_box2d_observed[1])),
+                                'velocity': (puck_x_vel, puck_y_vel),
+                                'occluded': int(occluded)})
 
         return self.convert_from_box2d_coords(state_info)
+
+    def _get_noisy_puck_position(self, position):
+        if not self.puck_noise:
+            return position
+        noise = self.rng.normal(loc=0.0, scale=self.puck_noise_std, size=2)
+        noisy_position = np.array(position, dtype=float) + noise
+        return float(noisy_position[0]), float(noisy_position[1])
+
+    def _is_in_bad_occlusion_region_base(self, puck_base_xy):
+        x = float(puck_base_xy[0])
+        y = float(puck_base_xy[1])
+        box_x_min, box_x_max = self.random_occlusion_bad_region_box_x
+        box_y_min, box_y_max = self.random_occlusion_bad_region_box_y
+        right_x_min, right_x_max = self.random_occlusion_bad_region_right_x
+
+        in_box_region = (box_x_min <= x <= box_x_max) and (box_y_min <= y <= box_y_max)
+        in_right_strip = (right_x_min <= x <= right_x_max)
+        return in_box_region or in_right_strip
+
+    def _sample_occlusion_run_length(self):
+        lengths = np.arange(1, self._occlusion_max_run + 1, dtype=int)
+        weights = np.maximum(self.random_occlusion_length_weights, 0.0)
+        weight_sum = float(np.sum(weights))
+        if weight_sum <= 0:
+            return 1
+        probs = weights / weight_sum
+        return int(self.rng.choice(lengths, p=probs))
+
+    def _update_random_occlusion(self, puck_name, true_puck_base_xy):
+        if not self.enable_random_occlusions:
+            self._occlusion_last_visible_base[puck_name] = (
+                float(true_puck_base_xy[0]),
+                float(true_puck_base_xy[1]),
+            )
+            self._occlusion_prev_occluded[puck_name] = False
+            return False, np.array(true_puck_base_xy, dtype=float)
+
+        remaining = int(self._occlusion_run_remaining.get(puck_name, 0))
+        prev_occluded = bool(self._occlusion_prev_occluded.get(puck_name, False))
+        if remaining > 0:
+            self._occlusion_run_remaining[puck_name] = remaining - 1
+            observed = self._occlusion_last_visible_base.get(
+                puck_name, (-2.0 + self.center_offset_constant, 0.0)
+            )
+            self._occlusion_prev_occluded[puck_name] = True
+            return True, np.array(observed, dtype=float)
+
+        # Force at least one visible frame between occlusion runs so max consecutive
+        # occluded frames is strictly capped by the sampled run length (<= 7 by default).
+        if prev_occluded:
+            self._occlusion_last_visible_base[puck_name] = (
+                float(true_puck_base_xy[0]),
+                float(true_puck_base_xy[1]),
+            )
+            self._occlusion_prev_occluded[puck_name] = False
+            return False, np.array(true_puck_base_xy, dtype=float)
+
+        in_bad_region = self._is_in_bad_occlusion_region_base(true_puck_base_xy)
+        start_prob = self.random_occlusion_bad_region_rate if in_bad_region else self.random_occlusion_other_region_rate
+        if self.rng.uniform(0.0, 1.0) < start_prob:
+            run_len = self._sample_occlusion_run_length()
+            self._occlusion_run_remaining[puck_name] = max(run_len - 1, 0)
+            observed = self._occlusion_last_visible_base.get(
+                puck_name, (-2.0 + self.center_offset_constant, 0.0)
+            )
+            self._occlusion_prev_occluded[puck_name] = True
+            return True, np.array(observed, dtype=float)
+
+        self._occlusion_last_visible_base[puck_name] = (
+            float(true_puck_base_xy[0]),
+            float(true_puck_base_xy[1]),
+        )
+        self._occlusion_prev_occluded[puck_name] = False
+        return False, np.array(true_puck_base_xy, dtype=float)
     
     def instantiate_objects(self):
         pass # we don't need to do anything here
@@ -702,7 +827,7 @@ class AirHockeyBox2D:
             state_info = self.get_current_state()
             if 'pucks' in state_info:
                 for puck in state_info['pucks']:
-                    self.puck_history.append(list(puck["position"]) + [0])
+                    self.puck_history.append(list(puck["position"]) + [int(puck.get("occluded", 0))])
             else:
                 for i in range(len(self.pucks.keys())):
                     self.puck_history.append([-2 + self.center_offset_constant,0,1])

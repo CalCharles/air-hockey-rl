@@ -30,6 +30,7 @@ import tyro
 
 import os
 from datetime import datetime
+from types import SimpleNamespace
 
 from scripts.smooth_policy.evaluate import evaluate_agent
 from scripts.smooth_policy.agent import Agent
@@ -117,6 +118,13 @@ def parse_discriminator_hidden_dims(hidden_sizes):
     return hidden_dims
 
 
+def augment_policy_observation(observation, last_action, use_last_action):
+    """Append last action to policy observation when enabled."""
+    if not use_last_action:
+        return observation
+    return torch.cat([observation, last_action], dim=-1)
+
+
 @dataclass
 class Args:
     num_envs: int = 8
@@ -188,6 +196,7 @@ class Args:
     # Action-conditioned discriminator
     use_action_discriminator: bool = False  # If True, discriminator uses position + 4 transition actions (16D)
     disc_debug_interval: int = 5000  # Print discriminator feature samples every N env steps (<=0 disables)
+    use_last_action_in_policy_state: bool = False  # Append previous action to policy input state
     
 
 def make_env(env_id, reference_states=None, max_episode_steps=20):
@@ -293,7 +302,20 @@ if __name__ == "__main__":
     else:
         action_scale = args.action_scale # use whatever action scale specified
 
-    agent = Agent(envs, action_scale=action_scale, action_bias=0.0, hidden_size=args.agent_hidden_size).to(args.device)
+    policy_obs_dim = int(np.prod(envs.single_observation_space.shape))
+    action_dim = int(np.prod(envs.single_action_space.shape))
+    if args.use_last_action_in_policy_state:
+        policy_obs_dim += action_dim
+    policy_env_view = SimpleNamespace(
+        single_observation_space=gym.spaces.Box(
+            low=-np.inf,
+            high=np.inf,
+            shape=(policy_obs_dim,),
+            dtype=np.float32,
+        ),
+        single_action_space=envs.single_action_space,
+    )
+    agent = Agent(policy_env_view, action_scale=action_scale, action_bias=0.0, hidden_size=args.agent_hidden_size).to(args.device)
     # Load pre-trained model if path is provided
     if args.model_path is not None:
         if not os.path.exists(args.model_path):
@@ -387,6 +409,7 @@ if __name__ == "__main__":
 
     # main training loop
     obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(args.device)
+    policy_obs = torch.zeros((args.num_steps, args.num_envs, policy_obs_dim), device=args.device)
     actions = torch.zeros((args.num_steps, args.num_envs) + envs.single_action_space.shape).to(args.device)
     logprobs = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     rewards = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
@@ -417,6 +440,7 @@ if __name__ == "__main__":
     next_obs = torch.Tensor(next_obs).to(args.device)
     next_done = torch.zeros(args.num_envs).to(args.device)
     just_reset = torch.zeros(args.num_envs, dtype=torch.bool).to(args.device)
+    last_action_for_policy = torch.zeros((args.num_envs, action_dim), device=args.device)
     
     # Tracking lists for motion metrics
     velocity_magnitudes = []
@@ -438,10 +462,14 @@ if __name__ == "__main__":
             global_step += args.num_envs
             obs[step] = next_obs
             dones[step] = next_done
+            policy_next_obs = augment_policy_observation(
+                next_obs, last_action_for_policy, args.use_last_action_in_policy_state
+            )
+            policy_obs[step] = policy_next_obs
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                action, logprob, _, value = agent.get_action_and_value(next_obs)
+                action, logprob, _, value = agent.get_action_and_value(policy_next_obs)
                 values[step] = value.flatten()
             actions[step] = action
             logprobs[step] = logprob
@@ -453,6 +481,8 @@ if __name__ == "__main__":
             next_done = np.logical_or(terminations, truncations)
             rewards[step] = torch.tensor(reward).to(args.device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(args.device), torch.Tensor(next_done).to(args.device)
+            last_action_for_policy = action.detach().clone()
+            last_action_for_policy[next_done.bool()] = 0
             
             # AMP: Construct discriminator observations from position history
             current_paddle_pos = next_obs[:, 12:14]  # [batch, 2] - just x, y position
@@ -559,7 +589,10 @@ if __name__ == "__main__":
 
         # bootstrap value if not done and compute advantages
         with torch.no_grad():
-            next_value = agent.get_value(next_obs).reshape(1, -1)
+            next_policy_obs = augment_policy_observation(
+                next_obs, last_action_for_policy, args.use_last_action_in_policy_state
+            )
+            next_value = agent.get_value(next_policy_obs).reshape(1, -1)
             
             # Optional temporal alignment reward:
             # compare realized movement over horizon vs commanded action direction from horizon steps ago.
@@ -675,6 +708,7 @@ if __name__ == "__main__":
 
         # flatten the batch
         b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
+        b_policy_obs = policy_obs.reshape((-1, policy_obs_dim))
         b_logprobs = logprobs.reshape(-1)
         b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
         b_advantages = advantages.reshape(-1)
@@ -685,8 +719,8 @@ if __name__ == "__main__":
         # EVALUATE the loss before optimization
         with torch.no_grad():
             noise_std = 0.01
-            nearby_obs = b_obs + torch.randn_like(b_obs) * noise_std # new sample of noise
-            nearby_actions, _, _, _ = agent.get_action_and_value(nearby_obs)
+            nearby_policy_obs = b_policy_obs + torch.randn_like(b_policy_obs) * noise_std # new sample of noise
+            nearby_actions, _, _, _ = agent.get_action_and_value(nearby_policy_obs)
             next_actions = b_actions[np.clip(np.arange(args.batch_size) + 1, 0, args.batch_size - 1)] # ignore bias from the last action
             non_done_mask = ~b_dones
 
@@ -716,12 +750,12 @@ if __name__ == "__main__":
         for epoch in range(args.update_epochs):
             np.random.shuffle(b_inds)
             noise_std = 0.01
-            nearby_obs = b_obs + torch.randn_like(b_obs) * noise_std # new sample of noise
+            nearby_policy_obs = b_policy_obs + torch.randn_like(b_policy_obs) * noise_std # new sample of noise
             for start in range(0, args.batch_size, args.minibatch_size):
                 end = start + args.minibatch_size
                 mb_inds = b_inds[start:end]
 
-                _, newlogprob, _, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
+                _, newlogprob, _, newvalue = agent.get_action_and_value(b_policy_obs[mb_inds], b_actions[mb_inds])
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
@@ -758,9 +792,9 @@ if __name__ == "__main__":
                 # caps loss
                 if args.caps_coef_nearby > 0 or args.caps_coef_consecutive > 0:
                     next_inds = np.clip(mb_inds + 1, 0, len(b_obs) - 1)
-                    curr_actions, _, _, _ = agent.get_action_and_value(b_obs[mb_inds])
-                    nearby_actions, _, _, _ = agent.get_action_and_value(nearby_obs[mb_inds]) # for now just use sample from gaussian
-                    next_actions, _, _, _ = agent.get_action_and_value(b_obs[next_inds])
+                    curr_actions, _, _, _ = agent.get_action_and_value(b_policy_obs[mb_inds])
+                    nearby_actions, _, _, _ = agent.get_action_and_value(nearby_policy_obs[mb_inds]) # for now just use sample from gaussian
+                    next_actions, _, _, _ = agent.get_action_and_value(b_policy_obs[next_inds])
 
                     nearby_action_loss = ((nearby_actions - curr_actions) ** 2.0).mean()
                     non_done_mask = ~b_dones[mb_inds]
@@ -958,7 +992,8 @@ if __name__ == "__main__":
                 reference_states=reference_states,
                 ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None,
                 action_scale=action_scale,
-                agent_hidden_size=args.agent_hidden_size
+                agent_hidden_size=args.agent_hidden_size,
+                use_last_action_in_policy_state=args.use_last_action_in_policy_state,
             )
             
             print(f"Iteration {iteration} complete")
@@ -983,7 +1018,8 @@ if __name__ == "__main__":
         reference_states=reference_states,
         ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None,
         action_scale=action_scale,
-        agent_hidden_size=args.agent_hidden_size
+        agent_hidden_size=args.agent_hidden_size,
+        use_last_action_in_policy_state=args.use_last_action_in_policy_state,
     )
     
     # Define metrics to plot
