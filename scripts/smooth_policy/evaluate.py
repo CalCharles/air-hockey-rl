@@ -3,6 +3,9 @@ import torch
 import argparse
 import yaml
 import os
+import cv2
+import imageio
+import tqdm
 from airhockey import AirHockeyEnv
 from airhockey.renderers import AirHockeyRenderer
 from scripts.smooth_policy.agent import Agent
@@ -10,6 +13,7 @@ import gymnasium as gym
 from tensorboard.backend.event_processing import event_accumulator
 from scripts.utils import save_tensorboard_plots
 import numpy as np
+from types import SimpleNamespace
 
 
 class ReferenceStateWrapper(gym.Wrapper):
@@ -32,7 +36,73 @@ class ReferenceStateWrapper(gym.Wrapper):
         
         return self.env.reset(**kwargs)
 
-def evaluate_agent(model_path, save_dir, air_hockey_params, air_hockey_config_path=None, n_eps=5, n_gifs=3, base_reward_scaling=1.0, reference_states=None, ref_max_episode_steps=None, action_scale=0.02, agent_hidden_size=64):
+
+def _augment_policy_observation(observation, last_action, use_last_action):
+    if not use_last_action:
+        return observation
+    return torch.cat([observation, last_action], dim=-1)
+
+
+def _save_task_gif_with_last_action(
+    n_eps_viz, n_gifs, env_test, policy, renderer, log_dir, action_dim, use_last_action_in_policy_state
+):
+    env_test.max_timesteps = 200
+    for gif_idx in range(n_gifs):
+        frames = []
+        for _ in tqdm.tqdm(range(n_eps_viz)):
+            obs, _ = env_test.reset()
+            obs_tensor = torch.tensor(obs, dtype=torch.float32)
+            last_action = torch.zeros((1, action_dim), dtype=torch.float32)
+            done = False
+            rew = 0
+            cum_rew = 0
+            while not done:
+                frame = renderer.get_frame()
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                aspect_ratio = frame.shape[1] / frame.shape[0]
+                frame = cv2.resize(frame, (160, int(160 / aspect_ratio)))
+
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.5
+                font_color = (0, 0, 0)
+                line_type = 2
+                text_position = (frame.shape[1] - 150, 30)
+                cv2.putText(frame, f"Reward: {rew:.2f}", text_position, font, font_scale, font_color, line_type)
+                text_position = (frame.shape[1] - 150, 60)
+                cv2.putText(frame, f"Return: {cum_rew:.2f}", text_position, font, font_scale, font_color, line_type)
+                frames.append(frame)
+
+                policy_obs = _augment_policy_observation(
+                    obs_tensor.unsqueeze(0), last_action, use_last_action_in_policy_state
+                )
+                action = policy(policy_obs).numpy().squeeze()
+                obs, rew, term, trunc, _ = env_test.step(action)
+                done = term or trunc
+                cum_rew += rew
+                obs_tensor = torch.tensor(obs, dtype=torch.float32)
+                last_action = torch.tensor(action, dtype=torch.float32).reshape(1, -1)
+                if done:
+                    last_action.zero_()
+
+        gif_savepath = os.path.join(log_dir, f'eval_{gif_idx}.gif')
+        fps = 20
+        imageio.mimsave(gif_savepath, frames, format='GIF', loop=0, duration=int(1000 * 1 / fps))
+
+
+def evaluate_agent(
+    model_path,
+    save_dir,
+    air_hockey_params,
+    air_hockey_config_path=None,
+    n_eps=5,
+    n_gifs=3,
+    base_reward_scaling=1.0,
+    reference_states=None,
+    ref_max_episode_steps=None,
+    action_scale=0.02,
+    agent_hidden_size=64,
+    use_last_action_in_policy_state=False,
+):
 
     # Override max_timesteps if reference state initialization is enabled
     eval_air_hockey_params = air_hockey_params.copy()
@@ -48,7 +118,19 @@ def evaluate_agent(model_path, save_dir, air_hockey_params, air_hockey_config_pa
         return env
     
     envs = gym.vector.SyncVectorEnv([make_eval_env])
-    model = Agent(envs, action_scale=action_scale, action_bias=0.0, hidden_size=agent_hidden_size)
+    obs_dim = int(np.prod(envs.single_observation_space.shape))
+    action_dim = int(np.prod(envs.single_action_space.shape))
+    policy_obs_dim = obs_dim + action_dim if use_last_action_in_policy_state else obs_dim
+    policy_env_view = SimpleNamespace(
+        single_observation_space=gym.spaces.Box(
+            low=-np.inf,
+            high=np.inf,
+            shape=(policy_obs_dim,),
+            dtype=np.float32,
+        ),
+        single_action_space=envs.single_action_space,
+    )
+    model = Agent(policy_env_view, action_scale=action_scale, action_bias=0.0, hidden_size=agent_hidden_size)
     state_dict = torch.load(model_path)
     model.load_state_dict(state_dict)
 
@@ -59,7 +141,19 @@ def evaluate_agent(model_path, save_dir, air_hockey_params, air_hockey_config_pa
 
     # create directory if it doesn't exist
     os.makedirs(save_dir, exist_ok=True)
-    save_task_gif(n_eps, n_gifs, env, model, renderer, save_dir)
+    if use_last_action_in_policy_state:
+        _save_task_gif_with_last_action(
+            n_eps,
+            n_gifs,
+            env,
+            model,
+            renderer,
+            save_dir,
+            action_dim=action_dim,
+            use_last_action_in_policy_state=use_last_action_in_policy_state,
+        )
+    else:
+        save_task_gif(n_eps, n_gifs, env, model, renderer, save_dir)
 
     
 

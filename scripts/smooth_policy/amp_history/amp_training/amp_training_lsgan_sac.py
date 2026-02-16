@@ -28,6 +28,7 @@ import torch.optim as optim
 import tyro
 import yaml
 from torch.utils.tensorboard import SummaryWriter
+from types import SimpleNamespace
 
 from airhockey import AirHockeyEnv
 from scripts.smooth_policy.evaluate import evaluate_agent
@@ -148,6 +149,13 @@ def parse_discriminator_hidden_dims(hidden_sizes):
     return hidden_dims
 
 
+def augment_policy_observation(observation, last_action, use_last_action):
+    """Append last action to policy observation when enabled."""
+    if not use_last_action:
+        return observation
+    return torch.cat([observation, last_action], dim=-1)
+
+
 @dataclass
 class Args:
     """the environment id of the task"""
@@ -236,6 +244,7 @@ class Args:
     # Action-conditioned discriminator
     use_action_discriminator: bool = False  # If True, discriminator uses position + 4 transition actions (16D)
     disc_debug_interval: int = 5000  # Print discriminator feature samples every N env steps (<=0 disables)
+    use_last_action_in_policy_state: bool = False  # Append previous action to policy input state
 
 
 def make_env(env_id, reference_states=None, max_episode_steps=20):
@@ -341,7 +350,19 @@ if __name__ == "__main__":
         action_scale = args.action_scale # use whatever action scale specified
 
     # SAC networks: Use Agent for actor (PPO-style), add Q-networks for SAC
-    actor = Agent(envs, action_scale=action_scale, action_bias=0.0, hidden_size=args.agent_hidden_size).to(args.device)
+    raw_obs_dim = int(np.array(envs.single_observation_space.shape).prod())
+    act_dim = int(np.prod(envs.single_action_space.shape))
+    policy_obs_dim = raw_obs_dim + act_dim if args.use_last_action_in_policy_state else raw_obs_dim
+    policy_env_view = SimpleNamespace(
+        single_observation_space=gym.spaces.Box(
+            low=-np.inf,
+            high=np.inf,
+            shape=(policy_obs_dim,),
+            dtype=np.float32,
+        ),
+        single_action_space=envs.single_action_space,
+    )
+    actor = Agent(policy_env_view, action_scale=action_scale, action_bias=0.0, hidden_size=args.agent_hidden_size).to(args.device)
     
     # Q-networks for SAC (simple MLPs)
     class SoftQNetwork(nn.Module):
@@ -359,7 +380,6 @@ if __name__ == "__main__":
             return x
     
     obs_dim = np.array(envs.single_observation_space.shape).prod()
-    act_dim = np.prod(envs.single_action_space.shape)
     
     qf1 = SoftQNetwork(obs_dim, act_dim, args.q_hidden_size).to(args.device)
     qf2 = SoftQNetwork(obs_dim, act_dim, args.q_hidden_size).to(args.device)
@@ -522,6 +542,7 @@ if __name__ == "__main__":
 
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=args.seed)
+    last_action_for_policy = torch.zeros((args.num_envs, act_dim), dtype=torch.float32, device=args.device)
     
     # Track episodic returns for logging
     episodic_returns = []
@@ -578,11 +599,15 @@ if __name__ == "__main__":
     iteration = 0
     while global_step < args.total_timesteps:
         # ALGO LOGIC: put action logic here
+        prev_action_for_transition = last_action_for_policy.clone()
+        obs_tensor = torch.tensor(obs, dtype=torch.float32, device=args.device)
+        policy_obs_tensor = augment_policy_observation(
+            obs_tensor, last_action_for_policy, args.use_last_action_in_policy_state
+        )
         if global_step < args.learning_starts:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
-            obs_tensor = torch.Tensor(obs).to(args.device)
-            actions, _, _, _ = actor.get_action_and_value(obs_tensor)
+            actions, _, _, _ = actor.get_action_and_value(policy_obs_tensor)
             actions = actions.detach().cpu().numpy()
 
         # TRY NOT TO MODIFY: execute the game and log data.
@@ -594,6 +619,8 @@ if __name__ == "__main__":
         current_paddle_pos = next_obs_tensor[:, 12:14]  # [batch, 2]
         action_tensor = torch.tensor(actions, dtype=torch.float32, device=args.device)
         done_tensor = torch.tensor(dones, dtype=torch.bool, device=args.device)
+        last_action_for_policy = action_tensor.clone()
+        last_action_for_policy[done_tensor] = 0
         
         # Optional action magnitude reward (raw value is independent of scale)
         action_magnitude = action_tensor.abs().sum(dim=-1)
@@ -770,6 +797,7 @@ if __name__ == "__main__":
                 actions, 
                 rewards,  # Environment reward + auxiliary rewards (disc reward recomputed on sampling)
                 terminations,
+                prev_action=prev_action_for_transition.cpu().numpy(),
                 disc_obs=current_disc_obs.cpu().numpy(),
                 disc_valid=valid_transition_mask.cpu().numpy()
             )
@@ -779,7 +807,8 @@ if __name__ == "__main__":
                 real_next_obs, 
                 actions, 
                 rewards,
-                terminations
+                terminations,
+                prev_action=prev_action_for_transition.cpu().numpy(),
             )
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
@@ -799,6 +828,14 @@ if __name__ == "__main__":
                     sampled_actions = data['actions']
                     sampled_task_rewards = data['rewards']  # Environment reward + auxiliary rewards
                     sampled_dones = data['dones']
+                    sampled_prev_actions = data['prev_actions']
+                    sampled_next_prev_actions = sampled_actions * (1.0 - sampled_dones.unsqueeze(-1))
+                    sampled_policy_observations = augment_policy_observation(
+                        sampled_observations, sampled_prev_actions, args.use_last_action_in_policy_state
+                    )
+                    sampled_next_policy_observations = augment_policy_observation(
+                        sampled_next_observations, sampled_next_prev_actions, args.use_last_action_in_policy_state
+                    )
                     
                     # Compute combined rewards (with or without AMP)
                     if use_amp:
@@ -824,7 +861,7 @@ if __name__ == "__main__":
                         sampled_combined_rewards = args.task_reward_weight * sampled_task_rewards
                     
                     with torch.no_grad():
-                        next_state_actions, next_state_log_pi, _, _ = actor.get_action_and_value(sampled_next_observations)
+                        next_state_actions, next_state_log_pi, _, _ = actor.get_action_and_value(sampled_next_policy_observations)
                         qf1_next_target = qf1_target(sampled_next_observations, next_state_actions)
                         qf2_next_target = qf2_target(sampled_next_observations, next_state_actions)
                         
@@ -881,11 +918,15 @@ if __name__ == "__main__":
                 # Sample fresh data for policy update
                 data = rb.sample(args.batch_size)
                 sampled_observations = data['observations']
+                sampled_prev_actions = data['prev_actions']
+                sampled_policy_observations = augment_policy_observation(
+                    sampled_observations, sampled_prev_actions, args.use_last_action_in_policy_state
+                )
                 
                 for _ in range(
                     args.policy_frequency
                 ):  # compensate for the delay by doing 'actor_update_interval' instead of 1
-                    pi, log_pi, _, _ = actor.get_action_and_value(sampled_observations)
+                    pi, log_pi, _, _ = actor.get_action_and_value(sampled_policy_observations)
                     qf1_pi = qf1(sampled_observations, pi)
                     qf2_pi = qf2(sampled_observations, pi)
                     min_qf_pi_h = torch.min(qf1_pi, qf2_pi)
@@ -902,7 +943,7 @@ if __name__ == "__main__":
 
                     if args.autotune:
                         with torch.no_grad():
-                            _, log_pi, _, _ = actor.get_action_and_value(sampled_observations)
+                            _, log_pi, _, _ = actor.get_action_and_value(sampled_policy_observations)
                         alpha_loss = (-log_alpha.exp() * (log_pi + target_entropy)).mean()
 
                         a_optimizer.zero_grad()
@@ -1125,7 +1166,8 @@ if __name__ == "__main__":
                     reference_states=reference_states,
                     ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None,
                     action_scale=action_scale,
-                    agent_hidden_size=args.agent_hidden_size
+                    agent_hidden_size=args.agent_hidden_size,
+                    use_last_action_in_policy_state=args.use_last_action_in_policy_state,
                 )
             except Exception as e:
                 print(f"Evaluation failed: {e}")
@@ -1165,7 +1207,8 @@ if __name__ == "__main__":
             reference_states=reference_states,
             ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None,
             action_scale=action_scale,
-            agent_hidden_size=args.agent_hidden_size
+            agent_hidden_size=args.agent_hidden_size,
+            use_last_action_in_policy_state=args.use_last_action_in_policy_state,
         )
     except Exception as e:
         print(f"Final evaluation failed: {e}")
