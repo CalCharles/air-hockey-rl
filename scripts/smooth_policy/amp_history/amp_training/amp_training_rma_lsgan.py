@@ -94,14 +94,30 @@ def inject_latent_noise(env_latent, noise_std, enabled):
     return env_latent + torch.randn_like(env_latent) * noise_std
 
 
+def summarize_latent_stats(latents):
+    """Compute scalar statistics for encoder latent vectors."""
+    flat = latents.reshape(-1)
+    per_sample_norm = torch.norm(latents, dim=-1)
+    return {
+        "mean": flat.mean(),
+        "std": flat.std(unbiased=False),
+        "min": flat.min(),
+        "max": flat.max(),
+        "norm_mean": per_sample_norm.mean(),
+        "norm_std": per_sample_norm.std(unbiased=False),
+    }
+
+
 def get_env_spec_ranges():
     """Single source of truth for uniform randomization ranges."""
     return {
-        "paddle_density": (2500 * 0.8, 2500 * 1.2),
-        "paddle_damping": (3 * 0.8, 3 * 1.2),
-        "puck_density": (250 * 0.8, 250 * 1.2),
-        "puck_damping": (0.5 * 0.8, 0.5 * 1.2),
-        "force_scaling": (1 * 0.8, 1 * 1.2),
+        "paddle_density": (2500 * 0.5, 2500 * 1.5),
+        "paddle_damping": (3 * 0.5, 3 * 1.5),
+        "puck_density": (250 * 0.5, 250 * 1.5),
+        "puck_damping": (0.5 * 0.5, 0.5 * 1.5),
+        "force_scaling": (1 * 0.5, 1 * 1.5),
+        "pid_kp": (1000.0 * 0.5, 1000.0 * 1.5),
+        "pid_kd": (100.0 * 0.5, 100.0 * 1.5),
     }
 
 
@@ -183,6 +199,19 @@ def build_env_spec_pool(num_randomized_envs_total, seed):
     return pool
 
 
+def sample_env_spec_from_ranges(rng, env_id):
+    """Sample one environment spec directly from configured randomization ranges."""
+    ranges = get_env_spec_ranges()
+    return {
+        "env_id": int(env_id),
+        "paddle_density": float(rng.uniform(*ranges["paddle_density"])),
+        "paddle_damping": float(rng.uniform(*ranges["paddle_damping"])),
+        "puck_density": float(rng.uniform(*ranges["puck_density"])),
+        "puck_damping": float(rng.uniform(*ranges["puck_damping"])),
+        "force_scaling": float(rng.uniform(*ranges["force_scaling"])),
+    }
+
+
 def save_env_spec_pool_artifacts(env_spec_pool, output_dir):
     """Persist sampled env spec pool so stage-2 adaptation can reuse exact matching specs."""
     os.makedirs(output_dir, exist_ok=True)
@@ -198,6 +227,7 @@ def save_training_env_setup_manifest(env_spec_pool, output_dir, args, source_mod
     """Persist startup env setup metadata for reproducibility and resumed training."""
     os.makedirs(output_dir, exist_ok=True)
     manifest_path = os.path.join(output_dir, "training_env_setup.yaml")
+    pool_size = int(len(env_spec_pool)) if env_spec_pool is not None else None
     manifest = {
         "env_spec_pool_source": source_mode,
         "env_spec_pool_source_path": source_path,
@@ -209,7 +239,7 @@ def save_training_env_setup_manifest(env_spec_pool, output_dir, args, source_mod
         },
         "env_spec_pool_summary": {
             "configured_num_randomized_envs_total": int(args.num_randomized_envs_total),
-            "actual_pool_size": int(len(env_spec_pool)),
+            "actual_pool_size": pool_size,
             "seed": int(args.seed),
         },
     }
@@ -259,6 +289,15 @@ def build_edge_eval_specs():
         },
     ]
     return edge_specs
+
+
+def save_edge_eval_specs_artifact(edge_specs, output_dir):
+    """Persist the fixed edge evaluation specs used by evaluate_on_edge_specs."""
+    os.makedirs(output_dir, exist_ok=True)
+    edge_specs_path = os.path.join(output_dir, "edge_eval_specs.yaml")
+    with open(edge_specs_path, "w") as f:
+        yaml.dump(edge_specs, f, sort_keys=False)
+    print(f"✓ Saved edge eval specs: {edge_specs_path}")
 
 
 def extract_env_var_vector_from_spec(spec, env_var_dim):
@@ -357,6 +396,54 @@ class ResetSampledEnvWrapper(gym.Wrapper):
         return obs, reward, terminated, truncated, info
 
 
+class ResetRangeSampledEnvWrapper(gym.Wrapper):
+    """
+    Keeps one env process alive and samples fresh env parameters from the
+    configured randomization ranges on every reset.
+    """
+
+    def __init__(self, env, env_var_dim, rng_seed, env_id_offset=0):
+        super().__init__(env)
+        self.env_var_dim = env_var_dim
+        self.rng = np.random.default_rng(rng_seed)
+        self.current_env_spec = None
+        self.current_env_var_vec = np.zeros(env_var_dim, dtype=np.float32)
+        self.current_env_id = -1
+        self._sample_idx = 0
+        self._env_id_offset = int(env_id_offset)
+
+    def _apply_env_spec(self, env_spec):
+        self.env.unwrapped.paddle_density = env_spec["paddle_density"]
+        self.env.unwrapped.paddle_damping = env_spec["paddle_damping"]
+        self.env.unwrapped.puck_density = env_spec["puck_density"]
+        self.env.unwrapped.puck_damping = env_spec["puck_damping"]
+        self.env.unwrapped.force_scaling = env_spec["force_scaling"]
+
+        self.current_env_var_vec = extract_env_var_vector_from_spec(env_spec, self.env_var_dim)
+        self.current_env_id = int(env_spec["env_id"])
+
+    def _sample_and_apply_spec(self):
+        env_id = self._env_id_offset + self._sample_idx
+        self._sample_idx += 1
+        self.current_env_spec = sample_env_spec_from_ranges(self.rng, env_id=env_id)
+        self._apply_env_spec(self.current_env_spec)
+
+    def reset(self, **kwargs):
+        self._sample_and_apply_spec()
+        obs, info = self.env.reset(**kwargs)
+        info = dict(info)
+        info["rma_env_vars"] = self.current_env_var_vec.copy()
+        info["rma_env_id"] = self.current_env_id
+        return obs, info
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        info = dict(info)
+        info["rma_env_vars"] = self.current_env_var_vec.copy()
+        info["rma_env_id"] = self.current_env_id
+        return obs, reward, terminated, truncated, info
+
+
 @dataclass
 class Args:
     num_envs: int = 16
@@ -419,10 +506,11 @@ class Args:
 
     # RMA randomization + encoder args
     num_randomized_envs_total: int = 500
+    use_on_demand_env_sampling: bool = True  # If True, sample env parameters at reset directly from ranges.
     env_spec_pool_path: str = None  # Optional path to saved env pool (.pt or .yaml) for continued training
     env_var_dim: int = 8
     env_latent_dim: int = 8
-    env_encoder_hidden_size: int = 64
+    env_encoder_hidden_size: list[int] = field(default_factory=lambda: [128, 128])
     latent_noise_std: float = 0.05
     edge_eval_episodes: int = 5
     edge_eval_interval: int = 10
@@ -434,18 +522,26 @@ class Args:
     
     
 
-def make_env(env_id, env_spec_pool, env_var_dim, seed=0):
+def make_env(env_id, env_spec_pool, env_var_dim, seed=0, use_on_demand_env_sampling=False):
     def _thunk():
         curr_seed = random.randint(0, int(1e8))
         config["air_hockey"]["seed"] = curr_seed
         
         env = AirHockeyEnv(config["air_hockey"])
-        env = ResetSampledEnvWrapper(
-            env=env,
-            env_spec_pool=env_spec_pool,
-            env_var_dim=env_var_dim,
-            rng_seed=seed + env_id * 131,
-        )
+        if use_on_demand_env_sampling:
+            env = ResetRangeSampledEnvWrapper(
+                env=env,
+                env_var_dim=env_var_dim,
+                rng_seed=seed + env_id * 131,
+                env_id_offset=env_id * 1_000_000,
+            )
+        else:
+            env = ResetSampledEnvWrapper(
+                env=env,
+                env_spec_pool=env_spec_pool,
+                env_var_dim=env_var_dim,
+                rng_seed=seed + env_id * 131,
+            )
         
         return env
     return _thunk
@@ -596,7 +692,11 @@ if __name__ == "__main__":
 
     # command line args override file args
     args = tyro.cli(Args, default=default_args)
-    if args.env_spec_pool_path is None and args.num_randomized_envs_total < args.num_envs:
+    if (
+        (not args.use_on_demand_env_sampling)
+        and args.env_spec_pool_path is None
+        and args.num_randomized_envs_total < args.num_envs
+    ):
         raise ValueError(
             f"num_randomized_envs_total ({args.num_randomized_envs_total}) must be >= num_envs ({args.num_envs})."
         )
@@ -607,7 +707,13 @@ if __name__ == "__main__":
     with open(args.config, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
 
-    if args.env_spec_pool_path is not None:
+    use_on_demand_env_sampling = args.use_on_demand_env_sampling and args.env_spec_pool_path is None
+    if use_on_demand_env_sampling:
+        env_spec_pool = None
+        env_spec_pool_source_mode = "on_demand_range_sampling"
+        env_spec_pool_source_path = None
+        print("Using on-demand env sampling from randomization ranges (no fixed env pool).")
+    elif args.env_spec_pool_path is not None:
         env_spec_pool = load_env_spec_pool(args.env_spec_pool_path)
         env_spec_pool_source_mode = "loaded"
         env_spec_pool_source_path = os.path.abspath(args.env_spec_pool_path)
@@ -617,12 +723,13 @@ if __name__ == "__main__":
         env_spec_pool_source_mode = "generated"
         env_spec_pool_source_path = None
         print(f"Generated env spec pool from seed={args.seed} (size={len(env_spec_pool)})")
-    if len(env_spec_pool) < args.num_envs:
+    if env_spec_pool is not None and len(env_spec_pool) < args.num_envs:
         raise ValueError(
             f"Environment spec pool size ({len(env_spec_pool)}) must be >= num_envs ({args.num_envs})."
         )
 
-    validation_env_spec = build_edge_eval_specs()[0]  # fixed validation environment across checkpoints
+    edge_eval_specs = build_edge_eval_specs()
+    validation_env_spec = edge_eval_specs[0]  # fixed validation environment across checkpoints
     # Persistent vector env: each worker re-samples from the pool inside reset().
     envs = gym.vector.AsyncVectorEnv(
         [
@@ -631,6 +738,7 @@ if __name__ == "__main__":
                 env_spec_pool=env_spec_pool,
                 env_var_dim=args.env_var_dim,
                 seed=args.seed,
+                use_on_demand_env_sampling=use_on_demand_env_sampling,
             )
             for i in range(args.num_envs)
         ]
@@ -668,7 +776,8 @@ if __name__ == "__main__":
         yaml.dump(config, f)
     with open(f"{log_parent_dir}/args.yaml", "w") as f:
         yaml.dump(vars(args), f)
-    save_env_spec_pool_artifacts(env_spec_pool=env_spec_pool, output_dir=log_parent_dir)
+    if env_spec_pool is not None:
+        save_env_spec_pool_artifacts(env_spec_pool=env_spec_pool, output_dir=log_parent_dir)
     save_training_env_setup_manifest(
         env_spec_pool=env_spec_pool,
         output_dir=log_parent_dir,
@@ -676,6 +785,7 @@ if __name__ == "__main__":
         source_mode=env_spec_pool_source_mode,
         source_path=env_spec_pool_source_path,
     )
+    save_edge_eval_specs_artifact(edge_specs=edge_eval_specs, output_dir=log_parent_dir)
     
     if 'use_pid' in config["air_hockey"] and config["air_hockey"]["use_pid"]:
         action_scale = 1
@@ -1129,6 +1239,17 @@ if __name__ == "__main__":
         b_advantages = advantages.reshape(-1)
         b_returns = returns.reshape(-1)
         b_values = values.reshape(-1)
+
+        # Log encoder latent statistics from the rollout batch for monitoring.
+        with torch.no_grad():
+            latent_snapshot = env_encoder(b_env_vars)
+            latent_stats = summarize_latent_stats(latent_snapshot)
+            writer.add_scalar("encoder_latent/mean", latent_stats["mean"].item(), global_step)
+            writer.add_scalar("encoder_latent/std", latent_stats["std"].item(), global_step)
+            writer.add_scalar("encoder_latent/min", latent_stats["min"].item(), global_step)
+            writer.add_scalar("encoder_latent/max", latent_stats["max"].item(), global_step)
+            writer.add_scalar("encoder_latent/norm_mean", latent_stats["norm_mean"].item(), global_step)
+            writer.add_scalar("encoder_latent/norm_std", latent_stats["norm_std"].item(), global_step)
             
 
         # Optimizing the policy and value network
@@ -1372,7 +1493,9 @@ if __name__ == "__main__":
             model_path = f"{checkpoint_dir}/model.pth"
             torch.save(agent.state_dict(), model_path)
             torch.save(env_encoder.state_dict(), f"{checkpoint_dir}/encoder.pth")
-            save_env_spec_pool_artifacts(env_spec_pool=env_spec_pool, output_dir=checkpoint_dir)
+            if env_spec_pool is not None:
+                save_env_spec_pool_artifacts(env_spec_pool=env_spec_pool, output_dir=checkpoint_dir)
+            save_edge_eval_specs_artifact(edge_specs=edge_eval_specs, output_dir=checkpoint_dir)
             
             # Save AMP components in checkpoint when discriminator reward is active
             if use_discriminator_reward:

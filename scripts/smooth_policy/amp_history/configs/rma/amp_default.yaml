@@ -3,18 +3,18 @@
 # arguments supported by amp_training_rma_lsgan.py.
 
 # Basic training parameters
-num_envs: 16
+num_envs: 64
 num_steps: 512
 learning_rate: 0.0001
 num_iterations: 10000 # more iterations for testing
 anneal_lr: false
 gamma: 0.99
 gae_lambda: 0.95
-minibatch_size: 128
-update_epochs: 10
+minibatch_size: 256
+update_epochs: 5 # 10 is a lot over the data
 clip_coef: 0.2
 clip_vloss: false
-ent_coef: 0.0
+ent_coef: 0.01
 vf_coef: 0.5
 max_grad_norm: 0.5
 target_kl: null
@@ -22,9 +22,9 @@ batch_size: 0  # computed at runtime
 norm_adv: true
 
 # AMP hyperparameters
-disc_replay_buffer_size: 50000
-disc_replay_samples: 1024
-disc_batch_size: 128
+disc_replay_buffer_size: 100000
+disc_replay_samples: 4096
+disc_batch_size: 256
 disc_learning_rate: 0.00001
 disc_logit_reg: 0.01
 disc_grad_penalty: 5.0
@@ -60,8 +60,8 @@ agent_hidden_size: 512
 # RMA randomization + encoder args
 num_randomized_envs_total: 500
 env_var_dim: 8
-env_latent_dim: 8
-env_encoder_hidden_size: 64
+env_latent_dim: 12
+env_encoder_hidden_size: [128, 128]
 edge_eval_episodes: 5
 edge_eval_interval: 10
 model_save_interval: 50
