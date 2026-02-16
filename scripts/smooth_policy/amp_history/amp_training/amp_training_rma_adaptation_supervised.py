@@ -1,7 +1,7 @@
 import os
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -19,6 +19,17 @@ from scripts.smooth_policy.amp_history.amp_training.rma_adaptation import RMAAda
 from scripts.smooth_policy.encoder import EnvEncoder
 
 
+class _TupleFriendlySafeLoader(yaml.SafeLoader):
+    """Safe loader variant that accepts legacy !!python/tuple nodes as plain tuples."""
+
+
+def _construct_python_tuple(loader, node):
+    return tuple(loader.construct_sequence(node))
+
+
+_TupleFriendlySafeLoader.add_constructor("tag:yaml.org,2002:python/tuple", _construct_python_tuple)
+
+
 def augment_policy_observation(observation, last_action, use_last_action):
     if not use_last_action:
         return observation
@@ -34,12 +45,13 @@ def inject_latent_noise(env_latent, noise_std):
 
 
 def get_env_spec_ranges():
+    # Keep defaults aligned with stage-1 LSGAN randomization ranges.
     return {
-        "paddle_density": (2500 * 0.8, 2500 * 1.2),
-        "paddle_damping": (3 * 0.8, 3 * 1.2),
-        "puck_density": (250 * 0.8, 250 * 1.2),
-        "puck_damping": (0.5 * 0.8, 0.5 * 1.2),
-        "force_scaling": (1 * 0.8, 1 * 1.2),
+        "paddle_density": (2500 * 0.5, 2500 * 1.5),
+        "paddle_damping": (3 * 0.5, 3 * 1.5),
+        "puck_density": (250 * 0.5, 250 * 1.5),
+        "puck_damping": (0.5 * 0.5, 0.5 * 1.5),
+        "force_scaling": (1 * 0.5, 1 * 1.5),
     }
 
 
@@ -75,15 +87,18 @@ def validate_env_spec_pool(env_spec_pool):
 
 def _load_yaml(path):
     with open(path, "r") as f:
-        return yaml.safe_load(f)
+        return yaml.load(f, Loader=_TupleFriendlySafeLoader)
 
 
 def _resolve_env_artifact_paths(env_spec_pool_path):
     """
     Accept either:
     - direct env pool file path (.pt/.yaml), or
-    - run/checkpoint directory containing env_spec_pool.pt/yaml and optional training_env_setup.yaml, or
+    - run/checkpoint directory containing optional env_spec_pool(.pt/.yaml) and/or training_env_setup.yaml, or
     - direct path to training_env_setup.yaml.
+
+    Returns:
+      (pool_path_or_none, manifest_path_or_none)
     """
     input_path = os.path.abspath(env_spec_pool_path)
     manifest_path = None
@@ -99,10 +114,10 @@ def _resolve_env_artifact_paths(env_spec_pool_path):
             pool_path = pt_candidate
         elif os.path.exists(yaml_candidate):
             pool_path = yaml_candidate
-        else:
+        if pool_path is None and manifest_path is None:
             raise FileNotFoundError(
-                f"No env_spec_pool artifact found in directory '{input_path}'. "
-                "Expected env_spec_pool.pt or env_spec_pool.yaml."
+                f"No recognized env artifacts found in directory '{input_path}'. "
+                "Expected training_env_setup.yaml and/or env_spec_pool.pt/.yaml."
             )
         return pool_path, manifest_path
 
@@ -128,11 +143,7 @@ def _resolve_env_artifact_paths(env_spec_pool_path):
                 pool_path = pt_candidate
             elif os.path.exists(yaml_candidate):
                 pool_path = yaml_candidate
-            else:
-                raise FileNotFoundError(
-                    f"Could not resolve env pool path from manifest '{manifest_path}'. "
-                    "Neither source path nor sibling env_spec_pool artifacts exist."
-                )
+        # Manifest-only setups are valid for on-demand range sampling.
         return pool_path, manifest_path
 
     if input_path.endswith(".pt") or input_path.endswith(".yaml") or input_path.endswith(".yml"):
@@ -166,8 +177,69 @@ def _validate_manifest_compatibility(manifest, args):
         )
 
 
-def extract_env_var_vector_from_spec(spec, env_var_dim):
-    ranges = get_env_spec_ranges()
+def _resolve_stage1_module_paths(module_dir):
+    """
+    Resolve required stage-1 artifacts from one directory.
+    Expected files:
+      - model:   model.pth
+      - encoder: encoder.pth
+    Optional:
+      - training_env_setup.yaml and/or env_spec_pool.(pt/.yaml) for range metadata.
+    """
+    base_dir = os.path.abspath(module_dir)
+    if not os.path.isdir(base_dir):
+        raise FileNotFoundError(f"module_dir does not exist or is not a directory: '{module_dir}'")
+
+    model_path = os.path.join(base_dir, "model.pth")
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(
+            f"Could not find model artifact in module_dir '{base_dir}'. Expected: '{model_path}'."
+        )
+
+    encoder_path = os.path.join(base_dir, "encoder.pth")
+    if not os.path.exists(encoder_path):
+        raise FileNotFoundError(
+            f"Could not find encoder artifact in module_dir '{base_dir}'. Expected: '{encoder_path}'."
+        )
+
+    try:
+        pool_path, manifest_path = _resolve_env_artifact_paths(base_dir)
+    except FileNotFoundError:
+        pool_path, manifest_path = None, None
+    return {
+        "module_dir": base_dir,
+        "model_path": model_path,
+        "encoder_path": encoder_path,
+        "env_spec_pool_path": pool_path,
+        "training_manifest_path": manifest_path,
+    }
+
+
+def _coerce_env_spec_ranges(raw_ranges):
+    if raw_ranges is None:
+        return get_env_spec_ranges()
+
+    ordered_keys = get_env_spec_ordered_keys()
+    out = {}
+    for key in ordered_keys:
+        if key not in raw_ranges:
+            raise ValueError(
+                f"randomization_ranges in manifest missing key '{key}'. "
+                f"Expected keys: {ordered_keys}"
+            )
+        bounds = raw_ranges[key]
+        if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+            raise ValueError(f"Invalid range for '{key}': {bounds}. Expected [low, high].")
+        low = float(bounds[0])
+        high = float(bounds[1])
+        if not high > low:
+            raise ValueError(f"Invalid range for '{key}': low={low}, high={high}.")
+        out[key] = (low, high)
+    return out
+
+
+def extract_env_var_vector_from_spec(spec, env_var_dim, env_spec_ranges=None):
+    ranges = _coerce_env_spec_ranges(env_spec_ranges)
     ordered_keys = get_env_spec_ordered_keys()
     normalized = []
     for key in ordered_keys:
@@ -243,16 +315,78 @@ class ResetSampledEnvWrapper(gym.Wrapper):
         return obs, reward, terminated, truncated, info
 
 
-def make_env(env_id, env_spec_pool, env_var_dim, air_hockey_config, seed):
+def sample_env_spec_from_ranges(rng, env_id, env_spec_ranges):
+    return {
+        "env_id": int(env_id),
+        "paddle_density": float(rng.uniform(*env_spec_ranges["paddle_density"])),
+        "paddle_damping": float(rng.uniform(*env_spec_ranges["paddle_damping"])),
+        "puck_density": float(rng.uniform(*env_spec_ranges["puck_density"])),
+        "puck_damping": float(rng.uniform(*env_spec_ranges["puck_damping"])),
+        "force_scaling": float(rng.uniform(*env_spec_ranges["force_scaling"])),
+    }
+
+
+class ResetRangeSampledEnvWrapper(gym.Wrapper):
+    def __init__(self, env, env_var_dim, rng_seed, env_spec_ranges, env_id_offset=0):
+        super().__init__(env)
+        self.env_var_dim = env_var_dim
+        self.rng = np.random.default_rng(rng_seed)
+        self.env_spec_ranges = _coerce_env_spec_ranges(env_spec_ranges)
+        self.current_env_var_vec = np.zeros(env_var_dim, dtype=np.float32)
+        self.current_env_id = -1
+        self._sample_idx = 0
+        self._env_id_offset = int(env_id_offset)
+
+    def _apply_env_spec(self, env_spec):
+        self.env.unwrapped.paddle_density = env_spec["paddle_density"]
+        self.env.unwrapped.paddle_damping = env_spec["paddle_damping"]
+        self.env.unwrapped.puck_density = env_spec["puck_density"]
+        self.env.unwrapped.puck_damping = env_spec["puck_damping"]
+        self.env.unwrapped.force_scaling = env_spec["force_scaling"]
+        self.current_env_var_vec = extract_env_var_vector_from_spec(
+            spec=env_spec,
+            env_var_dim=self.env_var_dim,
+            env_spec_ranges=self.env_spec_ranges,
+        )
+        self.current_env_id = int(env_spec["env_id"])
+
+    def _sample_and_apply_spec(self):
+        env_id = self._env_id_offset + self._sample_idx
+        self._sample_idx += 1
+        sampled_spec = sample_env_spec_from_ranges(
+            rng=self.rng,
+            env_id=env_id,
+            env_spec_ranges=self.env_spec_ranges,
+        )
+        self._apply_env_spec(sampled_spec)
+
+    def reset(self, **kwargs):
+        self._sample_and_apply_spec()
+        obs, info = self.env.reset(**kwargs)
+        info = dict(info)
+        info["rma_env_vars"] = self.current_env_var_vec.copy()
+        info["rma_env_id"] = self.current_env_id
+        return obs, info
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        info = dict(info)
+        info["rma_env_vars"] = self.current_env_var_vec.copy()
+        info["rma_env_id"] = self.current_env_id
+        return obs, reward, terminated, truncated, info
+
+
+def make_env(env_id, env_var_dim, air_hockey_config, seed, env_spec_ranges, env_id_offset):
     def _thunk():
         cfg = dict(air_hockey_config)
         cfg["seed"] = random.randint(0, int(1e8))
         env = AirHockeyEnv(cfg)
-        return ResetSampledEnvWrapper(
+        return ResetRangeSampledEnvWrapper(
             env=env,
-            env_spec_pool=env_spec_pool,
             env_var_dim=env_var_dim,
             rng_seed=seed + env_id * 131,
+            env_spec_ranges=env_spec_ranges,
+            env_id_offset=env_id_offset + env_id * 1_000_000,
         )
 
     return _thunk
@@ -342,6 +476,7 @@ def collect_rollout_dataset(envs, agent, env_encoder, args, device):
     states = torch.zeros((rollout_len, num_envs) + obs_shape, device=device)
     actions = torch.zeros((rollout_len, num_envs) + act_shape, device=device)
     env_vars = torch.zeros((rollout_len, num_envs, args.env_var_dim), device=device)
+    target_latents = torch.zeros((rollout_len, num_envs, args.env_latent_dim), device=device)
     done_flags = torch.zeros((rollout_len, num_envs), dtype=torch.bool, device=device)
 
     next_obs, infos = envs.reset(seed=args.seed + args.rollout_seed_offset)
@@ -362,6 +497,7 @@ def collect_rollout_dataset(envs, agent, env_encoder, args, device):
             policy_obs_base = augment_policy_observation(next_obs, last_action, args.use_last_action_in_policy_state)
             latent_clean = env_encoder(current_env_vars)
             latent_noisy = inject_latent_noise(latent_clean, args.latent_noise_std)
+            target_latents[t] = latent_clean.detach()
             policy_obs = concat_env_latent_to_policy_obs(policy_obs_base, latent_noisy)
             action, _, _, _ = agent.get_action_and_value(policy_obs)
             actions[t] = action
@@ -380,11 +516,6 @@ def collect_rollout_dataset(envs, agent, env_encoder, args, device):
             )
             last_action = action.detach()
             last_action[done_t] = 0.0
-
-    with torch.no_grad():
-        target_latents = env_encoder(env_vars.reshape(-1, args.env_var_dim)).reshape(
-            rollout_len, num_envs, args.env_latent_dim
-        )
 
     return {
         "states": states,
@@ -407,59 +538,64 @@ def sample_batch_from_rollout(rollout, batch_size, args, mode):
     max_k = args.prior_max
     fixed_context_len = 100
 
-    sampled_states = []
-    sampled_actions = []
-    sampled_targets = []
-    sampled_k = []
-    sampled_available = []
-    sampled_masks = []
+    if mode not in {"train", "eval_max"}:
+        raise ValueError(f"Unknown mode: {mode}")
 
-    max_tries = batch_size * 30
-    tries = 0
-    while len(sampled_states) < batch_size and tries < max_tries:
-        tries += 1
-        t = random.randint(0, t_steps - 1)
-        e = random.randint(0, n_envs - 1)
-        available = int(context_lengths[t, e].item())
-        if mode == "train" and available < min_k:
-            continue
-        if mode == "train":
-            local_max = min(max_k, available)
-            k = random.randint(min_k, local_max)
-        elif mode == "eval_max":
-            k = min(max_k, available)
-        else:
-            raise ValueError(f"Unknown mode: {mode}")
+    available_flat = context_lengths.reshape(-1)
+    if mode == "train":
+        valid_positions = torch.nonzero(available_flat >= min_k, as_tuple=False).squeeze(-1)
+        if valid_positions.numel() == 0:
+            raise RuntimeError(
+                "No valid training samples found in rollout. "
+                "Increase rollout_len or reduce prior_min."
+            )
+    else:
+        valid_positions = torch.arange(available_flat.numel(), device=available_flat.device)
 
-        start = t - k + 1
-        state_seq, action_seq, valid_mask = build_window(
-            states=states,
-            actions=actions,
-            start_idx=start,
-            end_idx=t,
-            env_idx=e,
-            fixed_context_len=fixed_context_len,
+    chosen_flat = valid_positions[
+        torch.randint(
+            low=0,
+            high=valid_positions.numel(),
+            size=(batch_size,),
+            device=valid_positions.device,
         )
-        sampled_states.append(state_seq)
-        sampled_actions.append(action_seq)
-        sampled_masks.append(valid_mask)
-        sampled_targets.append(targets[t, e])
-        sampled_k.append(k)
-        sampled_available.append(available)
+    ]
+    sampled_t = torch.div(chosen_flat, n_envs, rounding_mode="floor")
+    sampled_e = torch.remainder(chosen_flat, n_envs)
+    sampled_available = context_lengths[sampled_t, sampled_e].to(torch.long)
 
-    if len(sampled_states) == 0:
-        raise RuntimeError(
-            "No valid training samples found in rollout. "
-            "Increase rollout_len or reduce prior_min."
-        )
+    if mode == "train":
+        local_max = torch.minimum(sampled_available, torch.full_like(sampled_available, max_k))
+        span = (local_max - min_k + 1).to(torch.float32)
+        sampled_k = (torch.floor(torch.rand(batch_size, device=targets.device) * span).to(torch.long) + min_k)
+    else:
+        sampled_k = torch.minimum(sampled_available, torch.full_like(sampled_available, max_k))
+
+    effective_len = torch.minimum(sampled_k, torch.full_like(sampled_k, fixed_context_len))
+    start_idx = sampled_t - sampled_k + 1
+    start_eff = start_idx + (sampled_k - effective_len)
+    pad_len = fixed_context_len - effective_len
+
+    rel = torch.arange(fixed_context_len, device=targets.device).unsqueeze(0).expand(batch_size, -1)
+    time_idx = torch.where(
+        rel < pad_len.unsqueeze(1),
+        start_eff.unsqueeze(1),
+        start_eff.unsqueeze(1) + (rel - pad_len.unsqueeze(1)),
+    )
+    env_idx = sampled_e.unsqueeze(1).expand(-1, fixed_context_len)
+    valid_mask = (rel >= pad_len.unsqueeze(1)).to(dtype=torch.float32)
+
+    sampled_states = states[time_idx, env_idx]
+    sampled_actions = actions[time_idx, env_idx]
+    sampled_targets = targets[sampled_t, sampled_e]
 
     return {
-        "states": torch.stack(sampled_states, dim=0),
-        "actions": torch.stack(sampled_actions, dim=0),
-        "valid_mask": torch.stack(sampled_masks, dim=0),
-        "targets": torch.stack(sampled_targets, dim=0),
-        "k": torch.tensor(sampled_k, dtype=torch.float32, device=targets.device),
-        "available": torch.tensor(sampled_available, dtype=torch.float32, device=targets.device),
+        "states": sampled_states,
+        "actions": sampled_actions,
+        "valid_mask": valid_mask,
+        "targets": sampled_targets,
+        "k": sampled_k.to(dtype=torch.float32),
+        "available": sampled_available.to(dtype=torch.float32),
     }
 
 
@@ -499,16 +635,17 @@ class Args:
     # Paths and configs.
     config: str = "scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_config.yaml"
     args_file: str | None = None
+    module_dir: str = ""
     model_path: str = ""
     encoder_path: str = ""
-    env_spec_pool_path: str = ""
+    env_spec_pool_path: str = ""  # Optional stage-1 directory/manifest/pool path for randomization-range metadata.
     log_parent_dir: str | None = None
     run_name: str = "rma_adaptation_supervised"
 
     # Runtime.
     seed: int = 0
     device: str = "cuda:0"
-    num_envs: int = 16
+    num_envs: int = 32
 
     # Stage-1 architecture compatibility.
     use_last_action_in_policy_state: bool = True
@@ -516,11 +653,10 @@ class Args:
     agent_hidden_size: int = 512
     env_var_dim: int = 8
     env_latent_dim: int = 8
-    env_encoder_hidden_size: int = 64
+    env_encoder_hidden_size: list[int] = field(default_factory=lambda: [128, 128])
 
     # Stage-2 adaptation model sizes.
-    adaptation_embed_dim: int = 16
-    adaptation_conv_in_channels: int = 8
+    adaptation_conv_in_channels: int = 32
     adaptation_hidden_size: int = 64
 
     # Data collection and supervision.
@@ -552,17 +688,29 @@ if __name__ == "__main__":
     if temp_args.args_file is not None:
         with open(temp_args.args_file, "r") as f:
             file_args_dict = yaml.load(f, Loader=yaml.FullLoader)
+        if isinstance(file_args_dict.get("env_encoder_hidden_size"), int):
+            file_args_dict["env_encoder_hidden_size"] = [int(file_args_dict["env_encoder_hidden_size"])]
         default_args = Args(**file_args_dict)
     else:
         default_args = Args()
     args = tyro.cli(Args, default=default_args)
 
+    resolved_stage1 = None
+    if args.module_dir:
+        resolved_stage1 = _resolve_stage1_module_paths(args.module_dir)
+        if not args.model_path:
+            args.model_path = resolved_stage1["model_path"]
+        if not args.encoder_path:
+            args.encoder_path = resolved_stage1["encoder_path"]
+        print(
+            "Resolved stage-1 artifacts from module_dir: "
+            f"{resolved_stage1['module_dir']}"
+        )
+
     if not args.model_path:
         raise ValueError("model_path must be provided.")
     if not args.encoder_path:
         raise ValueError("encoder_path must be provided.")
-    if not args.env_spec_pool_path:
-        raise ValueError("env_spec_pool_path must be provided.")
     if args.prior_min > args.prior_max:
         raise ValueError("prior_min must be <= prior_max.")
 
@@ -573,27 +721,37 @@ if __name__ == "__main__":
     with open(args.config, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
 
-    full_env_pool, manifest_path, resolved_pool_path = load_env_spec_pool(args.env_spec_pool_path)
-    if manifest_path is not None:
-        manifest = _load_yaml(manifest_path) or {}
+    resolved_pool_path = None
+    manifest_path = None
+    if resolved_stage1 is not None and resolved_stage1.get("training_manifest_path") is not None:
+        manifest_path = resolved_stage1["training_manifest_path"]
+    if args.env_spec_pool_path:
+        maybe_pool_path, maybe_manifest_path = _resolve_env_artifact_paths(args.env_spec_pool_path)
+        if maybe_manifest_path is not None:
+            manifest_path = maybe_manifest_path
+        if maybe_pool_path is not None:
+            resolved_pool_path = maybe_pool_path
+
+    manifest = (_load_yaml(manifest_path) or {}) if manifest_path is not None else {}
+    if manifest:
         _validate_manifest_compatibility(manifest, args)
         print(f"Loaded stage-1 env manifest: {manifest_path}")
-    print(f"Loaded env spec pool artifact: {resolved_pool_path} (size={len(full_env_pool)})")
-    train_env_specs, eval_env_specs = split_env_pool(
-        env_spec_pool=full_env_pool,
-        train_env_count=args.train_env_count,
-        eval_env_count=args.eval_env_count,
-        seed=args.seed,
+
+    env_spec_ranges = _coerce_env_spec_ranges(manifest.get("randomization_ranges"))
+    print(
+        "Using on-demand range sampling for adaptation envs with ranges: "
+        f"{env_spec_ranges}"
     )
 
     train_envs = gym.vector.AsyncVectorEnv(
         [
             make_env(
                 env_id=i,
-                env_spec_pool=train_env_specs,
                 env_var_dim=args.env_var_dim,
                 air_hockey_config=config["air_hockey"],
                 seed=args.seed,
+                env_spec_ranges=env_spec_ranges,
+                env_id_offset=0,
             )
             for i in range(args.num_envs)
         ]
@@ -602,10 +760,11 @@ if __name__ == "__main__":
         [
             make_env(
                 env_id=i,
-                env_spec_pool=eval_env_specs,
                 env_var_dim=args.env_var_dim,
                 air_hockey_config=config["air_hockey"],
                 seed=args.seed + 991,
+                env_spec_ranges=env_spec_ranges,
+                env_id_offset=100_000_000,
             )
             for i in range(args.num_envs)
         ]
@@ -635,12 +794,17 @@ if __name__ == "__main__":
     with open(f"{log_parent_dir}/args.yaml", "w") as f:
         yaml.dump(vars(args), f)
     env_artifact_usage = {
-        "input_env_spec_pool_path": os.path.abspath(args.env_spec_pool_path),
+        "input_module_dir": os.path.abspath(args.module_dir) if args.module_dir else None,
+        "resolved_model_path": os.path.abspath(args.model_path),
+        "resolved_encoder_path": os.path.abspath(args.encoder_path),
+        "input_env_spec_pool_path": os.path.abspath(args.env_spec_pool_path) if args.env_spec_pool_path else None,
         "resolved_env_spec_pool_path": resolved_pool_path,
         "resolved_training_manifest_path": manifest_path,
-        "loaded_env_pool_size": int(len(full_env_pool)),
-        "train_env_count": int(args.train_env_count),
-        "eval_env_count": int(args.eval_env_count),
+        "sampling_mode": "on_demand_range_sampling",
+        "randomization_ranges": env_spec_ranges,
+        "loaded_env_pool_size": None,
+        "train_env_count": None,
+        "eval_env_count": None,
         "split_seed": int(args.seed),
     }
     with open(f"{log_parent_dir}/env_spec_pool_usage.yaml", "w") as f:
@@ -676,7 +840,6 @@ if __name__ == "__main__":
     adaptation_module = RMAAdaptationModule(
         action_dim=action_dim,
         state_dim=int(np.prod(train_envs.single_observation_space.shape)),
-        embed_dim=args.adaptation_embed_dim,
         conv_in_channels=args.adaptation_conv_in_channels,
         latent_dim=args.env_latent_dim,
         hidden_size=args.adaptation_hidden_size,
@@ -717,13 +880,23 @@ if __name__ == "__main__":
                 args=args,
                 mode="train",
             )
-            preds = adaptation_module(batch["actions"], batch["states"], valid_mask=batch["valid_mask"])
+            should_log = ((global_step + 1) % 20) == 0
+            model_out = adaptation_module(
+                batch["actions"],
+                batch["states"],
+                valid_mask=batch["valid_mask"],
+                return_intermediates=should_log,
+            )
+            if should_log:
+                preds = model_out["latent"]
+            else:
+                preds = model_out
             metrics = latent_metrics(preds, batch["targets"])
             loss = metrics["mse"]
 
             optimizer.zero_grad()
             loss.backward()
-            grad_norm = torch.nn.utils.clip_grad_norm_(adaptation_module.parameters(), args.max_grad_norm).item()
+            grad_norm = torch.nn.utils.clip_grad_norm_(adaptation_module.parameters(), args.max_grad_norm)
             optimizer.step()
             global_step += 1
 
@@ -732,58 +905,52 @@ if __name__ == "__main__":
             train_rmse_sum += metrics["rmse"].item()
             train_cos_sum += metrics["cosine"].item()
 
-            writer.add_scalar("train/loss_mse", metrics["mse"].item(), global_step)
-            writer.add_scalar("train/loss_mae", metrics["mae"].item(), global_step)
-            writer.add_scalar("train/loss_rmse", metrics["rmse"].item(), global_step)
-            writer.add_scalar("train/latent_cosine", metrics["cosine"].item(), global_step)
-            writer.add_scalar("train/pred_norm", metrics["pred_norm"].item(), global_step)
-            writer.add_scalar("train/target_norm", metrics["target_norm"].item(), global_step)
-            writer.add_scalar("train/prior_k_mean", batch["k"].mean().item(), global_step)
-            writer.add_scalar("train/prior_available_mean", batch["available"].mean().item(), global_step)
-            writer.add_scalar("optim/lr", optimizer.param_groups[0]["lr"], global_step)
-            writer.add_scalar("optim/grad_norm", grad_norm, global_step)
-            writer.add_scalar(
-                "debug/nan_count_pred",
-                float(torch.isnan(preds).sum().item()),
-                global_step,
-            )
-            writer.add_scalar(
-                "debug/inf_count_pred",
-                float(torch.isinf(preds).sum().item()),
-                global_step,
-            )
-
-            with torch.no_grad():
-                inter = adaptation_module(
-                    batch["actions"],
-                    batch["states"],
-                    valid_mask=batch["valid_mask"],
-                    return_intermediates=True,
+            if should_log:
+                writer.add_scalar("train/loss_mse", metrics["mse"].item(), global_step)
+                writer.add_scalar("train/loss_mae", metrics["mae"].item(), global_step)
+                writer.add_scalar("train/loss_rmse", metrics["rmse"].item(), global_step)
+                writer.add_scalar("train/latent_cosine", metrics["cosine"].item(), global_step)
+                writer.add_scalar("train/pred_norm", metrics["pred_norm"].item(), global_step)
+                writer.add_scalar("train/target_norm", metrics["target_norm"].item(), global_step)
+                writer.add_scalar("train/prior_k_mean", batch["k"].mean().item(), global_step)
+                writer.add_scalar("train/prior_available_mean", batch["available"].mean().item(), global_step)
+                writer.add_scalar("optim/lr", optimizer.param_groups[0]["lr"], global_step)
+                writer.add_scalar("optim/grad_norm", float(grad_norm.item()), global_step)
+                writer.add_scalar(
+                    "debug/nan_count_pred",
+                    float(torch.isnan(preds).sum().item()),
+                    global_step,
                 )
-                emb_stats = tensor_stats(inter["embedded"])
-                proj_stats = tensor_stats(inter["projected"])
-                pooled_stats = tensor_stats(inter["pooled"])
+                writer.add_scalar(
+                    "debug/inf_count_pred",
+                    float(torch.isinf(preds).sum().item()),
+                    global_step,
+                )
+
+                emb_stats = tensor_stats(model_out["embedded"])
+                temporal_stats = tensor_stats(model_out["temporal_in"])
+                pooled_stats = tensor_stats(model_out["pooled"])
                 writer.add_scalar("cnn/embedded_mean", emb_stats[0].item(), global_step)
                 writer.add_scalar("cnn/embedded_std", emb_stats[1].item(), global_step)
-                writer.add_scalar("cnn/projected_mean", proj_stats[0].item(), global_step)
-                writer.add_scalar("cnn/projected_std", proj_stats[1].item(), global_step)
+                writer.add_scalar("cnn/temporal_in_mean", temporal_stats[0].item(), global_step)
+                writer.add_scalar("cnn/temporal_in_std", temporal_stats[1].item(), global_step)
                 writer.add_scalar("cnn/pooled_mean", pooled_stats[0].item(), global_step)
                 writer.add_scalar("cnn/pooled_std", pooled_stats[1].item(), global_step)
 
-            for name, layer in adaptation_module.named_modules():
-                if isinstance(layer, nn.Conv1d):
-                    w = layer.weight.detach()
-                    writer.add_scalar(f"cnn/{name}_weight_norm", float(torch.norm(w).item()), global_step)
-                    if layer.weight.grad is not None:
-                        writer.add_scalar(
-                            f"cnn/{name}_grad_norm",
-                            float(torch.norm(layer.weight.grad.detach()).item()),
-                            global_step,
-                        )
+                for name, layer in adaptation_module.named_modules():
+                    if isinstance(layer, nn.Conv1d):
+                        w = layer.weight.detach()
+                        writer.add_scalar(f"cnn/{name}_weight_norm", float(torch.norm(w).item()), global_step)
+                        if layer.weight.grad is not None:
+                            writer.add_scalar(
+                                f"cnn/{name}_grad_norm",
+                                float(torch.norm(layer.weight.grad.detach()).item()),
+                                global_step,
+                            )
 
-            p_norm, g_norm = param_and_grad_norm(adaptation_module)
-            writer.add_scalar("optim/param_norm", p_norm, global_step)
-            writer.add_scalar("optim/global_grad_norm_sqroot", g_norm, global_step)
+                p_norm, g_norm = param_and_grad_norm(adaptation_module)
+                writer.add_scalar("optim/param_norm", p_norm, global_step)
+                writer.add_scalar("optim/global_grad_norm_sqroot", g_norm, global_step)
 
         mean_train_mse = train_loss_sum / args.train_steps_per_iter
 
@@ -844,7 +1011,8 @@ if __name__ == "__main__":
                 f"rmse={train_rmse_sum / args.train_steps_per_iter:.6f} "
                 f"cos={train_cos_sum / args.train_steps_per_iter:.6f} sps={sps}"
             )
-            writer.add_scalar("charts/sps", sps, global_step)
+            if global_step % 20 == 0:
+                writer.add_scalar("charts/sps", sps, global_step)
 
     torch.save(adaptation_module.state_dict(), os.path.join(log_parent_dir, "adaptation_module.pth"))
     writer.close()

@@ -496,6 +496,7 @@ class Args:
     # Others
     seed: int = 0
     device: str = "cuda:0"
+    stats_log_interval: int = 5  # Log scalar statistics every N iterations
     use_last_action_in_policy_state: bool = False  # Append previous action to policy input state
 
     # action scale for the agent (mostly deprecated, should default to 1)
@@ -702,6 +703,8 @@ if __name__ == "__main__":
         )
     if args.env_var_dim <= 0 or args.env_latent_dim <= 0:
         raise ValueError("env_var_dim and env_latent_dim must be positive.")
+    if args.stats_log_interval <= 0:
+        raise ValueError("stats_log_interval must be a positive integer.")
     args.batch_size = args.num_envs * args.num_steps
 
     with open(args.config, "r") as f:
@@ -946,8 +949,8 @@ if __name__ == "__main__":
     global_step = 0
     start_time = time.time()
     next_obs, infos = envs.reset(seed=args.seed)
-    next_obs = torch.Tensor(next_obs).to(args.device)
-    next_done = torch.zeros(args.num_envs).to(args.device)
+    next_obs = torch.as_tensor(next_obs, dtype=torch.float32, device=args.device)
+    next_done = torch.zeros(args.num_envs, dtype=torch.float32, device=args.device)
     just_reset = torch.zeros(args.num_envs, dtype=torch.bool).to(args.device)
     last_action_for_policy = torch.zeros((args.num_envs, action_dim), device=args.device)
     current_env_vars = parse_env_vars_from_infos(
@@ -960,6 +963,7 @@ if __name__ == "__main__":
     
 
     for iteration in range(1, args.num_iterations + 1):
+        should_log_stats = (iteration % args.stats_log_interval) == 0
         # Reset episodic return tracking for this iteration
         episodic_returns = []
         success_rates = []
@@ -991,12 +995,14 @@ if __name__ == "__main__":
             actions[step] = action
             logprobs[step] = logprob
 
-            next_obs, reward, terminations, truncations, infos = envs.step(action.cpu().numpy())
+            next_obs_np, reward_np, terminations, truncations, infos = envs.step(action.cpu().numpy())
 
             # REWARD SCALING is done on the environment level, not here
-            next_done = np.logical_or(terminations, truncations)
-            rewards[step] = torch.tensor(reward).to(args.device).view(-1)
-            next_obs, next_done = torch.Tensor(next_obs).to(args.device), torch.Tensor(next_done).to(args.device)
+            next_done_np = np.logical_or(terminations, truncations)
+            next_done_mask = torch.as_tensor(next_done_np, dtype=torch.bool, device=args.device)
+            rewards[step] = torch.as_tensor(reward_np, dtype=torch.float32, device=args.device).view(-1)
+            next_obs = torch.as_tensor(next_obs_np, dtype=torch.float32, device=args.device)
+            next_done = next_done_mask.to(dtype=torch.float32)
             current_env_vars = parse_env_vars_from_infos(
                 infos=infos,
                 num_envs=args.num_envs,
@@ -1005,7 +1011,7 @@ if __name__ == "__main__":
                 fallback_env_vars=current_env_vars,
             )
             last_action_for_policy = action.detach().clone()
-            last_action_for_policy[next_done.bool()] = 0
+            last_action_for_policy[next_done_mask] = 0
             
             # AMP: Construct discriminator observations from position history
             current_paddle_pos = next_obs[:, 12:14]  # [batch, 2] - just x, y position
@@ -1084,8 +1090,8 @@ if __name__ == "__main__":
                         )
             
             # Reset position history and count for environments that are done
-            if use_discriminator_reward and next_done.any():
-                done_mask = next_done.bool()
+            if use_discriminator_reward and next_done_mask.any():
+                done_mask = next_done_mask
                 position_history[done_mask] = 0
                 position_history[done_mask, -1, :] = current_paddle_pos[done_mask]
                 position_count[done_mask] = 1  # We have 1 position after reset
@@ -1093,15 +1099,16 @@ if __name__ == "__main__":
                 action_count[done_mask] = 0
             
             # Track which environments just reset for next step
-            just_reset = next_done.bool()
+            just_reset = next_done_mask
 
             if "final_info" in infos:
                 for info in infos["final_info"]:
                     if info and "episode_return" in info:
                         episodic_returns.append(info["episode_return"])
                         success_rates.append(1.0 if info["success"] else 0.0)
-                        writer.add_scalar("charts/episodic_return", info["episode_return"], global_step)
-                        writer.add_scalar("charts/episodic_length", info["episode_length"], global_step)
+                        if should_log_stats:
+                            writer.add_scalar("charts/episodic_return", info["episode_return"], global_step)
+                            writer.add_scalar("charts/episodic_length", info["episode_length"], global_step)
                         if "motion_data" in info:
                             velocity_magnitudes.extend(info["motion_data"]["velocity_mags"])
                             acceleration_magnitudes.extend(info["motion_data"]["acceleration_mags"])
@@ -1125,28 +1132,38 @@ if __name__ == "__main__":
             temporal_alignment_reward_scaled.zero_()
             horizon = args.temporal_alignment_horizon
             eps = 1e-8
-            for t in range(horizon, args.num_steps):
-                realized_movement = paddle_positions[t] - paddle_positions[t - horizon]
-                target_direction = actions[t - horizon]
+            if horizon < args.num_steps:
+                realized_movement = paddle_positions[horizon:] - paddle_positions[: args.num_steps - horizon]
+                target_direction = actions[: args.num_steps - horizon]
 
                 movement_norm = torch.norm(realized_movement, dim=-1).clamp_min(eps)
-                target_norm = torch.norm(target_direction, dim=-1).clamp_min(eps)
-                cosine_sim = (realized_movement * target_direction).sum(dim=-1) / (movement_norm * target_norm)
+                target_norm = torch.norm(target_direction, dim=-1)
+                cosine_sim = (realized_movement * target_direction).sum(dim=-1) / (
+                    movement_norm * target_norm.clamp_min(eps)
+                )
 
                 # Apply fallback reward per environment when target direction is near zero.
-                small_target_mask = torch.norm(target_direction, dim=-1) < 0.03  # hard-coded threshold for now
+                small_target_mask = target_norm < 0.03  # hard-coded threshold for now
                 cosine_sim = torch.where(
                     small_target_mask,
                     torch.full_like(cosine_sim, 0.75),  # hard-coded reward
                     cosine_sim,
                 )
-                
+
                 # Invalidate if episode reset happened between command and realized movement.
-                temporal_valid = torch.ones(args.num_envs, dtype=torch.bool, device=args.device)
-                for k in range(t - horizon + 1, t + 1):
-                    temporal_valid = temporal_valid & (~dones[k].bool())
-                
-                temporal_alignment_reward_raw[t] = cosine_sim * temporal_valid.float()
+                done_int = dones.bool().to(dtype=torch.int32)
+                done_prefix = torch.cat(
+                    [
+                        torch.zeros((1, args.num_envs), dtype=torch.int32, device=args.device),
+                        torch.cumsum(done_int, dim=0),
+                    ],
+                    dim=0,
+                )
+                # For each t in [horizon, num_steps-1], check done count over [t-horizon+1, t].
+                window_done_count = done_prefix[horizon + 1 :] - done_prefix[1 : args.num_steps - horizon + 1]
+                temporal_valid = window_done_count == 0
+
+                temporal_alignment_reward_raw[horizon:] = cosine_sim * temporal_valid.float()
             temporal_alignment_reward_scaled = temporal_alignment_reward_raw * args.temporal_alignment_reward_scale
             
             if use_discriminator_reward:
@@ -1200,36 +1217,37 @@ if __name__ == "__main__":
             returns = advantages + values
             
             # Log reward stream statistics (raw and scaled)
-            if use_discriminator_reward:
-                writer.add_scalar("amp/disc_reward_raw_mean", disc_r_raw.mean().item(), global_step)
-                writer.add_scalar("amp/disc_reward_raw_std", disc_r_raw.std().item(), global_step)
-                writer.add_scalar("amp/disc_reward_scaled_mean", disc_r_scaled.mean().item(), global_step)
-                writer.add_scalar("amp/disc_reward_scaled_std", disc_r_scaled.std().item(), global_step)
-            writer.add_scalar("amp/task_reward_raw_mean", task_r_raw.mean().item(), global_step)
-            writer.add_scalar("amp/task_reward_raw_std", task_r_raw.std().item(), global_step)
-            writer.add_scalar("amp/task_reward_scaled_mean", task_r_scaled.mean().item(), global_step)
-            writer.add_scalar("amp/task_reward_scaled_std", task_r_scaled.std().item(), global_step)
-            writer.add_scalar("amp/temporal_alignment_reward_raw_mean", temporal_alignment_reward_raw.mean().item(), global_step)
-            writer.add_scalar("amp/temporal_alignment_reward_raw_std", temporal_alignment_reward_raw.std().item(), global_step)
-            writer.add_scalar("amp/temporal_alignment_reward_scaled_mean", temporal_alignment_reward_scaled.mean().item(), global_step)
-            writer.add_scalar("amp/temporal_alignment_reward_scaled_std", temporal_alignment_reward_scaled.std().item(), global_step)
-            writer.add_scalar("amp/action_magnitude_reward_raw_mean", action_magnitude_reward_raw.mean().item(), global_step)
-            writer.add_scalar("amp/action_magnitude_reward_raw_std", action_magnitude_reward_raw.std().item(), global_step)
-            writer.add_scalar("amp/action_magnitude_reward_scaled_mean", action_magnitude_reward_scaled.mean().item(), global_step)
-            writer.add_scalar("amp/action_magnitude_reward_scaled_std", action_magnitude_reward_scaled.std().item(), global_step)
+            if should_log_stats:
+                if use_discriminator_reward:
+                    writer.add_scalar("amp/disc_reward_raw_mean", disc_r_raw.mean().item(), global_step)
+                    writer.add_scalar("amp/disc_reward_raw_std", disc_r_raw.std().item(), global_step)
+                    writer.add_scalar("amp/disc_reward_scaled_mean", disc_r_scaled.mean().item(), global_step)
+                    writer.add_scalar("amp/disc_reward_scaled_std", disc_r_scaled.std().item(), global_step)
+                writer.add_scalar("amp/task_reward_raw_mean", task_r_raw.mean().item(), global_step)
+                writer.add_scalar("amp/task_reward_raw_std", task_r_raw.std().item(), global_step)
+                writer.add_scalar("amp/task_reward_scaled_mean", task_r_scaled.mean().item(), global_step)
+                writer.add_scalar("amp/task_reward_scaled_std", task_r_scaled.std().item(), global_step)
+                writer.add_scalar("amp/temporal_alignment_reward_raw_mean", temporal_alignment_reward_raw.mean().item(), global_step)
+                writer.add_scalar("amp/temporal_alignment_reward_raw_std", temporal_alignment_reward_raw.std().item(), global_step)
+                writer.add_scalar("amp/temporal_alignment_reward_scaled_mean", temporal_alignment_reward_scaled.mean().item(), global_step)
+                writer.add_scalar("amp/temporal_alignment_reward_scaled_std", temporal_alignment_reward_scaled.std().item(), global_step)
+                writer.add_scalar("amp/action_magnitude_reward_raw_mean", action_magnitude_reward_raw.mean().item(), global_step)
+                writer.add_scalar("amp/action_magnitude_reward_raw_std", action_magnitude_reward_raw.std().item(), global_step)
+                writer.add_scalar("amp/action_magnitude_reward_scaled_mean", action_magnitude_reward_scaled.mean().item(), global_step)
+                writer.add_scalar("amp/action_magnitude_reward_scaled_std", action_magnitude_reward_scaled.std().item(), global_step)
 
-            # Backward-compatible logs.
-            if use_discriminator_reward:
-                writer.add_scalar("amp/disc_reward_mean", disc_r_raw.mean().item(), global_step)
-                writer.add_scalar("amp/disc_reward_std", disc_r_raw.std().item(), global_step)
-            writer.add_scalar("amp/task_reward_mean", task_r_raw.mean().item(), global_step)
-            writer.add_scalar("amp/combined_reward_mean", combined_rewards.mean().item(), global_step)
+                # Backward-compatible logs.
+                if use_discriminator_reward:
+                    writer.add_scalar("amp/disc_reward_mean", disc_r_raw.mean().item(), global_step)
+                    writer.add_scalar("amp/disc_reward_std", disc_r_raw.std().item(), global_step)
+                writer.add_scalar("amp/task_reward_mean", task_r_raw.mean().item(), global_step)
+                writer.add_scalar("amp/combined_reward_mean", combined_rewards.mean().item(), global_step)
 
-            # log statistics of the advantages, values
-            writer.add_scalar("charts/advantage_mean", advantages.mean().item(), global_step)
-            writer.add_scalar("charts/advantage_std", advantages.std().item(), global_step)
-            writer.add_scalar("charts/value_mean", values.mean().item(), global_step)
-            writer.add_scalar("charts/value_std", values.std().item(), global_step)
+                # log statistics of the advantages, values
+                writer.add_scalar("charts/advantage_mean", advantages.mean().item(), global_step)
+                writer.add_scalar("charts/advantage_std", advantages.std().item(), global_step)
+                writer.add_scalar("charts/value_mean", values.mean().item(), global_step)
+                writer.add_scalar("charts/value_std", values.std().item(), global_step)
 
         # flatten the batch
         b_policy_obs_base = policy_obs_base.reshape((-1, base_policy_obs_dim))
@@ -1244,12 +1262,13 @@ if __name__ == "__main__":
         with torch.no_grad():
             latent_snapshot = env_encoder(b_env_vars)
             latent_stats = summarize_latent_stats(latent_snapshot)
-            writer.add_scalar("encoder_latent/mean", latent_stats["mean"].item(), global_step)
-            writer.add_scalar("encoder_latent/std", latent_stats["std"].item(), global_step)
-            writer.add_scalar("encoder_latent/min", latent_stats["min"].item(), global_step)
-            writer.add_scalar("encoder_latent/max", latent_stats["max"].item(), global_step)
-            writer.add_scalar("encoder_latent/norm_mean", latent_stats["norm_mean"].item(), global_step)
-            writer.add_scalar("encoder_latent/norm_std", latent_stats["norm_std"].item(), global_step)
+            if should_log_stats:
+                writer.add_scalar("encoder_latent/mean", latent_stats["mean"].item(), global_step)
+                writer.add_scalar("encoder_latent/std", latent_stats["std"].item(), global_step)
+                writer.add_scalar("encoder_latent/min", latent_stats["min"].item(), global_step)
+                writer.add_scalar("encoder_latent/max", latent_stats["max"].item(), global_step)
+                writer.add_scalar("encoder_latent/norm_mean", latent_stats["norm_mean"].item(), global_step)
+                writer.add_scalar("encoder_latent/norm_std", latent_stats["norm_std"].item(), global_step)
             
 
         # Optimizing the policy and value network
@@ -1400,31 +1419,34 @@ if __name__ == "__main__":
                     disc_demo_acc = (disc_demo_logit > 0.0).float().mean().item()
             
             # Log discriminator metrics
-            writer.add_scalar("amp/disc_loss", disc_loss.item(), global_step)
-            writer.add_scalar("amp/disc_loss_demo", disc_loss_demo.item(), global_step)
-            writer.add_scalar("amp/disc_loss_agent", disc_loss_agent.item(), global_step)
-            writer.add_scalar("amp/disc_grad_penalty", disc_grad_penalty.item(), global_step)
-            writer.add_scalar("amp/disc_agent_acc", disc_agent_acc, global_step)
-            writer.add_scalar("amp/disc_demo_acc", disc_demo_acc, global_step)
-            writer.add_scalar("amp/disc_agent_logit_mean", disc_agent_logit.mean().item(), global_step)
-            writer.add_scalar("amp/disc_demo_logit_mean", disc_demo_logit.mean().item(), global_step)
-            writer.add_scalar("amp/replay_buffer_size", len(replay_buffer), global_step)
+            if should_log_stats:
+                writer.add_scalar("amp/disc_loss", disc_loss.item(), global_step)
+                writer.add_scalar("amp/disc_loss_demo", disc_loss_demo.item(), global_step)
+                writer.add_scalar("amp/disc_loss_agent", disc_loss_agent.item(), global_step)
+                writer.add_scalar("amp/disc_grad_penalty", disc_grad_penalty.item(), global_step)
+                writer.add_scalar("amp/disc_agent_acc", disc_agent_acc, global_step)
+                writer.add_scalar("amp/disc_demo_acc", disc_demo_acc, global_step)
+                writer.add_scalar("amp/disc_agent_logit_mean", disc_agent_logit.mean().item(), global_step)
+                writer.add_scalar("amp/disc_demo_logit_mean", disc_demo_logit.mean().item(), global_step)
+                writer.add_scalar("amp/replay_buffer_size", len(replay_buffer), global_step)
 
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
-        writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
-        writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
-        writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
-        writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
-        writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
-        writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
-        writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
-        writer.add_scalar("losses/explained_variance", explained_var, global_step)
+        if should_log_stats:
+            writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
+            writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
+            writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
+            writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
+            writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
+            writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
+            writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
+            writer.add_scalar("losses/explained_variance", explained_var, global_step)
         print("SPS:", int(global_step / (time.time() - start_time)))
-        writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+        if should_log_stats:
+            writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
         # Calculate and log episodic return statistics for this iteration
         if episodic_returns:
@@ -1434,11 +1456,12 @@ if __name__ == "__main__":
 
             print(f"Iteration {iteration}: Avg Return: {avg_return:.2f}, Min Return: {min_return:.2f}, Max Return: {max_return:.2f}")
             print(f"Iteration {iteration}: Avg Success Rate: {np.mean(success_rates):.2f}, Max Success Rate: {np.max(success_rates):.2f}")
-            writer.add_scalar("charts/avg_episodic_return", avg_return, iteration)
-            writer.add_scalar("charts/min_episodic_return", min_return, iteration)
-            writer.add_scalar("charts/max_episodic_return", max_return, iteration)
-            writer.add_scalar("charts/avg_success_rate", np.mean(success_rates), iteration)
-            writer.add_scalar("charts/max_success_rate", np.max(success_rates), iteration)
+            if should_log_stats:
+                writer.add_scalar("charts/avg_episodic_return", avg_return, iteration)
+                writer.add_scalar("charts/min_episodic_return", min_return, iteration)
+                writer.add_scalar("charts/max_episodic_return", max_return, iteration)
+                writer.add_scalar("charts/avg_success_rate", np.mean(success_rates), iteration)
+                writer.add_scalar("charts/max_success_rate", np.max(success_rates), iteration)
             episodic_returns = []
             success_rates = []
         else:
@@ -1458,9 +1481,10 @@ if __name__ == "__main__":
                 f"Avg Acceleration Mag: {avg_acc_mag:.4f}, Avg Jerk Mag: {avg_jerk_mag:.4f}"
             )
 
-            writer.add_scalar("motion/avg_velocity_magnitude", avg_vel_mag, iteration)
-            writer.add_scalar("motion/avg_acceleration_magnitude", avg_acc_mag, iteration)
-            writer.add_scalar("motion/avg_jerk_magnitude", avg_jerk_mag, iteration)
+            if should_log_stats:
+                writer.add_scalar("motion/avg_velocity_magnitude", avg_vel_mag, iteration)
+                writer.add_scalar("motion/avg_acceleration_magnitude", avg_acc_mag, iteration)
+                writer.add_scalar("motion/avg_jerk_magnitude", avg_jerk_mag, iteration)
 
             # Clear lists for next iteration
             velocity_magnitudes.clear()
@@ -1475,15 +1499,16 @@ if __name__ == "__main__":
                 args=args,
                 device=args.device,
             )
-            writer.add_scalar(
-                "edge_eval/overall_avg_return",
-                float(np.mean([entry["avg_return"] for entry in edge_eval_results])),
-                iteration,
-            )
-            for entry in edge_eval_results:
-                spec_name = entry["name"]
-                writer.add_scalar(f"edge_eval/{spec_name}/avg_return", entry["avg_return"], iteration)
-                writer.add_scalar(f"edge_eval/{spec_name}/avg_length", entry["avg_length"], iteration)
+            if should_log_stats:
+                writer.add_scalar(
+                    "edge_eval/overall_avg_return",
+                    float(np.mean([entry["avg_return"] for entry in edge_eval_results])),
+                    iteration,
+                )
+                for entry in edge_eval_results:
+                    spec_name = entry["name"]
+                    writer.add_scalar(f"edge_eval/{spec_name}/avg_return", entry["avg_return"], iteration)
+                    writer.add_scalar(f"edge_eval/{spec_name}/avg_length", entry["avg_length"], iteration)
 
         if iteration % args.model_save_interval == 0:
             # save a checkpoint of the model
@@ -1538,15 +1563,16 @@ if __name__ == "__main__":
         args=args,
         device=args.device,
     )
-    writer.add_scalar(
-        "edge_eval/overall_avg_return",
-        float(np.mean([entry["avg_return"] for entry in edge_eval_results])),
-        args.num_iterations,
-    )
-    for entry in edge_eval_results:
-        spec_name = entry["name"]
-        writer.add_scalar(f"edge_eval/{spec_name}/avg_return", entry["avg_return"], args.num_iterations)
-        writer.add_scalar(f"edge_eval/{spec_name}/avg_length", entry["avg_length"], args.num_iterations)
+    if (args.num_iterations % args.stats_log_interval) == 0:
+        writer.add_scalar(
+            "edge_eval/overall_avg_return",
+            float(np.mean([entry["avg_return"] for entry in edge_eval_results])),
+            args.num_iterations,
+        )
+        for entry in edge_eval_results:
+            spec_name = entry["name"]
+            writer.add_scalar(f"edge_eval/{spec_name}/avg_return", entry["avg_return"], args.num_iterations)
+            writer.add_scalar(f"edge_eval/{spec_name}/avg_length", entry["avg_length"], args.num_iterations)
 
     writer.close()
     envs.close()

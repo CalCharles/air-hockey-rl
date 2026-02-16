@@ -8,7 +8,7 @@ from scripts.smooth_policy.agent import layer_init
 class ActionStateEmbedder(nn.Module):
     """Embed per-timestep (action, state) pairs into a latent feature vector."""
 
-    def __init__(self, action_dim, state_dim, embed_dim=16, hidden_size=64):
+    def __init__(self, action_dim, state_dim, embed_dim=16, hidden_size=128):
         super().__init__()
         if action_dim <= 0 or state_dim <= 0:
             raise ValueError("action_dim and state_dim must be positive.")
@@ -24,21 +24,67 @@ class ActionStateEmbedder(nn.Module):
             layer_init(nn.Linear(input_dim, hidden_size)),
             nn.Tanh(),
             layer_init(nn.Linear(hidden_size, embed_dim), std=1.0),
-            nn.Tanh(),
         )
 
     def forward(self, actions, states):
-        if actions.ndim != 3 or states.ndim != 3:
-            raise ValueError("actions and states must both be rank-3 tensors [batch, time, dim].")
-        if actions.shape[:2] != states.shape[:2]:
-            raise ValueError("actions and states must match on [batch, time].")
-        if actions.shape[-1] != self.action_dim:
-            raise ValueError(f"Expected action dim {self.action_dim}, got {actions.shape[-1]}.")
-        if states.shape[-1] != self.state_dim:
-            raise ValueError(f"Expected state dim {self.state_dim}, got {states.shape[-1]}.")
-
         x = torch.cat([actions, states], dim=-1)  # [B, T, action_dim + state_dim]
         return self.net(x)  # [B, T, embed_dim]
+
+
+class ChannelLayerNorm1d(nn.Module):
+    """LayerNorm over channels for each timestep of a [B, C, T] tensor."""
+
+    def __init__(self, num_channels):
+        super().__init__()
+        self.norm = nn.LayerNorm(num_channels)
+
+    def forward(self, x):
+        # [B, C, T] -> [B, T, C] -> LayerNorm(C) -> [B, C, T]
+        return self.norm(x.transpose(1, 2)).transpose(1, 2)
+
+
+class TemporalResidualBlock(nn.Module):
+    """Conv1d block with LayerNorm, ReLU, and residual connection."""
+
+    def __init__(self, in_channels, out_channels, kernel_size, stride, activation=nn.ReLU):
+        super().__init__()
+        self.conv = nn.Conv1d(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=0,
+        )
+        self.norm = ChannelLayerNorm1d(out_channels)
+        self.activation = activation()
+
+        # Match residual branch shape to the main branch when temporal/channel sizes differ.
+        if in_channels == out_channels and kernel_size == 1 and stride == 1:
+            self.residual = nn.Identity()
+        else:
+            self.residual = nn.Conv1d(
+                in_channels=in_channels,
+                out_channels=out_channels,
+                kernel_size=kernel_size,
+                stride=stride,
+                padding=0,
+                bias=False,
+            )
+
+    @staticmethod
+    def _align_time_dim(main, residual):
+        if main.shape[-1] == residual.shape[-1]:
+            return main, residual
+        min_len = min(main.shape[-1], residual.shape[-1])
+        return main[..., -min_len:], residual[..., -min_len:]
+
+    def forward(self, x):
+        out = self.conv(x)
+        out = self.norm(out)
+        out = self.activation(out)
+        residual = self.residual(x)
+        out, residual = self._align_time_dim(out, residual)
+        return out + residual
 
 
 class TemporalConvEncoder(nn.Module):
@@ -53,25 +99,33 @@ class TemporalConvEncoder(nn.Module):
                 (8, 8, 5, 1),
             ]
 
-        layers = []
-        for in_channels, out_channels, kernel_size, stride in conv_specs:
-            layers.append(
-                nn.Conv1d(
+        self.blocks = nn.ModuleList(
+            [
+                TemporalResidualBlock(
                     in_channels=in_channels,
                     out_channels=out_channels,
                     kernel_size=kernel_size,
                     stride=stride,
-                    padding=0,
+                    activation=activation,
                 )
-            )
-            layers.append(activation())
-        self.network = nn.Sequential(*layers)
+                for in_channels, out_channels, kernel_size, stride in conv_specs
+            ]
+        )
+        self._mask_kernel_cache = {}
+
+    def _get_mask_kernel(self, kernel_size, dtype, device):
+        cache_key = (int(kernel_size), dtype, device)
+        kernel = self._mask_kernel_cache.get(cache_key)
+        if kernel is None:
+            kernel = torch.ones((1, 1, int(kernel_size)), dtype=dtype, device=device)
+            self._mask_kernel_cache[cache_key] = kernel
+        return kernel
 
     def forward(self, temporal_features):
         # temporal_features: [B, C, T]
-        if temporal_features.ndim != 3:
-            raise ValueError("temporal_features must be rank-3 tensor [batch, channels, time].")
-        x = self.network(temporal_features)
+        x = temporal_features
+        for block in self.blocks:
+            x = block(x)
         return x.mean(dim=-1)  # [B, C_out]
 
     def forward_masked(self, temporal_features, valid_mask):
@@ -79,12 +133,6 @@ class TemporalConvEncoder(nn.Module):
         Mask-aware temporal encoding and pooling.
         valid_mask: [B, T] (1 for valid timestep, 0 for padded timestep).
         """
-        if temporal_features.ndim != 3:
-            raise ValueError("temporal_features must be rank-3 tensor [batch, channels, time].")
-        if valid_mask.ndim != 2:
-            raise ValueError("valid_mask must be rank-2 tensor [batch, time].")
-        if temporal_features.shape[0] != valid_mask.shape[0] or temporal_features.shape[-1] != valid_mask.shape[-1]:
-            raise ValueError("valid_mask must match temporal_features on [batch, time].")
 
         x = temporal_features
         mask = valid_mask.to(dtype=x.dtype).unsqueeze(1)  # [B, 1, T]
@@ -92,20 +140,39 @@ class TemporalConvEncoder(nn.Module):
         # Zero padded inputs before temporal convolutions.
         x = x * mask
 
-        for layer in self.network:
-            x = layer(x)
-            if isinstance(layer, nn.Conv1d):
-                k = int(layer.kernel_size[0])
-                s = int(layer.stride[0])
-                p = int(layer.padding[0])
-                d = int(layer.dilation[0])
+        for block in self.blocks:
+            main = block.conv(x)
+            k = int(block.conv.kernel_size[0])
+            s = int(block.conv.stride[0])
+            p = int(block.conv.padding[0])
+            d = int(block.conv.dilation[0])
 
-                kernel = torch.ones((1, 1, k), dtype=mask.dtype, device=mask.device)
-                mask = F.conv1d(mask, kernel, stride=s, padding=p, dilation=d)
+            # A timestep stays valid only if the whole conv receptive field was valid.
+            main_kernel = self._get_mask_kernel(k, mask.dtype, mask.device)
+            main_mask = F.conv1d(mask, main_kernel, stride=s, padding=p, dilation=d)
+            main_mask = (main_mask >= float(k)).to(dtype=x.dtype)
 
-                # A timestep remains valid only if the entire receptive field was valid.
-                mask = (mask >= float(k)).to(dtype=x.dtype)
-                x = x * mask  # Drop invalid outputs (including conv bias-only responses).
+            main = block.norm(main)
+            main = block.activation(main)
+            main = main * main_mask
+
+            residual = block.residual(x)
+            if isinstance(block.residual, nn.Identity):
+                residual_mask = mask
+            else:
+                rk = int(block.residual.kernel_size[0])
+                rs = int(block.residual.stride[0])
+                rp = int(block.residual.padding[0])
+                rd = int(block.residual.dilation[0])
+                residual_kernel = self._get_mask_kernel(rk, mask.dtype, mask.device)
+                residual_mask = F.conv1d(mask, residual_kernel, stride=rs, padding=rp, dilation=rd)
+                residual_mask = (residual_mask >= float(rk)).to(dtype=x.dtype)
+            residual = residual * residual_mask
+
+            main, residual = block._align_time_dim(main, residual)
+            main_mask, residual_mask = block._align_time_dim(main_mask, residual_mask)
+            x = (main + residual) * main_mask * residual_mask
+            mask = main_mask * residual_mask
 
         valid_count = mask.sum(dim=-1).clamp_min(1.0)  # [B, 1]
         pooled = x.sum(dim=-1) / valid_count  # [B, C_out]
@@ -122,44 +189,39 @@ class RMAAdaptationModule(nn.Module):
         self,
         action_dim,
         state_dim,
-        embed_dim=16,
-        conv_in_channels=8,
-        latent_dim=8,
-        hidden_size=64,
+        conv_in_channels=32,
+        latent_dim=12,
+        hidden_size=128,
     ):
         super().__init__()
         self.embedder = ActionStateEmbedder(
             action_dim=action_dim,
             state_dim=state_dim,
-            embed_dim=embed_dim,
+            embed_dim=conv_in_channels,
             hidden_size=hidden_size,
         )
-        # Bridge from 16D embedding to conv input channels (8D per timestep by default).
-        self.pre_conv_projection = layer_init(nn.Linear(embed_dim, conv_in_channels), std=1.0)
         self.temporal_encoder = TemporalConvEncoder(
             conv_specs=[
-                (conv_in_channels, 8, 8, 1),
-                (8, 8, 5, 1),
-                (8, 8, 5, 1),
+                (conv_in_channels, conv_in_channels, 8, 2),
+                (conv_in_channels, conv_in_channels, 5, 1),
+                (conv_in_channels, conv_in_channels, 5, 1),
             ]
         )
-        self.latent_head = layer_init(nn.Linear(8, latent_dim), std=1.0)
+        self.latent_head = layer_init(nn.Linear(conv_in_channels, latent_dim), std=1.0)
 
     def forward(self, actions, states, valid_mask=None, return_intermediates=False):
-        embedded = self.embedder(actions, states)  # [B, T, 16]
-        projected = self.pre_conv_projection(embedded)  # [B, T, 8]
-        temporal_in = projected.transpose(1, 2)  # [B, 8, T]
+        embedded = self.embedder(actions, states)  # [B, T, conv_in_channels]
+        temporal_in = embedded.transpose(1, 2)  # [B, conv_in_channels, T]
         if valid_mask is None:
-            pooled = self.temporal_encoder(temporal_in)  # [B, 8]
+            pooled = self.temporal_encoder(temporal_in)  # [B, conv_in_channels]
         else:
-            pooled = self.temporal_encoder.forward_masked(temporal_in, valid_mask=valid_mask)  # [B, 8]
-        latent = self.latent_head(pooled)  # [B, 8]
+            pooled = self.temporal_encoder.forward_masked(temporal_in, valid_mask=valid_mask)  # [B, conv_in_channels]
+        latent = self.latent_head(pooled)  # [B, latent_dim]
 
         if not return_intermediates:
             return latent
         return {
             "embedded": embedded,
-            "projected": projected,
             "temporal_in": temporal_in,
             "pooled": pooled,
             "latent": latent,

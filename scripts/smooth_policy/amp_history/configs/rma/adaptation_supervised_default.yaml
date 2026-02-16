@@ -4,29 +4,28 @@
 # Paths
 config: "scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_config.yaml"
 args_file: null
-model_path: "runs/rma_stage1/checkpoint_100/model.pth"
-encoder_path: "runs/rma_stage1/checkpoint_100/encoder.pth"
-env_spec_pool_path: "runs/rma_stage1/env_spec_pool.pt"
-log_parent_dir: "runs/rma_adaptation/default_run"
-run_name: "rma_adaptation_supervised"
+model_path: null
+encoder_path: null
+env_spec_pool_path: null
+log_parent_dir: null
+run_name: null
 
 # Runtime
 seed: 0
 device: "cuda:0"
-num_envs: 16
+num_envs: 32
 
 # Stage-1 architecture compatibility
 use_last_action_in_policy_state: true
 action_scale: 1.0
 agent_hidden_size: 512
 env_var_dim: 8
-env_latent_dim: 8
-env_encoder_hidden_size: 64
+env_latent_dim: 12
+env_encoder_hidden_size: [128, 128]
 
 # Adaptation network
-adaptation_embed_dim: 16
-adaptation_conv_in_channels: 8
-adaptation_hidden_size: 64
+adaptation_conv_in_channels: 32
+adaptation_hidden_size: 128
 
 # Rollout/data setup
 train_env_count: 500
