@@ -600,12 +600,26 @@ def sample_batch_from_rollout(rollout, batch_size, args, mode):
 
 
 def latent_metrics(pred, target):
+    pred_2d = pred.reshape(-1, pred.shape[-1])
+    target_2d = target.reshape(-1, target.shape[-1])
     mse = torch.mean((pred - target) ** 2)
     mae = torch.mean(torch.abs(pred - target))
     rmse = torch.sqrt(mse + 1e-12)
     cos = nn.functional.cosine_similarity(pred, target, dim=-1).mean()
     pred_norm = pred.norm(dim=-1).mean()
     target_norm = target.norm(dim=-1).mean()
+
+    # Multi-dimensional explained variance:
+    # EV_d = 1 - Var(y_d - yhat_d) / Var(y_d), then average over dimensions
+    # with non-negligible target variance.
+    target_var = torch.var(target_2d, dim=0, unbiased=False)
+    error_var = torch.var(target_2d - pred_2d, dim=0, unbiased=False)
+    valid_dims = target_var > 1e-12
+    if torch.any(valid_dims):
+        explained_variance = (1.0 - (error_var[valid_dims] / target_var[valid_dims])).mean()
+    else:
+        explained_variance = torch.tensor(float("nan"), device=pred.device, dtype=pred.dtype)
+
     return {
         "mse": mse,
         "mae": mae,
@@ -613,6 +627,7 @@ def latent_metrics(pred, target):
         "cosine": cos,
         "pred_norm": pred_norm,
         "target_norm": target_norm,
+        "explained_variance": explained_variance,
     }
 
 
@@ -872,6 +887,7 @@ if __name__ == "__main__":
         train_mae_sum = 0.0
         train_rmse_sum = 0.0
         train_cos_sum = 0.0
+        train_ev_sum = 0.0
 
         for _ in range(args.train_steps_per_iter):
             batch = sample_batch_from_rollout(
@@ -904,12 +920,14 @@ if __name__ == "__main__":
             train_mae_sum += metrics["mae"].item()
             train_rmse_sum += metrics["rmse"].item()
             train_cos_sum += metrics["cosine"].item()
+            train_ev_sum += metrics["explained_variance"].item()
 
             if should_log:
                 writer.add_scalar("train/loss_mse", metrics["mse"].item(), global_step)
                 writer.add_scalar("train/loss_mae", metrics["mae"].item(), global_step)
                 writer.add_scalar("train/loss_rmse", metrics["rmse"].item(), global_step)
                 writer.add_scalar("train/latent_cosine", metrics["cosine"].item(), global_step)
+                writer.add_scalar("train/explained_variance", metrics["explained_variance"].item(), global_step)
                 writer.add_scalar("train/pred_norm", metrics["pred_norm"].item(), global_step)
                 writer.add_scalar("train/target_norm", metrics["target_norm"].item(), global_step)
                 writer.add_scalar("train/prior_k_mean", batch["k"].mean().item(), global_step)
@@ -972,6 +990,7 @@ if __name__ == "__main__":
                 writer.add_scalar("eval/loss_mae", eval_metrics["mae"].item(), global_step)
                 writer.add_scalar("eval/loss_rmse", eval_metrics["rmse"].item(), global_step)
                 writer.add_scalar("eval/latent_cosine", eval_metrics["cosine"].item(), global_step)
+                writer.add_scalar("eval/explained_variance", eval_metrics["explained_variance"].item(), global_step)
                 writer.add_scalar("eval/context_k_mean", eval_batch["k"].mean().item(), global_step)
                 writer.add_scalar("eval/context_available_mean", eval_batch["available"].mean().item(), global_step)
 
@@ -982,6 +1001,7 @@ if __name__ == "__main__":
                     "eval_mae": float(eval_metrics["mae"].item()),
                     "eval_rmse": float(eval_metrics["rmse"].item()),
                     "eval_cosine": float(eval_metrics["cosine"].item()),
+                    "eval_explained_variance": float(eval_metrics["explained_variance"].item()),
                     "eval_context_mean": float(eval_batch["k"].mean().item()),
                     "eval_context_max": float(eval_batch["k"].max().item()),
                 }
@@ -991,7 +1011,8 @@ if __name__ == "__main__":
                     "[eval] "
                     f"iter={iteration} mse={eval_payload['eval_mse']:.6f} "
                     f"mae={eval_payload['eval_mae']:.6f} rmse={eval_payload['eval_rmse']:.6f} "
-                    f"cos={eval_payload['eval_cosine']:.6f} context_mean={eval_payload['eval_context_mean']:.2f}"
+                    f"cos={eval_payload['eval_cosine']:.6f} ev={eval_payload['eval_explained_variance']:.6f} "
+                    f"context_mean={eval_payload['eval_context_mean']:.2f}"
                 )
 
                 if eval_metrics["mse"].item() < best_eval_mse:
@@ -1009,7 +1030,8 @@ if __name__ == "__main__":
                 f"[train] iter={iteration} mse={mean_train_mse:.6f} "
                 f"mae={train_mae_sum / args.train_steps_per_iter:.6f} "
                 f"rmse={train_rmse_sum / args.train_steps_per_iter:.6f} "
-                f"cos={train_cos_sum / args.train_steps_per_iter:.6f} sps={sps}"
+                f"cos={train_cos_sum / args.train_steps_per_iter:.6f} "
+                f"ev={train_ev_sum / args.train_steps_per_iter:.6f} sps={sps}"
             )
             if global_step % 20 == 0:
                 writer.add_scalar("charts/sps", sps, global_step)

@@ -51,104 +51,99 @@ def get_env_spec_ordered_keys():
     ]
 
 
-def validate_env_spec_pool(env_spec_pool):
-    if not isinstance(env_spec_pool, list) or len(env_spec_pool) == 0:
-        raise ValueError("Loaded env_spec_pool must be a non-empty list.")
-
-    required_keys = {"env_id", *get_env_spec_ordered_keys()}
-    validated_pool = []
-    for idx, spec in enumerate(env_spec_pool):
-        if not isinstance(spec, dict):
-            raise ValueError(f"Environment spec at index {idx} must be a dict.")
-        missing = required_keys - set(spec.keys())
-        if missing:
-            raise ValueError(f"Environment spec at index {idx} is missing keys: {sorted(missing)}")
-        out = dict(spec)
-        out["env_id"] = int(spec["env_id"])
-        if "name" in spec:
-            out["name"] = str(spec["name"])
-        for key in get_env_spec_ordered_keys():
-            out[key] = float(spec[key])
-        validated_pool.append(out)
-    return validated_pool
-
-
 def _load_yaml(path):
     with open(path, "r") as f:
-        return yaml.safe_load(f)
+        try:
+            return yaml.safe_load(f)
+        except yaml.YAMLError:
+            f.seek(0)
+            return yaml.load(f, Loader=yaml.FullLoader)
 
 
-def _resolve_env_artifact_paths(env_spec_pool_path):
-    input_path = os.path.abspath(env_spec_pool_path)
-    manifest_path = None
-    pool_path = None
+def _coerce_env_spec_ranges(raw_ranges):
+    if raw_ranges is None:
+        return get_env_spec_ranges()
 
-    if os.path.isdir(input_path):
-        manifest_candidate = os.path.join(input_path, "training_env_setup.yaml")
-        pt_candidate = os.path.join(input_path, "env_spec_pool.pt")
-        yaml_candidate = os.path.join(input_path, "env_spec_pool.yaml")
-        if os.path.exists(manifest_candidate):
-            manifest_path = manifest_candidate
-        if os.path.exists(pt_candidate):
-            pool_path = pt_candidate
-        elif os.path.exists(yaml_candidate):
-            pool_path = yaml_candidate
-        else:
-            raise FileNotFoundError(
-                f"No env_spec_pool artifact found in directory '{input_path}'. "
-                "Expected env_spec_pool.pt or env_spec_pool.yaml."
+    ordered_keys = get_env_spec_ordered_keys()
+    out = {}
+    for key in ordered_keys:
+        if key not in raw_ranges:
+            raise ValueError(
+                f"randomization_ranges missing key '{key}'. Expected keys: {ordered_keys}"
             )
-        return pool_path, manifest_path
+        bounds = raw_ranges[key]
+        if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+            raise ValueError(f"Invalid range for '{key}': {bounds}. Expected [low, high].")
+        low = float(bounds[0])
+        high = float(bounds[1])
+        if not high > low:
+            raise ValueError(f"Invalid range for '{key}': low={low}, high={high}.")
+        out[key] = (low, high)
+    return out
 
+
+def load_randomization_setup(setup_path):
+    input_path = os.path.abspath(setup_path)
     if not os.path.exists(input_path):
-        raise FileNotFoundError(
-            f"env_spec_pool_path '{env_spec_pool_path}' does not exist. "
-            "Use a stage-1 run/checkpoint directory or env_spec_pool(.pt/.yaml) artifact."
+        raise FileNotFoundError(f"env_randomization_setup_path does not exist: '{setup_path}'")
+    manifest = _load_yaml(input_path) or {}
+    if not isinstance(manifest, dict):
+        raise ValueError(f"Invalid randomization setup format in '{input_path}'.")
+    ranges = _coerce_env_spec_ranges(manifest.get("randomization_ranges"))
+    return manifest, ranges, input_path
+
+
+def _validate_manifest_compatibility(manifest, args):
+    env_repr = manifest.get("env_var_representation", {}) if isinstance(manifest, dict) else {}
+    manifest_env_var_dim = env_repr.get("env_var_dim")
+    manifest_env_latent_dim = env_repr.get("env_latent_dim")
+    manifest_order = env_repr.get("ordered_keys")
+
+    if manifest_env_var_dim is not None and int(manifest_env_var_dim) != int(args.env_var_dim):
+        raise ValueError(
+            f"env_var_dim mismatch: args={args.env_var_dim}, manifest={manifest_env_var_dim}. "
+            "Use matching dimensions from stage-1 training."
+        )
+    if manifest_env_latent_dim is not None and int(manifest_env_latent_dim) != int(args.env_latent_dim):
+        raise ValueError(
+            f"env_latent_dim mismatch: args={args.env_latent_dim}, manifest={manifest_env_latent_dim}. "
+            "Use matching dimensions from stage-1 training."
+        )
+    if manifest_order is not None and list(manifest_order) != get_env_spec_ordered_keys():
+        raise ValueError(
+            f"ordered_keys mismatch: manifest={manifest_order}, expected={get_env_spec_ordered_keys()}."
         )
 
-    if os.path.basename(input_path) == "training_env_setup.yaml":
-        manifest_path = input_path
-        manifest = _load_yaml(manifest_path) or {}
-        source_path = manifest.get("env_spec_pool_source_path")
-        if source_path:
-            source_path = os.path.abspath(source_path)
-            if os.path.exists(source_path):
-                pool_path = source_path
-        if pool_path is None:
-            parent = os.path.dirname(manifest_path)
-            pt_candidate = os.path.join(parent, "env_spec_pool.pt")
-            yaml_candidate = os.path.join(parent, "env_spec_pool.yaml")
-            if os.path.exists(pt_candidate):
-                pool_path = pt_candidate
-            elif os.path.exists(yaml_candidate):
-                pool_path = yaml_candidate
-            else:
-                raise FileNotFoundError(
-                    f"Could not resolve env pool path from manifest '{manifest_path}'. "
-                    "Neither source path nor sibling env_spec_pool artifacts exist."
-                )
-        return pool_path, manifest_path
 
-    if input_path.endswith(".pt") or input_path.endswith(".yaml") or input_path.endswith(".yml"):
-        return input_path, None
-
-    raise ValueError(
-        f"Unsupported env_spec_pool_path format: '{env_spec_pool_path}'. "
-        "Use a directory, training_env_setup.yaml, env_spec_pool.pt, or env_spec_pool.yaml."
-    )
+def sample_env_spec_from_ranges(rng, env_id, env_spec_ranges):
+    return {
+        "env_id": int(env_id),
+        "name": f"env_{int(env_id)}",
+        "paddle_density": float(rng.uniform(*env_spec_ranges["paddle_density"])),
+        "paddle_damping": float(rng.uniform(*env_spec_ranges["paddle_damping"])),
+        "puck_density": float(rng.uniform(*env_spec_ranges["puck_density"])),
+        "puck_damping": float(rng.uniform(*env_spec_ranges["puck_damping"])),
+        "force_scaling": float(rng.uniform(*env_spec_ranges["force_scaling"])),
+    }
 
 
-def load_env_spec_pool(env_spec_pool_path):
-    pool_path, manifest_path = _resolve_env_artifact_paths(env_spec_pool_path)
-    if pool_path.endswith(".pt"):
-        pool = torch.load(pool_path, map_location="cpu")
-    else:
-        pool = _load_yaml(pool_path)
-    return validate_env_spec_pool(pool), manifest_path, pool_path
+def choose_eval_env_specs(args, env_spec_ranges):
+    rng = np.random.default_rng(args.eval_env_seed)
+    if args.num_eval_env_specs <= 0:
+        raise ValueError("num_eval_env_specs must be > 0.")
+    selected = [
+        sample_env_spec_from_ranges(
+            rng=rng,
+            env_id=i,
+            env_spec_ranges=env_spec_ranges,
+        )
+        for i in range(args.num_eval_env_specs)
+    ]
+    return selected, "randomized_from_ranges"
 
 
-def extract_env_var_vector_from_spec(spec, env_var_dim):
-    ranges = get_env_spec_ranges()
+def extract_env_var_vector_from_spec(spec, env_var_dim, env_spec_ranges):
+    ranges = _coerce_env_spec_ranges(env_spec_ranges)
     ordered_keys = get_env_spec_ordered_keys()
     normalized = []
     for key in ordered_keys:
@@ -266,14 +261,27 @@ def _combine_side_by_side(frames_left, frames_right):
     return out
 
 
-def evaluate_single_env_spec_rma(args, env_spec, config_air_hockey, agent, env_encoder, adaptation_module, device):
+def evaluate_single_env_spec_rma(
+    args,
+    env_spec,
+    env_spec_ranges,
+    config_air_hockey,
+    agent,
+    env_encoder,
+    adaptation_module,
+    device,
+):
     env = AirHockeyEnv(dict(config_air_hockey))
     apply_env_spec_to_unwrapped_env(env, env_spec)
     renderer = AirHockeyRenderer(env, show_target_position=True, show_acceleration_arrow=False) if args.save_gifs else None
     action_dim = int(np.prod(env.action_space.shape))
     obs_dim = int(np.prod(env.observation_space.shape))
 
-    env_var_np = extract_env_var_vector_from_spec(env_spec, args.env_var_dim)
+    env_var_np = extract_env_var_vector_from_spec(
+        spec=env_spec,
+        env_var_dim=args.env_var_dim,
+        env_spec_ranges=env_spec_ranges,
+    )
     env_var_t = torch.tensor(env_var_np, dtype=torch.float32, device=device).unsqueeze(0)
 
     episode_rows = []
@@ -403,7 +411,7 @@ def evaluate_single_env_spec_rma(args, env_spec, config_air_hockey, agent, env_e
     return per_env, episode_rows, gif_frames_by_episode
 
 
-def evaluate_single_env_spec_rma_gt(args, env_spec, config_air_hockey, agent, env_encoder, device):
+def evaluate_single_env_spec_rma_gt(args, env_spec, env_spec_ranges, config_air_hockey, agent, env_encoder, device):
     """
     Evaluate RMA policy while always conditioning on ground-truth encoder latent.
     Adaptation module is not used in this mode.
@@ -413,7 +421,11 @@ def evaluate_single_env_spec_rma_gt(args, env_spec, config_air_hockey, agent, en
     renderer = AirHockeyRenderer(env, show_target_position=True, show_acceleration_arrow=False) if args.save_gifs else None
     action_dim = int(np.prod(env.action_space.shape))
 
-    env_var_np = extract_env_var_vector_from_spec(env_spec, args.env_var_dim)
+    env_var_np = extract_env_var_vector_from_spec(
+        spec=env_spec,
+        env_var_dim=args.env_var_dim,
+        env_spec_ranges=env_spec_ranges,
+    )
     env_var_t = torch.tensor(env_var_np, dtype=torch.float32, device=device).unsqueeze(0)
 
     episode_rows = []
@@ -608,26 +620,6 @@ def evaluate_single_env_spec_ppo(args, env_spec, config_air_hockey, agent, devic
     return per_env, episode_rows, gif_frames_by_episode
 
 
-def choose_eval_env_specs(args, pool_specs):
-    if args.explicit_env_specs_path:
-        explicit = _load_yaml(args.explicit_env_specs_path)
-        return validate_env_spec_pool(explicit), "explicit_file"
-
-    if pool_specs is None:
-        raise ValueError("Either explicit_env_specs_path or env_spec_pool_path must be provided.")
-
-    rng = np.random.default_rng(args.eval_env_seed)
-    if args.num_eval_env_specs <= 0:
-        raise ValueError("num_eval_env_specs must be > 0.")
-    if args.num_eval_env_specs > len(pool_specs):
-        raise ValueError(
-            f"num_eval_env_specs ({args.num_eval_env_specs}) exceeds pool size ({len(pool_specs)})."
-        )
-    idxs = rng.choice(len(pool_specs), size=args.num_eval_env_specs, replace=False)
-    selected = [pool_specs[int(i)] for i in idxs]
-    return selected, "random_from_pool"
-
-
 def aggregate_across_envs(per_env_metrics):
     env_avg_returns = [entry["return"]["mean"] for entry in per_env_metrics]
     env_success_rates = [entry["success_rate"] for entry in per_env_metrics]
@@ -757,6 +749,8 @@ class Args:
     model_path: str = ""
     encoder_path: str = ""
     adaptation_path: str = ""
+    env_randomization_setup_path: str = ""
+    # Deprecated legacy static-eval args. Kept only so older args_file configs still parse.
     env_spec_pool_path: str = ""
     explicit_env_specs_path: str = ""
     log_parent_dir: str | None = None
@@ -770,18 +764,19 @@ class Args:
     agent_hidden_size: int = 512
     use_last_action_in_policy_state: bool = True
     env_var_dim: int = 8
-    env_latent_dim: int = 8
-    env_encoder_hidden_size: int = 64
+    env_latent_dim: int = 12
+    env_encoder_hidden_size: int | tuple[int, ...] = (128, 128)
     adaptation_embed_dim: int = 16
     adaptation_conv_in_channels: int = 8
     adaptation_hidden_size: int = 64
     ppo_model_path: str = ""
-    ppo_agent_hidden_size: int = 512
+    ppo_agent_hidden_size: int = 256
     ppo_action_scale: float = 1.0
-    ppo_use_last_action_in_policy_state: bool = False
+    ppo_use_last_action_in_policy_state: bool = True
+    include_rma_with_adaptation: bool = True
 
     # Eval setup.
-    num_eval_env_specs: int = 25
+    num_eval_env_specs: int = 50
     episodes_per_env: int = 5
     warmstart_steps: int = 75
     adaptation_min_context: int = 50
@@ -806,10 +801,41 @@ if __name__ == "__main__":
         raise ValueError("model_path must be provided.")
     if not args.encoder_path:
         raise ValueError("encoder_path must be provided.")
-    if not args.adaptation_path:
+    if args.include_rma_with_adaptation and not args.adaptation_path:
         raise ValueError("adaptation_path must be provided.")
-    if not args.env_spec_pool_path and not args.explicit_env_specs_path:
-        raise ValueError("Provide env_spec_pool_path or explicit_env_specs_path.")
+    if args.explicit_env_specs_path:
+        raise ValueError(
+            "explicit_env_specs_path is no longer supported. "
+            "Use env_randomization_setup_path (training_env_setup.yaml) and randomized evaluation."
+        )
+    if not args.env_randomization_setup_path and args.env_spec_pool_path:
+        legacy_input = os.path.abspath(args.env_spec_pool_path)
+        if os.path.isdir(legacy_input):
+            candidate = os.path.join(legacy_input, "training_env_setup.yaml")
+            if not os.path.exists(candidate):
+                raise ValueError(
+                    "Static env pool evaluation has been removed. "
+                    f"Provided env_spec_pool_path '{args.env_spec_pool_path}' is a directory "
+                    "without training_env_setup.yaml."
+                )
+            args.env_randomization_setup_path = candidate
+            print(
+                "WARNING: env_spec_pool_path is deprecated. "
+                f"Using training manifest: {args.env_randomization_setup_path}"
+            )
+        elif os.path.basename(legacy_input) == "training_env_setup.yaml":
+            args.env_randomization_setup_path = legacy_input
+            print(
+                "WARNING: env_spec_pool_path is deprecated. "
+                f"Using training manifest: {args.env_randomization_setup_path}"
+            )
+        else:
+            raise ValueError(
+                "Static env pool evaluation has been removed. "
+                "Use env_randomization_setup_path pointing to training_env_setup.yaml."
+            )
+    if not args.env_randomization_setup_path:
+        raise ValueError("env_randomization_setup_path must be provided.")
     if args.warmstart_steps <= 0:
         raise ValueError("warmstart_steps must be > 0.")
     if args.adaptation_min_context <= 0:
@@ -823,16 +849,11 @@ if __name__ == "__main__":
         config = yaml.load(f, Loader=yaml.FullLoader)
     air_hockey_config = config["air_hockey"]
 
-    pool_specs = None
-    resolved_pool_path = None
-    manifest_path = None
-    if args.env_spec_pool_path:
-        pool_specs, manifest_path, resolved_pool_path = load_env_spec_pool(args.env_spec_pool_path)
-        print(f"Loaded env spec pool: {resolved_pool_path} (size={len(pool_specs)})")
-        if manifest_path is not None:
-            print(f"Resolved manifest: {manifest_path}")
-
-    eval_specs, selection_mode = choose_eval_env_specs(args, pool_specs)
+    randomization_setup, env_spec_ranges, resolved_setup_path = load_randomization_setup(
+        args.env_randomization_setup_path
+    )
+    _validate_manifest_compatibility(randomization_setup, args)
+    eval_specs, selection_mode = choose_eval_env_specs(args, env_spec_ranges)
     print(f"Selected {len(eval_specs)} evaluation env specs via mode={selection_mode}")
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -859,10 +880,11 @@ if __name__ == "__main__":
         yaml.dump(
             {
                 "selection_mode": selection_mode,
-                "input_env_spec_pool_path": os.path.abspath(args.env_spec_pool_path) if args.env_spec_pool_path else None,
-                "resolved_env_spec_pool_path": resolved_pool_path,
-                "resolved_training_manifest_path": manifest_path,
-                "explicit_env_specs_path": os.path.abspath(args.explicit_env_specs_path) if args.explicit_env_specs_path else None,
+                "env_randomization_setup_path": os.path.abspath(args.env_randomization_setup_path),
+                "resolved_env_randomization_setup_path": resolved_setup_path,
+                "env_spec_pool_source": randomization_setup.get("env_spec_pool_source"),
+                "env_spec_pool_source_path": randomization_setup.get("env_spec_pool_source_path"),
+                "randomization_ranges": {k: [float(v[0]), float(v[1])] for k, v in env_spec_ranges.items()},
                 "num_eval_env_specs": int(len(eval_specs)),
                 "eval_env_seed": int(args.eval_env_seed),
             },
@@ -906,21 +928,22 @@ if __name__ == "__main__":
         latent_dim=args.env_latent_dim,
         hidden_size=args.env_encoder_hidden_size,
     ).to(device)
-    adaptation_module = RMAAdaptationModule(
-        action_dim=action_dim,
-        state_dim=obs_dim,
-        embed_dim=args.adaptation_embed_dim,
-        conv_in_channels=args.adaptation_conv_in_channels,
-        latent_dim=args.env_latent_dim,
-        hidden_size=args.adaptation_hidden_size,
-    ).to(device)
-
     rma_agent.load_state_dict(torch.load(args.model_path, map_location=device))
     env_encoder.load_state_dict(torch.load(args.encoder_path, map_location=device))
-    adaptation_module.load_state_dict(torch.load(args.adaptation_path, map_location=device))
     rma_agent.eval()
     env_encoder.eval()
-    adaptation_module.eval()
+    adaptation_module = None
+    if args.include_rma_with_adaptation:
+        adaptation_module = RMAAdaptationModule(
+            action_dim=action_dim,
+            state_dim=obs_dim,
+            embed_dim=args.adaptation_embed_dim,
+            conv_in_channels=args.adaptation_conv_in_channels,
+            latent_dim=args.env_latent_dim,
+            hidden_size=args.adaptation_hidden_size,
+        ).to(device)
+        adaptation_module.load_state_dict(torch.load(args.adaptation_path, map_location=device))
+        adaptation_module.eval()
 
     ppo_agent = None
     if args.ppo_model_path:
@@ -962,30 +985,35 @@ if __name__ == "__main__":
     ppo_per_env_metrics = []
     ppo_episode_rows = []
     for idx, spec in enumerate(eval_specs):
-        rma_per_env, rma_rows, rma_gifs = evaluate_single_env_spec_rma(
-            args=args,
-            env_spec=spec,
-            config_air_hockey=air_hockey_config,
-            agent=rma_agent,
-            env_encoder=env_encoder,
-            adaptation_module=adaptation_module,
-            device=device,
-        )
-        rma_per_env_metrics.append(rma_per_env)
-        rma_episode_rows.extend(rma_rows)
+        rma_per_env = None
+        rma_gifs = {}
+        if args.include_rma_with_adaptation:
+            rma_per_env, rma_rows, rma_gifs = evaluate_single_env_spec_rma(
+                args=args,
+                env_spec=spec,
+                env_spec_ranges=env_spec_ranges,
+                config_air_hockey=air_hockey_config,
+                agent=rma_agent,
+                env_encoder=env_encoder,
+                adaptation_module=adaptation_module,
+                device=device,
+            )
+            rma_per_env_metrics.append(rma_per_env)
+            rma_episode_rows.extend(rma_rows)
 
-        if args.save_gifs:
-            env_name = rma_per_env["env_name"]
-            for ep_i, frames in rma_gifs.items():
-                _save_gif(
-                    frames,
-                    os.path.join(log_parent_dir, "gifs", "rma", f"env_{rma_per_env['env_id']}_{env_name}_ep{ep_i}.gif"),
-                    args.gif_fps,
-                )
+            if args.save_gifs:
+                env_name = rma_per_env["env_name"]
+                for ep_i, frames in rma_gifs.items():
+                    _save_gif(
+                        frames,
+                        os.path.join(log_parent_dir, "gifs", "rma", f"env_{rma_per_env['env_id']}_{env_name}_ep{ep_i}.gif"),
+                        args.gif_fps,
+                    )
 
         rma_gt_per_env, rma_gt_rows, rma_gt_gifs = evaluate_single_env_spec_rma_gt(
             args=args,
             env_spec=spec,
+            env_spec_ranges=env_spec_ranges,
             config_air_hockey=air_hockey_config,
             agent=rma_agent,
             env_encoder=env_encoder,
@@ -1023,60 +1051,74 @@ if __name__ == "__main__":
                         os.path.join(log_parent_dir, "gifs", "ppo", f"env_{ppo_per_env['env_id']}_{env_name}_ep{ep_i}.gif"),
                         args.gif_fps,
                     )
-                for ep_i in range(min(args.gif_episodes_per_env, args.episodes_per_env)):
-                    if ep_i in rma_gifs and ep_i in ppo_gifs:
-                        side_frames = _combine_side_by_side(rma_gifs[ep_i], ppo_gifs[ep_i])
-                        _save_gif(
-                            side_frames,
-                            os.path.join(
-                                log_parent_dir,
-                                "gifs",
-                                "side_by_side",
-                                f"env_{rma_per_env['env_id']}_{rma_per_env['env_name']}_ep{ep_i}.gif",
-                            ),
-                            args.gif_fps,
-                        )
+                if rma_per_env is not None:
+                    for ep_i in range(min(args.gif_episodes_per_env, args.episodes_per_env)):
+                        if ep_i in rma_gifs and ep_i in ppo_gifs:
+                            side_frames = _combine_side_by_side(rma_gifs[ep_i], ppo_gifs[ep_i])
+                            _save_gif(
+                                side_frames,
+                                os.path.join(
+                                    log_parent_dir,
+                                    "gifs",
+                                    "side_by_side",
+                                    f"env_{rma_per_env['env_id']}_{rma_per_env['env_name']}_ep{ep_i}.gif",
+                                ),
+                                args.gif_fps,
+                            )
 
         if writer is not None:
-            writer.add_scalar("eval_rma/per_env_return_mean", rma_per_env["return"]["mean"], idx)
-            writer.add_scalar("eval_rma/per_env_success_rate", rma_per_env["success_rate"], idx)
-            writer.add_scalar("eval_rma/per_env_adaptation_fraction", rma_per_env["latent_adaptation_fraction"], idx)
+            if rma_per_env is not None:
+                writer.add_scalar("eval_rma/per_env_return_mean", rma_per_env["return"]["mean"], idx)
+                writer.add_scalar("eval_rma/per_env_success_rate", rma_per_env["success_rate"], idx)
+                writer.add_scalar("eval_rma/per_env_adaptation_fraction", rma_per_env["latent_adaptation_fraction"], idx)
             writer.add_scalar("eval_rma_gt/per_env_return_mean", rma_gt_per_env["return"]["mean"], idx)
             writer.add_scalar("eval_rma_gt/per_env_success_rate", rma_gt_per_env["success_rate"], idx)
             if ppo_per_env is not None:
                 writer.add_scalar("eval_ppo/per_env_return_mean", ppo_per_env["return"]["mean"], idx)
                 writer.add_scalar("eval_ppo/per_env_success_rate", ppo_per_env["success_rate"], idx)
-                writer.add_scalar(
-                    "eval_compare/per_env_return_delta_rma_minus_ppo",
-                    rma_per_env["return"]["mean"] - ppo_per_env["return"]["mean"],
-                    idx,
-                )
+                if rma_per_env is not None:
+                    writer.add_scalar(
+                        "eval_compare/per_env_return_delta_rma_minus_ppo",
+                        rma_per_env["return"]["mean"] - ppo_per_env["return"]["mean"],
+                        idx,
+                    )
                 writer.add_scalar(
                     "eval_compare/per_env_return_delta_rma_gt_minus_ppo",
                     rma_gt_per_env["return"]["mean"] - ppo_per_env["return"]["mean"],
                     idx,
                 )
-        print(
-            f"[env {idx + 1}/{len(eval_specs)}] env_id={rma_per_env['env_id']} "
-            f"RMA ret={rma_per_env['return']['mean']:.3f} succ={rma_per_env['success_rate']:.3f} "
-            f"adapt_frac={rma_per_env['latent_adaptation_fraction']:.3f}"
-        )
+        env_id = int(spec["env_id"])
+        print(f"[env {idx + 1}/{len(eval_specs)}] env_id={env_id}")
+        if rma_per_env is not None:
+            print(
+                f"                      RMA ret={rma_per_env['return']['mean']:.3f} "
+                f"succ={rma_per_env['success_rate']:.3f} "
+                f"adapt_frac={rma_per_env['latent_adaptation_fraction']:.3f}"
+            )
         print(
             f"                      RMA-GT ret={rma_gt_per_env['return']['mean']:.3f} "
             f"succ={rma_gt_per_env['success_rate']:.3f}"
         )
         if ppo_per_env is not None:
-            print(
-                f"                      PPO ret={ppo_per_env['return']['mean']:.3f} "
-                f"succ={ppo_per_env['success_rate']:.3f} "
-                f"delta={rma_per_env['return']['mean'] - ppo_per_env['return']['mean']:.3f}"
-            )
+            if rma_per_env is not None:
+                print(
+                    f"                      PPO ret={ppo_per_env['return']['mean']:.3f} "
+                    f"succ={ppo_per_env['success_rate']:.3f} "
+                    f"delta={rma_per_env['return']['mean'] - ppo_per_env['return']['mean']:.3f}"
+                )
+            else:
+                print(
+                    f"                      PPO ret={ppo_per_env['return']['mean']:.3f} "
+                    f"succ={ppo_per_env['success_rate']:.3f}"
+                )
             print(
                 f"                      RMA-GT delta={rma_gt_per_env['return']['mean'] - ppo_per_env['return']['mean']:.3f}"
             )
 
-    rma_aggregate = aggregate_across_envs(rma_per_env_metrics)
-    print_summary(rma_per_env_metrics, rma_aggregate, "Joint RMA evaluation summary")
+    rma_aggregate = None
+    if len(rma_per_env_metrics) > 0:
+        rma_aggregate = aggregate_across_envs(rma_per_env_metrics)
+        print_summary(rma_per_env_metrics, rma_aggregate, "Joint RMA evaluation summary")
     rma_gt_aggregate = aggregate_across_envs(rma_gt_per_env_metrics)
     print_summary(rma_gt_per_env_metrics, rma_gt_aggregate, "RMA with ground-truth latent evaluation summary")
 
@@ -1086,13 +1128,15 @@ if __name__ == "__main__":
     if ppo_agent is not None:
         ppo_aggregate = aggregate_across_envs(ppo_per_env_metrics)
         print_summary(ppo_per_env_metrics, ppo_aggregate, "PPO baseline evaluation summary")
-        comparison_report = build_comparison_report(rma_per_env_metrics, ppo_per_env_metrics)
+        if len(rma_per_env_metrics) > 0:
+            comparison_report = build_comparison_report(rma_per_env_metrics, ppo_per_env_metrics)
         comparison_report_rma_gt_vs_ppo = build_comparison_report(rma_gt_per_env_metrics, ppo_per_env_metrics)
 
-    with open(os.path.join(log_parent_dir, "per_env_metrics_rma.yaml"), "w") as f:
-        yaml.dump(rma_per_env_metrics, f, sort_keys=False)
-    with open(os.path.join(log_parent_dir, "aggregate_metrics_rma.yaml"), "w") as f:
-        yaml.dump(rma_aggregate, f, sort_keys=False)
+    if rma_aggregate is not None:
+        with open(os.path.join(log_parent_dir, "per_env_metrics_rma.yaml"), "w") as f:
+            yaml.dump(rma_per_env_metrics, f, sort_keys=False)
+        with open(os.path.join(log_parent_dir, "aggregate_metrics_rma.yaml"), "w") as f:
+            yaml.dump(rma_aggregate, f, sort_keys=False)
     with open(os.path.join(log_parent_dir, "per_env_metrics_rma_gt.yaml"), "w") as f:
         yaml.dump(rma_gt_per_env_metrics, f, sort_keys=False)
     with open(os.path.join(log_parent_dir, "aggregate_metrics_rma_gt.yaml"), "w") as f:
@@ -1102,8 +1146,9 @@ if __name__ == "__main__":
             yaml.dump(ppo_per_env_metrics, f, sort_keys=False)
         with open(os.path.join(log_parent_dir, "aggregate_metrics_ppo.yaml"), "w") as f:
             yaml.dump(ppo_aggregate, f, sort_keys=False)
-        with open(os.path.join(log_parent_dir, "comparison_rma_vs_ppo.yaml"), "w") as f:
-            yaml.dump(comparison_report, f, sort_keys=False)
+        if comparison_report is not None:
+            with open(os.path.join(log_parent_dir, "comparison_rma_vs_ppo.yaml"), "w") as f:
+                yaml.dump(comparison_report, f, sort_keys=False)
         with open(os.path.join(log_parent_dir, "comparison_rma_gt_vs_ppo.yaml"), "w") as f:
             yaml.dump(comparison_report_rma_gt_vs_ppo, f, sort_keys=False)
 
@@ -1129,10 +1174,11 @@ if __name__ == "__main__":
             writer_csv.writerow(row)
 
     if writer is not None:
-        writer.add_scalar("eval_rma/macro_return_mean", rma_aggregate["macro_return"]["mean"], 0)
-        writer.add_scalar("eval_rma/macro_return_std", rma_aggregate["macro_return"]["std"], 0)
-        writer.add_scalar("eval_rma/macro_success_mean", rma_aggregate["macro_success_rate"]["mean"], 0)
-        writer.add_scalar("eval_rma/macro_adaptation_fraction_mean", rma_aggregate["macro_latent_adaptation_fraction"]["mean"], 0)
+        if rma_aggregate is not None:
+            writer.add_scalar("eval_rma/macro_return_mean", rma_aggregate["macro_return"]["mean"], 0)
+            writer.add_scalar("eval_rma/macro_return_std", rma_aggregate["macro_return"]["std"], 0)
+            writer.add_scalar("eval_rma/macro_success_mean", rma_aggregate["macro_success_rate"]["mean"], 0)
+            writer.add_scalar("eval_rma/macro_adaptation_fraction_mean", rma_aggregate["macro_latent_adaptation_fraction"]["mean"], 0)
         writer.add_scalar("eval_rma_gt/macro_return_mean", rma_gt_aggregate["macro_return"]["mean"], 0)
         writer.add_scalar("eval_rma_gt/macro_return_std", rma_gt_aggregate["macro_return"]["std"], 0)
         writer.add_scalar("eval_rma_gt/macro_success_mean", rma_gt_aggregate["macro_success_rate"]["mean"], 0)
@@ -1141,16 +1187,17 @@ if __name__ == "__main__":
             writer.add_scalar("eval_ppo/macro_return_mean", ppo_aggregate["macro_return"]["mean"], 0)
             writer.add_scalar("eval_ppo/macro_return_std", ppo_aggregate["macro_return"]["std"], 0)
             writer.add_scalar("eval_ppo/macro_success_mean", ppo_aggregate["macro_success_rate"]["mean"], 0)
-            writer.add_scalar(
-                "eval_compare/macro_return_delta_rma_minus_ppo",
-                rma_aggregate["macro_return"]["mean"] - ppo_aggregate["macro_return"]["mean"],
-                0,
-            )
-            writer.add_scalar(
-                "eval_compare/macro_success_delta_rma_minus_ppo",
-                rma_aggregate["macro_success_rate"]["mean"] - ppo_aggregate["macro_success_rate"]["mean"],
-                0,
-            )
+            if rma_aggregate is not None:
+                writer.add_scalar(
+                    "eval_compare/macro_return_delta_rma_minus_ppo",
+                    rma_aggregate["macro_return"]["mean"] - ppo_aggregate["macro_return"]["mean"],
+                    0,
+                )
+                writer.add_scalar(
+                    "eval_compare/macro_success_delta_rma_minus_ppo",
+                    rma_aggregate["macro_success_rate"]["mean"] - ppo_aggregate["macro_success_rate"]["mean"],
+                    0,
+                )
             writer.add_scalar(
                 "eval_compare/macro_return_delta_rma_gt_minus_ppo",
                 rma_gt_aggregate["macro_return"]["mean"] - ppo_aggregate["macro_return"]["mean"],
