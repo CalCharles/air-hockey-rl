@@ -3,6 +3,8 @@ import argparse
 import yaml
 import os
 from pathlib import Path
+from types import SimpleNamespace
+import gymnasium as gym
 from airhockey import AirHockeyEnv
 import numpy as np
 from airhockey.airhockey_base import get_observation_by_type
@@ -22,10 +24,117 @@ LOG_STD_MIN = -1
 LOG_STD_MAX = 1
 EPS = 1e-6
 
+DEFAULT_RMA_FIXED_LATENT = [
+    -0.13727053,
+    0.73891377,
+    -0.22653317,
+    -0.61562562,
+    -0.61218202,
+    0.17801657,
+    -0.09171214,
+    0.04772795,
+    0.14299890,
+    -0.99860352,
+    -0.70962828,
+    0.70619726,
+]
+
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)
     torch.nn.init.constant_(layer.bias, bias_const)
     return layer
+
+
+def parse_fixed_latent_from_args(args):
+    if args.rma_fixed_latent_path is not None:
+        if not os.path.exists(args.rma_fixed_latent_path):
+            raise FileNotFoundError(
+                f"Requested --rma-fixed-latent-path does not exist: {args.rma_fixed_latent_path}"
+            )
+        if args.rma_fixed_latent_path.endswith(".npy"):
+            arr = np.load(args.rma_fixed_latent_path).astype(np.float32).reshape(-1)
+        else:
+            raw = yaml.load(open(args.rma_fixed_latent_path, "r"), Loader=yaml.FullLoader)
+            if isinstance(raw, dict) and "latent_centroid" in raw:
+                raw = raw["latent_centroid"]
+            arr = np.asarray(raw, dtype=np.float32).reshape(-1)
+    elif args.rma_fixed_latent is not None and len(args.rma_fixed_latent) > 0:
+        arr = np.asarray(args.rma_fixed_latent, dtype=np.float32).reshape(-1)
+    else:
+        arr = np.asarray(DEFAULT_RMA_FIXED_LATENT, dtype=np.float32)
+    return arr
+
+
+def _coerce_bool(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, np.integer)):
+        return bool(value)
+    if isinstance(value, str):
+        val = value.strip().lower()
+        if val in {"1", "true", "t", "yes", "y", "on"}:
+            return True
+        if val in {"0", "false", "f", "no", "n", "off"}:
+            return False
+    raise ValueError(f"Cannot coerce value '{value}' to bool.")
+
+
+def load_rma_settings_from_model_folder(model_path):
+    """
+    Read RMA-relevant settings from config files next to model checkpoint.
+    Priority:
+    1) args.yaml
+    2) config.yaml
+    """
+    model_dir = Path(model_path).resolve().parent
+    candidates = [model_dir / "args.yaml", model_dir / "config.yaml"]
+
+    settings = {
+        "env_latent_dim": None,
+        "use_last_action_in_policy_state": None,
+        "sources": {},
+    }
+
+    for p in candidates:
+        if not p.exists():
+            continue
+        with open(p, "r") as f:
+            cfg = yaml.load(f, Loader=yaml.FullLoader)
+        if not isinstance(cfg, dict):
+            continue
+
+        if settings["env_latent_dim"] is None and "env_latent_dim" in cfg:
+            settings["env_latent_dim"] = int(cfg["env_latent_dim"])
+            settings["sources"]["env_latent_dim"] = str(p)
+
+        if settings["use_last_action_in_policy_state"] is None and "use_last_action_in_policy_state" in cfg:
+            settings["use_last_action_in_policy_state"] = _coerce_bool(cfg["use_last_action_in_policy_state"])
+            settings["sources"]["use_last_action_in_policy_state"] = str(p)
+
+    return settings
+
+
+def build_policy_env_view(policy_obs_dim, action_dim):
+    return SimpleNamespace(
+        single_observation_space=gym.spaces.Box(
+            low=-np.inf,
+            high=np.inf,
+            shape=(int(policy_obs_dim),),
+            dtype=np.float32,
+        ),
+        single_action_space=gym.spaces.Box(
+            low=-np.inf,
+            high=np.inf,
+            shape=(int(action_dim),),
+            dtype=np.float32,
+        ),
+    )
+
+
+def infer_policy_dims_from_state_dict(state_dict):
+    actor_input_dim = int(state_dict["actor.0.weight"].shape[1])
+    action_dim = int(state_dict["actor_mean_head.weight"].shape[0])
+    return actor_input_dim, action_dim
 
 
 def maybe_generate_gifs_for_saved_trajectory(
@@ -160,6 +269,12 @@ if __name__ == '__main__':
     parser.add_argument('--save-path', type=str, default=None, help='Override trajectory save path (defaults to config value).')
     parser.add_argument('--action-scale', type=float, default=0.2, help='action scale')
     parser.add_argument('--agent-hidden-size', type=int, default=128, help='agent size')
+    parser.add_argument('--device', type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help='torch device')
+    parser.add_argument('--use-rma', action='store_true', help='Use fixed-latent RMA policy input construction.')
+    parser.add_argument('--rma-env-latent-dim', type=int, default=12, help='RMA latent dimension expected by policy.')
+    parser.add_argument('--rma-use-last-action', type=int, choices=[0, 1], default=1, help='Whether to append previous action to policy observation in RMA mode.')
+    parser.add_argument('--rma-fixed-latent', type=float, nargs='*', default=None, help='Optional fixed latent vector values (space-separated).')
+    parser.add_argument('--rma-fixed-latent-path', type=str, default=None, help='Optional path to .npy or YAML containing fixed latent.')
     parser.add_argument('--auto-gif', action='store_true', help='Generate GIF visualization(s) after each saved trajectory.')
     parser.add_argument('--gif-fps', type=int, default=20, help='GIF playback FPS used when --auto-gif is enabled.')
     parser.add_argument('--gif-max-frames-per-file', type=int, default=250, help='Maximum rendered frames per GIF when --auto-gif is enabled.')
@@ -197,10 +312,68 @@ if __name__ == '__main__':
         return env
     
     eval_env = make_eval_env()
-    model = Agent(eval_env, action_scale=args.action_scale, action_bias=0.0, hidden_size=args.agent_hidden_size)
-    state_dict = torch.load(args.model, map_location='cuda:0')
+    device = torch.device(args.device)
+    state_dict = torch.load(args.model, map_location=device)
+
+    if args.use_rma:
+        rma_cfg = load_rma_settings_from_model_folder(args.model)
+        base_obs_dim = int(np.prod(eval_env.single_observation_space.shape))
+        model_obs_dim, model_action_dim = infer_policy_dims_from_state_dict(state_dict)
+        fixed_latent_np = parse_fixed_latent_from_args(args)
+
+        if rma_cfg["env_latent_dim"] is not None:
+            requested_latent_dim = int(rma_cfg["env_latent_dim"])
+            print(
+                "Using env_latent_dim from model config:",
+                requested_latent_dim,
+                f"(source: {rma_cfg['sources'].get('env_latent_dim', 'unknown')})",
+            )
+        else:
+            requested_latent_dim = int(args.rma_env_latent_dim)
+            print("No env_latent_dim found in model folder config; using CLI value:", requested_latent_dim)
+
+        if fixed_latent_np.shape[0] != requested_latent_dim:
+            raise ValueError(
+                f"Fixed latent length ({fixed_latent_np.shape[0]}) does not match "
+                f"--rma-env-latent-dim ({requested_latent_dim})."
+            )
+
+        if rma_cfg["use_last_action_in_policy_state"] is not None:
+            use_last_action = bool(rma_cfg["use_last_action_in_policy_state"])
+            print(
+                "Using use_last_action_in_policy_state from model config:",
+                use_last_action,
+                f"(source: {rma_cfg['sources'].get('use_last_action_in_policy_state', 'unknown')})",
+            )
+        else:
+            use_last_action = bool(args.rma_use_last_action)
+            print("No use_last_action_in_policy_state found in model folder config; using CLI value:", use_last_action)
+
+        expected_obs_dim = base_obs_dim + (model_action_dim if use_last_action else 0) + requested_latent_dim
+        if expected_obs_dim != model_obs_dim:
+            raise ValueError(
+                "RMA policy observation dimension mismatch. "
+                f"Computed={expected_obs_dim} (base={base_obs_dim}, "
+                f"last_action={model_action_dim if use_last_action else 0}, latent={requested_latent_dim}), "
+                f"model expects {model_obs_dim}."
+            )
+
+        policy_env_view = build_policy_env_view(policy_obs_dim=expected_obs_dim, action_dim=model_action_dim)
+        model = Agent(policy_env_view, action_scale=args.action_scale, action_bias=0.0, hidden_size=args.agent_hidden_size)
+        fixed_latent_t = torch.tensor(fixed_latent_np, dtype=torch.float32, device=device).unsqueeze(0)
+        last_action_for_policy = torch.zeros((1, model_action_dim), dtype=torch.float32, device=device)
+        args.rma_use_last_action = int(use_last_action)
+        print("Using RMA mode with fixed latent:", fixed_latent_np.tolist())
+    else:
+        model_obs_dim, model_action_dim = infer_policy_dims_from_state_dict(state_dict)
+        policy_env_view = build_policy_env_view(policy_obs_dim=model_obs_dim, action_dim=model_action_dim)
+        model = Agent(policy_env_view, action_scale=args.action_scale, action_bias=0.0, hidden_size=args.agent_hidden_size)
+        fixed_latent_t = None
+        use_last_action = model_obs_dim > eval_env.single_observation_space.shape[0]
+        last_action_for_policy = torch.zeros((1, model_action_dim), dtype=torch.float32, device=device)
+
     model.load_state_dict(state_dict)
-    model = model.to(device="cuda:0")
+    model = model.to(device=device)
 
     print("model action scale: ", model.action_scale)
     # model.action_scale = torch.tensor(0.2) # manually scaling just for testing a model
@@ -213,8 +386,13 @@ if __name__ == '__main__':
     with NonBlockingConsole() as nbc:
         delay_counter = 0
         while True:
-            obs = torch.tensor(obs).unsqueeze(0).to(device="cuda:0").float()
-            action = model(obs).cpu().numpy().squeeze()
+            obs_t = torch.tensor(obs).unsqueeze(0).to(device=device).float()
+            policy_obs = obs_t
+            if use_last_action:
+                policy_obs = torch.cat([policy_obs, last_action_for_policy], dim=-1)
+            if args.use_rma and fixed_latent_t is not None:
+                policy_obs = torch.cat([policy_obs, fixed_latent_t], dim=-1)
+            action = model(policy_obs).cpu().numpy().squeeze()
             if delay_counter < 10 and delay_counter >= 0:
                 # action = model.policy(obs)
                 # action = action.mean
@@ -224,6 +402,8 @@ if __name__ == '__main__':
                 # action = action.mean
                 action = action / model.action_scale.item() # normalizes to [-1, 1]
                 # action[0,0] = action[0,0] * 0.5
+            if use_last_action:
+                last_action_for_policy = torch.tensor(action, dtype=torch.float32, device=device).unsqueeze(0)
             delay_counter += 1
             print("action", action, obs)
             # action = action * 0.0
@@ -248,10 +428,14 @@ if __name__ == '__main__':
                     gif_max_frames_per_file=args.gif_max_frames_per_file,
                 )
                 delay_counter = 0
+                if use_last_action:
+                    last_action_for_policy.zero_()
             elif key == 'q':
                 print("Resetting without saving...")
                 eval_env.reset(seed=None, write_traj = False)
                 delay_counter = 0
+                if use_last_action:
+                    last_action_for_policy.zero_()
             elif key == 'x':
                 print("Exiting...")
                 break

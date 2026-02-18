@@ -16,6 +16,45 @@ visual_downscale_constant = 2
 save_downscale_constant = 2
 offset_constants = np.array((2100, 500))
 
+
+def _robot_to_display_pixel(x_m, y_m):
+    pixel_coord = np.array((x_m * 1000.0, -y_m * 1000.0)) + offset_constants
+    return pixel_coord / visual_downscale_constant
+
+
+def _effective_xmax(y_m, lims, edge_lims):
+    _, x_max_lim, _, _ = lims
+    top_abs, _, max_bias_p, max_bias_m = edge_lims
+    return min(x_max_lim, max_bias_m - top_abs * y_m, max_bias_p + top_abs * y_m)
+
+
+def draw_robot_edge_limits(frame, lims, edge_lims, color=(0, 255, 255), thickness=2):
+    x_min_lim, _, y_min, y_max = lims
+
+    def _to_int_point(x_m, y_m):
+        px, py = _robot_to_display_pixel(x_m, y_m)
+        return (int(np.round(px)), int(np.round(py)))
+
+    # Left edge (x = x_min), top and bottom edges, plus effective right edge.
+    left_top = _to_int_point(x_min_lim, y_max)
+    left_bottom = _to_int_point(x_min_lim, y_min)
+    cv2.line(frame, left_top, left_bottom, color, thickness)
+
+    right_top_x = _effective_xmax(y_max, lims, edge_lims)
+    right_bottom_x = _effective_xmax(y_min, lims, edge_lims)
+    right_top = _to_int_point(right_top_x, y_max)
+    right_bottom = _to_int_point(right_bottom_x, y_min)
+
+    cv2.line(frame, left_top, right_top, color, thickness)
+    cv2.line(frame, left_bottom, right_bottom, color, thickness)
+
+    ys = np.linspace(y_min, y_max, num=64)
+    right_points = np.array(
+        [_to_int_point(_effective_xmax(y_val, lims, edge_lims), y_val) for y_val in ys],
+        dtype=np.int32,
+    ).reshape(-1, 1, 2)
+    cv2.polylines(frame, [right_points], isClosed=False, color=color, thickness=thickness)
+
 def single_point_homography(matrix, point):
     x,y = point
     return np.array([matrix[0,0] * x + matrix[0,1] * y + matrix[0,2] /
@@ -41,7 +80,7 @@ def homography_transform(image, get_save=True, rotate=False):
                 interpolation = cv2.INTER_LINEAR)
     return showdst, save_image
 
-def camera_callback(shared_array, save_image_check, puck_array, paddle_info, region_info, goal_info):
+def camera_callback(shared_array, save_image_check, puck_array, paddle_info, region_info, goal_info, lims=None, edge_lims=None):
     cap = cv2.VideoCapture(0)
     while True:
         start = time.time()
@@ -63,6 +102,8 @@ def camera_callback(shared_array, save_image_check, puck_array, paddle_info, reg
         #             interpolation = cv2.INTER_LINEAR)
         # cv2.imshow('image',image)
         puck = find_red_hockey_puck(showdst, rotate=False)
+        if lims is not None and edge_lims is not None:
+            draw_robot_edge_limits(showdst, lims, edge_lims)
         if region_info is not None: showdst = visualize_regions(showdst, region_info, goal_info, paddle_info)
         cv2.imshow('image',showdst)
         cv2.setMouseCallback('image', move_event)
@@ -120,6 +161,7 @@ def mimic_control(shared_array):
         cv2.waitKey(1)
 
 def save_callback(save_image_check):
+    # TODO: changed to 0 for now
     cap = cv2.VideoCapture(1)
 
     while True:
@@ -139,10 +181,12 @@ def save_callback(save_image_check):
         cv2.waitKey(1)
 
 # performs saving without multiprocessing
-def save_collect(cap, paddle_info, region_info, goal_info, show = True):
+def save_collect(cap, paddle_info, region_info, goal_info, show=True, lims=None, edge_lims=None):
     start = time.time()
     ret, image = cap.read()
     showdst, save_image = homography_transform(image, get_save=True, rotate=False)
+    if lims is not None and edge_lims is not None:
+        draw_robot_edge_limits(showdst, lims, edge_lims)
     if region_info is not None: showdst = visualize_regions(showdst, region_info, goal_info, paddle_info)
     if show:
         cv2.imshow('showdst',showdst)

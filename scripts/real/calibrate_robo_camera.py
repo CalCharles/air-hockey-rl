@@ -9,7 +9,7 @@ def find_robo_pixel(cap, offset):
     pixels = list()
     for i in range(100):
         ret, image = cap.read()
-        # imageio.imsave("temp/ar_frames/frame_" + str(i) +".png", image)
+        imageio.imsave("temp/ar_frames/frame_" + str(i) +".png", image)
         px = find_red_dot(image, offset)
         if px is not None: pixels.append(px)
     return np.mean(np.array(pixels), axis=0)
@@ -95,22 +95,49 @@ def calibrate_homography(camera_id, save_homographies):
     # pts2 = np.float32([[400,400],[400,100],[550,100],[550,400]]), [-548,-206], [-541, 259]
     # pts2 = np.float32([[-829,389],[-834,-337],[-408,-345],[-398,391]])
     # pts2 = np.float32([[-829,379],[-834,-327],[-408,-355],[-398,381]])
-    pts2 = np.float32([[-767,336],[-775,-361],[-426,-361],[-407,352]])
+    # pts2 = np.float32([[-767,336],[-775,-361],[-426,-361],[-407,352]])
+    pts2 = np.float32([[-767,336],[-775,-330],[-426,-330],[-407,352]])
     apply_negative_z_force(ctrl)
     pts1 = list()
-    for offset, robo_pt in zip(offsets1, pts2):
-        vel = 0.8 # velocity limit
-        acc = 0.8 # acceleration limit 
-        angle = [-0.00153677648744038, -3.0647520618606172, 0.]
+    # for offset, robo_pt in zip(offsets1, pts2):
+    #     vel = 0.3 # velocity limit
+    #     acc = 0.3 # acceleration limit 
+    #     angle = [-0.00153677648744038, -3.0647520618606172, 0.]
 
-        reset_pose = ([robo_pt[0] * 0.001, robo_pt[1] * 0.001, 0.33] + angle, vel, acc)
-        high_reset_success = ctrl.moveL(reset_pose[0], reset_pose[1], reset_pose[2], False)
-        pts1.append(find_robo_pixel(cap, offset))
+    #     reset_pose = ([robo_pt[0] * 0.001, robo_pt[1] * 0.001, 0.33] + angle, vel, acc)
+    #     high_reset_success = ctrl.moveL(reset_pose[0], reset_pose[1], reset_pose[2], False)
+        
+    #     print("reset_pose: ", reset_pose)
+        
+    #     import time
+    #     time.sleep(1)
+
+    #     pts1.append(find_robo_pixel(cap, offset))
+    #     print("pixel: ", pts1[-1])
+    #     print("robo: ", robo_pt)
+
+        
+        
+    pts1 = [np.array([62.92, 399.14]), np.array([281.83, 395.88]), np.array([307.3, 508.0]), np.array([59.93, 521.3])]
+    # flip the x y coords
+    pts1 = [np.array([y, x]) for x, y in [ [62.92, 399.14], [281.83, 395.88], [307.3, 508.0], [59.93, 521.3] ]]
+    print("pts1: ", pts1)
+
     pts1 =  np.float32(pts1)
     pts1 *= upscale_constant
     Mrob = cv2.getPerspectiveTransform(pts1,pts2)
-    for val in pts1:
-        cv2.circle(image,(int(val[0]),int(val[1])),5,(0,255,0),-1)
+    # Colors for each point, in order:
+    # 0: Green (0,255,0)
+    # 1: Red (0,0,255)
+    # 2: Blue (255,0,0)
+    # 3: Yellow (0,255,255)
+    colors = [(0,255,0), (0,0,255), (255,0,0), (0,255,255)]
+    for idx, val in enumerate(pts1):
+        color = colors[idx % len(colors)]
+        # cv2.circle(image, (int(val[0]), int(val[1])), 5, color, -1)
+        cv2.circle(image, (int(val[1]), int(val[0])), 5, color, -1)
+    cv2.imshow('image',image)
+    cv2.waitKey(5000)
 
     pts2 += offset_constants
     Mimg = cv2.getPerspectiveTransform(pts1,pts2)
@@ -124,7 +151,7 @@ def calibrate_homography(camera_id, save_homographies):
         dst = cv2.resize(dst, (int(640 * upscale_constant / visual_downscale_constant), int(480 * upscale_constant / visual_downscale_constant)), 
                     interpolation = cv2.INTER_LINEAR)
         cv2.imshow("transformed", dst)
-        cv2.waitKey(10)
+        cv2.waitKey(5000)
     # Save calibration data
     if save_homographies:
         np.save('Mimg.npy', Mimg)

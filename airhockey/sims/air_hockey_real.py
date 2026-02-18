@@ -230,8 +230,7 @@ class AirHockeyReal:
         
         # max workspace limits
         self.x_offset = config.x_offset
-        self.x_min_lim = -0.8
-        self.x_max_lim = -0.33
+        
 
         # self.x_min_lim = -0.8
         # self.x_max_lim = -0.26
@@ -243,11 +242,14 @@ class AirHockeyReal:
 
 
         # self.y_min = -0.3582
-        self.y_min = -0.36 # temporary for right now
-        self.y_max = 0.350
+        
         # self.y_min = -0.42
         # self.y_max = 0.42
 
+        self.x_min_lim = -0.79
+        self.x_max_lim = -0.37
+        self.y_min = -0.36 # temporary for right now
+        self.y_max = 0.350
 
         self.bot_abs = config.bot_abs
         self.top_abs = config.top_abs
@@ -333,7 +335,19 @@ class AirHockeyReal:
         self.region_info = kwargs["region_info"] if "region_info" in kwargs else None
         self.goal_info = kwargs["goal_info"] if "goal_info" in kwargs else None
         if self.control_mode == 'mouse':
-            self.camera_process = multiprocessing.Process(target=camera_callback, args=(self.protected_mouse_pos,self.protected_img_check, self.protected_puck_pos, self.protected_paddle_pos, self.region_info, self.goal_info))
+            self.camera_process = multiprocessing.Process(
+                target=camera_callback,
+                args=(
+                    self.protected_mouse_pos,
+                    self.protected_img_check,
+                    self.protected_puck_pos,
+                    self.protected_paddle_pos,
+                    self.region_info,
+                    self.goal_info,
+                    self.lims,
+                    self.edge_lims,
+                ),
+            )
             self.camera_process.start()
         elif self.control_mode == 'mimic':
             self.mimic_process = multiprocessing.Process(target=mimic_control, args=(self.protected_mouse_pos,))
@@ -341,7 +355,7 @@ class AirHockeyReal:
             self.camera_process = multiprocessing.Process(target=save_callback, args=(self.protected_img_check,))
             self.camera_process.start()
         else:
-            self.cap = cv2.VideoCapture(0)
+            self.cap = cv2.VideoCapture(1)
 
     def _compute_state(self, pose, speed, i, puck_history):
         # This should be the only place where it is necessary to correct detection by the offsets
@@ -519,7 +533,15 @@ class AirHockeyReal:
 
         # get image data
         if self.cap is not None:
-            image, save_img = save_collect(self.cap, [true_pose[0], true_pose[1], self.paddle_radius], self.region_info if not self.control_mode in ["observe"] else None, self.goal_info, show = not self.control_mode in ["observe"])
+            image, save_img = save_collect(
+                self.cap,
+                [true_pose[0], true_pose[1], self.paddle_radius],
+                self.region_info if not self.control_mode in ["observe"] else None,
+                self.goal_info,
+                show=not self.control_mode in ["observe"],
+                lims=self.lims,
+                edge_lims=self.edge_lims,
+            )
             self.images.append(save_img)
 
         
@@ -552,22 +574,22 @@ class AirHockeyReal:
             puck = np.array(puck)
             # print("puck", puck)
             self.puck_history.append(puck)
-            srvpose = [[x, y, 0.31] + self.angle, self.vel,self.acc]
+            srvpose = [[x, y, 0.30] + self.angle, self.vel,self.acc]
         ###### servoL #####
         requested_target_xy = (x, y)
 
         if self.control_type == "pol":
             polx, poly = compute_pol(x, y, true_pose, self.lims, self.move_lims, self.edge_lims)
-            srvpose = [[polx, poly, 0.31] + self.angle, self.vel,self.acc]
+            srvpose = [[polx, poly, 0.30] + self.angle, self.vel,self.acc]
         elif self.control_type == "rect":
             # x,y = true_pose[:2] + (np.random.rand(2) * ((np.random.randint(2) - 0.5) * 2)) # uncomment to test random actions
             recx, recy = compute_rect(x, y, true_pose, self.lims, self.move_lims, self.edge_lims)
             # print(recx - true_pose[0], recy -true_pose[1], true_pose[:2],recx, recy,  x,y)
             if self.above_table :srvpose = [[recx, recy, self.high_reset_val] + self.angle, self.vel,self.acc]
-            else: srvpose = [[recx, recy, 0.31] + self.angle, self.vel,self.acc]
+            else: srvpose = [[recx, recy, 0.30] + self.angle, self.vel,self.acc]
         elif self.control_type == "prim":
             x, y = self.motion_primitive.compute_primitive(action, true_pose, self.lims, self.move_lims, self.edge_lims)
-            srvpose = [[x, y, 0.31] + self.angle, self.vel,self.acc]
+            srvpose = [[x, y, 0.30] + self.angle, self.vel,self.acc]
         
         # TODO: change of direction is currently very sudden, we need to tune that
         # print("servl", srvpose[0][1], true_speed, true_force, measured_acc, ctrl.servoL(srvpose[0], vel, acc, block_time, lookahead, gain))
