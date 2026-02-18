@@ -1,38 +1,64 @@
 import numpy as np
 import cv2
 import copy
+from .overlay_utils import robot_to_display_pixel_int, meters_to_display_pixels, observation_to_robot_xy, draw_paddle_marker
 
-def visualize_regions(frame, reward_region_info, goal_info, paddle_info):
+
+def visualize_regions(
+    frame,
+    reward_region_info,
+    goal_info,
+    paddle_info,
+    x_offset=1.0,
+    offset_constants=None,
+    visual_downscale_constant=2,
+    draw_paddle=True,
+):
     # frame is the image frame
     # reward regions defined: [x y rx ry, ...]
     # goals defined: x y r
     # paddle defined: x y r
-    offset_constants = np.array((2100, 500))
     for r in reward_region_info:
-        # print("reward_regions", r.state, r.radius)
-        # ((0.09870443) *1000  + 500)/2
-        # print("reward_regions", r, goal_info)
-        pixel_coord = (((r[0] - 1)*1000, (-r[1])*1000 ) + offset_constants) /2
-        center_coordinates = (int(np.round(pixel_coord[0])), int(np.round(pixel_coord[1])))  # Example coordinates (x, y)
-        
-        pixel_radius = (int((r[2])*1000 /2), int((r[3])*1000 /2))
-        # radius = int(np.round((pixel_radius[0]))) #, int(np.round(-pixel_radius[1])))
+        rx, ry = observation_to_robot_xy(r[0], r[1], x_offset)
+        center_coordinates = robot_to_display_pixel_int(
+            rx,
+            ry,
+            offset_constants=offset_constants,
+            visual_downscale_constant=visual_downscale_constant,
+        )
+
+        pixel_radius = (
+            int(np.round(meters_to_display_pixels(r[2], visual_downscale_constant))),
+            int(np.round(meters_to_display_pixels(r[3], visual_downscale_constant))),
+        )
         color = (0, 0, 255)  # Red color in BGR
         thickness = 2  # Thickness of 2 px, use -1 for a filled circle
-        # center_coordinates = (480, 360)
-        center_coordinates_new = (center_coordinates[0], center_coordinates[1])
-        # print("reward_regions", center_coordinates_new, pixel_radius)
-        # Draw the circle on the frame
-        cv2.ellipse(frame, center_coordinates_new, pixel_radius, angle=0, startAngle=0, endAngle=360, color=color, thickness=thickness)
-        # image_new = cv2.addWeighted(overlay, alpha, image, 1 - alpha, 0)
+        cv2.ellipse(frame, center_coordinates, pixel_radius, angle=0, startAngle=0, endAngle=360, color=color, thickness=thickness)
+
     goal = goal_info[:2]
     goal = copy.deepcopy(goal)
-    goal_coord = (((goal[0] - 1)*1000, (-goal[1])*1000 ) + offset_constants) /2
-    goal_center_coordinates = (int(np.round(goal_coord[0])), int(np.round(goal_coord[1])))  # Example coordinates (x, y)
-    cv2.circle(frame, goal_center_coordinates, radius=int(np.round(goal_info[2]*1000/2)), color=(0,255,0), thickness=thickness)
+    goal_x, goal_y = observation_to_robot_xy(goal[0], goal[1], x_offset)
+    goal_center_coordinates = robot_to_display_pixel_int(
+        goal_x,
+        goal_y,
+        offset_constants=offset_constants,
+        visual_downscale_constant=visual_downscale_constant,
+    )
+    cv2.circle(
+        frame,
+        goal_center_coordinates,
+        radius=int(np.round(meters_to_display_pixels(goal_info[2], visual_downscale_constant))),
+        color=(0, 255, 0),
+        thickness=thickness,
+    )
 
-    paddles = [copy.deepcopy(paddle_info[:2])]
-    paddle_coord = (((paddles[0][0])*1000, (-paddles[0][1])*1000 ) + offset_constants) /2
-    center_coordinates = (int(np.round(paddle_coord[0])), int(np.round(paddle_coord[1])))  # Example coordinates (x, y)
-    cv2.circle(frame, center_coordinates, radius=int(np.round(paddle_info[2]*1000/2)), color=(255,0,0), thickness=thickness)
+    if draw_paddle and paddle_info is not None:
+        draw_paddle_marker(
+            frame,
+            (paddle_info[0], paddle_info[1]),
+            paddle_info[2],
+            offset_constants=offset_constants,
+            visual_downscale_constant=visual_downscale_constant,
+            color=(255, 0, 0),
+        )
     return frame

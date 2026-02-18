@@ -4,6 +4,12 @@ import time, os
 import numpy as np
 from .image_detection import find_red_hockey_paddle, find_red_hockey_puck
 from .draw_regions import visualize_regions
+from .overlay_utils import (
+    robot_to_display_pixel_int,
+    draw_target_marker,
+    draw_puck_marker_from_state,
+    draw_paddle_marker,
+)
 
 
 mousepos = (0,0,1)
@@ -17,11 +23,6 @@ save_downscale_constant = 2
 offset_constants = np.array((2100, 500))
 
 
-def _robot_to_display_pixel(x_m, y_m):
-    pixel_coord = np.array((x_m * 1000.0, -y_m * 1000.0)) + offset_constants
-    return pixel_coord / visual_downscale_constant
-
-
 def _effective_xmax(y_m, lims, edge_lims):
     _, x_max_lim, _, _ = lims
     top_abs, _, max_bias_p, max_bias_m = edge_lims
@@ -32,8 +33,12 @@ def draw_robot_edge_limits(frame, lims, edge_lims, color=(0, 255, 255), thicknes
     x_min_lim, _, y_min, y_max = lims
 
     def _to_int_point(x_m, y_m):
-        px, py = _robot_to_display_pixel(x_m, y_m)
-        return (int(np.round(px)), int(np.round(py)))
+        return robot_to_display_pixel_int(
+            x_m,
+            y_m,
+            offset_constants=offset_constants,
+            visual_downscale_constant=visual_downscale_constant,
+        )
 
     # Left edge (x = x_min), top and bottom edges, plus effective right edge.
     left_top = _to_int_point(x_min_lim, y_max)
@@ -80,8 +85,23 @@ def homography_transform(image, get_save=True, rotate=False):
                 interpolation = cv2.INTER_LINEAR)
     return showdst, save_image
 
-def camera_callback(shared_array, save_image_check, puck_array, paddle_info, region_info, goal_info, lims=None, edge_lims=None):
-    cap = cv2.VideoCapture(0)
+def camera_callback(
+    shared_array,
+    save_image_check,
+    puck_array,
+    paddle_info,
+    target_info,
+    region_info,
+    goal_info,
+    lims=None,
+    edge_lims=None,
+    puck_detector=find_red_hockey_puck,
+    puck_detector_kwargs=None,
+    puck_radius=0.03175,
+    region_x_offset=1.0,
+):
+    cap = cv2.VideoCapture(1)
+    detector_kwargs = puck_detector_kwargs if puck_detector_kwargs is not None else {}
     while True:
         start = time.time()
         ret, image = cap.read()
@@ -101,10 +121,45 @@ def camera_callback(shared_array, save_image_check, puck_array, paddle_info, reg
         # dst = cv2.resize(dst, original_size.astype(int).tolist(), 
         #             interpolation = cv2.INTER_LINEAR)
         # cv2.imshow('image',image)
-        puck = find_red_hockey_puck(showdst, rotate=False)
+        puck = puck_detector(showdst, rotate=False, **detector_kwargs)
         if lims is not None and edge_lims is not None:
             draw_robot_edge_limits(showdst, lims, edge_lims)
-        if region_info is not None: showdst = visualize_regions(showdst, region_info, goal_info, paddle_info)
+        if region_info is not None:
+            showdst = visualize_regions(
+                showdst,
+                region_info,
+                goal_info,
+                paddle_info,
+                x_offset=region_x_offset,
+                offset_constants=offset_constants,
+                visual_downscale_constant=visual_downscale_constant,
+                draw_paddle=False,
+            )
+        if target_info[2] > 0:
+            draw_target_marker(
+                showdst,
+                (target_info[0], target_info[1]),
+                offset_constants=offset_constants,
+                visual_downscale_constant=visual_downscale_constant,
+            )
+        draw_puck_marker_from_state(
+            showdst,
+            puck,
+            puck_radius,
+            x_offset_for_state=0.0,
+            offset_constants=offset_constants,
+            visual_downscale_constant=visual_downscale_constant,
+            color=(0, 255, 0),
+            require_visible=True,
+        )
+        draw_paddle_marker(
+            showdst,
+            (paddle_info[0], paddle_info[1]),
+            paddle_info[2],
+            offset_constants=offset_constants,
+            visual_downscale_constant=visual_downscale_constant,
+            color=(255, 0, 0),
+        )
         cv2.imshow('image',showdst)
         cv2.setMouseCallback('image', move_event)
         puck_array[0] = puck[0]
@@ -132,7 +187,7 @@ def move_event(event, x, y, flags, params):
 
 # callback functions for mimic control
 def mimic_control(shared_array):
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(1)
 
     Mimg_tele = np.load(os.path.join(base_dir, 'assets', 'real' ,'Mimg_tele.npy'))
 
@@ -162,7 +217,7 @@ def mimic_control(shared_array):
 
 def save_callback(save_image_check):
     # TODO: changed to 0 for now
-    cap = cv2.VideoCapture(1)
+    cap = cv2.VideoCapture(0)
 
     while True:
         start = time.time()
@@ -181,13 +236,23 @@ def save_callback(save_image_check):
         cv2.waitKey(1)
 
 # performs saving without multiprocessing
-def save_collect(cap, paddle_info, region_info, goal_info, show=True, lims=None, edge_lims=None):
+def save_collect(cap, paddle_info, region_info, goal_info, show=True, lims=None, edge_lims=None, region_x_offset=1.0):
     start = time.time()
     ret, image = cap.read()
     showdst, save_image = homography_transform(image, get_save=True, rotate=False)
     if lims is not None and edge_lims is not None:
         draw_robot_edge_limits(showdst, lims, edge_lims)
-    if region_info is not None: showdst = visualize_regions(showdst, region_info, goal_info, paddle_info)
+    if region_info is not None:
+        showdst = visualize_regions(
+            showdst,
+            region_info,
+            goal_info,
+            paddle_info,
+            x_offset=region_x_offset,
+            offset_constants=offset_constants,
+            visual_downscale_constant=visual_downscale_constant,
+            draw_paddle=False,
+        )
     if show:
         cv2.imshow('showdst',showdst)
         cv2.waitKey(1)

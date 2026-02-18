@@ -14,7 +14,8 @@ from .real.trajectory_merging import merge_trajectory, clear_images, write_traje
 from .real.robot_control import MotionPrimitive, apply_negative_z_force, filter_update
 from .real.coordinate_transform import compute_rect, compute_pol
 from .real.proprioceptive_state import get_state_array
-from .real.image_detection import find_red_hockey_puck
+from .real.image_detection import find_red_hockey_puck, find_red_hockey_puck_antiglare
+from .real.overlay_utils import draw_target_marker, draw_puck_marker_from_state, draw_paddle_marker
 import multiprocessing
 import cv2
 import copy
@@ -22,6 +23,7 @@ from ..utils import dict_to_namespace
 
 puck_detectors = {
     "red_puck": find_red_hockey_puck,
+    "red_puck_antiglare": find_red_hockey_puck_antiglare,
     # TODO: other puck detectors here
 }
 
@@ -59,7 +61,13 @@ class AirHockeyReal:
             "control_type": "rect",
             "puck_history_len": 5,
             "paddle_history_len": 5,
-            "puck_detector": "red_puck",
+            "puck_detector": "red_puck_antiglare",
+            # Antiglare bounds are interpreted in detector pixel space
+            # after homography and the detector's own internal resize/crop.
+            "antiglare_min_x_px": 290,
+            "antiglare_max_x_px": 451,
+            "antiglare_min_y_px": 186,
+            "antiglare_max_y_px": 465,
             "image_path": "./temp/images/",
             "save_path": "./data/rollout/temp_saving",
             "vel_lim": 0.8,
@@ -171,6 +179,13 @@ class AirHockeyReal:
         self.puck_history_len = 5
         self.paddle_history_len = 5
         self.puck_detector = puck_detectors[config.puck_detector]
+        self.puck_detector_kwargs = {
+            "antiglare_min_x_px": config.antiglare_min_x_px,
+            "antiglare_max_x_px": config.antiglare_max_x_px,
+            "antiglare_min_y_px": config.antiglare_min_y_px,
+            "antiglare_max_y_px": config.antiglare_max_y_px,
+            "center_offset_constant": self.center_offset_constant,
+        }
         self.image_path = config.image_path
         self.save_path = config.save_path
         self.tidx = get_trajectory_idx(self.save_path)
@@ -179,15 +194,18 @@ class AirHockeyReal:
         shared_mouse_pos = multiprocessing.Array("f", 3)
         shared_puck_pos = multiprocessing.Array("f", 3)
         shared_paddle_pos = multiprocessing.Array("f", 3)
+        shared_target_pos = multiprocessing.Array("f", 3)
         shared_image_check = multiprocessing.Array("f", 1)
         shared_mouse_pos[0] = 0
         shared_mouse_pos[1] = 0
         shared_mouse_pos[2] = 1
+        shared_target_pos[2] = 0
         shared_image_check[0] = 0
         self.protected_mouse_pos = ProtectedArray(shared_mouse_pos)
         self.protected_puck_pos = ProtectedArray(shared_puck_pos)
         self.protected_img_check = ProtectedArray(shared_image_check)
         self.protected_paddle_pos = ProtectedArray(shared_paddle_pos)
+        self.protected_target_pos = ProtectedArray(shared_target_pos)
         self.cap, self.camera_process, self.mimic_process = None, None, None
         if self.control_type == "prim":
             self.motion_primitive = MotionPrimitive()
@@ -338,52 +356,6 @@ class AirHockeyReal:
         timestep = getattr(self, "timestep", 0)
         return self.debug_control and timestep % self.debug_control_every == 0
 
-    def _robot_to_display_pixel(self, x_m, y_m):
-        pixel_coord = np.array((x_m * 1000.0, -y_m * 1000.0)) + self.offset_constants
-        return pixel_coord / self.visual_downscale_constant
-
-    def _draw_post_filter_target_marker(self, frame, target_xy, color=(0, 165, 255)):
-        if frame is None or target_xy is None or len(target_xy) < 2:
-            return
-
-        px, py = self._robot_to_display_pixel(target_xy[0], target_xy[1])
-        center = (int(np.round(px)), int(np.round(py)))
-        marker_size = 15
-        thickness = 3
-
-        cv2.circle(frame, center, marker_size, (0, 0, 0), thickness + 2)
-        cv2.circle(frame, center, marker_size, color, thickness)
-
-        cv2.line(
-            frame,
-            (center[0] - marker_size, center[1]),
-            (center[0] + marker_size, center[1]),
-            (0, 0, 0),
-            thickness + 2,
-        )
-        cv2.line(
-            frame,
-            (center[0], center[1] - marker_size),
-            (center[0], center[1] + marker_size),
-            (0, 0, 0),
-            thickness + 2,
-        )
-        cv2.line(
-            frame,
-            (center[0] - marker_size, center[1]),
-            (center[0] + marker_size, center[1]),
-            color,
-            thickness,
-        )
-        cv2.line(
-            frame,
-            (center[0], center[1] - marker_size),
-            (center[0], center[1] + marker_size),
-            color,
-            thickness,
-        )
-
-
     def start_callbacks(self, **kwargs):
         self.region_info = kwargs["region_info"] if "region_info" in kwargs else None
         self.goal_info = kwargs["goal_info"] if "goal_info" in kwargs else None
@@ -395,10 +367,15 @@ class AirHockeyReal:
                     self.protected_img_check,
                     self.protected_puck_pos,
                     self.protected_paddle_pos,
+                    self.protected_target_pos,
                     self.region_info,
                     self.goal_info,
                     self.lims,
                     self.edge_lims,
+                    self.puck_detector,
+                    self.puck_detector_kwargs,
+                    self.puck_radius,
+                    self.x_offset,
                 ),
             )
             self.camera_process.start()
@@ -442,7 +419,12 @@ class AirHockeyReal:
     def take_action(self, action, pose, speed, force, acc, estop, image, images, puck_history, lims, move_lims):
         # converts an action from the agent to an action in the robot space
         if self.puck_detector is not None: 
-            puck = self.puck_detector(image, puck_history, rotate=False)
+            puck = self.puck_detector(
+                image,
+                puck_history,
+                rotate=False,
+                **self.puck_detector_kwargs,
+            )
             puck = np.array(puck)
             if puck[-1] == 0: puck[0] += self.center_offset_constant
         else: puck = (puck_history[-1][0],puck_history[-1][1],0)
@@ -595,6 +577,7 @@ class AirHockeyReal:
                 show=False,
                 lims=self.lims,
                 edge_lims=self.edge_lims,
+                region_x_offset=self.x_offset,
             )
             self.images.append(save_img)
 
@@ -652,8 +635,34 @@ class AirHockeyReal:
         self.pose_hist.append(true_pose)
         self.dpose_hist.append(srvpose[0])
         srvpose[0] = filter_update(true_speed, self.pose_hist, self.dpose_hist)
+        self.protected_target_pos[0] = srvpose[0][0]
+        self.protected_target_pos[1] = srvpose[0][1]
+        self.protected_target_pos[2] = 1
         if self.cap is not None and self.control_mode not in ["observe"]:
-            self._draw_post_filter_target_marker(image, srvpose[0][:2])
+            draw_target_marker(
+                image,
+                srvpose[0][:2],
+                offset_constants=self.offset_constants,
+                visual_downscale_constant=self.visual_downscale_constant,
+            )
+            draw_puck_marker_from_state(
+                image,
+                puck,
+                self.puck_radius,
+                x_offset_for_state=self.center_offset_constant,
+                offset_constants=self.offset_constants,
+                visual_downscale_constant=self.visual_downscale_constant,
+                color=(0, 255, 0),
+                require_visible=True,
+            )
+            draw_paddle_marker(
+                image,
+                true_pose[:2],
+                self.paddle_radius,
+                offset_constants=self.offset_constants,
+                visual_downscale_constant=self.visual_downscale_constant,
+                color=(255, 0, 0),
+            )
             cv2.imshow("showdst", image)
             cv2.waitKey(1)
         safety_check = self.ctrl.isPoseWithinSafetyLimits(srvpose[0])
@@ -693,14 +702,16 @@ class AirHockeyReal:
                 f"step={self.timestep} servoL_sent=False reason={'safety_check_failed' if not safety_check else 'observe_mode'}"
             )
         if self.rcv.isProtectiveStopped():
-            next_state = self._compute_state(srvpose[0], true_speed, self.timestep, self.puck_history)
+            # TODO: temporary behavior: use current pose for next_state/paddle_history observations.
+            # next_state = self._compute_state(srvpose[0], true_speed, self.timestep, self.puck_history)
+            next_state = self._compute_state(true_pose, true_speed, self.timestep, self.puck_history)
             paddle_position = next_state["paddles"]["paddle_ego"]["position"]
             self.paddle_history.append(list(paddle_position) + [0])
             if self._should_debug_control():
                 print(
                     "[control_debug] "
                     f"step={self.timestep} returned_state_xy=({paddle_position[0]:.4f},{paddle_position[1]:.4f}) "
-                    f"state_source=commanded_pose protective_stop=True"
+                    f"state_source=current_pose protective_stop=True"
                 )
             return next_state
 
@@ -708,14 +719,16 @@ class AirHockeyReal:
         # print("time", time.time() - start)
         self.timestep += 1
         self.runtime = time.time() - self.transition_start
-        next_state = self._compute_state(srvpose[0], true_speed, self.timestep, self.puck_history) # TODO: populate this with the names of objects
+        # TODO: temporary behavior: use current pose for next_state/paddle_history observations.
+        # next_state = self._compute_state(srvpose[0], true_speed, self.timestep, self.puck_history) # TODO: populate this with the names of objects
+        next_state = self._compute_state(true_pose, true_speed, self.timestep, self.puck_history)
         paddle_position = next_state["paddles"]["paddle_ego"]["position"]
         self.paddle_history.append(list(paddle_position) + [0])
         if self._should_debug_control():
             print(
                 "[control_debug] "
                 f"step={self.timestep} returned_state_xy=({paddle_position[0]:.4f},{paddle_position[1]:.4f}) "
-                f"state_source=commanded_pose protective_stop=False"
+                f"state_source=current_pose protective_stop=False"
             )
         return next_state
 
