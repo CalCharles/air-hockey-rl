@@ -62,8 +62,9 @@ class AirHockeyReal:
             "puck_history_len": 5,
             "paddle_history_len": 5,
             "puck_detector": "red_puck_antiglare",
-            # Antiglare bounds are interpreted in detector pixel space
-            # after homography and the detector's own internal resize/crop.
+            # Antiglare bounds are interpreted in the raw detector input image
+            # (the image passed into the puck detector before preprocess).
+            "antiglare_bounds_in_raw_image": True,
             "antiglare_min_x_px": 290,
             "antiglare_max_x_px": 451,
             "antiglare_min_y_px": 186,
@@ -180,6 +181,7 @@ class AirHockeyReal:
         self.paddle_history_len = 5
         self.puck_detector = puck_detectors[config.puck_detector]
         self.puck_detector_kwargs = {
+            "antiglare_bounds_in_raw_image": config.antiglare_bounds_in_raw_image,
             "antiglare_min_x_px": config.antiglare_min_x_px,
             "antiglare_max_x_px": config.antiglare_max_x_px,
             "antiglare_min_y_px": config.antiglare_min_y_px,

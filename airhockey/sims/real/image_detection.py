@@ -89,6 +89,14 @@ def find_red_hockey_paddle(image):
 
 
 MIN_DETECT = 25
+MIN_PUCK_RADIUS_PX = 5
+MAX_PUCK_RADIUS_PX = 10
+MIN_PUCK_CIRCULARITY = 0.4
+SIMPLE_MIN_PUCK_RADIUS_PX = 5
+SIMPLE_MAX_PUCK_RADIUS_PX = 10
+SIMPLE_MIN_PUCK_CIRCULARITY = 0.80
+SIMPLE_MIN_PUCK_FILL_RATIO = 0.7
+SIMPLE_LOOSE_MIN_PUCK_FILL_RATIO = 0.55
 
 # Mimg = np.load('assets/real/Mimg.npy')
 Mimg = np.load(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "assets", "real", "Mimg.npy"))
@@ -136,6 +144,7 @@ def _dual_red_mask(hsv_image, sat_min, val_min, low_h=(0, 10), high_h=(170, 180)
 
 def _apply_antiglare_rescue_mask(
     base_mask,
+    bgr_image,
     hsv_image,
     antiglare_min_x_px=None,
     antiglare_max_x_px=None,
@@ -159,6 +168,7 @@ def _apply_antiglare_rescue_mask(
         return base_mask
 
     rescue_mask = base_mask.copy()
+    roi_bgr = bgr_image[y0:y1, x0:x1]
     roi_hsv = hsv_image[y0:y1, x0:x1]
     roi_rescue = _dual_red_mask(
         roi_hsv,
@@ -167,8 +177,82 @@ def _apply_antiglare_rescue_mask(
         low_h=(0, 15),
         high_h=(165, 180),
     )
-    rescue_mask[y0:y1, x0:x1] = cv2.bitwise_or(rescue_mask[y0:y1, x0:x1], roi_rescue)
+    # Glare makes the puck appear desaturated/grayish red. In that case hue can
+    # become unreliable, so use a simple channel-dominance rescue in BGR space.
+    r = roi_bgr[:, :, 2].astype(np.int16)
+    g = roi_bgr[:, :, 1].astype(np.int16)
+    b = roi_bgr[:, :, 0].astype(np.int16)
+    roi_gray_red_rescue = (
+        (r >= 160)
+        & ((r - np.maximum(g, b)) >= 25)
+        & (np.abs(g - b) <= 35)
+    ).astype(np.uint8) * 255
+
+    roi_rescue_combined = cv2.bitwise_or(roi_rescue, roi_gray_red_rescue)
+    rescue_mask[y0:y1, x0:x1] = cv2.bitwise_or(
+        rescue_mask[y0:y1, x0:x1], roi_rescue_combined
+    )
     return rescue_mask
+
+
+def _convert_raw_bounds_to_detector_bounds(
+    antiglare_min_x_px,
+    antiglare_max_x_px,
+    antiglare_min_y_px,
+    antiglare_max_y_px,
+    raw_shape,
+    detector_shape,
+    rotate,
+):
+    if None in (
+        antiglare_min_x_px,
+        antiglare_max_x_px,
+        antiglare_min_y_px,
+        antiglare_max_y_px,
+    ):
+        return antiglare_min_x_px, antiglare_max_x_px, antiglare_min_y_px, antiglare_max_y_px
+
+    x0 = float(min(antiglare_min_x_px, antiglare_max_x_px))
+    x1 = float(max(antiglare_min_x_px, antiglare_max_x_px))
+    y0 = float(min(antiglare_min_y_px, antiglare_max_y_px))
+    y1 = float(max(antiglare_min_y_px, antiglare_max_y_px))
+
+    raw_h, raw_w = raw_shape[:2]
+    det_h, det_w = detector_shape[:2]
+    if raw_h <= 0 or raw_w <= 0 or det_h <= 0 or det_w <= 0:
+        return antiglare_min_x_px, antiglare_max_x_px, antiglare_min_y_px, antiglare_max_y_px
+
+    if rotate:
+        # Match _preprocess_puck_image rotation: ROTATE_90_COUNTERCLOCKWISE.
+        corners = np.array(
+            [
+                [x0, y0],
+                [x1, y0],
+                [x1, y1],
+                [x0, y1],
+            ],
+            dtype=float,
+        )
+        rotated = np.zeros_like(corners)
+        rotated[:, 0] = corners[:, 1]  # x' = y
+        rotated[:, 1] = (raw_w - 1.0) - corners[:, 0]  # y' = W - 1 - x
+        x0_r, y0_r = np.min(rotated, axis=0)
+        x1_r, y1_r = np.max(rotated, axis=0)
+        raw_ref_w = float(raw_h)
+        raw_ref_h = float(raw_w)
+    else:
+        x0_r, x1_r, y0_r, y1_r = x0, x1, y0, y1
+        raw_ref_w = float(raw_w)
+        raw_ref_h = float(raw_h)
+
+    scale_x = float(det_w) / max(raw_ref_w, 1.0)
+    scale_y = float(det_h) / max(raw_ref_h, 1.0)
+    return (
+        x0_r * scale_x,
+        x1_r * scale_x,
+        y0_r * scale_y,
+        y1_r * scale_y,
+    )
 
 
 def _history_to_detector_pixel(puck_history, center_offset_constant):
@@ -181,45 +265,118 @@ def _history_to_detector_pixel(puck_history, center_offset_constant):
     return pred_x, pred_y
 
 
-def _select_component_centroid(mask, puck_history=None, center_offset_constant=0.0):
-    num_labels, _, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
-    candidates = []
-    for label_idx in range(1, num_labels):
-        area = int(stats[label_idx, cv2.CC_STAT_AREA])
-        if area < MIN_DETECT or area > 2500:
+def _select_component_centroid(
+    mask,
+    puck_history=None,
+    center_offset_constant=0.0,
+    min_radius_px=None,
+    max_radius_px=None,
+    min_circularity=None,
+    min_fill_ratio=None,
+    loose_min_fill_ratio=None,
+    max_area=2500,
+):
+    pred = _history_to_detector_pixel(puck_history, center_offset_constant)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    strict_candidates = []
+    loose_candidates = []
+    min_radius_px = MIN_PUCK_RADIUS_PX if min_radius_px is None else float(min_radius_px)
+    max_radius_px = MAX_PUCK_RADIUS_PX if max_radius_px is None else float(max_radius_px)
+    min_circularity = (
+        MIN_PUCK_CIRCULARITY if min_circularity is None else float(min_circularity)
+    )
+
+    for contour in contours:
+        area = float(cv2.contourArea(contour))
+        if area < MIN_DETECT or area > max_area:
             continue
-        cx, cy = centroids[label_idx]
-        candidates.append((area, float(cx), float(cy)))
+        perimeter = float(cv2.arcLength(contour, True))
+        if perimeter <= 0.0:
+            continue
+        (cx, cy), radius = cv2.minEnclosingCircle(contour)
+        if radius < min_radius_px or radius > max_radius_px:
+            continue
+
+        fill_ratio = area / max(np.pi * radius * radius, 1e-6)
+        if loose_min_fill_ratio is not None and fill_ratio < float(loose_min_fill_ratio):
+            continue
+        circularity = float((4.0 * np.pi * area) / (perimeter * perimeter))
+        candidate = (area, float(cx), float(cy), circularity, float(radius), fill_ratio)
+        loose_candidates.append(candidate)
+        if circularity >= min_circularity and (
+            min_fill_ratio is None or fill_ratio >= float(min_fill_ratio)
+        ):
+            strict_candidates.append(candidate)
+
+    # Prefer clearly circular blobs, but keep a loose fallback to avoid dropouts.
+    candidates = strict_candidates if len(strict_candidates) > 0 else loose_candidates
     if not candidates:
         return None
 
-    pred = _history_to_detector_pixel(puck_history, center_offset_constant)
     if pred is None:
-        _, cx, cy = max(candidates, key=lambda c: c[0])
+        _, cx, cy, _, _, _ = max(
+            candidates, key=lambda c: (c[3], c[5], c[0])
+        )
         return int(np.round(cx)), int(np.round(cy))
 
     pred_x, pred_y = pred
-    _, cx, cy = min(
+    _, cx, cy, _, _, _ = min(
         candidates,
-        key=lambda c: (c[1] - pred_x) ** 2 + (c[2] - pred_y) ** 2,
+        key=lambda c: (c[1] - pred_x) ** 2
+        + (c[2] - pred_y) ** 2
+        + 200.0 * (1.0 - c[3]) ** 2
+        + 120.0 * (1.0 - c[5]) ** 2,
     )
     return int(np.round(cx)), int(np.round(cy))
 
 
-def find_red_hockey_puck(image, puck_history=None, rotate=True, **_ignored_kwargs):
+def find_red_hockey_puck(
+    image,
+    puck_history=None,
+    rotate=True,
+    center_offset_constant=0.0,
+    **_ignored_kwargs,
+):
     image = _preprocess_puck_image(image, rotate=rotate)
     hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    refined_mask = cv2.inRange(
+
+    # Puck is roughly 30 px wide in raw detector input; _preprocess_puck_image
+    # downsamples by 2, so we gate radius around that while keeping a wide margin.
+    red_mask = _dual_red_mask(
         hsv_image,
-        np.array([0, 137, 80], dtype=np.uint8),
-        np.array([8, 255, 255], dtype=np.uint8),
+        sat_min=45,
+        val_min=45,
+        low_h=(0, 13),
+        high_h=(165, 180),
     )
-    puck_idx = np.where(refined_mask)
-    if len(puck_idx[0]) < MIN_DETECT:
+    r = image[:, :, 2].astype(np.int16)
+    g = image[:, :, 1].astype(np.int16)
+    b = image[:, :, 0].astype(np.int16)
+    gray_red_rescue = (
+        (r >= 110)
+        & ((r - np.maximum(g, b)) >= 12)
+        & (np.abs(g - b) <= 45)
+    ).astype(np.uint8) * 255
+    mask = cv2.bitwise_or(red_mask, gray_red_rescue)
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+
+    center = _select_component_centroid(
+        mask,
+        puck_history=puck_history,
+        center_offset_constant=center_offset_constant,
+        min_radius_px=SIMPLE_MIN_PUCK_RADIUS_PX,
+        max_radius_px=SIMPLE_MAX_PUCK_RADIUS_PX,
+        min_circularity=SIMPLE_MIN_PUCK_CIRCULARITY,
+        min_fill_ratio=SIMPLE_MIN_PUCK_FILL_RATIO,
+        loose_min_fill_ratio=SIMPLE_LOOSE_MIN_PUCK_FILL_RATIO,
+    )
+    if center is None:
         return _fallback_puck(puck_history)
 
-    y = int(np.round(np.median(puck_idx[0])))
-    x = int(np.round(np.median(puck_idx[1])))
+    x, y = center
     robot_x, robot_y = _pixel_to_robot_xy(x, y)
     return robot_x, robot_y, 0
 
@@ -228,6 +385,7 @@ def find_red_hockey_puck_antiglare(
     image,
     puck_history=None,
     rotate=True,
+    antiglare_bounds_in_raw_image=True,
     antiglare_min_x_px=None,
     antiglare_max_x_px=None,
     antiglare_min_y_px=None,
@@ -235,18 +393,36 @@ def find_red_hockey_puck_antiglare(
     center_offset_constant=0.0,
     **_ignored_kwargs,
 ):
+    raw_shape = image.shape
     image = _preprocess_puck_image(image, rotate=rotate)
     hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
+    if antiglare_bounds_in_raw_image:
+        (
+            antiglare_min_x_px,
+            antiglare_max_x_px,
+            antiglare_min_y_px,
+            antiglare_max_y_px,
+        ) = _convert_raw_bounds_to_detector_bounds(
+            antiglare_min_x_px,
+            antiglare_max_x_px,
+            antiglare_min_y_px,
+            antiglare_max_y_px,
+            raw_shape=raw_shape,
+            detector_shape=image.shape,
+            rotate=rotate,
+        )
+
     mask = _dual_red_mask(
         hsv_image,
-        sat_min=90,
-        val_min=45,
+        sat_min=80,
+        val_min=30,
         low_h=(0, 10),
         high_h=(170, 180),
     )
     mask = _apply_antiglare_rescue_mask(
         mask,
+        image,
         hsv_image,
         antiglare_min_x_px=antiglare_min_x_px,
         antiglare_max_x_px=antiglare_max_x_px,
