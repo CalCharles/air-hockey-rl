@@ -2,7 +2,14 @@ import time
 from collections import deque
 import numpy as np
 from .real.multiprocessing import ProtectedArray, NonBlockingConsole
-from .real.control_parameters import camera_callback, save_callback, mimic_control, save_collect, observe_collect
+from .real.control_parameters import (
+    camera_callback,
+    save_callback,
+    mimic_control,
+    save_collect,
+    observe_collect,
+    visual_downscale_constant,
+)
 from .real.trajectory_merging import merge_trajectory, clear_images, write_trajectory, get_trajectory_idx
 from .real.robot_control import MotionPrimitive, apply_negative_z_force, filter_update
 from .real.coordinate_transform import compute_rect, compute_pol
@@ -227,6 +234,7 @@ class AirHockeyReal:
 
         # homography offsets
         self.offset_constants = np.array((2100, 500))
+        self.visual_downscale_constant = visual_downscale_constant
         
         # max workspace limits
         self.x_offset = config.x_offset
@@ -329,6 +337,51 @@ class AirHockeyReal:
     def _should_debug_control(self):
         timestep = getattr(self, "timestep", 0)
         return self.debug_control and timestep % self.debug_control_every == 0
+
+    def _robot_to_display_pixel(self, x_m, y_m):
+        pixel_coord = np.array((x_m * 1000.0, -y_m * 1000.0)) + self.offset_constants
+        return pixel_coord / self.visual_downscale_constant
+
+    def _draw_post_filter_target_marker(self, frame, target_xy, color=(0, 165, 255)):
+        if frame is None or target_xy is None or len(target_xy) < 2:
+            return
+
+        px, py = self._robot_to_display_pixel(target_xy[0], target_xy[1])
+        center = (int(np.round(px)), int(np.round(py)))
+        marker_size = 15
+        thickness = 3
+
+        cv2.circle(frame, center, marker_size, (0, 0, 0), thickness + 2)
+        cv2.circle(frame, center, marker_size, color, thickness)
+
+        cv2.line(
+            frame,
+            (center[0] - marker_size, center[1]),
+            (center[0] + marker_size, center[1]),
+            (0, 0, 0),
+            thickness + 2,
+        )
+        cv2.line(
+            frame,
+            (center[0], center[1] - marker_size),
+            (center[0], center[1] + marker_size),
+            (0, 0, 0),
+            thickness + 2,
+        )
+        cv2.line(
+            frame,
+            (center[0] - marker_size, center[1]),
+            (center[0] + marker_size, center[1]),
+            color,
+            thickness,
+        )
+        cv2.line(
+            frame,
+            (center[0], center[1] - marker_size),
+            (center[0], center[1] + marker_size),
+            color,
+            thickness,
+        )
 
 
     def start_callbacks(self, **kwargs):
@@ -531,6 +584,7 @@ class AirHockeyReal:
         self.protected_paddle_pos[1] = true_pose[1]
         self.protected_paddle_pos[2] = self.paddle_radius
 
+        image = None
         # get image data
         if self.cap is not None:
             image, save_img = save_collect(
@@ -538,7 +592,7 @@ class AirHockeyReal:
                 [true_pose[0], true_pose[1], self.paddle_radius],
                 self.region_info if not self.control_mode in ["observe"] else None,
                 self.goal_info,
-                show=not self.control_mode in ["observe"],
+                show=False,
                 lims=self.lims,
                 edge_lims=self.edge_lims,
             )
@@ -598,6 +652,10 @@ class AirHockeyReal:
         self.pose_hist.append(true_pose)
         self.dpose_hist.append(srvpose[0])
         srvpose[0] = filter_update(true_speed, self.pose_hist, self.dpose_hist)
+        if self.cap is not None and self.control_mode not in ["observe"]:
+            self._draw_post_filter_target_marker(image, srvpose[0][:2])
+            cv2.imshow("showdst", image)
+            cv2.waitKey(1)
         safety_check = self.ctrl.isPoseWithinSafetyLimits(srvpose[0])
         if self._should_debug_control():
             if self.control_mode in ["mouse", "mimic"]:
