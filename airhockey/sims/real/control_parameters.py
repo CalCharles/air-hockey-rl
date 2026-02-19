@@ -20,7 +20,7 @@ upscale_constant = 3
 original_size = np.array([640, 480])
 visual_downscale_constant = 2
 save_downscale_constant = 2
-offset_constants = np.array((2100, 500))
+offset_constants = np.array((2250, 500))
 
 
 def _effective_xmax(y_m, lims, edge_lims):
