@@ -211,6 +211,43 @@ class AirHockeyPuckJuggleLinearTopEnv(AirHockeyPuckJuggleEnv):
     def from_dict(state_dict):
         return AirHockeyPuckJuggleLinearTopEnv(**state_dict)
 
+    def get_paddle_configuration(self, name):
+        if name == 'paddle_ego':
+            x_pos = self.table_x_bot * 3 / 4
+            # x is table length axis, y is lateral axis; keep y in the middle 50% band.
+            y_low = self.table_y_left + 0.25 * (self.table_y_right - self.table_y_left)
+            y_high = self.table_y_left + 0.75 * (self.table_y_right - self.table_y_left)
+            y_pos = self.rng.uniform(low=y_low, high=y_high)
+            return (x_pos, y_pos), (0, 0)
+        elif name == 'paddle_alt':
+            x_pos = self.table_x_top + self.paddle_radius
+            return (x_pos, 0), (0, 0)
+        else:
+            raise ValueError("Invalid paddle name")
+
+    def get_puck_configuration(self, bad_regions=None):
+        # Use base-frame coordinates here; Box2D conversion happens in spawn_puck.
+        # "Top 1/3" is along x toward table_x_top (more negative x values).
+        x_low = self.table_x_top + self.puck_radius
+        x_high = self.table_x_top + (self.length / 3.0) - self.puck_radius
+        y_low = self.table_y_left + self.puck_radius
+        y_high = self.table_y_right - self.puck_radius
+
+        y_pos = None
+        if bad_regions is not None:
+            while y_pos is None:
+                proposed_y_pos = self.rng.uniform(low=y_low, high=y_high)
+                if all(not (region[0] < proposed_y_pos < region[1]) for region in bad_regions):
+                    y_pos = proposed_y_pos
+        else:
+            y_pos = self.rng.uniform(low=y_low, high=y_high)
+
+        x_pos = self.rng.uniform(low=x_low, high=x_high)
+        speed = self.rng.uniform(low=0.0, high=0.75)
+        heading = self.rng.uniform(low=0.0, high=2 * math.pi)
+        vel = (speed * math.cos(heading), speed * math.sin(heading))
+        return (x_pos, y_pos), vel
+
 class AirHockeyPuckStrikeEnv(AirHockeyBaseEnv):
     def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces

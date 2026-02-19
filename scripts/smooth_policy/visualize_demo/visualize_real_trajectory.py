@@ -9,7 +9,8 @@ Key features:
 - Loads HDF5 trajectory files from /nfs/data/airhockey/
 - Transforms robot frame coordinates to simulation table frame
 - Uses the same rendering assets and logic as Box2D simulator
-- Generates GIFs with paddle position and velocity visualization
+- Generates GIFs with paddle position/velocity visualization
+- Optionally visualizes puck position if present in train_vals (fields 32-34)
 
 Usage:
     python visualize_real_trajectory.py /nfs/data/airhockey/trajectory_data434.hdf5
@@ -35,19 +36,20 @@ def load_trajectory_data(filepath):
         filepath: Path to HDF5 trajectory file
         
     Returns:
-        numpy.ndarray: Train values array (N, 32)
+        numpy.ndarray: Train values array (N, D), where D is typically 32 or 35
     """
     print(f"Loading trajectory data from: {filepath}")
     with h5py.File(filepath, 'r') as f:
         train_vals = f['train_vals'][:]
         print(f"  Shape: {train_vals.shape}")
         print(f"  Timesteps: {train_vals.shape[0]}")
+        print(f"  Features per timestep: {train_vals.shape[1]}")
     return train_vals
 
 
-def extract_paddle_data(train_vals):
+def extract_paddle_data(train_vals, require_puck=False):
     """
-    Extract paddle position, velocity, and timestamps from trajectory data.
+    Extract paddle position/velocity/timestamps and optional puck data.
     
     According to FIELD_DOCUMENTATION.md:
     - Field 0: cur_time (Unix timestamp)
@@ -56,19 +58,51 @@ def extract_paddle_data(train_vals):
     - Field 11: speed_vx (X velocity in m/s)
     - Field 12: speed_vy (Y velocity in m/s)
     
+    Additional optional puck fields:
+    - Field 32: puck_x (table frame X)
+    - Field 33: puck_y (table frame Y)
+    - Field 34: puck_occlusion (1=occluded, 0=visible)
+
     Args:
-        train_vals: Array of trajectory data (N, 32)
-        
+        train_vals: Array of trajectory data (N, D)
+        require_puck: If True, raise an error when puck fields are unavailable
+
     Returns:
-        dict: Dictionary with keys 'pos_x', 'pos_y', 'vel_x', 'vel_y', 'timestamps'
+        dict: Dictionary with paddle data and optional puck data
     """
+    n_features = train_vals.shape[1]
+    has_puck_xy = n_features >= 34
+    has_puck_occlusion = n_features >= 35
+
+    if require_puck and not has_puck_xy:
+        raise ValueError(
+            f"--require-puck was set, but train_vals has only {n_features} columns "
+            "(need at least 34 for puck_x/puck_y)."
+        )
+
     data = {
         'pos_x': train_vals[:, 5],      # Robot frame X position
         'pos_y': train_vals[:, 6],      # Robot frame Y position
         'vel_x': train_vals[:, 11],     # X velocity
         'vel_y': train_vals[:, 12],     # Y velocity
-        'timestamps': train_vals[:, 0]  # Unix timestamps
+        'timestamps': train_vals[:, 0],  # Unix timestamps
+        'has_puck': has_puck_xy
     }
+
+    if has_puck_xy:
+        data['puck_x'] = train_vals[:, 32]  # Table frame X
+        data['puck_y'] = train_vals[:, 33]  # Table frame Y
+        data['puck_occluded'] = train_vals[:, 34] > 0.5 if has_puck_occlusion else None
+        if has_puck_occlusion:
+            print("  ✓ Puck fields detected: x, y, occlusion")
+        else:
+            print("  ✓ Puck fields detected: x, y (no occlusion column)")
+    else:
+        data['puck_x'] = None
+        data['puck_y'] = None
+        data['puck_occluded'] = None
+        print("  ! No puck fields detected (expected columns 32-34)")
+
     return data
 
 
@@ -84,6 +118,7 @@ class RealTrajectoryRenderer:
                  table_length=1.9304,
                  table_width=0.8636,
                  paddle_radius=0.0508,
+                 puck_radius=0.03175,
                  render_size=360,
                  robot_x_offset=1.2,
                  orientation='vertical'):
@@ -94,6 +129,7 @@ class RealTrajectoryRenderer:
             table_length: Length of air hockey table in meters (simulation default: 1.9304m)
             table_width: Width of air hockey table in meters (simulation default: 0.8636m)
             paddle_radius: Radius of paddle in meters (0.0508m)
+            puck_radius: Radius of puck in meters (simulation default: 0.03175m)
             render_size: Render size in pixels (default: 360, matching simulation)
             robot_x_offset: Robot base offset from table center in X (real world: ~1.2m)
             orientation: Render orientation ('vertical' or 'horizontal')
@@ -101,6 +137,7 @@ class RealTrajectoryRenderer:
         self.length = table_length
         self.width = table_width
         self.paddle_radius = paddle_radius
+        self.puck_radius = puck_radius
         self.robot_x_offset = robot_x_offset
         self.orientation = orientation
         
@@ -114,6 +151,7 @@ class RealTrajectoryRenderer:
         print(f"  Render size: {self.render_length}px x {self.render_width}px")
         print(f"  Pixels per meter: {self.ppm:.1f}")
         print(f"  Paddle radius: {self.paddle_radius}m ({int(self.paddle_radius * self.ppm)}px)")
+        print(f"  Puck radius: {self.puck_radius}m ({int(self.puck_radius * self.ppm)}px)")
         print(f"  Robot X offset: {self.robot_x_offset}m")
         print(f"  Orientation: {self.orientation}")
         
@@ -184,6 +222,22 @@ class RealTrajectoryRenderer:
         table_x = pos_x + self.robot_x_offset
         table_y = pos_y
         return table_x, table_y
+
+    def table_position_to_pixel_coords(self, table_x, table_y):
+        """
+        Convert table-frame position to pixel coordinates.
+
+        Args:
+            table_x: X position in table frame (meters)
+            table_y: Y position in table frame (meters)
+
+        Returns:
+            numpy.ndarray: Pixel coordinates [x, y]
+        """
+        pos_render = self.convert_to_render_coords_sys([table_x, table_y])
+        center = np.array(pos_render) + np.array((self.width / 2, self.length / 2))
+        center = np.array((center[1], center[0])) * self.ppm
+        return center.astype(int)
     
     def position_to_pixel_coords(self, pos_x, pos_y):
         """
@@ -201,14 +255,8 @@ class RealTrajectoryRenderer:
         # Transform to table frame
         table_x, table_y = self.robot_to_table_frame(pos_x, pos_y)
         
-        # Convert to render coordinates
-        pos_render = self.convert_to_render_coords_sys([table_x, table_y])
-        
-        # Convert to pixel coordinates (matching render.py lines 241-242)
-        center = np.array(pos_render) + np.array((self.width / 2, self.length / 2))
-        center = np.array((center[1], center[0])) * self.ppm
-        
-        return center.astype(int)
+        # Convert to pixel coordinates
+        return self.table_position_to_pixel_coords(table_x, table_y)
     
     def draw_paddle(self, frame, pos_x, pos_y):
         """
@@ -313,8 +361,31 @@ class RealTrajectoryRenderer:
                          (255, 255, 255), -1)
             
             cv2.putText(frame, text, text_pos, font, font_scale, color, 1)
+
+    def draw_puck(self, frame, puck_x, puck_y, puck_occluded=None):
+        """
+        Draw puck at table-frame coordinates.
+
+        Args:
+            frame: Image to draw on (will be modified in place)
+            puck_x: Puck X position in table frame (meters)
+            puck_y: Puck Y position in table frame (meters)
+            puck_occluded: Optional bool occlusion flag
+        """
+        center = self.table_position_to_pixel_coords(puck_x, puck_y)
+        radius = max(2, int(self.puck_radius * self.ppm))
+
+        # Green when visible, red when occluded.
+        if puck_occluded is None:
+            color = (60, 180, 75)
+        else:
+            color = (30, 30, 220) if bool(puck_occluded) else (60, 180, 75)
+
+        cv2.circle(frame, tuple(center), radius, color, -1)
+        cv2.circle(frame, tuple(center), radius, (20, 20, 20), 1)
     
-    def render_frame(self, pos_x, pos_y, vel_x=None, vel_y=None, 
+    def render_frame(self, pos_x, pos_y, vel_x=None, vel_y=None,
+                    puck_x=None, puck_y=None, puck_occluded=None,
                     timestep=None, total_time=None):
         """
         Render a single frame with paddle at given position.
@@ -324,6 +395,9 @@ class RealTrajectoryRenderer:
             pos_y: Y position in robot frame (meters)
             vel_x: X velocity in m/s (optional)
             vel_y: Y velocity in m/s (optional)
+            puck_x: Puck X position in table frame (optional)
+            puck_y: Puck Y position in table frame (optional)
+            puck_occluded: Optional puck occlusion flag
             timestep: Optional timestep number to display
             total_time: Optional total elapsed time to display
             
@@ -331,6 +405,10 @@ class RealTrajectoryRenderer:
             numpy.ndarray: BGR image array
         """
         frame = self.table_img.copy()
+
+        # Draw puck first so paddle can appear on top.
+        if puck_x is not None and puck_y is not None:
+            self.draw_puck(frame, puck_x, puck_y, puck_occluded)
         
         # Draw paddle
         self.draw_paddle(frame, pos_x, pos_y)
@@ -367,6 +445,15 @@ class RealTrajectoryRenderer:
             vel_mag = np.sqrt(vel_x**2 + vel_y**2)
             text = f"Vel: ({vel_x:.2f}, {vel_y:.2f})m/s [{vel_mag:.2f}]"
             cv2.putText(frame, text, (10, y_offset), font, font_scale, (0, 165, 255), line_type)
+            y_offset += 25
+
+        if puck_x is not None and puck_y is not None:
+            if puck_occluded is None:
+                text = f"Puck: ({puck_x:.3f}, {puck_y:.3f})m"
+            else:
+                occlusion_text = "occluded" if bool(puck_occluded) else "visible"
+                text = f"Puck: ({puck_x:.3f}, {puck_y:.3f})m [{occlusion_text}]"
+            cv2.putText(frame, text, (10, y_offset), font, font_scale, (60, 180, 75), line_type)
         
         # Apply orientation rotation if vertical (matching render.py line 487)
         if self.orientation == 'vertical':
@@ -394,6 +481,10 @@ def create_trajectory_gif(paddle_data, renderer, output_path,
     vel_x = paddle_data['vel_x']
     vel_y = paddle_data['vel_y']
     timestamps = paddle_data['timestamps']
+    has_puck = paddle_data.get('has_puck', False)
+    puck_x = paddle_data.get('puck_x')
+    puck_y = paddle_data.get('puck_y')
+    puck_occluded = paddle_data.get('puck_occluded')
     
     # Calculate relative time
     relative_time = timestamps - timestamps[0]
@@ -425,6 +516,9 @@ def create_trajectory_gif(paddle_data, renderer, output_path,
             pos_y[i],
             vel_x=vel_x[i],
             vel_y=vel_y[i],
+            puck_x=(puck_x[i] if has_puck else None),
+            puck_y=(puck_y[i] if has_puck else None),
+            puck_occluded=(puck_occluded[i] if (has_puck and puck_occluded is not None) else None),
             timestep=i,
             total_time=relative_time[i]
         )
@@ -460,6 +554,7 @@ def print_trajectory_statistics(paddle_data):
     vel_x = paddle_data['vel_x']
     vel_y = paddle_data['vel_y']
     timestamps = paddle_data['timestamps']
+    has_puck = paddle_data.get('has_puck', False)
     
     relative_time = timestamps - timestamps[0]
     vel_magnitude = np.sqrt(vel_x**2 + vel_y**2)
@@ -478,6 +573,17 @@ def print_trajectory_statistics(paddle_data):
     print(f"    Range: [{vel_magnitude.min():.3f}, {vel_magnitude.max():.3f}] m/s")
     print(f"    Mean: {vel_magnitude.mean():.3f} m/s")
 
+    if has_puck:
+        puck_x = paddle_data['puck_x']
+        puck_y = paddle_data['puck_y']
+        print(f"\n  Puck position (table frame):")
+        print(f"    X range: [{puck_x.min():.3f}, {puck_x.max():.3f}] meters")
+        print(f"    Y range: [{puck_y.min():.3f}, {puck_y.max():.3f}] meters")
+        puck_occluded = paddle_data.get('puck_occluded')
+        if puck_occluded is not None:
+            occluded_ratio = 100.0 * puck_occluded.mean()
+            print(f"    Occluded frames: {occluded_ratio:.1f}%")
+
 
 def parse_args():
     """Parse command line arguments."""
@@ -486,9 +592,9 @@ def parse_args():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument(
-        'input_file',
+        'input_path',
         type=str,
-        help='Path to HDF5 trajectory file (e.g., /nfs/data/airhockey/trajectory_data434.hdf5)'
+        help='Path to HDF5 trajectory file or directory containing trajectory_data*.hdf5 files'
     )
     parser.add_argument(
         '--output-dir',
@@ -532,58 +638,60 @@ def parse_args():
         default=1.2,
         help='Robot base X offset from table center in meters'
     )
+    parser.add_argument(
+        '--puck-radius',
+        type=float,
+        default=0.03175,
+        help='Puck radius in meters'
+    )
+    parser.add_argument(
+        '--require-puck',
+        action='store_true',
+        help='Fail if puck fields (train_vals[:, 32:34]) are not present'
+    )
     
     return parser.parse_args()
 
 
-def main():
-    """Main function to generate trajectory visualization."""
-    args = parse_args()
-    
-    # Check if input file exists
-    data_path = Path(args.input_file)
-    if not data_path.exists():
-        print(f"Error: Data file not found: {data_path}")
-        sys.exit(1)
-    
-    # Determine output directory
-    if args.output_dir:
-        output_dir = Path(args.output_dir)
-    else:
-        # Create output directory based on input filename
-        input_stem = data_path.stem
-        output_dir = Path(__file__).parent / f"{input_stem}_visualization"
-    
-    # Create output directory if it doesn't exist
+def visualize_single_file(data_path, output_dir, args):
+    """
+    Generate one visualization GIF for a single HDF5 trajectory file.
+
+    Args:
+        data_path: Path to HDF5 file
+        output_dir: Output directory for this file's GIF
+        args: Parsed CLI args
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / 'trajectory_visualization.gif'
-    
+
     print("=" * 80)
     print("REAL ROBOT TRAJECTORY VISUALIZATION")
     print("=" * 80)
     print(f"\nInput file: {data_path}")
     print(f"Output directory: {output_dir}")
     print(f"Output file: {output_path}")
-    
+
     # Load trajectory data
     train_vals = load_trajectory_data(data_path)
-    
-    # Extract paddle data
-    paddle_data = extract_paddle_data(train_vals)
-    
+
+    # Extract trajectory data
+    paddle_data = extract_paddle_data(train_vals, require_puck=args.require_puck)
+
     # Print statistics
     print_trajectory_statistics(paddle_data)
-    
+
     # Initialize renderer with simulation-matching parameters
     renderer = RealTrajectoryRenderer(
         table_length=args.table_length,
         table_width=args.table_width,
         paddle_radius=0.0508,
+        puck_radius=args.puck_radius,
         render_size=360,
         robot_x_offset=args.robot_x_offset,
         orientation='vertical'
     )
-    
+
     # Generate GIF
     create_trajectory_gif(
         paddle_data,
@@ -593,11 +701,72 @@ def main():
         subsample=args.subsample,
         fps=args.fps
     )
-    
+
     print("\n" + "=" * 80)
     print("✓ Visualization complete!")
     print("=" * 80)
     print(f"\nTo view the GIF, open: {output_path}")
+
+
+def main():
+    """Main function to generate trajectory visualization."""
+    args = parse_args()
+    input_path = Path(args.input_path)
+
+    if not input_path.exists():
+        print(f"Error: Input path not found: {input_path}")
+        sys.exit(1)
+
+    if input_path.is_file():
+        # Single-file mode
+        if args.output_dir:
+            output_dir = Path(args.output_dir)
+        else:
+            output_dir = Path(__file__).parent / f"{input_path.stem}_visualization"
+        visualize_single_file(input_path, output_dir, args)
+        return
+
+    # Directory mode
+    trajectory_files = sorted(input_path.glob("trajectory_data*.hdf5"))
+    if not trajectory_files:
+        # Fallback: include all hdf5 files if strict naming pattern is absent.
+        trajectory_files = sorted(input_path.glob("*.hdf5"))
+
+    if not trajectory_files:
+        print(f"Error: No .hdf5 trajectory files found in directory: {input_path}")
+        sys.exit(1)
+
+    if args.output_dir:
+        batch_output_root = Path(args.output_dir)
+    else:
+        batch_output_root = Path(__file__).parent / f"{input_path.name}_visualization"
+    batch_output_root.mkdir(parents=True, exist_ok=True)
+
+    print("=" * 80)
+    print("REAL ROBOT TRAJECTORY VISUALIZATION (BATCH MODE)")
+    print("=" * 80)
+    print(f"Input directory: {input_path}")
+    print(f"Found {len(trajectory_files)} trajectory files")
+    print(f"Output root: {batch_output_root}")
+
+    success = 0
+    failures = 0
+    for idx, data_path in enumerate(trajectory_files, start=1):
+        print(f"\n[{idx}/{len(trajectory_files)}] Processing {data_path.name}")
+        output_dir = batch_output_root / data_path.stem
+        try:
+            visualize_single_file(data_path, output_dir, args)
+            success += 1
+        except Exception as exc:
+            failures += 1
+            print(f"  ✗ Failed to process {data_path}: {exc}")
+
+    print("\n" + "=" * 80)
+    print("BATCH PROCESSING COMPLETE")
+    print("=" * 80)
+    print(f"Successful: {success}")
+    print(f"Failed: {failures}")
+    print(f"Output root: {batch_output_root}")
 
 
 if __name__ == '__main__':

@@ -13,25 +13,41 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.constant_(layer.bias, bias_const)
     return layer
 
+def build_activation(activation_type: str, leaky_relu_negative_slope: float = 0.01) -> nn.Module:
+    activation_type = activation_type.lower()
+    if activation_type == "tanh":
+        return nn.Tanh()
+    if activation_type == "leaky_relu":
+        return nn.LeakyReLU(negative_slope=leaky_relu_negative_slope)
+    raise ValueError(f"Unsupported activation_type: {activation_type}. Use 'tanh' or 'leaky_relu'.")
+
 # Simple MLP Gaussian Policy + Critic for PPO (actions clipped into some pre-determined range)
 class Agent(nn.Module):
-    def __init__(self, envs, action_scale=1.0, action_bias=0.0, hidden_size=64): # preliminary calculation
+    def __init__(
+        self,
+        envs,
+        action_scale=1.0,
+        action_bias=0.0,
+        hidden_size=64,
+        activation_type="tanh",
+        leaky_relu_negative_slope=0.01,
+    ): # preliminary calculation
         super().__init__()
         obs_dim = int(np.prod(envs.single_observation_space.shape))
         act_dim = int(np.prod(envs.single_action_space.shape))
 
         self.critic = nn.Sequential(
             layer_init(nn.Linear(obs_dim, hidden_size)),
-            nn.Tanh(),
+            build_activation(activation_type, leaky_relu_negative_slope),
             layer_init(nn.Linear(hidden_size, hidden_size)),
-            nn.Tanh(),
+            build_activation(activation_type, leaky_relu_negative_slope),
             layer_init(nn.Linear(hidden_size, 1), std=1.0),
         )
         self.actor = nn.Sequential(
             layer_init(nn.Linear(obs_dim, hidden_size)),
-            nn.Tanh(),
+            build_activation(activation_type, leaky_relu_negative_slope),
             layer_init(nn.Linear(hidden_size, hidden_size)),
-            nn.Tanh(),
+            build_activation(activation_type, leaky_relu_negative_slope),
         )
         self.actor_mean_head = layer_init(nn.Linear(hidden_size, act_dim), std=0.01) # action initially close to 0, exploration guided by logstd
         # self.actor_logstd_head = layer_init(nn.Linear(64, act_dim), std=3)

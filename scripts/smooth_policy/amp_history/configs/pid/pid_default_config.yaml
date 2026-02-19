@@ -24,13 +24,15 @@ air_hockey:
     max_force_timestep: 100
     paddle_radius: 0.0508
     force_scaling: 1
-    paddle_damping: 3
-    paddle_density: 2500
-    gravity: -0.5
-    puck_damping: 0.5
+    paddle_damping: 1.8316
+    paddle_density: 1000
+    pid_kp: 3000
+    pid_kd: 150
+    gravity: -0.75
+    puck_damping: 0.75
     puck_density: 250
     puck_restitution: 1.09145
-    wall_bounce_scale: 0.02
+    wall_bounce_scale: 0.4
     puck_radius: 0.03175
     render_size: 360
     seed: 0

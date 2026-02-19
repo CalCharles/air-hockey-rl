@@ -29,45 +29,13 @@ from scripts.smooth_policy.amp_history.amp_training.discriminator import Discrim
 from scripts.smooth_policy.amp_history.amp_training.replay_buffer import ReplayBuffer
 from scripts.smooth_policy.amp_history.amp_training.normalizer import Normalizer
 from scripts.smooth_policy.amp_history.amp_training.demo_loader_position_history import DemoLoaderPositionHistory
+from scripts.smooth_policy.amp_history.amp_training.feature_processing import (
+    PUCK_FEATURE_DIM,
+    build_puck_discriminator_features_torch,
+    normalize_action_history_batch,
+    normalize_position_history_batch,
+)
 
-
-def normalize_position_history_batch(position_history):
-    """
-    Normalize batched position history to relative coordinates (translation only).
-    
-    Process:
-    1. Translate all positions so the first position is at (0, 0)
-    2. Remove the first position (now [0, 0], contains no information)
-    3. Return the remaining 4 relative positions (8 dimensions)
-    
-    Args:
-        position_history: Tensor of shape [batch, 5, 2] containing 5 consecutive (x, y) positions
-    
-    Returns:
-        torch.Tensor: Normalized positions of shape [batch, 8]
-                     [pos2_x, pos2_y, pos3_x, pos3_y, pos4_x, pos4_y, pos5_x, pos5_y]
-                     (all relative to pos1 which is at origin)
-    """
-    # Extract the first position
-    pos1 = position_history[:, 0, :]  # [batch, 2]
-    # Translate all positions so first is at origin
-    translated = position_history - pos1.unsqueeze(1)  # [batch, 5, 2]
-    # Remove first position (now [0, 0]) and flatten the remaining 4 positions
-    normalized_state = translated[:, 1:, :].reshape(-1, 8)  # [batch, 8]
-    return normalized_state
-
-
-def normalize_action_history_batch(action_history):
-    """
-    Normalize batched transition action history to unit norm and flatten.
-    Args:
-        action_history: Tensor of shape [batch, 4, 2]
-    Returns:
-        torch.Tensor: Normalized flattened actions of shape [batch, 8]
-    """
-    action_norms = torch.norm(action_history, dim=-1, keepdim=True)
-    normalized_actions = action_history / (action_norms + 1e-8)
-    return normalized_actions.reshape(action_history.shape[0], 8)
 
 def parse_discriminator_hidden_dims(hidden_sizes):
     """Validate and normalize discriminator hidden layer sizes."""
@@ -83,6 +51,31 @@ def augment_policy_observation(observation, last_action, use_last_action):
     if not use_last_action:
         return observation
     return torch.cat([observation, last_action], dim=-1)
+
+
+def extract_current_paddle_position(observation):
+    """Extract current paddle (x, y) from common observation layouts."""
+    obs_dim = observation.shape[-1]
+    if obs_dim >= 30:
+        # history layout: paddle history [0:15], current paddle at indices 12:14
+        return observation[:, 12:14]
+    # pos/vel layouts both put paddle position in the first 2 dims
+    return observation[:, 0:2]
+
+
+def extract_current_puck_position(observation):
+    """Extract current puck (x, y) from common observation layouts."""
+    obs_dim = observation.shape[-1]
+    if obs_dim >= 30:
+        # history layout: puck history [15:30], current puck at indices 27:29
+        return observation[:, 27:29]
+    if obs_dim >= 8:
+        # vel layout: [paddle_pos, paddle_vel, puck_pos, puck_vel]
+        return observation[:, 4:6]
+    if obs_dim >= 4:
+        # pos layout: [paddle_pos, puck_pos]
+        return observation[:, 2:4]
+    raise ValueError(f"Observation dim {obs_dim} is too small to extract puck position.")
 
 
 def concat_env_latent_to_policy_obs(policy_obs_base, env_latent):
@@ -108,16 +101,194 @@ def summarize_latent_stats(latents):
     }
 
 
+def _sample_rows_random(rows, num_samples):
+    """Randomly sample rows from [N, D], with replacement if needed."""
+    if num_samples <= 0:
+        return rows[:0]
+    if rows.shape[0] == 0:
+        return rows
+    if num_samples <= rows.shape[0]:
+        indices = torch.randperm(rows.shape[0], device=rows.device)[:num_samples]
+    else:
+        indices = torch.randint(0, rows.shape[0], (num_samples,), device=rows.device)
+    return rows[indices]
+
+
+def extract_puck_feature_slice(disc_obs_batch, use_action_disc):
+    """Extract puck feature sub-vector [x, y, direction_sign, downward_speed_bin]."""
+    start = 16 if use_action_disc else 8
+    return disc_obs_batch[:, start : start + PUCK_FEATURE_DIM]
+
+
+def sample_large_demo_disc_obs(demo_loader, total_samples, chunk_size):
+    """Sample a large random set of demo discriminator observations in chunks."""
+    if total_samples <= 0:
+        return None
+    chunk_size = int(chunk_size)
+    total_samples = int(total_samples)
+    full_chunks, tail = divmod(total_samples, chunk_size)
+    chunks = [demo_loader.sample(chunk_size) for _ in range(full_chunks)]
+    if tail:
+        chunks.append(demo_loader.sample(tail))
+    return torch.cat(chunks, dim=0)
+
+
+def sample_large_agent_disc_obs(valid_disc_obs, replay_buffer, total_samples):
+    """Sample a large random set of agent discriminator observations from current + replay."""
+    if total_samples <= 0:
+        return None, 0, 0
+    total_samples, valid_count, replay_count = int(total_samples), int(valid_disc_obs.shape[0]), int(len(replay_buffer))
+    if valid_count == 0 and replay_count == 0:
+        return None, 0, 0
+    current_target = total_samples if replay_count == 0 else (total_samples // 2 if valid_count > 0 else 0)
+    replay_target = total_samples - current_target
+    parts = []
+    if current_target > 0:
+        parts.append(_sample_rows_random(valid_disc_obs, current_target))
+    if replay_target > 0:
+        parts.append(replay_buffer.sample(replay_target))
+    return torch.cat(parts, dim=0), current_target, replay_target
+
+
+def _summarize_1d(values):
+    """Scalar summary for one feature dimension."""
+    values = values.float()
+    return {
+        "mean": values.mean().item(),
+        "std": values.std(unbiased=False).item(),
+        "min": values.min().item(),
+        "max": values.max().item(),
+        "p10": torch.quantile(values, 0.10).item(),
+        "p50": torch.quantile(values, 0.50).item(),
+        "p90": torch.quantile(values, 0.90).item(),
+    }
+
+
+def _hist_overlap_score(x_demo, x_agent, bins=40):
+    """
+    Histogram overlap in [0, 1] for two 1D tensors.
+    1 means identical histograms; 0 means no overlap.
+    """
+    low = min(float(x_demo.min().item()), float(x_agent.min().item()))
+    high = max(float(x_demo.max().item()), float(x_agent.max().item()))
+    if high - low <= 1e-8:
+        return 1.0
+    demo_hist = torch.histc(x_demo, bins=bins, min=low, max=high)
+    agent_hist = torch.histc(x_agent, bins=bins, min=low, max=high)
+    demo_prob = demo_hist / demo_hist.sum().clamp_min(1e-8)
+    agent_prob = agent_hist / agent_hist.sum().clamp_min(1e-8)
+    return torch.minimum(demo_prob, agent_prob).sum().item()
+
+
+def _categorical_probs(values, categories=(-1.0, 0.0, 1.0)):
+    probs = []
+    denom = max(1, int(values.shape[0]))
+    for cat in categories:
+        probs.append((values == cat).float().sum().item() / float(denom))
+    return probs
+
+
+def compute_puck_feature_diagnostics(demo_puck_features, agent_puck_features):
+    """Compute distribution and separability metrics for puck discriminator features."""
+    dim_names = ["puck_x_noised", "puck_y_noised", "direction_sign", "downward_speed_bin"]
+    per_dim = {}
+    easy_flags = []
+
+    for dim_idx, dim_name in enumerate(dim_names):
+        demo_dim = demo_puck_features[:, dim_idx]
+        agent_dim = agent_puck_features[:, dim_idx]
+
+        demo_stats = _summarize_1d(demo_dim)
+        agent_stats = _summarize_1d(agent_dim)
+        pooled_std = np.sqrt(0.5 * (demo_stats["std"] ** 2 + agent_stats["std"] ** 2) + 1e-8)
+        z_gap = abs(demo_stats["mean"] - agent_stats["mean"]) / pooled_std
+
+        item = {
+            "demo_stats": demo_stats,
+            "agent_stats": agent_stats,
+            "z_gap": float(z_gap),
+        }
+        if dim_idx <= 1:
+            overlap = _hist_overlap_score(demo_dim, agent_dim, bins=40)
+            item["hist_overlap"] = float(overlap)
+            item["hist_distance"] = float(1.0 - overlap)
+            if z_gap > 1.5 or (1.0 - overlap) > 0.35:
+                easy_flags.append(f"{dim_name}:z={z_gap:.2f},dist={1.0-overlap:.2f}")
+        else:
+            demo_probs = _categorical_probs(demo_dim)
+            agent_probs = _categorical_probs(agent_dim)
+            tv_distance = 0.5 * float(sum(abs(d - a) for d, a in zip(demo_probs, agent_probs)))
+            item["demo_probs"] = demo_probs
+            item["agent_probs"] = agent_probs
+            item["tv_distance"] = tv_distance
+            if tv_distance > 0.35:
+                easy_flags.append(f"{dim_name}:tv={tv_distance:.2f}")
+        per_dim[dim_name] = item
+
+    return {
+        "per_dim": per_dim,
+        "easy_flags": easy_flags,
+    }
+
+
+def print_puck_feature_diagnostics(
+    diagnostics,
+    iteration,
+    valid_count,
+    replay_count,
+    sampled_current,
+    sampled_replay,
+    sampled_demo,
+    sampled_agent,
+):
+    """Pretty-print puck feature diagnostics for quick discriminator leakage checks."""
+    print("\n" + "-" * 92)
+    print(
+        f"[puck-diag][iter={iteration}] "
+        f"valid_current={valid_count}, replay_size={replay_count}, "
+        f"sampled_current={sampled_current}, sampled_replay={sampled_replay}, "
+        f"sampled_demo={sampled_demo}, sampled_agent={sampled_agent}"
+    )
+    per_dim = diagnostics["per_dim"]
+    for dim_name in ["puck_x_noised", "puck_y_noised", "direction_sign", "downward_speed_bin"]:
+        dim_info = per_dim[dim_name]
+        d = dim_info["demo_stats"]
+        a = dim_info["agent_stats"]
+        base = (
+            f"  {dim_name:<20} "
+            f"demo(mean={d['mean']:+.4f},std={d['std']:.4f},p10/p50/p90={d['p10']:+.3f}/{d['p50']:+.3f}/{d['p90']:+.3f}) | "
+            f"agent(mean={a['mean']:+.4f},std={a['std']:.4f},p10/p50/p90={a['p10']:+.3f}/{a['p50']:+.3f}/{a['p90']:+.3f}) | "
+            f"z_gap={dim_info['z_gap']:.3f}"
+        )
+        if "hist_distance" in dim_info:
+            base += f", hist_distance={dim_info['hist_distance']:.3f}"
+        if "tv_distance" in dim_info:
+            base += (
+                f", tv_distance={dim_info['tv_distance']:.3f}, "
+                f"demo_probs={np.array2string(np.array(dim_info['demo_probs']), precision=3)}, "
+                f"agent_probs={np.array2string(np.array(dim_info['agent_probs']), precision=3)}"
+            )
+        print(base)
+
+    if diagnostics["easy_flags"]:
+        print("  Potential easy discriminator shortcuts in puck features: " + "; ".join(diagnostics["easy_flags"]))
+    else:
+        print("  No obvious easy discriminator shortcut from puck features under current diagnostics.")
+    print("-" * 92 + "\n")
+
+
 def get_env_spec_ranges():
     """Single source of truth for uniform randomization ranges."""
     return {
-        "paddle_density": (2500 * 0.5, 2500 * 1.5),
-        "paddle_damping": (3 * 0.5, 3 * 1.5),
-        "puck_density": (250 * 0.5, 250 * 1.5),
-        "puck_damping": (0.5 * 0.5, 0.5 * 1.5),
-        "force_scaling": (1 * 0.5, 1 * 1.5),
-        "pid_kp": (1000.0 * 0.5, 1000.0 * 1.5),
+        # Baselines match scripts/smooth_policy/amp_history/configs/new_juggle/new_pid_noise.yaml
+        "paddle_density": (2000.0 * 0.5, 2000.0 * 1.5),
+        "paddle_damping": (2.5 * 0.5, 2.5 * 1.5),
+        "puck_density": (250.0 * 0.5, 250.0 * 1.5),
+        "puck_damping": (0.35 * 0.5, 0.35 * 1.5),
+        "force_scaling": (1.0 * 0.5, 1.0 * 1.5),
+        "pid_kp": (1250.0 * 0.5, 1250.0 * 1.5),
         "pid_kd": (100.0 * 0.5, 100.0 * 1.5),
+        "wall_bounce_scale": (0.2 * 0.5, 0.2 * 1.5),
     }
 
 
@@ -129,6 +300,9 @@ def get_env_spec_ordered_keys():
         "puck_density",
         "puck_damping",
         "force_scaling",
+        "pid_kp",
+        "pid_kd",
+        "wall_bounce_scale",
     ]
 
 
@@ -137,18 +311,24 @@ def validate_env_spec_pool(env_spec_pool):
     if not isinstance(env_spec_pool, list) or len(env_spec_pool) == 0:
         raise ValueError("Environment spec pool must be a non-empty list.")
 
-    required_keys = {"env_id", *get_env_spec_ordered_keys()}
+    ordered_keys = get_env_spec_ordered_keys()
+    required_keys = {"env_id", *ordered_keys}
+    ranges = get_env_spec_ranges()
+    defaults = {key: float(np.mean(ranges[key])) for key in ordered_keys}
     validated_pool = []
     for idx, spec in enumerate(env_spec_pool):
         if not isinstance(spec, dict):
             raise ValueError(f"Environment spec at index {idx} must be a dict.")
-        missing = required_keys - set(spec.keys())
+        spec_out = dict(spec)
+        # Backward compatibility: older pools may miss newly added randomized variables.
+        for key, default_value in defaults.items():
+            spec_out.setdefault(key, default_value)
+        missing = required_keys - set(spec_out.keys())
         if missing:
             raise ValueError(f"Environment spec at index {idx} is missing keys: {sorted(missing)}")
-        spec_out = dict(spec)
-        spec_out["env_id"] = int(spec["env_id"])
-        for key in get_env_spec_ordered_keys():
-            spec_out[key] = float(spec[key])
+        spec_out["env_id"] = int(spec_out["env_id"])
+        for key in ordered_keys:
+            spec_out[key] = float(spec_out[key])
         validated_pool.append(spec_out)
     return validated_pool
 
@@ -194,6 +374,9 @@ def build_env_spec_pool(num_randomized_envs_total, seed):
                 "puck_density": float(rng.uniform(*ranges["puck_density"])),
                 "puck_damping": float(rng.uniform(*ranges["puck_damping"])),
                 "force_scaling": float(rng.uniform(*ranges["force_scaling"])),
+                "pid_kp": float(rng.uniform(*ranges["pid_kp"])),
+                "pid_kd": float(rng.uniform(*ranges["pid_kd"])),
+                "wall_bounce_scale": float(rng.uniform(*ranges["wall_bounce_scale"])),
             }
         )
     return pool
@@ -209,6 +392,9 @@ def sample_env_spec_from_ranges(rng, env_id):
         "puck_density": float(rng.uniform(*ranges["puck_density"])),
         "puck_damping": float(rng.uniform(*ranges["puck_damping"])),
         "force_scaling": float(rng.uniform(*ranges["force_scaling"])),
+        "pid_kp": float(rng.uniform(*ranges["pid_kp"])),
+        "pid_kd": float(rng.uniform(*ranges["pid_kd"])),
+        "wall_bounce_scale": float(rng.uniform(*ranges["wall_bounce_scale"])),
     }
 
 
@@ -268,6 +454,9 @@ def build_edge_eval_specs():
             "puck_density": lows["puck_density"],
             "puck_damping": lows["puck_damping"],
             "force_scaling": highs["force_scaling"],
+            "pid_kp": highs["pid_kp"],
+            "pid_kd": highs["pid_kd"],
+            "wall_bounce_scale": highs["wall_bounce_scale"],
         },
         {
             "env_id": 10003,
@@ -277,6 +466,9 @@ def build_edge_eval_specs():
             "puck_density": highs["puck_density"],
             "puck_damping": highs["puck_damping"],
             "force_scaling": lows["force_scaling"],
+            "pid_kp": lows["pid_kp"],
+            "pid_kd": lows["pid_kd"],
+            "wall_bounce_scale": lows["wall_bounce_scale"],
         },
         {
             "env_id": 10004,
@@ -286,6 +478,9 @@ def build_edge_eval_specs():
             "puck_density": highs["puck_density"],
             "puck_damping": lows["puck_damping"],
             "force_scaling": highs["force_scaling"],
+            "pid_kp": highs["pid_kp"],
+            "pid_kd": lows["pid_kd"],
+            "wall_bounce_scale": lows["wall_bounce_scale"],
         },
     ]
     return edge_specs
@@ -298,6 +493,17 @@ def save_edge_eval_specs_artifact(edge_specs, output_dir):
     with open(edge_specs_path, "w") as f:
         yaml.dump(edge_specs, f, sort_keys=False)
     print(f"✓ Saved edge eval specs: {edge_specs_path}")
+
+
+def sample_random_validation_specs(num_specs, seed, env_id_start=20_000):
+    """Sample validation environment specs directly from randomization ranges."""
+    rng = np.random.default_rng(seed)
+    specs = []
+    for idx in range(num_specs):
+        spec = sample_env_spec_from_ranges(rng, env_id=env_id_start + idx)
+        spec["name"] = f"random_validation_env_{idx}"
+        specs.append(spec)
+    return specs
 
 
 def extract_env_var_vector_from_spec(spec, env_var_dim):
@@ -371,6 +577,15 @@ class ResetSampledEnvWrapper(gym.Wrapper):
         self.env.unwrapped.puck_density = env_spec["puck_density"]
         self.env.unwrapped.puck_damping = env_spec["puck_damping"]
         self.env.unwrapped.force_scaling = env_spec["force_scaling"]
+        self.env.unwrapped.pid_kp = env_spec["pid_kp"]
+        self.env.unwrapped.pid_kd = env_spec["pid_kd"]
+        self.env.unwrapped.wall_bounce_scale = env_spec["wall_bounce_scale"]
+        if hasattr(self.env.unwrapped, "pid_controller"):
+            self.env.unwrapped.pid_controller.Kp = env_spec["pid_kp"]
+            self.env.unwrapped.pid_controller.Kd = env_spec["pid_kd"]
+        # Keep the listener in sync because collision impulses read this value directly.
+        if hasattr(self.env.unwrapped, "collision_listener"):
+            self.env.unwrapped.collision_listener.wall_bounce_scale = env_spec["wall_bounce_scale"]
         
         self.current_env_var_vec = extract_env_var_vector_from_spec(env_spec, self.env_var_dim)
         self.current_env_id = int(env_spec["env_id"])
@@ -418,6 +633,15 @@ class ResetRangeSampledEnvWrapper(gym.Wrapper):
         self.env.unwrapped.puck_density = env_spec["puck_density"]
         self.env.unwrapped.puck_damping = env_spec["puck_damping"]
         self.env.unwrapped.force_scaling = env_spec["force_scaling"]
+        self.env.unwrapped.pid_kp = env_spec["pid_kp"]
+        self.env.unwrapped.pid_kd = env_spec["pid_kd"]
+        self.env.unwrapped.wall_bounce_scale = env_spec["wall_bounce_scale"]
+        if hasattr(self.env.unwrapped, "pid_controller"):
+            self.env.unwrapped.pid_controller.Kp = env_spec["pid_kp"]
+            self.env.unwrapped.pid_controller.Kd = env_spec["pid_kd"]
+        # Keep the listener in sync because collision impulses read this value directly.
+        if hasattr(self.env.unwrapped, "collision_listener"):
+            self.env.unwrapped.collision_listener.wall_bounce_scale = env_spec["wall_bounce_scale"]
 
         self.current_env_var_vec = extract_env_var_vector_from_spec(env_spec, self.env_var_dim)
         self.current_env_id = int(env_spec["env_id"])
@@ -504,6 +728,7 @@ class Args:
     
     # agent hidden layer size (2 layers with this size)
     agent_hidden_size: int = 512
+    agent_weight_decay: float = 0.00001
 
     # RMA randomization + encoder args
     num_randomized_envs_total: int = 500
@@ -516,10 +741,21 @@ class Args:
     edge_eval_episodes: int = 5
     edge_eval_interval: int = 10
     model_save_interval: int = 50
+    num_random_validation_gifs: int = 3  # Additional random-range validation GIFs per checkpoint
+    validation_gif_episodes: int = 3  # Episodes per validation GIF (random gifs use at least 3)
     
     # Action-conditioned discriminator
     use_action_discriminator: bool = False  # If True, discriminator uses position + 4 transition actions (16D)
+    use_puck_discriminator: bool = False  # If True, discriminator appends puck features (+4D)
+    puck_vertical_axis: int = 0  # Canonical up/down axis (0=x, 1=y)
+    puck_downward_positive_direction: float = 1.0  # +1 if increasing axis is downward, else -1
+    puck_noise_std: float = 0.03  # Gaussian noise std for current puck position features
+    puck_downward_speed_max: float = 0.75  # Max speed used for 3-level downward speed bins
+    puck_speed_dt: float = 0.05  # Time delta for puck speed estimation
     disc_debug_interval: int = 5000  # Print discriminator feature samples every N env steps (<=0 disables)
+    puck_diag_interval_iters: int = 5  # Print puck-feature diagnostics every N training iterations (<=0 disables)
+    puck_diag_total_agent_samples: int = 8192  # Large random sample size from current valid + replay buffers
+    puck_diag_total_demo_samples: int = 8192  # Large random sample size from demo buffer
     
     
 
@@ -555,6 +791,14 @@ def apply_env_spec_to_unwrapped_env(env, env_spec):
     env.unwrapped.puck_density = env_spec["puck_density"]
     env.unwrapped.puck_damping = env_spec["puck_damping"]
     env.unwrapped.force_scaling = env_spec["force_scaling"]
+    env.unwrapped.pid_kp = env_spec["pid_kp"]
+    env.unwrapped.pid_kd = env_spec["pid_kd"]
+    env.unwrapped.wall_bounce_scale = env_spec["wall_bounce_scale"]
+    if hasattr(env.unwrapped, "pid_controller"):
+        env.unwrapped.pid_controller.Kp = env_spec["pid_kp"]
+        env.unwrapped.pid_controller.Kd = env_spec["pid_kd"]
+    if hasattr(env.unwrapped, "collision_listener"):
+        env.unwrapped.collision_listener.wall_bounce_scale = env_spec["wall_bounce_scale"]
 
 
 def evaluate_on_edge_specs(agent, env_encoder, air_hockey_config, args, device):
@@ -626,8 +870,17 @@ def evaluate_on_edge_specs(agent, env_encoder, air_hockey_config, args, device):
     return results
 
 
-def save_validation_gif(agent, env_encoder, env_spec, air_hockey_config, args, gif_savepath):
-    """Save a validation GIF on a fixed environment spec."""
+def save_validation_gif(
+    agent,
+    env_encoder,
+    env_spec,
+    air_hockey_config,
+    args,
+    gif_savepath,
+    num_episodes=1,
+    episode_seed_offset=0,
+):
+    """Save a validation GIF over one or more episodes on a fixed environment spec."""
     eval_env = AirHockeyEnv(air_hockey_config.copy())
     apply_env_spec_to_unwrapped_env(eval_env, env_spec)
     renderer = AirHockeyRenderer(eval_env, show_target_position=True, show_acceleration_arrow=False)
@@ -639,8 +892,8 @@ def save_validation_gif(agent, env_encoder, env_spec, air_hockey_config, args, g
     agent.eval()
     env_encoder.eval()
     with torch.no_grad():
-        for _ in tqdm.tqdm(range(1), desc="validation-gif", leave=False):
-            obs, _ = eval_env.reset(seed=args.seed)
+        for episode_idx in tqdm.tqdm(range(num_episodes), desc="validation-gif", leave=False):
+            obs, _ = eval_env.reset(seed=args.seed + episode_seed_offset + episode_idx)
             obs_tensor = torch.tensor(obs, dtype=torch.float32, device=args.device).unsqueeze(0)
             last_action = torch.zeros((1, action_dim), dtype=torch.float32, device=args.device)
             done = False
@@ -656,6 +909,15 @@ def save_validation_gif(agent, env_encoder, env_spec, air_hockey_config, args, g
                 font_scale = 0.5
                 font_color = (0, 0, 0)
                 line_type = 2
+                cv2.putText(
+                    frame,
+                    f"Episode: {episode_idx + 1}/{num_episodes}",
+                    (10, 30),
+                    font,
+                    font_scale,
+                    font_color,
+                    line_type,
+                )
                 cv2.putText(frame, f"Reward: {rew:.2f}", (frame.shape[1] - 150, 30), font, font_scale, font_color, line_type)
                 cv2.putText(frame, f"Return: {cum_rew:.2f}", (frame.shape[1] - 150, 60), font, font_scale, font_color, line_type)
                 frames.append(frame)
@@ -705,6 +967,10 @@ if __name__ == "__main__":
         raise ValueError("env_var_dim and env_latent_dim must be positive.")
     if args.stats_log_interval <= 0:
         raise ValueError("stats_log_interval must be a positive integer.")
+    if args.num_random_validation_gifs < 0:
+        raise ValueError("num_random_validation_gifs must be >= 0.")
+    if args.validation_gif_episodes <= 0:
+        raise ValueError("validation_gif_episodes must be a positive integer.")
     args.batch_size = args.num_envs * args.num_steps
 
     with open(args.config, "r") as f:
@@ -809,7 +1075,7 @@ if __name__ == "__main__":
         ),
         single_action_space=envs.single_action_space,
     )
-    agent = Agent(policy_env_view, action_scale=action_scale, action_bias=0.0, hidden_size=args.agent_hidden_size).to(args.device)
+    agent = Agent(policy_env_view, action_scale=action_scale, action_bias=0.0, hidden_size=args.agent_hidden_size, activation_type='leaky_relu').to(args.device)
     env_encoder = EnvEncoder(
         env_var_dim=args.env_var_dim,
         latent_dim=args.env_latent_dim,
@@ -832,6 +1098,7 @@ if __name__ == "__main__":
     optimizer = torch.optim.Adam(
         list(agent.parameters()) + list(env_encoder.parameters()),
         lr=args.learning_rate,
+        weight_decay=args.agent_weight_decay,
         eps=1e-6,
     )
     use_discriminator_reward = args.disc_reward_weight > 0.0
@@ -844,30 +1111,36 @@ if __name__ == "__main__":
     history_len = 5  # Number of positions to track
     disc_obs_dim = 8
     use_action_disc = False
+    use_puck_disc = False
     discriminator, disc_optimizer, disc_normalizer, replay_buffer, demo_loader = None, None, None, None, None
     
     if use_discriminator_reward:
         # Load demonstration data first to determine observation dimension
-        demo_loader = DemoLoaderPositionHistory(args.demo_data_path, device=args.device)
+        demo_loader = DemoLoaderPositionHistory(
+            args.demo_data_path,
+            device=args.device,
+            use_actions=args.use_action_discriminator,
+            use_puck=args.use_puck_discriminator,
+            puck_vertical_axis=args.puck_vertical_axis,
+            puck_downward_positive_direction=args.puck_downward_positive_direction,
+            puck_downward_speed_max=args.puck_downward_speed_max,
+            puck_speed_dt=args.puck_speed_dt,
+            puck_noise_std=args.puck_noise_std,
+        )
         print(f"✓ Demo loader initialized ({len(demo_loader):,} demonstrations)")
         
-        # Check if demo data has actions and if we should use them
-        use_action_disc = args.use_action_discriminator
-        if use_action_disc and not demo_loader.has_actions:
-            print("  ⚠ WARNING: --use_action_discriminator is True but demo data has no actions!")
-            print("    Falling back to position-only discriminator.")
-            use_action_disc = False
-        
-        # Get discriminator observation dimension (position-only is always 8D)
-        disc_obs_dim = demo_loader.get_obs_dim() if use_action_disc else 8
+        use_action_disc = demo_loader.use_actions
+        use_puck_disc = demo_loader.use_puck
+        disc_obs_dim = demo_loader.get_obs_dim()
         disc_hidden_dims = parse_discriminator_hidden_dims(args.disc_hidden_sizes)
         
+        mode_parts = ["POSITION HISTORY (8D)"]
         if use_action_disc:
-            print("  Mode: POSITION + ACTION HISTORY (5 positions + 4 transition actions)")
-            print(f"  Discriminator input dim: {disc_obs_dim} (8 position + 8 action)")
-        else:
-            print(f"  Mode: POSITION HISTORY (5 positions → 4 relative positions)")
-            print(f"  Discriminator input dim: {disc_obs_dim}")
+            mode_parts.append("ACTION HISTORY (8D)")
+        if use_puck_disc:
+            mode_parts.append(f"PUCK FEATURES ({PUCK_FEATURE_DIM}D)")
+        print(f"  Mode: {' + '.join(mode_parts)}")
+        print(f"  Discriminator input dim: {disc_obs_dim}")
         
         # Initialize discriminator
         discriminator = Discriminator(
@@ -875,7 +1148,10 @@ if __name__ == "__main__":
             hidden_dims=disc_hidden_dims,
             activation='leaky_relu'
         ).to(args.device)
-        disc_optimizer = torch.optim.Adam(discriminator.parameters(), lr=args.disc_learning_rate, eps=1e-6)
+        
+        disc_optimizer = torch.optim.Adam(discriminator.parameters(), lr=args.disc_learning_rate, 
+        weight_decay=args.disc_weight_decay, eps=1e-6, betas=(0.5, 0.95)) # lower momentum values
+
         print(f"✓ Discriminator initialized (input_dim={disc_obs_dim}, hidden={disc_hidden_dims})")
         
         # Initialize normalizer
@@ -932,12 +1208,14 @@ if __name__ == "__main__":
     action_magnitude_reward_scaled = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     # Position history buffer: [num_envs, history_len, 2] for (x, y) positions
     position_history = torch.zeros((args.num_envs, history_len, 2)).to(args.device) if use_discriminator_reward else None
+    puck_position_history = torch.zeros((args.num_envs, history_len, 2)).to(args.device) if (use_discriminator_reward and use_puck_disc) else None
     # Action history buffer: [num_envs, 4, 2] for transition actions between 5 states
     action_history_len = history_len - 1
-    action_history = torch.zeros((args.num_envs, action_history_len, 2)).to(args.device) if use_discriminator_reward else None
+    action_history = torch.zeros((args.num_envs, action_history_len, 2)).to(args.device) if (use_discriminator_reward and use_action_disc) else None
     # Track how many valid positions we have per environment (need history_len before valid)
     position_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if use_discriminator_reward else None
-    action_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if use_discriminator_reward else None
+    action_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if (use_discriminator_reward and use_action_disc) else None
+    puck_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if (use_discriminator_reward and use_puck_disc) else None
     valid_transition = torch.zeros((args.num_steps, args.num_envs), dtype=torch.bool).to(args.device) if use_discriminator_reward else None
 
     # Tracking lists for motion metrics
@@ -1013,8 +1291,9 @@ if __name__ == "__main__":
             last_action_for_policy = action.detach().clone()
             last_action_for_policy[next_done_mask] = 0
             
-            # AMP: Construct discriminator observations from position history
-            current_paddle_pos = next_obs[:, 12:14]  # [batch, 2] - just x, y position
+            # AMP: Construct discriminator observations from trajectory history
+            current_paddle_pos = extract_current_paddle_position(next_obs)
+            current_puck_pos = extract_current_puck_position(next_obs) if use_puck_disc else None
             paddle_positions[step] = current_paddle_pos
             
             # Optional action magnitude reward (raw value is independent of scale)
@@ -1028,20 +1307,30 @@ if __name__ == "__main__":
                 position_history = torch.roll(position_history, shifts=-1, dims=1)
                 position_history[:, -1, :] = current_paddle_pos
 
-                # Update action history buffer with current transition action (aligned with next_obs)
-                action_history = torch.roll(action_history, shifts=-1, dims=1)
-                action_history[:, -1, :] = action
+                if use_action_disc:
+                    # Update action history buffer with current transition action (aligned with next_obs)
+                    action_history = torch.roll(action_history, shifts=-1, dims=1)
+                    action_history[:, -1, :] = action
+                if use_puck_disc:
+                    puck_position_history = torch.roll(puck_position_history, shifts=-1, dims=1)
+                    puck_position_history[:, -1, :] = current_puck_pos
                 
                 # Increment position count (capped at history_len)
                 position_count = torch.clamp(position_count + 1, max=history_len)
-                action_count = torch.clamp(action_count + 1, max=action_history_len)
+                if use_action_disc:
+                    action_count = torch.clamp(action_count + 1, max=action_history_len)
+                if use_puck_disc:
+                    puck_count = torch.clamp(puck_count + 1, max=history_len)
                 
                 # Valid transition only if we have history_len positions AND not just reset
                 has_enough_history = position_count >= history_len
-                has_enough_actions = action_count >= action_history_len
                 valid_transition[step] = has_enough_history
                 if use_action_disc:
+                    has_enough_actions = action_count >= action_history_len
                     valid_transition[step] = valid_transition[step] & has_enough_actions
+                if use_puck_disc:
+                    has_enough_puck = puck_count >= history_len
+                    valid_transition[step] = valid_transition[step] & has_enough_puck
                 
                 # Invalidate for environments that just reset
                 valid_transition[step, just_reset] = False
@@ -1051,43 +1340,57 @@ if __name__ == "__main__":
                 normalized_positions = normalize_position_history_batch(position_history)
                 
                 # Store the discriminator observations
+                disc_feature_parts = [normalized_positions]
                 if use_action_disc:
-                    # Concatenate positions with normalized transition action history: [batch, 8] + [batch, 8] -> [batch, 16]
                     normalized_actions = normalize_action_history_batch(action_history)
-                    disc_obs[step] = torch.cat([normalized_positions, normalized_actions], dim=-1)
-                else:
-                    # Position-only mode: [batch, 8]
-                    disc_obs[step] = normalized_positions
+                    disc_feature_parts.append(normalized_actions)
+                if use_puck_disc:
+                    puck_features = build_puck_discriminator_features_torch(
+                        puck_position_history,
+                        current_index=2,  # use puck position 2 steps before final state to match offline demos
+                        vertical_axis=args.puck_vertical_axis,
+                        downward_positive_direction=args.puck_downward_positive_direction,
+                        downward_speed_max=args.puck_downward_speed_max,
+                        speed_dt=args.puck_speed_dt,
+                        noise_std=args.puck_noise_std,
+                    )
+                    disc_feature_parts.append(puck_features)
+                disc_obs[step] = torch.cat(disc_feature_parts, dim=-1)
 
                 # Occasional debug logging for discriminator feature formatting.
                 if args.disc_debug_interval > 0 and global_step % args.disc_debug_interval == 0:
                     sample_idx = 0
                     sample_pos = normalized_positions[sample_idx].detach().cpu().numpy()
+                    sample_disc = disc_obs[step, sample_idx].detach().cpu().numpy()
+                    debug_msg = (
+                        f"[disc-debug][step={global_step}] pos_shape={normalized_positions.shape}, "
+                        f"disc_shape={disc_obs[step].shape}, valid={bool(valid_transition[step, sample_idx].item())}"
+                    )
+                    if use_action_disc:
+                        debug_msg += f", action_shape={action_history.shape}"
+                    if use_puck_disc:
+                        debug_msg += f", puck_shape={puck_position_history.shape}"
+                    print(debug_msg)
+                    print(
+                        "  sample pos[0:4]="
+                        f"{np.array2string(sample_pos[:4], precision=4, suppress_small=True)}"
+                    )
                     if use_action_disc:
                         sample_action = normalize_action_history_batch(action_history)[sample_idx].detach().cpu().numpy()
-                        sample_disc = disc_obs[step, sample_idx].detach().cpu().numpy()
                         print(
-                            f"[disc-debug][step={global_step}] pos_shape={normalized_positions.shape}, "
-                            f"action_shape={action_history.shape}, disc_shape={disc_obs[step].shape}, "
-                            f"valid={bool(valid_transition[step, sample_idx].item())}"
+                            "  sample action[0:4]="
+                            f"{np.array2string(sample_action[:4], precision=4, suppress_small=True)}"
                         )
+                    if use_puck_disc:
+                        sample_puck = puck_features[sample_idx].detach().cpu().numpy()
                         print(
-                            "  sample pos[0:4]="
-                            f"{np.array2string(sample_pos[:4], precision=4, suppress_small=True)} "
-                            "action[0:4]="
-                            f"{np.array2string(sample_action[:4], precision=4, suppress_small=True)} "
-                            "disc[0:8]="
-                            f"{np.array2string(sample_disc[:8], precision=4, suppress_small=True)}"
+                            "  sample puck="
+                            f"{np.array2string(sample_puck, precision=4, suppress_small=True)}"
                         )
-                    else:
-                        print(
-                            f"[disc-debug][step={global_step}] pos_shape={normalized_positions.shape}, "
-                            f"disc_shape={disc_obs[step].shape}, valid={bool(valid_transition[step, sample_idx].item())}"
-                        )
-                        print(
-                            "  sample pos[0:4]="
-                            f"{np.array2string(sample_pos[:4], precision=4, suppress_small=True)}"
-                        )
+                    print(
+                        "  sample disc[0:8]="
+                        f"{np.array2string(sample_disc[:8], precision=4, suppress_small=True)}"
+                    )
             
             # Reset position history and count for environments that are done
             if use_discriminator_reward and next_done_mask.any():
@@ -1095,8 +1398,13 @@ if __name__ == "__main__":
                 position_history[done_mask] = 0
                 position_history[done_mask, -1, :] = current_paddle_pos[done_mask]
                 position_count[done_mask] = 1  # We have 1 position after reset
-                action_history[done_mask] = 0
-                action_count[done_mask] = 0
+                if use_action_disc:
+                    action_history[done_mask] = 0
+                    action_count[done_mask] = 0
+                if use_puck_disc:
+                    puck_position_history[done_mask] = 0
+                    puck_position_history[done_mask, -1, :] = current_puck_pos[done_mask]
+                    puck_count[done_mask] = 1
             
             # Track which environments just reset for next step
             just_reset = next_done_mask
@@ -1394,12 +1702,6 @@ if __name__ == "__main__":
                     disc_logit_reg_loss = torch.sum(logit_weights ** 2)
                     disc_loss = disc_loss + args.disc_logit_reg * disc_logit_reg_loss
             
-                # Weight decay
-                if args.disc_weight_decay > 0:
-                    disc_weights = discriminator.get_all_weights()
-                    disc_weight_decay_loss = torch.sum(disc_weights ** 2)
-                    disc_loss = disc_loss + args.disc_weight_decay * disc_weight_decay_loss
-            
                 # Update discriminator
                 disc_optimizer.zero_grad()
                 disc_loss.backward()
@@ -1417,6 +1719,57 @@ if __name__ == "__main__":
                 with torch.no_grad():
                     disc_agent_acc = (disc_agent_logit < 0.0).float().mean().item()
                     disc_demo_acc = (disc_demo_logit > 0.0).float().mean().item()
+
+            if use_puck_disc and args.puck_diag_interval_iters > 0 and iteration % args.puck_diag_interval_iters == 0:
+                b_valid = valid_transition.reshape(-1)
+                valid_disc_obs = b_disc_obs[b_valid]
+                valid_count = int(valid_disc_obs.shape[0])
+                replay_count = int(len(replay_buffer))
+
+                agent_diag_disc_obs, sampled_current_count, sampled_replay_count = sample_large_agent_disc_obs(
+                    valid_disc_obs=valid_disc_obs,
+                    replay_buffer=replay_buffer,
+                    total_samples=args.puck_diag_total_agent_samples,
+                )
+                demo_diag_disc_obs = sample_large_demo_disc_obs(
+                    demo_loader=demo_loader,
+                    total_samples=args.puck_diag_total_demo_samples,
+                    chunk_size=max(args.disc_batch_size, 512),
+                )
+
+                if agent_diag_disc_obs is not None and demo_diag_disc_obs is not None:
+                    demo_puck_features = extract_puck_feature_slice(
+                        demo_diag_disc_obs, use_action_disc=use_action_disc
+                    )
+                    agent_puck_features = extract_puck_feature_slice(
+                        agent_diag_disc_obs, use_action_disc=use_action_disc
+                    )
+                    puck_diag = compute_puck_feature_diagnostics(
+                        demo_puck_features=demo_puck_features,
+                        agent_puck_features=agent_puck_features,
+                    )
+                    print_puck_feature_diagnostics(
+                        diagnostics=puck_diag,
+                        iteration=iteration,
+                        valid_count=valid_count,
+                        replay_count=replay_count,
+                        sampled_current=sampled_current_count,
+                        sampled_replay=sampled_replay_count,
+                        sampled_demo=int(demo_diag_disc_obs.shape[0]),
+                        sampled_agent=int(agent_diag_disc_obs.shape[0]),
+                    )
+
+                    per_dim = puck_diag["per_dim"]
+                    for tag, value in (
+                        ("puck_diag/puck_x_z_gap", per_dim["puck_x_noised"]["z_gap"]),
+                        ("puck_diag/puck_y_z_gap", per_dim["puck_y_noised"]["z_gap"]),
+                        ("puck_diag/puck_x_hist_distance", per_dim["puck_x_noised"]["hist_distance"]),
+                        ("puck_diag/puck_y_hist_distance", per_dim["puck_y_noised"]["hist_distance"]),
+                        ("puck_diag/direction_sign_tv", per_dim["direction_sign"]["tv_distance"]),
+                        ("puck_diag/downward_speed_bin_tv", per_dim["downward_speed_bin"]["tv_distance"]),
+                        ("puck_diag/num_easy_flags", float(len(puck_diag["easy_flags"]))),
+                    ):
+                        writer.add_scalar(tag, value, iteration)
             
             # Log discriminator metrics
             if should_log_stats:
@@ -1539,6 +1892,30 @@ if __name__ == "__main__":
                 args=args,
                 gif_savepath=validation_gif_path,
             )
+            if args.num_random_validation_gifs > 0:
+                random_specs = sample_random_validation_specs(
+                    num_specs=args.num_random_validation_gifs,
+                    seed=args.seed + iteration * 10_000,
+                    env_id_start=20_000 + iteration * 100,
+                )
+                random_specs_path = os.path.join(checkpoint_dir, "validation_random_env_specs.yaml")
+                with open(random_specs_path, "w") as f:
+                    yaml.dump(random_specs, f, sort_keys=False)
+                print(f"✓ Saved random validation env specs: {random_specs_path}")
+
+                random_gif_episodes = max(3, args.validation_gif_episodes)
+                for spec_idx, random_spec in enumerate(random_specs):
+                    random_gif_path = os.path.join(checkpoint_dir, f"validation_random_env_{spec_idx:02d}.gif")
+                    save_validation_gif(
+                        agent=agent,
+                        env_encoder=env_encoder,
+                        env_spec=random_spec,
+                        air_hockey_config=config["air_hockey"],
+                        args=args,
+                        gif_savepath=random_gif_path,
+                        num_episodes=random_gif_episodes,
+                        episode_seed_offset=iteration * 1_000 + spec_idx * 100,
+                    )
 
             print(f"Iteration {iteration} complete")
 

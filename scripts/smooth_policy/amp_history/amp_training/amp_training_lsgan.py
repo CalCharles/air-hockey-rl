@@ -8,10 +8,11 @@ LSGAN uses MSE loss: 0.5 * E[(D(x_real) - 1)^2] + 0.5 * E[(D(x_fake) - (-1))^2]
 This variant uses [-1, 1] targets instead of [0, 1] for better gradient flow.
 This often provides more stable gradients compared to standard GAN training.
 
-Supports two discriminator modes:
-1. Position-only (default): Discriminator input is 8D (4 relative positions x 2 coords)
-2. Position + Action: Discriminator input is 10D (8 positions + 2 action dims)
-   Enable with --use_action_discriminator flag and provide a dataset with action_sequences.
+Supports discriminator modes:
+1. Position-only (default): 8D
+2. Position + Action: 16D
+3. Position (+ Action) + Puck features: +4D
+   Enable with --use_action_discriminator / --use_puck_discriminator.
 """
 
 import random
@@ -40,6 +41,12 @@ from scripts.smooth_policy.amp_history.amp_training.discriminator import Discrim
 from scripts.smooth_policy.amp_history.amp_training.replay_buffer import ReplayBuffer
 from scripts.smooth_policy.amp_history.amp_training.normalizer import Normalizer
 from scripts.smooth_policy.amp_history.amp_training.demo_loader_position_history import DemoLoaderPositionHistory
+from scripts.smooth_policy.amp_history.amp_training.feature_processing import (
+    PUCK_FEATURE_DIM,
+    build_puck_discriminator_features_torch,
+    normalize_action_history_batch,
+    normalize_position_history_batch,
+)
 
 # used for possible reference state initialization from demonstrations
 class ReferenceStateWrapper(gym.Wrapper):
@@ -63,44 +70,6 @@ class ReferenceStateWrapper(gym.Wrapper):
         return self.env.reset(**kwargs)
 
 
-def normalize_position_history_batch(position_history):
-    """
-    Normalize batched position history to relative coordinates (translation only).
-    
-    Process:
-    1. Translate all positions so the first position is at (0, 0)
-    2. Remove the first position (now [0, 0], contains no information)
-    3. Return the remaining 4 relative positions (8 dimensions)
-    
-    Args:
-        position_history: Tensor of shape [batch, 5, 2] containing 5 consecutive (x, y) positions
-    
-    Returns:
-        torch.Tensor: Normalized positions of shape [batch, 8]
-                     [pos2_x, pos2_y, pos3_x, pos3_y, pos4_x, pos4_y, pos5_x, pos5_y]
-                     (all relative to pos1 which is at origin)
-    """
-    # Extract the first position
-    pos1 = position_history[:, 0, :]  # [batch, 2]
-    # Translate all positions so first is at origin
-    translated = position_history - pos1.unsqueeze(1)  # [batch, 5, 2]
-    # Remove first position (now [0, 0]) and flatten the remaining 4 positions
-    normalized_state = translated[:, 1:, :].reshape(-1, 8)  # [batch, 8]
-    return normalized_state
-
-
-def normalize_action_history_batch(action_history):
-    """
-    Normalize batched transition action history to unit norm and flatten.
-    Args:
-        action_history: Tensor of shape [batch, 4, 2]
-    Returns:
-        torch.Tensor: Normalized flattened actions of shape [batch, 8]
-    """
-    action_norms = torch.norm(action_history, dim=-1, keepdim=True)
-    normalized_actions = action_history / (action_norms + 1e-8)
-    return normalized_actions.reshape(action_history.shape[0], 8)
-
 def parse_discriminator_hidden_dims(hidden_sizes):
     """Validate and normalize discriminator hidden layer sizes."""
     hidden_dims = [int(size) for size in hidden_sizes]
@@ -115,6 +84,31 @@ def augment_policy_observation(observation, last_action, use_last_action):
     if not use_last_action:
         return observation
     return torch.cat([observation, last_action], dim=-1)
+
+
+def extract_current_paddle_position(observation):
+    """Extract current paddle (x, y) from common observation layouts."""
+    obs_dim = observation.shape[-1]
+    if obs_dim >= 30:
+        # history layout: paddle history [0:15], current paddle at indices 12:14
+        return observation[:, 12:14]
+    # pos/vel layouts both put paddle position in the first 2 dims
+    return observation[:, 0:2]
+
+
+def extract_current_puck_position(observation):
+    """Extract current puck (x, y) from common observation layouts."""
+    obs_dim = observation.shape[-1]
+    if obs_dim >= 30:
+        # history layout: puck history [15:30], current puck at indices 27:29
+        return observation[:, 27:29]
+    if obs_dim >= 8:
+        # vel layout: [paddle_pos, paddle_vel, puck_pos, puck_vel]
+        return observation[:, 4:6]
+    if obs_dim >= 4:
+        # pos layout: [paddle_pos, puck_pos]
+        return observation[:, 2:4]
+    raise ValueError(f"Observation dim {obs_dim} is too small to extract puck position.")
 
 
 @dataclass
@@ -183,6 +177,12 @@ class Args:
     
     # Action-conditioned discriminator
     use_action_discriminator: bool = False  # If True, discriminator uses position + 4 transition actions (16D)
+    use_puck_discriminator: bool = False  # If True, discriminator appends puck features (+4D)
+    puck_vertical_axis: int = 0  # Canonical up/down axis (0=x, 1=y)
+    puck_downward_positive_direction: float = 1.0  # +1 if increasing axis is downward, else -1
+    puck_noise_std: float = 0.03  # Gaussian noise std for current puck position features
+    puck_downward_speed_max: float = 0.75  # Max speed used for 3-level downward speed bins
+    puck_speed_dt: float = 0.05  # Time delta for puck speed estimation
     disc_debug_interval: int = 5000  # Print discriminator feature samples every N env steps (<=0 disables)
     
     
@@ -321,30 +321,36 @@ if __name__ == "__main__":
     history_len = 5  # Number of positions to track
     disc_obs_dim = 8
     use_action_disc = False
+    use_puck_disc = False
     discriminator, disc_optimizer, disc_normalizer, replay_buffer, demo_loader = None, None, None, None, None
     
     if use_discriminator_reward:
         # Load demonstration data first to determine observation dimension
-        demo_loader = DemoLoaderPositionHistory(args.demo_data_path, device=args.device)
+        demo_loader = DemoLoaderPositionHistory(
+            args.demo_data_path,
+            device=args.device,
+            use_actions=args.use_action_discriminator,
+            use_puck=args.use_puck_discriminator,
+            puck_vertical_axis=args.puck_vertical_axis,
+            puck_downward_positive_direction=args.puck_downward_positive_direction,
+            puck_downward_speed_max=args.puck_downward_speed_max,
+            puck_speed_dt=args.puck_speed_dt,
+            puck_noise_std=args.puck_noise_std,
+        )
         print(f"✓ Demo loader initialized ({len(demo_loader):,} demonstrations)")
         
-        # Check if demo data has actions and if we should use them
-        use_action_disc = args.use_action_discriminator
-        if use_action_disc and not demo_loader.has_actions:
-            print("  ⚠ WARNING: --use_action_discriminator is True but demo data has no actions!")
-            print("    Falling back to position-only discriminator.")
-            use_action_disc = False
-        
-        # Get discriminator observation dimension (position-only is always 8D)
-        disc_obs_dim = demo_loader.get_obs_dim() if use_action_disc else 8
+        use_action_disc = demo_loader.use_actions
+        use_puck_disc = demo_loader.use_puck
+        disc_obs_dim = demo_loader.get_obs_dim()
         disc_hidden_dims = parse_discriminator_hidden_dims(args.disc_hidden_sizes)
         
+        mode_parts = ["POSITION HISTORY (8D)"]
         if use_action_disc:
-            print("  Mode: POSITION + ACTION HISTORY (5 positions + 4 transition actions)")
-            print(f"  Discriminator input dim: {disc_obs_dim} (8 position + 8 action)")
-        else:
-            print(f"  Mode: POSITION HISTORY (5 positions → 4 relative positions)")
-            print(f"  Discriminator input dim: {disc_obs_dim}")
+            mode_parts.append("ACTION HISTORY (8D)")
+        if use_puck_disc:
+            mode_parts.append(f"PUCK FEATURES ({PUCK_FEATURE_DIM}D)")
+        print(f"  Mode: {' + '.join(mode_parts)}")
+        print(f"  Discriminator input dim: {disc_obs_dim}")
         
         # Initialize discriminator
         discriminator = Discriminator(
@@ -408,12 +414,14 @@ if __name__ == "__main__":
     action_magnitude_reward_scaled = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     # Position history buffer: [num_envs, history_len, 2] for (x, y) positions
     position_history = torch.zeros((args.num_envs, history_len, 2)).to(args.device) if use_discriminator_reward else None
+    puck_position_history = torch.zeros((args.num_envs, history_len, 2)).to(args.device) if (use_discriminator_reward and use_puck_disc) else None
     # Action history buffer: [num_envs, 4, 2] for transition actions between 5 states
     action_history_len = history_len - 1
-    action_history = torch.zeros((args.num_envs, action_history_len, 2)).to(args.device) if use_discriminator_reward else None
+    action_history = torch.zeros((args.num_envs, action_history_len, 2)).to(args.device) if (use_discriminator_reward and use_action_disc) else None
     # Track how many valid positions we have per environment (need history_len before valid)
     position_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if use_discriminator_reward else None
-    action_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if use_discriminator_reward else None
+    action_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if (use_discriminator_reward and use_action_disc) else None
+    puck_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if (use_discriminator_reward and use_puck_disc) else None
     valid_transition = torch.zeros((args.num_steps, args.num_envs), dtype=torch.bool).to(args.device) if use_discriminator_reward else None
 
     # Tracking lists for motion metrics
@@ -466,8 +474,9 @@ if __name__ == "__main__":
             last_action_for_policy = action.detach().clone()
             last_action_for_policy[next_done.bool()] = 0
             
-            # AMP: Construct discriminator observations from position history
-            current_paddle_pos = next_obs[:, 12:14]  # [batch, 2] - just x, y position
+            # AMP: Construct discriminator observations from trajectory history
+            current_paddle_pos = extract_current_paddle_position(next_obs)
+            current_puck_pos = extract_current_puck_position(next_obs) if use_puck_disc else None
             paddle_positions[step] = current_paddle_pos
             
             # Optional action magnitude reward (raw value is independent of scale)
@@ -481,20 +490,30 @@ if __name__ == "__main__":
                 position_history = torch.roll(position_history, shifts=-1, dims=1)
                 position_history[:, -1, :] = current_paddle_pos
 
-                # Update action history buffer with current transition action (aligned with next_obs)
-                action_history = torch.roll(action_history, shifts=-1, dims=1)
-                action_history[:, -1, :] = action
+                if use_action_disc:
+                    # Update action history buffer with current transition action (aligned with next_obs)
+                    action_history = torch.roll(action_history, shifts=-1, dims=1)
+                    action_history[:, -1, :] = action
+                if use_puck_disc:
+                    puck_position_history = torch.roll(puck_position_history, shifts=-1, dims=1)
+                    puck_position_history[:, -1, :] = current_puck_pos
                 
                 # Increment position count (capped at history_len)
                 position_count = torch.clamp(position_count + 1, max=history_len)
-                action_count = torch.clamp(action_count + 1, max=action_history_len)
+                if use_action_disc:
+                    action_count = torch.clamp(action_count + 1, max=action_history_len)
+                if use_puck_disc:
+                    puck_count = torch.clamp(puck_count + 1, max=history_len)
                 
                 # Valid transition only if we have history_len positions AND not just reset
                 has_enough_history = position_count >= history_len
-                has_enough_actions = action_count >= action_history_len
                 valid_transition[step] = has_enough_history
                 if use_action_disc:
+                    has_enough_actions = action_count >= action_history_len
                     valid_transition[step] = valid_transition[step] & has_enough_actions
+                if use_puck_disc:
+                    has_enough_puck = puck_count >= history_len
+                    valid_transition[step] = valid_transition[step] & has_enough_puck
                 
                 # Invalidate for environments that just reset
                 valid_transition[step, just_reset] = False
@@ -504,43 +523,57 @@ if __name__ == "__main__":
                 normalized_positions = normalize_position_history_batch(position_history)
                 
                 # Store the discriminator observations
+                disc_feature_parts = [normalized_positions]
                 if use_action_disc:
-                    # Concatenate positions with normalized transition action history: [batch, 8] + [batch, 8] -> [batch, 16]
                     normalized_actions = normalize_action_history_batch(action_history)
-                    disc_obs[step] = torch.cat([normalized_positions, normalized_actions], dim=-1)
-                else:
-                    # Position-only mode: [batch, 8]
-                    disc_obs[step] = normalized_positions
+                    disc_feature_parts.append(normalized_actions)
+                if use_puck_disc:
+                    puck_features = build_puck_discriminator_features_torch(
+                        puck_position_history,
+                        current_index=2,  # use puck position 2 steps before final state to match offline demos
+                        vertical_axis=args.puck_vertical_axis,
+                        downward_positive_direction=args.puck_downward_positive_direction,
+                        downward_speed_max=args.puck_downward_speed_max,
+                        speed_dt=args.puck_speed_dt,
+                        noise_std=args.puck_noise_std,
+                    )
+                    disc_feature_parts.append(puck_features)
+                disc_obs[step] = torch.cat(disc_feature_parts, dim=-1)
 
                 # Occasional debug logging for discriminator feature formatting.
                 if args.disc_debug_interval > 0 and global_step % args.disc_debug_interval == 0:
                     sample_idx = 0
                     sample_pos = normalized_positions[sample_idx].detach().cpu().numpy()
+                    sample_disc = disc_obs[step, sample_idx].detach().cpu().numpy()
+                    debug_msg = (
+                        f"[disc-debug][step={global_step}] pos_shape={normalized_positions.shape}, "
+                        f"disc_shape={disc_obs[step].shape}, valid={bool(valid_transition[step, sample_idx].item())}"
+                    )
+                    if use_action_disc:
+                        debug_msg += f", action_shape={action_history.shape}"
+                    if use_puck_disc:
+                        debug_msg += f", puck_shape={puck_position_history.shape}"
+                    print(debug_msg)
+                    print(
+                        "  sample pos[0:4]="
+                        f"{np.array2string(sample_pos[:4], precision=4, suppress_small=True)}"
+                    )
                     if use_action_disc:
                         sample_action = normalize_action_history_batch(action_history)[sample_idx].detach().cpu().numpy()
-                        sample_disc = disc_obs[step, sample_idx].detach().cpu().numpy()
                         print(
-                            f"[disc-debug][step={global_step}] pos_shape={normalized_positions.shape}, "
-                            f"action_shape={action_history.shape}, disc_shape={disc_obs[step].shape}, "
-                            f"valid={bool(valid_transition[step, sample_idx].item())}"
+                            "  sample action[0:4]="
+                            f"{np.array2string(sample_action[:4], precision=4, suppress_small=True)}"
                         )
+                    if use_puck_disc:
+                        sample_puck = puck_features[sample_idx].detach().cpu().numpy()
                         print(
-                            "  sample pos[0:4]="
-                            f"{np.array2string(sample_pos[:4], precision=4, suppress_small=True)} "
-                            "action[0:4]="
-                            f"{np.array2string(sample_action[:4], precision=4, suppress_small=True)} "
-                            "disc[0:8]="
-                            f"{np.array2string(sample_disc[:8], precision=4, suppress_small=True)}"
+                            "  sample puck="
+                            f"{np.array2string(sample_puck, precision=4, suppress_small=True)}"
                         )
-                    else:
-                        print(
-                            f"[disc-debug][step={global_step}] pos_shape={normalized_positions.shape}, "
-                            f"disc_shape={disc_obs[step].shape}, valid={bool(valid_transition[step, sample_idx].item())}"
-                        )
-                        print(
-                            "  sample pos[0:4]="
-                            f"{np.array2string(sample_pos[:4], precision=4, suppress_small=True)}"
-                        )
+                    print(
+                        "  sample disc[0:8]="
+                        f"{np.array2string(sample_disc[:8], precision=4, suppress_small=True)}"
+                    )
             
             # Reset position history and count for environments that are done
             if use_discriminator_reward and next_done.any():
@@ -548,8 +581,13 @@ if __name__ == "__main__":
                 position_history[done_mask] = 0
                 position_history[done_mask, -1, :] = current_paddle_pos[done_mask]
                 position_count[done_mask] = 1  # We have 1 position after reset
-                action_history[done_mask] = 0
-                action_count[done_mask] = 0
+                if use_action_disc:
+                    action_history[done_mask] = 0
+                    action_count[done_mask] = 0
+                if use_puck_disc:
+                    puck_position_history[done_mask] = 0
+                    puck_position_history[done_mask, -1, :] = current_puck_pos[done_mask]
+                    puck_count[done_mask] = 1
             
             # Track which environments just reset for next step
             just_reset = next_done.bool()
