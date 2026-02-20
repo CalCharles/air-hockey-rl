@@ -95,14 +95,22 @@ class PIDController:
         return force
 
 class CollisionForceListener(contactListener):
-    def __init__(self, wall_bounce_scale=0.01):
+    def __init__(self, wall_bounce_scale=0.01, wall_tag="table_wall"):
         contactListener.__init__(self)
         self.collision_forces = list()
         self.wall_bounce_scale = wall_bounce_scale
+        self.wall_tag = wall_tag
     
     def reset(self):
         del self.collision_forces
         self.collision_forces = list()
+
+    @staticmethod
+    def _is_puck(body):
+        return body.userData is not None and "puck" in str(body.userData)
+
+    def _is_wall(self, body):
+        return body.userData == self.wall_tag
 
     def PostSolve(self, contact, impulse):
         fixtureA = contact.fixtureA
@@ -124,13 +132,36 @@ class CollisionForceListener(contactListener):
                     'contact_normal': (normal.x, normal.y)
                 })
 
-                for body in (bodyA, bodyB):
-                    if body.userData is not None and "puck" in body.userData:
-                        vel = body.GetLinearVelocityFromWorldPoint(contact.worldManifold.points[i])
-                        projected_vel = np.dot(vel, normal) / np.linalg.norm(normal)
-                        body.ApplyLinearImpulse(normal * self.wall_bounce_scale * projected_vel, body.worldCenter, True)
-                        body.ApplyLinearImpulse(normal * self.wall_bounce_scale / 4, body.worldCenter, True)
-                        # TODO: change the value if the normal is from the top
+                # Apply legacy wall-bounce impulse ONLY for puck-wall collisions.
+                is_puck_wall = (self._is_puck(bodyA) and self._is_wall(bodyB)) or (self._is_puck(bodyB) and self._is_wall(bodyA))
+                if is_puck_wall:
+                    puck_body = bodyA if self._is_puck(bodyA) else bodyB
+                    pre_vel = np.array(
+                        puck_body.GetLinearVelocityFromWorldPoint(contact.worldManifold.points[i]),
+                        dtype=float,
+                    )
+                    pre_speed = float(np.linalg.norm(pre_vel))
+                    normal_np = np.array([normal.x, normal.y], dtype=float)
+                    normal_norm = float(np.linalg.norm(normal_np))
+                    if normal_norm > 1e-8:
+                        projected_vel = float(np.dot(pre_vel, normal_np) / normal_norm)
+                        puck_body.ApplyLinearImpulse(
+                            normal * self.wall_bounce_scale * projected_vel,
+                            puck_body.worldCenter,
+                            True,
+                        )
+                        puck_body.ApplyLinearImpulse(
+                            normal * self.wall_bounce_scale / 4,
+                            puck_body.worldCenter,
+                            True,
+                        )
+
+                        # Hard cap: post-processing must not increase puck speed.
+                        post_vel = np.array([puck_body.linearVelocity[0], puck_body.linearVelocity[1]], dtype=float)
+                        post_speed = float(np.linalg.norm(post_vel))
+                        if post_speed > pre_speed + 1e-8 and pre_speed > 1e-8:
+                            clipped = post_vel * (pre_speed / post_speed)
+                            puck_body.linearVelocity = b2Vec2(float(clipped[0]), float(clipped[1]))
 
 class AirHockeyBox2D:
     def __init__(self, **kwargs):
@@ -307,12 +338,16 @@ class AirHockeyBox2D:
                                          (self.table_x_min, self.table_y_max),
                                          (self.table_x_max, self.table_y_max),
                                          (self.table_x_max, self.table_y_min)]),
+            userData="table_wall",
         )
         # self.ground_body.fixtures[0].friction = 0.0
         self.reset(config.seed)
 
         # Initialize the contact listener
-        self.collision_listener = CollisionForceListener(wall_bounce_scale=self.wall_bounce_scale)
+        self.collision_listener = CollisionForceListener(
+            wall_bounce_scale=self.wall_bounce_scale,
+            wall_tag="table_wall",
+        )
         self.world.contactListener = self.collision_listener
         self.total_timesteps = 0
         from cProfile import Profile

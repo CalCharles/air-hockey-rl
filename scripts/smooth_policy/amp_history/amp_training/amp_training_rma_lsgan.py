@@ -34,7 +34,20 @@ from scripts.smooth_policy.amp_history.amp_training.feature_processing import (
     build_puck_discriminator_features_torch,
     normalize_action_history_batch,
     normalize_position_history_batch,
+    normalize_position_sequence_batch,
+    sample_bucketed_indices_torch,
 )
+
+
+class _TupleFriendlySafeLoader(yaml.SafeLoader):
+    """Safe loader variant that accepts legacy !!python/tuple nodes as plain tuples."""
+
+
+def _construct_python_tuple(loader, node):
+    return tuple(loader.construct_sequence(node))
+
+
+_TupleFriendlySafeLoader.add_constructor("tag:yaml.org,2002:python/tuple", _construct_python_tuple)
 
 
 def parse_discriminator_hidden_dims(hidden_sizes):
@@ -115,7 +128,7 @@ def _sample_rows_random(rows, num_samples):
 
 
 def extract_puck_feature_slice(disc_obs_batch, use_action_disc):
-    """Extract puck feature sub-vector [x, y, direction_sign, downward_speed_bin]."""
+    """Extract puck feature sub-vector [direction_sign, downward_speed_bin, vertical_pos_bin_5]."""
     start = 16 if use_action_disc else 8
     return disc_obs_batch[:, start : start + PUCK_FEATURE_DIM]
 
@@ -190,7 +203,7 @@ def _categorical_probs(values, categories=(-1.0, 0.0, 1.0)):
 
 def compute_puck_feature_diagnostics(demo_puck_features, agent_puck_features):
     """Compute distribution and separability metrics for puck discriminator features."""
-    dim_names = ["puck_x_noised", "puck_y_noised", "direction_sign", "downward_speed_bin"]
+    dim_names = ["direction_sign", "downward_speed_bin", "vertical_pos_bin_5"]
     per_dim = {}
     easy_flags = []
 
@@ -208,21 +221,14 @@ def compute_puck_feature_diagnostics(demo_puck_features, agent_puck_features):
             "agent_stats": agent_stats,
             "z_gap": float(z_gap),
         }
-        if dim_idx <= 1:
-            overlap = _hist_overlap_score(demo_dim, agent_dim, bins=40)
-            item["hist_overlap"] = float(overlap)
-            item["hist_distance"] = float(1.0 - overlap)
-            if z_gap > 1.5 or (1.0 - overlap) > 0.35:
-                easy_flags.append(f"{dim_name}:z={z_gap:.2f},dist={1.0-overlap:.2f}")
-        else:
-            demo_probs = _categorical_probs(demo_dim)
-            agent_probs = _categorical_probs(agent_dim)
-            tv_distance = 0.5 * float(sum(abs(d - a) for d, a in zip(demo_probs, agent_probs)))
-            item["demo_probs"] = demo_probs
-            item["agent_probs"] = agent_probs
-            item["tv_distance"] = tv_distance
-            if tv_distance > 0.35:
-                easy_flags.append(f"{dim_name}:tv={tv_distance:.2f}")
+        demo_probs = _categorical_probs(demo_dim, categories=(-1.0, -0.5, 0.0, 0.5, 1.0) if dim_name == "vertical_pos_bin_5" else (-1.0, 0.0, 1.0))
+        agent_probs = _categorical_probs(agent_dim, categories=(-1.0, -0.5, 0.0, 0.5, 1.0) if dim_name == "vertical_pos_bin_5" else (-1.0, 0.0, 1.0))
+        tv_distance = 0.5 * float(sum(abs(d - a) for d, a in zip(demo_probs, agent_probs)))
+        item["demo_probs"] = demo_probs
+        item["agent_probs"] = agent_probs
+        item["tv_distance"] = tv_distance
+        if tv_distance > 0.35:
+            easy_flags.append(f"{dim_name}:tv={tv_distance:.2f}")
         per_dim[dim_name] = item
 
     return {
@@ -250,7 +256,7 @@ def print_puck_feature_diagnostics(
         f"sampled_demo={sampled_demo}, sampled_agent={sampled_agent}"
     )
     per_dim = diagnostics["per_dim"]
-    for dim_name in ["puck_x_noised", "puck_y_noised", "direction_sign", "downward_speed_bin"]:
+    for dim_name in ["direction_sign", "downward_speed_bin", "vertical_pos_bin_5"]:
         dim_info = per_dim[dim_name]
         d = dim_info["demo_stats"]
         a = dim_info["agent_stats"]
@@ -260,8 +266,6 @@ def print_puck_feature_diagnostics(
             f"agent(mean={a['mean']:+.4f},std={a['std']:.4f},p10/p50/p90={a['p10']:+.3f}/{a['p50']:+.3f}/{a['p90']:+.3f}) | "
             f"z_gap={dim_info['z_gap']:.3f}"
         )
-        if "hist_distance" in dim_info:
-            base += f", hist_distance={dim_info['hist_distance']:.3f}"
         if "tv_distance" in dim_info:
             base += (
                 f", tv_distance={dim_info['tv_distance']:.3f}, "
@@ -290,6 +294,118 @@ def get_env_spec_ranges():
         "pid_kd": (100.0 * 0.5, 100.0 * 1.5),
         "wall_bounce_scale": (0.2 * 0.5, 0.2 * 1.5),
     }
+
+
+def _load_yaml(path):
+    with open(path, "r") as f:
+        return yaml.load(f, Loader=_TupleFriendlySafeLoader)
+
+
+def _serialize_env_spec_ranges(env_spec_ranges):
+    return {key: [float(bounds[0]), float(bounds[1])] for key, bounds in env_spec_ranges.items()}
+
+
+def _coerce_env_spec_ranges(raw_ranges, base_ranges):
+    """Merge optional external ranges with defaults and validate shape/value constraints."""
+    ordered_keys = get_env_spec_ordered_keys()
+    out = {}
+    raw_ranges = {} if raw_ranges is None else raw_ranges
+    if not isinstance(raw_ranges, dict):
+        raise ValueError("randomization_ranges must be a mapping from key -> [low, high].")
+    unknown_keys = sorted(set(raw_ranges.keys()) - set(ordered_keys))
+    if unknown_keys:
+        raise ValueError(f"randomization_ranges contains unknown keys: {unknown_keys}")
+
+    for key in ordered_keys:
+        if key in raw_ranges:
+            bounds = raw_ranges[key]
+            if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+                raise ValueError(f"Invalid range for '{key}': {bounds}. Expected [low, high].")
+            low = float(bounds[0])
+            high = float(bounds[1])
+            if not high > low:
+                raise ValueError(f"Invalid range for '{key}': low={low}, high={high}.")
+            out[key] = (low, high)
+        else:
+            out[key] = tuple(base_ranges[key])
+    return out
+
+
+def _coerce_randomized_keys(randomized_keys, ordered_keys):
+    if randomized_keys is None:
+        return list(ordered_keys)
+    if not isinstance(randomized_keys, list) or len(randomized_keys) == 0:
+        raise ValueError("randomized_keys must be a non-empty list when provided.")
+    unknown = sorted(set(randomized_keys) - set(ordered_keys))
+    if unknown:
+        raise ValueError(f"randomized_keys contains unknown entries: {unknown}")
+    deduped = []
+    seen = set()
+    for key in randomized_keys:
+        if key not in seen:
+            deduped.append(key)
+            seen.add(key)
+    return deduped
+
+
+def resolve_env_randomization_config(args):
+    """Resolve randomization ranges + randomized subset from defaults, file, and CLI."""
+    ordered_keys = get_env_spec_ordered_keys()
+    default_ranges = get_env_spec_ranges()
+    setup_source_path = None
+    file_ranges = None
+    file_randomized_keys = None
+
+    if args.env_randomization_setup_path is not None:
+        setup_source_path = os.path.abspath(args.env_randomization_setup_path)
+        if not os.path.exists(setup_source_path):
+            raise FileNotFoundError(f"env_randomization_setup_path does not exist: {args.env_randomization_setup_path}")
+        setup_data = _load_yaml(setup_source_path) or {}
+        if not isinstance(setup_data, dict):
+            raise ValueError("env_randomization_setup_path must point to a YAML mapping/object.")
+        file_ranges = setup_data.get("randomization_ranges")
+        file_randomized_keys = setup_data.get("randomized_keys")
+
+    configured_ranges = _coerce_env_spec_ranges(file_ranges, base_ranges=default_ranges)
+    randomized_keys = _coerce_randomized_keys(file_randomized_keys, ordered_keys)
+    if args.env_randomized_keys is not None:
+        randomized_keys = _coerce_randomized_keys(args.env_randomized_keys, ordered_keys)
+
+    resolved_ranges = {}
+    for key in ordered_keys:
+        low, high = configured_ranges[key]
+        if key in randomized_keys:
+            resolved_ranges[key] = (low, high)
+        else:
+            fixed_value = float(0.5 * (low + high))
+            resolved_ranges[key] = (fixed_value, fixed_value)
+
+    return {
+        "source_path": setup_source_path,
+        "ordered_keys": ordered_keys,
+        "default_ranges": default_ranges,
+        "configured_ranges": configured_ranges,
+        "resolved_ranges": resolved_ranges,
+        "randomized_keys": randomized_keys,
+    }
+
+
+def save_env_randomization_config_artifact(env_randomization_config, output_dir):
+    """Persist resolved env randomization config used for this run/checkpoint."""
+    os.makedirs(output_dir, exist_ok=True)
+    artifact_path = os.path.join(output_dir, "env_randomization_config_resolved.yaml")
+    randomized = set(env_randomization_config["randomized_keys"])
+    payload = {
+        "env_randomization_setup_source_path": env_randomization_config["source_path"],
+        "ordered_keys": env_randomization_config["ordered_keys"],
+        "randomized_keys": env_randomization_config["randomized_keys"],
+        "fixed_keys": [key for key in env_randomization_config["ordered_keys"] if key not in randomized],
+        "configured_ranges": _serialize_env_spec_ranges(env_randomization_config["configured_ranges"]),
+        "resolved_randomization_ranges": _serialize_env_spec_ranges(env_randomization_config["resolved_ranges"]),
+    }
+    with open(artifact_path, "w") as f:
+        yaml.dump(payload, f, sort_keys=False)
+    print(f"✓ Saved env randomization config: {artifact_path}")
 
 
 def get_env_spec_ordered_keys():
@@ -360,10 +476,10 @@ def load_env_spec_pool(env_spec_pool_path):
     return validate_env_spec_pool(raw_pool)
 
 
-def build_env_spec_pool(num_randomized_envs_total, seed):
+def build_env_spec_pool(num_randomized_envs_total, seed, env_spec_ranges=None):
     """Create placeholder environment specs for domain randomization."""
     rng = np.random.default_rng(seed)
-    ranges = get_env_spec_ranges()
+    ranges = get_env_spec_ranges() if env_spec_ranges is None else env_spec_ranges
     pool = []
     for idx in range(num_randomized_envs_total):
         pool.append(
@@ -382,9 +498,9 @@ def build_env_spec_pool(num_randomized_envs_total, seed):
     return pool
 
 
-def sample_env_spec_from_ranges(rng, env_id):
+def sample_env_spec_from_ranges(rng, env_id, env_spec_ranges=None):
     """Sample one environment spec directly from configured randomization ranges."""
-    ranges = get_env_spec_ranges()
+    ranges = get_env_spec_ranges() if env_spec_ranges is None else env_spec_ranges
     return {
         "env_id": int(env_id),
         "paddle_density": float(rng.uniform(*ranges["paddle_density"])),
@@ -409,7 +525,7 @@ def save_env_spec_pool_artifacts(env_spec_pool, output_dir):
     print(f"✓ Saved env spec pool artifacts: {yaml_path}, {pt_path}")
 
 
-def save_training_env_setup_manifest(env_spec_pool, output_dir, args, source_mode, source_path):
+def save_training_env_setup_manifest(env_spec_pool, output_dir, args, source_mode, source_path, env_randomization_config):
     """Persist startup env setup metadata for reproducibility and resumed training."""
     os.makedirs(output_dir, exist_ok=True)
     manifest_path = os.path.join(output_dir, "training_env_setup.yaml")
@@ -417,7 +533,9 @@ def save_training_env_setup_manifest(env_spec_pool, output_dir, args, source_mod
     manifest = {
         "env_spec_pool_source": source_mode,
         "env_spec_pool_source_path": source_path,
-        "randomization_ranges": get_env_spec_ranges(),
+        "env_randomization_setup_source_path": env_randomization_config["source_path"],
+        "randomized_keys": list(env_randomization_config["randomized_keys"]),
+        "randomization_ranges": _serialize_env_spec_ranges(env_randomization_config["resolved_ranges"]),
         "env_var_representation": {
             "env_var_dim": int(args.env_var_dim),
             "env_latent_dim": int(args.env_latent_dim),
@@ -434,12 +552,12 @@ def save_training_env_setup_manifest(env_spec_pool, output_dir, args, source_mod
     print(f"✓ Saved training env setup manifest: {manifest_path}")
 
 
-def build_edge_eval_specs():
+def build_edge_eval_specs(env_spec_ranges=None):
     """
     Build 5 fixed evaluation environments at range edges using the same
     ranges as training randomization.
     """
-    ranges = get_env_spec_ranges()
+    ranges = get_env_spec_ranges() if env_spec_ranges is None else env_spec_ranges
     lows = {key: value[0] for key, value in ranges.items()}
     highs = {key: value[1] for key, value in ranges.items()}
 
@@ -495,24 +613,24 @@ def save_edge_eval_specs_artifact(edge_specs, output_dir):
     print(f"✓ Saved edge eval specs: {edge_specs_path}")
 
 
-def sample_random_validation_specs(num_specs, seed, env_id_start=20_000):
+def sample_random_validation_specs(num_specs, seed, env_id_start=20_000, env_spec_ranges=None):
     """Sample validation environment specs directly from randomization ranges."""
     rng = np.random.default_rng(seed)
     specs = []
     for idx in range(num_specs):
-        spec = sample_env_spec_from_ranges(rng, env_id=env_id_start + idx)
+        spec = sample_env_spec_from_ranges(rng, env_id=env_id_start + idx, env_spec_ranges=env_spec_ranges)
         spec["name"] = f"random_validation_env_{idx}"
         specs.append(spec)
     return specs
 
 
-def extract_env_var_vector_from_spec(spec, env_var_dim):
+def extract_env_var_vector_from_spec(spec, env_var_dim, env_spec_ranges=None):
     """
     Pack a fixed-size env-variable vector from one sampled environment spec.
     Variables are normalized to approximately mean 0 / std 1 using the
     uniform-randomization ranges: mean=(low+high)/2, std=(high-low)/sqrt(12).
     """
-    ranges = get_env_spec_ranges()
+    ranges = get_env_spec_ranges() if env_spec_ranges is None else env_spec_ranges
     ordered_keys = get_env_spec_ordered_keys()
 
     normalized = []
@@ -562,10 +680,11 @@ class ResetSampledEnvWrapper(gym.Wrapper):
     This avoids process respawn overhead while still randomizing from a large pool.
     """
 
-    def __init__(self, env, env_spec_pool, env_var_dim, rng_seed):
+    def __init__(self, env, env_spec_pool, env_var_dim, rng_seed, env_spec_ranges):
         super().__init__(env)
         self.env_spec_pool = env_spec_pool
         self.env_var_dim = env_var_dim
+        self.env_spec_ranges = env_spec_ranges
         self.rng = np.random.default_rng(rng_seed)
         self.current_env_spec = None
         self.current_env_var_vec = np.zeros(env_var_dim, dtype=np.float32)
@@ -587,7 +706,9 @@ class ResetSampledEnvWrapper(gym.Wrapper):
         if hasattr(self.env.unwrapped, "collision_listener"):
             self.env.unwrapped.collision_listener.wall_bounce_scale = env_spec["wall_bounce_scale"]
         
-        self.current_env_var_vec = extract_env_var_vector_from_spec(env_spec, self.env_var_dim)
+        self.current_env_var_vec = extract_env_var_vector_from_spec(
+            env_spec, self.env_var_dim, env_spec_ranges=self.env_spec_ranges
+        )
         self.current_env_id = int(env_spec["env_id"])
 
     def _sample_and_apply_spec(self):
@@ -617,10 +738,11 @@ class ResetRangeSampledEnvWrapper(gym.Wrapper):
     configured randomization ranges on every reset.
     """
 
-    def __init__(self, env, env_var_dim, rng_seed, env_id_offset=0):
+    def __init__(self, env, env_var_dim, rng_seed, env_spec_ranges, env_id_offset=0):
         super().__init__(env)
         self.env_var_dim = env_var_dim
         self.rng = np.random.default_rng(rng_seed)
+        self.env_spec_ranges = env_spec_ranges
         self.current_env_spec = None
         self.current_env_var_vec = np.zeros(env_var_dim, dtype=np.float32)
         self.current_env_id = -1
@@ -643,13 +765,17 @@ class ResetRangeSampledEnvWrapper(gym.Wrapper):
         if hasattr(self.env.unwrapped, "collision_listener"):
             self.env.unwrapped.collision_listener.wall_bounce_scale = env_spec["wall_bounce_scale"]
 
-        self.current_env_var_vec = extract_env_var_vector_from_spec(env_spec, self.env_var_dim)
+        self.current_env_var_vec = extract_env_var_vector_from_spec(
+            env_spec, self.env_var_dim, env_spec_ranges=self.env_spec_ranges
+        )
         self.current_env_id = int(env_spec["env_id"])
 
     def _sample_and_apply_spec(self):
         env_id = self._env_id_offset + self._sample_idx
         self._sample_idx += 1
-        self.current_env_spec = sample_env_spec_from_ranges(self.rng, env_id=env_id)
+        self.current_env_spec = sample_env_spec_from_ranges(
+            self.rng, env_id=env_id, env_spec_ranges=self.env_spec_ranges
+        )
         self._apply_env_spec(self.current_env_spec)
 
     def reset(self, **kwargs):
@@ -700,6 +826,21 @@ class Args:
     disc_reward_weight: float = 0.5
     num_discriminator_updates: int = 1
     disc_hidden_sizes: list[int] = field(default_factory=lambda: [64, 64])
+    use_long_discriminator: bool = False
+    long_disc_reward_weight: float = 0.0
+    long_disc_replay_buffer_size: int = 100000
+    long_disc_replay_samples: int = 1024
+    long_disc_batch_size: int = 512
+    long_disc_learning_rate: float = 1e-5
+    long_disc_logit_reg: float = 0.01
+    long_disc_grad_penalty: float = 5.0
+    long_disc_weight_decay: float = 0.0001
+    long_num_discriminator_updates: int = 1
+    long_disc_hidden_sizes: list[int] = field(default_factory=lambda: [64, 64])
+    long_history_len: int = 30
+    long_num_bins: int = 3
+    long_samples_per_bin: int = 2
+    long_puck_current_index: int = 15
     
     # Optional auxiliary rewards (default disabled)
     temporal_alignment_reward_scale: float = 0.0
@@ -712,7 +853,9 @@ class Args:
     model_path: str = None  # Path to pre-trained model state dict
     encoder_path: str = None  # Path to pre-trained environment encoder state dict
     discriminator_path: str = None  # Path to pre-trained discriminator state dict
+    long_discriminator_path: str = None  # Path to second long-window discriminator state dict
     amp_components_path: str = None  # Path to AMP components (normalizer, replay buffer)
+    long_amp_components_path: str = None  # Path to long AMP components (normalizer, replay buffer)
     log_parent_dir: str = None
     run_name: str = "default"
     demo_data_path: str = "scripts/smooth_policy/amp_data/amp_dataset.pt"
@@ -734,6 +877,8 @@ class Args:
     num_randomized_envs_total: int = 500
     use_on_demand_env_sampling: bool = True  # If True, sample env parameters at reset directly from ranges.
     env_spec_pool_path: str = None  # Optional path to saved env pool (.pt or .yaml) for continued training
+    env_randomization_setup_path: str = None  # Optional YAML with randomization_ranges and randomized_keys
+    env_randomized_keys: list[str] = None  # Optional CLI override for randomized key subset
     env_var_dim: int = 8
     env_latent_dim: int = 8
     env_encoder_hidden_size: list[int] = field(default_factory=lambda: [128, 128])
@@ -752,6 +897,8 @@ class Args:
     puck_noise_std: float = 0.03  # Gaussian noise std for current puck position features
     puck_downward_speed_max: float = 0.75  # Max speed used for 3-level downward speed bins
     puck_speed_dt: float = 0.05  # Time delta for puck speed estimation
+    puck_vertical_pos_min: float = -1.0  # Min vertical puck value mapped to 5-bin range
+    puck_vertical_pos_max: float = 1.0  # Max vertical puck value mapped to 5-bin range
     disc_debug_interval: int = 5000  # Print discriminator feature samples every N env steps (<=0 disables)
     puck_diag_interval_iters: int = 5  # Print puck-feature diagnostics every N training iterations (<=0 disables)
     puck_diag_total_agent_samples: int = 8192  # Large random sample size from current valid + replay buffers
@@ -759,7 +906,7 @@ class Args:
     
     
 
-def make_env(env_id, env_spec_pool, env_var_dim, seed=0, use_on_demand_env_sampling=False):
+def make_env(env_id, env_spec_pool, env_var_dim, env_spec_ranges, seed=0, use_on_demand_env_sampling=False):
     def _thunk():
         curr_seed = random.randint(0, int(1e8))
         config["air_hockey"]["seed"] = curr_seed
@@ -770,6 +917,7 @@ def make_env(env_id, env_spec_pool, env_var_dim, seed=0, use_on_demand_env_sampl
                 env=env,
                 env_var_dim=env_var_dim,
                 rng_seed=seed + env_id * 131,
+                env_spec_ranges=env_spec_ranges,
                 env_id_offset=env_id * 1_000_000,
             )
         else:
@@ -778,6 +926,7 @@ def make_env(env_id, env_spec_pool, env_var_dim, seed=0, use_on_demand_env_sampl
                 env_spec_pool=env_spec_pool,
                 env_var_dim=env_var_dim,
                 rng_seed=seed + env_id * 131,
+                env_spec_ranges=env_spec_ranges,
             )
         
         return env
@@ -801,12 +950,12 @@ def apply_env_spec_to_unwrapped_env(env, env_spec):
         env.unwrapped.collision_listener.wall_bounce_scale = env_spec["wall_bounce_scale"]
 
 
-def evaluate_on_edge_specs(agent, env_encoder, air_hockey_config, args, device):
+def evaluate_on_edge_specs(agent, env_encoder, air_hockey_config, args, device, env_spec_ranges):
     """
     Evaluate the trained policy on five edge-of-range environment specs.
     Runs args.edge_eval_episodes episodes per spec.
     """
-    edge_specs = build_edge_eval_specs()
+    edge_specs = build_edge_eval_specs(env_spec_ranges=env_spec_ranges)
     eval_env = AirHockeyEnv(air_hockey_config)
     action_dim = int(np.prod(eval_env.action_space.shape))
 
@@ -816,7 +965,9 @@ def evaluate_on_edge_specs(agent, env_encoder, air_hockey_config, args, device):
     with torch.no_grad():
         for spec in edge_specs:
             apply_env_spec_to_unwrapped_env(eval_env, spec)
-            env_var_np = extract_env_var_vector_from_spec(spec, args.env_var_dim)
+            env_var_np = extract_env_var_vector_from_spec(
+                spec, args.env_var_dim, env_spec_ranges=env_spec_ranges
+            )
             env_var_tensor = torch.tensor(env_var_np, dtype=torch.float32, device=device).unsqueeze(0)
 
             episode_returns = []
@@ -877,6 +1028,7 @@ def save_validation_gif(
     air_hockey_config,
     args,
     gif_savepath,
+    env_spec_ranges,
     num_episodes=1,
     episode_seed_offset=0,
 ):
@@ -885,7 +1037,9 @@ def save_validation_gif(
     apply_env_spec_to_unwrapped_env(eval_env, env_spec)
     renderer = AirHockeyRenderer(eval_env, show_target_position=True, show_acceleration_arrow=False)
     action_dim = int(np.prod(eval_env.action_space.shape))
-    env_var_np = extract_env_var_vector_from_spec(env_spec, args.env_var_dim)
+    env_var_np = extract_env_var_vector_from_spec(
+        env_spec, args.env_var_dim, env_spec_ranges=env_spec_ranges
+    )
     env_var_tensor = torch.tensor(env_var_np, dtype=torch.float32, device=args.device).unsqueeze(0)
 
     frames = []
@@ -977,6 +1131,11 @@ if __name__ == "__main__":
         config = yaml.load(f, Loader=yaml.FullLoader)
 
     use_on_demand_env_sampling = args.use_on_demand_env_sampling and args.env_spec_pool_path is None
+    env_randomization_config = resolve_env_randomization_config(args)
+    env_spec_ranges = env_randomization_config["resolved_ranges"]
+    print("Resolved env randomization configuration:")
+    print(f"  source_path: {env_randomization_config['source_path']}")
+    print(f"  randomized_keys: {env_randomization_config['randomized_keys']}")
     if use_on_demand_env_sampling:
         env_spec_pool = None
         env_spec_pool_source_mode = "on_demand_range_sampling"
@@ -988,7 +1147,9 @@ if __name__ == "__main__":
         env_spec_pool_source_path = os.path.abspath(args.env_spec_pool_path)
         print(f"Loaded env spec pool from: {env_spec_pool_source_path} (size={len(env_spec_pool)})")
     else:
-        env_spec_pool = build_env_spec_pool(args.num_randomized_envs_total, args.seed)
+        env_spec_pool = build_env_spec_pool(
+            args.num_randomized_envs_total, args.seed, env_spec_ranges=env_spec_ranges
+        )
         env_spec_pool_source_mode = "generated"
         env_spec_pool_source_path = None
         print(f"Generated env spec pool from seed={args.seed} (size={len(env_spec_pool)})")
@@ -997,7 +1158,7 @@ if __name__ == "__main__":
             f"Environment spec pool size ({len(env_spec_pool)}) must be >= num_envs ({args.num_envs})."
         )
 
-    edge_eval_specs = build_edge_eval_specs()
+    edge_eval_specs = build_edge_eval_specs(env_spec_ranges=env_spec_ranges)
     validation_env_spec = edge_eval_specs[0]  # fixed validation environment across checkpoints
     # Persistent vector env: each worker re-samples from the pool inside reset().
     envs = gym.vector.AsyncVectorEnv(
@@ -1006,6 +1167,7 @@ if __name__ == "__main__":
                 i,
                 env_spec_pool=env_spec_pool,
                 env_var_dim=args.env_var_dim,
+                env_spec_ranges=env_spec_ranges,
                 seed=args.seed,
                 use_on_demand_env_sampling=use_on_demand_env_sampling,
             )
@@ -1047,12 +1209,14 @@ if __name__ == "__main__":
         yaml.dump(vars(args), f)
     if env_spec_pool is not None:
         save_env_spec_pool_artifacts(env_spec_pool=env_spec_pool, output_dir=log_parent_dir)
+    save_env_randomization_config_artifact(env_randomization_config=env_randomization_config, output_dir=log_parent_dir)
     save_training_env_setup_manifest(
         env_spec_pool=env_spec_pool,
         output_dir=log_parent_dir,
         args=args,
         source_mode=env_spec_pool_source_mode,
         source_path=env_spec_pool_source_path,
+        env_randomization_config=env_randomization_config,
     )
     save_edge_eval_specs_artifact(edge_specs=edge_eval_specs, output_dir=log_parent_dir)
     
@@ -1101,21 +1265,26 @@ if __name__ == "__main__":
         weight_decay=args.agent_weight_decay,
         eps=1e-6,
     )
-    use_discriminator_reward = args.disc_reward_weight > 0.0
+    use_short_discriminator_reward = args.disc_reward_weight > 0.0
+    use_long_discriminator_reward = args.use_long_discriminator and args.long_disc_reward_weight > 0.0
+    use_discriminator_reward = use_short_discriminator_reward or use_long_discriminator_reward
 
     # Initialize AMP components (always enabled)
     print("\n" + "="*80)
     print("Initializing AMP (Adversarial Motion Priors) components")
     print("="*80)
 
-    history_len = 5  # Number of positions to track
+    history_len = 5  # Number of positions to track for short discriminator
     disc_obs_dim = 8
+    disc_obs_dim_long = 0
     use_action_disc = False
     use_puck_disc = False
+    use_puck_disc_long = False
     discriminator, disc_optimizer, disc_normalizer, replay_buffer, demo_loader = None, None, None, None, None
+    discriminator_long, disc_optimizer_long, disc_normalizer_long, replay_buffer_long, demo_loader_long = None, None, None, None, None
     
-    if use_discriminator_reward:
-        # Load demonstration data first to determine observation dimension
+    if use_short_discriminator_reward:
+        # Load demonstration data first to determine short observation dimension
         demo_loader = DemoLoaderPositionHistory(
             args.demo_data_path,
             device=args.device,
@@ -1126,8 +1295,10 @@ if __name__ == "__main__":
             puck_downward_speed_max=args.puck_downward_speed_max,
             puck_speed_dt=args.puck_speed_dt,
             puck_noise_std=args.puck_noise_std,
+            puck_vertical_pos_min=args.puck_vertical_pos_min,
+            puck_vertical_pos_max=args.puck_vertical_pos_max,
         )
-        print(f"✓ Demo loader initialized ({len(demo_loader):,} demonstrations)")
+        print(f"✓ Short demo loader initialized ({len(demo_loader):,} demonstrations)")
         
         use_action_disc = demo_loader.use_actions
         use_puck_disc = demo_loader.use_puck
@@ -1142,7 +1313,7 @@ if __name__ == "__main__":
         print(f"  Mode: {' + '.join(mode_parts)}")
         print(f"  Discriminator input dim: {disc_obs_dim}")
         
-        # Initialize discriminator
+        # Initialize short discriminator
         discriminator = Discriminator(
             disc_obs_dim,
             hidden_dims=disc_hidden_dims,
@@ -1152,7 +1323,7 @@ if __name__ == "__main__":
         disc_optimizer = torch.optim.Adam(discriminator.parameters(), lr=args.disc_learning_rate, 
         weight_decay=args.disc_weight_decay, eps=1e-6, betas=(0.5, 0.95)) # lower momentum values
 
-        print(f"✓ Discriminator initialized (input_dim={disc_obs_dim}, hidden={disc_hidden_dims})")
+        print(f"✓ Short discriminator initialized (input_dim={disc_obs_dim}, hidden={disc_hidden_dims})")
         
         # Initialize normalizer
         disc_normalizer = Normalizer(shape=(disc_obs_dim,), clip=10.0, device=args.device)
@@ -1166,7 +1337,7 @@ if __name__ == "__main__":
         )
         print(f"✓ Replay buffer initialized (capacity={args.disc_replay_buffer_size:,})")
         
-        # Load pre-trained discriminator if path is provided
+        # Load pre-trained short discriminator if path is provided
         if args.discriminator_path is not None:
             if not os.path.exists(args.discriminator_path):
                 raise FileNotFoundError(f"Discriminator path {args.discriminator_path} does not exist.")
@@ -1174,7 +1345,7 @@ if __name__ == "__main__":
             discriminator.load_state_dict(torch.load(args.discriminator_path, map_location=args.device))
             print("✓ Discriminator loaded successfully")
         
-        # Load AMP components (normalizer, replay buffer) if path is provided
+        # Load short AMP components (normalizer, replay buffer) if path is provided
         if args.amp_components_path is not None:
             if not os.path.exists(args.amp_components_path):
                 raise FileNotFoundError(f"AMP components path {args.amp_components_path} does not exist.")
@@ -1182,9 +1353,78 @@ if __name__ == "__main__":
             amp_components = torch.load(args.amp_components_path, map_location=args.device)
             disc_normalizer.load_state_dict(amp_components['normalizer'])
             replay_buffer.load_state_dict(amp_components['replay_buffer'])
-            print(f"✓ AMP components loaded successfully (replay buffer size: {len(replay_buffer):,})")
+            print(f"✓ Short AMP components loaded successfully (replay buffer size: {len(replay_buffer):,})")
     else:
-        print("  Discriminator reward disabled (disc_reward_weight <= 0). Skipping discriminator setup.")
+        print("  Short discriminator reward disabled (disc_reward_weight <= 0).")
+
+    if use_long_discriminator_reward:
+        demo_loader_long = DemoLoaderPositionHistory(
+            args.demo_data_path,
+            device=args.device,
+            use_actions=False,
+            use_puck=args.use_puck_discriminator,
+            puck_vertical_axis=args.puck_vertical_axis,
+            puck_downward_positive_direction=args.puck_downward_positive_direction,
+            puck_downward_speed_max=args.puck_downward_speed_max,
+            puck_speed_dt=args.puck_speed_dt,
+            puck_noise_std=args.puck_noise_std,
+            puck_vertical_pos_min=args.puck_vertical_pos_min,
+            puck_vertical_pos_max=args.puck_vertical_pos_max,
+            position_key="position_sequences_30",
+            puck_key="puck_sequences_30",
+            sample_bucketed_points=True,
+            bucket_window_len=args.long_history_len,
+            bucket_num_bins=args.long_num_bins,
+            bucket_samples_per_bin=args.long_samples_per_bin,
+            puck_current_index=args.long_puck_current_index,
+        )
+        print(f"✓ Long demo loader initialized ({len(demo_loader_long):,} demonstrations)")
+        use_puck_disc_long = demo_loader_long.use_puck
+        disc_obs_dim_long = demo_loader_long.get_obs_dim()
+        long_hidden_dims = parse_discriminator_hidden_dims(args.long_disc_hidden_sizes)
+        print(f"  Long mode: POSITION HISTORY (bucketed 8-point from {args.long_history_len}) + "
+              f"{'PUCK FEATURES (' + str(PUCK_FEATURE_DIM) + 'D)' if use_puck_disc_long else 'NO PUCK'}")
+        print(f"  Long discriminator input dim: {disc_obs_dim_long}")
+
+        discriminator_long = Discriminator(
+            disc_obs_dim_long,
+            hidden_dims=long_hidden_dims,
+            activation='leaky_relu'
+        ).to(args.device)
+        disc_optimizer_long = torch.optim.Adam(
+            discriminator_long.parameters(),
+            lr=args.long_disc_learning_rate,
+            weight_decay=args.long_disc_weight_decay,
+            eps=1e-6,
+            betas=(0.5, 0.95),
+        )
+        print(f"✓ Long discriminator initialized (input_dim={disc_obs_dim_long}, hidden={long_hidden_dims})")
+
+        disc_normalizer_long = Normalizer(shape=(disc_obs_dim_long,), clip=10.0, device=args.device)
+        replay_buffer_long = ReplayBuffer(
+            capacity=args.long_disc_replay_buffer_size,
+            obs_shape=(disc_obs_dim_long,),
+            device=args.device
+        )
+        print(f"✓ Long replay buffer initialized (capacity={args.long_disc_replay_buffer_size:,})")
+
+        if args.long_discriminator_path is not None:
+            if not os.path.exists(args.long_discriminator_path):
+                raise FileNotFoundError(f"Long discriminator path {args.long_discriminator_path} does not exist.")
+            print(f"Loading pre-trained long discriminator from {args.long_discriminator_path}")
+            discriminator_long.load_state_dict(torch.load(args.long_discriminator_path, map_location=args.device))
+            print("✓ Long discriminator loaded successfully")
+
+        if args.long_amp_components_path is not None:
+            if not os.path.exists(args.long_amp_components_path):
+                raise FileNotFoundError(f"Long AMP components path {args.long_amp_components_path} does not exist.")
+            print(f"Loading long AMP components from {args.long_amp_components_path}")
+            long_amp_components = torch.load(args.long_amp_components_path, map_location=args.device)
+            disc_normalizer_long.load_state_dict(long_amp_components['normalizer'])
+            replay_buffer_long.load_state_dict(long_amp_components['replay_buffer'])
+            print(f"✓ Long AMP components loaded successfully (replay buffer size: {len(replay_buffer_long):,})")
+    else:
+        print("  Long discriminator reward disabled.")
     
     print("="*80 + "\n")
 
@@ -1200,23 +1440,47 @@ if __name__ == "__main__":
     values = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     
     # AMP: Storage for discriminator observations and position history
-    disc_obs = torch.zeros((args.num_steps, args.num_envs, disc_obs_dim)).to(args.device) if use_discriminator_reward else None
+    disc_obs = torch.zeros((args.num_steps, args.num_envs, disc_obs_dim)).to(args.device) if use_short_discriminator_reward else None
+    disc_obs_long = (
+        torch.zeros((args.num_steps, args.num_envs, disc_obs_dim_long), device=args.device)
+        if use_long_discriminator_reward else None
+    )
     paddle_positions = torch.zeros((args.num_steps, args.num_envs, 2)).to(args.device)
     temporal_alignment_reward_raw = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     temporal_alignment_reward_scaled = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     action_magnitude_reward_raw = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     action_magnitude_reward_scaled = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     # Position history buffer: [num_envs, history_len, 2] for (x, y) positions
-    position_history = torch.zeros((args.num_envs, history_len, 2)).to(args.device) if use_discriminator_reward else None
-    puck_position_history = torch.zeros((args.num_envs, history_len, 2)).to(args.device) if (use_discriminator_reward and use_puck_disc) else None
+    position_history = torch.zeros((args.num_envs, history_len, 2)).to(args.device) if use_short_discriminator_reward else None
+    puck_position_history = torch.zeros((args.num_envs, history_len, 2)).to(args.device) if (use_short_discriminator_reward and use_puck_disc) else None
     # Action history buffer: [num_envs, 4, 2] for transition actions between 5 states
     action_history_len = history_len - 1
-    action_history = torch.zeros((args.num_envs, action_history_len, 2)).to(args.device) if (use_discriminator_reward and use_action_disc) else None
+    action_history = torch.zeros((args.num_envs, action_history_len, 2)).to(args.device) if (use_short_discriminator_reward and use_action_disc) else None
     # Track how many valid positions we have per environment (need history_len before valid)
-    position_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if use_discriminator_reward else None
-    action_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if (use_discriminator_reward and use_action_disc) else None
-    puck_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if (use_discriminator_reward and use_puck_disc) else None
-    valid_transition = torch.zeros((args.num_steps, args.num_envs), dtype=torch.bool).to(args.device) if use_discriminator_reward else None
+    position_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if use_short_discriminator_reward else None
+    action_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if (use_short_discriminator_reward and use_action_disc) else None
+    puck_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if (use_short_discriminator_reward and use_puck_disc) else None
+    valid_transition = torch.zeros((args.num_steps, args.num_envs), dtype=torch.bool).to(args.device) if use_short_discriminator_reward else None
+    long_position_history = (
+        torch.zeros((args.num_envs, args.long_history_len, 2), device=args.device)
+        if use_long_discriminator_reward else None
+    )
+    long_puck_history = (
+        torch.zeros((args.num_envs, args.long_history_len, 2), device=args.device)
+        if (use_long_discriminator_reward and use_puck_disc_long) else None
+    )
+    long_position_count = (
+        torch.zeros(args.num_envs, dtype=torch.long, device=args.device)
+        if use_long_discriminator_reward else None
+    )
+    long_puck_count = (
+        torch.zeros(args.num_envs, dtype=torch.long, device=args.device)
+        if (use_long_discriminator_reward and use_puck_disc_long) else None
+    )
+    valid_transition_long = (
+        torch.zeros((args.num_steps, args.num_envs), dtype=torch.bool, device=args.device)
+        if use_long_discriminator_reward else None
+    )
 
     # Tracking lists for motion metrics
     velocity_magnitudes = []
@@ -1293,7 +1557,7 @@ if __name__ == "__main__":
             
             # AMP: Construct discriminator observations from trajectory history
             current_paddle_pos = extract_current_paddle_position(next_obs)
-            current_puck_pos = extract_current_puck_position(next_obs) if use_puck_disc else None
+            current_puck_pos = extract_current_puck_position(next_obs) if (use_puck_disc or use_puck_disc_long) else None
             paddle_positions[step] = current_paddle_pos
             
             # Optional action magnitude reward (raw value is independent of scale)
@@ -1302,8 +1566,8 @@ if __name__ == "__main__":
             action_magnitude_reward_raw[step] = action_mag_raw
             action_magnitude_reward_scaled[step] = action_mag_raw * args.action_magnitude_reward_scale
             
-            if use_discriminator_reward:
-                # Update position history buffer (rolling buffer: shift left, add new position at end)
+            if use_short_discriminator_reward:
+                # Update short position history buffer (rolling buffer: shift left, add new position at end)
                 position_history = torch.roll(position_history, shifts=-1, dims=1)
                 position_history[:, -1, :] = current_paddle_pos
 
@@ -1353,6 +1617,8 @@ if __name__ == "__main__":
                         downward_speed_max=args.puck_downward_speed_max,
                         speed_dt=args.puck_speed_dt,
                         noise_std=args.puck_noise_std,
+                        vertical_pos_min=args.puck_vertical_pos_min,
+                        vertical_pos_max=args.puck_vertical_pos_max,
                     )
                     disc_feature_parts.append(puck_features)
                 disc_obs[step] = torch.cat(disc_feature_parts, dim=-1)
@@ -1391,20 +1657,71 @@ if __name__ == "__main__":
                         "  sample disc[0:8]="
                         f"{np.array2string(sample_disc[:8], precision=4, suppress_small=True)}"
                     )
+
+            if use_long_discriminator_reward:
+                long_position_history = torch.roll(long_position_history, shifts=-1, dims=1)
+                long_position_history[:, -1, :] = current_paddle_pos
+                long_position_count = torch.clamp(long_position_count + 1, max=args.long_history_len)
+
+                if use_puck_disc_long:
+                    long_puck_history = torch.roll(long_puck_history, shifts=-1, dims=1)
+                    long_puck_history[:, -1, :] = current_puck_pos
+                    long_puck_count = torch.clamp(long_puck_count + 1, max=args.long_history_len)
+
+                has_enough_long_history = long_position_count >= args.long_history_len
+                valid_transition_long[step] = has_enough_long_history
+                if use_puck_disc_long:
+                    has_enough_long_puck = long_puck_count >= args.long_history_len
+                    valid_transition_long[step] = valid_transition_long[step] & has_enough_long_puck
+                valid_transition_long[step, just_reset] = False
+
+                sampled_indices = sample_bucketed_indices_torch(
+                    args.num_envs,
+                    window_len=args.long_history_len,
+                    num_bins=args.long_num_bins,
+                    samples_per_bin=args.long_samples_per_bin,
+                    device=args.device,
+                )
+                gather_idx = sampled_indices.unsqueeze(-1).expand(-1, -1, 2)
+                sampled_positions = torch.gather(long_position_history, dim=1, index=gather_idx)
+                long_features = [normalize_position_sequence_batch(sampled_positions)]
+                if use_puck_disc_long:
+                    puck_features_long = build_puck_discriminator_features_torch(
+                        long_puck_history,
+                        current_index=args.long_puck_current_index,
+                        vertical_axis=args.puck_vertical_axis,
+                        downward_positive_direction=args.puck_downward_positive_direction,
+                        downward_speed_max=args.puck_downward_speed_max,
+                        speed_dt=args.puck_speed_dt,
+                        noise_std=args.puck_noise_std,
+                        vertical_pos_min=args.puck_vertical_pos_min,
+                        vertical_pos_max=args.puck_vertical_pos_max,
+                    )
+                    long_features.append(puck_features_long)
+                disc_obs_long[step] = torch.cat(long_features, dim=-1)
             
             # Reset position history and count for environments that are done
             if use_discriminator_reward and next_done_mask.any():
                 done_mask = next_done_mask
-                position_history[done_mask] = 0
-                position_history[done_mask, -1, :] = current_paddle_pos[done_mask]
-                position_count[done_mask] = 1  # We have 1 position after reset
-                if use_action_disc:
-                    action_history[done_mask] = 0
-                    action_count[done_mask] = 0
-                if use_puck_disc:
-                    puck_position_history[done_mask] = 0
-                    puck_position_history[done_mask, -1, :] = current_puck_pos[done_mask]
-                    puck_count[done_mask] = 1
+                if use_short_discriminator_reward:
+                    position_history[done_mask] = 0
+                    position_history[done_mask, -1, :] = current_paddle_pos[done_mask]
+                    position_count[done_mask] = 1  # We have 1 position after reset
+                    if use_action_disc:
+                        action_history[done_mask] = 0
+                        action_count[done_mask] = 0
+                    if use_puck_disc:
+                        puck_position_history[done_mask] = 0
+                        puck_position_history[done_mask, -1, :] = current_puck_pos[done_mask]
+                        puck_count[done_mask] = 1
+                if use_long_discriminator_reward:
+                    long_position_history[done_mask] = 0
+                    long_position_history[done_mask, -1, :] = current_paddle_pos[done_mask]
+                    long_position_count[done_mask] = 1
+                    if use_puck_disc_long:
+                        long_puck_history[done_mask] = 0
+                        long_puck_history[done_mask, -1, :] = current_puck_pos[done_mask]
+                        long_puck_count[done_mask] = 1
             
             # Track which environments just reset for next step
             just_reset = next_done_mask
@@ -1474,31 +1791,33 @@ if __name__ == "__main__":
                 temporal_alignment_reward_raw[horizon:] = cosine_sim * temporal_valid.float()
             temporal_alignment_reward_scaled = temporal_alignment_reward_raw * args.temporal_alignment_reward_scale
             
-            if use_discriminator_reward:
-                # AMP: Compute discriminator rewards and combine with task rewards
-                # Flatten discriminator observations
+            if use_short_discriminator_reward:
                 b_disc_obs = disc_obs.reshape(-1, disc_obs_dim)
-                
-                # Normalize discriminator observations
                 norm_disc_obs = disc_normalizer.normalize(b_disc_obs)
-                
-                # Compute discriminator rewards (LSGAN)
                 disc_scores = discriminator(norm_disc_obs).squeeze(-1)
-                # For LSGAN, discriminator outputs raw scores (not logits)
-                # Reward formula: quadratic function peaked at disc_scores=1, clamped to [0, 1]
                 disc_r_raw = torch.clamp(1 - 0.25 * (disc_scores - 1) ** 2, min=0)
-                
-                # Mask invalid transitions (set reward to 0)
                 b_valid = valid_transition.reshape(-1)
-                disc_r_raw = disc_r_raw * b_valid.float()  # Zero out invalid transitions
-                
-                # Reshape discriminator rewards to match original shape
+                disc_r_raw = disc_r_raw * b_valid.float()
                 disc_r_raw_shaped = disc_r_raw.reshape(args.num_steps, args.num_envs)
                 disc_r_scaled = args.disc_reward_weight * disc_r_raw_shaped
             else:
                 b_disc_obs = None
                 disc_r_raw = torch.zeros(args.num_steps * args.num_envs, device=args.device)
                 disc_r_scaled = torch.zeros((args.num_steps, args.num_envs), device=args.device)
+
+            if use_long_discriminator_reward:
+                b_disc_obs_long = disc_obs_long.reshape(-1, disc_obs_dim_long)
+                norm_disc_obs_long = disc_normalizer_long.normalize(b_disc_obs_long)
+                disc_scores_long = discriminator_long(norm_disc_obs_long).squeeze(-1)
+                disc_r_raw_long = torch.clamp(1 - 0.25 * (disc_scores_long - 1) ** 2, min=0)
+                b_valid_long = valid_transition_long.reshape(-1)
+                disc_r_raw_long = disc_r_raw_long * b_valid_long.float()
+                disc_r_raw_shaped_long = disc_r_raw_long.reshape(args.num_steps, args.num_envs)
+                disc_r_scaled_long = args.long_disc_reward_weight * disc_r_raw_shaped_long
+            else:
+                b_disc_obs_long = None
+                disc_r_raw_long = torch.zeros(args.num_steps * args.num_envs, device=args.device)
+                disc_r_scaled_long = torch.zeros((args.num_steps, args.num_envs), device=args.device)
             task_r_raw = rewards
             task_r_scaled = args.task_reward_weight * task_r_raw
             
@@ -1506,6 +1825,7 @@ if __name__ == "__main__":
             combined_rewards = (
                 task_r_scaled
                 + disc_r_scaled
+                + disc_r_scaled_long
                 + temporal_alignment_reward_scaled
                 + action_magnitude_reward_scaled
             )
@@ -1526,11 +1846,16 @@ if __name__ == "__main__":
             
             # Log reward stream statistics (raw and scaled)
             if should_log_stats:
-                if use_discriminator_reward:
+                if use_short_discriminator_reward:
                     writer.add_scalar("amp/disc_reward_raw_mean", disc_r_raw.mean().item(), global_step)
                     writer.add_scalar("amp/disc_reward_raw_std", disc_r_raw.std().item(), global_step)
                     writer.add_scalar("amp/disc_reward_scaled_mean", disc_r_scaled.mean().item(), global_step)
                     writer.add_scalar("amp/disc_reward_scaled_std", disc_r_scaled.std().item(), global_step)
+                if use_long_discriminator_reward:
+                    writer.add_scalar("amp_long/disc_reward_raw_mean", disc_r_raw_long.mean().item(), global_step)
+                    writer.add_scalar("amp_long/disc_reward_raw_std", disc_r_raw_long.std().item(), global_step)
+                    writer.add_scalar("amp_long/disc_reward_scaled_mean", disc_r_scaled_long.mean().item(), global_step)
+                    writer.add_scalar("amp_long/disc_reward_scaled_std", disc_r_scaled_long.std().item(), global_step)
                 writer.add_scalar("amp/task_reward_raw_mean", task_r_raw.mean().item(), global_step)
                 writer.add_scalar("amp/task_reward_raw_std", task_r_raw.std().item(), global_step)
                 writer.add_scalar("amp/task_reward_scaled_mean", task_r_scaled.mean().item(), global_step)
@@ -1545,7 +1870,7 @@ if __name__ == "__main__":
                 writer.add_scalar("amp/action_magnitude_reward_scaled_std", action_magnitude_reward_scaled.std().item(), global_step)
 
                 # Backward-compatible logs.
-                if use_discriminator_reward:
+                if use_short_discriminator_reward:
                     writer.add_scalar("amp/disc_reward_mean", disc_r_raw.mean().item(), global_step)
                     writer.add_scalar("amp/disc_reward_std", disc_r_raw.std().item(), global_step)
                 writer.add_scalar("amp/task_reward_mean", task_r_raw.mean().item(), global_step)
@@ -1641,8 +1966,8 @@ if __name__ == "__main__":
             if args.target_kl is not None and approx_kl > args.target_kl:
                 break
         
-        # AMP: Train discriminator
-        if use_discriminator_reward:
+        # AMP: Train short discriminator
+        if use_short_discriminator_reward:
             for i in range(args.num_discriminator_updates):
             # Sample demonstration data
                 demo_disc_obs = demo_loader.sample(args.disc_batch_size)
@@ -1761,17 +2086,14 @@ if __name__ == "__main__":
 
                     per_dim = puck_diag["per_dim"]
                     for tag, value in (
-                        ("puck_diag/puck_x_z_gap", per_dim["puck_x_noised"]["z_gap"]),
-                        ("puck_diag/puck_y_z_gap", per_dim["puck_y_noised"]["z_gap"]),
-                        ("puck_diag/puck_x_hist_distance", per_dim["puck_x_noised"]["hist_distance"]),
-                        ("puck_diag/puck_y_hist_distance", per_dim["puck_y_noised"]["hist_distance"]),
                         ("puck_diag/direction_sign_tv", per_dim["direction_sign"]["tv_distance"]),
                         ("puck_diag/downward_speed_bin_tv", per_dim["downward_speed_bin"]["tv_distance"]),
+                        ("puck_diag/vertical_pos_bin_tv", per_dim["vertical_pos_bin_5"]["tv_distance"]),
                         ("puck_diag/num_easy_flags", float(len(puck_diag["easy_flags"]))),
                     ):
                         writer.add_scalar(tag, value, iteration)
             
-            # Log discriminator metrics
+            # Log short discriminator metrics
             if should_log_stats:
                 writer.add_scalar("amp/disc_loss", disc_loss.item(), global_step)
                 writer.add_scalar("amp/disc_loss_demo", disc_loss_demo.item(), global_step)
@@ -1782,6 +2104,76 @@ if __name__ == "__main__":
                 writer.add_scalar("amp/disc_agent_logit_mean", disc_agent_logit.mean().item(), global_step)
                 writer.add_scalar("amp/disc_demo_logit_mean", disc_demo_logit.mean().item(), global_step)
                 writer.add_scalar("amp/replay_buffer_size", len(replay_buffer), global_step)
+
+        # AMP: Train long discriminator
+        if use_long_discriminator_reward:
+            for i in range(args.long_num_discriminator_updates):
+                demo_disc_obs_long = demo_loader_long.sample(args.long_disc_batch_size)
+                agent_samples_long = args.long_disc_batch_size // 2
+
+                b_valid_long = valid_transition_long.reshape(-1)
+                valid_disc_obs_long = b_disc_obs_long[b_valid_long]
+                perm_indices_long = torch.randperm(len(valid_disc_obs_long), device=args.device)
+                agent_disc_obs_current_long = valid_disc_obs_long[perm_indices_long[:agent_samples_long]]
+
+                num_to_store_long = min(len(valid_disc_obs_long), args.long_disc_replay_samples)
+                replay_buffer_long.push(valid_disc_obs_long[perm_indices_long[:num_to_store_long]])
+
+                if len(replay_buffer_long) > 0:
+                    agent_disc_obs_replay_long = replay_buffer_long.sample(agent_samples_long)
+                    agent_disc_obs_long = torch.cat([agent_disc_obs_current_long, agent_disc_obs_replay_long], dim=0)
+                else:
+                    agent_disc_obs_long = agent_disc_obs_current_long
+
+                norm_demo_disc_obs_long = disc_normalizer_long.normalize(demo_disc_obs_long)
+                norm_agent_disc_obs_long = disc_normalizer_long.normalize(agent_disc_obs_long)
+                norm_demo_disc_obs_long.requires_grad_(True)
+
+                disc_demo_logit_long = discriminator_long(norm_demo_disc_obs_long).squeeze(-1)
+                disc_agent_logit_long = discriminator_long(norm_agent_disc_obs_long).squeeze(-1)
+                disc_loss_demo_long = 0.5 * torch.mean((disc_demo_logit_long - 1.0) ** 2)
+                disc_loss_agent_long = 0.5 * torch.mean((disc_agent_logit_long - (-1.0)) ** 2)
+                disc_loss_long = disc_loss_demo_long + disc_loss_agent_long
+
+                disc_demo_grad_long = torch.autograd.grad(
+                    disc_demo_logit_long,
+                    norm_demo_disc_obs_long,
+                    grad_outputs=torch.ones_like(disc_demo_logit_long),
+                    create_graph=True,
+                    retain_graph=True,
+                    only_inputs=True,
+                )[0]
+                disc_grad_penalty_long = torch.mean(torch.sum(disc_demo_grad_long ** 2, dim=-1))
+                disc_loss_long = disc_loss_long + args.long_disc_grad_penalty * disc_grad_penalty_long
+
+                if args.long_disc_logit_reg > 0:
+                    logit_weights_long = discriminator_long.get_logit_weights()
+                    disc_logit_reg_loss_long = torch.sum(logit_weights_long ** 2)
+                    disc_loss_long = disc_loss_long + args.long_disc_logit_reg * disc_logit_reg_loss_long
+
+                disc_optimizer_long.zero_grad()
+                disc_loss_long.backward()
+                nn.utils.clip_grad_norm_(discriminator_long.parameters(), args.max_grad_norm)
+                disc_optimizer_long.step()
+
+                disc_normalizer_long.record(b_disc_obs_long[b_valid_long])
+                disc_normalizer_long.record(demo_disc_obs_long)
+                disc_normalizer_long.update()
+
+                with torch.no_grad():
+                    disc_agent_acc_long = (disc_agent_logit_long < 0.0).float().mean().item()
+                    disc_demo_acc_long = (disc_demo_logit_long > 0.0).float().mean().item()
+
+            if should_log_stats:
+                writer.add_scalar("amp_long/disc_loss", disc_loss_long.item(), global_step)
+                writer.add_scalar("amp_long/disc_loss_demo", disc_loss_demo_long.item(), global_step)
+                writer.add_scalar("amp_long/disc_loss_agent", disc_loss_agent_long.item(), global_step)
+                writer.add_scalar("amp_long/disc_grad_penalty", disc_grad_penalty_long.item(), global_step)
+                writer.add_scalar("amp_long/disc_agent_acc", disc_agent_acc_long, global_step)
+                writer.add_scalar("amp_long/disc_demo_acc", disc_demo_acc_long, global_step)
+                writer.add_scalar("amp_long/disc_agent_logit_mean", disc_agent_logit_long.mean().item(), global_step)
+                writer.add_scalar("amp_long/disc_demo_logit_mean", disc_demo_logit_long.mean().item(), global_step)
+                writer.add_scalar("amp_long/replay_buffer_size", len(replay_buffer_long), global_step)
 
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
         var_y = np.var(y_true)
@@ -1851,6 +2243,7 @@ if __name__ == "__main__":
                 air_hockey_config=config["air_hockey"],
                 args=args,
                 device=args.device,
+                env_spec_ranges=env_spec_ranges,
             )
             if should_log_stats:
                 writer.add_scalar(
@@ -1873,15 +2266,24 @@ if __name__ == "__main__":
             torch.save(env_encoder.state_dict(), f"{checkpoint_dir}/encoder.pth")
             if env_spec_pool is not None:
                 save_env_spec_pool_artifacts(env_spec_pool=env_spec_pool, output_dir=checkpoint_dir)
+            save_env_randomization_config_artifact(
+                env_randomization_config=env_randomization_config, output_dir=checkpoint_dir
+            )
             save_edge_eval_specs_artifact(edge_specs=edge_eval_specs, output_dir=checkpoint_dir)
             
-            # Save AMP components in checkpoint when discriminator reward is active
-            if use_discriminator_reward:
+            # Save short AMP components in checkpoint when short discriminator reward is active
+            if use_short_discriminator_reward:
                 torch.save(discriminator.state_dict(), f"{checkpoint_dir}/discriminator.pth")
                 torch.save({
                     'normalizer': disc_normalizer.state_dict(),
                     'replay_buffer': replay_buffer.state_dict()
                 }, f"{checkpoint_dir}/amp_components.pth")
+            if use_long_discriminator_reward:
+                torch.save(discriminator_long.state_dict(), f"{checkpoint_dir}/discriminator_long.pth")
+                torch.save({
+                    'normalizer': disc_normalizer_long.state_dict(),
+                    'replay_buffer': replay_buffer_long.state_dict()
+                }, f"{checkpoint_dir}/amp_components_long.pth")
 
             validation_gif_path = os.path.join(checkpoint_dir, "validation_fixed_env.gif")
             save_validation_gif(
@@ -1891,12 +2293,14 @@ if __name__ == "__main__":
                 air_hockey_config=config["air_hockey"],
                 args=args,
                 gif_savepath=validation_gif_path,
+                env_spec_ranges=env_spec_ranges,
             )
             if args.num_random_validation_gifs > 0:
                 random_specs = sample_random_validation_specs(
                     num_specs=args.num_random_validation_gifs,
                     seed=args.seed + iteration * 10_000,
                     env_id_start=20_000 + iteration * 100,
+                    env_spec_ranges=env_spec_ranges,
                 )
                 random_specs_path = os.path.join(checkpoint_dir, "validation_random_env_specs.yaml")
                 with open(random_specs_path, "w") as f:
@@ -1913,6 +2317,7 @@ if __name__ == "__main__":
                         air_hockey_config=config["air_hockey"],
                         args=args,
                         gif_savepath=random_gif_path,
+                        env_spec_ranges=env_spec_ranges,
                         num_episodes=random_gif_episodes,
                         episode_seed_offset=iteration * 1_000 + spec_idx * 100,
                     )
@@ -1924,13 +2329,20 @@ if __name__ == "__main__":
     torch.save(env_encoder.state_dict(), f"{log_parent_dir}/encoder.pth")
     
     # Save AMP components when discriminator reward is active
-    if use_discriminator_reward:
+    if use_short_discriminator_reward:
         torch.save(discriminator.state_dict(), f"{log_parent_dir}/discriminator.pth")
         torch.save({
             'normalizer': disc_normalizer.state_dict(),
             'replay_buffer': replay_buffer.state_dict()
         }, f"{log_parent_dir}/amp_components.pth")
-        print(f"✓ Saved discriminator and AMP components")
+        print(f"✓ Saved short discriminator and AMP components")
+    if use_long_discriminator_reward:
+        torch.save(discriminator_long.state_dict(), f"{log_parent_dir}/discriminator_long.pth")
+        torch.save({
+            'normalizer': disc_normalizer_long.state_dict(),
+            'replay_buffer': replay_buffer_long.state_dict()
+        }, f"{log_parent_dir}/amp_components_long.pth")
+        print(f"✓ Saved long discriminator and AMP components")
 
     # Evaluate on 5 edge configurations derived from the training randomization ranges.
     edge_eval_results = evaluate_on_edge_specs(
@@ -1939,6 +2351,7 @@ if __name__ == "__main__":
         air_hockey_config=config["air_hockey"],
         args=args,
         device=args.device,
+        env_spec_ranges=env_spec_ranges,
     )
     if (args.num_iterations % args.stats_log_interval) == 0:
         writer.add_scalar(

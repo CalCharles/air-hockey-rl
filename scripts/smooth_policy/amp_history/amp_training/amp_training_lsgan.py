@@ -46,6 +46,8 @@ from scripts.smooth_policy.amp_history.amp_training.feature_processing import (
     build_puck_discriminator_features_torch,
     normalize_action_history_batch,
     normalize_position_history_batch,
+    normalize_position_sequence_batch,
+    sample_bucketed_indices_torch,
 )
 
 # used for possible reference state initialization from demonstrations
@@ -143,6 +145,21 @@ class Args:
     disc_reward_weight: float = 0.5
     num_discriminator_updates: int = 1
     disc_hidden_sizes: list[int] = field(default_factory=lambda: [64, 64])
+    use_long_discriminator: bool = False
+    long_disc_reward_weight: float = 0.0
+    long_disc_replay_buffer_size: int = 100000
+    long_disc_replay_samples: int = 1024
+    long_disc_batch_size: int = 512
+    long_disc_learning_rate: float = 1e-5
+    long_disc_logit_reg: float = 0.01
+    long_disc_grad_penalty: float = 5.0
+    long_disc_weight_decay: float = 0.0001
+    long_num_discriminator_updates: int = 1
+    long_disc_hidden_sizes: list[int] = field(default_factory=lambda: [64, 64])
+    long_history_len: int = 30
+    long_num_bins: int = 3
+    long_samples_per_bin: int = 2
+    long_puck_current_index: int = 15
     
     # Optional auxiliary rewards (default disabled)
     temporal_alignment_reward_scale: float = 0.0
@@ -154,7 +171,9 @@ class Args:
     args_file: str = None
     model_path: str = None  # Path to pre-trained model state dict
     discriminator_path: str = None  # Path to pre-trained discriminator state dict
+    long_discriminator_path: str = None  # Path to second long-window discriminator state dict
     amp_components_path: str = None  # Path to AMP components (normalizer, replay buffer)
+    long_amp_components_path: str = None  # Path to long AMP components (normalizer, replay buffer)
     log_parent_dir: str = None
     run_name: str = "default"
     demo_data_path: str = "scripts/smooth_policy/amp_data/amp_dataset.pt"
@@ -183,6 +202,9 @@ class Args:
     puck_noise_std: float = 0.03  # Gaussian noise std for current puck position features
     puck_downward_speed_max: float = 0.75  # Max speed used for 3-level downward speed bins
     puck_speed_dt: float = 0.05  # Time delta for puck speed estimation
+    puck_vertical_pos_min: float = -1.0  # Min vertical puck value mapped to 5-bin range
+    puck_vertical_pos_max: float = 1.0  # Max vertical puck value mapped to 5-bin range
+    use_puck_discriminator_long: bool = False  # If True, long-window discriminator appends puck features
     disc_debug_interval: int = 5000  # Print discriminator feature samples every N env steps (<=0 disables)
     
     
@@ -311,21 +333,26 @@ if __name__ == "__main__":
         print("Model loaded successfully")
     
     optimizer = torch.optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-6)
-    use_discriminator_reward = args.disc_reward_weight > 0.0
+    use_short_discriminator_reward = args.disc_reward_weight > 0.0
+    use_long_discriminator_reward = args.use_long_discriminator and args.long_disc_reward_weight > 0.0
+    use_discriminator_reward = use_short_discriminator_reward or use_long_discriminator_reward
 
     # Initialize AMP components (always enabled)
     print("\n" + "="*80)
     print("Initializing AMP (Adversarial Motion Priors) components")
     print("="*80)
 
-    history_len = 5  # Number of positions to track
+    history_len = 5  # Number of positions to track for short discriminator
     disc_obs_dim = 8
+    disc_obs_dim_long = 0
     use_action_disc = False
     use_puck_disc = False
+    use_puck_disc_long = False
     discriminator, disc_optimizer, disc_normalizer, replay_buffer, demo_loader = None, None, None, None, None
+    discriminator_long, disc_optimizer_long, disc_normalizer_long, replay_buffer_long, demo_loader_long = None, None, None, None, None
     
-    if use_discriminator_reward:
-        # Load demonstration data first to determine observation dimension
+    if use_short_discriminator_reward:
+        # Load demonstration data first to determine short observation dimension
         demo_loader = DemoLoaderPositionHistory(
             args.demo_data_path,
             device=args.device,
@@ -336,8 +363,10 @@ if __name__ == "__main__":
             puck_downward_speed_max=args.puck_downward_speed_max,
             puck_speed_dt=args.puck_speed_dt,
             puck_noise_std=args.puck_noise_std,
+            puck_vertical_pos_min=args.puck_vertical_pos_min,
+            puck_vertical_pos_max=args.puck_vertical_pos_max,
         )
-        print(f"✓ Demo loader initialized ({len(demo_loader):,} demonstrations)")
+        print(f"✓ Short demo loader initialized ({len(demo_loader):,} demonstrations)")
         
         use_action_disc = demo_loader.use_actions
         use_puck_disc = demo_loader.use_puck
@@ -352,14 +381,20 @@ if __name__ == "__main__":
         print(f"  Mode: {' + '.join(mode_parts)}")
         print(f"  Discriminator input dim: {disc_obs_dim}")
         
-        # Initialize discriminator
+        # Initialize short discriminator
         discriminator = Discriminator(
             disc_obs_dim,
             hidden_dims=disc_hidden_dims,
             activation='leaky_relu'
         ).to(args.device)
-        disc_optimizer = torch.optim.Adam(discriminator.parameters(), lr=args.disc_learning_rate, eps=1e-6)
-        print(f"✓ Discriminator initialized (input_dim={disc_obs_dim}, hidden={disc_hidden_dims})")
+        disc_optimizer = torch.optim.Adam(
+            discriminator.parameters(),
+            lr=args.disc_learning_rate,
+            weight_decay=args.disc_weight_decay,
+            eps=1e-6,
+            betas=(0.5, 0.95),
+        )
+        print(f"✓ Short discriminator initialized (input_dim={disc_obs_dim}, hidden={disc_hidden_dims})")
         
         # Initialize normalizer
         disc_normalizer = Normalizer(shape=(disc_obs_dim,), clip=10.0, device=args.device)
@@ -373,7 +408,7 @@ if __name__ == "__main__":
         )
         print(f"✓ Replay buffer initialized (capacity={args.disc_replay_buffer_size:,})")
         
-        # Load pre-trained discriminator if path is provided
+        # Load pre-trained short discriminator if path is provided
         if args.discriminator_path is not None:
             if not os.path.exists(args.discriminator_path):
                 raise FileNotFoundError(f"Discriminator path {args.discriminator_path} does not exist.")
@@ -381,7 +416,7 @@ if __name__ == "__main__":
             discriminator.load_state_dict(torch.load(args.discriminator_path, map_location=args.device))
             print("✓ Discriminator loaded successfully")
         
-        # Load AMP components (normalizer, replay buffer) if path is provided
+        # Load short AMP components (normalizer, replay buffer) if path is provided
         if args.amp_components_path is not None:
             if not os.path.exists(args.amp_components_path):
                 raise FileNotFoundError(f"AMP components path {args.amp_components_path} does not exist.")
@@ -389,9 +424,80 @@ if __name__ == "__main__":
             amp_components = torch.load(args.amp_components_path, map_location=args.device)
             disc_normalizer.load_state_dict(amp_components['normalizer'])
             replay_buffer.load_state_dict(amp_components['replay_buffer'])
-            print(f"✓ AMP components loaded successfully (replay buffer size: {len(replay_buffer):,})")
+            print(f"✓ Short AMP components loaded successfully (replay buffer size: {len(replay_buffer):,})")
     else:
-        print("  Discriminator reward disabled (disc_reward_weight <= 0). Skipping discriminator setup.")
+        print("  Short discriminator reward disabled (disc_reward_weight <= 0).")
+
+    if use_long_discriminator_reward:
+        demo_loader_long = DemoLoaderPositionHistory(
+            args.demo_data_path,
+            device=args.device,
+            use_actions=False,
+            use_puck=args.use_puck_discriminator_long,
+            puck_vertical_axis=args.puck_vertical_axis,
+            puck_downward_positive_direction=args.puck_downward_positive_direction,
+            puck_downward_speed_max=args.puck_downward_speed_max,
+            puck_speed_dt=args.puck_speed_dt,
+            puck_noise_std=args.puck_noise_std,
+            puck_vertical_pos_min=args.puck_vertical_pos_min,
+            puck_vertical_pos_max=args.puck_vertical_pos_max,
+            position_key="position_sequences_30",
+            puck_key="puck_sequences_30",
+            sample_bucketed_points=True,
+            bucket_window_len=args.long_history_len,
+            bucket_num_bins=args.long_num_bins,
+            bucket_samples_per_bin=args.long_samples_per_bin,
+            puck_current_index=args.long_puck_current_index,
+        )
+        print(f"✓ Long demo loader initialized ({len(demo_loader_long):,} demonstrations)")
+        use_puck_disc_long = demo_loader_long.use_puck
+        disc_obs_dim_long = demo_loader_long.get_obs_dim()
+        long_hidden_dims = parse_discriminator_hidden_dims(args.long_disc_hidden_sizes)
+        print(
+            f"  Long mode: POSITION HISTORY (bucketed 8-point from {args.long_history_len}) + "
+            f"{'PUCK FEATURES (' + str(PUCK_FEATURE_DIM) + 'D)' if use_puck_disc_long else 'NO PUCK'}"
+        )
+        print(f"  Long discriminator input dim: {disc_obs_dim_long}")
+
+        discriminator_long = Discriminator(
+            disc_obs_dim_long,
+            hidden_dims=long_hidden_dims,
+            activation='leaky_relu'
+        ).to(args.device)
+        disc_optimizer_long = torch.optim.Adam(
+            discriminator_long.parameters(),
+            lr=args.long_disc_learning_rate,
+            weight_decay=args.long_disc_weight_decay,
+            eps=1e-6,
+            betas=(0.5, 0.95),
+        )
+        print(f"✓ Long discriminator initialized (input_dim={disc_obs_dim_long}, hidden={long_hidden_dims})")
+
+        disc_normalizer_long = Normalizer(shape=(disc_obs_dim_long,), clip=10.0, device=args.device)
+        replay_buffer_long = ReplayBuffer(
+            capacity=args.long_disc_replay_buffer_size,
+            obs_shape=(disc_obs_dim_long,),
+            device=args.device
+        )
+        print(f"✓ Long replay buffer initialized (capacity={args.long_disc_replay_buffer_size:,})")
+
+        if args.long_discriminator_path is not None:
+            if not os.path.exists(args.long_discriminator_path):
+                raise FileNotFoundError(f"Long discriminator path {args.long_discriminator_path} does not exist.")
+            print(f"Loading pre-trained long discriminator from {args.long_discriminator_path}")
+            discriminator_long.load_state_dict(torch.load(args.long_discriminator_path, map_location=args.device))
+            print("✓ Long discriminator loaded successfully")
+
+        if args.long_amp_components_path is not None:
+            if not os.path.exists(args.long_amp_components_path):
+                raise FileNotFoundError(f"Long AMP components path {args.long_amp_components_path} does not exist.")
+            print(f"Loading long AMP components from {args.long_amp_components_path}")
+            long_amp_components = torch.load(args.long_amp_components_path, map_location=args.device)
+            disc_normalizer_long.load_state_dict(long_amp_components['normalizer'])
+            replay_buffer_long.load_state_dict(long_amp_components['replay_buffer'])
+            print(f"✓ Long AMP components loaded successfully (replay buffer size: {len(replay_buffer_long):,})")
+    else:
+        print("  Long discriminator reward disabled.")
     
     print("="*80 + "\n")
 
@@ -406,23 +512,47 @@ if __name__ == "__main__":
     values = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     
     # AMP: Storage for discriminator observations and position history
-    disc_obs = torch.zeros((args.num_steps, args.num_envs, disc_obs_dim)).to(args.device) if use_discriminator_reward else None
+    disc_obs = torch.zeros((args.num_steps, args.num_envs, disc_obs_dim)).to(args.device) if use_short_discriminator_reward else None
+    disc_obs_long = (
+        torch.zeros((args.num_steps, args.num_envs, disc_obs_dim_long), device=args.device)
+        if use_long_discriminator_reward else None
+    )
     paddle_positions = torch.zeros((args.num_steps, args.num_envs, 2)).to(args.device)
     temporal_alignment_reward_raw = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     temporal_alignment_reward_scaled = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     action_magnitude_reward_raw = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     action_magnitude_reward_scaled = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     # Position history buffer: [num_envs, history_len, 2] for (x, y) positions
-    position_history = torch.zeros((args.num_envs, history_len, 2)).to(args.device) if use_discriminator_reward else None
-    puck_position_history = torch.zeros((args.num_envs, history_len, 2)).to(args.device) if (use_discriminator_reward and use_puck_disc) else None
+    position_history = torch.zeros((args.num_envs, history_len, 2)).to(args.device) if use_short_discriminator_reward else None
+    puck_position_history = torch.zeros((args.num_envs, history_len, 2)).to(args.device) if (use_short_discriminator_reward and use_puck_disc) else None
     # Action history buffer: [num_envs, 4, 2] for transition actions between 5 states
     action_history_len = history_len - 1
-    action_history = torch.zeros((args.num_envs, action_history_len, 2)).to(args.device) if (use_discriminator_reward and use_action_disc) else None
+    action_history = torch.zeros((args.num_envs, action_history_len, 2)).to(args.device) if (use_short_discriminator_reward and use_action_disc) else None
     # Track how many valid positions we have per environment (need history_len before valid)
-    position_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if use_discriminator_reward else None
-    action_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if (use_discriminator_reward and use_action_disc) else None
-    puck_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if (use_discriminator_reward and use_puck_disc) else None
-    valid_transition = torch.zeros((args.num_steps, args.num_envs), dtype=torch.bool).to(args.device) if use_discriminator_reward else None
+    position_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if use_short_discriminator_reward else None
+    action_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if (use_short_discriminator_reward and use_action_disc) else None
+    puck_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if (use_short_discriminator_reward and use_puck_disc) else None
+    valid_transition = torch.zeros((args.num_steps, args.num_envs), dtype=torch.bool).to(args.device) if use_short_discriminator_reward else None
+    long_position_history = (
+        torch.zeros((args.num_envs, args.long_history_len, 2), device=args.device)
+        if use_long_discriminator_reward else None
+    )
+    long_puck_history = (
+        torch.zeros((args.num_envs, args.long_history_len, 2), device=args.device)
+        if (use_long_discriminator_reward and use_puck_disc_long) else None
+    )
+    long_position_count = (
+        torch.zeros(args.num_envs, dtype=torch.long, device=args.device)
+        if use_long_discriminator_reward else None
+    )
+    long_puck_count = (
+        torch.zeros(args.num_envs, dtype=torch.long, device=args.device)
+        if (use_long_discriminator_reward and use_puck_disc_long) else None
+    )
+    valid_transition_long = (
+        torch.zeros((args.num_steps, args.num_envs), dtype=torch.bool, device=args.device)
+        if use_long_discriminator_reward else None
+    )
 
     # Tracking lists for motion metrics
     velocity_magnitudes = []
@@ -476,7 +606,7 @@ if __name__ == "__main__":
             
             # AMP: Construct discriminator observations from trajectory history
             current_paddle_pos = extract_current_paddle_position(next_obs)
-            current_puck_pos = extract_current_puck_position(next_obs) if use_puck_disc else None
+            current_puck_pos = extract_current_puck_position(next_obs) if (use_puck_disc or use_puck_disc_long) else None
             paddle_positions[step] = current_paddle_pos
             
             # Optional action magnitude reward (raw value is independent of scale)
@@ -485,7 +615,7 @@ if __name__ == "__main__":
             action_magnitude_reward_raw[step] = action_mag_raw
             action_magnitude_reward_scaled[step] = action_mag_raw * args.action_magnitude_reward_scale
             
-            if use_discriminator_reward:
+            if use_short_discriminator_reward:
                 # Update position history buffer (rolling buffer: shift left, add new position at end)
                 position_history = torch.roll(position_history, shifts=-1, dims=1)
                 position_history[:, -1, :] = current_paddle_pos
@@ -536,6 +666,8 @@ if __name__ == "__main__":
                         downward_speed_max=args.puck_downward_speed_max,
                         speed_dt=args.puck_speed_dt,
                         noise_std=args.puck_noise_std,
+                        vertical_pos_min=args.puck_vertical_pos_min,
+                        vertical_pos_max=args.puck_vertical_pos_max,
                     )
                     disc_feature_parts.append(puck_features)
                 disc_obs[step] = torch.cat(disc_feature_parts, dim=-1)
@@ -574,20 +706,71 @@ if __name__ == "__main__":
                         "  sample disc[0:8]="
                         f"{np.array2string(sample_disc[:8], precision=4, suppress_small=True)}"
                     )
+
+            if use_long_discriminator_reward:
+                long_position_history = torch.roll(long_position_history, shifts=-1, dims=1)
+                long_position_history[:, -1, :] = current_paddle_pos
+                long_position_count = torch.clamp(long_position_count + 1, max=args.long_history_len)
+
+                if use_puck_disc_long:
+                    long_puck_history = torch.roll(long_puck_history, shifts=-1, dims=1)
+                    long_puck_history[:, -1, :] = current_puck_pos
+                    long_puck_count = torch.clamp(long_puck_count + 1, max=args.long_history_len)
+
+                has_enough_long_history = long_position_count >= args.long_history_len
+                valid_transition_long[step] = has_enough_long_history
+                if use_puck_disc_long:
+                    has_enough_long_puck = long_puck_count >= args.long_history_len
+                    valid_transition_long[step] = valid_transition_long[step] & has_enough_long_puck
+                valid_transition_long[step, just_reset] = False
+
+                sampled_indices = sample_bucketed_indices_torch(
+                    args.num_envs,
+                    window_len=args.long_history_len,
+                    num_bins=args.long_num_bins,
+                    samples_per_bin=args.long_samples_per_bin,
+                    device=args.device,
+                )
+                gather_idx = sampled_indices.unsqueeze(-1).expand(-1, -1, 2)
+                sampled_positions = torch.gather(long_position_history, dim=1, index=gather_idx)
+                long_features = [normalize_position_sequence_batch(sampled_positions)]
+                if use_puck_disc_long:
+                    puck_features_long = build_puck_discriminator_features_torch(
+                        long_puck_history,
+                        current_index=args.long_puck_current_index,
+                        vertical_axis=args.puck_vertical_axis,
+                        downward_positive_direction=args.puck_downward_positive_direction,
+                        downward_speed_max=args.puck_downward_speed_max,
+                        speed_dt=args.puck_speed_dt,
+                        noise_std=args.puck_noise_std,
+                        vertical_pos_min=args.puck_vertical_pos_min,
+                        vertical_pos_max=args.puck_vertical_pos_max,
+                    )
+                    long_features.append(puck_features_long)
+                disc_obs_long[step] = torch.cat(long_features, dim=-1)
             
             # Reset position history and count for environments that are done
             if use_discriminator_reward and next_done.any():
                 done_mask = next_done.bool()
-                position_history[done_mask] = 0
-                position_history[done_mask, -1, :] = current_paddle_pos[done_mask]
-                position_count[done_mask] = 1  # We have 1 position after reset
-                if use_action_disc:
-                    action_history[done_mask] = 0
-                    action_count[done_mask] = 0
-                if use_puck_disc:
-                    puck_position_history[done_mask] = 0
-                    puck_position_history[done_mask, -1, :] = current_puck_pos[done_mask]
-                    puck_count[done_mask] = 1
+                if use_short_discriminator_reward:
+                    position_history[done_mask] = 0
+                    position_history[done_mask, -1, :] = current_paddle_pos[done_mask]
+                    position_count[done_mask] = 1  # We have 1 position after reset
+                    if use_action_disc:
+                        action_history[done_mask] = 0
+                        action_count[done_mask] = 0
+                    if use_puck_disc:
+                        puck_position_history[done_mask] = 0
+                        puck_position_history[done_mask, -1, :] = current_puck_pos[done_mask]
+                        puck_count[done_mask] = 1
+                if use_long_discriminator_reward:
+                    long_position_history[done_mask] = 0
+                    long_position_history[done_mask, -1, :] = current_paddle_pos[done_mask]
+                    long_position_count[done_mask] = 1
+                    if use_puck_disc_long:
+                        long_puck_history[done_mask] = 0
+                        long_puck_history[done_mask, -1, :] = current_puck_pos[done_mask]
+                        long_puck_count[done_mask] = 1
             
             # Track which environments just reset for next step
             just_reset = next_done.bool()
@@ -644,31 +827,33 @@ if __name__ == "__main__":
                 temporal_alignment_reward_raw[t] = cosine_sim * temporal_valid.float()
             temporal_alignment_reward_scaled = temporal_alignment_reward_raw * args.temporal_alignment_reward_scale
             
-            if use_discriminator_reward:
-                # AMP: Compute discriminator rewards and combine with task rewards
-                # Flatten discriminator observations
+            if use_short_discriminator_reward:
                 b_disc_obs = disc_obs.reshape(-1, disc_obs_dim)
-                
-                # Normalize discriminator observations
                 norm_disc_obs = disc_normalizer.normalize(b_disc_obs)
-                
-                # Compute discriminator rewards (LSGAN)
                 disc_scores = discriminator(norm_disc_obs).squeeze(-1)
-                # For LSGAN, discriminator outputs raw scores (not logits)
-                # Reward formula: quadratic function peaked at disc_scores=1, clamped to [0, 1]
                 disc_r_raw = torch.clamp(1 - 0.25 * (disc_scores - 1) ** 2, min=0)
-                
-                # Mask invalid transitions (set reward to 0)
                 b_valid = valid_transition.reshape(-1)
-                disc_r_raw = disc_r_raw * b_valid.float()  # Zero out invalid transitions
-                
-                # Reshape discriminator rewards to match original shape
+                disc_r_raw = disc_r_raw * b_valid.float()
                 disc_r_raw_shaped = disc_r_raw.reshape(args.num_steps, args.num_envs)
                 disc_r_scaled = args.disc_reward_weight * disc_r_raw_shaped
             else:
                 b_disc_obs = None
                 disc_r_raw = torch.zeros(args.num_steps * args.num_envs, device=args.device)
                 disc_r_scaled = torch.zeros((args.num_steps, args.num_envs), device=args.device)
+
+            if use_long_discriminator_reward:
+                b_disc_obs_long = disc_obs_long.reshape(-1, disc_obs_dim_long)
+                norm_disc_obs_long = disc_normalizer_long.normalize(b_disc_obs_long)
+                disc_scores_long = discriminator_long(norm_disc_obs_long).squeeze(-1)
+                disc_r_raw_long = torch.clamp(1 - 0.25 * (disc_scores_long - 1) ** 2, min=0)
+                b_valid_long = valid_transition_long.reshape(-1)
+                disc_r_raw_long = disc_r_raw_long * b_valid_long.float()
+                disc_r_raw_shaped_long = disc_r_raw_long.reshape(args.num_steps, args.num_envs)
+                disc_r_scaled_long = args.long_disc_reward_weight * disc_r_raw_shaped_long
+            else:
+                b_disc_obs_long = None
+                disc_r_raw_long = torch.zeros(args.num_steps * args.num_envs, device=args.device)
+                disc_r_scaled_long = torch.zeros((args.num_steps, args.num_envs), device=args.device)
             task_r_raw = rewards
             task_r_scaled = args.task_reward_weight * task_r_raw
             
@@ -676,6 +861,7 @@ if __name__ == "__main__":
             combined_rewards = (
                 task_r_scaled
                 + disc_r_scaled
+                + disc_r_scaled_long
                 + temporal_alignment_reward_scaled
                 + action_magnitude_reward_scaled
             )
@@ -695,11 +881,16 @@ if __name__ == "__main__":
             returns = advantages + values
             
             # Log reward stream statistics (raw and scaled)
-            if use_discriminator_reward:
+            if use_short_discriminator_reward:
                 writer.add_scalar("amp/disc_reward_raw_mean", disc_r_raw.mean().item(), global_step)
                 writer.add_scalar("amp/disc_reward_raw_std", disc_r_raw.std().item(), global_step)
                 writer.add_scalar("amp/disc_reward_scaled_mean", disc_r_scaled.mean().item(), global_step)
                 writer.add_scalar("amp/disc_reward_scaled_std", disc_r_scaled.std().item(), global_step)
+            if use_long_discriminator_reward:
+                writer.add_scalar("amp_long/disc_reward_raw_mean", disc_r_raw_long.mean().item(), global_step)
+                writer.add_scalar("amp_long/disc_reward_raw_std", disc_r_raw_long.std().item(), global_step)
+                writer.add_scalar("amp_long/disc_reward_scaled_mean", disc_r_scaled_long.mean().item(), global_step)
+                writer.add_scalar("amp_long/disc_reward_scaled_std", disc_r_scaled_long.std().item(), global_step)
             writer.add_scalar("amp/task_reward_raw_mean", task_r_raw.mean().item(), global_step)
             writer.add_scalar("amp/task_reward_raw_std", task_r_raw.std().item(), global_step)
             writer.add_scalar("amp/task_reward_scaled_mean", task_r_scaled.mean().item(), global_step)
@@ -714,7 +905,7 @@ if __name__ == "__main__":
             writer.add_scalar("amp/action_magnitude_reward_scaled_std", action_magnitude_reward_scaled.std().item(), global_step)
             
             # Backward-compatible logs.
-            if use_discriminator_reward:
+            if use_short_discriminator_reward:
                 writer.add_scalar("amp/disc_reward_mean", disc_r_raw.mean().item(), global_step)
                 writer.add_scalar("amp/disc_reward_std", disc_r_raw.std().item(), global_step)
             writer.add_scalar("amp/task_reward_mean", task_r_raw.mean().item(), global_step)
@@ -793,8 +984,8 @@ if __name__ == "__main__":
             if args.target_kl is not None and approx_kl > args.target_kl:
                 break
         
-        # AMP: Train discriminator
-        if use_discriminator_reward:
+        # AMP: Train short discriminator
+        if use_short_discriminator_reward:
             for i in range(args.num_discriminator_updates):
             # Sample demonstration data
                 demo_disc_obs = demo_loader.sample(args.disc_batch_size)
@@ -854,12 +1045,6 @@ if __name__ == "__main__":
                     disc_logit_reg_loss = torch.sum(logit_weights ** 2)
                     disc_loss = disc_loss + args.disc_logit_reg * disc_logit_reg_loss
             
-                # Weight decay
-                if args.disc_weight_decay > 0:
-                    disc_weights = discriminator.get_all_weights()
-                    disc_weight_decay_loss = torch.sum(disc_weights ** 2)
-                    disc_loss = disc_loss + args.disc_weight_decay * disc_weight_decay_loss
-            
                 # Update discriminator
                 disc_optimizer.zero_grad()
                 disc_loss.backward()
@@ -878,7 +1063,7 @@ if __name__ == "__main__":
                     disc_agent_acc = (disc_agent_logit < 0.0).float().mean().item()
                     disc_demo_acc = (disc_demo_logit > 0.0).float().mean().item()
             
-            # Log discriminator metrics
+            # Log short discriminator metrics
             writer.add_scalar("amp/disc_loss", disc_loss.item(), global_step)
             writer.add_scalar("amp/disc_loss_demo", disc_loss_demo.item(), global_step)
             writer.add_scalar("amp/disc_loss_agent", disc_loss_agent.item(), global_step)
@@ -888,6 +1073,75 @@ if __name__ == "__main__":
             writer.add_scalar("amp/disc_agent_logit_mean", disc_agent_logit.mean().item(), global_step)
             writer.add_scalar("amp/disc_demo_logit_mean", disc_demo_logit.mean().item(), global_step)
             writer.add_scalar("amp/replay_buffer_size", len(replay_buffer), global_step)
+
+        # AMP: Train long discriminator
+        if use_long_discriminator_reward:
+            for i in range(args.long_num_discriminator_updates):
+                demo_disc_obs_long = demo_loader_long.sample(args.long_disc_batch_size)
+                agent_samples_long = args.long_disc_batch_size // 2
+
+                b_valid_long = valid_transition_long.reshape(-1)
+                valid_disc_obs_long = b_disc_obs_long[b_valid_long]
+                perm_indices_long = torch.randperm(len(valid_disc_obs_long), device=args.device)
+                agent_disc_obs_current_long = valid_disc_obs_long[perm_indices_long[:agent_samples_long]]
+
+                num_to_store_long = min(len(valid_disc_obs_long), args.long_disc_replay_samples)
+                replay_buffer_long.push(valid_disc_obs_long[perm_indices_long[:num_to_store_long]])
+
+                if len(replay_buffer_long) > 0:
+                    agent_disc_obs_replay_long = replay_buffer_long.sample(agent_samples_long)
+                    agent_disc_obs_long = torch.cat([agent_disc_obs_current_long, agent_disc_obs_replay_long], dim=0)
+                else:
+                    agent_disc_obs_long = agent_disc_obs_current_long
+
+                norm_demo_disc_obs_long = disc_normalizer_long.normalize(demo_disc_obs_long)
+                norm_agent_disc_obs_long = disc_normalizer_long.normalize(agent_disc_obs_long)
+                norm_demo_disc_obs_long.requires_grad_(True)
+
+                disc_demo_logit_long = discriminator_long(norm_demo_disc_obs_long).squeeze(-1)
+                disc_agent_logit_long = discriminator_long(norm_agent_disc_obs_long).squeeze(-1)
+                disc_loss_demo_long = 0.5 * torch.mean((disc_demo_logit_long - 1.0) ** 2)
+                disc_loss_agent_long = 0.5 * torch.mean((disc_agent_logit_long - (-1.0)) ** 2)
+                disc_loss_long = disc_loss_demo_long + disc_loss_agent_long
+
+                disc_demo_grad_long = torch.autograd.grad(
+                    disc_demo_logit_long,
+                    norm_demo_disc_obs_long,
+                    grad_outputs=torch.ones_like(disc_demo_logit_long),
+                    create_graph=True,
+                    retain_graph=True,
+                    only_inputs=True,
+                )[0]
+                disc_grad_penalty_long = torch.mean(torch.sum(disc_demo_grad_long ** 2, dim=-1))
+                disc_loss_long = disc_loss_long + args.long_disc_grad_penalty * disc_grad_penalty_long
+
+                if args.long_disc_logit_reg > 0:
+                    logit_weights_long = discriminator_long.get_logit_weights()
+                    disc_logit_reg_loss_long = torch.sum(logit_weights_long ** 2)
+                    disc_loss_long = disc_loss_long + args.long_disc_logit_reg * disc_logit_reg_loss_long
+
+                disc_optimizer_long.zero_grad()
+                disc_loss_long.backward()
+                nn.utils.clip_grad_norm_(discriminator_long.parameters(), args.max_grad_norm)
+                disc_optimizer_long.step()
+
+                disc_normalizer_long.record(b_disc_obs_long[b_valid_long])
+                disc_normalizer_long.record(demo_disc_obs_long)
+                disc_normalizer_long.update()
+
+                with torch.no_grad():
+                    disc_agent_acc_long = (disc_agent_logit_long < 0.0).float().mean().item()
+                    disc_demo_acc_long = (disc_demo_logit_long > 0.0).float().mean().item()
+
+            writer.add_scalar("amp_long/disc_loss", disc_loss_long.item(), global_step)
+            writer.add_scalar("amp_long/disc_loss_demo", disc_loss_demo_long.item(), global_step)
+            writer.add_scalar("amp_long/disc_loss_agent", disc_loss_agent_long.item(), global_step)
+            writer.add_scalar("amp_long/disc_grad_penalty", disc_grad_penalty_long.item(), global_step)
+            writer.add_scalar("amp_long/disc_agent_acc", disc_agent_acc_long, global_step)
+            writer.add_scalar("amp_long/disc_demo_acc", disc_demo_acc_long, global_step)
+            writer.add_scalar("amp_long/disc_agent_logit_mean", disc_agent_logit_long.mean().item(), global_step)
+            writer.add_scalar("amp_long/disc_demo_logit_mean", disc_demo_logit_long.mean().item(), global_step)
+            writer.add_scalar("amp_long/replay_buffer_size", len(replay_buffer_long), global_step)
         
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
         var_y = np.var(y_true)
@@ -951,13 +1205,19 @@ if __name__ == "__main__":
             model_path = f"{checkpoint_dir}/model.pth"
             torch.save(agent.state_dict(), model_path)
             
-            # Save AMP components in checkpoint when discriminator reward is active
-            if use_discriminator_reward:
+            # Save short AMP components in checkpoint when short discriminator reward is active
+            if use_short_discriminator_reward:
                 torch.save(discriminator.state_dict(), f"{checkpoint_dir}/discriminator.pth")
                 torch.save({
                     'normalizer': disc_normalizer.state_dict(),
                     'replay_buffer': replay_buffer.state_dict()
                 }, f"{checkpoint_dir}/amp_components.pth")
+            if use_long_discriminator_reward:
+                torch.save(discriminator_long.state_dict(), f"{checkpoint_dir}/discriminator_long.pth")
+                torch.save({
+                    'normalizer': disc_normalizer_long.state_dict(),
+                    'replay_buffer': replay_buffer_long.state_dict()
+                }, f"{checkpoint_dir}/amp_components_long.pth")
 
             # evaluate the model
             evaluate_agent(
@@ -979,13 +1239,20 @@ if __name__ == "__main__":
     torch.save(agent.state_dict(), f"{log_parent_dir}/model.pth")
     
     # Save AMP components when discriminator reward is active
-    if use_discriminator_reward:
+    if use_short_discriminator_reward:
         torch.save(discriminator.state_dict(), f"{log_parent_dir}/discriminator.pth")
         torch.save({
             'normalizer': disc_normalizer.state_dict(),
             'replay_buffer': replay_buffer.state_dict()
         }, f"{log_parent_dir}/amp_components.pth")
-        print(f"✓ Saved discriminator and AMP components")
+        print(f"✓ Saved short discriminator and AMP components")
+    if use_long_discriminator_reward:
+        torch.save(discriminator_long.state_dict(), f"{log_parent_dir}/discriminator_long.pth")
+        torch.save({
+            'normalizer': disc_normalizer_long.state_dict(),
+            'replay_buffer': replay_buffer_long.state_dict()
+        }, f"{log_parent_dir}/amp_components_long.pth")
+        print(f"✓ Saved long discriminator and AMP components")
 
     # evaluate the model and save results
     evaluate_agent(

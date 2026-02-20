@@ -3,7 +3,7 @@ import math
 import numpy as np
 from gymnasium.spaces import Box
 from .airhockey_base import AirHockeyBaseEnv
-from .airhockey_rewards import AirHockeyPuckCatchReward, AirHockeyPuckVelReward, AirHockeyPuckTouchReward, AirHockeyPuckHeightReward, AirHockeyPuckJuggleReward, AirHockeyPuckJuggleLinearTopReward, AirHockeyPuckStrikeReward, AirHockeyStrikeCrowdReward, AirHockeyPaddleFreeMovementReward
+from .airhockey_rewards import AirHockeyPuckCatchReward, AirHockeyPuckVelReward, AirHockeyPuckTouchReward, AirHockeyPuckHeightReward, AirHockeyPuckJuggleReward, AirHockeyPuckJuggleLinearTopReward, AirHockeyPuckJuggleLinearTopNoBaseReward, AirHockeyPuckStrikeReward, AirHockeyStrikeCrowdReward, AirHockeyPaddleFreeMovementReward
 
 class AirHockeyPuckVelEnv(AirHockeyBaseEnv):
     def initialize_spaces(self, obs_type):
@@ -247,6 +247,20 @@ class AirHockeyPuckJuggleLinearTopEnv(AirHockeyPuckJuggleEnv):
         heading = self.rng.uniform(low=0.0, high=2 * math.pi)
         vel = (speed * math.cos(heading), speed * math.sin(heading))
         return (x_pos, y_pos), vel
+
+
+class AirHockeyPuckJuggleLinearTopNoBaseRewardEnv(AirHockeyPuckJuggleLinearTopEnv):
+    def initialize_spaces(self, obs_type):
+        low, high = self.init_observation(obs_type)
+        self.action_space = self.single_action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32)
+        self.reward_range = Box(low=-1, high=1)
+        self.count_hit = False
+        self.hits = 0
+        self.reward = AirHockeyPuckJuggleLinearTopNoBaseReward(self)
+
+    @staticmethod
+    def from_dict(state_dict):
+        return AirHockeyPuckJuggleLinearTopNoBaseRewardEnv(**state_dict)
 
 class AirHockeyPuckStrikeEnv(AirHockeyBaseEnv):
     def initialize_spaces(self, obs_type):

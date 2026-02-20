@@ -213,11 +213,10 @@ def extract_position_sequences(
         If include_actions=True and include_puck=True:
             tuple: (position_sequences, action_sequences, puck_sequences)
     """
-    if include_puck:
-        if puck_window_size != 5:
-            raise ValueError("puck_window_size must be 5 for AMP puck processing.")
-        if puck_window_size % 2 == 0:
-            raise ValueError("puck_window_size must be odd.")
+    if include_puck and puck_window_size != sequence_length:
+        raise ValueError(
+            f"puck_window_size ({puck_window_size}) must match sequence_length ({sequence_length})."
+        )
 
     n_timesteps = train_vals.shape[0]
     position_sequences = []
@@ -450,7 +449,15 @@ def process_all_trajectories(data_dir, min_length=50, max_trajectories=None,
     return position_dataset, stats
 
 
-def save_dataset(position_dataset, output_path, stats=None, action_dataset=None, puck_dataset=None):
+def save_dataset(
+    position_dataset,
+    output_path,
+    stats=None,
+    action_dataset=None,
+    puck_dataset=None,
+    long_position_dataset=None,
+    long_puck_dataset=None,
+):
     """
     Save dataset as PyTorch tensor file.
     
@@ -460,6 +467,8 @@ def save_dataset(position_dataset, output_path, stats=None, action_dataset=None,
         stats: Optional statistics dictionary
         action_dataset: Optional np.ndarray of shape (N, 4, 2) for transition actions
         puck_dataset: Optional np.ndarray of shape (N, 5, 2) for aligned puck windows
+        long_position_dataset: Optional np.ndarray of shape (N_long, 30, 2) for long windows
+        long_puck_dataset: Optional np.ndarray of shape (N_long, 30, 2) for aligned long puck windows
     """
     # Convert to torch tensor
     position_tensor = torch.from_numpy(position_dataset).float()
@@ -484,6 +493,20 @@ def save_dataset(position_dataset, output_path, stats=None, action_dataset=None,
         save_dict['has_puck'] = True
     else:
         save_dict['has_puck'] = False
+
+    if long_position_dataset is not None:
+        long_position_tensor = torch.from_numpy(long_position_dataset).float()
+        save_dict['position_sequences_30'] = long_position_tensor
+        save_dict['has_long_positions'] = True
+    else:
+        save_dict['has_long_positions'] = False
+
+    if long_puck_dataset is not None:
+        long_puck_tensor = torch.from_numpy(long_puck_dataset).float()
+        save_dict['puck_sequences_30'] = long_puck_tensor
+        save_dict['has_long_puck'] = True
+    else:
+        save_dict['has_long_puck'] = False
     
     if stats is not None:
         # Convert stats to be JSON-serializable (remove Path objects)
@@ -504,6 +527,10 @@ def save_dataset(position_dataset, output_path, stats=None, action_dataset=None,
         print(f"  Includes action sequences: Yes")
     if puck_dataset is not None:
         print(f"  Includes puck sequences: Yes")
+    if long_position_dataset is not None:
+        print(f"  Includes long position sequences: Yes")
+    if long_puck_dataset is not None:
+        print(f"  Includes long puck sequences: Yes")
 
 
 def print_dataset_statistics(position_dataset, stats, action_dataset=None, puck_dataset=None):
@@ -580,11 +607,12 @@ def print_dataset_statistics(position_dataset, stats, action_dataset=None, puck_
             speed_dt=0.05,
             noise_std=0.0,
         )
-        speed_bins = puck_features[:, 3]
+        speed_bins = puck_features[:, 1]
         unique_bins, counts = np.unique(speed_bins, return_counts=True)
         print("\nPuck discriminator feature preview (noise_std=0.0, axis=0):")
         print(f"  Feature shape: {puck_features.shape}")
-        print(f"  Direction sign mean: {puck_features[:, 2].mean():.4f}")
+        print(f"  Direction sign mean: {puck_features[:, 0].mean():.4f}")
+        print(f"  Vertical bin mean: {puck_features[:, 2].mean():.4f}")
         print(f"  Downward speed bin distribution: {dict(zip(unique_bins.tolist(), counts.tolist()))}")
 
 

@@ -97,6 +97,8 @@ def process_all_trajectories(
     sequence_length=5,
     include_actions=False,
     include_puck=False,
+    include_long_sequences=True,
+    long_sequence_length=30,
 ):
     """
     Process all split-schema trajectory files and collect position sequences.
@@ -115,6 +117,8 @@ def process_all_trajectories(
     all_position_sequences = []
     all_action_sequences = [] if include_actions else None
     all_puck_sequences = [] if include_puck else None
+    all_long_position_sequences = [] if include_long_sequences else None
+    all_long_puck_sequences = [] if (include_long_sequences and include_puck) else None
     stats = {
         "total_files": len(trajectory_files),
         "valid_trajectories": 0,
@@ -145,6 +149,7 @@ def process_all_trajectories(
                 sequence_length=sequence_length,
                 include_actions=include_actions,
                 include_puck=include_puck,
+                puck_window_size=sequence_length,
             )
 
             if include_actions and include_puck:
@@ -171,6 +176,21 @@ def process_all_trajectories(
             )
             stats["total_timesteps"] += train_vals.shape[0]
 
+            if include_long_sequences:
+                long_result = extract_position_sequences(
+                    train_vals,
+                    sequence_length=long_sequence_length,
+                    include_actions=False,
+                    include_puck=include_puck,
+                    puck_window_size=long_sequence_length,
+                )
+                if include_puck:
+                    long_position_sequences, long_puck_sequences = long_result
+                    all_long_position_sequences.append(long_position_sequences)
+                    all_long_puck_sequences.append(long_puck_sequences)
+                else:
+                    all_long_position_sequences.append(long_result)
+
         except Exception as exc:
             print(f"\nError processing {file_path.name}: {exc}")
             stats["skipped_trajectories"] += 1
@@ -181,19 +201,25 @@ def process_all_trajectories(
         raise ValueError("No valid trajectories found!")
 
     position_dataset = np.concatenate(all_position_sequences, axis=0)
+    long_position_dataset = (
+        np.concatenate(all_long_position_sequences, axis=0) if include_long_sequences else None
+    )
+    long_puck_dataset = (
+        np.concatenate(all_long_puck_sequences, axis=0) if (include_long_sequences and include_puck) else None
+    )
 
     if include_actions and include_puck:
         action_dataset = np.concatenate(all_action_sequences, axis=0)
         puck_dataset = np.concatenate(all_puck_sequences, axis=0)
-        return position_dataset, action_dataset, puck_dataset, stats
+        return position_dataset, action_dataset, puck_dataset, long_position_dataset, long_puck_dataset, stats
     if include_actions:
         action_dataset = np.concatenate(all_action_sequences, axis=0)
-        return position_dataset, action_dataset, stats
+        return position_dataset, action_dataset, long_position_dataset, stats
     if include_puck:
         puck_dataset = np.concatenate(all_puck_sequences, axis=0)
-        return position_dataset, puck_dataset, stats
+        return position_dataset, puck_dataset, long_position_dataset, long_puck_dataset, stats
 
-    return position_dataset, stats
+    return position_dataset, long_position_dataset, stats
 
 
 def parse_args():
@@ -259,6 +285,17 @@ def parse_args():
         action="store_true",
         help="Include aligned 5-step puck windows [t..t+4] for each paddle sequence",
     )
+    parser.add_argument(
+        "--long-sequence-length",
+        type=int,
+        default=30,
+        help="Long temporal sequence length stored for long discriminator training",
+    )
+    parser.add_argument(
+        "--disable-long-sequences",
+        action="store_true",
+        help="Disable storing additional long (30-step) position/puck sequences",
+    )
 
     return parser.parse_args()
 
@@ -267,7 +304,7 @@ def main():
     """Main function to prepare AMP position dataset from split-schema trajectories."""
     args = parse_args()
     if args.include_puck and args.sequence_length != 5:
-        raise ValueError("--include-puck currently requires --sequence-length 5.")
+        raise ValueError("--include-puck currently requires --sequence-length 5 for short-head compatibility.")
 
     print("=" * 80)
     print("AMP POSITION DATASET PREPARATION (SPLIT SCHEMA)")
@@ -281,6 +318,8 @@ def main():
     print(f"  Sequence length: {args.sequence_length}")
     print(f"  Include actions: {args.include_actions}")
     print(f"  Include puck windows: {args.include_puck}")
+    print(f"  Include long sequences: {not args.disable_long_sequences}")
+    print(f"  Long sequence length: {args.long_sequence_length}")
 
     demo_list = None
     if args.demo_list:
@@ -297,20 +336,24 @@ def main():
         sequence_length=args.sequence_length,
         include_actions=args.include_actions,
         include_puck=args.include_puck,
+        include_long_sequences=not args.disable_long_sequences,
+        long_sequence_length=args.long_sequence_length,
     )
 
     if args.include_actions and args.include_puck:
-        position_dataset, action_dataset, puck_dataset, stats = result
+        position_dataset, action_dataset, puck_dataset, long_position_dataset, long_puck_dataset, stats = result
     elif args.include_actions:
-        position_dataset, action_dataset, stats = result
+        position_dataset, action_dataset, long_position_dataset, stats = result
         puck_dataset = None
+        long_puck_dataset = None
     elif args.include_puck:
-        position_dataset, puck_dataset, stats = result
+        position_dataset, puck_dataset, long_position_dataset, long_puck_dataset, stats = result
         action_dataset = None
     else:
-        position_dataset, stats = result
+        position_dataset, long_position_dataset, stats = result
         action_dataset = None
         puck_dataset = None
+        long_puck_dataset = None
 
     print_dataset_statistics(position_dataset, stats, action_dataset, puck_dataset)
 
@@ -320,7 +363,15 @@ def main():
         print("\nWARNING: Validation failed! Proceeding with save anyway...")
 
     output_path = Path(args.output_path)
-    save_dataset(position_dataset, output_path, stats, action_dataset, puck_dataset)
+    save_dataset(
+        position_dataset=position_dataset,
+        output_path=output_path,
+        stats=stats,
+        action_dataset=action_dataset,
+        puck_dataset=puck_dataset,
+        long_position_dataset=long_position_dataset,
+        long_puck_dataset=long_puck_dataset,
+    )
 
     print("\n" + "=" * 80)
     print("✓ Dataset preparation complete!")
@@ -346,6 +397,11 @@ def main():
         print("\n  # With --include-puck flag:")
         print("  puck_sequences = data['puck_sequences']  # Shape: (N, 5, 2)")
         print("  # aligned with paddle windows [t..t+4]; index 2 is two timesteps before s5")
+    if not args.disable_long_sequences:
+        print("\n  # Long-window keys for second discriminator:")
+        print("  long_position_sequences = data['position_sequences_30']  # Shape: (N_long, 30, 2)")
+        if args.include_puck:
+            print("  long_puck_sequences = data['puck_sequences_30']  # Shape: (N_long, 30, 2)")
 
 
 if __name__ == "__main__":

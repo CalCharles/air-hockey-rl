@@ -34,6 +34,22 @@ disc_reward_weight: 0.5
 num_discriminator_updates: 3
 disc_hidden_sizes: [128, 128]
 
+use_long_discriminator: true
+long_disc_reward_weight: 0.5
+long_disc_replay_buffer_size: 100000
+long_disc_replay_samples: 4096
+long_disc_batch_size: 512
+long_disc_learning_rate: 0.00001
+long_disc_logit_reg: 0.01
+long_disc_grad_penalty: 5.0
+long_disc_weight_decay: 0.0001
+long_num_discriminator_updates: 3
+long_disc_hidden_sizes: [128, 128]
+long_history_len: 30
+long_num_bins: 3
+long_samples_per_bin: 2
+long_puck_current_index: 15
+
 # Optional auxiliary rewards
 temporal_alignment_reward_scale: 0.75
 action_magnitude_reward_scale: 0.75
@@ -45,7 +61,9 @@ args_file: null
 model_path: null
 encoder_path: null
 discriminator_path: null
+long_discriminator_path: null
 amp_components_path: null
+long_amp_components_path: null
 log_parent_dir: "runs/rma/test_amp_training/run"
 run_name: "rma_default"
 demo_data_path: "scripts/smooth_policy/amp_history/amp_training/amp_data/amp_paddle_puck_dataset.pt" # paddle and puck
@@ -69,5 +87,7 @@ model_save_interval: 50
 
 # Action-conditioned discriminator
 use_action_discriminator: false
-use_puck_discriminator: true
+use_puck_discriminator: false
+puck_vertical_pos_min: -1.0
+puck_vertical_pos_max: 1.0
 disc_debug_interval: 5000

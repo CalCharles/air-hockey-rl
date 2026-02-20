@@ -195,6 +195,13 @@ class AirHockeyPuckJuggleLinearTopReward(AirHockeyPuckJuggleReward):
 
         return reward
 
+
+class AirHockeyPuckJuggleLinearTopNoBaseReward(AirHockeyPuckJuggleLinearTopReward):
+    def get_base_reward(self, state_info):
+        # Preserve success logic from linear-top shaping while removing base reward signal.
+        _, success = super().get_base_reward(state_info)
+        return 0.0, success
+
 class AirHockeyPuckStrikeReward(AirHockeyRewardBase):
     def __init__(self, task_env):
         super().__init__(task_env)
