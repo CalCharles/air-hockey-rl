@@ -31,10 +31,12 @@ class Agent(nn.Module):
         hidden_size=64,
         activation_type="tanh",
         leaky_relu_negative_slope=0.01,
+        use_intrinsic_critic=False,
     ): # preliminary calculation
         super().__init__()
         obs_dim = int(np.prod(envs.single_observation_space.shape))
         act_dim = int(np.prod(envs.single_action_space.shape))
+        self.use_intrinsic_critic = use_intrinsic_critic
 
         self.critic = nn.Sequential(
             layer_init(nn.Linear(obs_dim, hidden_size)),
@@ -43,6 +45,15 @@ class Agent(nn.Module):
             build_activation(activation_type, leaky_relu_negative_slope),
             layer_init(nn.Linear(hidden_size, 1), std=1.0),
         )
+        self.intrinsic_critic = None
+        if self.use_intrinsic_critic:
+            self.intrinsic_critic = nn.Sequential(
+                layer_init(nn.Linear(obs_dim, hidden_size)),
+                build_activation(activation_type, leaky_relu_negative_slope),
+                layer_init(nn.Linear(hidden_size, hidden_size)),
+                build_activation(activation_type, leaky_relu_negative_slope),
+                layer_init(nn.Linear(hidden_size, 1), std=1.0),
+            )
         self.actor = nn.Sequential(
             layer_init(nn.Linear(obs_dim, hidden_size)),
             build_activation(activation_type, leaky_relu_negative_slope),
@@ -63,6 +74,14 @@ class Agent(nn.Module):
 
     def get_value(self, x):
         return self.critic(x)
+
+    def get_intrinsic_value(self, x):
+        if self.intrinsic_critic is None:
+            return torch.zeros((x.shape[0], 1), device=x.device, dtype=x.dtype)
+        return self.intrinsic_critic(x)
+
+    def get_values(self, x):
+        return self.get_value(x), self.get_intrinsic_value(x)
     
     def get_action_mean_and_logstd(self, x):
         x = self.actor(x)
@@ -85,7 +104,7 @@ class Agent(nn.Module):
                 x = x.unsqueeze(0)
             return self.get_action_and_value(x)[0] # just return the action, as a tensor
 
-    def get_action_and_value(self, x, action=None):
+    def get_action_and_value(self, x, action=None, return_intrinsic_value=False):
         action_mean, action_logstd = self.get_action_mean_and_logstd(x)
         action_std = torch.exp(action_logstd)
         normal = Normal(action_mean, action_std)
@@ -102,5 +121,8 @@ class Agent(nn.Module):
         log_prob = normal.log_prob(x_t) - torch.log(self.action_scale * (1 - y_t.pow(2)) + self.EPS)
         log_prob = log_prob.sum(1)
         mean = torch.tanh(action_mean) * self.action_scale + self.action_bias
-
-        return action, log_prob, mean, self.critic(x)
+        ext_value = self.critic(x)
+        if return_intrinsic_value:
+            int_value = self.get_intrinsic_value(x)
+            return action, log_prob, mean, ext_value, int_value
+        return action, log_prob, mean, ext_value

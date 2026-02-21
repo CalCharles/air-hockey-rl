@@ -130,9 +130,18 @@ def evaluate_agent(
         ),
         single_action_space=envs.single_action_space,
     )
-    model = Agent(policy_env_view, action_scale=action_scale, action_bias=0.0, hidden_size=agent_hidden_size)
     state_dict = torch.load(model_path)
-    model.load_state_dict(state_dict)
+    has_intrinsic_head = any(k.startswith("intrinsic_critic.") for k in state_dict.keys())
+    model = Agent(
+        policy_env_view,
+        action_scale=action_scale,
+        action_bias=0.0,
+        hidden_size=agent_hidden_size,
+        use_intrinsic_critic=has_intrinsic_head,
+    )
+    load_result = model.load_state_dict(state_dict, strict=False)
+    if load_result.unexpected_keys:
+        print(f"[evaluate] Unexpected checkpoint keys: {load_result.unexpected_keys}")
 
     env = envs.envs[0]
     renderer = AirHockeyRenderer(env, show_target_position=True, show_acceleration_arrow=False)

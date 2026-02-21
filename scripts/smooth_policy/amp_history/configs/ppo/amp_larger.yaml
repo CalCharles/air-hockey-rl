@@ -76,4 +76,4 @@ use_reference_state_init: false
 reference_data_path: null  # Will default to demo_data_path
 ref_max_episode_steps: 30  # Slightly longer episodes with more diverse data
 
-agent_hidden_size: 512 # larger actor
+agent_hidden_size: 256 # larger actor

@@ -216,3 +216,6 @@ plots/
 datasets/
 new_data/
 demo/
+*.out
+.cursor/
+shared/

@@ -113,6 +113,171 @@ def extract_current_puck_position(observation):
     raise ValueError(f"Observation dim {obs_dim} is too small to extract puck position.")
 
 
+def train_lsgan_discriminator_step(
+    demo_loader,
+    disc_batch_size,
+    b_disc_obs,
+    b_valid,
+    replay_buffer,
+    replay_samples,
+    disc_normalizer,
+    discriminator,
+    disc_optimizer,
+    grad_penalty_weight,
+    logit_reg_weight,
+    max_grad_norm,
+    device,
+):
+    """Run one discriminator update step with the same LSGAN objective used in training."""
+    demo_disc_obs = demo_loader.sample(disc_batch_size)
+    agent_samples = disc_batch_size // 2
+
+    valid_disc_obs = b_disc_obs[b_valid]
+    perm_indices = torch.randperm(len(valid_disc_obs), device=device)
+    agent_disc_obs_current = valid_disc_obs[perm_indices[:agent_samples]]
+
+    num_to_store = min(len(valid_disc_obs), replay_samples)
+    replay_buffer.push(valid_disc_obs[perm_indices[:num_to_store]])
+
+    if len(replay_buffer) > 0:
+        agent_disc_obs_replay = replay_buffer.sample(agent_samples)
+        agent_disc_obs = torch.cat([agent_disc_obs_current, agent_disc_obs_replay], dim=0)
+    else:
+        agent_disc_obs = agent_disc_obs_current
+
+    norm_demo_disc_obs = disc_normalizer.normalize(demo_disc_obs)
+    norm_agent_disc_obs = disc_normalizer.normalize(agent_disc_obs)
+    norm_demo_disc_obs.requires_grad_(True)
+
+    disc_demo_logit = discriminator(norm_demo_disc_obs).squeeze(-1)
+    disc_agent_logit = discriminator(norm_agent_disc_obs).squeeze(-1)
+
+    disc_loss_demo = 0.5 * torch.mean((disc_demo_logit - 1.0) ** 2)
+    disc_loss_agent = 0.5 * torch.mean((disc_agent_logit - (-1.0)) ** 2)
+    disc_loss = disc_loss_demo + disc_loss_agent
+
+    disc_demo_grad = torch.autograd.grad(
+        disc_demo_logit,
+        norm_demo_disc_obs,
+        grad_outputs=torch.ones_like(disc_demo_logit),
+        create_graph=True,
+        retain_graph=True,
+        only_inputs=True,
+    )[0]
+    disc_grad_penalty = torch.mean(torch.sum(disc_demo_grad ** 2, dim=-1))
+    disc_loss = disc_loss + grad_penalty_weight * disc_grad_penalty
+
+    if logit_reg_weight > 0:
+        logit_weights = discriminator.get_logit_weights()
+        disc_logit_reg_loss = torch.sum(logit_weights ** 2)
+        disc_loss = disc_loss + logit_reg_weight * disc_logit_reg_loss
+
+    disc_optimizer.zero_grad()
+    disc_loss.backward()
+    nn.utils.clip_grad_norm_(discriminator.parameters(), max_grad_norm)
+    disc_optimizer.step()
+
+    disc_normalizer.record(b_disc_obs[b_valid])
+    disc_normalizer.record(demo_disc_obs)
+    disc_normalizer.update()
+
+    with torch.no_grad():
+        disc_agent_acc = (disc_agent_logit < 0.0).float().mean().item()
+        disc_demo_acc = (disc_demo_logit > 0.0).float().mean().item()
+
+    return {
+        "disc_loss": disc_loss,
+        "disc_loss_demo": disc_loss_demo,
+        "disc_loss_agent": disc_loss_agent,
+        "disc_grad_penalty": disc_grad_penalty,
+        "disc_agent_acc": disc_agent_acc,
+        "disc_demo_acc": disc_demo_acc,
+        "disc_agent_logit": disc_agent_logit,
+        "disc_demo_logit": disc_demo_logit,
+    }
+
+
+def log_discriminator_metrics(writer, prefix, metrics, replay_buffer_size, global_step):
+    writer.add_scalar(f"{prefix}/disc_loss", metrics["disc_loss"].item(), global_step)
+    writer.add_scalar(f"{prefix}/disc_loss_demo", metrics["disc_loss_demo"].item(), global_step)
+    writer.add_scalar(f"{prefix}/disc_loss_agent", metrics["disc_loss_agent"].item(), global_step)
+    writer.add_scalar(f"{prefix}/disc_grad_penalty", metrics["disc_grad_penalty"].item(), global_step)
+    writer.add_scalar(f"{prefix}/disc_agent_acc", metrics["disc_agent_acc"], global_step)
+    writer.add_scalar(f"{prefix}/disc_demo_acc", metrics["disc_demo_acc"], global_step)
+    writer.add_scalar(f"{prefix}/disc_agent_logit_mean", metrics["disc_agent_logit"].mean().item(), global_step)
+    writer.add_scalar(f"{prefix}/disc_demo_logit_mean", metrics["disc_demo_logit"].mean().item(), global_step)
+    writer.add_scalar(f"{prefix}/replay_buffer_size", replay_buffer_size, global_step)
+
+
+def log_reward_stream_stats(
+    writer,
+    global_step,
+    task_r_raw,
+    task_r_scaled,
+    temporal_alignment_reward_raw,
+    temporal_alignment_reward_scaled,
+    action_magnitude_reward_raw,
+    action_magnitude_reward_scaled,
+    combined_rewards,
+    advantages,
+    values,
+    use_short_discriminator_reward,
+    disc_r_raw,
+    disc_r_scaled,
+    use_long_discriminator_reward,
+    disc_r_raw_long,
+    disc_r_scaled_long,
+):
+    if use_short_discriminator_reward:
+        writer.add_scalar("amp/disc_reward_raw_mean", disc_r_raw.mean().item(), global_step)
+        writer.add_scalar("amp/disc_reward_raw_std", disc_r_raw.std().item(), global_step)
+        writer.add_scalar("amp/disc_reward_scaled_mean", disc_r_scaled.mean().item(), global_step)
+        writer.add_scalar("amp/disc_reward_scaled_std", disc_r_scaled.std().item(), global_step)
+    if use_long_discriminator_reward:
+        writer.add_scalar("amp_long/disc_reward_raw_mean", disc_r_raw_long.mean().item(), global_step)
+        writer.add_scalar("amp_long/disc_reward_raw_std", disc_r_raw_long.std().item(), global_step)
+        writer.add_scalar("amp_long/disc_reward_scaled_mean", disc_r_scaled_long.mean().item(), global_step)
+        writer.add_scalar("amp_long/disc_reward_scaled_std", disc_r_scaled_long.std().item(), global_step)
+
+    writer.add_scalar("amp/task_reward_raw_mean", task_r_raw.mean().item(), global_step)
+    writer.add_scalar("amp/task_reward_raw_std", task_r_raw.std().item(), global_step)
+    writer.add_scalar("amp/task_reward_scaled_mean", task_r_scaled.mean().item(), global_step)
+    writer.add_scalar("amp/task_reward_scaled_std", task_r_scaled.std().item(), global_step)
+    writer.add_scalar("amp/temporal_alignment_reward_raw_mean", temporal_alignment_reward_raw.mean().item(), global_step)
+    writer.add_scalar("amp/temporal_alignment_reward_raw_std", temporal_alignment_reward_raw.std().item(), global_step)
+    writer.add_scalar("amp/temporal_alignment_reward_scaled_mean", temporal_alignment_reward_scaled.mean().item(), global_step)
+    writer.add_scalar("amp/temporal_alignment_reward_scaled_std", temporal_alignment_reward_scaled.std().item(), global_step)
+    writer.add_scalar("amp/action_magnitude_reward_raw_mean", action_magnitude_reward_raw.mean().item(), global_step)
+    writer.add_scalar("amp/action_magnitude_reward_raw_std", action_magnitude_reward_raw.std().item(), global_step)
+    writer.add_scalar("amp/action_magnitude_reward_scaled_mean", action_magnitude_reward_scaled.mean().item(), global_step)
+    writer.add_scalar("amp/action_magnitude_reward_scaled_std", action_magnitude_reward_scaled.std().item(), global_step)
+
+    # Backward-compatible logs.
+    if use_short_discriminator_reward:
+        writer.add_scalar("amp/disc_reward_mean", disc_r_raw.mean().item(), global_step)
+        writer.add_scalar("amp/disc_reward_std", disc_r_raw.std().item(), global_step)
+    writer.add_scalar("amp/task_reward_mean", task_r_raw.mean().item(), global_step)
+    writer.add_scalar("amp/combined_reward_mean", combined_rewards.mean().item(), global_step)
+
+    writer.add_scalar("charts/advantage_mean", advantages.mean().item(), global_step)
+    writer.add_scalar("charts/advantage_std", advantages.std().item(), global_step)
+    writer.add_scalar("charts/value_mean", values.mean().item(), global_step)
+    writer.add_scalar("charts/value_std", values.std().item(), global_step)
+
+
+def save_amp_components(save_dir, discriminator, normalizer, replay_buffer, is_long=False):
+    discriminator_filename = "discriminator_long.pth" if is_long else "discriminator.pth"
+    components_filename = "amp_components_long.pth" if is_long else "amp_components.pth"
+    torch.save(discriminator.state_dict(), os.path.join(save_dir, discriminator_filename))
+    torch.save(
+        {
+            "normalizer": normalizer.state_dict(),
+            "replay_buffer": replay_buffer.state_dict(),
+        },
+        os.path.join(save_dir, components_filename),
+    )
+
+
 @dataclass
 class Args:
     num_envs: int = 8
@@ -170,6 +335,11 @@ class Args:
     config: str = "scripts/smooth_policy/configs/puck_touch/default_config.yaml"
     args_file: str = None
     model_path: str = None  # Path to pre-trained model state dict
+    bc_policy_path: str = None  # Path to frozen BC teacher policy (Agent state_dict)
+    bc_kl_weight: float = 0.01  # Initial KL weight for BC regularization: KL(pi_BC || pi_theta)
+    bc_kl_decay_iters: int = 200  # Linearly decay BC KL weight to 0 over this many iterations
+    reset_actor_logstd_on_model_load: bool = False  # Override actor_logstd immediately after loading model_path
+    actor_logstd_on_model_load: float = 0.0  # Value used when reset_actor_logstd_on_model_load=True
     discriminator_path: str = None  # Path to pre-trained discriminator state dict
     long_discriminator_path: str = None  # Path to second long-window discriminator state dict
     amp_components_path: str = None  # Path to AMP components (normalizer, replay buffer)
@@ -330,7 +500,29 @@ if __name__ == "__main__":
             raise FileNotFoundError(f"Model path {args.model_path} does not exist.")
         print(f"Loading pre-trained model from {args.model_path}")
         agent.load_state_dict(torch.load(args.model_path, map_location=args.device))
+        if args.reset_actor_logstd_on_model_load:
+            with torch.no_grad():
+                agent.actor_logstd.fill_(float(args.actor_logstd_on_model_load))
+            print(
+                "Applied actor_logstd override after model load: "
+                f"{float(args.actor_logstd_on_model_load):.4f}"
+            )
         print("Model loaded successfully")
+
+    bc_policy = None
+    if args.bc_policy_path is not None:
+        if not os.path.exists(args.bc_policy_path):
+            raise FileNotFoundError(f"BC policy path {args.bc_policy_path} does not exist.")
+        bc_policy = Agent(
+            policy_env_view,
+            action_scale=action_scale,
+            action_bias=0.0,
+            hidden_size=args.agent_hidden_size,
+        ).to(args.device)
+        bc_policy.load_state_dict(torch.load(args.bc_policy_path, map_location=args.device))
+        bc_policy.eval()
+        bc_policy.requires_grad_(False)
+        print(f"Loaded frozen BC policy from {args.bc_policy_path}")
     
     optimizer = torch.optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-6)
     use_short_discriminator_reward = args.disc_reward_weight > 0.0
@@ -579,6 +771,12 @@ if __name__ == "__main__":
             frac = 1.0 - (iteration - 1.0) / args.num_iterations
             lrnow = frac * args.learning_rate
             optimizer.param_groups[0]["lr"] = lrnow
+
+        if args.bc_kl_decay_iters > 0:
+            bc_anneal_frac = max(0.0, 1.0 - (iteration - 1.0) / float(args.bc_kl_decay_iters))
+            current_bc_kl_weight = args.bc_kl_weight * bc_anneal_frac
+        else:
+            current_bc_kl_weight = args.bc_kl_weight
 
         for step in range(0, args.num_steps):
             global_step += args.num_envs
@@ -880,42 +1078,25 @@ if __name__ == "__main__":
                 advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
             returns = advantages + values
             
-            # Log reward stream statistics (raw and scaled)
-            if use_short_discriminator_reward:
-                writer.add_scalar("amp/disc_reward_raw_mean", disc_r_raw.mean().item(), global_step)
-                writer.add_scalar("amp/disc_reward_raw_std", disc_r_raw.std().item(), global_step)
-                writer.add_scalar("amp/disc_reward_scaled_mean", disc_r_scaled.mean().item(), global_step)
-                writer.add_scalar("amp/disc_reward_scaled_std", disc_r_scaled.std().item(), global_step)
-            if use_long_discriminator_reward:
-                writer.add_scalar("amp_long/disc_reward_raw_mean", disc_r_raw_long.mean().item(), global_step)
-                writer.add_scalar("amp_long/disc_reward_raw_std", disc_r_raw_long.std().item(), global_step)
-                writer.add_scalar("amp_long/disc_reward_scaled_mean", disc_r_scaled_long.mean().item(), global_step)
-                writer.add_scalar("amp_long/disc_reward_scaled_std", disc_r_scaled_long.std().item(), global_step)
-            writer.add_scalar("amp/task_reward_raw_mean", task_r_raw.mean().item(), global_step)
-            writer.add_scalar("amp/task_reward_raw_std", task_r_raw.std().item(), global_step)
-            writer.add_scalar("amp/task_reward_scaled_mean", task_r_scaled.mean().item(), global_step)
-            writer.add_scalar("amp/task_reward_scaled_std", task_r_scaled.std().item(), global_step)
-            writer.add_scalar("amp/temporal_alignment_reward_raw_mean", temporal_alignment_reward_raw.mean().item(), global_step)
-            writer.add_scalar("amp/temporal_alignment_reward_raw_std", temporal_alignment_reward_raw.std().item(), global_step)
-            writer.add_scalar("amp/temporal_alignment_reward_scaled_mean", temporal_alignment_reward_scaled.mean().item(), global_step)
-            writer.add_scalar("amp/temporal_alignment_reward_scaled_std", temporal_alignment_reward_scaled.std().item(), global_step)
-            writer.add_scalar("amp/action_magnitude_reward_raw_mean", action_magnitude_reward_raw.mean().item(), global_step)
-            writer.add_scalar("amp/action_magnitude_reward_raw_std", action_magnitude_reward_raw.std().item(), global_step)
-            writer.add_scalar("amp/action_magnitude_reward_scaled_mean", action_magnitude_reward_scaled.mean().item(), global_step)
-            writer.add_scalar("amp/action_magnitude_reward_scaled_std", action_magnitude_reward_scaled.std().item(), global_step)
-            
-            # Backward-compatible logs.
-            if use_short_discriminator_reward:
-                writer.add_scalar("amp/disc_reward_mean", disc_r_raw.mean().item(), global_step)
-                writer.add_scalar("amp/disc_reward_std", disc_r_raw.std().item(), global_step)
-            writer.add_scalar("amp/task_reward_mean", task_r_raw.mean().item(), global_step)
-            writer.add_scalar("amp/combined_reward_mean", combined_rewards.mean().item(), global_step)
-
-            # log statistics of the advantages, values
-            writer.add_scalar("charts/advantage_mean", advantages.mean().item(), global_step)
-            writer.add_scalar("charts/advantage_std", advantages.std().item(), global_step)
-            writer.add_scalar("charts/value_mean", values.mean().item(), global_step)
-            writer.add_scalar("charts/value_std", values.std().item(), global_step)
+            log_reward_stream_stats(
+                writer=writer,
+                global_step=global_step,
+                task_r_raw=task_r_raw,
+                task_r_scaled=task_r_scaled,
+                temporal_alignment_reward_raw=temporal_alignment_reward_raw,
+                temporal_alignment_reward_scaled=temporal_alignment_reward_scaled,
+                action_magnitude_reward_raw=action_magnitude_reward_raw,
+                action_magnitude_reward_scaled=action_magnitude_reward_scaled,
+                combined_rewards=combined_rewards,
+                advantages=advantages,
+                values=values,
+                use_short_discriminator_reward=use_short_discriminator_reward,
+                disc_r_raw=disc_r_raw,
+                disc_r_scaled=disc_r_scaled,
+                use_long_discriminator_reward=use_long_discriminator_reward,
+                disc_r_raw_long=disc_r_raw_long,
+                disc_r_scaled_long=disc_r_scaled_long,
+            )
 
         # flatten the batch
         b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
@@ -931,6 +1112,7 @@ if __name__ == "__main__":
         # Optimizing the policy and value network
         b_inds = np.arange(args.batch_size)
         clipfracs = []
+        bc_kl_loss = torch.zeros((), device=args.device)
         for epoch in range(args.update_epochs):
             np.random.shuffle(b_inds)
             noise_std = 0.01
@@ -974,7 +1156,25 @@ if __name__ == "__main__":
                     v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
 
                 entropy_loss = (-newlogprob).mean() # unbiased estimate of entropy
-                loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+                # PPO + BC-KL objective:
+                # L_total(theta) = L_PPO(theta) + lambda_BC * E_s[ KL(pi_BC(.|s) || pi_theta(.|s)) ].
+                # Minibatch estimate uses sampled rollout states s_i:
+                # (1/M) * sum_i KL(pi_BC(.|s_i) || pi_theta(.|s_i)).
+                if bc_policy is not None and current_bc_kl_weight > 0.0:
+                    with torch.no_grad():
+                        bc_mean, bc_logstd = bc_policy.get_action_mean_and_logstd(b_policy_obs[mb_inds])
+                    student_mean, student_logstd = agent.get_action_mean_and_logstd(b_policy_obs[mb_inds])
+                    bc_var = torch.exp(2.0 * bc_logstd)
+                    student_var = torch.exp(2.0 * student_logstd)
+                    bc_kl_loss = (
+                        student_logstd - bc_logstd
+                        + (bc_var + (bc_mean - student_mean) ** 2) / (2.0 * student_var)
+                        - 0.5
+                    ).sum(dim=-1).mean()
+                else:
+                    bc_kl_loss = torch.zeros((), device=args.device)
+
+                loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef + current_bc_kl_weight * bc_kl_loss
     
                 optimizer.zero_grad()
                 loss.backward()
@@ -987,161 +1187,59 @@ if __name__ == "__main__":
         # AMP: Train short discriminator
         if use_short_discriminator_reward:
             for i in range(args.num_discriminator_updates):
-            # Sample demonstration data
-                demo_disc_obs = demo_loader.sample(args.disc_batch_size)
-            
-                # Sample agent data (mix current batch + replay buffer)
-                agent_samples = args.disc_batch_size // 2
-            
-                # Filter to only valid transitions
                 b_valid = valid_transition.reshape(-1)
-                valid_disc_obs = b_disc_obs[b_valid]
-            
-                # Randomly sample from valid current batch transitions
-                perm_indices = torch.randperm(len(valid_disc_obs), device=args.device)
-                agent_disc_obs_current = valid_disc_obs[perm_indices[:agent_samples]]
-            
-                # Store only valid samples in replay buffer
-                num_to_store = min(len(valid_disc_obs), args.disc_replay_samples)
-                replay_buffer.push(valid_disc_obs[perm_indices[:num_to_store]])
-            
-                # Sample from replay buffer if available
-                if len(replay_buffer) > 0:
-                    agent_disc_obs_replay = replay_buffer.sample(agent_samples)
-                    agent_disc_obs = torch.cat([agent_disc_obs_current, agent_disc_obs_replay], dim=0)
-                else:
-                    agent_disc_obs = agent_disc_obs_current
-            
-                # Normalize observations
-                norm_demo_disc_obs = disc_normalizer.normalize(demo_disc_obs)
-                norm_agent_disc_obs = disc_normalizer.normalize(agent_disc_obs)
-            
-                # Enable gradients for gradient penalty
-                norm_demo_disc_obs.requires_grad_(True)
-            
-                # Forward pass through discriminator (LSGAN outputs raw scores, not logits)
-                disc_demo_logit = discriminator(norm_demo_disc_obs).squeeze(-1)
-                disc_agent_logit = discriminator(norm_agent_disc_obs).squeeze(-1)
-            
-                # LSGAN: Least Squares loss
-                # Demo = 1 (expert), Agent = -1 (fake)
-                # LSGAN uses MSE instead of BCE: 0.5 * E[(D(x_real) - 1)^2] + 0.5 * E[(D(x_fake) - (-1))^2]
-                disc_loss_demo = 0.5 * torch.mean((disc_demo_logit - 1.0) ** 2)
-                disc_loss_agent = 0.5 * torch.mean((disc_agent_logit - (-1.0)) ** 2)
-                disc_loss = disc_loss_demo + disc_loss_agent
-            
-                # Gradient penalty (Lipschitz constraint)
-                disc_demo_grad = torch.autograd.grad(
-                    disc_demo_logit, norm_demo_disc_obs,
-                    grad_outputs=torch.ones_like(disc_demo_logit),
-                    create_graph=True, retain_graph=True, only_inputs=True
-                )[0]
-                disc_grad_penalty = torch.mean(torch.sum(disc_demo_grad ** 2, dim=-1))
-                disc_loss = disc_loss + args.disc_grad_penalty * disc_grad_penalty
-            
-                # Logit regularization
-                if args.disc_logit_reg > 0:
-                    logit_weights = discriminator.get_logit_weights()
-                    disc_logit_reg_loss = torch.sum(logit_weights ** 2)
-                    disc_loss = disc_loss + args.disc_logit_reg * disc_logit_reg_loss
-            
-                # Update discriminator
-                disc_optimizer.zero_grad()
-                disc_loss.backward()
-                nn.utils.clip_grad_norm_(discriminator.parameters(), args.max_grad_norm)
-                disc_optimizer.step()
-            
-                # Update normalizer statistics (only with valid transitions)
-                b_valid = valid_transition.reshape(-1)
-                disc_normalizer.record(b_disc_obs[b_valid])
-                disc_normalizer.record(demo_disc_obs)
-                disc_normalizer.update()
-            
-                # Compute discriminator accuracy (LSGAN)
-                # For LSGAN, scores closer to 1 for expert, closer to -1 for agent
-                with torch.no_grad():
-                    disc_agent_acc = (disc_agent_logit < 0.0).float().mean().item()
-                    disc_demo_acc = (disc_demo_logit > 0.0).float().mean().item()
-            
+                disc_metrics = train_lsgan_discriminator_step(
+                    demo_loader=demo_loader,
+                    disc_batch_size=args.disc_batch_size,
+                    b_disc_obs=b_disc_obs,
+                    b_valid=b_valid,
+                    replay_buffer=replay_buffer,
+                    replay_samples=args.disc_replay_samples,
+                    disc_normalizer=disc_normalizer,
+                    discriminator=discriminator,
+                    disc_optimizer=disc_optimizer,
+                    grad_penalty_weight=args.disc_grad_penalty,
+                    logit_reg_weight=args.disc_logit_reg,
+                    max_grad_norm=args.max_grad_norm,
+                    device=args.device,
+                )
+
             # Log short discriminator metrics
-            writer.add_scalar("amp/disc_loss", disc_loss.item(), global_step)
-            writer.add_scalar("amp/disc_loss_demo", disc_loss_demo.item(), global_step)
-            writer.add_scalar("amp/disc_loss_agent", disc_loss_agent.item(), global_step)
-            writer.add_scalar("amp/disc_grad_penalty", disc_grad_penalty.item(), global_step)
-            writer.add_scalar("amp/disc_agent_acc", disc_agent_acc, global_step)
-            writer.add_scalar("amp/disc_demo_acc", disc_demo_acc, global_step)
-            writer.add_scalar("amp/disc_agent_logit_mean", disc_agent_logit.mean().item(), global_step)
-            writer.add_scalar("amp/disc_demo_logit_mean", disc_demo_logit.mean().item(), global_step)
-            writer.add_scalar("amp/replay_buffer_size", len(replay_buffer), global_step)
+            log_discriminator_metrics(
+                writer=writer,
+                prefix="amp",
+                metrics=disc_metrics,
+                replay_buffer_size=len(replay_buffer),
+                global_step=global_step,
+            )
 
         # AMP: Train long discriminator
         if use_long_discriminator_reward:
             for i in range(args.long_num_discriminator_updates):
-                demo_disc_obs_long = demo_loader_long.sample(args.long_disc_batch_size)
-                agent_samples_long = args.long_disc_batch_size // 2
-
                 b_valid_long = valid_transition_long.reshape(-1)
-                valid_disc_obs_long = b_disc_obs_long[b_valid_long]
-                perm_indices_long = torch.randperm(len(valid_disc_obs_long), device=args.device)
-                agent_disc_obs_current_long = valid_disc_obs_long[perm_indices_long[:agent_samples_long]]
+                disc_metrics_long = train_lsgan_discriminator_step(
+                    demo_loader=demo_loader_long,
+                    disc_batch_size=args.long_disc_batch_size,
+                    b_disc_obs=b_disc_obs_long,
+                    b_valid=b_valid_long,
+                    replay_buffer=replay_buffer_long,
+                    replay_samples=args.long_disc_replay_samples,
+                    disc_normalizer=disc_normalizer_long,
+                    discriminator=discriminator_long,
+                    disc_optimizer=disc_optimizer_long,
+                    grad_penalty_weight=args.long_disc_grad_penalty,
+                    logit_reg_weight=args.long_disc_logit_reg,
+                    max_grad_norm=args.max_grad_norm,
+                    device=args.device,
+                )
 
-                num_to_store_long = min(len(valid_disc_obs_long), args.long_disc_replay_samples)
-                replay_buffer_long.push(valid_disc_obs_long[perm_indices_long[:num_to_store_long]])
-
-                if len(replay_buffer_long) > 0:
-                    agent_disc_obs_replay_long = replay_buffer_long.sample(agent_samples_long)
-                    agent_disc_obs_long = torch.cat([agent_disc_obs_current_long, agent_disc_obs_replay_long], dim=0)
-                else:
-                    agent_disc_obs_long = agent_disc_obs_current_long
-
-                norm_demo_disc_obs_long = disc_normalizer_long.normalize(demo_disc_obs_long)
-                norm_agent_disc_obs_long = disc_normalizer_long.normalize(agent_disc_obs_long)
-                norm_demo_disc_obs_long.requires_grad_(True)
-
-                disc_demo_logit_long = discriminator_long(norm_demo_disc_obs_long).squeeze(-1)
-                disc_agent_logit_long = discriminator_long(norm_agent_disc_obs_long).squeeze(-1)
-                disc_loss_demo_long = 0.5 * torch.mean((disc_demo_logit_long - 1.0) ** 2)
-                disc_loss_agent_long = 0.5 * torch.mean((disc_agent_logit_long - (-1.0)) ** 2)
-                disc_loss_long = disc_loss_demo_long + disc_loss_agent_long
-
-                disc_demo_grad_long = torch.autograd.grad(
-                    disc_demo_logit_long,
-                    norm_demo_disc_obs_long,
-                    grad_outputs=torch.ones_like(disc_demo_logit_long),
-                    create_graph=True,
-                    retain_graph=True,
-                    only_inputs=True,
-                )[0]
-                disc_grad_penalty_long = torch.mean(torch.sum(disc_demo_grad_long ** 2, dim=-1))
-                disc_loss_long = disc_loss_long + args.long_disc_grad_penalty * disc_grad_penalty_long
-
-                if args.long_disc_logit_reg > 0:
-                    logit_weights_long = discriminator_long.get_logit_weights()
-                    disc_logit_reg_loss_long = torch.sum(logit_weights_long ** 2)
-                    disc_loss_long = disc_loss_long + args.long_disc_logit_reg * disc_logit_reg_loss_long
-
-                disc_optimizer_long.zero_grad()
-                disc_loss_long.backward()
-                nn.utils.clip_grad_norm_(discriminator_long.parameters(), args.max_grad_norm)
-                disc_optimizer_long.step()
-
-                disc_normalizer_long.record(b_disc_obs_long[b_valid_long])
-                disc_normalizer_long.record(demo_disc_obs_long)
-                disc_normalizer_long.update()
-
-                with torch.no_grad():
-                    disc_agent_acc_long = (disc_agent_logit_long < 0.0).float().mean().item()
-                    disc_demo_acc_long = (disc_demo_logit_long > 0.0).float().mean().item()
-
-            writer.add_scalar("amp_long/disc_loss", disc_loss_long.item(), global_step)
-            writer.add_scalar("amp_long/disc_loss_demo", disc_loss_demo_long.item(), global_step)
-            writer.add_scalar("amp_long/disc_loss_agent", disc_loss_agent_long.item(), global_step)
-            writer.add_scalar("amp_long/disc_grad_penalty", disc_grad_penalty_long.item(), global_step)
-            writer.add_scalar("amp_long/disc_agent_acc", disc_agent_acc_long, global_step)
-            writer.add_scalar("amp_long/disc_demo_acc", disc_demo_acc_long, global_step)
-            writer.add_scalar("amp_long/disc_agent_logit_mean", disc_agent_logit_long.mean().item(), global_step)
-            writer.add_scalar("amp_long/disc_demo_logit_mean", disc_demo_logit_long.mean().item(), global_step)
-            writer.add_scalar("amp_long/replay_buffer_size", len(replay_buffer_long), global_step)
+            log_discriminator_metrics(
+                writer=writer,
+                prefix="amp_long",
+                metrics=disc_metrics_long,
+                replay_buffer_size=len(replay_buffer_long),
+                global_step=global_step,
+            )
         
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
         var_y = np.var(y_true)
@@ -1149,9 +1247,11 @@ if __name__ == "__main__":
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
+        writer.add_scalar("losses/bc_kl_weight", current_bc_kl_weight, global_step)
         writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
         writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
         writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
+        writer.add_scalar("losses/bc_kl_loss", bc_kl_loss.item(), global_step)
         writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
         writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
         writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
@@ -1207,17 +1307,9 @@ if __name__ == "__main__":
             
             # Save short AMP components in checkpoint when short discriminator reward is active
             if use_short_discriminator_reward:
-                torch.save(discriminator.state_dict(), f"{checkpoint_dir}/discriminator.pth")
-                torch.save({
-                    'normalizer': disc_normalizer.state_dict(),
-                    'replay_buffer': replay_buffer.state_dict()
-                }, f"{checkpoint_dir}/amp_components.pth")
+                save_amp_components(checkpoint_dir, discriminator, disc_normalizer, replay_buffer, is_long=False)
             if use_long_discriminator_reward:
-                torch.save(discriminator_long.state_dict(), f"{checkpoint_dir}/discriminator_long.pth")
-                torch.save({
-                    'normalizer': disc_normalizer_long.state_dict(),
-                    'replay_buffer': replay_buffer_long.state_dict()
-                }, f"{checkpoint_dir}/amp_components_long.pth")
+                save_amp_components(checkpoint_dir, discriminator_long, disc_normalizer_long, replay_buffer_long, is_long=True)
 
             # evaluate the model
             evaluate_agent(
@@ -1240,18 +1332,10 @@ if __name__ == "__main__":
     
     # Save AMP components when discriminator reward is active
     if use_short_discriminator_reward:
-        torch.save(discriminator.state_dict(), f"{log_parent_dir}/discriminator.pth")
-        torch.save({
-            'normalizer': disc_normalizer.state_dict(),
-            'replay_buffer': replay_buffer.state_dict()
-        }, f"{log_parent_dir}/amp_components.pth")
+        save_amp_components(log_parent_dir, discriminator, disc_normalizer, replay_buffer, is_long=False)
         print(f"✓ Saved short discriminator and AMP components")
     if use_long_discriminator_reward:
-        torch.save(discriminator_long.state_dict(), f"{log_parent_dir}/discriminator_long.pth")
-        torch.save({
-            'normalizer': disc_normalizer_long.state_dict(),
-            'replay_buffer': replay_buffer_long.state_dict()
-        }, f"{log_parent_dir}/amp_components_long.pth")
+        save_amp_components(log_parent_dir, discriminator_long, disc_normalizer_long, replay_buffer_long, is_long=True)
         print(f"✓ Saved long discriminator and AMP components")
 
     # evaluate the model and save results
