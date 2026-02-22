@@ -10,7 +10,7 @@ try:
 except:
     print('Some air hockey components not installed. Does not work on Apple Silicon')
 from airhockey.airhockey_simple_tasks import AirHockeyPuckVelEnv, AirHockeyPuckHeightEnv, AirHockeyPuckCatchEnv 
-from airhockey.airhockey_simple_tasks import AirHockeyPuckJuggleEnv, AirHockeyPuckJuggleLinearTopEnv, AirHockeyPuckJuggleLinearTopNoBaseRewardEnv, AirHockeyPuckStrikeEnv, AirHockeyPuckTouchEnv, AirHockeyPaddleFreeMovementEnv
+from airhockey.airhockey_simple_tasks import AirHockeyPuckJuggleEnv, AirHockeyPuckJuggleLinearTopEnv, AirHockeyPuckJuggleLinearTopNoBaseRewardEnv, AirHockeyPuckJuggleLinearTopUpperHalfRewardEnv, AirHockeyPuckStrikeEnv, AirHockeyPuckTouchEnv, AirHockeyPaddleFreeMovementEnv
 from airhockey.airhockey_hierarchical_tasks  import AirHockeyMoveBlockEnv, AirHockeyStrikeCrowdEnv
 from robosuite.utils.mjcf_utils import xml_path_completion as robosuite_xml_path_completion
 # from airhockey.airhockey_goal_tasks import AirHockeyPuckGoalPositionEnv, AirHockeyPuckGoalPositionVelocityEnv, AirHockeyPuckReachPositionDynamicNegRegionsEnv
@@ -69,6 +69,10 @@ def AirHockeyEnv(cfg):
         task_env = AirHockeyPuckJuggleLinearTopEnv
     elif task == "puck_juggle_linear_top_no_base_reward" or task == "multipuck_juggle_linear_top_no_base_reward":
         task_env = AirHockeyPuckJuggleLinearTopNoBaseRewardEnv
+    elif task == "puck_juggle_linear_top_upper_half_reward" or task == "multipuck_juggle_linear_top_upper_half_reward":
+        task_env = AirHockeyPuckJuggleLinearTopUpperHalfRewardEnv
+    elif task == "puck_juggle_upper_half_reward" or task == "multipuck_juggle_upper_half_reward":
+        task_env = AirHockeyPuckJuggleLinearTopUpperHalfRewardEnv
     elif task == "puck_strike":
         task_env = AirHockeyPuckStrikeEnv
     elif task == "puck_touch":

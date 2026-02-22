@@ -202,6 +202,24 @@ class AirHockeyPuckJuggleLinearTopNoBaseReward(AirHockeyPuckJuggleLinearTopRewar
         _, success = super().get_base_reward(state_info)
         return 0.0, success
 
+
+class AirHockeyPuckJuggleLinearTopUpperHalfReward(AirHockeyPuckJuggleLinearTopReward):
+    def get_base_reward(self, state_info):
+        reward, success = super().get_base_reward(state_info)
+        reward += self.upper_half_bonus(state_info)
+        return reward, success
+
+    def upper_half_bonus(self, state_info):
+        bonus_reward = 0.0
+        x_midpoint = (self.task_env.table_x_top + self.task_env.table_x_bot) / 2.0
+        num_pucks = max(len(state_info["pucks"]), 1)
+
+        for puck in state_info["pucks"]:
+            if puck["position"][0] <= x_midpoint:
+                bonus_reward += 2.0 / num_pucks
+
+        return bonus_reward
+
 class AirHockeyPuckStrikeReward(AirHockeyRewardBase):
     def __init__(self, task_env):
         super().__init__(task_env)

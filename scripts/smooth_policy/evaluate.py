@@ -100,9 +100,15 @@ def evaluate_agent(
     reference_states=None,
     ref_max_episode_steps=None,
     action_scale=0.02,
-    agent_hidden_size=64,
+    agent_hidden_layer_size=64,
+    agent_num_hidden_layers=2,
+    agent_hidden_size=None,
     use_last_action_in_policy_state=False,
 ):
+    if agent_hidden_size is not None:
+        agent_hidden_layer_size = int(agent_hidden_size)
+    if agent_num_hidden_layers < 1:
+        raise ValueError("agent_num_hidden_layers must be >= 1.")
 
     # Override max_timesteps if reference state initialization is enabled
     eval_air_hockey_params = air_hockey_params.copy()
@@ -130,18 +136,15 @@ def evaluate_agent(
         ),
         single_action_space=envs.single_action_space,
     )
-    state_dict = torch.load(model_path)
-    has_intrinsic_head = any(k.startswith("intrinsic_critic.") for k in state_dict.keys())
     model = Agent(
         policy_env_view,
         action_scale=action_scale,
         action_bias=0.0,
-        hidden_size=agent_hidden_size,
-        use_intrinsic_critic=has_intrinsic_head,
+        hidden_layer_size=agent_hidden_layer_size,
+        num_hidden_layers=agent_num_hidden_layers,
     )
-    load_result = model.load_state_dict(state_dict, strict=False)
-    if load_result.unexpected_keys:
-        print(f"[evaluate] Unexpected checkpoint keys: {load_result.unexpected_keys}")
+    state_dict = torch.load(model_path)
+    model.load_state_dict(state_dict)
 
     env = envs.envs[0]
     renderer = AirHockeyRenderer(env, show_target_position=True, show_acceleration_arrow=False)

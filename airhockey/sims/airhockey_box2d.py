@@ -209,6 +209,13 @@ class AirHockeyBox2D:
             'random_occlusion_bad_region_box_x': [-0.4, -0.35],
             'random_occlusion_bad_region_box_y': [-0.3, 0.0],
             'random_occlusion_bad_region_right_x': [0.35, 0.8],
+            # Robust derivative-estimation controls used for accel/jerk readouts.
+            'derivative_min_dt': 1e-6,
+            'acceleration_ema_alpha': 0.35,
+            'jerk_ema_alpha': 0.35,
+            # <= 0 disables norm clipping.
+            'max_acceleration_norm': 0.0,
+            'max_jerk_norm': 0.0,
         }
 
         kwargs = {**defaults, **kwargs}
@@ -259,6 +266,11 @@ class AirHockeyBox2D:
         self.wall_bounce_scale = config.wall_bounce_scale
         self.action_lag = config.action_lag 
         assert self.action_lag >= 0 and self.action_lag <= 1, "Action lag must be between 0 and 1"
+        self.derivative_min_dt = max(float(config.derivative_min_dt), 1e-8)
+        self.acceleration_ema_alpha = float(np.clip(config.acceleration_ema_alpha, 0.0, 1.0))
+        self.jerk_ema_alpha = float(np.clip(config.jerk_ema_alpha, 0.0, 1.0))
+        self.max_acceleration_norm = float(config.max_acceleration_norm)
+        self.max_jerk_norm = float(config.max_jerk_norm)
         self.puck_noise = config.puck_noise
         self.puck_noise_std = float(config.puck_noise_std)
         # random occlusion simulation
@@ -290,6 +302,9 @@ class AirHockeyBox2D:
         self.last_action = np.zeros(2) # keep the last action taken, used for action lag
         self.last_target_position = None  # base-frame target used for visualization/debugging
         self.previous_acceleration = np.zeros(2)  # for jerk calculation
+        self.filtered_acceleration = np.zeros(2)
+        self.filtered_jerk = np.zeros(2)
+        self._has_prev_acceleration = False
         self.jerk = np.zeros(2)
         self.pose_hist = deque(maxlen=self.hist_len)
         self.dpose_hist = deque(maxlen=self.hist_len)
@@ -393,6 +408,9 @@ class AirHockeyBox2D:
         self.last_action = np.zeros(2) # keep the last action taken
         self.last_target_position = None
         self.previous_acceleration = np.zeros(2)  # reset for jerk calculation
+        self.filtered_acceleration = np.zeros(2)
+        self.filtered_jerk = np.zeros(2)
+        self._has_prev_acceleration = False
         self.jerk = np.zeros(2)
         self.pose_hist = deque(maxlen=self.hist_len)
         self.dpose_hist = deque(maxlen=self.hist_len)
@@ -751,6 +769,44 @@ class AirHockeyBox2D:
         else:
             action = self.convert_to_box2d_coords(action)
             return self.get_singleagent_transition(action)
+
+    @staticmethod
+    def _clip_vector_norm(vec, max_norm):
+        if max_norm <= 0:
+            return vec
+        norm = np.linalg.norm(vec)
+        if norm <= max_norm or norm <= 1e-8:
+            return vec
+        return vec * (max_norm / norm)
+
+    def _update_motion_derivatives(self, initial_vel, final_vel):
+        """
+        Robust acceleration/jerk estimates with optional EMA smoothing.
+        Keeps estimator lightweight: O(1) state per environment step.
+        """
+        dt = max(float(self.time_per_step), self.derivative_min_dt)
+        raw_acceleration = (final_vel - initial_vel) / dt
+        raw_acceleration = self._clip_vector_norm(raw_acceleration, self.max_acceleration_norm)
+
+        if not self._has_prev_acceleration:
+            filtered_acceleration = raw_acceleration
+            filtered_jerk = np.zeros_like(raw_acceleration)
+            self._has_prev_acceleration = True
+        else:
+            alpha_a = self.acceleration_ema_alpha
+            filtered_acceleration = (
+                alpha_a * raw_acceleration + (1.0 - alpha_a) * self.filtered_acceleration
+            )
+            raw_jerk = (filtered_acceleration - self.filtered_acceleration) / dt
+            raw_jerk = self._clip_vector_norm(raw_jerk, self.max_jerk_norm)
+            alpha_j = self.jerk_ema_alpha
+            filtered_jerk = alpha_j * raw_jerk + (1.0 - alpha_j) * self.filtered_jerk
+
+        self.filtered_acceleration = filtered_acceleration
+        self.filtered_jerk = filtered_jerk
+        self.previous_acceleration = filtered_acceleration.copy()
+        self.jerk = filtered_jerk.copy()
+        return filtered_acceleration, filtered_jerk
     
     def get_singleagent_transition(self, action):
 
@@ -761,6 +817,8 @@ class AirHockeyBox2D:
         initial_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0], self.paddles['paddle_ego'].linearVelocity[1]])
 
         for act, sim_time in zip(action_list, time_to_sim):
+            if sim_time <= 0.0:
+                continue
             pos = np.array([self.paddles['paddle_ego'].position[0], self.paddles['paddle_ego'].position[1]])
             
             # Boundary constraint: prevent paddle from going into opponent's side
@@ -888,16 +946,14 @@ class AirHockeyBox2D:
 
                 self.paddles['paddle_ego_force'] = total_force
         
-        # Calculate acceleration and jerk AFTER the entire action step
-        # Use the total time step and initial velocity for proper acceleration calculation
+        # Calculate robust acceleration and jerk AFTER the entire action step.
         final_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0], self.paddles['paddle_ego'].linearVelocity[1]])
-        current_acceleration = (final_vel - initial_vel) / self.time_per_step
+        current_acceleration, current_jerk = self._update_motion_derivatives(initial_vel, final_vel)
         self.paddles['paddle_ego_acceleration'] = current_acceleration
-        
-        # Calculate jerk (derivative of acceleration)
-        self.jerk = (current_acceleration - self.previous_acceleration) / self.time_per_step
-        self.paddles['paddle_ego_jerk'] = self.jerk
-        self.previous_acceleration = current_acceleration.copy()
+        self.paddles['paddle_ego_jerk'] = current_jerk
+
+        # Refresh state so acceleration/jerk in returned transition are current-step values.
+        state_info = self.get_current_state()
         
         # Debug: Print acceleration values occasionally (remove this after testing)
         # if self.timestep % 100 == 0 and np.linalg.norm(current_acceleration) > 0:

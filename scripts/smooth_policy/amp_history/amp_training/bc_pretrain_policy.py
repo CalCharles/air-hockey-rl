@@ -53,6 +53,7 @@ class BCTransitionDataset(Dataset):
         use_last_action_in_policy_state,
         puck_sequences=None,
         missing_puck_fill=0.0,
+        precompute_transitions=True,
     ):
         super().__init__()
         if position_sequences.dim() != 3 or position_sequences.shape[1:] != (5, 2):
@@ -67,17 +68,91 @@ class BCTransitionDataset(Dataset):
             if puck_sequences.shape[0] != position_sequences.shape[0]:
                 raise ValueError("position_sequences and puck_sequences must have matching N.")
 
-        self.position_sequences = position_sequences
-        self.action_sequences = action_sequences
-        self.puck_sequences = puck_sequences
+        self.precompute_transitions = bool(precompute_transitions)
         self.use_last_action = bool(use_last_action_in_policy_state)
         self.missing_puck_fill = float(missing_puck_fill)
         self.num_windows = int(position_sequences.shape[0])
 
+        self.position_sequences = None
+        self.action_sequences = None
+        self.puck_sequences = None
+        self.observations = None
+        self.expert_actions = None
+
+        if self.precompute_transitions:
+            self.observations, self.expert_actions = self._build_all_transition_samples(
+                position_sequences=position_sequences,
+                action_sequences=action_sequences,
+                puck_sequences=puck_sequences,
+            )
+        else:
+            self.position_sequences = position_sequences
+            self.action_sequences = action_sequences
+            self.puck_sequences = puck_sequences
+
     def __len__(self):
+        if self.precompute_transitions:
+            return int(self.observations.shape[0])
         return self.num_windows * 4
 
+    def _build_all_transition_samples(self, position_sequences, action_sequences, puck_sequences):
+        """Vectorized transition conversion done once to reduce per-step CPU overhead."""
+        num_windows = int(position_sequences.shape[0])
+        obs_by_t = []
+        action_by_t = []
+
+        if puck_sequences is None:
+            missing_puck_hist = torch.full(
+                (num_windows, 5, 3),
+                self.missing_puck_fill,
+                dtype=position_sequences.dtype,
+            )
+        else:
+            missing_puck_hist = None
+
+        for transition_idx in range(4):
+            pad = 5 - (transition_idx + 1)
+
+            paddle_prefix = position_sequences[:, : transition_idx + 1, :]
+            if pad > 0:
+                paddle_prefix = torch.cat(
+                    [position_sequences[:, 0:1, :].expand(-1, pad, -1), paddle_prefix],
+                    dim=1,
+                )
+            paddle_aux = torch.zeros((num_windows, 5, 1), dtype=position_sequences.dtype)
+            paddle_hist = torch.cat([paddle_prefix, paddle_aux], dim=-1)
+
+            if puck_sequences is not None:
+                puck_prefix = puck_sequences[:, : transition_idx + 1, :]
+                if pad > 0:
+                    puck_prefix = torch.cat(
+                        [puck_sequences[:, 0:1, :].expand(-1, pad, -1), puck_prefix],
+                        dim=1,
+                    )
+                puck_aux = torch.zeros((num_windows, 5, 1), dtype=puck_sequences.dtype)
+                puck_hist = torch.cat([puck_prefix, puck_aux], dim=-1)
+            else:
+                puck_hist = missing_puck_hist
+
+            obs_t = torch.cat([paddle_hist.flatten(1), puck_hist.flatten(1)], dim=1)
+            if self.use_last_action:
+                if transition_idx == 0:
+                    prev_action = torch.zeros_like(action_sequences[:, 0, :])
+                else:
+                    prev_action = action_sequences[:, transition_idx - 1, :]
+                obs_t = augment_policy_observation(obs_t, prev_action, True)
+
+            obs_by_t.append(obs_t)
+            action_by_t.append(action_sequences[:, transition_idx, :])
+
+        observations = torch.stack(obs_by_t, dim=1).reshape(num_windows * 4, -1).contiguous()
+        expert_actions = torch.stack(action_by_t, dim=1).reshape(num_windows * 4, -1).contiguous()
+        return observations, expert_actions
+
     def __getitem__(self, index):
+        if self.precompute_transitions:
+            return self.observations[index], self.expert_actions[index]
+
         window_idx = index // 4
         transition_idx = index % 4
 
@@ -124,21 +199,25 @@ class Args:
     weight_decay: float = 1e-6
     max_grad_norm: float = 0.5
     val_fraction: float = 0.05
-    num_workers: int = 0
-    min_train_steps_for_logging: int = 20
+    num_workers: int = -1
+    max_auto_num_workers: int = 8
+    min_train_steps_for_logging: int = 2
     early_stopping_enabled: bool = True
     early_stopping_patience: int = 8
     early_stopping_min_delta: float = 1e-4
     save_best_model: bool = True
     eval_gif_on_validation: bool = True
-    eval_gif_every_epochs: int = 1
+    eval_gif_every_epochs: int = 20
     eval_gif_n_eps: int = 4
     eval_gif_n_gifs: int = 1
 
     # Keep these aligned with amp_training_lsgan.py for compatibility.
     use_last_action_in_policy_state: bool = False
     action_scale: float = 1.0
-    agent_hidden_size: int = 128
+    agent_hidden_layer_size: int = 128
+    agent_num_hidden_layers: int = 2
+    # Deprecated alias kept for backward compatibility with older args files.
+    agent_hidden_size: int | None = None
 
     # Exploration-preserving controls.
     freeze_actor_logstd: bool = True
@@ -149,6 +228,9 @@ class Args:
     # Dataset behavior.
     require_puck_sequences: bool = False
     missing_puck_fill: float = 0.0
+    precompute_transition_dataset: bool = True
+    dataset_load_mmap: bool = True
+    warn_on_unused_long_sequences: bool = True
 
     # Optional initialization from existing policy.
     init_model_path: str | None = None
@@ -175,6 +257,25 @@ def split_dataset(dataset, val_fraction, seed):
     val_idx = perm[:val_size].tolist()
     train_idx = perm[val_size:].tolist()
     return Subset(dataset, train_idx), Subset(dataset, val_idx)
+
+
+def resolve_num_workers(num_workers, max_auto_num_workers):
+    if num_workers >= 0:
+        return num_workers
+    cpu_count = os.cpu_count() or 1
+    return max(1, min(int(max_auto_num_workers), cpu_count // 2))
+
+
+def load_demo_dataset(demo_data_path, enable_mmap):
+    load_kwargs = {"map_location": "cpu"}
+    if enable_mmap:
+        load_kwargs["mmap"] = True
+    try:
+        return torch.load(demo_data_path, **load_kwargs)
+    except TypeError:
+        if enable_mmap:
+            print("[BC] torch.load does not support mmap in this PyTorch build; falling back to regular load.")
+        return torch.load(demo_data_path, map_location="cpu")
 
 
 def evaluate_bc(agent, data_loader, device):
@@ -208,6 +309,14 @@ if __name__ == "__main__":
 
     if not (0.0 <= args.val_fraction < 1.0):
         raise ValueError("val_fraction must be in [0, 1).")
+    if args.agent_hidden_size is not None:
+        args.agent_hidden_layer_size = int(args.agent_hidden_size)
+    if args.agent_num_hidden_layers < 1:
+        raise ValueError("agent_num_hidden_layers must be >= 1.")
+    if args.num_workers < -1:
+        raise ValueError("num_workers must be >= -1.")
+    if args.max_auto_num_workers < 1:
+        raise ValueError("max_auto_num_workers must be >= 1.")
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -242,7 +351,8 @@ if __name__ == "__main__":
         policy_env_view,
         action_scale=action_scale,
         action_bias=0.0,
-        hidden_size=args.agent_hidden_size,
+        hidden_layer_size=args.agent_hidden_layer_size,
+        num_hidden_layers=args.agent_num_hidden_layers,
     ).to(args.device)
     logstd_init = agent.actor_logstd.detach().clone()
 
@@ -264,34 +374,60 @@ if __name__ == "__main__":
 
     if not os.path.exists(args.demo_data_path):
         raise FileNotFoundError(f"Demo dataset not found: {args.demo_data_path}")
-    data = torch.load(args.demo_data_path, map_location="cpu")
+    data = load_demo_dataset(args.demo_data_path, enable_mmap=args.dataset_load_mmap)
     if "position_sequences" not in data or "action_sequences" not in data:
         raise ValueError("Dataset must contain 'position_sequences' and 'action_sequences'.")
     if args.require_puck_sequences and "puck_sequences" not in data:
         raise ValueError("require_puck_sequences=True but dataset does not contain 'puck_sequences'.")
+    if args.warn_on_unused_long_sequences and (
+        "position_sequences_30" in data or "puck_sequences_30" in data
+    ):
+        print(
+            "[BC] Demo dataset includes long-sequence keys that BC does not use. "
+            "For lower load overhead, rebuild dataset with --disable-long-sequences."
+        )
+
+    position_sequences = data["position_sequences"].float().contiguous()
+    action_sequences = data["action_sequences"].float().contiguous()
+    puck_sequences = data.get("puck_sequences", None)
+    puck_sequences = puck_sequences.float().contiguous() if puck_sequences is not None else None
+    del data
 
     dataset = BCTransitionDataset(
-        position_sequences=data["position_sequences"].float(),
-        action_sequences=data["action_sequences"].float(),
-        puck_sequences=data.get("puck_sequences", None).float() if "puck_sequences" in data else None,
+        position_sequences=position_sequences,
+        action_sequences=action_sequences,
+        puck_sequences=puck_sequences,
         use_last_action_in_policy_state=args.use_last_action_in_policy_state,
         missing_puck_fill=args.missing_puck_fill,
+        precompute_transitions=args.precompute_transition_dataset,
+    )
+    del position_sequences, action_sequences, puck_sequences
+
+    resolved_num_workers = resolve_num_workers(args.num_workers, args.max_auto_num_workers)
+    pin_memory = bool(torch.cuda.is_available() and args.device.startswith("cuda"))
+    print(
+        f"[BC] DataLoader setup: num_workers={resolved_num_workers}, "
+        f"pin_memory={pin_memory}, precompute_transition_dataset={args.precompute_transition_dataset}"
     )
     train_dataset, val_dataset = split_dataset(dataset, args.val_fraction, args.seed)
+    loader_common_kwargs = {
+        "batch_size": args.batch_size,
+        "num_workers": resolved_num_workers,
+        "pin_memory": pin_memory,
+    }
+    if resolved_num_workers > 0:
+        loader_common_kwargs["persistent_workers"] = True
+        loader_common_kwargs["prefetch_factor"] = 2
     train_loader = DataLoader(
         train_dataset,
-        batch_size=args.batch_size,
         shuffle=True,
-        num_workers=args.num_workers,
-        pin_memory=True,
+        **loader_common_kwargs,
     )
     val_loader = (
         DataLoader(
             val_dataset,
-            batch_size=args.batch_size,
             shuffle=False,
-            num_workers=args.num_workers,
-            pin_memory=True,
+            **loader_common_kwargs,
         )
         if val_dataset is not None
         else None
@@ -393,7 +529,8 @@ if __name__ == "__main__":
                     n_eps=args.eval_gif_n_eps,
                     n_gifs=args.eval_gif_n_gifs,
                     action_scale=action_scale,
-                    agent_hidden_size=args.agent_hidden_size,
+                    agent_hidden_layer_size=args.agent_hidden_layer_size,
+                    agent_num_hidden_layers=args.agent_num_hidden_layers,
                     use_last_action_in_policy_state=args.use_last_action_in_policy_state,
                 )
 

@@ -1,0 +1,67 @@
+# PPO + task reward + timestep motion penalties (velocity + jerk)
+# Uses existing env config file without modifications.
+
+# Basic training parameters
+num_envs: 8
+num_steps: 512
+learning_rate: 0.0001
+num_iterations: 500
+anneal_lr: false
+gamma: 0.99
+gae_lambda: 0.95
+minibatch_size: 32
+update_epochs: 10
+clip_coef: 0.2
+clip_vloss: false
+ent_coef: 0.0
+vf_coef: 0.5
+max_grad_norm: 0.5
+target_kl: null
+batch_size: 0
+norm_adv: true
+
+use_last_action_in_policy_state: true
+
+# Keep AMP/discriminator disabled for this run.
+disc_reward_weight: 0.0
+num_discriminator_updates: 0
+
+# Reward weighting
+task_reward_weight: 1.0
+temporal_alignment_reward_scale: 0.0
+action_magnitude_reward_scale: 0.0
+
+# Timestep motion penalties
+velocity_penalty_weight: 0.75
+acceleration_penalty_weight: 0.0
+jerk_penalty_weight: 0.25
+
+motion_norm_warmup_steps: 4096
+motion_norm_update_online: true
+motion_norm_clip: 8.0
+motion_norm_eps: 1.0e-6
+
+# Paths
+config: "scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_constant_upper_half.yaml"
+args_file: null
+model_path: null
+bc_policy_path: null
+discriminator_path: null
+amp_components_path: null
+log_parent_dir: runs/amp_training/pid/motion_penalty_vj
+run_name: "motion_penalty_vj"
+demo_data_path: "scripts/smooth_policy/amp_history/amp_training/amp_data/amp_paddle_puck_dataset.pt"
+
+# Others
+seed: 0
+device: "cuda:0"
+action_scale: 1
+
+# Reference state initialization
+use_reference_state_init: false
+reference_data_path: null
+ref_max_episode_steps: 30
+
+# Agent architecture
+agent_hidden_layer_size: 64
+agent_num_hidden_layers: 20

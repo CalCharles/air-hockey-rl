@@ -40,14 +40,13 @@ from scripts.smooth_policy.agent import Agent
 from scripts.smooth_policy.amp_history.amp_training.discriminator import Discriminator
 from scripts.smooth_policy.amp_history.amp_training.replay_buffer import ReplayBuffer
 from scripts.smooth_policy.amp_history.amp_training.normalizer import Normalizer
+from scripts.smooth_policy.amp_history.amp_training.rnd_normalizer import RunningMeanStd
 from scripts.smooth_policy.amp_history.amp_training.demo_loader_position_history import DemoLoaderPositionHistory
 from scripts.smooth_policy.amp_history.amp_training.feature_processing import (
     PUCK_FEATURE_DIM,
     build_puck_discriminator_features_torch,
     normalize_action_history_batch,
     normalize_position_history_batch,
-    normalize_position_sequence_batch,
-    sample_bucketed_indices_torch,
 )
 
 # used for possible reference state initialization from demonstrations
@@ -112,6 +111,115 @@ def extract_current_puck_position(observation):
         return observation[:, 2:4]
     raise ValueError(f"Observation dim {obs_dim} is too small to extract puck position.")
 
+
+def parse_scalar_info_from_infos(infos, key, num_envs, device, fallback_values):
+    """Read vectorized scalar infos with mask-aware fallback handling."""
+    if not (isinstance(infos, dict) and key in infos):
+        return fallback_values
+
+    raw = infos[key]
+    values = np.asarray(raw, dtype=np.float32).reshape(-1)
+    if values.shape[0] == num_envs:
+        return torch.as_tensor(values, dtype=torch.float32, device=device)
+
+    mask_key = f"_{key}"
+    mask = infos.get(mask_key)
+    if mask is not None:
+        mask = np.asarray(mask, dtype=bool).reshape(-1)
+        if values.shape[0] == int(mask.sum()):
+            out = fallback_values.clone()
+            out[torch.as_tensor(mask, dtype=torch.bool, device=device)] = torch.as_tensor(
+                values, dtype=torch.float32, device=device
+            )
+            return out
+    return fallback_values
+
+
+def _extract_last_terminal_motion_value(info, motion_key):
+    """Return last terminal motion sample from final_info.motion_data when available."""
+    if not (isinstance(info, dict) and "motion_data" in info):
+        return None
+    values = info["motion_data"].get(motion_key)
+    if values is None or len(values) == 0:
+        return None
+    return float(values[-1])
+
+
+def parse_motion_magnitudes_from_infos(
+    infos,
+    num_envs,
+    device,
+    fallback_velocity_mag,
+    fallback_acceleration_mag,
+    fallback_jerk_mag,
+):
+    """Extract per-env motion magnitudes from infos, including terminal-step fallbacks."""
+    velocity_mag = parse_scalar_info_from_infos(
+        infos, "paddle_velocity_mag", num_envs, device, fallback_velocity_mag
+    )
+    acceleration_mag = parse_scalar_info_from_infos(
+        infos, "paddle_acceleration_mag", num_envs, device, fallback_acceleration_mag
+    )
+    jerk_mag = parse_scalar_info_from_infos(
+        infos, "paddle_jerk_mag", num_envs, device, fallback_jerk_mag
+    )
+
+    if isinstance(infos, dict) and "final_info" in infos:
+        terminal_mask = infos.get("_final_info")
+        if terminal_mask is None:
+            terminal_mask = np.ones(num_envs, dtype=bool)
+        else:
+            terminal_mask = np.asarray(terminal_mask, dtype=bool).reshape(-1)
+
+        final_infos = infos["final_info"]
+        if isinstance(final_infos, np.ndarray):
+            final_infos = final_infos.tolist()
+
+        for env_idx, info in enumerate(final_infos):
+            if env_idx >= num_envs or not terminal_mask[env_idx] or not info:
+                continue
+            terminal_velocity = _extract_last_terminal_motion_value(info, "velocity_mags")
+            terminal_acceleration = _extract_last_terminal_motion_value(info, "acceleration_mags")
+            terminal_jerk = _extract_last_terminal_motion_value(info, "jerk_mags")
+            if terminal_velocity is not None:
+                velocity_mag[env_idx] = terminal_velocity
+            if terminal_acceleration is not None:
+                acceleration_mag[env_idx] = terminal_acceleration
+            if terminal_jerk is not None:
+                jerk_mag[env_idx] = terminal_jerk
+
+    return velocity_mag, acceleration_mag, jerk_mag
+
+
+def warmup_motion_normalizer(envs, motion_normalizer, warmup_steps, seed, device):
+    """Collect random-rollout motion statistics before training starts."""
+    if warmup_steps <= 0:
+        return
+
+    num_envs = envs.num_envs
+    fallback_velocity = torch.zeros(num_envs, dtype=torch.float32, device=device)
+    fallback_acceleration = torch.zeros(num_envs, dtype=torch.float32, device=device)
+    fallback_jerk = torch.zeros(num_envs, dtype=torch.float32, device=device)
+
+    envs.reset(seed=seed)
+    for _ in range(int(warmup_steps)):
+        random_actions = np.stack(
+            [envs.single_action_space.sample() for _ in range(num_envs)],
+            axis=0,
+        )
+        _, _, _, _, infos = envs.step(random_actions)
+        fallback_velocity, fallback_acceleration, fallback_jerk = parse_motion_magnitudes_from_infos(
+            infos=infos,
+            num_envs=num_envs,
+            device=device,
+            fallback_velocity_mag=fallback_velocity,
+            fallback_acceleration_mag=fallback_acceleration,
+            fallback_jerk_mag=fallback_jerk,
+        )
+        motion_batch = torch.stack(
+            [fallback_velocity, fallback_acceleration, fallback_jerk], dim=-1
+        )
+        motion_normalizer.update(motion_batch)
 
 def train_lsgan_discriminator_step(
     demo_loader,
@@ -224,21 +332,12 @@ def log_reward_stream_stats(
     use_short_discriminator_reward,
     disc_r_raw,
     disc_r_scaled,
-    use_long_discriminator_reward,
-    disc_r_raw_long,
-    disc_r_scaled_long,
 ):
     if use_short_discriminator_reward:
         writer.add_scalar("amp/disc_reward_raw_mean", disc_r_raw.mean().item(), global_step)
         writer.add_scalar("amp/disc_reward_raw_std", disc_r_raw.std().item(), global_step)
         writer.add_scalar("amp/disc_reward_scaled_mean", disc_r_scaled.mean().item(), global_step)
         writer.add_scalar("amp/disc_reward_scaled_std", disc_r_scaled.std().item(), global_step)
-    if use_long_discriminator_reward:
-        writer.add_scalar("amp_long/disc_reward_raw_mean", disc_r_raw_long.mean().item(), global_step)
-        writer.add_scalar("amp_long/disc_reward_raw_std", disc_r_raw_long.std().item(), global_step)
-        writer.add_scalar("amp_long/disc_reward_scaled_mean", disc_r_scaled_long.mean().item(), global_step)
-        writer.add_scalar("amp_long/disc_reward_scaled_std", disc_r_scaled_long.std().item(), global_step)
-
     writer.add_scalar("amp/task_reward_raw_mean", task_r_raw.mean().item(), global_step)
     writer.add_scalar("amp/task_reward_raw_std", task_r_raw.std().item(), global_step)
     writer.add_scalar("amp/task_reward_scaled_mean", task_r_scaled.mean().item(), global_step)
@@ -265,16 +364,49 @@ def log_reward_stream_stats(
     writer.add_scalar("charts/value_std", values.std().item(), global_step)
 
 
-def save_amp_components(save_dir, discriminator, normalizer, replay_buffer, is_long=False):
-    discriminator_filename = "discriminator_long.pth" if is_long else "discriminator.pth"
-    components_filename = "amp_components_long.pth" if is_long else "amp_components.pth"
-    torch.save(discriminator.state_dict(), os.path.join(save_dir, discriminator_filename))
+def log_motion_penalty_stats(
+    writer,
+    global_step,
+    velocity_mag,
+    acceleration_mag,
+    jerk_mag,
+    velocity_penalty_raw,
+    acceleration_penalty_raw,
+    jerk_penalty_raw,
+    velocity_penalty_scaled,
+    acceleration_penalty_scaled,
+    jerk_penalty_scaled,
+    motion_normalizer,
+):
+    writer.add_scalar("motion/velocity_mag_mean", velocity_mag.mean().item(), global_step)
+    writer.add_scalar("motion/velocity_mag_std", velocity_mag.std().item(), global_step)
+    writer.add_scalar("motion/acceleration_mag_mean", acceleration_mag.mean().item(), global_step)
+    writer.add_scalar("motion/acceleration_mag_std", acceleration_mag.std().item(), global_step)
+    writer.add_scalar("motion/jerk_mag_mean", jerk_mag.mean().item(), global_step)
+    writer.add_scalar("motion/jerk_mag_std", jerk_mag.std().item(), global_step)
+
+    writer.add_scalar("motion/velocity_penalty_raw_mean", velocity_penalty_raw.mean().item(), global_step)
+    writer.add_scalar("motion/acceleration_penalty_raw_mean", acceleration_penalty_raw.mean().item(), global_step)
+    writer.add_scalar("motion/jerk_penalty_raw_mean", jerk_penalty_raw.mean().item(), global_step)
+    writer.add_scalar("motion/velocity_penalty_scaled_mean", velocity_penalty_scaled.mean().item(), global_step)
+    writer.add_scalar("motion/acceleration_penalty_scaled_mean", acceleration_penalty_scaled.mean().item(), global_step)
+    writer.add_scalar("motion/jerk_penalty_scaled_mean", jerk_penalty_scaled.mean().item(), global_step)
+
+    motion_std = torch.sqrt(motion_normalizer.var).detach().cpu().numpy()
+    writer.add_scalar("motion/normalizer_velocity_std", float(motion_std[0]), global_step)
+    writer.add_scalar("motion/normalizer_acceleration_std", float(motion_std[1]), global_step)
+    writer.add_scalar("motion/normalizer_jerk_std", float(motion_std[2]), global_step)
+    writer.add_scalar("motion/normalizer_count", motion_normalizer.count.item(), global_step)
+
+
+def save_amp_components(save_dir, discriminator, normalizer, replay_buffer):
+    torch.save(discriminator.state_dict(), os.path.join(save_dir, "discriminator.pth"))
     torch.save(
         {
             "normalizer": normalizer.state_dict(),
             "replay_buffer": replay_buffer.state_dict(),
         },
-        os.path.join(save_dir, components_filename),
+        os.path.join(save_dir, "amp_components.pth"),
     )
 
 
@@ -302,6 +434,8 @@ class Args:
     disc_replay_buffer_size: int = 100000
     disc_replay_samples: int = 1024
     disc_batch_size: int = 512
+    disc_reward_warmup_iters: int = 10
+    disc_reward_warmup_value: float = 0.4
     disc_learning_rate: float = 1e-5
     disc_logit_reg: float = 0.01
     disc_grad_penalty: float = 5.0
@@ -310,26 +444,17 @@ class Args:
     disc_reward_weight: float = 0.5
     num_discriminator_updates: int = 1
     disc_hidden_sizes: list[int] = field(default_factory=lambda: [64, 64])
-    use_long_discriminator: bool = False
-    long_disc_reward_weight: float = 0.0
-    long_disc_replay_buffer_size: int = 100000
-    long_disc_replay_samples: int = 1024
-    long_disc_batch_size: int = 512
-    long_disc_learning_rate: float = 1e-5
-    long_disc_logit_reg: float = 0.01
-    long_disc_grad_penalty: float = 5.0
-    long_disc_weight_decay: float = 0.0001
-    long_num_discriminator_updates: int = 1
-    long_disc_hidden_sizes: list[int] = field(default_factory=lambda: [64, 64])
-    long_history_len: int = 30
-    long_num_bins: int = 3
-    long_samples_per_bin: int = 2
-    long_puck_current_index: int = 15
-    
     # Optional auxiliary rewards (default disabled)
     temporal_alignment_reward_scale: float = 0.0
     action_magnitude_reward_scale: float = 0.0
     temporal_alignment_horizon: int = 4
+    velocity_penalty_weight: float = 0.0
+    acceleration_penalty_weight: float = 0.0
+    jerk_penalty_weight: float = 0.0
+    motion_norm_warmup_steps: int = 2048
+    motion_norm_update_online: bool = True
+    motion_norm_clip: float = 10.0
+    motion_norm_eps: float = 1e-6
 
     # Paths
     config: str = "scripts/smooth_policy/configs/puck_touch/default_config.yaml"
@@ -341,9 +466,7 @@ class Args:
     reset_actor_logstd_on_model_load: bool = False  # Override actor_logstd immediately after loading model_path
     actor_logstd_on_model_load: float = 0.0  # Value used when reset_actor_logstd_on_model_load=True
     discriminator_path: str = None  # Path to pre-trained discriminator state dict
-    long_discriminator_path: str = None  # Path to second long-window discriminator state dict
     amp_components_path: str = None  # Path to AMP components (normalizer, replay buffer)
-    long_amp_components_path: str = None  # Path to long AMP components (normalizer, replay buffer)
     log_parent_dir: str = None
     run_name: str = "default"
     demo_data_path: str = "scripts/smooth_policy/amp_data/amp_dataset.pt"
@@ -356,8 +479,11 @@ class Args:
     # action scale for the agent (mostly deprecated, should default to 1)
     action_scale: float = 1
     
-    # agent hidden layer size (2 layers with this size)
-    agent_hidden_size: int = 128
+    # Agent architecture.
+    agent_hidden_layer_size: int = 128
+    agent_num_hidden_layers: int = 2
+    # Deprecated alias kept for backward compatibility with older args files.
+    agent_hidden_size: int | None = None
     
     # Reference state initialization
     use_reference_state_init: bool = False  # Enable/disable feature
@@ -374,7 +500,6 @@ class Args:
     puck_speed_dt: float = 0.05  # Time delta for puck speed estimation
     puck_vertical_pos_min: float = -1.0  # Min vertical puck value mapped to 5-bin range
     puck_vertical_pos_max: float = 1.0  # Max vertical puck value mapped to 5-bin range
-    use_puck_discriminator_long: bool = False  # If True, long-window discriminator appends puck features
     disc_debug_interval: int = 5000  # Print discriminator feature samples every N env steps (<=0 disables)
     
     
@@ -411,6 +536,10 @@ if __name__ == "__main__":
     # command line args override file args
     args = tyro.cli(Args, default=default_args)
     args.batch_size = args.num_envs * args.num_steps
+    if args.agent_hidden_size is not None:
+        args.agent_hidden_layer_size = int(args.agent_hidden_size)
+    if args.agent_num_hidden_layers < 1:
+        raise ValueError("agent_num_hidden_layers must be >= 1.")
 
     with open(args.config, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
@@ -493,7 +622,13 @@ if __name__ == "__main__":
         ),
         single_action_space=envs.single_action_space,
     )
-    agent = Agent(policy_env_view, action_scale=action_scale, action_bias=0.0, hidden_size=args.agent_hidden_size).to(args.device)
+    agent = Agent(
+        policy_env_view,
+        action_scale=action_scale,
+        action_bias=0.0,
+        hidden_layer_size=args.agent_hidden_layer_size,
+        num_hidden_layers=args.agent_num_hidden_layers,
+    ).to(args.device)
     # Load pre-trained model if path is provided
     if args.model_path is not None:
         if not os.path.exists(args.model_path):
@@ -517,7 +652,8 @@ if __name__ == "__main__":
             policy_env_view,
             action_scale=action_scale,
             action_bias=0.0,
-            hidden_size=args.agent_hidden_size,
+            hidden_layer_size=args.agent_hidden_layer_size,
+            num_hidden_layers=args.agent_num_hidden_layers,
         ).to(args.device)
         bc_policy.load_state_dict(torch.load(args.bc_policy_path, map_location=args.device))
         bc_policy.eval()
@@ -526,8 +662,13 @@ if __name__ == "__main__":
     
     optimizer = torch.optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-6)
     use_short_discriminator_reward = args.disc_reward_weight > 0.0
-    use_long_discriminator_reward = args.use_long_discriminator and args.long_disc_reward_weight > 0.0
-    use_discriminator_reward = use_short_discriminator_reward or use_long_discriminator_reward
+    use_discriminator_reward = use_short_discriminator_reward
+    use_motion_penalty = (
+        args.velocity_penalty_weight > 0.0
+        or args.acceleration_penalty_weight > 0.0
+        or args.jerk_penalty_weight > 0.0
+    )
+    motion_normalizer = RunningMeanStd(shape=(3,), device=args.device, clip=None)
 
     # Initialize AMP components (always enabled)
     print("\n" + "="*80)
@@ -536,12 +677,9 @@ if __name__ == "__main__":
 
     history_len = 5  # Number of positions to track for short discriminator
     disc_obs_dim = 8
-    disc_obs_dim_long = 0
     use_action_disc = False
     use_puck_disc = False
-    use_puck_disc_long = False
     discriminator, disc_optimizer, disc_normalizer, replay_buffer, demo_loader = None, None, None, None, None
-    discriminator_long, disc_optimizer_long, disc_normalizer_long, replay_buffer_long, demo_loader_long = None, None, None, None, None
     
     if use_short_discriminator_reward:
         # Load demonstration data first to determine short observation dimension
@@ -620,77 +758,6 @@ if __name__ == "__main__":
     else:
         print("  Short discriminator reward disabled (disc_reward_weight <= 0).")
 
-    if use_long_discriminator_reward:
-        demo_loader_long = DemoLoaderPositionHistory(
-            args.demo_data_path,
-            device=args.device,
-            use_actions=False,
-            use_puck=args.use_puck_discriminator_long,
-            puck_vertical_axis=args.puck_vertical_axis,
-            puck_downward_positive_direction=args.puck_downward_positive_direction,
-            puck_downward_speed_max=args.puck_downward_speed_max,
-            puck_speed_dt=args.puck_speed_dt,
-            puck_noise_std=args.puck_noise_std,
-            puck_vertical_pos_min=args.puck_vertical_pos_min,
-            puck_vertical_pos_max=args.puck_vertical_pos_max,
-            position_key="position_sequences_30",
-            puck_key="puck_sequences_30",
-            sample_bucketed_points=True,
-            bucket_window_len=args.long_history_len,
-            bucket_num_bins=args.long_num_bins,
-            bucket_samples_per_bin=args.long_samples_per_bin,
-            puck_current_index=args.long_puck_current_index,
-        )
-        print(f"✓ Long demo loader initialized ({len(demo_loader_long):,} demonstrations)")
-        use_puck_disc_long = demo_loader_long.use_puck
-        disc_obs_dim_long = demo_loader_long.get_obs_dim()
-        long_hidden_dims = parse_discriminator_hidden_dims(args.long_disc_hidden_sizes)
-        print(
-            f"  Long mode: POSITION HISTORY (bucketed 8-point from {args.long_history_len}) + "
-            f"{'PUCK FEATURES (' + str(PUCK_FEATURE_DIM) + 'D)' if use_puck_disc_long else 'NO PUCK'}"
-        )
-        print(f"  Long discriminator input dim: {disc_obs_dim_long}")
-
-        discriminator_long = Discriminator(
-            disc_obs_dim_long,
-            hidden_dims=long_hidden_dims,
-            activation='leaky_relu'
-        ).to(args.device)
-        disc_optimizer_long = torch.optim.Adam(
-            discriminator_long.parameters(),
-            lr=args.long_disc_learning_rate,
-            weight_decay=args.long_disc_weight_decay,
-            eps=1e-6,
-            betas=(0.5, 0.95),
-        )
-        print(f"✓ Long discriminator initialized (input_dim={disc_obs_dim_long}, hidden={long_hidden_dims})")
-
-        disc_normalizer_long = Normalizer(shape=(disc_obs_dim_long,), clip=10.0, device=args.device)
-        replay_buffer_long = ReplayBuffer(
-            capacity=args.long_disc_replay_buffer_size,
-            obs_shape=(disc_obs_dim_long,),
-            device=args.device
-        )
-        print(f"✓ Long replay buffer initialized (capacity={args.long_disc_replay_buffer_size:,})")
-
-        if args.long_discriminator_path is not None:
-            if not os.path.exists(args.long_discriminator_path):
-                raise FileNotFoundError(f"Long discriminator path {args.long_discriminator_path} does not exist.")
-            print(f"Loading pre-trained long discriminator from {args.long_discriminator_path}")
-            discriminator_long.load_state_dict(torch.load(args.long_discriminator_path, map_location=args.device))
-            print("✓ Long discriminator loaded successfully")
-
-        if args.long_amp_components_path is not None:
-            if not os.path.exists(args.long_amp_components_path):
-                raise FileNotFoundError(f"Long AMP components path {args.long_amp_components_path} does not exist.")
-            print(f"Loading long AMP components from {args.long_amp_components_path}")
-            long_amp_components = torch.load(args.long_amp_components_path, map_location=args.device)
-            disc_normalizer_long.load_state_dict(long_amp_components['normalizer'])
-            replay_buffer_long.load_state_dict(long_amp_components['replay_buffer'])
-            print(f"✓ Long AMP components loaded successfully (replay buffer size: {len(replay_buffer_long):,})")
-    else:
-        print("  Long discriminator reward disabled.")
-    
     print("="*80 + "\n")
 
 
@@ -705,15 +772,14 @@ if __name__ == "__main__":
     
     # AMP: Storage for discriminator observations and position history
     disc_obs = torch.zeros((args.num_steps, args.num_envs, disc_obs_dim)).to(args.device) if use_short_discriminator_reward else None
-    disc_obs_long = (
-        torch.zeros((args.num_steps, args.num_envs, disc_obs_dim_long), device=args.device)
-        if use_long_discriminator_reward else None
-    )
     paddle_positions = torch.zeros((args.num_steps, args.num_envs, 2)).to(args.device)
     temporal_alignment_reward_raw = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     temporal_alignment_reward_scaled = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     action_magnitude_reward_raw = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     action_magnitude_reward_scaled = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
+    velocity_mag_rollout = torch.zeros((args.num_steps, args.num_envs), device=args.device)
+    acceleration_mag_rollout = torch.zeros((args.num_steps, args.num_envs), device=args.device)
+    jerk_mag_rollout = torch.zeros((args.num_steps, args.num_envs), device=args.device)
     # Position history buffer: [num_envs, history_len, 2] for (x, y) positions
     position_history = torch.zeros((args.num_envs, history_len, 2)).to(args.device) if use_short_discriminator_reward else None
     puck_position_history = torch.zeros((args.num_envs, history_len, 2)).to(args.device) if (use_short_discriminator_reward and use_puck_disc) else None
@@ -725,27 +791,6 @@ if __name__ == "__main__":
     action_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if (use_short_discriminator_reward and use_action_disc) else None
     puck_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if (use_short_discriminator_reward and use_puck_disc) else None
     valid_transition = torch.zeros((args.num_steps, args.num_envs), dtype=torch.bool).to(args.device) if use_short_discriminator_reward else None
-    long_position_history = (
-        torch.zeros((args.num_envs, args.long_history_len, 2), device=args.device)
-        if use_long_discriminator_reward else None
-    )
-    long_puck_history = (
-        torch.zeros((args.num_envs, args.long_history_len, 2), device=args.device)
-        if (use_long_discriminator_reward and use_puck_disc_long) else None
-    )
-    long_position_count = (
-        torch.zeros(args.num_envs, dtype=torch.long, device=args.device)
-        if use_long_discriminator_reward else None
-    )
-    long_puck_count = (
-        torch.zeros(args.num_envs, dtype=torch.long, device=args.device)
-        if (use_long_discriminator_reward and use_puck_disc_long) else None
-    )
-    valid_transition_long = (
-        torch.zeros((args.num_steps, args.num_envs), dtype=torch.bool, device=args.device)
-        if use_long_discriminator_reward else None
-    )
-
     # Tracking lists for motion metrics
     velocity_magnitudes = []
     acceleration_magnitudes = []
@@ -754,11 +799,27 @@ if __name__ == "__main__":
     # Start
     global_step = 0
     start_time = time.time()
+    if use_motion_penalty and args.motion_norm_warmup_steps > 0:
+        print(
+            f"Warming motion normalizer for {args.motion_norm_warmup_steps} steps "
+            f"using random actions..."
+        )
+        warmup_motion_normalizer(
+            envs=envs,
+            motion_normalizer=motion_normalizer,
+            warmup_steps=args.motion_norm_warmup_steps,
+            seed=args.seed + 2026,
+            device=args.device,
+        )
+
     next_obs, _ = envs.reset(seed=args.seed)
     next_obs = torch.Tensor(next_obs).to(args.device)
     next_done = torch.zeros(args.num_envs).to(args.device)
     just_reset = torch.zeros(args.num_envs, dtype=torch.bool).to(args.device)
     last_action_for_policy = torch.zeros((args.num_envs, action_dim), device=args.device)
+    current_velocity_mag = torch.zeros(args.num_envs, dtype=torch.float32, device=args.device)
+    current_acceleration_mag = torch.zeros(args.num_envs, dtype=torch.float32, device=args.device)
+    current_jerk_mag = torch.zeros(args.num_envs, dtype=torch.float32, device=args.device)
     
 
     for iteration in range(1, args.num_iterations + 1):
@@ -801,10 +862,22 @@ if __name__ == "__main__":
             next_obs, next_done = torch.Tensor(next_obs).to(args.device), torch.Tensor(next_done).to(args.device)
             last_action_for_policy = action.detach().clone()
             last_action_for_policy[next_done.bool()] = 0
+
+            current_velocity_mag, current_acceleration_mag, current_jerk_mag = parse_motion_magnitudes_from_infos(
+                infos=infos,
+                num_envs=args.num_envs,
+                device=args.device,
+                fallback_velocity_mag=current_velocity_mag,
+                fallback_acceleration_mag=current_acceleration_mag,
+                fallback_jerk_mag=current_jerk_mag,
+            )
+            velocity_mag_rollout[step] = current_velocity_mag
+            acceleration_mag_rollout[step] = current_acceleration_mag
+            jerk_mag_rollout[step] = current_jerk_mag
             
             # AMP: Construct discriminator observations from trajectory history
             current_paddle_pos = extract_current_paddle_position(next_obs)
-            current_puck_pos = extract_current_puck_position(next_obs) if (use_puck_disc or use_puck_disc_long) else None
+            current_puck_pos = extract_current_puck_position(next_obs) if use_puck_disc else None
             paddle_positions[step] = current_paddle_pos
             
             # Optional action magnitude reward (raw value is independent of scale)
@@ -905,48 +978,6 @@ if __name__ == "__main__":
                         f"{np.array2string(sample_disc[:8], precision=4, suppress_small=True)}"
                     )
 
-            if use_long_discriminator_reward:
-                long_position_history = torch.roll(long_position_history, shifts=-1, dims=1)
-                long_position_history[:, -1, :] = current_paddle_pos
-                long_position_count = torch.clamp(long_position_count + 1, max=args.long_history_len)
-
-                if use_puck_disc_long:
-                    long_puck_history = torch.roll(long_puck_history, shifts=-1, dims=1)
-                    long_puck_history[:, -1, :] = current_puck_pos
-                    long_puck_count = torch.clamp(long_puck_count + 1, max=args.long_history_len)
-
-                has_enough_long_history = long_position_count >= args.long_history_len
-                valid_transition_long[step] = has_enough_long_history
-                if use_puck_disc_long:
-                    has_enough_long_puck = long_puck_count >= args.long_history_len
-                    valid_transition_long[step] = valid_transition_long[step] & has_enough_long_puck
-                valid_transition_long[step, just_reset] = False
-
-                sampled_indices = sample_bucketed_indices_torch(
-                    args.num_envs,
-                    window_len=args.long_history_len,
-                    num_bins=args.long_num_bins,
-                    samples_per_bin=args.long_samples_per_bin,
-                    device=args.device,
-                )
-                gather_idx = sampled_indices.unsqueeze(-1).expand(-1, -1, 2)
-                sampled_positions = torch.gather(long_position_history, dim=1, index=gather_idx)
-                long_features = [normalize_position_sequence_batch(sampled_positions)]
-                if use_puck_disc_long:
-                    puck_features_long = build_puck_discriminator_features_torch(
-                        long_puck_history,
-                        current_index=args.long_puck_current_index,
-                        vertical_axis=args.puck_vertical_axis,
-                        downward_positive_direction=args.puck_downward_positive_direction,
-                        downward_speed_max=args.puck_downward_speed_max,
-                        speed_dt=args.puck_speed_dt,
-                        noise_std=args.puck_noise_std,
-                        vertical_pos_min=args.puck_vertical_pos_min,
-                        vertical_pos_max=args.puck_vertical_pos_max,
-                    )
-                    long_features.append(puck_features_long)
-                disc_obs_long[step] = torch.cat(long_features, dim=-1)
-            
             # Reset position history and count for environments that are done
             if use_discriminator_reward and next_done.any():
                 done_mask = next_done.bool()
@@ -961,15 +992,6 @@ if __name__ == "__main__":
                         puck_position_history[done_mask] = 0
                         puck_position_history[done_mask, -1, :] = current_puck_pos[done_mask]
                         puck_count[done_mask] = 1
-                if use_long_discriminator_reward:
-                    long_position_history[done_mask] = 0
-                    long_position_history[done_mask, -1, :] = current_paddle_pos[done_mask]
-                    long_position_count[done_mask] = 1
-                    if use_puck_disc_long:
-                        long_puck_history[done_mask] = 0
-                        long_puck_history[done_mask, -1, :] = current_puck_pos[done_mask]
-                        long_puck_count[done_mask] = 1
-            
             # Track which environments just reset for next step
             just_reset = next_done.bool()
 
@@ -1027,11 +1049,19 @@ if __name__ == "__main__":
             
             if use_short_discriminator_reward:
                 b_disc_obs = disc_obs.reshape(-1, disc_obs_dim)
-                norm_disc_obs = disc_normalizer.normalize(b_disc_obs)
-                disc_scores = discriminator(norm_disc_obs).squeeze(-1)
-                disc_r_raw = torch.clamp(1 - 0.25 * (disc_scores - 1) ** 2, min=0)
-                b_valid = valid_transition.reshape(-1)
-                disc_r_raw = disc_r_raw * b_valid.float()
+                if iteration <= args.disc_reward_warmup_iters:
+                    # Keep discriminator reward fixed during early policy warmup.
+                    disc_r_raw = torch.full(
+                        (args.num_steps * args.num_envs,),
+                        float(args.disc_reward_warmup_value),
+                        device=args.device,
+                    )
+                else:
+                    norm_disc_obs = disc_normalizer.normalize(b_disc_obs)
+                    disc_scores = discriminator(norm_disc_obs).squeeze(-1)
+                    disc_r_raw = torch.clamp(1 - 0.25 * (disc_scores - 1) ** 2, min=0)
+                    b_valid = valid_transition.reshape(-1)
+                    disc_r_raw = disc_r_raw * b_valid.float()
                 disc_r_raw_shaped = disc_r_raw.reshape(args.num_steps, args.num_envs)
                 disc_r_scaled = args.disc_reward_weight * disc_r_raw_shaped
             else:
@@ -1039,29 +1069,38 @@ if __name__ == "__main__":
                 disc_r_raw = torch.zeros(args.num_steps * args.num_envs, device=args.device)
                 disc_r_scaled = torch.zeros((args.num_steps, args.num_envs), device=args.device)
 
-            if use_long_discriminator_reward:
-                b_disc_obs_long = disc_obs_long.reshape(-1, disc_obs_dim_long)
-                norm_disc_obs_long = disc_normalizer_long.normalize(b_disc_obs_long)
-                disc_scores_long = discriminator_long(norm_disc_obs_long).squeeze(-1)
-                disc_r_raw_long = torch.clamp(1 - 0.25 * (disc_scores_long - 1) ** 2, min=0)
-                b_valid_long = valid_transition_long.reshape(-1)
-                disc_r_raw_long = disc_r_raw_long * b_valid_long.float()
-                disc_r_raw_shaped_long = disc_r_raw_long.reshape(args.num_steps, args.num_envs)
-                disc_r_scaled_long = args.long_disc_reward_weight * disc_r_raw_shaped_long
-            else:
-                b_disc_obs_long = None
-                disc_r_raw_long = torch.zeros(args.num_steps * args.num_envs, device=args.device)
-                disc_r_scaled_long = torch.zeros((args.num_steps, args.num_envs), device=args.device)
             task_r_raw = rewards
             task_r_scaled = args.task_reward_weight * task_r_raw
+
+            motion_raw = torch.stack(
+                [velocity_mag_rollout, acceleration_mag_rollout, jerk_mag_rollout], dim=-1
+            )
+            if use_motion_penalty and args.motion_norm_update_online:
+                motion_normalizer.update(motion_raw.reshape(-1, 3))
+
+            motion_std = torch.sqrt(motion_normalizer.var).clamp_min(args.motion_norm_eps).view(1, 1, 3)
+            motion_penalty_features = motion_raw / motion_std
+            if args.motion_norm_clip is not None and args.motion_norm_clip > 0:
+                motion_penalty_features = torch.clamp(
+                    motion_penalty_features, -args.motion_norm_clip, args.motion_norm_clip
+                )
+
+            velocity_penalty_raw = -motion_penalty_features[:, :, 0]
+            acceleration_penalty_raw = -motion_penalty_features[:, :, 1]
+            jerk_penalty_raw = -motion_penalty_features[:, :, 2]
+            velocity_penalty_scaled = args.velocity_penalty_weight * velocity_penalty_raw
+            acceleration_penalty_scaled = args.acceleration_penalty_weight * acceleration_penalty_raw
+            jerk_penalty_scaled = args.jerk_penalty_weight * jerk_penalty_raw
             
             # Combine scaled reward streams only when building PPO targets.
             combined_rewards = (
                 task_r_scaled
                 + disc_r_scaled
-                + disc_r_scaled_long
                 + temporal_alignment_reward_scaled
                 + action_magnitude_reward_scaled
+                + velocity_penalty_scaled
+                + acceleration_penalty_scaled
+                + jerk_penalty_scaled
             )
             
             # Compute advantages with combined rewards
@@ -1093,9 +1132,20 @@ if __name__ == "__main__":
                 use_short_discriminator_reward=use_short_discriminator_reward,
                 disc_r_raw=disc_r_raw,
                 disc_r_scaled=disc_r_scaled,
-                use_long_discriminator_reward=use_long_discriminator_reward,
-                disc_r_raw_long=disc_r_raw_long,
-                disc_r_scaled_long=disc_r_scaled_long,
+            )
+            log_motion_penalty_stats(
+                writer=writer,
+                global_step=global_step,
+                velocity_mag=velocity_mag_rollout,
+                acceleration_mag=acceleration_mag_rollout,
+                jerk_mag=jerk_mag_rollout,
+                velocity_penalty_raw=velocity_penalty_raw,
+                acceleration_penalty_raw=acceleration_penalty_raw,
+                jerk_penalty_raw=jerk_penalty_raw,
+                velocity_penalty_scaled=velocity_penalty_scaled,
+                acceleration_penalty_scaled=acceleration_penalty_scaled,
+                jerk_penalty_scaled=jerk_penalty_scaled,
+                motion_normalizer=motion_normalizer,
             )
 
         # flatten the batch
@@ -1213,34 +1263,6 @@ if __name__ == "__main__":
                 global_step=global_step,
             )
 
-        # AMP: Train long discriminator
-        if use_long_discriminator_reward:
-            for i in range(args.long_num_discriminator_updates):
-                b_valid_long = valid_transition_long.reshape(-1)
-                disc_metrics_long = train_lsgan_discriminator_step(
-                    demo_loader=demo_loader_long,
-                    disc_batch_size=args.long_disc_batch_size,
-                    b_disc_obs=b_disc_obs_long,
-                    b_valid=b_valid_long,
-                    replay_buffer=replay_buffer_long,
-                    replay_samples=args.long_disc_replay_samples,
-                    disc_normalizer=disc_normalizer_long,
-                    discriminator=discriminator_long,
-                    disc_optimizer=disc_optimizer_long,
-                    grad_penalty_weight=args.long_disc_grad_penalty,
-                    logit_reg_weight=args.long_disc_logit_reg,
-                    max_grad_norm=args.max_grad_norm,
-                    device=args.device,
-                )
-
-            log_discriminator_metrics(
-                writer=writer,
-                prefix="amp_long",
-                metrics=disc_metrics_long,
-                replay_buffer_size=len(replay_buffer_long),
-                global_step=global_step,
-            )
-        
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
@@ -1307,9 +1329,7 @@ if __name__ == "__main__":
             
             # Save short AMP components in checkpoint when short discriminator reward is active
             if use_short_discriminator_reward:
-                save_amp_components(checkpoint_dir, discriminator, disc_normalizer, replay_buffer, is_long=False)
-            if use_long_discriminator_reward:
-                save_amp_components(checkpoint_dir, discriminator_long, disc_normalizer_long, replay_buffer_long, is_long=True)
+                save_amp_components(checkpoint_dir, discriminator, disc_normalizer, replay_buffer)
 
             # evaluate the model
             evaluate_agent(
@@ -1321,7 +1341,8 @@ if __name__ == "__main__":
                 reference_states=reference_states,
                 ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None,
                 action_scale=action_scale,
-                agent_hidden_size=args.agent_hidden_size,
+                agent_hidden_layer_size=args.agent_hidden_layer_size,
+                agent_num_hidden_layers=args.agent_num_hidden_layers,
                 use_last_action_in_policy_state=args.use_last_action_in_policy_state,
             )
             
@@ -1332,11 +1353,8 @@ if __name__ == "__main__":
     
     # Save AMP components when discriminator reward is active
     if use_short_discriminator_reward:
-        save_amp_components(log_parent_dir, discriminator, disc_normalizer, replay_buffer, is_long=False)
+        save_amp_components(log_parent_dir, discriminator, disc_normalizer, replay_buffer)
         print(f"✓ Saved short discriminator and AMP components")
-    if use_long_discriminator_reward:
-        save_amp_components(log_parent_dir, discriminator_long, disc_normalizer_long, replay_buffer_long, is_long=True)
-        print(f"✓ Saved long discriminator and AMP components")
 
     # evaluate the model and save results
     evaluate_agent(
@@ -1346,7 +1364,8 @@ if __name__ == "__main__":
         reference_states=reference_states,
         ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None,
         action_scale=action_scale,
-        agent_hidden_size=args.agent_hidden_size,
+        agent_hidden_layer_size=args.agent_hidden_layer_size,
+        agent_num_hidden_layers=args.agent_num_hidden_layers,
         use_last_action_in_policy_state=args.use_last_action_in_policy_state,
     )
     

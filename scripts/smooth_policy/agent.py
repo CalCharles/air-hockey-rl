@@ -19,7 +19,59 @@ def build_activation(activation_type: str, leaky_relu_negative_slope: float = 0.
         return nn.Tanh()
     if activation_type == "leaky_relu":
         return nn.LeakyReLU(negative_slope=leaky_relu_negative_slope)
+    if activation_type == "swish":
+        return nn.SiLU()
     raise ValueError(f"Unsupported activation_type: {activation_type}. Use 'tanh' or 'leaky_relu'.")
+
+
+class ResidualDenseNormSwishBlock(nn.Module):
+    """Residual block with 4x [Dense -> LayerNorm -> Swish], then residual add."""
+
+    def __init__(self, input_dim, hidden_layer_size, units_per_block=4):
+        super().__init__()
+        self.units = nn.ModuleList()
+        curr_dim = input_dim
+        for _ in range(units_per_block):
+            self.units.append(
+                nn.Sequential(
+                    layer_init(nn.Linear(curr_dim, hidden_layer_size)),
+                    nn.LayerNorm(hidden_layer_size),
+                    nn.SiLU(),
+                )
+            )
+            curr_dim = hidden_layer_size
+
+        self.skip_projection = None
+        if input_dim != hidden_layer_size:
+            self.skip_projection = layer_init(nn.Linear(input_dim, hidden_layer_size), std=1.0)
+
+    def forward(self, x):
+        residual = self.skip_projection(x) if self.skip_projection is not None else x
+        out = x
+        for unit in self.units:
+            out = unit(out)
+        return out + residual
+
+
+class ResidualMLPTrunk(nn.Module):
+    def __init__(self, input_dim, hidden_layer_size, num_residual_blocks, units_per_block=4):
+        super().__init__()
+        self.blocks = nn.ModuleList()
+        curr_dim = input_dim
+        for _ in range(num_residual_blocks):
+            self.blocks.append(
+                ResidualDenseNormSwishBlock(
+                    input_dim=curr_dim,
+                    hidden_layer_size=hidden_layer_size,
+                    units_per_block=units_per_block,
+                )
+            )
+            curr_dim = hidden_layer_size
+
+    def forward(self, x):
+        for block in self.blocks:
+            x = block(x)
+        return x
 
 # Simple MLP Gaussian Policy + Critic for PPO (actions clipped into some pre-determined range)
 class Agent(nn.Module):
@@ -28,39 +80,46 @@ class Agent(nn.Module):
         envs,
         action_scale=1.0,
         action_bias=0.0,
-        hidden_size=64,
+        hidden_layer_size=64,
+        num_hidden_layers=2,
+        hidden_size=None,
         activation_type="tanh",
         leaky_relu_negative_slope=0.01,
-        use_intrinsic_critic=False,
     ): # preliminary calculation
         super().__init__()
         obs_dim = int(np.prod(envs.single_observation_space.shape))
         act_dim = int(np.prod(envs.single_action_space.shape))
-        self.use_intrinsic_critic = use_intrinsic_critic
 
-        self.critic = nn.Sequential(
-            layer_init(nn.Linear(obs_dim, hidden_size)),
-            build_activation(activation_type, leaky_relu_negative_slope),
-            layer_init(nn.Linear(hidden_size, hidden_size)),
-            build_activation(activation_type, leaky_relu_negative_slope),
-            layer_init(nn.Linear(hidden_size, 1), std=1.0),
+        # Backward compatibility for existing callers while preferring hidden_layer_size.
+        if hidden_size is not None:
+            hidden_layer_size = hidden_size
+
+        units_per_residual_block = 4
+        num_residual_blocks = int(num_hidden_layers)
+
+        if num_residual_blocks < 1:
+            raise ValueError(f"num_residual_blocks must be >= 1, got {num_residual_blocks}")
+
+        # Kept for introspection/logging and checkpoint metadata usage.
+        self.network_depth = int(num_residual_blocks * units_per_residual_block)
+        self.num_residual_blocks = int(num_residual_blocks)
+        self.hidden_layer_size = int(hidden_layer_size)
+
+        self.critic = ResidualMLPTrunk(
+            input_dim=obs_dim,
+            hidden_layer_size=hidden_layer_size,
+            num_residual_blocks=num_residual_blocks,
+            units_per_block=units_per_residual_block,
         )
-        self.intrinsic_critic = None
-        if self.use_intrinsic_critic:
-            self.intrinsic_critic = nn.Sequential(
-                layer_init(nn.Linear(obs_dim, hidden_size)),
-                build_activation(activation_type, leaky_relu_negative_slope),
-                layer_init(nn.Linear(hidden_size, hidden_size)),
-                build_activation(activation_type, leaky_relu_negative_slope),
-                layer_init(nn.Linear(hidden_size, 1), std=1.0),
-            )
-        self.actor = nn.Sequential(
-            layer_init(nn.Linear(obs_dim, hidden_size)),
-            build_activation(activation_type, leaky_relu_negative_slope),
-            layer_init(nn.Linear(hidden_size, hidden_size)),
-            build_activation(activation_type, leaky_relu_negative_slope),
+        self.critic_head = layer_init(nn.Linear(hidden_layer_size, 1), std=1.0)
+
+        self.actor = ResidualMLPTrunk(
+            input_dim=obs_dim,
+            hidden_layer_size=hidden_layer_size,
+            num_residual_blocks=num_residual_blocks,
+            units_per_block=units_per_residual_block,
         )
-        self.actor_mean_head = layer_init(nn.Linear(hidden_size, act_dim), std=0.01) # action initially close to 0, exploration guided by logstd
+        self.actor_mean_head = layer_init(nn.Linear(hidden_layer_size, act_dim), std=0.01) # action initially close to 0, exploration guided by logstd
         # self.actor_logstd_head = layer_init(nn.Linear(64, act_dim), std=3)
 
         # forget about per-state logstd, just use a fixed one for now
@@ -73,15 +132,7 @@ class Agent(nn.Module):
         self.register_buffer("EPS", torch.tensor(EPS))
 
     def get_value(self, x):
-        return self.critic(x)
-
-    def get_intrinsic_value(self, x):
-        if self.intrinsic_critic is None:
-            return torch.zeros((x.shape[0], 1), device=x.device, dtype=x.dtype)
-        return self.intrinsic_critic(x)
-
-    def get_values(self, x):
-        return self.get_value(x), self.get_intrinsic_value(x)
+        return self.critic_head(self.critic(x))
     
     def get_action_mean_and_logstd(self, x):
         x = self.actor(x)
@@ -104,7 +155,7 @@ class Agent(nn.Module):
                 x = x.unsqueeze(0)
             return self.get_action_and_value(x)[0] # just return the action, as a tensor
 
-    def get_action_and_value(self, x, action=None, return_intrinsic_value=False):
+    def get_action_and_value(self, x, action=None):
         action_mean, action_logstd = self.get_action_mean_and_logstd(x)
         action_std = torch.exp(action_logstd)
         normal = Normal(action_mean, action_std)
@@ -121,8 +172,5 @@ class Agent(nn.Module):
         log_prob = normal.log_prob(x_t) - torch.log(self.action_scale * (1 - y_t.pow(2)) + self.EPS)
         log_prob = log_prob.sum(1)
         mean = torch.tanh(action_mean) * self.action_scale + self.action_bias
-        ext_value = self.critic(x)
-        if return_intrinsic_value:
-            int_value = self.get_intrinsic_value(x)
-            return action, log_prob, mean, ext_value, int_value
-        return action, log_prob, mean, ext_value
+
+        return action, log_prob, mean, self.critic_head(self.critic(x))

@@ -602,6 +602,10 @@ class AirHockeyBaseEnv(ABC, Env):
             self.old_state = self.current_state
         self.current_state = next_state
         
+        vel_mag = 0.0
+        acc_mag = 0.0
+        jerk_mag = 0.0
+
         # Collect motion data
         if 'paddles' in next_state and 'paddle_ego' in next_state['paddles']:
             paddle_data = next_state['paddles']['paddle_ego']
@@ -616,6 +620,9 @@ class AirHockeyBaseEnv(ABC, Env):
         success = self.success_in_ep 
         info = {}
         info['success'] = success
+        info['paddle_velocity_mag'] = float(vel_mag)
+        info['paddle_acceleration_mag'] = float(acc_mag)
+        info['paddle_jerk_mag'] = float(jerk_mag)
 
         hit_a_puck = False
         is_finished, truncated, puck_within_home, puck_within_alt_home, puck_within_goal, _ = self.has_finished(next_state)
