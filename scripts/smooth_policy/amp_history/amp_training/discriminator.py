@@ -26,27 +26,52 @@ class Discriminator(nn.Module):
     or agent-generated (negative).
     """
     
-    def __init__(self, obs_dim, hidden_dims=[64, 64], activation='leaky_relu'):
+    def __init__(
+        self,
+        obs_dim,
+        hidden_layer_size=64,
+        num_hidden_layers=2,
+        activation='leaky_relu',
+        hidden_dims=None,
+    ):
         """
         Initialize discriminator.
         
         Args:
             obs_dim: Dimension of discriminator observations (e.g., 8 for [s_t, s_{t+1}])
-            hidden_dims: List of hidden layer dimensions
+            hidden_layer_size: Width of each hidden layer (preferred spec)
+            num_hidden_layers: Number of hidden layers (preferred spec)
             activation: Activation function ('leaky_relu', 'relu' or 'tanh')
+            hidden_dims: Optional legacy list of hidden layer dimensions
         """
         super().__init__()
         
         self.obs_dim = obs_dim
-        self.hidden_dims = hidden_dims
+        if hidden_dims is not None:
+            hidden_dims = [int(size) for size in hidden_dims]
+            if len(hidden_dims) == 0:
+                raise ValueError("hidden_dims must contain at least one layer size.")
+            if any(size <= 0 for size in hidden_dims):
+                raise ValueError(f"hidden_dims must be positive, got: {hidden_dims}")
+            self.hidden_dims = hidden_dims
+        else:
+            hidden_layer_size = int(hidden_layer_size)
+            num_hidden_layers = int(num_hidden_layers)
+            if hidden_layer_size <= 0:
+                raise ValueError(f"hidden_layer_size must be positive, got {hidden_layer_size}")
+            if num_hidden_layers < 1:
+                raise ValueError(f"num_hidden_layers must be >= 1, got {num_hidden_layers}")
+            self.hidden_dims = [hidden_layer_size] * num_hidden_layers
+        self.hidden_layer_size = int(self.hidden_dims[0])
+        self.num_hidden_layers = int(len(self.hidden_dims))
         
         # Choose activation function
         if activation == 'leaky_relu':
-            self.activation = nn.LeakyReLU(negative_slope=0.2)
+            activation_ctor = lambda: nn.LeakyReLU(negative_slope=0.2)
         elif activation == 'relu':
-            self.activation = nn.ReLU()
+            activation_ctor = nn.ReLU
         elif activation == 'tanh':
-            self.activation = nn.Tanh()
+            activation_ctor = nn.Tanh
         else:
             raise ValueError(f"Unknown activation: {activation}")
         
@@ -54,9 +79,9 @@ class Discriminator(nn.Module):
         layers = []
         prev_dim = obs_dim
         
-        for hidden_dim in hidden_dims:
+        for hidden_dim in self.hidden_dims:
             layers.append(layer_init(nn.Linear(prev_dim, hidden_dim)))
-            layers.append(self.activation)
+            layers.append(activation_ctor())
             prev_dim = hidden_dim
         
         # Output layer (single logit)

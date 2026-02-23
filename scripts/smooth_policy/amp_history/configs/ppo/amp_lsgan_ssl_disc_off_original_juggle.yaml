@@ -1,0 +1,85 @@
+# AMP-LSGAN-SSL run args
+# Case 1: discriminator disabled, original puck_juggle environment.
+
+# Basic training parameters
+num_envs: 8
+num_steps: 512
+learning_rate: 0.0001
+num_iterations: 500
+anneal_lr: false
+gamma: 0.99
+gae_lambda: 0.95
+minibatch_size: 64
+update_epochs: 10
+clip_coef: 0.2
+clip_vloss: false
+ent_coef: 0.0
+vf_coef: 0.5
+max_grad_norm: 0.5
+target_kl: null
+batch_size: 0
+norm_adv: true
+
+# SSL latent + auxiliary heads
+ssl_latent_dim: 10
+ssl_encoder_hidden_layer_size: 64
+ssl_encoder_num_hidden_layers: 5
+ssl_reward_head_hidden_layer_size: 64
+ssl_reward_head_num_hidden_layers: 10
+ssl_dynamics_head_hidden_layer_size: 64
+ssl_dynamics_head_num_hidden_layers: 10
+ssl_reward_loss_weight: 1.0
+ssl_dynamics_loss_weight: 1.0
+
+# AMP / discriminator configuration
+use_action_discriminator: false
+use_puck_discriminator: false
+disc_replay_buffer_size: 100000
+disc_replay_samples: 1024
+disc_batch_size: 512
+disc_reward_warmup_iters: 10
+disc_reward_warmup_value: 0.4
+disc_learning_rate: 0.00001
+disc_logit_reg: 0.01
+disc_grad_penalty: 5.0
+disc_weight_decay: 0.0001
+num_discriminator_updates: 1
+disc_hidden_layer_size: 64
+disc_num_hidden_layers: 10
+
+# Reward weighting
+task_reward_weight: 0.5
+disc_reward_weight: 0.0
+temporal_alignment_reward_scale: 0.0
+action_magnitude_reward_scale: 0.0
+temporal_alignment_horizon: 4
+velocity_penalty_weight: 0.0
+acceleration_penalty_weight: 0.0
+jerk_penalty_weight: 0.0
+exploration_reward_weight: 0.5
+exploration_error_deadzone: 0.1
+exploration_norm_update_online: true
+exploration_norm_clip: 10.0
+exploration_norm_eps: 0.000001
+
+# Paths
+config: "scripts/smooth_policy/amp_history/configs/pid/puck_juggle_original_config.yaml"
+args_file: null
+model_path: null
+bc_policy_path: null
+discriminator_path: null
+amp_components_path: null
+state_encoder_path: null
+reward_head_path: null
+dynamics_head_path: null
+log_parent_dir: "runs/amp_training/ssl/disc_off_original_juggle"
+run_name: "amp_lsgan_ssl_disc_off_original_juggle"
+demo_data_path: "scripts/smooth_policy/amp_history/amp_training/amp_data/amp_paddle_puck_dataset.pt"
+
+# Others
+seed: 0
+device: "cuda:0"
+use_last_action_in_policy_state: true
+action_scale: 1
+agent_hidden_layer_size: 64
+agent_num_hidden_layers: 10

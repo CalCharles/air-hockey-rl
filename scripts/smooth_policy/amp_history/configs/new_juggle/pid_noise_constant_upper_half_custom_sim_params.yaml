@@ -19,15 +19,15 @@ air_hockey:
   simulator_params:
     absorb_target: false
     block_density: 1000
-    block_width: 0.0554
+    block_width: 0.0254
     length: 1.9304
-    max_force_timestep: 100
+    max_force_timestep: 10000
     paddle_radius: 0.0508
-    force_scaling: 1
-    paddle_damping: 3
-    paddle_density: 2500
-    gravity: -0.5
-    puck_damping: 0.5
+    force_scaling: 0.99
+    paddle_damping: 17
+    paddle_density: 1000
+    gravity: -0.65
+    puck_damping: 0.3
     puck_density: 250
     puck_restitution: 1.09145
     wall_bounce_scale: 0.02
@@ -36,6 +36,8 @@ air_hockey:
     seed: 0
     width: 0.8636
     use_pid: true
+    pid_kp: 5000
+    pid_kd: 200
     pid_ki: 0.0
     puck_noise: true
     puck_noise_std: 0.005
@@ -47,7 +49,7 @@ air_hockey:
     random_occlusion_bad_region_box_y: [-0.3, 0.0]
     random_occlusion_bad_region_right_x: [0.35, 0.8]
   stand_still_rew: 0.0
-  task: puck_juggle_no_base_reward
+  task: puck_juggle_upper_half_reward 
   terminate_on_enemy_goal: true
   terminate_on_out_of_bounds: false
   terminate_on_puck_hit_bottom: true
@@ -55,9 +57,7 @@ air_hockey:
   terminate_on_puck_pass_paddle: true
   terminate_on_puck_stop: false
   truncate_rew: 0
-  wall_bumping_rew: -1
+  wall_bumping_rew: 0
   use_reward_shaping: true
   use_smooth_penalty: false
   base_reward_scaling: 1
-  
-

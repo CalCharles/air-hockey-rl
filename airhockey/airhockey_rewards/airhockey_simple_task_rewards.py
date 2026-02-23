@@ -196,27 +196,27 @@ class AirHockeyPuckJuggleLinearTopReward(AirHockeyPuckJuggleReward):
         return reward
 
 
-class AirHockeyPuckJuggleLinearTopNoBaseReward(AirHockeyPuckJuggleLinearTopReward):
+class AirHockeyPuckJuggleNoBaseReward(AirHockeyPuckJuggleLinearTopReward):
     def get_base_reward(self, state_info):
         # Preserve success logic from linear-top shaping while removing base reward signal.
         _, success = super().get_base_reward(state_info)
         return 0.0, success
 
 
-class AirHockeyPuckJuggleLinearTopUpperHalfReward(AirHockeyPuckJuggleLinearTopReward):
+class AirHockeyPuckJuggleUpperHalfReward(AirHockeyPuckJuggleLinearTopReward):
     def get_base_reward(self, state_info):
-        reward, success = super().get_base_reward(state_info)
-        reward += self.upper_half_bonus(state_info)
+        _, success = super().get_base_reward(state_info)
+        reward = self.upper_half_reward(state_info)
         return reward, success
 
-    def upper_half_bonus(self, state_info):
+    def upper_half_reward(self, state_info):
         bonus_reward = 0.0
         x_midpoint = (self.task_env.table_x_top + self.task_env.table_x_bot) / 2.0
         num_pucks = max(len(state_info["pucks"]), 1)
 
         for puck in state_info["pucks"]:
             if puck["position"][0] <= x_midpoint:
-                bonus_reward += 2.0 / num_pucks
+                bonus_reward += 1.0 / num_pucks
 
         return bonus_reward
 
