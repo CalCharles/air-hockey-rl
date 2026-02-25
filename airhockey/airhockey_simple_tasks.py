@@ -213,10 +213,15 @@ class AirHockeyPuckJuggleLinearTopEnv(AirHockeyPuckJuggleEnv):
 
     def get_paddle_configuration(self, name):
         if name == 'paddle_ego':
-            x_pos = self.table_x_bot * 3 / 4
-            # x is table length axis, y is lateral axis; keep y in the middle 50% band.
-            y_low = self.table_y_left + 0.25 * (self.table_y_right - self.table_y_left)
-            y_high = self.table_y_left + 0.75 * (self.table_y_right - self.table_y_left)
+            x_low = self.paddle_x_min + self.paddle_radius
+            x_high = self.paddle_x_max - self.paddle_radius
+            y_low = self.paddle_y_min + self.paddle_radius
+            y_high = self.paddle_y_max - self.paddle_radius
+            if x_low >= x_high:
+                x_low, x_high = self.table_x_top + self.paddle_radius, self.table_x_bot - self.paddle_radius
+            if y_low >= y_high:
+                y_low, y_high = self.table_y_left + self.paddle_radius, self.table_y_right - self.paddle_radius
+            x_pos = self.rng.uniform(low=x_low, high=x_high)
             y_pos = self.rng.uniform(low=y_low, high=y_high)
             return (x_pos, y_pos), (0, 0)
         elif name == 'paddle_alt':
@@ -227,9 +232,9 @@ class AirHockeyPuckJuggleLinearTopEnv(AirHockeyPuckJuggleEnv):
 
     def get_puck_configuration(self, bad_regions=None):
         # Use base-frame coordinates here; Box2D conversion happens in spawn_puck.
-        # "Top 1/3" is along x toward table_x_top (more negative x values).
+        # "Upper half" is the top side of the table (x from table_x_top to centerline).
         x_low = self.table_x_top + self.puck_radius
-        x_high = self.table_x_top + (self.length / 3.0) - self.puck_radius
+        x_high = 0.0 - self.puck_radius
         y_low = self.table_y_left + self.puck_radius
         y_high = self.table_y_right - self.puck_radius
 

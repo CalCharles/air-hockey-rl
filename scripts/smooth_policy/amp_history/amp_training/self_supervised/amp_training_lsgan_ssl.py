@@ -38,7 +38,7 @@ from datetime import datetime
 from types import SimpleNamespace
 
 from scripts.smooth_policy.agent import Agent
-from scripts.smooth_policy.amp_history.amp_training.ssl_modules import (
+from scripts.smooth_policy.amp_history.amp_training.self_supervised.ssl_modules import (
     ActionConditionedDynamicsHead,
     ActionConditionedRewardHead,
     SharedStateEncoder,
@@ -48,7 +48,7 @@ from scripts.smooth_policy.amp_history.amp_training.ssl_modules import (
 from scripts.smooth_policy.amp_history.amp_training.discriminator import Discriminator
 from scripts.smooth_policy.amp_history.amp_training.replay_buffer import ReplayBuffer
 from scripts.smooth_policy.amp_history.amp_training.normalizer import Normalizer
-from scripts.smooth_policy.amp_history.amp_training.rnd_normalizer import RunningMeanStd
+from scripts.smooth_policy.amp_history.amp_training.running_stats import RunningStatsNormalizer
 from scripts.smooth_policy.amp_history.amp_training.demo_loader_position_history import DemoLoaderPositionHistory
 from scripts.smooth_policy.amp_history.amp_training.feature_processing import (
     PUCK_FEATURE_DIM,
@@ -902,8 +902,8 @@ if __name__ == "__main__":
         or args.acceleration_penalty_weight > 0.0
         or args.jerk_penalty_weight > 0.0
     )
-    motion_normalizer = RunningMeanStd(shape=(3,), device=args.device, clip=None)
-    exploration_error_normalizer = RunningMeanStd(shape=(1,), device=args.device, clip=None)
+    motion_normalizer = RunningStatsNormalizer(shape=(3,), device=args.device, clip=None)
+    exploration_error_normalizer = RunningStatsNormalizer(shape=(1,), device=args.device, clip=None)
 
     # Initialize AMP components (always enabled)
     print("\n" + "="*80)

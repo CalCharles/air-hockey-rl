@@ -17,7 +17,7 @@ from torch.utils.tensorboard import SummaryWriter
 from airhockey import AirHockeyEnv
 from airhockey.renderers import AirHockeyRenderer
 from scripts.smooth_policy.agent import Agent
-from scripts.smooth_policy.amp_history.amp_training.rma_adaptation import RMAAdaptationModule
+from scripts.smooth_policy.amp_history.amp_training.rma.rma_adaptation import RMAAdaptationModule
 from scripts.smooth_policy.encoder import EnvEncoder
 
 

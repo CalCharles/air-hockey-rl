@@ -1,11 +1,11 @@
-"""Running normalizer for RND feature inputs and rewards."""
+"""Running statistics normalizer utilities."""
 
 from __future__ import annotations
 
 import torch
 
 
-class RunningMeanStd:
+class RunningStatsNormalizer:
     """Simple running mean/std estimator for 1D feature tensors."""
 
     def __init__(self, shape, device: str = "cuda", clip: float | None = 10.0):

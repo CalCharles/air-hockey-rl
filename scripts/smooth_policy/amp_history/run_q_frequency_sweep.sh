@@ -19,7 +19,7 @@ CUDA_DEVICES=(0 1 2 3)
 EXTRA_ARGS="$@"
 
 # Base command
-BASE_CMD="python scripts/smooth_policy/amp_history/amp_training/amp_training_lsgan_sac.py"
+BASE_CMD="python scripts/smooth_policy/amp_history/amp_training/sac/amp_training_lsgan_sac.py"
 
 # Launch each experiment on a different GPU
 for i in "${!Q_FREQUENCIES[@]}"; do

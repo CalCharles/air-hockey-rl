@@ -36,7 +36,7 @@ from scripts.smooth_policy.agent import Agent
 from scripts.utils import save_tensorboard_plots
 
 # SAC replay buffer
-from scripts.smooth_policy.amp_history.amp_training.sac_replay_buffer import SACReplayBuffer
+from scripts.smooth_policy.amp_history.amp_training.sac.sac_replay_buffer import SACReplayBuffer
 
 # AMP components
 from scripts.smooth_policy.amp_history.amp_training.discriminator import Discriminator

@@ -172,9 +172,9 @@ class AirHockeyBox2D:
             'rmax_y': 0.12,
             # Real-equivalent workspace and edge shaping limits (base frame).
             'x_min_lim': -0.8,
-            'x_max_lim': -0.33,
-            'y_min': -0.3582,
-            'y_max': 0.350,
+            'x_max_lim': -0.37,
+            'y_min': -0.34,
+            'y_max': 0.34,
             'top_abs': 0.8,
             'bot_abs': 0.1,
             'max_bias_p': -0.15,
@@ -615,7 +615,8 @@ class AirHockeyBox2D:
             bullet=True,
             position=pos,
             linearVelocity=vel,
-            linearDamping=self.paddle_damping
+            linearDamping=self.paddle_damping,
+            userData=name,
         )
         if not affected_by_gravity:
             paddle.gravityScale = 0
@@ -809,6 +810,7 @@ class AirHockeyBox2D:
         return filtered_acceleration, filtered_jerk
     
     def get_singleagent_transition(self, action):
+        collision_start_idx = len(self.collision_listener.collision_forces)
 
         action_list = [np.copy(self.last_action), np.copy(action)]
         time_to_sim = [self.time_per_step * self.action_lag, self.time_per_step * (1 - self.action_lag)]
@@ -954,6 +956,17 @@ class AirHockeyBox2D:
 
         # Refresh state so acceleration/jerk in returned transition are current-step values.
         state_info = self.get_current_state()
+        step_collision_count = 0
+        for collision in self.collision_listener.collision_forces[collision_start_idx:]:
+            body_a = str(collision.get("bodyA", ""))
+            body_b = str(collision.get("bodyB", ""))
+            paddle_puck_contact = (
+                (body_a == "paddle_ego" and body_b.startswith("puck"))
+                or (body_b == "paddle_ego" and body_a.startswith("puck"))
+            )
+            if paddle_puck_contact:
+                step_collision_count += 1
+        state_info["paddle_puck_collision_count"] = int(step_collision_count)
         
         # Debug: Print acceleration values occasionally (remove this after testing)
         # if self.timestep % 100 == 0 and np.linalg.norm(current_acceleration) > 0:

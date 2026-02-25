@@ -72,7 +72,7 @@ amp_components_path: null
 state_encoder_path: null
 reward_head_path: null
 dynamics_head_path: null
-log_parent_dir: "runs/amp_training/ssl/disc_off_original_juggle"
+log_parent_dir: "runs/amp_training/self_supervised/disc_off_original_juggle"
 run_name: "amp_lsgan_ssl_disc_off_original_juggle"
 demo_data_path: "scripts/smooth_policy/amp_history/amp_training/amp_data/amp_paddle_puck_dataset.pt"
 

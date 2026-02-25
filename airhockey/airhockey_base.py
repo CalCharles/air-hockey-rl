@@ -623,6 +623,7 @@ class AirHockeyBaseEnv(ABC, Env):
         info['paddle_velocity_mag'] = float(vel_mag)
         info['paddle_acceleration_mag'] = float(acc_mag)
         info['paddle_jerk_mag'] = float(jerk_mag)
+        info['paddle_puck_collision_count'] = int(next_state.get('paddle_puck_collision_count', 0))
 
         hit_a_puck = False
         is_finished, truncated, puck_within_home, puck_within_alt_home, puck_within_goal, _ = self.has_finished(next_state)

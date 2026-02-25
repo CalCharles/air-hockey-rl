@@ -1,6 +1,6 @@
 # Configuration for RMA + AMP (LSGAN) training.
 # This is modeled after pid/amp_default.yaml but only includes
-# arguments supported by amp_training_rma_lsgan.py.
+# arguments supported by amp_training/rma/amp_training_rma_lsgan.py.
 
 # Basic training parameters
 num_envs: 64

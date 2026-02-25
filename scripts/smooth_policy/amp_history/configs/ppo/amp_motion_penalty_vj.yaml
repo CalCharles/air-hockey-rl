@@ -25,6 +25,8 @@ use_last_action_in_policy_state: true
 # Keep AMP/discriminator disabled for this run.
 disc_reward_weight: 0.0
 num_discriminator_updates: 0
+disc_hidden_layer_size: 64
+disc_num_hidden_layers: 2
 
 # Reward weighting
 task_reward_weight: 1.0

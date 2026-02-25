@@ -26,7 +26,7 @@ import yaml
 from airhockey import AirHockeyEnv
 import gymnasium as gym
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import tyro
 
 import os
@@ -40,7 +40,7 @@ from scripts.smooth_policy.agent import Agent
 from scripts.smooth_policy.amp_history.amp_training.discriminator import Discriminator
 from scripts.smooth_policy.amp_history.amp_training.replay_buffer import ReplayBuffer
 from scripts.smooth_policy.amp_history.amp_training.normalizer import Normalizer
-from scripts.smooth_policy.amp_history.amp_training.rnd_normalizer import RunningMeanStd
+from scripts.smooth_policy.amp_history.amp_training.running_stats import RunningStatsNormalizer
 from scripts.smooth_policy.amp_history.amp_training.demo_loader_position_history import DemoLoaderPositionHistory
 from scripts.smooth_policy.amp_history.amp_training.feature_processing import (
     PUCK_FEATURE_DIM,
@@ -71,14 +71,15 @@ class ReferenceStateWrapper(gym.Wrapper):
         return self.env.reset(**kwargs)
 
 
-def parse_discriminator_hidden_dims(hidden_sizes):
-    """Validate and normalize discriminator hidden layer sizes."""
-    hidden_dims = [int(size) for size in hidden_sizes]
-    if len(hidden_dims) == 0:
-        raise ValueError("disc_hidden_sizes must contain at least one layer size.")
-    if any(size <= 0 for size in hidden_dims):
-        raise ValueError(f"disc_hidden_sizes must be positive, got: {hidden_dims}")
-    return hidden_dims
+def validate_discriminator_arch(hidden_layer_size, num_hidden_layers):
+    """Validate discriminator architecture in hidden-size + depth form."""
+    hidden_layer_size = int(hidden_layer_size)
+    num_hidden_layers = int(num_hidden_layers)
+    if hidden_layer_size <= 0:
+        raise ValueError(f"disc_hidden_layer_size must be positive, got {hidden_layer_size}")
+    if num_hidden_layers < 1:
+        raise ValueError(f"disc_num_hidden_layers must be >= 1, got {num_hidden_layers}")
+    return hidden_layer_size, num_hidden_layers
 
 def augment_policy_observation(observation, last_action, use_last_action):
     """Append last action to policy observation when enabled."""
@@ -443,7 +444,8 @@ class Args:
     task_reward_weight: float = 0.5
     disc_reward_weight: float = 0.5
     num_discriminator_updates: int = 1
-    disc_hidden_sizes: list[int] = field(default_factory=lambda: [64, 64])
+    disc_hidden_layer_size: int = 64
+    disc_num_hidden_layers: int = 2
     # Optional auxiliary rewards (default disabled)
     temporal_alignment_reward_scale: float = 0.0
     action_magnitude_reward_scale: float = 0.0
@@ -482,9 +484,6 @@ class Args:
     # Agent architecture.
     agent_hidden_layer_size: int = 128
     agent_num_hidden_layers: int = 2
-    # Deprecated alias kept for backward compatibility with older args files.
-    agent_hidden_size: int | None = None
-    
     # Reference state initialization
     use_reference_state_init: bool = False  # Enable/disable feature
     reference_data_path: str = None  # Path to raw demo data (defaults to demo_data_path)
@@ -536,10 +535,12 @@ if __name__ == "__main__":
     # command line args override file args
     args = tyro.cli(Args, default=default_args)
     args.batch_size = args.num_envs * args.num_steps
-    if args.agent_hidden_size is not None:
-        args.agent_hidden_layer_size = int(args.agent_hidden_size)
     if args.agent_num_hidden_layers < 1:
         raise ValueError("agent_num_hidden_layers must be >= 1.")
+    validate_discriminator_arch(
+        hidden_layer_size=args.disc_hidden_layer_size,
+        num_hidden_layers=args.disc_num_hidden_layers,
+    )
 
     with open(args.config, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
@@ -668,7 +669,7 @@ if __name__ == "__main__":
         or args.acceleration_penalty_weight > 0.0
         or args.jerk_penalty_weight > 0.0
     )
-    motion_normalizer = RunningMeanStd(shape=(3,), device=args.device, clip=None)
+    motion_normalizer = RunningStatsNormalizer(shape=(3,), device=args.device, clip=None)
 
     # Initialize AMP components (always enabled)
     print("\n" + "="*80)
@@ -701,7 +702,10 @@ if __name__ == "__main__":
         use_action_disc = demo_loader.use_actions
         use_puck_disc = demo_loader.use_puck
         disc_obs_dim = demo_loader.get_obs_dim()
-        disc_hidden_dims = parse_discriminator_hidden_dims(args.disc_hidden_sizes)
+        disc_hidden_layer_size, disc_num_hidden_layers = validate_discriminator_arch(
+            hidden_layer_size=args.disc_hidden_layer_size,
+            num_hidden_layers=args.disc_num_hidden_layers,
+        )
         
         mode_parts = ["POSITION HISTORY (8D)"]
         if use_action_disc:
@@ -714,7 +718,8 @@ if __name__ == "__main__":
         # Initialize short discriminator
         discriminator = Discriminator(
             disc_obs_dim,
-            hidden_dims=disc_hidden_dims,
+            hidden_layer_size=disc_hidden_layer_size,
+            num_hidden_layers=disc_num_hidden_layers,
             activation='leaky_relu'
         ).to(args.device)
         disc_optimizer = torch.optim.Adam(
@@ -724,7 +729,11 @@ if __name__ == "__main__":
             eps=1e-6,
             betas=(0.5, 0.95),
         )
-        print(f"✓ Short discriminator initialized (input_dim={disc_obs_dim}, hidden={disc_hidden_dims})")
+        print(
+            "✓ Short discriminator initialized "
+            f"(input_dim={disc_obs_dim}, hidden_layer_size={disc_hidden_layer_size}, "
+            f"num_hidden_layers={disc_num_hidden_layers})"
+        )
         
         # Initialize normalizer
         disc_normalizer = Normalizer(shape=(disc_obs_dim,), clip=10.0, device=args.device)
