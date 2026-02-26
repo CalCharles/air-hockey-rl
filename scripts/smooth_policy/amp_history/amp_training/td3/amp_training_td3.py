@@ -11,12 +11,15 @@ Compared to SAC+AMP:
 import os
 import random
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from types import SimpleNamespace
-from typing import Dict
+from typing import Dict, List, Tuple
 
+import cv2
 import gymnasium as gym
+import imageio
 import numpy as np
 import torch
 import torch.optim as optim
@@ -25,6 +28,7 @@ import yaml
 from torch.utils.tensorboard import SummaryWriter
 
 from airhockey import AirHockeyEnv
+from airhockey.renderers import AirHockeyRenderer
 from scripts.smooth_policy.deterministic_agent import DeterministicAgent
 from scripts.smooth_policy.amp_history.amp_training.td3.dual_head_q import (
     TD3DualHeadQNetwork,
@@ -36,37 +40,30 @@ from scripts.smooth_policy.amp_history.amp_training.td3.replay_buffer import TD3
 from scripts.smooth_policy.amp_history.amp_training.td3.prioritized_replay_buffer import (
     TD3PrioritizedReplayBuffer,
 )
+from scripts.smooth_policy.amp_history.amp_training.td3.td3_checkpointing import (
+    build_training_state,
+    load_resume_training_state,
+)
+from scripts.smooth_policy.amp_history.amp_training.td3.td3_episode_collection import (
+    EpisodeTrajectory,
+    finalize_episode_if_done,
+)
+from scripts.smooth_policy.amp_history.amp_training.td3.td3_metrics import (
+    initialize_train_metrics,
+    log_scalar_metrics,
+    tensor_mean_items,
+)
+from scripts.smooth_policy.amp_history.amp_training.td3.td3_replay_sampling import (
+    concat_replay_samples,
+    critic_success_failure_counts,
+    sample_actor_source_chunk,
+    sample_critic_source_chunk,
+)
 from scripts.smooth_policy.amp_history.amp_training.amp_training_lsgan import (
     parse_motion_magnitudes_from_infos,
 )
 from scripts.smooth_policy.evaluate import evaluate_agent
 from scripts.utils import save_tensorboard_plots
-
-
-def _cpu_tensor(tensor: torch.Tensor) -> torch.Tensor:
-    return tensor.detach().clone().cpu()
-
-
-def get_rng_states() -> Dict[str, object]:
-    states: Dict[str, object] = {
-        "python": random.getstate(),
-        "numpy": np.random.get_state(),
-        "torch_cpu": torch.get_rng_state().cpu(),
-    }
-    if torch.cuda.is_available():
-        states["torch_cuda"] = [state.cpu() for state in torch.cuda.get_rng_state_all()]
-    return states
-
-
-def set_rng_states(states: Dict[str, object]) -> None:
-    if "python" in states:
-        random.setstate(states["python"])
-    if "numpy" in states:
-        np.random.set_state(states["numpy"])
-    if "torch_cpu" in states:
-        torch.set_rng_state(states["torch_cpu"])
-    if "torch_cuda" in states and torch.cuda.is_available():
-        torch.cuda.set_rng_state_all(states["torch_cuda"])
 
 
 def h_transform(x: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
@@ -94,6 +91,159 @@ def deterministic_actor_action(actor, policy_obs):
     if hasattr(actor, "get_action"):
         return actor.get_action(policy_obs)
     raise TypeError(f"Unsupported actor type for deterministic action: {type(actor)}")
+
+
+def save_training_data_like_rollout_gif(
+    save_path: str,
+    env_params: Dict[str, object],
+    actor,
+    action_low: torch.Tensor,
+    action_high: torch.Tensor,
+    use_last_action_in_policy_state: bool,
+    exploration_noise: float,
+    primitive_selector: PrimitiveExplorationSelector,
+    warm_policy_actor,
+    warm_policy_use_last_action: bool,
+    max_timesteps: int,
+    fps: int,
+    device: str,
+) -> None:
+    viz_env = AirHockeyEnv(dict(env_params))
+    viz_env.max_timesteps = int(max_timesteps)
+    renderer = AirHockeyRenderer(viz_env, show_target_position=True, show_acceleration_arrow=False)
+
+    obs, _ = viz_env.reset()
+    obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+    act_dim = int(np.prod(viz_env.action_space.shape))
+    last_action_for_policy = torch.zeros((1, act_dim), dtype=torch.float32, device=device)
+    warm_policy_last_action = torch.zeros((1, act_dim), dtype=torch.float32, device=device)
+    action_low_single = action_low.unsqueeze(0)
+    action_high_single = action_high.unsqueeze(0)
+
+    rollout_selector = PrimitiveExplorationSelector(
+        num_envs=1,
+        chance=float(primitive_selector.chance),
+        takeover_steps=int(primitive_selector.takeover_steps),
+        device=device,
+        dtype=torch.float32,
+        direction_y_component_weight=float(primitive_selector.direction_y_component_weight),
+        target_min_distance=float(primitive_selector.target_min_distance),
+        target_max_distance=float(primitive_selector.target_max_distance),
+        target_action_delta_x=float(primitive_selector.target_action_delta_x),
+        target_action_delta_y=float(primitive_selector.target_action_delta_y),
+        target_takeover_steps=int(primitive_selector.target_takeover_steps),
+        pre_contact_hit_variant_chance=float(primitive_selector.pre_contact_hit_variant_chance),
+        pre_contact_hit_variant_steps=int(primitive_selector.pre_contact_hit_variant_steps),
+        pre_contact_hit_variant_distance_threshold=float(
+            primitive_selector.pre_contact_hit_variant_distance_threshold
+        ),
+        pre_contact_hit_variant_scale_min=float(primitive_selector.pre_contact_hit_variant_scale_min),
+        pre_contact_hit_variant_scale_max=float(primitive_selector.pre_contact_hit_variant_scale_max),
+        pre_contact_hit_variant_min_upward_displacement_x=float(
+            primitive_selector.pre_contact_hit_variant_min_upward_displacement_x
+        ),
+    )
+    primitive_weights = primitive_selector.primitive_weights.detach().cpu().numpy()
+    rollout_selector.set_primitive_weights(
+        stand_still=float(primitive_weights[0]),
+        same_direction=float(primitive_weights[1]),
+        y_aligned=float(primitive_weights[2]),
+        policy_takeover=float(primitive_weights[3]),
+        target_position_directional=(
+            float(primitive_weights[4]) if primitive_weights.shape[0] > 4 else 0.0
+        ),
+    )
+
+    frames = []
+    rew = 0.0
+    cum_rew = 0.0
+    done = False
+    previous_puck_position = extract_current_puck_position(obs_tensor).clone()
+    while not done and len(frames) < int(max_timesteps):
+        frame = renderer.get_frame()
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        aspect_ratio = frame.shape[1] / frame.shape[0]
+        frame = cv2.resize(frame, (160, int(160 / aspect_ratio)))
+        cv2.putText(
+            frame,
+            f"Reward: {rew:.2f}",
+            (frame.shape[1] - 150, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 0, 0),
+            2,
+        )
+        cv2.putText(
+            frame,
+            f"Return: {cum_rew:.2f}",
+            (frame.shape[1] - 150, 60),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 0, 0),
+            2,
+        )
+        frames.append(frame)
+
+        with torch.no_grad():
+            policy_obs = augment_policy_observation(
+                obs_tensor, last_action_for_policy, use_last_action_in_policy_state
+            )
+            action_tensor = deterministic_actor_action(actor, policy_obs)
+            if exploration_noise > 0:
+                action_tensor = action_tensor + torch.randn_like(action_tensor) * float(exploration_noise)
+            action_tensor = torch.clamp(action_tensor, action_low_single, action_high_single)
+
+            current_paddle_pos = extract_current_paddle_position(obs_tensor)
+            current_puck_pos = extract_current_puck_position(obs_tensor)
+            current_puck_vel = extract_current_puck_velocity(obs_tensor)
+            if torch.all(current_puck_vel == 0):
+                current_puck_vel = current_puck_pos - previous_puck_position
+            y_alignment_sign = torch.sign(current_puck_pos[:, 1] - current_paddle_pos[:, 1])
+            action_tensor, _ = rollout_selector.apply(
+                action_tensor,
+                action_low=action_low_single,
+                action_high=action_high_single,
+                y_alignment_sign=y_alignment_sign,
+                current_paddle_position=current_paddle_pos,
+                current_puck_position=current_puck_pos,
+                current_puck_velocity=current_puck_vel,
+                return_stats=True,
+            )
+            if warm_policy_actor is not None:
+                policy_takeover_mask = rollout_selector.active & (
+                    rollout_selector.primitive_id == rollout_selector.primitive_ids.POLICY_TAKEOVER
+                )
+                if torch.any(policy_takeover_mask):
+                    warm_policy_obs = augment_policy_observation(
+                        obs_tensor,
+                        warm_policy_last_action,
+                        warm_policy_use_last_action,
+                    )
+                    warm_policy_actions = deterministic_actor_action(warm_policy_actor, warm_policy_obs)
+                    warm_policy_actions = torch.clamp(
+                        warm_policy_actions,
+                        action_low_single,
+                        action_high_single,
+                    )
+                    action_tensor[policy_takeover_mask] = warm_policy_actions[policy_takeover_mask]
+
+        action_np = action_tensor.squeeze(0).detach().cpu().numpy()
+        next_obs, rew, terminated, truncated, _ = viz_env.step(action_np)
+        done = bool(terminated or truncated)
+        cum_rew += float(rew)
+        obs_tensor = torch.tensor(next_obs, dtype=torch.float32, device=device).unsqueeze(0)
+        previous_puck_position = extract_current_puck_position(obs_tensor).clone()
+        done_tensor = torch.tensor([done], dtype=torch.bool, device=device)
+        rollout_selector.reset(done_tensor)
+        last_action_for_policy = action_tensor.clone()
+        warm_policy_last_action = action_tensor.clone()
+        if done:
+            last_action_for_policy.zero_()
+            warm_policy_last_action.zero_()
+
+    duration_ms = int(1000 * 1 / max(int(fps), 1))
+    imageio.mimsave(save_path, frames, format="GIF", loop=0, duration=duration_ms)
+    viz_env.close()
 
 
 def extract_deterministic_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -174,6 +324,17 @@ def extract_current_puck_position(observation: torch.Tensor) -> torch.Tensor:
     raise ValueError(f"Observation dim {obs_dim} is too small to extract puck position.")
 
 
+def extract_current_puck_velocity(observation: torch.Tensor) -> torch.Tensor:
+    obs_dim = observation.shape[-1]
+    if obs_dim >= 30:
+        # History obs stores 5 puck positions at indices [15:30], so estimate velocity
+        # using window displacement (last - first) to reduce one-step noise.
+        return observation[:, 27:29] - observation[:, 15:17]
+    if obs_dim >= 8 and obs_dim < 30:
+        return observation[:, 6:8]
+    return torch.zeros((observation.shape[0], 2), dtype=observation.dtype, device=observation.device)
+
+
 def velocity_reward_from_magnitude(
     velocity_mag: torch.Tensor,
     velocity_at_one: float,
@@ -191,15 +352,6 @@ def jerk_reward_from_magnitude(
 ) -> torch.Tensor:
     denom = max(jerk_at_zero - jerk_at_one, 1e-6)
     return 1.0 - (jerk_mag - jerk_at_one) / denom
-
-
-def tensor_mean_items(values: Dict[str, torch.Tensor]) -> Dict[str, float]:
-    return {key: tensor.mean().item() for key, tensor in values.items()}
-
-
-def log_scalar_metrics(writer: SummaryWriter, metrics: Dict[str, float], global_step: int) -> None:
-    for name, value in metrics.items():
-        writer.add_scalar(name, value, global_step)
 
 
 def linear_anneal(start: float, end: float, step: int, anneal_steps: int) -> float:
@@ -234,41 +386,6 @@ def sum_info_metric(infos: dict, metric_name: str) -> float:
         return 0.0
 
 
-def initialize_train_metrics() -> Dict[str, float]:
-    return {
-        "losses/q_task_loss": 0.0,
-        "losses/q_motion_loss": 0.0,
-        "losses/q_total_loss": 0.0,
-        "losses/actor_loss": 0.0,
-        "losses/q1_task_mean": 0.0,
-        "losses/q1_motion_mean": 0.0,
-        "losses/q1_total_mean": 0.0,
-        "debug/bellman_target_task_original_mean": 0.0,
-        "debug/bellman_target_motion_original_mean": 0.0,
-        "debug/next_q_task_h_mean": 0.0,
-        "debug/next_q_motion_h_mean": 0.0,
-        "rewards/sampled_task_reward_mean": 0.0,
-        "rewards/sampled_motion_reward_mean": 0.0,
-        "rewards/sampled_combined_reward_mean": 0.0,
-        "rewards/stand_still_reward_raw_mean": 0.0,
-        "rewards/temporal_alignment_reward_raw_mean": 0.0,
-        "rewards/axis_alignment_reward_raw_mean": 0.0,
-        "rewards/velocity_reward_raw_mean": 0.0,
-        "rewards/jerk_reward_raw_mean": 0.0,
-        "rewards/stand_still_reward_weighted_mean": 0.0,
-        "rewards/temporal_alignment_reward_weighted_mean": 0.0,
-        "rewards/axis_alignment_reward_weighted_mean": 0.0,
-        "rewards/velocity_reward_weighted_mean": 0.0,
-        "rewards/jerk_reward_weighted_mean": 0.0,
-        "losses/actor_norm_task_mean": 0.0,
-        "losses/actor_norm_motion_mean": 0.0,
-        "replay/per_beta": 0.0,
-        "replay/per_is_weight_mean": 1.0,
-        "replay/per_sampled_priority_mean": 0.0,
-        "replay/per_priority_td_error_mean": 0.0,
-    }
-
-
 @dataclass
 class Args:
     total_timesteps: int = 1000000
@@ -288,6 +405,7 @@ class Args:
     q_updates: int = 1
     policy_frequency: int = 2
     target_network_frequency: int = 1
+    actor_updates_per_iteration: int = 1
     exploration_noise: float = 0.1
     policy_noise: float = 0.2
     noise_clip: float = 0.5
@@ -297,6 +415,14 @@ class Args:
     per_beta_end: float = 1.0
     per_beta_anneal_steps: int = 200000
     per_eps: float = 1e-6
+    critic_per_fraction: float = 0.7
+    critic_uniform_fraction: float = 0.3
+    success_buffer_size: int = int(2e5)
+    failure_buffer_size: int = int(8e5)
+    success_top_fraction: float = 0.2
+    recent_episode_window_size: int = 500
+    critic_success_sample_fraction: float = 0.3
+    critic_failure_sample_fraction: float = 0.7
 
     # Primitive exploration takeover
     exploration_primitive_chance: float = 0.05
@@ -308,11 +434,24 @@ class Args:
     exploration_primitive_weight_same_direction: float = 1.0 / 3.0
     exploration_primitive_weight_y_aligned: float = 1.0 / 3.0
     exploration_primitive_weight_policy_takeover: float = 0.4
+    exploration_primitive_weight_target_position_directional: float = 0.0
     exploration_primitive_weight_anneal_stand_still: float = 0.3
     exploration_primitive_weight_anneal_same_direction: float = 0.1
     exploration_primitive_weight_anneal_y_aligned: float = 0.6
     exploration_primitive_weight_anneal_policy_takeover: float = 0.4
+    exploration_primitive_weight_anneal_target_position_directional: float = 0.0
     exploration_direction_y_component_weight: float = 1.5
+    exploration_target_position_min_distance: float = 0.2
+    exploration_target_position_max_distance: float = 0.5
+    exploration_target_position_delta_x: float = 0.26
+    exploration_target_position_delta_y: float = 0.12
+    exploration_target_position_steps: int = 5
+    exploration_pre_contact_hit_variant_chance: float = 0.15
+    exploration_pre_contact_hit_variant_steps: int = 5
+    exploration_pre_contact_hit_variant_distance_threshold: float = 0.25
+    exploration_pre_contact_hit_variant_scale_min: float = 0.5
+    exploration_pre_contact_hit_variant_scale_max: float = 1.5
+    exploration_pre_contact_hit_variant_min_upward_displacement_x: float = 0.12
     exploration_policy_takeover_enabled: bool = True
     exploration_policy_takeover_model_path: str = "model1.pth"
     exploration_policy_takeover_args_path: str = "args.yaml"
@@ -382,10 +521,50 @@ if __name__ == "__main__":
         default_args = Args()
 
     args = tyro.cli(Args, default=default_args)
+    if args.num_envs != 1:
+        raise ValueError(
+            "This training script currently supports only single-environment collection. "
+            f"Set num_envs=1, got {args.num_envs}."
+        )
     if args.agent_hidden_size is not None:
         args.agent_hidden_layer_size = int(args.agent_hidden_size)
     if args.q_hidden_size is not None:
         args.q_hidden_layer_size = int(args.q_hidden_size)
+    if not (0.0 <= args.critic_per_fraction <= 1.0):
+        raise ValueError("critic_per_fraction must be between 0 and 1.")
+    if not (0.0 <= args.critic_uniform_fraction <= 1.0):
+        raise ValueError("critic_uniform_fraction must be between 0 and 1.")
+    critic_mix_sum = float(args.critic_per_fraction + args.critic_uniform_fraction)
+    if abs(critic_mix_sum - 1.0) > 1e-6:
+        raise ValueError(
+            f"critic_per_fraction + critic_uniform_fraction must equal 1.0, got {critic_mix_sum:.6f}."
+        )
+    if args.success_buffer_size <= 0:
+        raise ValueError("success_buffer_size must be > 0.")
+    if args.failure_buffer_size <= 0:
+        raise ValueError("failure_buffer_size must be > 0.")
+    if args.recent_episode_window_size <= 0:
+        raise ValueError("recent_episode_window_size must be > 0.")
+    if not (0.0 < args.success_top_fraction < 1.0):
+        raise ValueError("success_top_fraction must be between 0 and 1 (exclusive).")
+    if not (0.0 <= args.critic_success_sample_fraction <= 1.0):
+        raise ValueError("critic_success_sample_fraction must be between 0 and 1.")
+    if not (0.0 <= args.critic_failure_sample_fraction <= 1.0):
+        raise ValueError("critic_failure_sample_fraction must be between 0 and 1.")
+    success_failure_mix_sum = float(
+        args.critic_success_sample_fraction + args.critic_failure_sample_fraction
+    )
+    if abs(success_failure_mix_sum - 1.0) > 1e-6:
+        raise ValueError(
+            "critic_success_sample_fraction + critic_failure_sample_fraction must equal 1.0, "
+            f"got {success_failure_mix_sum:.6f}."
+        )
+    if args.q_updates <= 0:
+        raise ValueError("q_updates must be > 0.")
+    if args.target_network_frequency <= 0:
+        raise ValueError("target_network_frequency must be > 0.")
+    if args.actor_updates_per_iteration <= 0:
+        raise ValueError("actor_updates_per_iteration must be > 0.")
 
     with open(args.config, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
@@ -438,6 +617,14 @@ if __name__ == "__main__":
         hidden_layer_size=args.agent_hidden_layer_size,
         num_hidden_layers=args.agent_num_hidden_layers,
     ).to(args.device)
+    actor_target = DeterministicAgent(
+        policy_env_view,
+        action_scale=action_scale,
+        action_bias=0.0,
+        hidden_layer_size=args.agent_hidden_layer_size,
+        num_hidden_layers=args.agent_num_hidden_layers,
+    ).to(args.device)
+    actor_target.load_state_dict(actor.state_dict())
 
     obs_dim = int(np.prod(envs.single_observation_space.shape))
     qf1 = TD3DualHeadQNetwork(
@@ -476,6 +663,13 @@ if __name__ == "__main__":
         if isinstance(loaded_obj, dict) and "actor" in loaded_obj and "qf1" in loaded_obj:
             resume_checkpoint = loaded_obj
             actor.load_state_dict(extract_deterministic_state_dict(resume_checkpoint["actor"]), strict=False)
+            if "actor_target" in resume_checkpoint:
+                actor_target.load_state_dict(
+                    extract_deterministic_state_dict(resume_checkpoint["actor_target"]),
+                    strict=False,
+                )
+            else:
+                actor_target.load_state_dict(actor.state_dict())
             qf1.load_state_dict(resume_checkpoint["qf1"])
             qf2.load_state_dict(resume_checkpoint["qf2"])
             qf1_target.load_state_dict(resume_checkpoint["qf1_target"])
@@ -483,6 +677,7 @@ if __name__ == "__main__":
             print("Full training checkpoint loaded (network weights).")
         else:
             actor.load_state_dict(extract_deterministic_state_dict(loaded_obj), strict=False)
+            actor_target.load_state_dict(actor.state_dict())
             print("Actor-only model loaded successfully.")
 
     q_optimizer = optim.Adam(
@@ -491,8 +686,17 @@ if __name__ == "__main__":
     actor_optimizer = optim.Adam(actor.parameters(), lr=args.policy_lr)
 
     if args.per_enabled:
-        rb = TD3PrioritizedReplayBuffer(
-            buffer_size=args.buffer_size,
+        success_rb = TD3PrioritizedReplayBuffer(
+            buffer_size=args.success_buffer_size,
+            obs_shape=envs.single_observation_space.shape,
+            action_shape=envs.single_action_space.shape,
+            device=args.device,
+            n_envs=args.num_envs,
+            alpha=args.per_alpha,
+            priority_eps=args.per_eps,
+        )
+        failure_rb = TD3PrioritizedReplayBuffer(
+            buffer_size=args.failure_buffer_size,
             obs_shape=envs.single_observation_space.shape,
             action_shape=envs.single_action_space.shape,
             device=args.device,
@@ -501,18 +705,30 @@ if __name__ == "__main__":
             priority_eps=args.per_eps,
         )
         print(
-            f"✓ TD3 prioritized replay buffer initialized "
-            f"(capacity={args.buffer_size:,}, alpha={args.per_alpha:.3f})\n"
+            "✓ TD3 prioritized replay buffers initialized "
+            f"(success_capacity={args.success_buffer_size:,}, "
+            f"failure_capacity={args.failure_buffer_size:,}, alpha={args.per_alpha:.3f})\n"
         )
     else:
-        rb = TD3ReplayBuffer(
-            buffer_size=args.buffer_size,
+        success_rb = TD3ReplayBuffer(
+            buffer_size=args.success_buffer_size,
             obs_shape=envs.single_observation_space.shape,
             action_shape=envs.single_action_space.shape,
             device=args.device,
             n_envs=args.num_envs,
         )
-        print(f"✓ TD3 replay buffer initialized (capacity={args.buffer_size:,})\n")
+        failure_rb = TD3ReplayBuffer(
+            buffer_size=args.failure_buffer_size,
+            obs_shape=envs.single_observation_space.shape,
+            action_shape=envs.single_action_space.shape,
+            device=args.device,
+            n_envs=args.num_envs,
+        )
+        print(
+            "✓ TD3 replay buffers initialized "
+            f"(success_capacity={args.success_buffer_size:,}, "
+            f"failure_capacity={args.failure_buffer_size:,})\n"
+        )
 
     velocity_magnitudes = []
     acceleration_magnitudes = []
@@ -527,6 +743,10 @@ if __name__ == "__main__":
     interval_primitive_env_steps = 0
     interval_primitive_horizontal_env_steps = 0
     interval_policy_takeover_env_steps = 0
+    interval_target_position_directional_env_steps = 0
+    episode_trajectory = EpisodeTrajectory.empty()
+    recent_episode_returns = deque(maxlen=args.recent_episode_window_size)
+    episode_return_success_threshold = 0.0
 
     if args.temporal_alignment_horizon <= 0:
         raise ValueError("temporal_alignment_horizon must be > 0 for stand-still and alignment rewards.")
@@ -539,6 +759,7 @@ if __name__ == "__main__":
     initial_obs_tensor = torch.tensor(obs, dtype=torch.float32, device=args.device)
     temporal_paddle_history[:, -1, :] = extract_current_paddle_position(initial_obs_tensor)
     temporal_puck_history[:, -1, :] = extract_current_puck_position(initial_obs_tensor)
+    previous_puck_position_for_trigger = extract_current_puck_position(initial_obs_tensor).clone()
     temporal_position_count[:] = 1
 
     current_velocity_mag = torch.zeros(args.num_envs, dtype=torch.float32, device=args.device)
@@ -588,6 +809,21 @@ if __name__ == "__main__":
         device=args.device,
         dtype=torch.float32,
         direction_y_component_weight=args.exploration_direction_y_component_weight,
+        target_min_distance=args.exploration_target_position_min_distance,
+        target_max_distance=args.exploration_target_position_max_distance,
+        target_action_delta_x=args.exploration_target_position_delta_x,
+        target_action_delta_y=args.exploration_target_position_delta_y,
+        target_takeover_steps=args.exploration_target_position_steps,
+        pre_contact_hit_variant_chance=args.exploration_pre_contact_hit_variant_chance,
+        pre_contact_hit_variant_steps=args.exploration_pre_contact_hit_variant_steps,
+        pre_contact_hit_variant_distance_threshold=(
+            args.exploration_pre_contact_hit_variant_distance_threshold
+        ),
+        pre_contact_hit_variant_scale_min=args.exploration_pre_contact_hit_variant_scale_min,
+        pre_contact_hit_variant_scale_max=args.exploration_pre_contact_hit_variant_scale_max,
+        pre_contact_hit_variant_min_upward_displacement_x=(
+            args.exploration_pre_contact_hit_variant_min_upward_displacement_x
+        ),
     )
     primitive_selector.set_primitive_weights(
         stand_still=args.exploration_primitive_weight_stand_still,
@@ -598,55 +834,76 @@ if __name__ == "__main__":
             if args.exploration_policy_takeover_enabled
             else 0.0
         ),
+        target_position_directional=args.exploration_primitive_weight_target_position_directional,
     )
     if resume_checkpoint is not None:
-        q_optimizer.load_state_dict(resume_checkpoint["q_optimizer"])
-        actor_optimizer.load_state_dict(resume_checkpoint["actor_optimizer"])
-        rb.load_state_dict(resume_checkpoint["replay_buffer"])
-        if "primitive_selector" in resume_checkpoint:
-            primitive_selector.load_state_dict(resume_checkpoint["primitive_selector"])
-
-        global_step = int(resume_checkpoint["global_step"])
-        iteration = int(resume_checkpoint["iteration"])
-        obs = np.asarray(resume_checkpoint["obs"], dtype=np.float32)
-        last_action_for_policy = resume_checkpoint["last_action_for_policy"].to(args.device)
-        temporal_paddle_history = resume_checkpoint["temporal_paddle_history"].to(args.device)
-        temporal_puck_history = resume_checkpoint["temporal_puck_history"].to(args.device)
-        temporal_done_history = resume_checkpoint["temporal_done_history"].to(args.device)
-        temporal_position_count = resume_checkpoint["temporal_position_count"].to(args.device)
-        current_velocity_mag = resume_checkpoint["current_velocity_mag"].to(args.device)
-        current_acceleration_mag = resume_checkpoint["current_acceleration_mag"].to(args.device)
-        current_jerk_mag = resume_checkpoint["current_jerk_mag"].to(args.device)
-        train_metrics = dict(resume_checkpoint.get("train_metrics", train_metrics))
-        episodic_returns = list(resume_checkpoint.get("episodic_returns", episodic_returns))
-        success_rates = list(resume_checkpoint.get("success_rates", success_rates))
-        velocity_magnitudes = list(resume_checkpoint.get("velocity_magnitudes", velocity_magnitudes))
-        acceleration_magnitudes = list(resume_checkpoint.get("acceleration_magnitudes", acceleration_magnitudes))
-        jerk_magnitudes = list(resume_checkpoint.get("jerk_magnitudes", jerk_magnitudes))
-        interval_paddle_puck_collisions = float(
-            resume_checkpoint.get("interval_paddle_puck_collisions", interval_paddle_puck_collisions)
+        restored_state = load_resume_training_state(
+            resume_checkpoint,
+            device=args.device,
+            recent_episode_window_size=args.recent_episode_window_size,
+            success_rb=success_rb,
+            failure_rb=failure_rb,
+            primitive_selector=primitive_selector,
+            q_optimizer=q_optimizer,
+            actor_optimizer=actor_optimizer,
+            defaults={
+                "warm_policy_last_action": warm_policy_last_action,
+                "train_metrics": train_metrics,
+                "episodic_returns": episodic_returns,
+                "success_rates": success_rates,
+                "velocity_magnitudes": velocity_magnitudes,
+                "acceleration_magnitudes": acceleration_magnitudes,
+                "jerk_magnitudes": jerk_magnitudes,
+                "interval_paddle_puck_collisions": interval_paddle_puck_collisions,
+                "interval_env_steps": interval_env_steps,
+                "interval_primitive_env_steps": interval_primitive_env_steps,
+                "interval_primitive_horizontal_env_steps": interval_primitive_horizontal_env_steps,
+                "interval_policy_takeover_env_steps": interval_policy_takeover_env_steps,
+                "interval_target_position_directional_env_steps": (
+                    interval_target_position_directional_env_steps
+                ),
+                "recent_episode_returns": recent_episode_returns,
+                "episode_return_success_threshold": episode_return_success_threshold,
+            },
         )
-        interval_env_steps = int(resume_checkpoint.get("interval_env_steps", interval_env_steps))
-        interval_primitive_env_steps = int(
-            resume_checkpoint.get("interval_primitive_env_steps", interval_primitive_env_steps)
-        )
-        interval_primitive_horizontal_env_steps = int(
-            resume_checkpoint.get(
-                "interval_primitive_horizontal_env_steps", interval_primitive_horizontal_env_steps
-            )
-        )
-        interval_policy_takeover_env_steps = int(
-            resume_checkpoint.get("interval_policy_takeover_env_steps", interval_policy_takeover_env_steps)
-        )
-        if "warm_policy_last_action" in resume_checkpoint:
-            warm_policy_last_action = resume_checkpoint["warm_policy_last_action"].to(args.device)
-        if "rng_states" in resume_checkpoint:
-            set_rng_states(resume_checkpoint["rng_states"])
+        global_step = restored_state["global_step"]
+        iteration = restored_state["iteration"]
+        obs = restored_state["obs"]
+        previous_puck_position_for_trigger = extract_current_puck_position(
+            torch.tensor(obs, dtype=torch.float32, device=args.device)
+        ).clone()
+        last_action_for_policy = restored_state["last_action_for_policy"]
+        warm_policy_last_action = restored_state["warm_policy_last_action"]
+        temporal_paddle_history = restored_state["temporal_paddle_history"]
+        temporal_puck_history = restored_state["temporal_puck_history"]
+        temporal_done_history = restored_state["temporal_done_history"]
+        temporal_position_count = restored_state["temporal_position_count"]
+        current_velocity_mag = restored_state["current_velocity_mag"]
+        current_acceleration_mag = restored_state["current_acceleration_mag"]
+        current_jerk_mag = restored_state["current_jerk_mag"]
+        train_metrics = restored_state["train_metrics"]
+        episodic_returns = restored_state["episodic_returns"]
+        success_rates = restored_state["success_rates"]
+        velocity_magnitudes = restored_state["velocity_magnitudes"]
+        acceleration_magnitudes = restored_state["acceleration_magnitudes"]
+        jerk_magnitudes = restored_state["jerk_magnitudes"]
+        interval_paddle_puck_collisions = restored_state["interval_paddle_puck_collisions"]
+        interval_env_steps = restored_state["interval_env_steps"]
+        interval_primitive_env_steps = restored_state["interval_primitive_env_steps"]
+        interval_primitive_horizontal_env_steps = restored_state["interval_primitive_horizontal_env_steps"]
+        interval_policy_takeover_env_steps = restored_state["interval_policy_takeover_env_steps"]
+        interval_target_position_directional_env_steps = restored_state[
+            "interval_target_position_directional_env_steps"
+        ]
+        episode_trajectory = restored_state["episode_trajectory"]
+        recent_episode_returns = restored_state["recent_episode_returns"]
+        episode_return_success_threshold = restored_state["episode_return_success_threshold"]
         print(f"Resuming training from global_step={global_step}, iteration={iteration}")
 
     while global_step < args.total_timesteps:
-        should_update_train_metrics = global_step > 0 and global_step % 500 == 0
-        should_refresh_annealing = global_step % 500 == 0
+        should_update_train_metrics = global_step > 0 and np.random.rand() < 0.1
+        should_refresh_annealing = np.random.rand() < 0.1
+        
         if should_refresh_annealing:
             annealing_active = global_step < args.exploration_primitive_chance_anneal_steps
             primitive_selector.chance = primitive_exploration_chance_for_step(args, global_step)
@@ -660,6 +917,9 @@ if __name__ == "__main__":
                         if args.exploration_policy_takeover_enabled
                         else 0.0
                     ),
+                    target_position_directional=(
+                        args.exploration_primitive_weight_anneal_target_position_directional
+                    ),
                 )
             else:
                 primitive_selector.set_primitive_weights(
@@ -670,6 +930,9 @@ if __name__ == "__main__":
                         args.exploration_primitive_weight_policy_takeover
                         if args.exploration_policy_takeover_enabled
                         else 0.0
+                    ),
+                    target_position_directional=(
+                        args.exploration_primitive_weight_target_position_directional
                     ),
                 )
         prev_action_for_transition = last_action_for_policy.clone()
@@ -690,12 +953,20 @@ if __name__ == "__main__":
         action_tensor = torch.as_tensor(actions, dtype=torch.float32, device=args.device)
         current_paddle_pos_for_primitive = extract_current_paddle_position(obs_tensor)
         current_puck_pos_for_primitive = extract_current_puck_position(obs_tensor)
+        current_puck_vel_for_primitive = extract_current_puck_velocity(obs_tensor)
+        if torch.all(current_puck_vel_for_primitive == 0):
+            current_puck_vel_for_primitive = (
+                current_puck_pos_for_primitive - previous_puck_position_for_trigger
+            )
         y_alignment_sign = torch.sign(current_puck_pos_for_primitive[:, 1] - current_paddle_pos_for_primitive[:, 1])
         action_tensor, primitive_step_stats = primitive_selector.apply(
             action_tensor,
             action_low=action_low,
             action_high=action_high,
             y_alignment_sign=y_alignment_sign,
+            current_paddle_position=current_paddle_pos_for_primitive,
+            current_puck_position=current_puck_pos_for_primitive,
+            current_puck_velocity=current_puck_vel_for_primitive,
             return_stats=True,
         )
         if args.exploration_policy_takeover_enabled and warm_policy_actor is not None:
@@ -723,9 +994,13 @@ if __name__ == "__main__":
             primitive_step_stats["primitive_horizontal_dominant_count"]
         )
         interval_policy_takeover_env_steps += int(primitive_step_stats["policy_takeover_applied_count"])
+        interval_target_position_directional_env_steps += int(
+            primitive_step_stats["target_position_directional_applied_count"]
+        )
         next_obs_tensor = torch.tensor(next_obs, dtype=torch.float32, device=args.device)
         current_paddle_pos = extract_current_paddle_position(next_obs_tensor)
         current_puck_pos = extract_current_puck_position(next_obs_tensor)
+        previous_puck_position_for_trigger = current_puck_pos.clone()
         done_tensor = torch.tensor(dones, dtype=torch.bool, device=args.device)
         primitive_selector.reset(done_tensor)
         last_action_for_policy = action_tensor.clone()
@@ -842,167 +1117,308 @@ if __name__ == "__main__":
         for idx, trunc in enumerate(truncations):
             if trunc:
                 real_next_obs[idx] = infos["final_observation"][idx]
-
-        rb.add(
-            obs=obs_tensor,
-            next_obs=torch.as_tensor(real_next_obs, dtype=torch.float32, device=args.device),
-            actions=action_tensor,
-            task_rewards=task_rewards,
-            motion_rewards=motion_rewards,
-            dones=torch.as_tensor(terminations, dtype=torch.float32, device=args.device),
-            prev_action=prev_action_for_transition,
+        real_next_obs_tensor = torch.as_tensor(real_next_obs, dtype=torch.float32, device=args.device)
+        terminations_tensor = torch.as_tensor(terminations, dtype=torch.float32, device=args.device)
+        episode_trajectory.append_step(
+            obs=obs_tensor[0],
+            next_obs=real_next_obs_tensor[0],
+            action=action_tensor[0],
+            task_reward=task_rewards[0],
+            motion_reward=motion_rewards[0],
+            done=terminations_tensor[0],
+            prev_action=prev_action_for_transition[0],
         )
+        episode_return_success_threshold = finalize_episode_if_done(
+            episode_done=bool(dones[0]),
+            episode_trajectory=episode_trajectory,
+            recent_episode_returns=recent_episode_returns,
+            success_top_fraction=args.success_top_fraction,
+            episode_return_success_threshold=episode_return_success_threshold,
+            success_rb=success_rb,
+            failure_rb=failure_rb,
+        )
+        episode_finished = bool(dones[0])
 
         obs = next_obs
 
-        if global_step > args.learning_starts:
-            if iteration % args.q_frequency == 0:
-                for q_update_idx in range(args.q_updates):
-                    if args.per_enabled:
-                        per_beta = linear_anneal(
-                            args.per_beta_start,
-                            args.per_beta_end,
-                            global_step,
-                            args.per_beta_anneal_steps,
-                        )
-                        data = rb.sample(args.batch_size, beta=per_beta)
-                    else:
-                        per_beta = 0.0
-                        data = rb.sample(args.batch_size)
-                    sampled_observations = data["observations"]
-                    sampled_next_observations = data["next_observations"]
-                    sampled_actions = data["actions"]
-                    sampled_task_rewards = data["task_rewards"]
-                    sampled_motion_rewards = data["motion_rewards"]
-                    sampled_dones = data["dones"]
-                    sampled_prev_actions = data["prev_actions"]
-                    sampled_weights = data.get("weights")
-                    if sampled_weights is None:
-                        sampled_weights = torch.ones_like(sampled_task_rewards)
-                    sampled_weights = sampled_weights.view(-1)
-                    sampled_next_prev_actions = sampled_actions * (1.0 - sampled_dones.unsqueeze(-1))
-                    sampled_next_policy_observations = augment_policy_observation(
-                        sampled_next_observations,
-                        sampled_next_prev_actions,
-                        args.use_last_action_in_policy_state,
+        if global_step > args.learning_starts and episode_finished:
+            for q_update_idx in range(args.q_updates):
+                success_batch_count, failure_batch_count = critic_success_failure_counts(
+                    batch_size=args.batch_size,
+                    success_fraction=args.critic_success_sample_fraction,
+                    success_available=len(success_rb) > 0,
+                    failure_available=len(failure_rb) > 0,
+                )
+                if success_batch_count + failure_batch_count == 0:
+                    continue
+                if args.per_enabled:
+                    per_beta = linear_anneal(
+                        args.per_beta_start,
+                        args.per_beta_end,
+                        global_step,
+                        args.per_beta_anneal_steps,
                     )
+                else:
+                    per_beta = 0.0
 
-                    with torch.no_grad():
-                        target_next_action = deterministic_actor_action(actor, sampled_next_policy_observations)
-                        noise = torch.randn_like(target_next_action) * args.policy_noise
-                        noise = torch.clamp(noise, -args.noise_clip, args.noise_clip)
-                        target_next_action = torch.clamp(target_next_action + noise, action_low, action_high)
-
-                        q1_next_task_h, q1_next_motion_h = qf1_target(
-                            sampled_next_observations,
-                            target_next_action,
-                        )
-                        q2_next_task_h, q2_next_motion_h = qf2_target(
-                            sampled_next_observations,
-                            target_next_action,
-                        )
-
-                        min_next_task_h = torch.min(q1_next_task_h, q2_next_task_h)
-                        min_next_motion_h = torch.min(q1_next_motion_h, q2_next_motion_h)
-
-                        min_next_task = h_inverse(min_next_task_h, eps=args.h_transform_eps).view(-1)
-                        min_next_motion = h_inverse(min_next_motion_h, eps=args.h_transform_eps).view(-1)
-
-                        bellman_target_task_original = sampled_task_rewards + (
-                            1 - sampled_dones
-                        ) * args.task_gamma * min_next_task
-                        bellman_target_motion_original = sampled_motion_rewards + (
-                            1 - sampled_dones
-                        ) * args.motion_gamma * min_next_motion
-
-                        next_q_task_value_h = h_transform(
-                            bellman_target_task_original, eps=args.h_transform_eps
-                        )
-                        next_q_motion_value_h = h_transform(
-                            bellman_target_motion_original, eps=args.h_transform_eps
-                        )
-
-                        if should_update_train_metrics and q_update_idx == args.q_updates - 1:
-                            train_metrics.update(
-                                {
-                                    "debug/bellman_target_task_original_mean": (
-                                        bellman_target_task_original.mean().item()
-                                    ),
-                                    "debug/bellman_target_motion_original_mean": (
-                                        bellman_target_motion_original.mean().item()
-                                    ),
-                                    "debug/next_q_task_h_mean": next_q_task_value_h.mean().item(),
-                                    "debug/next_q_motion_h_mean": next_q_motion_value_h.mean().item(),
-                                }
+                replay_chunks: List[Dict[str, torch.Tensor]] = []
+                per_priority_update_slices: List[Tuple[object, torch.Tensor, int, int]] = []
+                per_sample_count = 0
+                uniform_sample_count = 0
+                running_offset = 0
+                for source_buffer, source_count in (
+                    (success_rb, success_batch_count),
+                    (failure_rb, failure_batch_count),
+                ):
+                    if source_count <= 0:
+                        continue
+                    source_chunk = sample_critic_source_chunk(
+                        replay_buffer=source_buffer,
+                        sample_count=source_count,
+                        per_enabled=args.per_enabled,
+                        per_beta=per_beta,
+                        critic_per_fraction=args.critic_per_fraction,
+                    )
+                    source_data = source_chunk["data"]
+                    replay_chunks.append(source_data)
+                    source_batch_size = int(source_data["task_rewards"].shape[0])
+                    source_per_count = int(source_chunk["per_count"])
+                    source_uniform_count = int(source_chunk["uniform_count"])
+                    per_sample_count += source_per_count
+                    uniform_sample_count += source_uniform_count
+                    if (
+                        args.per_enabled
+                        and source_per_count > 0
+                        and source_chunk["per_indices"] is not None
+                    ):
+                        per_priority_update_slices.append(
+                            (
+                                source_buffer,
+                                source_chunk["per_indices"],
+                                running_offset,
+                                running_offset + source_per_count,
                             )
-
-                    q1_task_h, q1_motion_h = qf1(
-                        sampled_observations,
-                        sampled_actions,
-                    )
-                    q2_task_h, q2_motion_h = qf2(
-                        sampled_observations,
-                        sampled_actions,
-                    )
-
-                    q1_task_error_h = q1_task_h.view(-1) - next_q_task_value_h
-                    q2_task_error_h = q2_task_h.view(-1) - next_q_task_value_h
-                    q1_motion_error_h = q1_motion_h.view(-1) - next_q_motion_value_h
-                    q2_motion_error_h = q2_motion_h.view(-1) - next_q_motion_value_h
-
-                    q1_task_loss = (sampled_weights * q1_task_error_h.pow(2)).mean()
-                    q2_task_loss = (sampled_weights * q2_task_error_h.pow(2)).mean()
-                    q1_motion_loss = (sampled_weights * q1_motion_error_h.pow(2)).mean()
-                    q2_motion_loss = (sampled_weights * q2_motion_error_h.pow(2)).mean()
-                    q_total_loss = q1_task_loss + q2_task_loss + q1_motion_loss + q2_motion_loss
-
-                    q_optimizer.zero_grad()
-                    q_total_loss.backward()
-                    q_optimizer.step()
-
-                    if args.per_enabled and "indices" in data:
-                        priority_td_error = 0.25 * (
-                            q1_task_error_h.abs()
-                            + q2_task_error_h.abs()
-                            + q1_motion_error_h.abs()
-                            + q2_motion_error_h.abs()
                         )
-                        rb.update_priorities(
-                            data["indices"],
-                            priority_td_error.detach() + args.per_eps,
-                        )
+                    running_offset += source_batch_size
+
+                if len(replay_chunks) == 1:
+                    data = replay_chunks[0]
+                else:
+                    data = concat_replay_samples(replay_chunks)
+                sampled_observations = data["observations"]
+                sampled_next_observations = data["next_observations"]
+                sampled_actions = data["actions"]
+                sampled_task_rewards = data["task_rewards"]
+                sampled_motion_rewards = data["motion_rewards"]
+                sampled_dones = data["dones"]
+                sampled_prev_actions = data["prev_actions"]
+                sampled_weights = data.get("weights")
+                if sampled_weights is None:
+                    sampled_weights = torch.ones_like(sampled_task_rewards)
+                sampled_weights = sampled_weights.view(-1)
+                sampled_next_prev_actions = sampled_actions * (1.0 - sampled_dones.unsqueeze(-1))
+                sampled_next_policy_observations = augment_policy_observation(
+                    sampled_next_observations,
+                    sampled_next_prev_actions,
+                    args.use_last_action_in_policy_state,
+                )
+
+                with torch.no_grad():
+                    target_next_action = deterministic_actor_action(
+                        actor_target,
+                        sampled_next_policy_observations,
+                    )
+                    noise = torch.randn_like(target_next_action) * args.policy_noise
+                    noise = torch.clamp(noise, -args.noise_clip, args.noise_clip)
+                    target_next_action = torch.clamp(target_next_action + noise, action_low, action_high)
+
+                    q1_next_task_h, q1_next_motion_h = qf1_target(
+                        sampled_next_observations,
+                        target_next_action,
+                    )
+                    q2_next_task_h, q2_next_motion_h = qf2_target(
+                        sampled_next_observations,
+                        target_next_action,
+                    )
+
+                    min_next_task_h = torch.min(q1_next_task_h, q2_next_task_h)
+                    min_next_motion_h = torch.min(q1_next_motion_h, q2_next_motion_h)
+
+                    min_next_task = h_inverse(min_next_task_h, eps=args.h_transform_eps).view(-1)
+                    min_next_motion = h_inverse(min_next_motion_h, eps=args.h_transform_eps).view(-1)
+
+                    bellman_target_task_original = sampled_task_rewards + (
+                        1 - sampled_dones
+                    ) * args.task_gamma * min_next_task
+                    bellman_target_motion_original = sampled_motion_rewards + (
+                        1 - sampled_dones
+                    ) * args.motion_gamma * min_next_motion
+
+                    next_q_task_value_h = h_transform(
+                        bellman_target_task_original, eps=args.h_transform_eps
+                    )
+                    next_q_motion_value_h = h_transform(
+                        bellman_target_motion_original, eps=args.h_transform_eps
+                    )
 
                     if should_update_train_metrics and q_update_idx == args.q_updates - 1:
-                        sampled_priorities = data.get("sampled_priorities")
-                        if sampled_priorities is None:
-                            sampled_priorities = torch.zeros_like(sampled_weights)
-                        priority_td_error_mean = (
-                            priority_td_error.mean().item()
-                            if args.per_enabled and "indices" in data
-                            else 0.0
-                        )
                         train_metrics.update(
                             {
-                                "losses/q_task_loss": (q1_task_loss + q2_task_loss).item() / 2.0,
-                                "losses/q_motion_loss": (q1_motion_loss + q2_motion_loss).item() / 2.0,
-                                "losses/q_total_loss": q_total_loss.item(),
-                                "losses/q1_task_mean": q1_task_h.mean().item(),
-                                "losses/q1_motion_mean": q1_motion_h.mean().item(),
-                                "losses/q1_total_mean": (q1_task_h + q1_motion_h).mean().item(),
-                                "rewards/sampled_task_reward_mean": sampled_task_rewards.mean().item(),
-                                "rewards/sampled_motion_reward_mean": sampled_motion_rewards.mean().item(),
-                                "rewards/sampled_combined_reward_mean": (
-                                    sampled_task_rewards + sampled_motion_rewards
-                                ).mean().item(),
-                                "replay/per_beta": per_beta,
-                                "replay/per_is_weight_mean": sampled_weights.mean().item(),
-                                "replay/per_sampled_priority_mean": sampled_priorities.mean().item(),
-                                "replay/per_priority_td_error_mean": priority_td_error_mean,
+                                "debug/bellman_target_task_original_mean": (
+                                    bellman_target_task_original.mean().item()
+                                ),
+                                "debug/bellman_target_motion_original_mean": (
+                                    bellman_target_motion_original.mean().item()
+                                ),
+                                "debug/next_q_task_h_mean": next_q_task_value_h.mean().item(),
+                                "debug/next_q_motion_h_mean": next_q_motion_value_h.mean().item(),
                             }
                         )
 
-            if iteration % args.policy_frequency == 0:
-                data = rb.sample(args.batch_size)
+                q1_task_h, q1_motion_h = qf1(
+                    sampled_observations,
+                    sampled_actions,
+                )
+                q2_task_h, q2_motion_h = qf2(
+                    sampled_observations,
+                    sampled_actions,
+                )
+
+                q1_task_error_h = q1_task_h.view(-1) - next_q_task_value_h
+                q2_task_error_h = q2_task_h.view(-1) - next_q_task_value_h
+                q1_motion_error_h = q1_motion_h.view(-1) - next_q_motion_value_h
+                q2_motion_error_h = q2_motion_h.view(-1) - next_q_motion_value_h
+
+                q1_task_loss = (sampled_weights * q1_task_error_h.pow(2)).mean()
+                q2_task_loss = (sampled_weights * q2_task_error_h.pow(2)).mean()
+                q1_motion_loss = (sampled_weights * q1_motion_error_h.pow(2)).mean()
+                q2_motion_loss = (sampled_weights * q2_motion_error_h.pow(2)).mean()
+                q_total_loss = q1_task_loss + q2_task_loss + q1_motion_loss + q2_motion_loss
+
+                q_optimizer.zero_grad()
+                q_total_loss.backward()
+                q_optimizer.step()
+
+                priority_td_error = 0.25 * (
+                    q1_task_error_h.abs()
+                    + q2_task_error_h.abs()
+                    + q1_motion_error_h.abs()
+                    + q2_motion_error_h.abs()
+                )
+                if args.per_enabled and per_sample_count > 0:
+                    for source_buffer, per_indices, start_idx, end_idx in per_priority_update_slices:
+                        source_buffer.update_priorities(
+                            per_indices,
+                            priority_td_error[start_idx:end_idx].detach() + args.per_eps,
+                        )
+
+                if should_update_train_metrics and q_update_idx == args.q_updates - 1:
+                    sampled_priorities = data.get("sampled_priorities")
+                    if sampled_priorities is None:
+                        sampled_priorities = torch.zeros_like(sampled_weights)
+                    positive_task_reward_mask = sampled_task_rewards > 0.0
+                    positive_task_reward_count = float(positive_task_reward_mask.sum().item())
+                    minibatch_size = max(int(sampled_task_rewards.numel()), 1)
+                    positive_task_rewards = sampled_task_rewards[positive_task_reward_mask]
+                    priority_td_error_mean = (
+                        priority_td_error.mean().item()
+                        if args.per_enabled and per_sample_count > 0
+                        else 0.0
+                    )
+                    train_metrics.update(
+                        {
+                            "losses/q_task_loss": (q1_task_loss + q2_task_loss).item() / 2.0,
+                            "losses/q_motion_loss": (q1_motion_loss + q2_motion_loss).item() / 2.0,
+                            "losses/q_total_loss": q_total_loss.item(),
+                            "losses/q1_task_mean": q1_task_h.mean().item(),
+                            "losses/q1_motion_mean": q1_motion_h.mean().item(),
+                            "losses/q1_total_mean": (q1_task_h + q1_motion_h).mean().item(),
+                            "rewards/sampled_task_reward_mean": sampled_task_rewards.mean().item(),
+                            "rewards/sampled_task_reward_min": sampled_task_rewards.min().item(),
+                            "rewards/sampled_task_reward_std": sampled_task_rewards.std(
+                                unbiased=False
+                            ).item(),
+                            "rewards/sampled_task_reward_positive_count": positive_task_reward_count,
+                            "rewards/sampled_task_reward_positive_fraction": (
+                                positive_task_reward_count / float(minibatch_size)
+                            ),
+                            "rewards/sampled_task_reward_positive_mean": (
+                                positive_task_rewards.mean().item()
+                                if positive_task_rewards.numel() > 0
+                                else 0.0
+                            ),
+                            "rewards/sampled_task_reward_positive_std": (
+                                positive_task_rewards.std(unbiased=False).item()
+                                if positive_task_rewards.numel() > 0
+                                else 0.0
+                            ),
+                            "rewards/sampled_motion_reward_mean": sampled_motion_rewards.mean().item(),
+                            "rewards/sampled_combined_reward_mean": (
+                                sampled_task_rewards + sampled_motion_rewards
+                            ).mean().item(),
+                            "replay/per_beta": per_beta,
+                            "replay/per_is_weight_mean": sampled_weights.mean().item(),
+                            "replay/per_sampled_priority_mean": sampled_priorities.mean().item(),
+                            "replay/per_priority_td_error_mean": priority_td_error_mean,
+                            "replay/critic_per_sample_count": float(per_sample_count),
+                            "replay/critic_uniform_sample_count": float(uniform_sample_count),
+                            "replay/critic_per_sample_fraction": (
+                                float(per_sample_count) / float(max(args.batch_size, 1))
+                            ),
+                            "replay/success_buffer_size": float(len(success_rb)),
+                            "replay/failure_buffer_size": float(len(failure_rb)),
+                            "replay/critic_success_sample_count": float(success_batch_count),
+                            "replay/critic_failure_sample_count": float(failure_batch_count),
+                            "replay/critic_success_sample_fraction": (
+                                float(success_batch_count) / float(max(args.batch_size, 1))
+                            ),
+                            "replay/critic_failure_sample_fraction": (
+                                float(failure_batch_count) / float(max(args.batch_size, 1))
+                            ),
+                            "replay/episode_return_success_threshold": (
+                                episode_return_success_threshold
+                            ),
+                            "replay/recent_episode_window_count": float(len(recent_episode_returns)),
+                        }
+                    )
+
+                if (q_update_idx + 1) % args.target_network_frequency == 0:
+                    for param, target_param in zip(actor.parameters(), actor_target.parameters()):
+                        target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
+                    for param, target_param in zip(qf1.parameters(), qf1_target.parameters()):
+                        target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
+                    for param, target_param in zip(qf2.parameters(), qf2_target.parameters()):
+                        target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
+
+            for actor_update_idx in range(args.actor_updates_per_iteration):
+                actor_success_count, actor_failure_count = critic_success_failure_counts(
+                    batch_size=args.batch_size,
+                    success_fraction=args.critic_success_sample_fraction,
+                    success_available=len(success_rb) > 0,
+                    failure_available=len(failure_rb) > 0,
+                )
+                if actor_success_count + actor_failure_count == 0:
+                    continue
+                actor_data_chunks: List[Dict[str, torch.Tensor]] = []
+                if actor_success_count > 0:
+                    actor_data_chunks.append(
+                        sample_actor_source_chunk(success_rb, actor_success_count, args.per_enabled)
+                    )
+                if actor_failure_count > 0:
+                    actor_data_chunks.append(
+                        sample_actor_source_chunk(failure_rb, actor_failure_count, args.per_enabled)
+                    )
+                if len(actor_data_chunks) == 1:
+                    data = actor_data_chunks[0]
+                else:
+                    data = {
+                        "observations": torch.cat(
+                            [chunk["observations"] for chunk in actor_data_chunks], dim=0
+                        ),
+                        "prev_actions": torch.cat(
+                            [chunk["prev_actions"] for chunk in actor_data_chunks], dim=0
+                        ),
+                    }
                 sampled_observations = data["observations"]
                 sampled_prev_actions = data["prev_actions"]
                 sampled_policy_observations = augment_policy_observation(
@@ -1026,7 +1442,7 @@ if __name__ == "__main__":
                 actor_optimizer.zero_grad()
                 actor_loss.backward()
                 actor_optimizer.step()
-                if should_update_train_metrics:
+                if should_update_train_metrics and actor_update_idx == args.actor_updates_per_iteration - 1:
                     train_metrics.update(
                         {
                             "losses/actor_loss": actor_loss.item(),
@@ -1035,17 +1451,21 @@ if __name__ == "__main__":
                         }
                     )
 
-                if iteration % args.target_network_frequency == 0:
-                    for param, target_param in zip(qf1.parameters(), qf1_target.parameters()):
-                        target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
-                    for param, target_param in zip(qf2.parameters(), qf2_target.parameters()):
-                        target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
-
             if should_update_train_metrics:
+                train_metrics.update(
+                    {
+                        "replay/success_buffer_size": float(len(success_rb)),
+                        "replay/failure_buffer_size": float(len(failure_rb)),
+                        "replay/episode_return_success_threshold": episode_return_success_threshold,
+                        "replay/recent_episode_window_count": float(len(recent_episode_returns)),
+                    }
+                )
                 log_scalar_metrics(writer, train_metrics, global_step)
                 writer.add_scalar("charts/exploration_primitive_chance", primitive_selector.chance, global_step)
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
+
+        # LOGGING AND EVALUATION
         if global_step > 0 and global_step % 500 == 0:
             if episodic_returns:
                 avg_return = np.mean(episodic_returns)
@@ -1110,6 +1530,11 @@ if __name__ == "__main__":
             policy_takeover_fraction = (
                 interval_policy_takeover_env_steps / max(interval_env_steps, 1) if interval_env_steps > 0 else 0.0
             )
+            target_position_directional_fraction = (
+                interval_target_position_directional_env_steps / max(interval_env_steps, 1)
+                if interval_env_steps > 0
+                else 0.0
+            )
             print(
                 f"Step {global_step}: Primitive Actions (last interval): "
                 f"{interval_primitive_env_steps}/{interval_env_steps} env-steps ({primitive_fraction:.4f}), "
@@ -1120,6 +1545,11 @@ if __name__ == "__main__":
                 f"Step {global_step}: Policy Takeover Actions (last interval): "
                 f"{interval_policy_takeover_env_steps}/{interval_env_steps} env-steps "
                 f"({policy_takeover_fraction:.4f})"
+            )
+            print(
+                f"Step {global_step}: Target-Position Directional Actions (last interval): "
+                f"{interval_target_position_directional_env_steps}/{interval_env_steps} env-steps "
+                f"({target_position_directional_fraction:.4f})"
             )
             writer.add_scalar(
                 "exploration/interval_primitive_env_steps",
@@ -1151,58 +1581,76 @@ if __name__ == "__main__":
                 policy_takeover_fraction,
                 global_step,
             )
+            writer.add_scalar(
+                "exploration/interval_target_position_directional_env_steps",
+                interval_target_position_directional_env_steps,
+                global_step,
+            )
+            writer.add_scalar(
+                "exploration/interval_target_position_directional_fraction",
+                target_position_directional_fraction,
+                global_step,
+            )
             interval_paddle_puck_collisions = 0.0
             interval_env_steps = 0
             interval_primitive_env_steps = 0
             interval_primitive_horizontal_env_steps = 0
             interval_policy_takeover_env_steps = 0
+            interval_target_position_directional_env_steps = 0
 
         if global_step > 0 and global_step % 5000 == 0: # save more frequently (Need to look at visualizations)
             checkpoint_dir = os.path.join(log_parent_dir, f"checkpoint_{global_step}")
             os.makedirs(checkpoint_dir, exist_ok=True)
             model_path = f"{checkpoint_dir}/model.pth"
             torch.save(actor.state_dict(), model_path)
+            torch.save(actor_target.state_dict(), f"{checkpoint_dir}/actor_target.pth")
             torch.save(qf1.state_dict(), f"{checkpoint_dir}/qf1.pth")
             torch.save(qf2.state_dict(), f"{checkpoint_dir}/qf2.pth")
             torch.save(qf1_target.state_dict(), f"{checkpoint_dir}/qf1_target.pth")
             torch.save(qf2_target.state_dict(), f"{checkpoint_dir}/qf2_target.pth")
-            training_state = {
-                "checkpoint_version": 1,
-                "global_step": global_step,
-                "iteration": iteration,
-                "actor": actor.state_dict(),
-                "qf1": qf1.state_dict(),
-                "qf2": qf2.state_dict(),
-                "qf1_target": qf1_target.state_dict(),
-                "qf2_target": qf2_target.state_dict(),
-                "q_optimizer": q_optimizer.state_dict(),
-                "actor_optimizer": actor_optimizer.state_dict(),
-                "replay_buffer": rb.state_dict(),
-                "primitive_selector": primitive_selector.state_dict(),
-                "obs": np.array(obs, copy=True),
-                "last_action_for_policy": _cpu_tensor(last_action_for_policy),
-                "warm_policy_last_action": _cpu_tensor(warm_policy_last_action),
-                "temporal_paddle_history": _cpu_tensor(temporal_paddle_history),
-                "temporal_puck_history": _cpu_tensor(temporal_puck_history),
-                "temporal_done_history": _cpu_tensor(temporal_done_history),
-                "temporal_position_count": _cpu_tensor(temporal_position_count),
-                "current_velocity_mag": _cpu_tensor(current_velocity_mag),
-                "current_acceleration_mag": _cpu_tensor(current_acceleration_mag),
-                "current_jerk_mag": _cpu_tensor(current_jerk_mag),
-                "train_metrics": dict(train_metrics),
-                "episodic_returns": list(episodic_returns),
-                "success_rates": list(success_rates),
-                "velocity_magnitudes": list(velocity_magnitudes),
-                "acceleration_magnitudes": list(acceleration_magnitudes),
-                "jerk_magnitudes": list(jerk_magnitudes),
-                "interval_paddle_puck_collisions": interval_paddle_puck_collisions,
-                "interval_env_steps": interval_env_steps,
-                "interval_primitive_env_steps": interval_primitive_env_steps,
-                "interval_primitive_horizontal_env_steps": interval_primitive_horizontal_env_steps,
-                "interval_policy_takeover_env_steps": interval_policy_takeover_env_steps,
-                "rng_states": get_rng_states(),
-                "args": vars(args),
-            }
+            training_state = build_training_state(
+                global_step=global_step,
+                iteration=iteration,
+                actor=actor,
+                actor_target=actor_target,
+                qf1=qf1,
+                qf2=qf2,
+                qf1_target=qf1_target,
+                qf2_target=qf2_target,
+                q_optimizer=q_optimizer,
+                actor_optimizer=actor_optimizer,
+                success_rb=success_rb,
+                failure_rb=failure_rb,
+                primitive_selector=primitive_selector,
+                obs=obs,
+                last_action_for_policy=last_action_for_policy,
+                warm_policy_last_action=warm_policy_last_action,
+                temporal_paddle_history=temporal_paddle_history,
+                temporal_puck_history=temporal_puck_history,
+                temporal_done_history=temporal_done_history,
+                temporal_position_count=temporal_position_count,
+                current_velocity_mag=current_velocity_mag,
+                current_acceleration_mag=current_acceleration_mag,
+                current_jerk_mag=current_jerk_mag,
+                train_metrics=train_metrics,
+                episodic_returns=episodic_returns,
+                success_rates=success_rates,
+                velocity_magnitudes=velocity_magnitudes,
+                acceleration_magnitudes=acceleration_magnitudes,
+                jerk_magnitudes=jerk_magnitudes,
+                interval_paddle_puck_collisions=interval_paddle_puck_collisions,
+                interval_env_steps=interval_env_steps,
+                interval_primitive_env_steps=interval_primitive_env_steps,
+                interval_primitive_horizontal_env_steps=interval_primitive_horizontal_env_steps,
+                interval_policy_takeover_env_steps=interval_policy_takeover_env_steps,
+                interval_target_position_directional_env_steps=(
+                    interval_target_position_directional_env_steps
+                ),
+                episode_trajectory=episode_trajectory,
+                recent_episode_returns=recent_episode_returns,
+                episode_return_success_threshold=episode_return_success_threshold,
+                args_dict=vars(args),
+            )
             torch.save(training_state, f"{checkpoint_dir}/training_state.pth")
             print(f"\nCheckpoint saved at step {global_step}")
             try:
@@ -1217,6 +1665,21 @@ if __name__ == "__main__":
                     agent_num_hidden_layers=args.agent_num_hidden_layers,
                     use_last_action_in_policy_state=args.use_last_action_in_policy_state,
                 )
+                save_training_data_like_rollout_gif(
+                    save_path=os.path.join(checkpoint_dir, "rollout_data_like_0.gif"),
+                    env_params=config["air_hockey"],
+                    actor=actor,
+                    action_low=action_low,
+                    action_high=action_high,
+                    use_last_action_in_policy_state=args.use_last_action_in_policy_state,
+                    exploration_noise=args.exploration_noise,
+                    primitive_selector=primitive_selector,
+                    warm_policy_actor=warm_policy_actor if args.exploration_policy_takeover_enabled else None,
+                    warm_policy_use_last_action=warm_policy_use_last_action,
+                    max_timesteps=200,
+                    fps=20,
+                    device=args.device,
+                )
             except Exception as e:
                 print(f"Evaluation failed: {e}")
 
@@ -1226,47 +1689,52 @@ if __name__ == "__main__":
     envs.close()
 
     torch.save(actor.state_dict(), f"{log_parent_dir}/model.pth")
+    torch.save(actor_target.state_dict(), f"{log_parent_dir}/actor_target.pth")
     torch.save(qf1.state_dict(), f"{log_parent_dir}/qf1.pth")
     torch.save(qf2.state_dict(), f"{log_parent_dir}/qf2.pth")
     torch.save(qf1_target.state_dict(), f"{log_parent_dir}/qf1_target.pth")
     torch.save(qf2_target.state_dict(), f"{log_parent_dir}/qf2_target.pth")
-    final_training_state = {
-        "checkpoint_version": 1,
-        "global_step": global_step,
-        "iteration": iteration,
-        "actor": actor.state_dict(),
-        "qf1": qf1.state_dict(),
-        "qf2": qf2.state_dict(),
-        "qf1_target": qf1_target.state_dict(),
-        "qf2_target": qf2_target.state_dict(),
-        "q_optimizer": q_optimizer.state_dict(),
-        "actor_optimizer": actor_optimizer.state_dict(),
-        "replay_buffer": rb.state_dict(),
-        "primitive_selector": primitive_selector.state_dict(),
-        "obs": np.array(obs, copy=True),
-        "last_action_for_policy": _cpu_tensor(last_action_for_policy),
-        "warm_policy_last_action": _cpu_tensor(warm_policy_last_action),
-        "temporal_paddle_history": _cpu_tensor(temporal_paddle_history),
-        "temporal_puck_history": _cpu_tensor(temporal_puck_history),
-        "temporal_done_history": _cpu_tensor(temporal_done_history),
-        "temporal_position_count": _cpu_tensor(temporal_position_count),
-        "current_velocity_mag": _cpu_tensor(current_velocity_mag),
-        "current_acceleration_mag": _cpu_tensor(current_acceleration_mag),
-        "current_jerk_mag": _cpu_tensor(current_jerk_mag),
-        "train_metrics": dict(train_metrics),
-        "episodic_returns": list(episodic_returns),
-        "success_rates": list(success_rates),
-        "velocity_magnitudes": list(velocity_magnitudes),
-        "acceleration_magnitudes": list(acceleration_magnitudes),
-        "jerk_magnitudes": list(jerk_magnitudes),
-        "interval_paddle_puck_collisions": interval_paddle_puck_collisions,
-        "interval_env_steps": interval_env_steps,
-        "interval_primitive_env_steps": interval_primitive_env_steps,
-        "interval_primitive_horizontal_env_steps": interval_primitive_horizontal_env_steps,
-        "interval_policy_takeover_env_steps": interval_policy_takeover_env_steps,
-        "rng_states": get_rng_states(),
-        "args": vars(args),
-    }
+    final_training_state = build_training_state(
+        global_step=global_step,
+        iteration=iteration,
+        actor=actor,
+        actor_target=actor_target,
+        qf1=qf1,
+        qf2=qf2,
+        qf1_target=qf1_target,
+        qf2_target=qf2_target,
+        q_optimizer=q_optimizer,
+        actor_optimizer=actor_optimizer,
+        success_rb=success_rb,
+        failure_rb=failure_rb,
+        primitive_selector=primitive_selector,
+        obs=obs,
+        last_action_for_policy=last_action_for_policy,
+        warm_policy_last_action=warm_policy_last_action,
+        temporal_paddle_history=temporal_paddle_history,
+        temporal_puck_history=temporal_puck_history,
+        temporal_done_history=temporal_done_history,
+        temporal_position_count=temporal_position_count,
+        current_velocity_mag=current_velocity_mag,
+        current_acceleration_mag=current_acceleration_mag,
+        current_jerk_mag=current_jerk_mag,
+        train_metrics=train_metrics,
+        episodic_returns=episodic_returns,
+        success_rates=success_rates,
+        velocity_magnitudes=velocity_magnitudes,
+        acceleration_magnitudes=acceleration_magnitudes,
+        jerk_magnitudes=jerk_magnitudes,
+        interval_paddle_puck_collisions=interval_paddle_puck_collisions,
+        interval_env_steps=interval_env_steps,
+        interval_primitive_env_steps=interval_primitive_env_steps,
+        interval_primitive_horizontal_env_steps=interval_primitive_horizontal_env_steps,
+        interval_policy_takeover_env_steps=interval_policy_takeover_env_steps,
+        interval_target_position_directional_env_steps=interval_target_position_directional_env_steps,
+        episode_trajectory=episode_trajectory,
+        recent_episode_returns=recent_episode_returns,
+        episode_return_success_threshold=episode_return_success_threshold,
+        args_dict=vars(args),
+    )
     torch.save(final_training_state, f"{log_parent_dir}/training_state.pth")
 
     try:

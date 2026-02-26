@@ -1,5 +1,5 @@
 from Box2D.b2 import world, contactListener
-from Box2D import (b2CircleShape, b2FixtureDef, b2LoopShape, b2PolygonShape,
+from Box2D import (b2CircleShape, b2EdgeShape, b2FixtureDef, b2PolygonShape,
                    b2_dynamicBody, b2_staticBody, b2Filter, b2Vec2)
 import numpy as np
 from collections import deque
@@ -95,15 +95,27 @@ class PIDController:
         return force
 
 class CollisionForceListener(contactListener):
-    def __init__(self, wall_bounce_scale=0.01, wall_tag="table_wall"):
+    def __init__(
+        self,
+        wall_tag="table_wall",
+        puck_wall_restitution_threshold_speed=0.25,
+        puck_wall_fixed_impulse_below_threshold=0.0,
+    ):
         contactListener.__init__(self)
         self.collision_forces = list()
-        self.wall_bounce_scale = wall_bounce_scale
         self.wall_tag = wall_tag
+        self.puck_wall_restitution_threshold_speed = max(
+            float(puck_wall_restitution_threshold_speed), 0.0
+        )
+        self.puck_wall_fixed_impulse_below_threshold = max(
+            float(puck_wall_fixed_impulse_below_threshold), 0.0
+        )
+        self._pending_wall_restitution = {}
     
     def reset(self):
         del self.collision_forces
         self.collision_forces = list()
+        self._pending_wall_restitution = {}
 
     @staticmethod
     def _is_puck(body):
@@ -111,6 +123,61 @@ class CollisionForceListener(contactListener):
 
     def _is_wall(self, body):
         return body.userData == self.wall_tag
+
+    def PreSolve(self, contact, oldManifold):
+        fixtureA = contact.fixtureA
+        fixtureB = contact.fixtureB
+        bodyA = fixtureA.body
+        bodyB = fixtureB.body
+        wall_fixture = fixtureA if self._is_wall(bodyA) else (fixtureB if self._is_wall(bodyB) else None)
+
+        # For any wall contact, use wall restitution (not mixed restitution).
+        # Puck-wall contacts are still handled by custom impulse logic below.
+        if wall_fixture is not None:
+            contact.restitution = float(wall_fixture.restitution)
+
+        # Enforce a deterministic restitution threshold for puck-wall contacts.
+        # This avoids relying on global Box2D velocityThreshold behavior.
+        is_puck_wall = (self._is_puck(bodyA) and self._is_wall(bodyB)) or (self._is_puck(bodyB) and self._is_wall(bodyA))
+        if not is_puck_wall:
+            return
+
+        point_count = int(contact.manifold.pointCount)
+        if point_count <= 0:
+            return
+
+        world_manifold = contact.worldManifold
+        normal = np.array([world_manifold.normal.x, world_manifold.normal.y], dtype=float)
+        normal_norm = float(np.linalg.norm(normal))
+        if normal_norm <= 1e-8:
+            return
+        normal_unit = normal / normal_norm
+        puck_body = bodyA if self._is_puck(bodyA) else bodyB
+        puck_name = str(puck_body.userData)
+        puck_pos = np.array([puck_body.position[0], puck_body.position[1]], dtype=float)
+        center_vec = -puck_pos
+        normal_inward = normal_unit if float(np.dot(center_vec, normal_unit)) >= 0.0 else -normal_unit
+        puck_vel = np.array([puck_body.linearVelocity[0], puck_body.linearVelocity[1]], dtype=float)
+        # Positive vn means moving away from wall (toward table center).
+        vn_inward = float(np.dot(puck_vel, normal_inward))
+        incoming_speed = max(0.0, -vn_inward)
+        if incoming_speed <= 1e-8:
+            # Not an incoming wall impact: do not arm any custom impulse.
+            self._pending_wall_restitution.pop(puck_name, None)
+            contact.restitution = 0.0
+            return
+
+        prev = self._pending_wall_restitution.get(puck_name)
+        if prev is None or incoming_speed > prev["incoming_speed"]:
+            self._pending_wall_restitution[puck_name] = {
+                "incoming_speed": incoming_speed,
+                "normal_inward": normal_inward,
+                "restitution": float(wall_fixture.restitution) if wall_fixture is not None else max(float(fixtureA.restitution), float(fixtureB.restitution)),
+            }
+
+        # Disable built-in restitution for puck-wall so we can enforce
+        # a deterministic threshold ourselves in PostSolve.
+        contact.restitution = 0.0
 
     def PostSolve(self, contact, impulse):
         fixtureA = contact.fixtureA
@@ -132,36 +199,43 @@ class CollisionForceListener(contactListener):
                     'contact_normal': (normal.x, normal.y)
                 })
 
-                # Apply legacy wall-bounce impulse ONLY for puck-wall collisions.
+                # Apply deterministic puck-wall rebound model.
                 is_puck_wall = (self._is_puck(bodyA) and self._is_wall(bodyB)) or (self._is_puck(bodyB) and self._is_wall(bodyA))
                 if is_puck_wall:
                     puck_body = bodyA if self._is_puck(bodyA) else bodyB
-                    pre_vel = np.array(
-                        puck_body.GetLinearVelocityFromWorldPoint(contact.worldManifold.points[i]),
-                        dtype=float,
-                    )
-                    pre_speed = float(np.linalg.norm(pre_vel))
-                    normal_np = np.array([normal.x, normal.y], dtype=float)
-                    normal_norm = float(np.linalg.norm(normal_np))
-                    if normal_norm > 1e-8:
-                        projected_vel = float(np.dot(pre_vel, normal_np) / normal_norm)
-                        puck_body.ApplyLinearImpulse(
-                            normal * self.wall_bounce_scale * projected_vel,
-                            puck_body.worldCenter,
-                            True,
-                        )
-                        puck_body.ApplyLinearImpulse(
-                            normal * self.wall_bounce_scale / 4,
-                            puck_body.worldCenter,
-                            True,
-                        )
+                    puck_name = str(puck_body.userData)
+                    pending = self._pending_wall_restitution.pop(puck_name, None)
+                    if pending is not None:
+                        incoming_speed = float(pending.get("incoming_speed", 0.0))
+                        if incoming_speed <= 1e-8:
+                            continue
+                        normal_unit = np.array(pending.get("normal_inward", (0.0, 0.0)), dtype=float)
+                        n_norm = float(np.linalg.norm(normal_unit))
+                        if n_norm > 1e-8:
+                            normal_unit = normal_unit / n_norm
+                            restitution = max(float(pending.get("restitution", 0.0)), 0.0)
+                            if incoming_speed >= self.puck_wall_restitution_threshold_speed:
+                                target_outgoing = incoming_speed * restitution
+                            else:
+                                target_outgoing = (
+                                    self.puck_wall_fixed_impulse_below_threshold
+                                    / max(float(puck_body.mass), 1e-8)
+                                )
 
-                        # Hard cap: post-processing must not increase puck speed.
-                        post_vel = np.array([puck_body.linearVelocity[0], puck_body.linearVelocity[1]], dtype=float)
-                        post_speed = float(np.linalg.norm(post_vel))
-                        if post_speed > pre_speed + 1e-8 and pre_speed > 1e-8:
-                            clipped = post_vel * (pre_speed / post_speed)
-                            puck_body.linearVelocity = b2Vec2(float(clipped[0]), float(clipped[1]))
+                            post_vel = np.array(
+                                [puck_body.linearVelocity[0], puck_body.linearVelocity[1]],
+                                dtype=float,
+                            )
+                            current_outgoing = max(0.0, float(np.dot(post_vel, normal_unit)))
+                            if target_outgoing > current_outgoing + 1e-8:
+                                delta_outgoing = target_outgoing - current_outgoing
+                                impulse_mag = float(puck_body.mass) * delta_outgoing
+                                impulse_vec = normal_unit * impulse_mag
+                                puck_body.ApplyLinearImpulse(
+                                    b2Vec2(float(impulse_vec[0]), float(impulse_vec[1])),
+                                    puck_body.worldCenter,
+                                    True,
+                                )
 
 class AirHockeyBox2D:
     def __init__(self, **kwargs):
@@ -173,8 +247,8 @@ class AirHockeyBox2D:
             # Real-equivalent workspace and edge shaping limits (base frame).
             'x_min_lim': -0.8,
             'x_max_lim': -0.37,
-            'y_min': -0.34,
-            'y_max': 0.34,
+            'y_min': -0.33,
+            'y_max': 0.33,
             'top_abs': 0.8,
             'bot_abs': 0.1,
             'max_bias_p': -0.15,
@@ -193,6 +267,14 @@ class AirHockeyBox2D:
             'paddle_edge_bounds': [],
             'center_offset_constant': 1.2,
             'puck_restitution': 1.0,
+            # Wall restitution defaults: side rails (x-min/x-max) are livelier
+            # than top/bottom rails (y-min/y-max).
+            'side_wall_restitution': 0.99,
+            'end_wall_restitution': 0.7,
+            # Deterministic puck-wall restitution gate based on relative normal speed.
+            'puck_wall_restitution_threshold_speed': 0.25,
+            # For impacts below threshold, optionally enforce a fixed outward normal impulse.
+            'puck_wall_fixed_impulse_below_threshold': 0.0,
             'action_lag': 0.0,
             'puck_noise': False,
             'puck_noise_std': 0.005,
@@ -237,6 +319,12 @@ class AirHockeyBox2D:
         self.puck_damping = config.puck_damping
         self.gravity = config.gravity
         self.puck_restitution = config.puck_restitution
+        self.side_wall_restitution = float(config.side_wall_restitution)
+        self.end_wall_restitution = float(config.end_wall_restitution)
+        self.puck_wall_restitution_threshold_speed = max(float(config.puck_wall_restitution_threshold_speed), 0.0)
+        self.puck_wall_fixed_impulse_below_threshold = max(
+            float(config.puck_wall_fixed_impulse_below_threshold), 0.0
+        )
         self.puck_min_height = (-config.length / 2) + (config.length / 3)
         self.paddle_max_height = 0
         self.block_min_height = 0
@@ -263,7 +351,6 @@ class AirHockeyBox2D:
         self.edge_lims = (self.top_abs, self.bot_abs, self.max_bias_p, self.max_bias_m)
         self.hist_len = config.hist_len
         self.center_offset_constant = config.center_offset_constant
-        self.wall_bounce_scale = config.wall_bounce_scale
         self.action_lag = config.action_lag 
         assert self.action_lag >= 0 and self.action_lag <= 1, "Action lag must be between 0 and 1"
         self.derivative_min_dt = max(float(config.derivative_min_dt), 1e-8)
@@ -347,21 +434,34 @@ class AirHockeyBox2D:
 
         self.metadata = {}
 
-        # creating the ground -- need to only call once! otherwise it can be laggy
+        # Create walls as four fixtures so side vs end restitution can differ.
         self.ground_body = self.world.CreateBody(
-            shapes=b2LoopShape(vertices=[(self.table_x_min, self.table_y_min),
-                                         (self.table_x_min, self.table_y_max),
-                                         (self.table_x_max, self.table_y_max),
-                                         (self.table_x_max, self.table_y_min)]),
+            type=b2_staticBody,
             userData="table_wall",
         )
-        # self.ground_body.fixtures[0].friction = 0.0
+        wall_segments = [
+            # Left / right side walls.
+            ((self.table_x_min, self.table_y_min), (self.table_x_min, self.table_y_max), self.side_wall_restitution),
+            ((self.table_x_max, self.table_y_min), (self.table_x_max, self.table_y_max), self.side_wall_restitution),
+            # Bottom / top end walls.
+            ((self.table_x_min, self.table_y_min), (self.table_x_max, self.table_y_min), self.end_wall_restitution),
+            ((self.table_x_min, self.table_y_max), (self.table_x_max, self.table_y_max), self.end_wall_restitution),
+        ]
+        for p1, p2, restitution in wall_segments:
+            self.ground_body.CreateFixture(
+                b2FixtureDef(
+                    shape=b2EdgeShape(vertices=[p1, p2]),
+                    restitution=float(restitution),
+                    friction=0.0,
+                )
+            )
         self.reset(config.seed)
 
         # Initialize the contact listener
         self.collision_listener = CollisionForceListener(
-            wall_bounce_scale=self.wall_bounce_scale,
             wall_tag="table_wall",
+            puck_wall_restitution_threshold_speed=self.puck_wall_restitution_threshold_speed,
+            puck_wall_fixed_impulse_below_threshold=self.puck_wall_fixed_impulse_below_threshold,
         )
         self.world.contactListener = self.collision_listener
         self.total_timesteps = 0
@@ -808,7 +908,7 @@ class AirHockeyBox2D:
         self.previous_acceleration = filtered_acceleration.copy()
         self.jerk = filtered_jerk.copy()
         return filtered_acceleration, filtered_jerk
-    
+
     def get_singleagent_transition(self, action):
         collision_start_idx = len(self.collision_listener.collision_forces)
 
@@ -956,17 +1056,18 @@ class AirHockeyBox2D:
 
         # Refresh state so acceleration/jerk in returned transition are current-step values.
         state_info = self.get_current_state()
-        step_collision_count = 0
+        # Count unique paddle<->puck contacts per env step.
+        # PostSolve can emit multiple entries for the same physical collision
+        # (multiple manifold points / sub-steps), which overestimates counts.
+        step_contacted_pucks = set()
         for collision in self.collision_listener.collision_forces[collision_start_idx:]:
             body_a = str(collision.get("bodyA", ""))
             body_b = str(collision.get("bodyB", ""))
-            paddle_puck_contact = (
-                (body_a == "paddle_ego" and body_b.startswith("puck"))
-                or (body_b == "paddle_ego" and body_a.startswith("puck"))
-            )
-            if paddle_puck_contact:
-                step_collision_count += 1
-        state_info["paddle_puck_collision_count"] = int(step_collision_count)
+            if body_a == "paddle_ego" and body_b.startswith("puck"):
+                step_contacted_pucks.add(body_b)
+            elif body_b == "paddle_ego" and body_a.startswith("puck"):
+                step_contacted_pucks.add(body_a)
+        state_info["paddle_puck_collision_count"] = int(len(step_contacted_pucks))
         
         # Debug: Print acceleration values occasionally (remove this after testing)
         # if self.timestep % 100 == 0 and np.linalg.norm(current_acceleration) > 0:

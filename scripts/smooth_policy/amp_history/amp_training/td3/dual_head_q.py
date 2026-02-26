@@ -45,9 +45,9 @@ class TD3DualHeadQNetwork(nn.Module):
             units_per_block=units_per_residual_block,
         )
 
-        # Heads output Q values in transformed (h) space.
-        self.task_head = layer_init(nn.Linear(hidden_layer_size, 1), std=1.0)
-        self.motion_head = layer_init(nn.Linear(hidden_layer_size, 1), std=1.0)
+        # Small output-head init keeps initial Q estimates close to zero.
+        self.task_head = layer_init(nn.Linear(hidden_layer_size, 1), std=0.01)
+        self.motion_head = layer_init(nn.Linear(hidden_layer_size, 1), std=0.01)
 
     def forward(
         self,

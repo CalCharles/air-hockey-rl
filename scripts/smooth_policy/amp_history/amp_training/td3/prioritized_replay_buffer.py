@@ -107,6 +107,23 @@ class TD3PrioritizedReplayBuffer:
             "sampled_priorities": valid_priorities[indices],
         }
 
+    def sample_uniform(self, batch_size):
+        if self.size == 0:
+            raise ValueError("Cannot sample from empty buffer")
+        indices = torch.randint(0, self.size, (batch_size,), device=self.device)
+        return {
+            "observations": self.observations[indices],
+            "next_observations": self.next_observations[indices],
+            "actions": self.actions[indices],
+            "prev_actions": self.prev_actions[indices],
+            "task_rewards": self.task_rewards[indices],
+            "motion_rewards": self.motion_rewards[indices],
+            "dones": self.dones[indices],
+            "indices": indices,
+            "weights": torch.ones((batch_size,), dtype=torch.float32, device=self.device),
+            "sampled_priorities": self.priorities[: self.size].clamp_min(self.priority_eps)[indices],
+        }
+
     def update_priorities(self, indices, priorities):
         indices = torch.as_tensor(indices, dtype=torch.long, device=self.device).reshape(-1)
         priorities = torch.as_tensor(priorities, dtype=torch.float32, device=self.device).reshape(-1)
