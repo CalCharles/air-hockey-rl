@@ -13,10 +13,11 @@ class CMAPlanner:
     Supports both paddle (simple sampling) and puck (hits_array interval sampling) pipelines.
     """
 
-    def __init__(self, eval_fn, trajectories, elite_frac=0.2, n_samples=100,
+    def __init__(self, eval_fn, trajectories, object_type, elite_frac=0.2, n_samples=100,
                  n_iterations=10, variance=0.2, n_starts=20, traj_length=50,
                  lower_bounds=None, upper_bounds=None, param_names=None,
-                 wdb_logging=False, log_file=None):
+                 wdb_logging=False, log_file=None, approach_intervals=None,
+                 peak_start=False):
         self.eval_fn = eval_fn
         # Normalize to list-of-episodes format.
         # Accepts: list of dicts, or a single dict (legacy single-trajectory).
@@ -45,13 +46,22 @@ class CMAPlanner:
         self.es = None
         self.mean = None
         self.best_values_history = []
+        self.object_type = object_type
 
-        # Use hits_array-based interval sampling if available, otherwise simple sampling
-        has_hits = any('hits_array' in ep for ep in self.episodes)
-        if has_hits:
-            self.tuple_non_hit_array_start_end = self._divide_into_non_hit_intervals()
+        self.peak_start = peak_start
+
+        # Interval sampling: prefer approach_intervals (from inflection analysis),
+        # fall back to hits_array-based intervals, then simple sampling.
+        if approach_intervals is not None:
+            self.tuple_non_hit_array_start_end = approach_intervals
+            mode = "peak-start" if peak_start else "random-start"
+            print(f"  Using {len(approach_intervals)} pre-computed approach intervals ({mode})")
         else:
-            self.tuple_non_hit_array_start_end = None
+            has_hits = any('hits_array' in ep for ep in self.episodes)
+            if has_hits and self.object_type == 'puck':
+                self.tuple_non_hit_array_start_end = self._divide_into_non_hit_intervals()
+            else:
+                self.tuple_non_hit_array_start_end = None
 
     def initialize(self, initial_guess):
         """Initialize CMA-ES with initial guess."""
@@ -123,7 +133,7 @@ class CMAPlanner:
         if self.tuple_non_hit_array_start_end is not None:
             # Puck-style: sample from non-hit intervals
             valid_intervals = [(ep_idx, s, e) for ep_idx, s, e in self.tuple_non_hit_array_start_end
-                               if e - s > traj_length]
+                               if e - s >= traj_length]
             if len(valid_intervals) == 0:
                 raise ValueError(f"No non-hit intervals are long enough for traj_length={traj_length}")
 
@@ -135,7 +145,12 @@ class CMAPlanner:
                 ep_idx, start_episode, end_episode = valid_intervals[range_index]
                 ep = self.episodes[ep_idx]
 
-                start = np.random.randint(start_episode, end_episode - traj_length)
+                if self.peak_start:
+                    # Always start at the peak (beginning of interval) where velocity ≈ 0
+                    # print('getting to peak-start beginning')
+                    start = start_episode
+                else:
+                    start = rng.randint(start_episode, end_episode - traj_length)
                 start_points.append((ep_idx, start))
                 sampled_obs_segments.append(ep['observations'][start: start + traj_length])
                 sampled_act_segments.append(ep['actions'][start: start + traj_length])
@@ -196,7 +211,7 @@ class CMAPlanner:
             rewards = np.array([self.eval_fn(sample, trajs)[0] for sample in samples])
 
             #evaluating the sample parameters on holdout trajectories
-            holdout_reward = np.array([self.eval_fn(holdout_sample, trajs)[0] for holdout_sample in holdout])
+            holdout_reward = np.array([self.eval_fn(sample, holdout)[0] for sample in samples])
             print(f"Reward spread: min={min(rewards):.4f}, max={max(rewards):.4f}, std={np.std(rewards):.4f}")
             if self.log_file is not None:
                 with open(self.log_file, "a") as lf:

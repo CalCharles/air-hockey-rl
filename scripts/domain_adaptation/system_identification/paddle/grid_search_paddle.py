@@ -1,9 +1,7 @@
 """Grid search over paddle system identification parameters.
 
 Evaluates all combinations of parameters from the sys-id YAML config on
-trajectory segments sampled from multiple real-world episodes. Unlike the
-CMA-ES pipeline which optimizes on a single trajectory, this script loads
-many trajectories from the data directory and samples segments across them.
+trajectory segments sampled from multiple real-world episodes. 
 
 Usage:
     python scripts/domain_adaptation/system_identification/paddle/grid_search_paddle.py \
@@ -42,27 +40,26 @@ from data_loading import (
 
 
 def compare_trajectories(a_traj, b_traj, comp_type="posl1"):
-    """Compare two trajectory arrays. Returns negative loss (higher = better)."""
     if comp_type == "l2":
         diffs = a_traj - b_traj
         step_rmse = np.sqrt(np.mean(diffs**2, axis=2))
         traj_loss = np.mean(step_rmse, axis=1)
-        return -np.mean(traj_loss)
+        return np.mean(traj_loss)
     if comp_type == "posl2":
         diffs = a_traj[..., :2] - b_traj[..., :2]
         step_rmse = np.sqrt(np.mean(diffs**2, axis=2))
         traj_loss = np.mean(step_rmse, axis=1)
-        return -np.mean(traj_loss)
+        return np.mean(traj_loss)
     if comp_type == "l1":
         diffs = a_traj - b_traj
         step_l1 = np.sum(np.abs(diffs), axis=2)
         traj_loss = np.mean(step_l1, axis=1)
-        return -np.mean(traj_loss)
+        return np.mean(traj_loss)
     if comp_type == "posl1":
         pos_diffs = a_traj[..., :2] - b_traj[..., :2]
         step_l1 = np.sum(np.abs(pos_diffs), axis=2)
         traj_loss = np.mean(step_l1, axis=1)
-        return -np.mean(traj_loss)
+        return np.mean(traj_loss)
     raise ValueError(f"Unknown comp_type: {comp_type}")
 
 
@@ -103,15 +100,15 @@ def build_sim_config():
             "block_width": 0.0254,
             "render_size": 360,
             "absorb_target": False,
-            "max_force_timestep": 100,
+            "max_force_timestep": 10000,
             "wall_bounce_scale": 0.02,
             # Placeholders -- grid search will overwrite these
             "force_scaling": 1000,
             "paddle_damping": 3,
-            "paddle_density": 2500,
+            "paddle_density": 1000,
             "puck_damping": 0.5,
             "puck_density": 250,
-            "gravity": -0.5,
+            "gravity": -0.67,
         },
     }
 
@@ -182,7 +179,7 @@ def evaluate_params(param_vector, param_names, sim_config, trajectories,
         all_eval_segments.append(np.array(segment_obs))
 
     if len(all_eval_segments) == 0:
-        return -1e6
+        return 1e6
 
     evaluated_states = np.stack(all_eval_segments, axis=0)
 
@@ -199,6 +196,7 @@ def evaluate_params(param_vector, param_names, sim_config, trajectories,
 
     if failures > 0:
         # Rebuild target to match only successful segments
+        print("getting to failures")
         success_indices = []
         idx = 0
         for i in range(num_segments):
@@ -247,43 +245,27 @@ def main():
     parser = argparse.ArgumentParser(description="Grid search paddle system identification")
 
     # Data
-    parser.add_argument("--cfg", type=str, default=None,
-                        help="Optional YAML config (air_hockey key expected)")
-    parser.add_argument("--data-dir", type=str,
-                        default="/data2/air_hockey/air_hockey_state_data/datastor1/calebc/public/data/mouse/state_data_all_new/",
-                        help="Directory containing trajectory HDF5 files")
-    parser.add_argument("--num-trajectories", type=int, default=50,
-                        help="Number of trajectory files to load (-1 for all)")
-    parser.add_argument("--sys-id-path-paddle", type=str,
-                        default="scripts/domain_adaptation/sys_id_configs/real2sim/paddle_id_params.yaml",
-                        help="System ID parameter bounds YAML")
+    parser.add_argument("--cfg", type=str, default=None,help="Optional YAML config (air_hockey key expected)")
+    parser.add_argument("--data-dir", type=str,default="/data2/air_hockey/air_hockey_state_data/datastor1/calebc/public/data/mouse/state_data_all_new/",help="Directory containing trajectory HDF5 files")
+    parser.add_argument("--num-trajectories", type=int, default=50,help="Number of trajectory files to load (-1 for all)")
+    parser.add_argument("--sys-id-path-paddle", type=str,default="scripts/domain_adaptation/sys_id_configs/real2sim/paddle_id_params.yaml",help="System ID parameter bounds YAML")
 
     # Comparison
-    parser.add_argument("--object-name", type=str, default="paddle",
-                        help="Object to compare: paddle, puck, or all")
-    parser.add_argument("--comp-type", type=str, default="posl1",
-                        help="Comparison metric: l2, posl2, l1, posl1")
-    parser.add_argument("--dt", type=float, default=0.05,
-                        help="Timestep for velocity finite differences")
+    parser.add_argument("--object-name", type=str, default="paddle",help="Object to compare: paddle, puck, or all")
+    parser.add_argument("--comp-type", type=str, default="posl2",help="Comparison metric: l2, posl2, l1, posl1")
+    parser.add_argument("--dt", type=float, default=0.05,help="Timestep for velocity finite differences")
 
     # Sampling
-    parser.add_argument("--num-resamples", type=int, default=200,
-                        help="Number of trajectory segments per evaluation")
-    parser.add_argument("--traj-length", type=int, default=10,
-                        help="Length of each trajectory segment")
-    parser.add_argument("--num-eval-seeds", type=int, default=3,
-                        help="Number of random seeds to average over per grid point")
+    parser.add_argument("--num-resamples", type=int, default=500,help="Number of trajectory segments per evaluation")
+    parser.add_argument("--traj-length", type=int, default=10,help="Length of each trajectory segment")
+    parser.add_argument("--num-eval-seeds", type=int, default=3,help="Number of random seeds to average over per grid point")
 
     # Grid
-    parser.add_argument("--grid-points", type=int, default=7,
-                        help="Number of grid points per parameter")
+    parser.add_argument("--grid-points", type=int, default=20,help="Number of grid points per parameter")
 
     # Output
-    parser.add_argument("--run-dir", type=str,
-                        default="scripts/domain_adaptation/system_identification/paddle/grid_search_runs",
-                        help="Directory for results")
-    parser.add_argument("--run-id", type=str, default="1",
-                        help="Run identifier")
+    parser.add_argument("--run-dir", type=str,default="scripts/domain_adaptation/system_identification/paddle/grid_search_runs",help="Directory for results")
+    parser.add_argument("--run-id", type=str, default="6",help="Run identifier")
 
     args = parser.parse_args()
 
@@ -310,7 +292,7 @@ def main():
 
     # ── Load trajectories ────────────────────────────────────────
     print(f"\nLoading trajectories from {args.data_dir} (num={args.num_trajectories})...")
-    episodes = load_multiple_real_trajectories_for_sysid(
+    episodes, _ = load_multiple_real_trajectories_for_sysid(
         args.data_dir, num_load=args.num_trajectories, dt=args.dt,
     )
     total_obs = sum(len(ep["observations"]) for ep in episodes)
@@ -397,7 +379,7 @@ def main():
     df.to_csv(os.path.join(run_dir, "grid_results.csv"), index=False)
 
     # Find best
-    best_idx = df["mean_loss"].idxmax()  # highest = least negative = best
+    best_idx = df["mean_loss"].idxmin()  # lowest = best
     best_row = df.iloc[best_idx]
     print(f"\n{'='*60}")
     print("GRID SEARCH COMPLETE")
@@ -414,6 +396,25 @@ def main():
     with open(os.path.join(run_dir, "best_params.yaml"), "w") as f:
         yaml.dump(best_params, f, default_flow_style=False)
 
+    # Save full config with best parameters applied
+    best_vector = [float(best_row[name]) for name in param_names]
+    best_config = assign_values(best_vector, param_names, sim_config)
+    # Convert any numpy types for clean YAML serialization
+    def _to_native(obj):
+        if isinstance(obj, dict):
+            return {k: _to_native(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [_to_native(v) for v in obj]
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return obj
+    with open(os.path.join(run_dir, "best_config.yaml"), "w") as f:
+        yaml.dump({"air_hockey": _to_native(best_config)}, f, default_flow_style=False)
+
     # ── Plots ────────────────────────────────────────────────────
     # 2D heatmaps for each pair of parameters (marginalizing over the third)
     if len(param_names) >= 2:
@@ -425,7 +426,7 @@ def main():
                 other_params = [p for p in param_names if p not in (pi, pj)]
 
                 fig, ax = plt.subplots(figsize=(8, 6))
-                pivot = df.groupby([pi, pj])["mean_loss"].max().reset_index()
+                pivot = df.groupby([pi, pj])["mean_loss"].min().reset_index()
                 pivot_table = pivot.pivot(index=pi, columns=pj, values="mean_loss")
 
                 im = ax.imshow(
@@ -438,7 +439,7 @@ def main():
                     ],
                     cmap="viridis",
                 )
-                plt.colorbar(im, ax=ax, label=f"Best loss (over {', '.join(other_params)})")
+                plt.colorbar(im, ax=ax, label=f"Min loss (over {', '.join(other_params)})")
                 ax.set_xlabel(pj)
                 ax.set_ylabel(pi)
                 ax.set_title(f"Grid Search: {pi} vs {pj}")
@@ -458,9 +459,9 @@ def main():
     if len(param_names) == 1:
         axes = [axes]
     for ax, name in zip(axes, param_names):
-        marginal = df.groupby(name)["mean_loss"].agg(["max", "mean", "std"]).reset_index()
-        ax.plot(marginal[name], -marginal["max"], "o-", label="best (min error)")
-        ax.plot(marginal[name], -marginal["mean"], "s--", alpha=0.5, label="avg error")
+        marginal = df.groupby(name)["mean_loss"].agg(["min", "mean", "std"]).reset_index()
+        ax.plot(marginal[name], marginal["min"], "o-", label="best (min error)")
+        ax.plot(marginal[name], marginal["mean"], "s--", alpha=0.5, label="avg error")
         ax.set_xlabel(name)
         ax.set_ylabel("Error (lower = better)")
         ax.set_title(f"Marginal: {name}")

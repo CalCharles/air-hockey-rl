@@ -1,3 +1,18 @@
+"""Load real robot trajectory data from HDF5 files.
+
+Pipeline call stack (puck system identification):
+  real_data_puck_pipeline.py  RealDataPuckPipeline.load_real_data()
+    └─ real_to_sim_observations.py  load_multiple_real_trajectories_for_sysid()
+        └─ data_loading.py  load_all_trajectories() / load_trajectory()  ◄── YOU ARE HERE
+            └─ reads trajectory_data<idx>.hdf5 → dict with paddle, puck, speed, action, ...
+
+  - traj["pose"]   : raw end-effector pose (NOT base coords, needs +1.2 x offset)
+  - traj["paddle"] : pose with offset applied = base coordinates
+  - traj["puck"]   : (x, y, occluded) already in base coordinates
+  - traj["speed"]  : velocity (same in both frames, offset is constant)
+  - traj["action"] : relative deltas (desired_pose - pose), no offset needed
+"""
+
 import os
 import glob
 import h5py
@@ -31,6 +46,10 @@ STATE_KEYS = [
 def load_trajectory(data_dir, filename, load_images=False):
     """Load a single trajectory from an HDF5 file.
 
+    Supports both per-key format (pose, puck, paddle, ...) and legacy
+    train_vals 35-column format. Legacy files are auto-detected and
+    converted to per-key format via load_legacy_train_vals_trajectory().
+
     Args:
         data_dir: Directory containing the HDF5 files.
         filename: Name of the HDF5 file (e.g. 'trajectory_data100.hdf5').
@@ -46,6 +65,11 @@ def load_trajectory(data_dir, filename, load_images=False):
             if key == "image" and not load_images:
                 continue
             traj[key] = np.array(f[key])
+
+    if "puck" not in traj and "train_vals" in traj:
+        trajs = load_legacy_train_vals_trajectory(filepath)
+        traj = next(iter(trajs.values()))
+
     return traj
 
 
@@ -94,6 +118,65 @@ BOX2D_PADDLE_RADIUS = 0.0508
 BOX2D_PUCK_RADIUS = 0.03175
 
 
+def load_legacy_train_vals_trajectory(filepath):
+    """Load a legacy train_vals HDF5 file and convert to standard per-key format.
+
+    Handles the 35-column format where:
+        col 0: cur_time, col 1: tidx, col 2: i, col 3: estop, col 4: safety
+        cols 5-10: pose (xyz rxryrz), cols 11-16: speed, cols 17-22: force
+        cols 23-25: acc, cols 26-31: desired_pose, cols 32-34: puck (x, y, occluded)
+
+    Splits by tidx into separate trajectories and adds derived fields
+    (paddle, action) to match the output of load_trajectory().
+
+    Args:
+        filepath: Path to the legacy HDF5 file.
+
+    Returns:
+        dict mapping trajectory index (int) to trajectory dict with keys:
+            cur_time, tidx, i, estop, safety, pose, speed, force, acc,
+            desired_pose, puck, paddle, action
+    """
+    with h5py.File(filepath, "r") as f:
+        train_vals = np.array(f["train_vals"])
+
+    n_cols = train_vals.shape[1]
+    if n_cols < 35:
+        raise ValueError(f"Expected at least 35 columns, got {n_cols}")
+
+    # Split by trajectory index
+    tidx_col = train_vals[:, 1]
+    unique_tidx = np.unique(tidx_col).astype(int)
+
+    trajectories = {}
+    for tidx in unique_tidx:
+        mask = tidx_col == tidx
+        rows = train_vals[mask]
+
+        traj = {
+            "cur_time": rows[:, 0:1],
+            "tidx": rows[:, 1:2],
+            "i": rows[:, 2:3],
+            "estop": rows[:, 3:4],
+            "safety": rows[:, 4:5],
+            "pose": rows[:, 5:11],
+            "speed": rows[:, 11:17],
+            "force": rows[:, 17:23],
+            "acc": rows[:, 23:26],
+            "desired_pose": rows[:, 26:32],
+            "puck": rows[:, 32:35],
+        }
+
+        # Derived fields
+        traj["paddle"] = traj["pose"].copy()
+        traj["paddle"][:, 0] += OFFSET_CONSTANT
+        traj["action"] = traj["desired_pose"][:, :2] - traj["pose"][:, :2]
+
+        trajectories[int(tidx)] = traj
+
+    return trajectories
+
+
 def load_raw_train_vals(data_dir, num_load=-1):
     """Load raw train_vals arrays from all trajectory HDF5 files.
 
@@ -110,7 +193,6 @@ def load_raw_train_vals(data_dir, num_load=-1):
 
     all_vals = []
     for fpath in files:
-        print('here')
         with h5py.File(fpath, "r") as f:
             if "train_vals" in f:
                 all_vals.append(np.array(f["train_vals"]))

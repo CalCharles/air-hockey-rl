@@ -433,14 +433,14 @@ class AirHockeyBox2D:
         paddle = self.world.CreateDynamicBody(
             fixtures=b2FixtureDef(
                 shape=b2CircleShape(radius=radius),
-                density=self.paddle_density,
+                density=float(self.paddle_density),
                 restitution = 1.0,
                 filter=b2Filter (maskBits=1,
                                  categoryBits=1)),
             bullet=True,
             position=pos,
             linearVelocity=vel,
-            linearDamping=self.paddle_damping
+            linearDamping=float(self.paddle_damping)
         )
         if not affected_by_gravity:
             paddle.gravityScale = 0
@@ -466,15 +466,15 @@ class AirHockeyBox2D:
         puck = self.world.CreateDynamicBody(
             fixtures=b2FixtureDef(
                 shape=b2CircleShape(radius=radius),
-                density=self.puck_density,
-                restitution = self.puck_restitution,
+                density=float(self.puck_density),
+                restitution=float(self.puck_restitution),
                 filter=b2Filter (maskBits=1,
                                  categoryBits=1),
                 friction=0.0),
             bullet=True,
             position=pos,
             linearVelocity=vel,
-            linearDamping=self.puck_damping,
+            linearDamping=float(self.puck_damping),
             angularDamping=100000,
             userData=name
         )
@@ -497,7 +497,7 @@ class AirHockeyBox2D:
             bullet=True,
             position=pos,
             linearVelocity=vel,
-            linearDamping=self.puck_damping
+            linearDamping=float(self.puck_damping)
         )
         if not affected_by_gravity:
             block.gravityScale = 0
@@ -615,7 +615,9 @@ class AirHockeyBox2D:
             # Compute force using either PID controller or legacy controller
             if self.use_pid:
                 # PID controller target uses real-like scaled delta + rect projection + clipping.
-                target_pos = self._compute_pid_target_pos(pos, act)
+                # Comment out the line of code here for sys id
+                # target_pos = self._compute_pid_target_pos(pos, act)
+                target_pos = act + pos
                 self.pose_hist.append(np.array(pos, dtype=float))
                 self.dpose_hist.append(np.array(target_pos, dtype=float))
                 target_pos = self._filter_update()

@@ -1,12 +1,22 @@
-"""Convert real trajectory HDF5 data into the observation format
-used by the system identification pipeline.
+"""Convert real trajectory HDF5 data into the 8D observation format used by
+the system identification pipeline (CMA-ES optimization in Box2D).
 
-The sim observation vector is:
+Observation vector layout:
     [paddle_x, paddle_y, paddle_vx, paddle_vy, puck_x, puck_y, puck_vx, puck_vy]
+     ├── cols 0-3: paddle state ──┘              ├── cols 4-7: puck state ──┘
 
-Coordinate note: paddle positions use the 'paddle' key (pose + offset 1.2)
-which is in base coordinates compatible with base_coord_to_box2d.
-Puck positions from the 'puck' key are already in the same base frame.
+Pipeline call stack (puck system identification):
+  real_data_puck_pipeline.py  RealDataPuckPipeline.load_real_data()
+    └─ real_to_sim_observations.py  load_multiple_real_trajectories_for_sysid()  ◄── YOU ARE HERE
+        ├─ data_loading.py  load_all_trajectories()
+        │   └─ load_trajectory()  N  →  raw traj dicts from HDF5
+        └─ real_trajectory_to_sim_format()  N
+            ├─ paddle: traj["paddle"][:,:2] (base coords), traj["speed"][:,:2]
+            ├─ puck position: traj["puck"][:,:2] (base coords)
+            ├─ puck velocity:
+            │   ├─ "parabolic" → puck_velocity_fit.fit_trajectory_velocities()
+            │   └─ "finite_diff" → (pos[t+1] - pos[t]) / dt
+            └─ hit detection → hits_array (paddle proximity + wall boundary)
 """
 
 import os
@@ -23,12 +33,13 @@ from data_loading import (
 )
 
 
-def real_trajectory_to_sim_format(traj, dt=0.05):
+def real_trajectory_to_sim_format(traj, dt=0.05, velocity_mode="finite_diff"):
     """Convert a loaded real trajectory dict into sim-compatible format.
 
     Args:
         traj: dict from load_trajectory() with keys 'paddle', 'speed', 'puck', 'action'.
         dt: timestep duration (seconds) for finite difference velocity.
+        velocity_mode: "finite_diff" (legacy) or "parabolic" (polynomial fit).
 
     Returns:
         dict with keys:
@@ -44,14 +55,19 @@ def real_trajectory_to_sim_format(traj, dt=0.05):
     puck_pos = traj["puck"][:, :2]            # (N, 2)
     puck_occluded = traj["puck"][:, 2] > 0.5  # (N,)
 
-    # Puck velocity via finite differences
+    # Puck velocity estimation
     N = len(puck_pos)
-    puck_vel = np.zeros((N, 2))
-    if N > 1:
-        puck_vel[1:] = (puck_pos[1:] - puck_pos[:-1]) / dt
-        puck_vel[0] = puck_vel[1]
-    # Zero out velocity when puck is occluded
-    puck_vel[puck_occluded] = 0.0
+    if velocity_mode == "parabolic":
+        from puck_velocity_fit import fit_trajectory_velocities
+        puck_vel = fit_trajectory_velocities(traj, dt=dt)
+    else:
+        # Legacy finite differences
+        puck_vel = np.zeros((N, 2))
+        if N > 1:
+            puck_vel[1:] = (puck_pos[1:] - puck_pos[:-1]) / dt
+            puck_vel[0] = puck_vel[1]
+        # Zero out velocity when puck is occluded
+        puck_vel[puck_occluded] = 0.0
 
     # 8D observation: [paddle_x, paddle_y, paddle_vx, paddle_vy,
     #                  puck_x, puck_y, puck_vx, puck_vy]
@@ -86,24 +102,28 @@ def real_trajectory_to_sim_format(traj, dt=0.05):
     }
 
 
-def load_real_trajectory_for_sysid(data_dir, filename, dt=0.05):
+def load_real_trajectory_for_sysid(data_dir, filename, dt=0.05,
+                                   velocity_mode="finite_diff"):
     """Load and convert a real trajectory file for system identification.
 
     Args:
         data_dir: Directory containing trajectory HDF5 files.
         filename: HDF5 filename (e.g. 'trajectory_data100.hdf5').
         dt: Timestep duration for puck velocity computation.
+        velocity_mode: "finite_diff" or "parabolic".
 
     Returns:
         dict formatted for CMAPlanner: {0: {observations, actions, hits_array}}
     """
     traj = load_trajectory(data_dir, filename, load_images=False)
-    converted = real_trajectory_to_sim_format(traj, dt=dt)
+    converted = real_trajectory_to_sim_format(traj, dt=dt,
+                                              velocity_mode=velocity_mode)
     # Wrap in episode-keyed dict expected by CMAPlanner
     return {0: converted}
 
 
-def load_multiple_real_trajectories_for_sysid(data_dir, num_load=-1, dt=0.05):
+def load_multiple_real_trajectories_for_sysid(data_dir, num_load=-1, dt=0.05,
+                                               velocity_mode="finite_diff"):
     """Load and convert multiple real trajectory files for system identification.
 
     Loads all trajectory HDF5 files from the directory, converts each to
@@ -115,9 +135,12 @@ def load_multiple_real_trajectories_for_sysid(data_dir, num_load=-1, dt=0.05):
         data_dir: Directory containing trajectory_data*.hdf5 files.
         num_load: Max number of trajectories to load. -1 for all.
         dt: Timestep duration for puck velocity computation.
+        velocity_mode: "finite_diff" or "parabolic".
 
     Returns:
-        list of dicts, each with keys {observations, actions, hits_array}.
+        tuple of (episodes, traj_indices) where:
+            episodes: list of dicts, each with keys {observations, actions, hits_array}
+            traj_indices: list of int trajectory indices corresponding to each episode
     """
     from data_loading import load_all_trajectories
 
@@ -125,17 +148,20 @@ def load_multiple_real_trajectories_for_sysid(data_dir, num_load=-1, dt=0.05):
     print(f"Loaded {len(raw_trajectories)} raw trajectory files from {data_dir}")
 
     episodes = []
+    traj_indices = []
     skipped = 0
     for tidx in sorted(raw_trajectories.keys()):
         try:
-            converted = real_trajectory_to_sim_format(raw_trajectories[tidx], dt=dt)
+            converted = real_trajectory_to_sim_format(raw_trajectories[tidx], dt=dt,
+                                                      velocity_mode=velocity_mode)
             if len(converted["observations"]) < 10:
                 skipped += 1
                 continue
             episodes.append(converted)
+            traj_indices.append(tidx)
         except Exception as e:
             print(f"  Skipping trajectory {tidx}: {e}")
             skipped += 1
 
     print(f"Converted {len(episodes)} trajectories ({skipped} skipped)")
-    return episodes
+    return episodes, traj_indices

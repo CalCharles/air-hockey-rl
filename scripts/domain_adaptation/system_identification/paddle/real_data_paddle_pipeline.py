@@ -4,17 +4,14 @@ Finds Box2D physics parameters that best reproduce a real robot trajectory
 when the recorded actions are replayed in simulation. Uses CMA-ES optimization
 with per-segment rollouts (reset env to each segment's initial state).
 
-Unlike the sim2sim PaddlePipeline, there is NO source/base environment here.
-We only have the real trajectory data (observations, actions). The Box2D
-environment is constructed from known table constants and CMA-ES candidate
-parameters -- the entire point is to discover the unknown physics parameters.
-
 Usage:
     python scripts/domain_adaptation/system_identification/paddle/real_data_paddle_pipeline.py \
         --data-dir /data2/air_hockey/air_hockey_state_data/datastor1/calebc/public/data/mouse/state_data_all_new/ \
         --trajectory-file trajectory_data100.hdf5 \
         --sys-id-path-paddle scripts/domain_adaptation/sys_id_configs/real2sim/paddle_id_params.yaml \
         --num-population 20 --num-iterations 100 --traj-length 50 --num-resamples 20
+    
+    trajectory_data100.hdf5 is an example trajectory file from the data directory provided
 """
 
 import argparse
@@ -35,7 +32,10 @@ from scripts.domain_adaptation.encode_env_params import assign_values
 sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), "../../../real_data_transforms")
 )
-from scripts.real_data_transforms.real_to_sim_observations import load_real_trajectory_for_sysid
+from scripts.real_data_transforms.real_to_sim_observations import (
+    load_real_trajectory_for_sysid,
+    load_multiple_real_trajectories_for_sysid,
+)
 from data_loading import (
     BOX2D_TABLE_LENGTH,
     BOX2D_TABLE_WIDTH,
@@ -48,13 +48,13 @@ def compare_trajectories(a_traj, b_traj, comp_type="l2"):
     """Compare two trajectory arrays. Returns negative loss (higher = better)."""
     diffs = a_traj - b_traj
     if comp_type == "l2":
-        step_rmse = np.sqrt(np.mean(diffs**2, axis=2))  # RMSE per step across features
-        traj_loss = np.mean(step_rmse, axis=1)            # average across timesteps
+        step_rmse = np.sqrt(np.mean(diffs**2, axis=2))  
+        traj_loss = np.mean(step_rmse, axis=1)          
         return -np.mean(traj_loss)    
     if comp_type == "posl2":
         diffs = a_traj[..., :2] - b_traj[..., :2]
-        step_rmse = np.sqrt(np.mean(diffs**2, axis=2))  # RMSE per step across features
-        traj_loss = np.mean(step_rmse, axis=1)            # average across timesteps
+        step_rmse = np.sqrt(np.mean(diffs**2, axis=2))
+        traj_loss = np.mean(step_rmse, axis=1)           
         return -np.mean(traj_loss)
     if comp_type == "l1":
         step_l1 = np.sum(np.abs(diffs), axis=2)
@@ -110,7 +110,6 @@ def build_sim_config():
         "goal_max_x_velocity": 1,
         "goal_max_y_velocity": 5,
         "goal_min_y_velocity": 1,
-        # Known structural parameters of the real table
         "simulator_params": {
             "length": BOX2D_TABLE_LENGTH,
             "width": BOX2D_TABLE_WIDTH,
@@ -121,7 +120,7 @@ def build_sim_config():
             "absorb_target": False,
             "max_force_timestep": 100,
             "wall_bounce_scale": 0.02,
-            # Physics placeholders -- CMA-ES will overwrite these
+
             "force_scaling": 1000,
             "paddle_damping": 3,
             "paddle_density": 2500,
@@ -174,32 +173,46 @@ class RealDataPaddlePipeline:
         columns.append(f"{self.object_name}_traj_loss")
         return columns
 
-    # ── Real data loading ─────────────────────────────────────────
-
     def load_real_data(self):
         """Load real trajectory data and convert to pipeline format.
 
         The real data provides observations and actions -- there is no
         source environment. CMA-ES will search for Box2D parameters that
         reproduce these observations when the actions are replayed.
+
+        When num_trajectories is set (> 0), loads multiple trajectory files
+        from data_dir so that CMA-ES samples segments across episodes
+        (same approach as grid_search_paddle.py). Otherwise falls back to
+        loading a single trajectory file.
         """
-        print(f"Loading real trajectory: {self.trajectory_file}")
-        print(f"Data directory: {self.data_dir}")
+        num_traj = getattr(self, "num_trajectories", 0)
+        dt = getattr(self, "dt", 0.05)
 
-        self.ground_truth_results = load_real_trajectory_for_sysid(
-            self.data_dir,
-            self.trajectory_file,
-            dt=getattr(self, "dt", 0.05),
-        )
+        if num_traj != 0:
+            # Multi-episode loading (like grid_search_paddle.py)
+            print(f"Loading multiple trajectories from {self.data_dir} "
+                  f"(num={num_traj})...")
+            self.ground_truth_results, _ = load_multiple_real_trajectories_for_sysid(
+                self.data_dir, num_load=num_traj, dt=dt,
+            )
+            total_obs = sum(len(ep["observations"]) for ep in self.ground_truth_results)
+            print(f"Loaded {len(self.ground_truth_results)} episodes, "
+                  f"{total_obs} total timesteps")
+        else:
+            # Single-file loading (legacy behaviour)
+            print(f"Loading real trajectory: {self.trajectory_file}")
+            print(f"Data directory: {self.data_dir}")
+            self.ground_truth_results = load_real_trajectory_for_sysid(
+                self.data_dir,
+                self.trajectory_file,
+                dt=dt,
+            )
 
-        ep_data = self.ground_truth_results[0]
-        print(f"Loaded trajectory: {len(ep_data['observations'])} timesteps")
-        print(f"  Observation shape: {ep_data['observations'].shape}")
-        print(f"  Action shape:      {ep_data['actions'].shape}")
-        n_hits = sum(ep_data["hits_array"])
-        print(f"  Hit timesteps:     {n_hits} / {len(ep_data['hits_array'])}")
+        for i, ep_data in enumerate(self.ground_truth_results):
+            print(f"  Episode {i}: {len(ep_data['observations'])} timesteps, "
+                  f"obs shape {ep_data['observations'].shape}, "
+                  f"act shape {ep_data['actions'].shape}")
 
-    # ── Per-segment evaluation ────────────────────────────────────
 
     def get_value(self, param_vector, trajectories, sample_idx=0, iteration=0):
         """Evaluate candidate parameters on sampled trajectory segments.
@@ -210,7 +223,6 @@ class RealDataPaddlePipeline:
           3. Replay segment actions
           4. Compare resulting paddle trajectory vs real
         """
-        # Overlay candidate physics params onto the sim config
         candidate_config = assign_values(
             param_vector, self.param_names, self.sim_config
         )
@@ -240,10 +252,6 @@ class RealDataPaddlePipeline:
             all_eval_segments.append(np.array(segment_obs))
 
         evaluated_states = np.stack(all_eval_segments, axis=0)
-
-        # Convert sim observations from Box2D coords back to base coords.
-        # Box2D applies (x,y) -> (y,-x) on spawn; inverse is (bx,by) -> (-by, bx).
-        # evaluated_states = self._box2d_obs_to_base(evaluated_states)
 
         value = self._compute_comparison(
             evaluated_states, trajectories, candidate_config
@@ -310,7 +318,8 @@ class RealDataPaddlePipeline:
         """Save the CMA-ES / argparse parameters used for this run."""
         config = {
             "data_dir": self.data_dir,
-            "trajectory_file": self.trajectory_file,
+            "trajectory_file": getattr(self, "trajectory_file", None),
+            "num_trajectories": getattr(self, "num_trajectories", 0),
             "sys_id_path_paddle": self.sys_id_path_paddle,
             "cfg": getattr(self, "cfg", None),
             "object_name": self.object_name,
@@ -372,6 +381,7 @@ class RealDataPaddlePipeline:
                 lower_bounds=self.lower_bounds,
                 upper_bounds=self.upper_bounds,
                 param_names=self.param_names,
+                object_type = self.object_name,
                 wdb_logging=len(getattr(self, "wdb_entity", "")) > 0,
             )
 
@@ -426,25 +436,26 @@ if __name__ == "__main__":
     # Data arguments
     parser.add_argument("--cfg",type=str,default=None,help="Path to a YAML config file (air_hockey key expected). If provided, uses this instead of build_sim_config().",)
     parser.add_argument("--data-dir",type=str,default="/data2/air_hockey/air_hockey_state_data/datastor1/calebc/public/data/mouse/state_data_all_new/",help="Directory containing trajectory HDF5 files",)
-    parser.add_argument("--trajectory-file",type=str,default="trajectory_data.hdf5",help="Trajectory HDF5 filename",)
+    parser.add_argument("--trajectory-file",type=str,default="trajectory_data.hdf5",help="Trajectory HDF5 filename (used when --num-trajectories is 0)",)
+    parser.add_argument("--num-trajectories",type=int,default=50,help="Number of trajectory files to load from data-dir (-1 for all, 0 to use --trajectory-file instead)",)
     parser.add_argument("--sys-id-path-paddle",type=str,default="scripts/domain_adaptation/sys_id_configs/real2sim/paddle_id_params.yaml",help="System ID parameter bounds YAML",)
 
     # Comparison
     parser.add_argument("--object-name",type=str,default="paddle",help="Object to compare: paddle, puck, or all",)
-    parser.add_argument("--comp-type",type=str,default="posl1",help="Comparison metric: l2, posl2, l1, posl1, last, dtw",)
+    parser.add_argument("--comp-type",type=str,default="l2",help="Comparison metric: l2, posl2, l1, posl1, last, dtw",)
     parser.add_argument("--dt",type=float,default=0.05,help="Timestep for puck velocity finite differences",)
 
     # CMA-ES parameters
-    parser.add_argument("--num-resamples",type=int,default=262,help="Number of trajectory segments to sample per evaluation",)
-    parser.add_argument("--traj-length", type=int, default=10, help="Length of each trajectory segment")
-    parser.add_argument("--num-population", type=int, default=18, help="CMA-ES population size")
+    parser.add_argument("--num-resamples",type=int,default=400,help="Number of trajectory segments to sample per evaluation",)
+    parser.add_argument("--traj-length", type=int, default=30, help="Length of each trajectory segment")
+    parser.add_argument("--num-population", type=int, default=9, help="CMA-ES population size")
     parser.add_argument("--num-iterations", type=int, default=100, help="CMA-ES iterations per trial")
-    parser.add_argument("--variance",type=float,default=0.4,help="CMA-ES initial step size (sigma)",)
+    parser.add_argument("--variance",type=float,default=0.3,help="CMA-ES initial step size (sigma)",)
     parser.add_argument("--simulation-iterations",type=int,default=1,help="Number of restarts with perturbed initial params",)
 
     # Logging
     parser.add_argument("--run-dir",type=str,default="scripts/domain_adaptation/system_identification/paddle/real2sim_runs",help="Directory for run results",)
-    parser.add_argument("--run-id", type=str, default="15", help="Run identifier")
+    parser.add_argument("--run-id", type=str, default="post_grid_search_4", help="Run identifier")
     parser.add_argument("--wdb-entity", type=str, default="", help="W&B entity for logging")
 
     args = parser.parse_args()

@@ -1,11 +1,11 @@
 gravity:
-  lower: -3.9
-  upper: -0.1
-  start: -2.0
+  lower: -0.671
+  upper: -0.669
+  start: -0.67
 puck_damping:
   lower: 0.1
-  upper: 4.0
-  start: 2.0
+  upper: 2.0
+  start: 1.0
 # puck_density:
 #   lower: 100
 #   upper: 300

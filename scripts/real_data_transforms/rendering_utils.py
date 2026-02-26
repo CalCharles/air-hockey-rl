@@ -2,6 +2,17 @@
 
 Provides sprite loading, pixel coordinate conversion, frame annotation,
 GIF saving, and side-by-side GIF synchronization.
+
+Pipeline call stack (visualization):
+  trajectory_to_gif.py  render_trajectory_gif() / render_inflection_gif() / ...
+    └─ rendering_utils.py  ◄── YOU ARE HERE
+        ├─ load_assets(ppm)       → table, paddle, puck sprite images
+        ├─ pos_to_pixel(pos, ppm) → base coords (x,y) to pixel coords
+        │   mapping: pixel_x = (y + W/2) · ppm,  pixel_y = (-x + L/2) · ppm
+        ├─ overlay_sprite()       → alpha-blend sprite onto frame
+        ├─ annotate_loss()        → per-step + cumulative loss text overlay
+        ├─ save_gif()             → write frames as animated GIF
+        └─ produce_synchronized_gifs() → side-by-side comparison GIF
 """
 
 import os

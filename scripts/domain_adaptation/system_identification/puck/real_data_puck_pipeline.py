@@ -1,17 +1,16 @@
-"""
+"""Puck system identification: optimize Box2D puck physics parameters to match real data.
+
 Usage (multi-trajectory, recommended):
-    python scripts/domain_adaptation/system_identification/puck/real_data_puck_pipeline.py \
-        --data-dir /path/to/state_data/ \
-        --num-trajectories 50 \
-        --sys-id-path-puck scripts/domain_adaptation/sys_id_configs/real2sim/puck_id_params.yaml \
-        --paddle-params-path scripts/domain_adaptation/system_identification/paddle/real2sim_runs/15/optimal_params.yaml
+    python real_data_puck_pipeline.py \\
+        --data-dir /path/to/state_data/ --num-trajectories 50 \\
+        --sys-id-path-puck .../puck_id_params.yaml \\
+        --paddle-params-path .../optimal_params.yaml
 
 Usage (single trajectory, legacy):
-    python scripts/domain_adaptation/system_identification/puck/real_data_puck_pipeline.py \
-        --data-dir /path/to/state_data/ \
-        --num-trajectories 0 --trajectory-file trajectory_data253.hdf5 \
-        --sys-id-path-puck scripts/domain_adaptation/sys_id_configs/real2sim/puck_id_params.yaml \
-        --paddle-params-path scripts/domain_adaptation/system_identification/paddle/real2sim_runs/15/optimal_params.yaml
+    python real_data_puck_pipeline.py \\
+        --data-dir /path/to/state_data/ --num-trajectories 0 \\
+        --trajectory-file trajectory_data253.hdf5 \\
+        --sys-id-path-puck .../puck_id_params.yaml
 """
 
 import argparse
@@ -34,6 +33,11 @@ from scripts.real_data_transforms.real_to_sim_observations import (
     load_real_trajectory_for_sysid,
     load_multiple_real_trajectories_for_sysid,
 )
+from scripts.real_data_transforms.puck_inflection import (
+    load_approach_intervals,
+    load_peak_start_intervals,
+    load_paddle_to_paddle_intervals,
+)
 from data_loading import (
     BOX2D_TABLE_LENGTH,
     BOX2D_TABLE_WIDTH,
@@ -46,8 +50,8 @@ def compare_trajectories(a_traj, b_traj, comp_type="l2"):
     """Compare two trajectory arrays. Returns negative loss (higher = better)."""
     diffs = a_traj - b_traj
     if comp_type == "l2":
-        step_l2 = np.linalg.norm(diffs**2, axis=2)
-        traj_loss = np.mean(step_l2, axis=1)
+        step_dist = np.sqrt(np.sum(diffs**2, axis=2))
+        traj_loss = np.mean(step_dist, axis=1) 
         return -np.mean(traj_loss)
     if comp_type == "posl2":
         pos_diffs = a_traj[..., :2] - b_traj[..., :2]
@@ -179,13 +183,19 @@ class RealDataPuckPipeline:
     def load_real_data(self):
         num_trajectories = getattr(self, "num_trajectories", None)
         dt = getattr(self, "dt", 0.05)
+        inflection_log_dir = getattr(self, "inflection_log_dir", None)
+
+        velocity_mode = getattr(self, "velocity_mode", "finite_diff")
 
         if num_trajectories is not None and num_trajectories != 0:
             # Multi-trajectory mode
             print(f"Loading multiple trajectories from {self.data_dir} "
-                  f"(num_load={num_trajectories})")
-            self.ground_truth_episodes = load_multiple_real_trajectories_for_sysid(
-                self.data_dir, num_load=num_trajectories, dt=dt,
+                  f"(num_load={num_trajectories}, velocity_mode={velocity_mode})")
+            self.ground_truth_episodes, traj_indices = (
+                load_multiple_real_trajectories_for_sysid(
+                    self.data_dir, num_load=num_trajectories, dt=dt,
+                    velocity_mode=velocity_mode,
+                )
             )
         else:
             # Legacy single-trajectory mode
@@ -193,13 +203,54 @@ class RealDataPuckPipeline:
             print(f"Loading single trajectory: {traj_file}")
             result = load_real_trajectory_for_sysid(
                 self.data_dir, traj_file, dt=dt,
+                velocity_mode=velocity_mode,
             )
             self.ground_truth_episodes = [result[0]]
+            traj_indices = None
 
         total_obs = sum(len(ep["observations"]) for ep in self.ground_truth_episodes)
         total_hits = sum(sum(ep["hits_array"]) for ep in self.ground_truth_episodes)
         print(f"Loaded {len(self.ground_truth_episodes)} episodes, "
               f"{total_obs} total timesteps, {total_hits} hit timesteps")
+
+        self.approach_intervals = None
+        interval_mode = getattr(self, "interval_mode", "paddle_to_paddle")
+        if not hasattr(self, "interval_mode"):
+            peak_start = getattr(self, "peak_start", True)
+            if peak_start:
+                interval_mode = "peak_start"
+            else:
+                interval_mode = "approach"
+
+        if inflection_log_dir and traj_indices:
+            if interval_mode == "paddle_to_paddle":
+                intervals_by_traj = load_paddle_to_paddle_intervals(
+                    inflection_log_dir, traj_indices,
+                )
+            elif interval_mode == "peak_start":
+                intervals_by_traj = load_peak_start_intervals(
+                    inflection_log_dir, traj_indices,
+                )
+            else:
+                intervals_by_traj, traj_indices_approach = load_approach_intervals(
+                    inflection_log_dir, traj_indices,
+                )
+                print(f'Printing the traj_indices: {traj_indices}')
+                print(f'Printing the approach indices: {traj_indices_approach}')
+                #making sure the approach intervals are in the proper indexes for the trajectory data
+                assert traj_indices_approach == traj_indices
+            print(f"Interval mode: {interval_mode}")
+
+            # Map traj_idx intervals to (episode_idx, start, end) tuples
+            traj_to_ep = {tidx: ep_idx for ep_idx, tidx in enumerate(traj_indices)}
+            approach_tuples = []
+            for tidx, intervals in intervals_by_traj.items():
+                ep_idx = traj_to_ep[tidx]
+                for start, end in intervals:
+                    approach_tuples.append((ep_idx, start, end))
+            self.approach_intervals = approach_tuples
+            print(f"Built {len(approach_tuples)} approach interval segments "
+                  f"from {len(intervals_by_traj)} trajectories")
 
     def get_value(self, param_vector, trajectories, sample_idx=0, iteration=0):
         candidate_config = assign_values(
@@ -214,13 +265,8 @@ class RealDataPuckPipeline:
         all_eval_segments = []
         for i in range(num_segments):
             state_vector = trajectories["observations"][i, 0].copy()
-
-            #finite-differences being used here
-            if traj_length > 1:
-                puck_pos_curr = trajectories["observations"][i, 0, 4:6]
-                puck_pos_next = trajectories["observations"][i, 1, 4:6]
-                state_vector[6:8] = (puck_pos_next - puck_pos_curr) / dt
-
+            if self.interval_mode  == 'peak_start':
+                assert state_vector[6] == np.float64(0)
             try:
                 obs, _ = env.reset_from_state(state_vector)
             except Exception:
@@ -289,6 +335,11 @@ class RealDataPuckPipeline:
             "simulation_iterations": self.simulation_iterations,
             "run_dir": self.run_dir,
             "run_id": self.run_id,
+            "inflection_log_dir": getattr(self, "inflection_log_dir", None),
+            "peak_start": getattr(self, "peak_start", False),
+            "velocity_mode": getattr(self, "velocity_mode", "finite_diff"),
+            "peak_y_threshold": getattr(self, "peak_y_threshold", 0.15),
+            "num_approach_intervals": len(self.approach_intervals) if self.approach_intervals else 0,
         }
         path = os.path.join(run_dir, "run_config.yaml")
         with open(path, "w") as f:
@@ -336,8 +387,11 @@ class RealDataPuckPipeline:
                 lower_bounds=self.lower_bounds,
                 upper_bounds=self.upper_bounds,
                 param_names=self.param_names,
+                object_type = self.object_name,
                 wdb_logging=len(getattr(self, "wdb_entity", "")) > 0,
                 log_file=log_file,
+                approach_intervals=self.approach_intervals,
+                peak_start=getattr(self, "peak_start", True),
             )
 
             optimal_params, opt_iter, best_error, best_error_idx = planner.optimize(
@@ -386,22 +440,29 @@ if __name__ == "__main__":
     parser.add_argument("--cfg", type=str,default = "/home/air-hockey/air-hockey-rl/scripts/domain_adaptation/realworld_paddle_config/estimate.yaml",help="Optional YAML config (air_hockey key expected)")
     parser.add_argument("--data-dir", type=str,default="/data2/air_hockey/air_hockey_state_data/datastor1/calebc/public/data/mouse/state_data_all_new/",help="Directory containing trajectory HDF5 files")
     parser.add_argument("--trajectory-file", type=str, default=None,help="Single trajectory HDF5 filename (legacy mode). ""Ignored if --num-trajectories is set.")
-    parser.add_argument("--num-trajectories", type=int, default=20,help="Number of trajectory files to load from data-dir. ""-1 for all. Set to 0 to use --trajectory-file instead.")
+    parser.add_argument("--num-trajectories", type=int, default=200,help="Number of trajectory files to load from data-dir. ""-1 for all. Set to 0 to use --trajectory-file instead.")
     parser.add_argument("--sys-id-path-puck", type=str,default="scripts/domain_adaptation/sys_id_configs/real2sim/puck_id_params.yaml",help="Puck system ID parameter bounds YAML")
     parser.add_argument("--paddle-params-path", type=str, default=None,help="Path to optimal paddle params YAML from paddle pipeline")
+    parser.add_argument("--inflection-log-dir", type=str,default="scripts/real_data_transforms/logs",help="Directory with inflection_<idx>.json files for approach interval sampling")
+    parser.add_argument("--interval-mode", type=str, default="paddle_to_paddle",choices=["paddle_to_paddle", "peak_start", "approach"],help="Interval selection: paddle_to_paddle (full parabolic arcs between "
+                             "paddle hits), peak_start (peak to first contact), approach (peak to "
+                             "paddle contact, split at walls)")
+    parser.add_argument("--peak-y-threshold", type=float, default=1,help="Max y-displacement for peak-start intervals (default: 0.15)")
 
-    parser.add_argument("--comp-type", type=str, default="posl2",help="Comparison metric: l2, posl2, l1, posl1, last")
+    parser.add_argument("--velocity-mode", type=str, default="parabolic",choices=["finite_diff", "parabolic"],help="Puck velocity estimation: finite_diff (legacy) or parabolic (polynomial fit)")
+    parser.add_argument("--object-name",type=str,default="puck",help="Object to compare: paddle, puck, or all",) 
+    parser.add_argument("--comp-type", type=str, default="l2",help="Comparison metric: l2, posl2, l1, posl1, last")
     parser.add_argument("--dt", type=float, default=0.05,help="Timestep for puck velocity finite differences")
 
     parser.add_argument("--num-resamples", type=int, default=400,help="Number of free-space segments to sample per evaluation")
-    parser.add_argument("--traj-length", type=int, default=20,help="Length of each trajectory segment")
-    parser.add_argument("--num-population", type=int, default=17,help="CMA-ES population size")
+    parser.add_argument("--traj-length", type=int, default=30,help="Length of each trajectory segment")
+    parser.add_argument("--num-population", type=int, default=6,help="CMA-ES population size")
     parser.add_argument("--num-iterations", type=int, default=100,help="CMA-ES iterations per trial")
-    parser.add_argument("--variance", type=float, default=0.35,help="CMA-ES initial step size (sigma)")
+    parser.add_argument("--variance", type=float, default=0.3,help="CMA-ES initial step size (sigma)")
     parser.add_argument("--simulation-iterations", type=int, default=1,help="Number of restarts with perturbed initial params")
 
     parser.add_argument("--run-dir", type=str,default="scripts/domain_adaptation/system_identification/puck/real2sim_runs",help="Directory for run results")
-    parser.add_argument("--run-id", type=str, default="14")
+    parser.add_argument("--run-id", type=str, default="post_padgrid_prepuckgrid_12")
     parser.add_argument("--wdb-entity", type=str, default="")
 
     args = parser.parse_args()

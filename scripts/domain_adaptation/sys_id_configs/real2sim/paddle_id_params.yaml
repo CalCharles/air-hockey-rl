@@ -1,15 +1,23 @@
 force_scaling:
-  lower: 1
-  upper: 5
-  start: 3
+  lower: 0.01
+  upper: 1
+  start: 0.5
 paddle_damping:
-  lower: 1
+  lower: 10
   upper: 20
-  start: 10
-paddle_density: 
-  lower: 200
-  upper: 6000
+  start: 15
+pid_kp:
+  lower: 2000
+  upper: 4000
   start: 3000
+pid_kd:
+  lower: 10
+  upper: 200
+  start: 100
+# paddle_density: 
+#   lower: 200
+#   upper: 6000
+#   start: 3000
 # max_force_timestep:
 #   lower: 10
 #   upper: 300

@@ -1,4 +1,11 @@
-"""Scan inflection log files and report approach interval statistics."""
+"""Scan inflection log files and report approach interval statistics.
+
+Standalone analysis tool — reads inflection_<idx>.json logs produced by
+puck_inflection.py --batch and prints/saves statistics on approach intervals
+(peak → paddle contact segments, with/without wall hits).
+
+Not part of the main puck pipeline execution path; used for data exploration.
+"""
 
 import os
 import sys
