@@ -267,6 +267,7 @@ class AirHockeyBox2D:
             'paddle_edge_bounds': [],
             'center_offset_constant': 1.2,
             'puck_restitution': 1.0,
+            'paddle_restitution': 1.0,
             # Wall restitution defaults: side rails (x-min/x-max) are livelier
             # than top/bottom rails (y-min/y-max).
             'side_wall_restitution': 0.99,
@@ -319,6 +320,7 @@ class AirHockeyBox2D:
         self.puck_damping = config.puck_damping
         self.gravity = config.gravity
         self.puck_restitution = config.puck_restitution
+        self.paddle_restitution = config.paddle_restitution
         self.side_wall_restitution = float(config.side_wall_restitution)
         self.end_wall_restitution = float(config.end_wall_restitution)
         self.puck_wall_restitution_threshold_speed = max(float(config.puck_wall_restitution_threshold_speed), 0.0)
@@ -709,7 +711,7 @@ class AirHockeyBox2D:
             fixtures=b2FixtureDef(
                 shape=b2CircleShape(radius=radius),
                 density=self.paddle_density,
-                restitution = 1.0,
+                restitution = self.paddle_restitution,
                 filter=b2Filter (maskBits=1,
                                  categoryBits=1)),
             bullet=True,

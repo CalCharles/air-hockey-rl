@@ -3,7 +3,7 @@ import math
 import numpy as np
 from gymnasium.spaces import Box
 from .airhockey_base import AirHockeyBaseEnv
-from .airhockey_rewards import AirHockeyPuckCatchReward, AirHockeyPuckVelReward, AirHockeyPuckTouchReward, AirHockeyPuckHeightReward, AirHockeyPuckJuggleReward, AirHockeyPuckJuggleLinearTopReward, AirHockeyPuckJuggleNoBaseReward, AirHockeyPuckJuggleUpperHalfReward, AirHockeyPuckStrikeReward, AirHockeyStrikeCrowdReward, AirHockeyPaddleFreeMovementReward
+from .airhockey_rewards import AirHockeyPuckCatchReward, AirHockeyPuckVelReward, AirHockeyPuckTouchReward, AirHockeyPuckHeightReward, AirHockeyPuckJuggleReward, AirHockeyPuckJuggleLinearTopReward, AirHockeyPuckJuggleNoBaseReward, AirHockeyPuckJuggleUpperHalfReward, AirHockeyPuckJuggleUpperHalfMidBandReward, AirHockeyPuckStrikeReward, AirHockeyStrikeCrowdReward, AirHockeyPaddleFreeMovementReward
 
 class AirHockeyPuckVelEnv(AirHockeyBaseEnv):
     def initialize_spaces(self, obs_type):
@@ -280,6 +280,53 @@ class AirHockeyPuckJuggleUpperHalfRewardEnv(AirHockeyPuckJuggleLinearTopEnv):
     @staticmethod
     def from_dict(state_dict):
         return AirHockeyPuckJuggleUpperHalfRewardEnv(**state_dict)
+
+
+class AirHockeyPuckJuggleUpperHalfMidBandRewardEnv(AirHockeyPuckJuggleLinearTopEnv):
+    def initialize_spaces(self, obs_type):
+        low, high = self.init_observation(obs_type)
+        self.action_space = self.single_action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32)
+        self.reward_range = Box(low=-1, high=1)
+        self.count_hit = False
+        self.hits = 0
+        self.reward = AirHockeyPuckJuggleUpperHalfMidBandReward(self)
+
+    @staticmethod
+    def from_dict(state_dict):
+        return AirHockeyPuckJuggleUpperHalfMidBandRewardEnv(**state_dict)
+
+    def get_paddle_configuration(self, name):
+        if name == 'paddle_ego':
+            x_pos = (self.paddle_x_min + self.paddle_x_max) / 2.0
+            y_pos = (self.paddle_y_min + self.paddle_y_max) / 2.0
+            x_pos = np.clip(
+                x_pos,
+                self.table_x_top + self.paddle_radius,
+                self.table_x_bot - self.paddle_radius,
+            )
+            y_pos = np.clip(
+                y_pos,
+                self.table_y_left + self.paddle_radius,
+                self.table_y_right - self.paddle_radius,
+            )
+            return (float(x_pos), float(y_pos)), (0, 0)
+        if name == 'paddle_alt':
+            x_pos = self.table_x_top + self.paddle_radius
+            return (x_pos, 0), (0, 0)
+        raise ValueError("Invalid paddle name")
+
+    def get_puck_configuration(self, bad_regions=None):
+        del bad_regions
+        x_low = self.table_x_top + self.puck_radius
+        x_high = 0.0 - self.puck_radius
+        y_low = self.table_y_left + self.puck_radius
+        y_high = self.table_y_right - self.puck_radius
+        x_pos = self.rng.uniform(low=x_low, high=x_high)
+        y_pos = self.rng.uniform(low=y_low, high=y_high)
+        speed = self.rng.uniform(low=0.0, high=0.5)
+        heading = self.rng.uniform(low=0.0, high=2 * math.pi)
+        vel = (speed * math.cos(heading), speed * math.sin(heading))
+        return (x_pos, y_pos), vel
 
 class AirHockeyPuckStrikeEnv(AirHockeyBaseEnv):
     def initialize_spaces(self, obs_type):

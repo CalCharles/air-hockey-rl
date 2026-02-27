@@ -220,6 +220,35 @@ class AirHockeyPuckJuggleUpperHalfReward(AirHockeyPuckJuggleLinearTopReward):
 
         return bonus_reward
 
+
+class AirHockeyPuckJuggleUpperHalfMidBandReward(AirHockeyPuckJuggleLinearTopReward):
+    """
+    Reward pattern along x (bottom -> top): 0, +1, 0.
+    +1 is only within the lower 3/4 of the upper half, excluding the top 1/4.
+    """
+
+    def get_base_reward(self, state_info):
+        _, success = super().get_base_reward(state_info)
+        reward = self.upper_half_mid_band_reward(state_info)
+        return reward, success
+
+    def upper_half_mid_band_reward(self, state_info):
+        bonus_reward = 0.0
+        x_top = self.task_env.table_x_top
+        x_bot = self.task_env.table_x_bot
+        x_midpoint = (x_top + x_bot) / 2.0
+        upper_half_height = x_midpoint - x_top
+        top_quarter_cutoff = x_top + 0.25 * upper_half_height
+        num_pucks = max(len(state_info["pucks"]), 1)
+
+        for puck in state_info["pucks"]:
+            x_pos = puck["position"][0]
+            # Reward only in middle band of the upper half.
+            if top_quarter_cutoff <= x_pos <= x_midpoint:
+                bonus_reward += 1.0 / num_pucks
+
+        return bonus_reward
+
 class AirHockeyPuckStrikeReward(AirHockeyRewardBase):
     def __init__(self, task_env):
         super().__init__(task_env)
