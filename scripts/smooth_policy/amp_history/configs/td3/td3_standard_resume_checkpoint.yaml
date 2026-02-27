@@ -1,7 +1,5 @@
-# Standard TD3 config for:
-# scripts/smooth_policy/amp_history/amp_training/td3/amp_training_td3.py
-#
-# Modeled after ppo/amp_larger.yaml structure, but aligned to TD3 args.
+# Standard TD3 config for checkpoint-resumed sweeps.
+# Based on td3_standard.yaml; this file fills in checkpoint-loading fields.
 
 # Basic training parameters
 total_timesteps: 1000000
@@ -46,7 +44,7 @@ exploration_primitive_chance: 0.02 # at the end
 exploration_primitive_chance_start: 0.10 # at the start of annealing
 
 # If set, overrides primitive takeover chance while global_step < learning_starts.
-exploration_primitive_chance_pre_learning_starts: 1.0 
+exploration_primitive_chance_pre_learning_starts: 1.0
 
 exploration_primitive_chance_anneal_steps: 200000 # around 2000-5000 episodes
 exploration_primitive_steps: 5
@@ -61,7 +59,7 @@ exploration_primitive_weight_target_position_directional: 0.5
 # exploration during annealing phase
 exploration_primitive_weight_anneal_stand_still: 1.0
 exploration_primitive_weight_anneal_same_direction: 0.0
-exploration_primitive_weight_anneal_y_aligned: 1.0 
+exploration_primitive_weight_anneal_y_aligned: 1.0
 exploration_primitive_weight_anneal_policy_takeover: 2.0 # success examples
 exploration_primitive_weight_anneal_target_position_directional: 0.5
 
@@ -110,9 +108,9 @@ jerk_at_zero: 20.0
 # Paths
 config: "scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_constant_upper_half_custom_sim_params.yaml"
 args_file: null
-model_path: null
-log_parent_dir: "runs/td3_training/pid/standard"
-run_name: "td3_standard"
+model_path: "/home/air-hockey/daliu/air-hockey-rl/runs/td3/final/task_only/checkpoint_20000/training_state.pth"
+log_parent_dir: "runs/td3/final/task_only_resume_from_checkpoint"
+run_name: "td3_standard_resume_checkpoint"
 
 # Runtime
 device: "cuda:0"

@@ -248,7 +248,7 @@ class AirHockeyPuckJuggleLinearTopEnv(AirHockeyPuckJuggleEnv):
             y_pos = self.rng.uniform(low=y_low, high=y_high)
 
         x_pos = self.rng.uniform(low=x_low, high=x_high)
-        speed = self.rng.uniform(low=0.0, high=0.75)
+        speed = self.rng.uniform(low=0.0, high=1.2)
         heading = self.rng.uniform(low=0.0, high=2 * math.pi)
         vel = (speed * math.cos(heading), speed * math.sin(heading))
         return (x_pos, y_pos), vel
