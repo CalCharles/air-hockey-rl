@@ -2,12 +2,20 @@ import time
 from collections import deque
 import numpy as np
 from .real.multiprocessing import ProtectedArray, NonBlockingConsole
-from .real.control_parameters import camera_callback, save_callback, mimic_control, save_collect, observe_collect
+from .real.control_parameters import (
+    camera_callback,
+    save_callback,
+    mimic_control,
+    save_collect,
+    observe_collect,
+    visual_downscale_constant,
+)
 from .real.trajectory_merging import merge_trajectory, clear_images, write_trajectory, get_trajectory_idx
 from .real.robot_control import MotionPrimitive, apply_negative_z_force, filter_update
-from .real.coordinate_transform import compute_rect, compute_pol
+from .real.coordinate_transform import compute_rect, compute_pol, clip_limits
 from .real.proprioceptive_state import get_state_array
-from .real.image_detection import find_red_hockey_puck
+from .real.image_detection import find_red_hockey_puck, find_red_hockey_puck_antiglare
+from .real.overlay_utils import draw_target_marker, draw_puck_marker_from_state, draw_paddle_marker
 import multiprocessing
 import cv2
 import copy
@@ -15,6 +23,7 @@ from ..utils import dict_to_namespace
 
 puck_detectors = {
     "red_puck": find_red_hockey_puck,
+    "red_puck_antiglare": find_red_hockey_puck_antiglare,
     # TODO: other puck detectors here
 }
 
@@ -52,7 +61,14 @@ class AirHockeyReal:
             "control_type": "rect",
             "puck_history_len": 5,
             "paddle_history_len": 5,
-            "puck_detector": "red_puck",
+            "puck_detector": "red_puck_antiglare",
+            # Antiglare bounds are interpreted in the raw detector input image
+            # (the image passed into the puck detector before preprocess).
+            "antiglare_bounds_in_raw_image": True,
+            "antiglare_min_x_px": 290,
+            "antiglare_max_x_px": 451,
+            "antiglare_min_y_px": 186,
+            "antiglare_max_y_px": 465,
             "image_path": "./temp/images/",
             "save_path": "./data/rollout/temp_saving",
             "vel_lim": 0.8,
@@ -67,6 +83,9 @@ class AirHockeyReal:
             "angle": [-0.00153677648744038, -3.0647520618606172, 0.],
             "zslope": 0.02577,
             "x_offset": 1.2,
+            "y_offset": 0.0,
+            "paddle_additional_x_offset": -0.075,
+            "paddle_additional_y_offset": -0.03,
             "bot_abs": 0.1,
             "top_abs": 0.8,
             "max_bias_p": -0.15,
@@ -81,6 +100,15 @@ class AirHockeyReal:
             "wait_for_space_to_start": True,
             "debug_control": False,
             "debug_control_every": 1,
+
+            # The current state prediction algorithm uses true current position
+            # and adds a predictive horizon on top
+            "use_actual_tcp_for_state": True,
+            # "state_prediction_horizon_s": 0.05,
+            "state_prediction_horizon_s": 0.0,
+            "state_prediction_blend": 0.3,
+            "state_prediction_opposite_dir_brake": 1.5,
+            "disable_prediction_on_estop": True,
         }
         kwargs = {**defaults, **kwargs}
         config = dict_to_namespace(kwargs)
@@ -164,6 +192,14 @@ class AirHockeyReal:
         self.puck_history_len = 5
         self.paddle_history_len = 5
         self.puck_detector = puck_detectors[config.puck_detector]
+        self.puck_detector_kwargs = {
+            "antiglare_bounds_in_raw_image": config.antiglare_bounds_in_raw_image,
+            "antiglare_min_x_px": config.antiglare_min_x_px,
+            "antiglare_max_x_px": config.antiglare_max_x_px,
+            "antiglare_min_y_px": config.antiglare_min_y_px,
+            "antiglare_max_y_px": config.antiglare_max_y_px,
+            "center_offset_constant": self.center_offset_constant,
+        }
         self.image_path = config.image_path
         self.save_path = config.save_path
         self.tidx = get_trajectory_idx(self.save_path)
@@ -172,15 +208,18 @@ class AirHockeyReal:
         shared_mouse_pos = multiprocessing.Array("f", 3)
         shared_puck_pos = multiprocessing.Array("f", 3)
         shared_paddle_pos = multiprocessing.Array("f", 3)
+        shared_target_pos = multiprocessing.Array("f", 3)
         shared_image_check = multiprocessing.Array("f", 1)
         shared_mouse_pos[0] = 0
         shared_mouse_pos[1] = 0
         shared_mouse_pos[2] = 1
+        shared_target_pos[2] = 0
         shared_image_check[0] = 0
         self.protected_mouse_pos = ProtectedArray(shared_mouse_pos)
         self.protected_puck_pos = ProtectedArray(shared_puck_pos)
         self.protected_img_check = ProtectedArray(shared_image_check)
         self.protected_paddle_pos = ProtectedArray(shared_paddle_pos)
+        self.protected_target_pos = ProtectedArray(shared_target_pos)
         self.cap, self.camera_process, self.mimic_process = None, None, None
         if self.control_type == "prim":
             self.motion_primitive = MotionPrimitive()
@@ -226,12 +265,14 @@ class AirHockeyReal:
         self.computez = lambda x: self.zslope * (x + 0.310) - 0.310
 
         # homography offsets
-        self.offset_constants = np.array((2100, 500))
+        self.offset_constants = np.array((2250, 500))
+        self.visual_downscale_constant = visual_downscale_constant
         
         # max workspace limits
         self.x_offset = config.x_offset
-        self.x_min_lim = -0.8
-        self.x_max_lim = -0.33
+        self.paddle_additional_x_offset = config.paddle_additional_x_offset
+        self.paddle_additional_y_offset = config.paddle_additional_y_offset
+        
 
         # self.x_min_lim = -0.8
         # self.x_max_lim = -0.26
@@ -243,11 +284,15 @@ class AirHockeyReal:
 
 
         # self.y_min = -0.3582
-        self.y_min = -0.36 # temporary for right now
-        self.y_max = 0.350
+        
         # self.y_min = -0.42
         # self.y_max = 0.42
 
+        # magic numbers representing the boundary
+        self.x_min_lim = -0.79
+        self.x_max_lim = -0.37
+        self.y_min = -0.36 # temporary for right now
+        self.y_max = 0.350
 
         self.bot_abs = config.bot_abs
         self.top_abs = config.top_abs
@@ -315,6 +360,13 @@ class AirHockeyReal:
         self.wait_for_space_to_start = config.wait_for_space_to_start
         self.debug_control = bool(config.debug_control)
         self.debug_control_every = max(1, int(config.debug_control_every))
+        self.use_actual_tcp_for_state = bool(config.use_actual_tcp_for_state)
+        self.state_prediction_horizon_s = float(config.state_prediction_horizon_s)
+        self.state_prediction_blend = float(np.clip(config.state_prediction_blend, 0.0, 1.0))
+        self.state_prediction_opposite_dir_brake = max(1.0, float(config.state_prediction_opposite_dir_brake))
+        self.disable_prediction_on_estop = bool(config.disable_prediction_on_estop)
+        self._actual_tcp_fallback_warned = False
+        self._last_observed_xy = None
 
 
         # creating the ground -- need to only call once! otherwise it can be laggy
@@ -328,12 +380,96 @@ class AirHockeyReal:
         timestep = getattr(self, "timestep", 0)
         return self.debug_control and timestep % self.debug_control_every == 0
 
+    def _paddle_display_xy_from_pose(self, pose_xy):
+        """Convert robot TCP XY to paddle-center XY for rendering."""
+        return np.array(
+            (
+                float(pose_xy[0]) + self.paddle_additional_x_offset,
+                float(pose_xy[1]) + self.paddle_additional_y_offset,
+            ),
+            dtype=float,
+        )
+
+    def _paddle_observation_xy_from_pose(self, pose_xy):
+        """Convert robot TCP XY to observation-frame paddle XY."""
+        paddle_xy = self._paddle_display_xy_from_pose(pose_xy)
+        paddle_xy[0] += self.x_offset
+        return paddle_xy
+
+    def _resolve_state_pose_speed(self, tcp_target_pose, tcp_target_speed):
+        """Return pose/speed source for observation state."""
+        if not self.use_actual_tcp_for_state:
+            return np.array(tcp_target_pose, dtype=float), np.array(tcp_target_speed, dtype=float), "tcp_target"
+        try:
+            actual_tcp_pose = np.array(self.rcv.getActualTCPPose(), dtype=float)
+            actual_tcp_speed = np.array(self.rcv.getActualTCPSpeed(), dtype=float)
+            return actual_tcp_pose, actual_tcp_speed, "actual_tcp"
+        except Exception:
+            if not self._actual_tcp_fallback_warned:
+                print("[control_debug] Falling back to target TCP pose/speed for state observations.")
+                self._actual_tcp_fallback_warned = True
+            return np.array(tcp_target_pose, dtype=float), np.array(tcp_target_speed, dtype=float), "tcp_target_fallback"
+
+    def _predict_next_pose_xy(self, pose_for_state, speed_for_state, cmd_pose, dt):
+        """Bounded one-step XY prediction toward filtered command target."""
+        dt = max(1e-4, float(dt))
+        current_xy = np.array(pose_for_state[:2], dtype=float)
+        current_vxy = np.array(speed_for_state[:2], dtype=float)
+        command_xy = np.array(cmd_pose[:2], dtype=float)
+        delta = command_xy - current_xy
+        dist = np.linalg.norm(delta)
+        if dist < 1e-8:
+            predicted_xy = np.array(clip_limits(current_xy[0], current_xy[1], self.lims, self.edge_lims), dtype=float)
+            return predicted_xy
+
+        desired_vxy = delta / dt
+        vel_cap = max(1e-4, float(self.vel))
+        desired_v_norm = np.linalg.norm(desired_vxy)
+        if desired_v_norm > vel_cap:
+            desired_vxy = desired_vxy * (vel_cap / desired_v_norm)
+
+        dv = desired_vxy - current_vxy
+        max_dv = max(1e-4, float(self.acc)) * dt
+        if np.dot(current_vxy, delta) < 0.0:
+            max_dv *= self.state_prediction_opposite_dir_brake
+        dv_norm = np.linalg.norm(dv)
+        if dv_norm > max_dv:
+            dv = dv * (max_dv / dv_norm)
+        predicted_vxy = current_vxy + dv
+        predicted_v_norm = np.linalg.norm(predicted_vxy)
+        if predicted_v_norm > vel_cap:
+            predicted_vxy = predicted_vxy * (vel_cap / predicted_v_norm)
+
+        predicted_xy = current_xy + predicted_vxy * dt
+        direction = delta / (dist + 1e-8)
+        projected_step = np.dot(predicted_xy - current_xy, direction)
+        if projected_step > dist:
+            predicted_xy = current_xy + direction * dist
+        predicted_xy = np.array(clip_limits(predicted_xy[0], predicted_xy[1], self.lims, self.edge_lims), dtype=float)
+        return predicted_xy
 
     def start_callbacks(self, **kwargs):
         self.region_info = kwargs["region_info"] if "region_info" in kwargs else None
         self.goal_info = kwargs["goal_info"] if "goal_info" in kwargs else None
         if self.control_mode == 'mouse':
-            self.camera_process = multiprocessing.Process(target=camera_callback, args=(self.protected_mouse_pos,self.protected_img_check, self.protected_puck_pos, self.protected_paddle_pos, self.region_info, self.goal_info))
+            self.camera_process = multiprocessing.Process(
+                target=camera_callback,
+                args=(
+                    self.protected_mouse_pos,
+                    self.protected_img_check,
+                    self.protected_puck_pos,
+                    self.protected_paddle_pos,
+                    self.protected_target_pos,
+                    self.region_info,
+                    self.goal_info,
+                    self.lims,
+                    self.edge_lims,
+                    self.puck_detector,
+                    self.puck_detector_kwargs,
+                    self.puck_radius,
+                    self.x_offset,
+                ),
+            )
             self.camera_process.start()
         elif self.control_mode == 'mimic':
             self.mimic_process = multiprocessing.Process(target=mimic_control, args=(self.protected_mouse_pos,))
@@ -341,7 +477,7 @@ class AirHockeyReal:
             self.camera_process = multiprocessing.Process(target=save_callback, args=(self.protected_img_check,))
             self.camera_process.start()
         else:
-            self.cap = cv2.VideoCapture(0)
+            self.cap = cv2.VideoCapture(1)
 
     def _compute_state(self, pose, speed, i, puck_history):
         # This should be the only place where it is necessary to correct detection by the offsets
@@ -359,8 +495,7 @@ class AirHockeyReal:
         state_info = dict()
         state_info['paddles'] = dict()
         state_info['paddles']['paddle_ego'] = dict()
-        state_info['paddles']['paddle_ego']['position'] = copy.deepcopy(self.pose[:2])
-        state_info['paddles']['paddle_ego']['position'][0] += self.x_offset
+        state_info['paddles']['paddle_ego']['position'] = self._paddle_observation_xy_from_pose(self.pose[:2])
         state_info['paddles']['paddle_ego']['velocity'] = copy.deepcopy(self.speed[:2])
         state_info['paddles']['paddle_ego']['history'] = self.paddle_history[- self.paddle_history_len :]
         state_info["pucks"] = list()
@@ -375,7 +510,12 @@ class AirHockeyReal:
     def take_action(self, action, pose, speed, force, acc, estop, image, images, puck_history, lims, move_lims):
         # converts an action from the agent to an action in the robot space
         if self.puck_detector is not None: 
-            puck = self.puck_detector(image, puck_history, rotate=False)
+            puck = self.puck_detector(
+                image,
+                puck_history,
+                rotate=False,
+                **self.puck_detector_kwargs,
+            )
             puck = np.array(puck)
             if puck[-1] == 0: puck[0] += self.center_offset_constant
         else: puck = (puck_history[-1][0],puck_history[-1][1],0)
@@ -415,9 +555,17 @@ class AirHockeyReal:
         self.timestep = 0
         self.pose_hist, self.dpose_hist = deque(maxlen=self.hist_len), deque(maxlen=self.hist_len)
         self.puck_history = [(-2 + self.center_offset_constant,0,1) for i in range(5)] # pretend that the puck starts at the other end of the table, but is occluded, for 5 frames
-        self.paddle_history = [(-2 + self.center_offset_constant,0,1) for i in range(5)]
+        self.paddle_history = [
+            (
+                -2 + self.center_offset_constant + self.paddle_additional_x_offset,
+                self.paddle_additional_y_offset,
+                1,
+            )
+            for i in range(5)
+        ]
         self.total = time.time()
         self.runtime = 0.0
+        self._last_observed_xy = None
 
         # TODO: set these with desired values, not yet finished
         self.paddles = dict()
@@ -434,9 +582,9 @@ class AirHockeyReal:
 
         self.object_dict = {}
         if self.high_reset and not self.control_off:
-            true_pose = self.rcv.getTargetTCPPose()
-            true_pose[2] = self.very_high_reset_val
-            high_reset_success = self.ctrl.moveL(true_pose, self.reset_pose[1], self.reset_pose[2], False)
+            tcp_target_pose = self.rcv.getTargetTCPPose()
+            tcp_target_pose[2] = self.very_high_reset_val
+            high_reset_success = self.ctrl.moveL(tcp_target_pose, self.reset_pose[1], self.reset_pose[2], False)
             if self.preset_reset:
                 self.reset_pose[0][0], self.reset_pose[0][1] = self.reset_pose_list[self.reset_idx % len(self.reset_pose_list)]
                 self.reset_pose[0][2] = self.very_high_reset_val
@@ -472,9 +620,10 @@ class AirHockeyReal:
         if self.high_reset and not self.above_table and not self.control_off: apply_negative_z_force(self.ctrl, self.rcv)
         count = 0
         time.sleep(0.7)
-        true_pose = self.rcv.getTargetTCPPose()
-        true_speed = self.rcv.getTargetTCPSpeed()
-        state_info = self._compute_state(true_pose, true_speed, 0, self.puck_history) # TODO: not sure if i=0 is correct
+        tcp_target_pose = self.rcv.getTargetTCPPose()
+        tcp_target_speed = self.rcv.getTargetTCPSpeed()
+        state_pose, state_speed, _ = self._resolve_state_pose_speed(tcp_target_pose, tcp_target_speed)
+        state_info = self._compute_state(state_pose, state_speed, 0, self.puck_history) # TODO: not sure if i=0 is correct
 
         print("To exit press 'q'") # TODO: make this actually usable
 
@@ -509,17 +658,30 @@ class AirHockeyReal:
 
         
         # acquire useful statistics
-        true_pose = self.rcv.getTargetTCPPose()
-        true_speed = self.rcv.getTargetTCPSpeed()
-        true_force = self.rcv.getActualTCPForce()
+        tcp_target_pose = self.rcv.getTargetTCPPose()
+        tcp_target_speed = self.rcv.getTargetTCPSpeed()
+        actual_tcp_force = self.rcv.getActualTCPForce()
         measured_acc = self.rcv.getActualToolAccelerometer()
-        self.protected_paddle_pos[0] = true_pose[0]
-        self.protected_paddle_pos[1] = true_pose[1]
+        protective_stop = self.rcv.isProtectiveStopped()
+        state_pose, state_speed, state_pose_source = self._resolve_state_pose_speed(tcp_target_pose, tcp_target_speed)
+        paddle_display_xy = self._paddle_display_xy_from_pose(state_pose[:2])
+        self.protected_paddle_pos[0] = paddle_display_xy[0]
+        self.protected_paddle_pos[1] = paddle_display_xy[1]
         self.protected_paddle_pos[2] = self.paddle_radius
 
+        image = None
         # get image data
         if self.cap is not None:
-            image, save_img = save_collect(self.cap, [true_pose[0], true_pose[1], self.paddle_radius], self.region_info if not self.control_mode in ["observe"] else None, self.goal_info, show = not self.control_mode in ["observe"])
+            image, save_img = save_collect(
+                self.cap,
+                [paddle_display_xy[0], paddle_display_xy[1], self.paddle_radius],
+                self.region_info if not self.control_mode in ["observe"] else None,
+                self.goal_info,
+                show=False,
+                lims=self.lims,
+                edge_lims=self.edge_lims,
+                region_x_offset=self.x_offset,
+            )
             self.images.append(save_img)
 
         
@@ -541,41 +703,77 @@ class AirHockeyReal:
             # print("puck", puck, self.protected_puck_pos)
             self.puck_history.append(puck)
         elif self.control_mode in ["observe"]:
-            x,y, occluded = observe_collect(image, [true_pose[0], true_pose[1], self.paddle_radius], self.region_info, self.goal_info, save_image = True)
+            x,y, occluded = observe_collect(
+                image,
+                [paddle_display_xy[0], paddle_display_xy[1], self.paddle_radius],
+                self.region_info,
+                self.goal_info,
+                save_image=True,
+            )
             puck = np.array([x,y, occluded])
-            true_pose[0] = x
-            true_pose[1] = y
-            true_pose[2] = occluded
+            state_pose[0] = x
+            state_pose[1] = y
+            state_pose[2] = occluded
             self.puck_history.append(puck)
         else:
-            x,y, puck = self.take_action(action, true_pose, true_speed, true_force, measured_acc, self.rcv.isProtectiveStopped(), image, self.images, self.puck_history, self.lims, self.move_lims) # TODO: add image handling
+            x,y, puck = self.take_action(action, tcp_target_pose, tcp_target_speed, actual_tcp_force, measured_acc, protective_stop, image, self.images, self.puck_history, self.lims, self.move_lims) # TODO: add image handling
             puck = np.array(puck)
             # print("puck", puck)
             self.puck_history.append(puck)
-            srvpose = [[x, y, 0.31] + self.angle, self.vel,self.acc]
+            srvpose = [[x, y, 0.30] + self.angle, self.vel,self.acc]
         ###### servoL #####
         requested_target_xy = (x, y)
 
         if self.control_type == "pol":
-            polx, poly = compute_pol(x, y, true_pose, self.lims, self.move_lims, self.edge_lims)
-            srvpose = [[polx, poly, 0.31] + self.angle, self.vel,self.acc]
+            polx, poly = compute_pol(x, y, tcp_target_pose, self.lims, self.move_lims, self.edge_lims)
+            srvpose = [[polx, poly, 0.30] + self.angle, self.vel,self.acc]
         elif self.control_type == "rect":
-            # x,y = true_pose[:2] + (np.random.rand(2) * ((np.random.randint(2) - 0.5) * 2)) # uncomment to test random actions
-            recx, recy = compute_rect(x, y, true_pose, self.lims, self.move_lims, self.edge_lims)
-            # print(recx - true_pose[0], recy -true_pose[1], true_pose[:2],recx, recy,  x,y)
+            # x,y = tcp_target_pose[:2] + (np.random.rand(2) * ((np.random.randint(2) - 0.5) * 2)) # uncomment to test random actions
+            recx, recy = compute_rect(x, y, tcp_target_pose, self.lims, self.move_lims, self.edge_lims)
+            # print(recx - tcp_target_pose[0], recy -tcp_target_pose[1], tcp_target_pose[:2],recx, recy,  x,y)
             if self.above_table :srvpose = [[recx, recy, self.high_reset_val] + self.angle, self.vel,self.acc]
-            else: srvpose = [[recx, recy, 0.31] + self.angle, self.vel,self.acc]
+            else: srvpose = [[recx, recy, 0.30] + self.angle, self.vel,self.acc]
         elif self.control_type == "prim":
-            x, y = self.motion_primitive.compute_primitive(action, true_pose, self.lims, self.move_lims, self.edge_lims)
-            srvpose = [[x, y, 0.31] + self.angle, self.vel,self.acc]
+            x, y = self.motion_primitive.compute_primitive(action, tcp_target_pose, self.lims, self.move_lims, self.edge_lims)
+            srvpose = [[x, y, 0.30] + self.angle, self.vel,self.acc]
         
         # TODO: change of direction is currently very sudden, we need to tune that
-        # print("servl", srvpose[0][1], true_speed, true_force, measured_acc, ctrl.servoL(srvpose[0], vel, acc, block_time, lookahead, gain))
+        # print("servl", srvpose[0][1], tcp_target_speed, actual_tcp_force, measured_acc, ctrl.servoL(srvpose[0], vel, acc, block_time, lookahead, gain))
         
         pre_filter_srvpose = copy.deepcopy(srvpose[0])
-        self.pose_hist.append(true_pose)
+        self.pose_hist.append(tcp_target_pose)
         self.dpose_hist.append(srvpose[0])
-        srvpose[0] = filter_update(true_speed, self.pose_hist, self.dpose_hist)
+        srvpose[0] = filter_update(tcp_target_speed, self.pose_hist, self.dpose_hist)
+        self.protected_target_pos[0] = srvpose[0][0]
+        self.protected_target_pos[1] = srvpose[0][1]
+        self.protected_target_pos[2] = 1
+        if self.cap is not None and self.control_mode not in ["observe"]:
+            draw_target_marker(
+                image,
+                srvpose[0][:2],
+                offset_constants=self.offset_constants,
+                visual_downscale_constant=self.visual_downscale_constant,
+            )
+            draw_puck_marker_from_state(
+                image,
+                puck,
+                self.puck_radius,
+                x_offset_for_state=self.center_offset_constant,
+                offset_constants=self.offset_constants,
+                visual_downscale_constant=self.visual_downscale_constant,
+                color=(0, 255, 0),
+                require_visible=True,
+            )
+            draw_paddle_marker(
+                image,
+                paddle_display_xy,
+                self.paddle_radius,
+                offset_constants=self.offset_constants,
+                visual_downscale_constant=self.visual_downscale_constant,
+                color=(255, 0, 0),
+            )
+            cv2.imshow("showdst", image)
+            cv2.waitKey(1)
         safety_check = self.ctrl.isPoseWithinSafetyLimits(srvpose[0])
         if self._should_debug_control():
             if self.control_mode in ["mouse", "mimic"]:
@@ -585,20 +783,22 @@ class AirHockeyReal:
             print(
                 "[control_debug] "
                 f"step={self.timestep} mode={self.control_mode} type={self.control_type} "
-                f"true_pose_xy=({true_pose[0]:.4f},{true_pose[1]:.4f}) "
+                f"state_pose_source={state_pose_source} "
+                f"tcp_target_pose_xy=({tcp_target_pose[0]:.4f},{tcp_target_pose[1]:.4f}) "
+                f"actual_state_pose_xy=({state_pose[0]:.4f},{state_pose[1]:.4f}) "
                 f"requested_target_xy=({requested_target_xy[0]:.4f},{requested_target_xy[1]:.4f}) "
                 f"pre_filter_target_xy=({pre_filter_srvpose[0]:.4f},{pre_filter_srvpose[1]:.4f}) "
                 f"post_filter_target_xy=({srvpose[0][0]:.4f},{srvpose[0][1]:.4f}) "
                 f"action={action_repr} "
-                f"safety_check={safety_check} protective_stop={self.rcv.isProtectiveStopped()}"
+                f"safety_check={safety_check} protective_stop={protective_stop}"
             )
-        values = get_state_array(time.time(), self.tidx, self.timestep, true_pose, true_speed, true_force, measured_acc, srvpose, self.rcv.isProtectiveStopped(), safety_check, puck)
+        values = get_state_array(time.time(), self.tidx, self.timestep, state_pose, state_speed, actual_tcp_force, measured_acc, srvpose, protective_stop, safety_check, puck)
         self.vals.append(values), #frames.append(np.array(protected_img[:]).reshape(640,480,3))
 
-        # print("servl", true_speed[:2], srvpose[0][:2], x,y, safety_check)# srvpose[0][:2], x,y, true_pose[:2], rcv.isProtectiveStopped())# , true_speed, true_force, measured_acc, )
+        # print("servl", tcp_target_speed[:2], srvpose[0][:2], x,y, safety_check)# srvpose[0][:2], x,y, tcp_target_pose[:2], rcv.isProtectiveStopped())# , tcp_target_speed, actual_tcp_force, measured_acc, )
         # print("desired_pose", srvpose[0][:2])
-        # print("delta desired", np.array(srvpose[0][:2]) - true_pose[:2])
-        # print("unnorm_delta", x- true_pose[0],y - true_pose[1], safety_check, self.rcv.isProtectiveStopped())# srvpose[0][:2], x,y, true_pose[:2], rcv.isProtectiveStopped())# , true_speed, true_force, measured_acc, )
+        # print("delta desired", np.array(srvpose[0][:2]) - tcp_target_pose[:2])
+        # print("unnorm_delta", x- tcp_target_pose[0],y - tcp_target_pose[1], safety_check, self.rcv.isProtectiveStopped())# srvpose[0][:2], x,y, tcp_target_pose[:2], rcv.isProtectiveStopped())# , tcp_target_speed, actual_tcp_force, measured_acc, )
         if safety_check and self.control_mode not in ["observe"]:
             self.ctrl.servoL(srvpose[0], self.vel, self.acc, self.block_time, self.lookahead, self.gain)
             if self._should_debug_control():
@@ -612,30 +812,63 @@ class AirHockeyReal:
                 "[control_debug] "
                 f"step={self.timestep} servoL_sent=False reason={'safety_check_failed' if not safety_check else 'observe_mode'}"
             )
-        if self.rcv.isProtectiveStopped():
-            next_state = self._compute_state(srvpose[0], true_speed, self.timestep, self.puck_history)
+        prediction_dt = self.state_prediction_horizon_s
+        prediction_blend = self.state_prediction_blend
+        if not safety_check:
+            prediction_blend *= 0.5
+        if self.disable_prediction_on_estop and protective_stop:
+            prediction_blend = 0.0
+        predicted_xy = self._predict_next_pose_xy(state_pose, state_speed, srvpose[0], prediction_dt)
+        observed_xy = (1.0 - prediction_blend) * np.array(state_pose[:2], dtype=float) + prediction_blend * predicted_xy
+        observed_xy = np.array(clip_limits(observed_xy[0], observed_xy[1], self.lims, self.edge_lims), dtype=float)
+        state_pose_for_observation = np.array(state_pose, dtype=float)
+        state_pose_for_observation[0] = observed_xy[0]
+        state_pose_for_observation[1] = observed_xy[1]
+        state_speed_for_observation = np.array(state_speed, dtype=float)
+
+        if self._should_debug_control():
+            cmd_xy = np.array(srvpose[0][:2], dtype=float)
+            if self._last_observed_xy is None:
+                one_step_obs_err = float("nan")
+            else:
+                one_step_obs_err = float(np.linalg.norm(np.array(state_pose[:2], dtype=float) - self._last_observed_xy))
+            print(
+                "[control_debug] "
+                f"step={self.timestep} prediction_dt={prediction_dt:.4f} blend={prediction_blend:.3f} "
+                f"predicted_xy=({predicted_xy[0]:.4f},{predicted_xy[1]:.4f}) "
+                f"observed_xy=({observed_xy[0]:.4f},{observed_xy[1]:.4f}) "
+                f"actual_xy=({state_pose[0]:.4f},{state_pose[1]:.4f}) "
+                f"cmd_xy=({cmd_xy[0]:.4f},{cmd_xy[1]:.4f}) "
+                f"actual_to_cmd={np.linalg.norm(np.array(state_pose[:2], dtype=float) - cmd_xy):.4f} "
+                f"observed_to_cmd={np.linalg.norm(observed_xy - cmd_xy):.4f} "
+                f"prev_observed_to_current_actual={one_step_obs_err:.4f}"
+            )
+        self._last_observed_xy = np.array(observed_xy, dtype=float)
+
+        if protective_stop:
+            next_state = self._compute_state(state_pose_for_observation, state_speed_for_observation, self.timestep, self.puck_history)
             paddle_position = next_state["paddles"]["paddle_ego"]["position"]
             self.paddle_history.append(list(paddle_position) + [0])
             if self._should_debug_control():
                 print(
                     "[control_debug] "
                     f"step={self.timestep} returned_state_xy=({paddle_position[0]:.4f},{paddle_position[1]:.4f}) "
-                    f"state_source=commanded_pose protective_stop=True"
+                    f"state_source=actual_plus_prediction protective_stop=True"
                 )
             return next_state
 
-        # print("servl", np.abs(polx - true_pose[0]), np.abs(poly - true_pose[1]), pixel_coord, srvpose[0], rcv.isProtectiveStopped())# , true_speed, true_force, measured_acc, )
+        # print("servl", np.abs(polx - tcp_target_pose[0]), np.abs(poly - tcp_target_pose[1]), pixel_coord, srvpose[0], rcv.isProtectiveStopped())# , tcp_target_speed, actual_tcp_force, measured_acc, )
         # print("time", time.time() - start)
         self.timestep += 1
         self.runtime = time.time() - self.transition_start
-        next_state = self._compute_state(srvpose[0], true_speed, self.timestep, self.puck_history) # TODO: populate this with the names of objects
+        next_state = self._compute_state(state_pose_for_observation, state_speed_for_observation, self.timestep, self.puck_history)
         paddle_position = next_state["paddles"]["paddle_ego"]["position"]
         self.paddle_history.append(list(paddle_position) + [0])
         if self._should_debug_control():
             print(
                 "[control_debug] "
                 f"step={self.timestep} returned_state_xy=({paddle_position[0]:.4f},{paddle_position[1]:.4f}) "
-                f"state_source=commanded_pose protective_stop=False"
+                f"state_source=actual_plus_prediction protective_stop=False"
             )
         return next_state
 

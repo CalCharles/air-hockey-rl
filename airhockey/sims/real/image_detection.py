@@ -89,6 +89,14 @@ def find_red_hockey_paddle(image):
 
 
 MIN_DETECT = 25
+MIN_PUCK_RADIUS_PX = 5
+MAX_PUCK_RADIUS_PX = 10
+MIN_PUCK_CIRCULARITY = 0.4
+SIMPLE_MIN_PUCK_RADIUS_PX = 5
+SIMPLE_MAX_PUCK_RADIUS_PX = 10
+SIMPLE_MIN_PUCK_CIRCULARITY = 0.80
+SIMPLE_MIN_PUCK_FILL_RATIO = 0.7
+SIMPLE_LOOSE_MIN_PUCK_FILL_RATIO = 0.55
 
 # Mimg = np.load('assets/real/Mimg.npy')
 Mimg = np.load(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "assets", "real", "Mimg.npy"))
@@ -96,66 +104,345 @@ upscale_constant = 3
 original_size = np.array([640, 480])
 visual_downscale_constant = 2
 save_downscale_constant = 2
-offset_constants = np.array((2100, 500))
+# offset_constants = np.array((2100, 500)) # change this number
+offset_constants = np.array((2250, 500)) # change this number
 
-def find_red_hockey_puck(image, puck_history = None, rotate=True):
-    # hsv_alt should e a lit
-    h, w, _ = image.shape
-    # lower HSV: [110  25 119], upper HSV: [125 255 255]
-    hsv_low = [  0, 137 ,  80]
-    hsv_high = [ 8, 255, 255]
-    # hsv_low = [0,100,140]
-    # hsv_high=[50,255,255]
-    if rotate: image = cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
+def _fallback_puck(puck_history):
+    if puck_history is not None and len(puck_history) > 0:
+        return puck_history[-1][0], puck_history[-1][1], 1
+    return -2, 0, 1
 
-    image = cv2.resize(image, (int(image.shape[1] / 2), int(image.shape[0] / 2)), 
-                    interpolation = cv2.INTER_LINEAR)
-    image[249:,:] = 0
-    image[:9] = 0
-    image[:,470:] = 0
 
-    # Convert the left half of the image to HSV
+def _preprocess_puck_image(image, rotate):
+    if rotate:
+        image = cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    image = cv2.resize(
+        image,
+        (int(image.shape[1] / 2), int(image.shape[0] / 2)),
+        interpolation=cv2.INTER_LINEAR,
+    )
+    h, w = image.shape[:2]
+    image[min(249, h):, :] = 0
+    image[: min(9, h), :] = 0
+    image[:, min(470, w):] = 0
+    return image
+
+
+def _pixel_to_robot_xy(x_px, y_px):
+    # Detector coordinates are in the downscaled detector frame.
+    # We map back by x4 to the original homography pixel frame before offset conversion.
+    homo_idx = (np.array([x_px * 4, y_px * 4]) - offset_constants) * 0.001
+    return homo_idx[0], -homo_idx[1]
+
+
+def _dual_red_mask(hsv_image, sat_min, val_min, low_h=(0, 10), high_h=(170, 180)):
+    low_1 = np.array([low_h[0], sat_min, val_min], dtype=np.uint8)
+    high_1 = np.array([low_h[1], 255, 255], dtype=np.uint8)
+    low_2 = np.array([high_h[0], sat_min, val_min], dtype=np.uint8)
+    high_2 = np.array([high_h[1], 255, 255], dtype=np.uint8)
+    return cv2.inRange(hsv_image, low_1, high_1) | cv2.inRange(hsv_image, low_2, high_2)
+
+
+def _apply_antiglare_rescue_mask(
+    base_mask,
+    bgr_image,
+    hsv_image,
+    antiglare_min_x_px=None,
+    antiglare_max_x_px=None,
+    antiglare_min_y_px=None,
+    antiglare_max_y_px=None,
+):
+    if None in (
+        antiglare_min_x_px,
+        antiglare_max_x_px,
+        antiglare_min_y_px,
+        antiglare_max_y_px,
+    ):
+        return base_mask
+
+    h, w = base_mask.shape[:2]
+    x0 = int(np.clip(np.round(float(antiglare_min_x_px)), 0, w))
+    x1 = int(np.clip(np.round(float(antiglare_max_x_px)), 0, w))
+    y0 = int(np.clip(np.round(float(antiglare_min_y_px)), 0, h))
+    y1 = int(np.clip(np.round(float(antiglare_max_y_px)), 0, h))
+    if x1 <= x0 or y1 <= y0:
+        return base_mask
+
+    rescue_mask = base_mask.copy()
+    roi_bgr = bgr_image[y0:y1, x0:x1]
+    roi_hsv = hsv_image[y0:y1, x0:x1]
+    roi_rescue = _dual_red_mask(
+        roi_hsv,
+        sat_min=20,
+        val_min=120,
+        low_h=(0, 15),
+        high_h=(165, 180),
+    )
+    # Glare makes the puck appear desaturated/grayish red. In that case hue can
+    # become unreliable, so use a simple channel-dominance rescue in BGR space.
+    r = roi_bgr[:, :, 2].astype(np.int16)
+    g = roi_bgr[:, :, 1].astype(np.int16)
+    b = roi_bgr[:, :, 0].astype(np.int16)
+    roi_gray_red_rescue = (
+        (r >= 160)
+        & ((r - np.maximum(g, b)) >= 25)
+        & (np.abs(g - b) <= 35)
+    ).astype(np.uint8) * 255
+
+    roi_rescue_combined = cv2.bitwise_or(roi_rescue, roi_gray_red_rescue)
+    rescue_mask[y0:y1, x0:x1] = cv2.bitwise_or(
+        rescue_mask[y0:y1, x0:x1], roi_rescue_combined
+    )
+    return rescue_mask
+
+
+def _convert_raw_bounds_to_detector_bounds(
+    antiglare_min_x_px,
+    antiglare_max_x_px,
+    antiglare_min_y_px,
+    antiglare_max_y_px,
+    raw_shape,
+    detector_shape,
+    rotate,
+):
+    if None in (
+        antiglare_min_x_px,
+        antiglare_max_x_px,
+        antiglare_min_y_px,
+        antiglare_max_y_px,
+    ):
+        return antiglare_min_x_px, antiglare_max_x_px, antiglare_min_y_px, antiglare_max_y_px
+
+    x0 = float(min(antiglare_min_x_px, antiglare_max_x_px))
+    x1 = float(max(antiglare_min_x_px, antiglare_max_x_px))
+    y0 = float(min(antiglare_min_y_px, antiglare_max_y_px))
+    y1 = float(max(antiglare_min_y_px, antiglare_max_y_px))
+
+    raw_h, raw_w = raw_shape[:2]
+    det_h, det_w = detector_shape[:2]
+    if raw_h <= 0 or raw_w <= 0 or det_h <= 0 or det_w <= 0:
+        return antiglare_min_x_px, antiglare_max_x_px, antiglare_min_y_px, antiglare_max_y_px
+
+    if rotate:
+        # Match _preprocess_puck_image rotation: ROTATE_90_COUNTERCLOCKWISE.
+        corners = np.array(
+            [
+                [x0, y0],
+                [x1, y0],
+                [x1, y1],
+                [x0, y1],
+            ],
+            dtype=float,
+        )
+        rotated = np.zeros_like(corners)
+        rotated[:, 0] = corners[:, 1]  # x' = y
+        rotated[:, 1] = (raw_w - 1.0) - corners[:, 0]  # y' = W - 1 - x
+        x0_r, y0_r = np.min(rotated, axis=0)
+        x1_r, y1_r = np.max(rotated, axis=0)
+        raw_ref_w = float(raw_h)
+        raw_ref_h = float(raw_w)
+    else:
+        x0_r, x1_r, y0_r, y1_r = x0, x1, y0, y1
+        raw_ref_w = float(raw_w)
+        raw_ref_h = float(raw_h)
+
+    scale_x = float(det_w) / max(raw_ref_w, 1.0)
+    scale_y = float(det_h) / max(raw_ref_h, 1.0)
+    return (
+        x0_r * scale_x,
+        x1_r * scale_x,
+        y0_r * scale_y,
+        y1_r * scale_y,
+    )
+
+
+def _history_to_detector_pixel(puck_history, center_offset_constant):
+    if puck_history is None or len(puck_history) == 0:
+        return None
+    prev_x = float(puck_history[-1][0]) - float(center_offset_constant)
+    prev_y = float(puck_history[-1][1])
+    pred_x = (prev_x * 1000.0 + float(offset_constants[0])) / 4.0
+    pred_y = (-prev_y * 1000.0 + float(offset_constants[1])) / 4.0
+    return pred_x, pred_y
+
+
+def _select_component_centroid(
+    mask,
+    puck_history=None,
+    center_offset_constant=0.0,
+    min_radius_px=None,
+    max_radius_px=None,
+    min_circularity=None,
+    min_fill_ratio=None,
+    loose_min_fill_ratio=None,
+    max_area=2500,
+):
+    pred = _history_to_detector_pixel(puck_history, center_offset_constant)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    strict_candidates = []
+    loose_candidates = []
+    min_radius_px = MIN_PUCK_RADIUS_PX if min_radius_px is None else float(min_radius_px)
+    max_radius_px = MAX_PUCK_RADIUS_PX if max_radius_px is None else float(max_radius_px)
+    min_circularity = (
+        MIN_PUCK_CIRCULARITY if min_circularity is None else float(min_circularity)
+    )
+
+    for contour in contours:
+        area = float(cv2.contourArea(contour))
+        if area < MIN_DETECT or area > max_area:
+            continue
+        perimeter = float(cv2.arcLength(contour, True))
+        if perimeter <= 0.0:
+            continue
+        (cx, cy), radius = cv2.minEnclosingCircle(contour)
+        if radius < min_radius_px or radius > max_radius_px:
+            continue
+
+        fill_ratio = area / max(np.pi * radius * radius, 1e-6)
+        if loose_min_fill_ratio is not None and fill_ratio < float(loose_min_fill_ratio):
+            continue
+        circularity = float((4.0 * np.pi * area) / (perimeter * perimeter))
+        candidate = (area, float(cx), float(cy), circularity, float(radius), fill_ratio)
+        loose_candidates.append(candidate)
+        if circularity >= min_circularity and (
+            min_fill_ratio is None or fill_ratio >= float(min_fill_ratio)
+        ):
+            strict_candidates.append(candidate)
+
+    # Prefer clearly circular blobs, but keep a loose fallback to avoid dropouts.
+    candidates = strict_candidates if len(strict_candidates) > 0 else loose_candidates
+    if not candidates:
+        return None
+
+    if pred is None:
+        _, cx, cy, _, _, _ = max(
+            candidates, key=lambda c: (c[3], c[5], c[0])
+        )
+        return int(np.round(cx)), int(np.round(cy))
+
+    pred_x, pred_y = pred
+    _, cx, cy, _, _, _ = min(
+        candidates,
+        key=lambda c: (c[1] - pred_x) ** 2
+        + (c[2] - pred_y) ** 2
+        + 200.0 * (1.0 - c[3]) ** 2
+        + 120.0 * (1.0 - c[5]) ** 2,
+    )
+    return int(np.round(cx)), int(np.round(cy))
+
+
+def find_red_hockey_puck(
+    image,
+    puck_history=None,
+    rotate=True,
+    center_offset_constant=0.0,
+    **_ignored_kwargs,
+):
+    image = _preprocess_puck_image(image, rotate=rotate)
     hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-    # We'll lower the saturation and value thresholds to possibly capture a darker green
-    refined_lower = np.array(hsv_low)  # Lower saturation and value
-    refined_upper = np.array(hsv_high)
-    # print(hsv_image[:,:,2])
-    # Create a mask for green color in the left half with the refined thresholds
-    refined_mask = cv2.inRange(hsv_image, refined_lower, refined_upper)
-    # remove_table_edges_mask = np.zeros((h,w), dtype=np.uint8)
-    # remove_table_edges_mask[0:175, 30:290] = 1
-    # refined_mask *= remove_table_edges_mask
+    # Puck is roughly 30 px wide in raw detector input; _preprocess_puck_image
+    # downsamples by 2, so we gate radius around that while keeping a wide margin.
+    red_mask = _dual_red_mask(
+        hsv_image,
+        sat_min=45,
+        val_min=45,
+        low_h=(0, 13),
+        high_h=(165, 180),
+    )
+    r = image[:, :, 2].astype(np.int16)
+    g = image[:, :, 1].astype(np.int16)
+    b = image[:, :, 0].astype(np.int16)
+    gray_red_rescue = (
+        (r >= 110)
+        & ((r - np.maximum(g, b)) >= 12)
+        & (np.abs(g - b) <= 45)
+    ).astype(np.uint8) * 255
+    mask = cv2.bitwise_or(red_mask, gray_red_rescue)
 
-    puck_idx = np.where(refined_mask)
-    # cv2.imshow('MASK',refined_mask)
-    # cv2.waitKey(1)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
 
-    if len(puck_idx[0]) < MIN_DETECT:
-        if puck_history is not None: return puck_history[-1][0], puck_history[-1][1], 1
-        return -2, 0, 1
-    y, x = int(np.round(np.median(puck_idx[0]))),int(np.round(np.median(puck_idx[1])))
-    image[y-3:y+3, x-3:x+3, :] = 0
-    # homo_idx = (Mimg @ np.array([[x * upscale_constant,y * upscale_constant,1]]).T - offset_constants / 2) * 0.001
-    homo_idx = (np.array([x*2 * 2,y*2 * 2]) - offset_constants) * 0.001
-    # cv2.imshow('detect',image)
-    # cv2.waitKey(1)
-    # # print(image.shape, offset_constants, x,y, x*2 * 1.5,y*2 * 1.5, homo_idx)
-    # print(h,w, x,y,homo_idx)
-    return homo_idx[0], -homo_idx[1], 0
+    center = _select_component_centroid(
+        mask,
+        puck_history=puck_history,
+        center_offset_constant=center_offset_constant,
+        min_radius_px=SIMPLE_MIN_PUCK_RADIUS_PX,
+        max_radius_px=SIMPLE_MAX_PUCK_RADIUS_PX,
+        min_circularity=SIMPLE_MIN_PUCK_CIRCULARITY,
+        min_fill_ratio=SIMPLE_MIN_PUCK_FILL_RATIO,
+        loose_min_fill_ratio=SIMPLE_LOOSE_MIN_PUCK_FILL_RATIO,
+    )
+    if center is None:
+        return _fallback_puck(puck_history)
+
+    x, y = center
+    robot_x, robot_y = _pixel_to_robot_xy(x, y)
+    return robot_x, robot_y, 0
 
 
-    # Detect blobs
-    # keypoints = detector.detect(mask)
-    while True:
-        cv2.imshow('mask',hsv_image)
-        cv2.imshow('mask',mask)
-        cv2.waitKey(1)
-    vals = np.where(mask > 0)
-    x, y = int(np.round(np.median(vals[0]))),int(np.round(np.median(vals[1])))
+def find_red_hockey_puck_antiglare(
+    image,
+    puck_history=None,
+    rotate=True,
+    antiglare_bounds_in_raw_image=True,
+    antiglare_min_x_px=None,
+    antiglare_max_x_px=None,
+    antiglare_min_y_px=None,
+    antiglare_max_y_px=None,
+    center_offset_constant=0.0,
+    **_ignored_kwargs,
+):
+    raw_shape = image.shape
+    image = _preprocess_puck_image(image, rotate=rotate)
+    hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-    image[x-5:x+5, y-5:y+5, :] = 0
-    # Save the image with keypoints
-    # cv2.imwrite('output.jpg', image_with_keypoints)
+    if antiglare_bounds_in_raw_image:
+        (
+            antiglare_min_x_px,
+            antiglare_max_x_px,
+            antiglare_min_y_px,
+            antiglare_max_y_px,
+        ) = _convert_raw_bounds_to_detector_bounds(
+            antiglare_min_x_px,
+            antiglare_max_x_px,
+            antiglare_min_y_px,
+            antiglare_max_y_px,
+            raw_shape=raw_shape,
+            detector_shape=image.shape,
+            rotate=rotate,
+        )
 
-    return x,y,image
+    mask = _dual_red_mask(
+        hsv_image,
+        sat_min=80,
+        val_min=30,
+        low_h=(0, 10),
+        high_h=(170, 180),
+    )
+    mask = _apply_antiglare_rescue_mask(
+        mask,
+        image,
+        hsv_image,
+        antiglare_min_x_px=antiglare_min_x_px,
+        antiglare_max_x_px=antiglare_max_x_px,
+        antiglare_min_y_px=antiglare_min_y_px,
+        antiglare_max_y_px=antiglare_max_y_px,
+    )
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+
+    center = _select_component_centroid(
+        mask,
+        puck_history=puck_history,
+        center_offset_constant=center_offset_constant,
+    )
+    if center is None:
+        return _fallback_puck(puck_history)
+
+    x, y = center
+    robot_x, robot_y = _pixel_to_robot_xy(x, y)
+    return robot_x, robot_y, 0

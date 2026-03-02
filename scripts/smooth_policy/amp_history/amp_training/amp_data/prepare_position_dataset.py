@@ -19,10 +19,19 @@ Output format (with actions): Additional tensor of shape [N, 4, 2] where:
           (s1→s2, s2→s3, s3→s4, s4→s5)
     - 2 = [delta_x, delta_y]
 
+Output format (with puck windows): Additional tensor of shape [N, 5, 2] where:
+    - N = total number of aligned sequences across all trajectories
+    - 5 = puck window aligned with each 5-state paddle window: [t, t+1, t+2, t+3, t+4]
+    - 2 = [puck_x, puck_y]
+
 Action data source (per FIELD_DOCUMENTATION.md):
     - Fields 26-27: desired_x, desired_y (commanded target position)
     - Fields 5-6: pose_x, pose_y (current position)
     - Action = desired_pose[:2] - pose[:2]
+
+Puck data source:
+    - Fields 32-33: puck_x, puck_y
+    - Required when --include-puck is enabled.
 """
 
 import h5py
@@ -31,6 +40,10 @@ import torch
 from pathlib import Path
 from tqdm import tqdm
 import argparse
+
+from scripts.smooth_policy.amp_history.amp_training.feature_processing import (
+    build_puck_discriminator_features_numpy,
+)
 
 
 def load_demo_list(demo_list_path):
@@ -151,7 +164,32 @@ def extract_action_vector(train_vals, idx):
     return action
 
 
-def extract_position_sequences(train_vals, sequence_length=5, include_actions=False):
+def extract_puck_vector(train_vals, idx):
+    """
+    Extract 2D puck position vector at given timestep index.
+
+    According to FIELD_DOCUMENTATION.md:
+    - Field 32: puck_x
+    - Field 33: puck_y
+    """
+    if train_vals.shape[1] < 34:
+        raise ValueError(
+            f"Puck fields require at least 34 columns (found {train_vals.shape[1]})."
+        )
+    puck_position = np.array([
+        train_vals[idx, 32],  # puck_x
+        train_vals[idx, 33],  # puck_y
+    ], dtype=np.float32)
+    return puck_position
+
+
+def extract_position_sequences(
+    train_vals,
+    sequence_length=5,
+    include_actions=False,
+    include_puck=False,
+    puck_window_size=5,
+):
     """
     Extract all consecutive position sequences from a single trajectory.
     
@@ -159,21 +197,36 @@ def extract_position_sequences(train_vals, sequence_length=5, include_actions=Fa
         train_vals: Full trajectory array (T x 32)
         sequence_length: Number of consecutive states to include (default: 5)
         include_actions: Whether to also extract action sequences (default: False)
+        include_puck: Whether to also extract puck windows (default: False)
+        puck_window_size: Puck window size aligned to paddle sequence (default: 5)
     
     Returns:
-        If include_actions=False:
+        If include_actions=False and include_puck=False:
             np.ndarray: Array of position sequences, shape (T-sequence_length+1, sequence_length, 2)
-        If include_actions=True:
+        If include_actions=True and include_puck=False:
             tuple: (position_sequences, action_sequences)
                 - position_sequences: shape (T-sequence_length+1, sequence_length, 2)
                 - action_sequences: shape (T-sequence_length+1, sequence_length-1, 2)
+        If include_actions=False and include_puck=True:
+            tuple: (position_sequences, puck_sequences)
+                - puck_sequences: shape (N, puck_window_size, 2)
+        If include_actions=True and include_puck=True:
+            tuple: (position_sequences, action_sequences, puck_sequences)
     """
+    if include_puck and puck_window_size != sequence_length:
+        raise ValueError(
+            f"puck_window_size ({puck_window_size}) must match sequence_length ({sequence_length})."
+        )
+
     n_timesteps = train_vals.shape[0]
     position_sequences = []
     action_sequences = [] if include_actions else None
+    puck_sequences = [] if include_puck else None
+
+    max_start = n_timesteps - sequence_length + 1
     
     # Need at least sequence_length timesteps for a sequence
-    for t in range(n_timesteps - sequence_length + 1):
+    for t in range(max_start):
         position_seq = []
         action_seq = [] if include_actions else None
         
@@ -191,17 +244,41 @@ def extract_position_sequences(train_vals, sequence_length=5, include_actions=Fa
         position_sequences.append(np.stack(position_seq))
         if include_actions:
             action_sequences.append(np.stack(action_seq))
+        if include_puck:
+            # Aligned puck window [t, t+1, t+2, t+3, t+4].
+            # In downstream processing with current_index=2, this corresponds to
+            # using the puck position 2 timesteps before the final paddle state.
+            puck_start = t
+            puck_end_exclusive = t + puck_window_size
+            puck_seq = [
+                extract_puck_vector(train_vals, puck_idx)
+                for puck_idx in range(puck_start, puck_end_exclusive)
+            ]
+            puck_sequences.append(np.stack(puck_seq))
     
     position_array = np.array(position_sequences, dtype=np.float32)
     
+    if include_actions and include_puck:
+        action_array = np.array(action_sequences, dtype=np.float32)
+        puck_array = np.array(puck_sequences, dtype=np.float32)
+        return position_array, action_array, puck_array
     if include_actions:
         action_array = np.array(action_sequences, dtype=np.float32)
         return position_array, action_array
+    if include_puck:
+        puck_array = np.array(puck_sequences, dtype=np.float32)
+        return position_array, puck_array
     
     return position_array
 
 
-def filter_trajectory(train_vals, min_length=50, safety_check=True, include_actions=False):
+def filter_trajectory(
+    train_vals,
+    min_length=50,
+    safety_check=True,
+    include_actions=False,
+    include_puck=False,
+):
     """
     Filter out bad trajectories based on quality criteria.
     
@@ -210,6 +287,7 @@ def filter_trajectory(train_vals, min_length=50, safety_check=True, include_acti
         min_length: Minimum trajectory length (need at least 5 for sequences)
         safety_check: Whether to check safety flags (field 4)
         include_actions: Whether to also check action fields for validity
+        include_puck: Whether to also check puck fields for validity
     
     Returns:
         bool: True if trajectory should be kept
@@ -234,13 +312,21 @@ def filter_trajectory(train_vals, min_length=50, safety_check=True, include_acti
         desired_pose_fields = train_vals[:, [26, 27]]
         if np.any(~np.isfinite(desired_pose_fields)):
             return False
+
+    # Check puck field availability and validity
+    if include_puck:
+        if train_vals.shape[1] < 34:
+            return False
+        puck_fields = train_vals[:, [32, 33]]
+        if np.any(~np.isfinite(puck_fields)):
+            return False
     
     return True
 
 
 def process_all_trajectories(data_dir, min_length=50, max_trajectories=None,
                             safety_check=True, demo_list=None, sequence_length=5,
-                            include_actions=False):
+                            include_actions=False, include_puck=False):
     """
     Process all trajectory files and collect position sequences.
     
@@ -252,17 +338,22 @@ def process_all_trajectories(data_dir, min_length=50, max_trajectories=None,
         demo_list: Optional list of trajectory IDs to process
         sequence_length: Number of consecutive states per sequence (default: 5)
         include_actions: Whether to also extract action sequences (default: False)
+        include_puck: Whether to also extract aligned puck windows (default: False)
     
     Returns:
-        If include_actions=False:
+        If include_actions=False and include_puck=False:
             tuple: (position_dataset, stats)
                 - position_dataset: np.ndarray of shape (N, sequence_length, 2)
                 - stats: dict with processing statistics
-        If include_actions=True:
+        If include_actions=True and include_puck=False:
             tuple: (position_dataset, action_dataset, stats)
                 - position_dataset: np.ndarray of shape (N, sequence_length, 2)
                 - action_dataset: np.ndarray of shape (N, sequence_length-1, 2)
                 - stats: dict with processing statistics
+        If include_actions=False and include_puck=True:
+            tuple: (position_dataset, puck_dataset, stats)
+        If include_actions=True and include_puck=True:
+            tuple: (position_dataset, action_dataset, puck_dataset, stats)
     """
     trajectory_files = find_trajectory_files(data_dir, demo_list)
     
@@ -275,6 +366,7 @@ def process_all_trajectories(data_dir, min_length=50, max_trajectories=None,
     
     all_position_sequences = []
     all_action_sequences = [] if include_actions else None
+    all_puck_sequences = [] if include_puck else None
     stats = {
         'total_files': len(trajectory_files),
         'valid_trajectories': 0,
@@ -282,7 +374,8 @@ def process_all_trajectories(data_dir, min_length=50, max_trajectories=None,
         'total_sequences': 0,
         'total_timesteps': 0,
         'error_files': [],
-        'include_actions': include_actions
+        'include_actions': include_actions,
+        'include_puck': include_puck,
     }
     
     for file_path in tqdm(trajectory_files, desc="Processing trajectories"):
@@ -292,22 +385,42 @@ def process_all_trajectories(data_dir, min_length=50, max_trajectories=None,
                 train_vals = f['train_vals'][:]
             
             # Filter trajectory
-            if not filter_trajectory(train_vals, min_length, safety_check, include_actions):
+            if not filter_trajectory(
+                train_vals,
+                min_length,
+                safety_check,
+                include_actions=include_actions,
+                include_puck=include_puck,
+            ):
                 stats['skipped_trajectories'] += 1
                 continue
             
             # Extract position sequences (and optionally action sequences)
-            result = extract_position_sequences(train_vals, sequence_length, include_actions)
-            
-            if include_actions:
+            result = extract_position_sequences(
+                train_vals,
+                sequence_length=sequence_length,
+                include_actions=include_actions,
+                include_puck=include_puck,
+            )
+
+            if include_actions and include_puck:
+                position_sequences, action_sequences, puck_sequences = result
+                all_position_sequences.append(position_sequences)
+                all_action_sequences.append(action_sequences)
+                all_puck_sequences.append(puck_sequences)
+            elif include_actions:
                 position_sequences, action_sequences = result
                 all_position_sequences.append(position_sequences)
                 all_action_sequences.append(action_sequences)
+            elif include_puck:
+                position_sequences, puck_sequences = result
+                all_position_sequences.append(position_sequences)
+                all_puck_sequences.append(puck_sequences)
             else:
                 all_position_sequences.append(result)
             
             stats['valid_trajectories'] += 1
-            stats['total_sequences'] += position_sequences.shape[0] if include_actions else result.shape[0]
+            stats['total_sequences'] += position_sequences.shape[0] if (include_actions or include_puck) else result.shape[0]
             stats['total_timesteps'] += train_vals.shape[0]
             
         except Exception as e:
@@ -322,14 +435,29 @@ def process_all_trajectories(data_dir, min_length=50, max_trajectories=None,
     
     position_dataset = np.concatenate(all_position_sequences, axis=0)
     
+    if include_actions and include_puck:
+        action_dataset = np.concatenate(all_action_sequences, axis=0)
+        puck_dataset = np.concatenate(all_puck_sequences, axis=0)
+        return position_dataset, action_dataset, puck_dataset, stats
     if include_actions:
         action_dataset = np.concatenate(all_action_sequences, axis=0)
         return position_dataset, action_dataset, stats
+    if include_puck:
+        puck_dataset = np.concatenate(all_puck_sequences, axis=0)
+        return position_dataset, puck_dataset, stats
     
     return position_dataset, stats
 
 
-def save_dataset(position_dataset, output_path, stats=None, action_dataset=None):
+def save_dataset(
+    position_dataset,
+    output_path,
+    stats=None,
+    action_dataset=None,
+    puck_dataset=None,
+    long_position_dataset=None,
+    long_puck_dataset=None,
+):
     """
     Save dataset as PyTorch tensor file.
     
@@ -338,6 +466,9 @@ def save_dataset(position_dataset, output_path, stats=None, action_dataset=None)
         output_path: Where to save the .pt file
         stats: Optional statistics dictionary
         action_dataset: Optional np.ndarray of shape (N, 4, 2) for transition actions
+        puck_dataset: Optional np.ndarray of shape (N, 5, 2) for aligned puck windows
+        long_position_dataset: Optional np.ndarray of shape (N_long, 30, 2) for long windows
+        long_puck_dataset: Optional np.ndarray of shape (N_long, 30, 2) for aligned long puck windows
     """
     # Convert to torch tensor
     position_tensor = torch.from_numpy(position_dataset).float()
@@ -355,6 +486,27 @@ def save_dataset(position_dataset, output_path, stats=None, action_dataset=None)
         save_dict['has_actions'] = True
     else:
         save_dict['has_actions'] = False
+
+    if puck_dataset is not None:
+        puck_tensor = torch.from_numpy(puck_dataset).float()
+        save_dict['puck_sequences'] = puck_tensor
+        save_dict['has_puck'] = True
+    else:
+        save_dict['has_puck'] = False
+
+    if long_position_dataset is not None:
+        long_position_tensor = torch.from_numpy(long_position_dataset).float()
+        save_dict['position_sequences_30'] = long_position_tensor
+        save_dict['has_long_positions'] = True
+    else:
+        save_dict['has_long_positions'] = False
+
+    if long_puck_dataset is not None:
+        long_puck_tensor = torch.from_numpy(long_puck_dataset).float()
+        save_dict['puck_sequences_30'] = long_puck_tensor
+        save_dict['has_long_puck'] = True
+    else:
+        save_dict['has_long_puck'] = False
     
     if stats is not None:
         # Convert stats to be JSON-serializable (remove Path objects)
@@ -373,9 +525,15 @@ def save_dataset(position_dataset, output_path, stats=None, action_dataset=None)
     print(f"  File size: {file_size_mb:.2f} MB")
     if action_dataset is not None:
         print(f"  Includes action sequences: Yes")
+    if puck_dataset is not None:
+        print(f"  Includes puck sequences: Yes")
+    if long_position_dataset is not None:
+        print(f"  Includes long position sequences: Yes")
+    if long_puck_dataset is not None:
+        print(f"  Includes long puck sequences: Yes")
 
 
-def print_dataset_statistics(position_dataset, stats, action_dataset=None):
+def print_dataset_statistics(position_dataset, stats, action_dataset=None, puck_dataset=None):
     """Print comprehensive statistics about the dataset."""
     print("\n" + "="*80)
     print("DATASET STATISTICS")
@@ -398,6 +556,9 @@ def print_dataset_statistics(position_dataset, stats, action_dataset=None):
     if action_dataset is not None:
         print(f"  Action shape: {action_dataset.shape}")
         print(f"  Action memory size: {action_dataset.nbytes / (1024**2):.2f} MB")
+    if puck_dataset is not None:
+        print(f"  Puck shape: {puck_dataset.shape}")
+        print(f"  Puck memory size: {puck_dataset.nbytes / (1024**2):.2f} MB")
     
     # Compute statistics for each position dimension
     all_positions = position_dataset.reshape(-1, 2)
@@ -424,8 +585,38 @@ def print_dataset_statistics(position_dataset, stats, action_dataset=None):
             print(f"    Mean: {values.mean():.4f}")
             print(f"    Std: {values.std():.4f}")
 
+    if puck_dataset is not None:
+        all_puck = puck_dataset.reshape(-1, 2)
+        puck_dim_names = ['Puck X (m)', 'Puck Y (m)']
 
-def validate_dataset(position_dataset, sequence_length=5, action_dataset=None):
+        print(f"\nPuck vector statistics:")
+        for i, name in enumerate(puck_dim_names):
+            values = all_puck[:, i]
+            print(f"  {name}:")
+            print(f"    Range: [{values.min():.4f}, {values.max():.4f}]")
+            print(f"    Mean: {values.mean():.4f}")
+            print(f"    Std: {values.std():.4f}")
+
+        # Shared puck feature processing preview (noise disabled for deterministic stats).
+        puck_features = build_puck_discriminator_features_numpy(
+            puck_dataset,
+            current_index=2,
+            vertical_axis=0,
+            downward_positive_direction=1.0,
+            downward_speed_max=0.75,
+            speed_dt=0.05,
+            noise_std=0.0,
+        )
+        speed_bins = puck_features[:, 1]
+        unique_bins, counts = np.unique(speed_bins, return_counts=True)
+        print("\nPuck discriminator feature preview (noise_std=0.0, axis=0):")
+        print(f"  Feature shape: {puck_features.shape}")
+        print(f"  Direction sign mean: {puck_features[:, 0].mean():.4f}")
+        print(f"  Vertical bin mean: {puck_features[:, 2].mean():.4f}")
+        print(f"  Downward speed bin distribution: {dict(zip(unique_bins.tolist(), counts.tolist()))}")
+
+
+def validate_dataset(position_dataset, sequence_length=5, action_dataset=None, puck_dataset=None):
     """
     Perform validation checks on the dataset.
     
@@ -433,6 +624,7 @@ def validate_dataset(position_dataset, sequence_length=5, action_dataset=None):
         position_dataset: np.ndarray of positions to validate
         sequence_length: Expected sequence length
         action_dataset: Optional np.ndarray of actions to validate
+        puck_dataset: Optional np.ndarray of puck windows to validate
         
     Returns:
         bool: True if all checks pass
@@ -466,6 +658,18 @@ def validate_dataset(position_dataset, sequence_length=5, action_dataset=None):
         assert action_dataset.shape[2] == 2, f"Expected 2D action vector, got {action_dataset.shape[2]}D"
         
         print("  ✓ Action validation checks passed")
+
+    if puck_dataset is not None:
+        if np.any(~np.isfinite(puck_dataset)):
+            print("  ⚠ WARNING: Puck dataset contains NaN or infinite values!")
+            return False
+
+        assert len(puck_dataset.shape) == 3, f"Expected 3D puck array, got {len(puck_dataset.shape)}D"
+        assert puck_dataset.shape[0] == position_dataset.shape[0], "Position and puck counts must match"
+        assert puck_dataset.shape[1] == 5, f"Expected 5 puck states per window, got {puck_dataset.shape[1]}"
+        assert puck_dataset.shape[2] == 2, f"Expected 2D puck vector, got {puck_dataset.shape[2]}D"
+
+        print("  ✓ Puck validation checks passed")
     
     print("  ✓ All validation checks passed")
     return True
@@ -509,7 +713,7 @@ def parse_args():
     parser.add_argument(
         '--demo-list',
         type=str,
-        default='scripts/smooth_policy/amp_history/amp_training/amp_data/good_demos.txt',
+        default=None,
         help='Path to text file containing list of trajectory names to process (one per line)'
     )
     parser.add_argument(
@@ -523,6 +727,11 @@ def parse_args():
         action='store_true',
         help='Include action sequences (delta target positions) in the dataset'
     )
+    parser.add_argument(
+        '--include-puck',
+        action='store_true',
+        help='Include aligned 5-step puck windows [t..t+4] for each paddle sequence'
+    )
     
     return parser.parse_args()
 
@@ -530,6 +739,8 @@ def parse_args():
 def main():
     """Main function to prepare AMP position dataset."""
     args = parse_args()
+    if args.include_puck and args.sequence_length != 5:
+        raise ValueError("--include-puck currently requires --sequence-length 5.")
     
     print("="*80)
     print("AMP POSITION DATASET PREPARATION")
@@ -542,6 +753,7 @@ def main():
     print(f"  Safety check: {not args.no_safety_check}")
     print(f"  Sequence length: {args.sequence_length}")
     print(f"  Include actions: {args.include_actions}")
+    print(f"  Include puck windows: {args.include_puck}")
     
     # Load demo list if provided
     demo_list = None
@@ -558,26 +770,34 @@ def main():
         safety_check=not args.no_safety_check,
         demo_list=demo_list,
         sequence_length=args.sequence_length,
-        include_actions=args.include_actions
+        include_actions=args.include_actions,
+        include_puck=args.include_puck,
     )
     
     # Unpack results based on whether actions are included
-    if args.include_actions:
+    if args.include_actions and args.include_puck:
+        position_dataset, action_dataset, puck_dataset, stats = result
+    elif args.include_actions:
         position_dataset, action_dataset, stats = result
+        puck_dataset = None
+    elif args.include_puck:
+        position_dataset, puck_dataset, stats = result
+        action_dataset = None
     else:
         position_dataset, stats = result
         action_dataset = None
+        puck_dataset = None
     
     # Print statistics
-    print_dataset_statistics(position_dataset, stats, action_dataset)
+    print_dataset_statistics(position_dataset, stats, action_dataset, puck_dataset)
     
     # Validate
-    if not validate_dataset(position_dataset, args.sequence_length, action_dataset):
+    if not validate_dataset(position_dataset, args.sequence_length, action_dataset, puck_dataset):
         print("\n⚠ WARNING: Validation failed! Proceeding with save anyway...")
     
     # Save dataset
     output_path = Path(args.output_path)
-    save_dataset(position_dataset, output_path, stats, action_dataset)
+    save_dataset(position_dataset, output_path, stats, action_dataset, puck_dataset)
     
     print("\n" + "="*80)
     print("✓ Dataset preparation complete!")
@@ -600,6 +820,10 @@ def main():
         print("  # transition actions aligned with state transitions in each 5-state window")
         print("  action12 = action_sequences[:, 0, :]  # (N, 2) - action s1->s2")
         print("  action45 = action_sequences[:, 3, :]  # (N, 2) - action s4->s5")
+    if args.include_puck:
+        print("\n  # With --include-puck flag:")
+        print("  puck_sequences = data['puck_sequences']  # Shape: (N, 5, 2)")
+        print("  # aligned with paddle windows [t..t+4]; index 2 is two timesteps before s5")
 
 
 if __name__ == '__main__':

@@ -8,10 +8,11 @@ LSGAN uses MSE loss: 0.5 * E[(D(x_real) - 1)^2] + 0.5 * E[(D(x_fake) - (-1))^2]
 This variant uses [-1, 1] targets instead of [0, 1] for better gradient flow.
 This often provides more stable gradients compared to standard GAN training.
 
-Supports two discriminator modes:
-1. Position-only (default): Discriminator input is 8D (4 relative positions x 2 coords)
-2. Position + Action: Discriminator input is 10D (8 positions + 2 action dims)
-   Enable with --use_action_discriminator flag and provide a dataset with action_sequences.
+Supports discriminator modes:
+1. Position-only (default): 8D
+2. Position + Action: 16D
+3. Position (+ Action) + Puck features: +4D
+   Enable with --use_action_discriminator / --use_puck_discriminator.
 """
 
 import random
@@ -25,7 +26,7 @@ import yaml
 from airhockey import AirHockeyEnv
 import gymnasium as gym
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import tyro
 
 import os
@@ -39,7 +40,14 @@ from scripts.smooth_policy.agent import Agent
 from scripts.smooth_policy.amp_history.amp_training.discriminator import Discriminator
 from scripts.smooth_policy.amp_history.amp_training.replay_buffer import ReplayBuffer
 from scripts.smooth_policy.amp_history.amp_training.normalizer import Normalizer
+from scripts.smooth_policy.amp_history.amp_training.running_stats import RunningStatsNormalizer
 from scripts.smooth_policy.amp_history.amp_training.demo_loader_position_history import DemoLoaderPositionHistory
+from scripts.smooth_policy.amp_history.amp_training.feature_processing import (
+    PUCK_FEATURE_DIM,
+    build_puck_discriminator_features_torch,
+    normalize_action_history_batch,
+    normalize_position_history_batch,
+)
 
 # used for possible reference state initialization from demonstrations
 class ReferenceStateWrapper(gym.Wrapper):
@@ -63,58 +71,344 @@ class ReferenceStateWrapper(gym.Wrapper):
         return self.env.reset(**kwargs)
 
 
-def normalize_position_history_batch(position_history):
-    """
-    Normalize batched position history to relative coordinates (translation only).
-    
-    Process:
-    1. Translate all positions so the first position is at (0, 0)
-    2. Remove the first position (now [0, 0], contains no information)
-    3. Return the remaining 4 relative positions (8 dimensions)
-    
-    Args:
-        position_history: Tensor of shape [batch, 5, 2] containing 5 consecutive (x, y) positions
-    
-    Returns:
-        torch.Tensor: Normalized positions of shape [batch, 8]
-                     [pos2_x, pos2_y, pos3_x, pos3_y, pos4_x, pos4_y, pos5_x, pos5_y]
-                     (all relative to pos1 which is at origin)
-    """
-    # Extract the first position
-    pos1 = position_history[:, 0, :]  # [batch, 2]
-    # Translate all positions so first is at origin
-    translated = position_history - pos1.unsqueeze(1)  # [batch, 5, 2]
-    # Remove first position (now [0, 0]) and flatten the remaining 4 positions
-    normalized_state = translated[:, 1:, :].reshape(-1, 8)  # [batch, 8]
-    return normalized_state
-
-
-def normalize_action_history_batch(action_history):
-    """
-    Normalize batched transition action history to unit norm and flatten.
-    Args:
-        action_history: Tensor of shape [batch, 4, 2]
-    Returns:
-        torch.Tensor: Normalized flattened actions of shape [batch, 8]
-    """
-    action_norms = torch.norm(action_history, dim=-1, keepdim=True)
-    normalized_actions = action_history / (action_norms + 1e-8)
-    return normalized_actions.reshape(action_history.shape[0], 8)
-
-def parse_discriminator_hidden_dims(hidden_sizes):
-    """Validate and normalize discriminator hidden layer sizes."""
-    hidden_dims = [int(size) for size in hidden_sizes]
-    if len(hidden_dims) == 0:
-        raise ValueError("disc_hidden_sizes must contain at least one layer size.")
-    if any(size <= 0 for size in hidden_dims):
-        raise ValueError(f"disc_hidden_sizes must be positive, got: {hidden_dims}")
-    return hidden_dims
+def validate_discriminator_arch(hidden_layer_size, num_hidden_layers):
+    """Validate discriminator architecture in hidden-size + depth form."""
+    hidden_layer_size = int(hidden_layer_size)
+    num_hidden_layers = int(num_hidden_layers)
+    if hidden_layer_size <= 0:
+        raise ValueError(f"disc_hidden_layer_size must be positive, got {hidden_layer_size}")
+    if num_hidden_layers < 1:
+        raise ValueError(f"disc_num_hidden_layers must be >= 1, got {num_hidden_layers}")
+    return hidden_layer_size, num_hidden_layers
 
 def augment_policy_observation(observation, last_action, use_last_action):
     """Append last action to policy observation when enabled."""
     if not use_last_action:
         return observation
     return torch.cat([observation, last_action], dim=-1)
+
+
+def extract_current_paddle_position(observation):
+    """Extract current paddle (x, y) from common observation layouts."""
+    obs_dim = observation.shape[-1]
+    if obs_dim >= 30:
+        # history layout: paddle history [0:15], current paddle at indices 12:14
+        return observation[:, 12:14]
+    # pos/vel layouts both put paddle position in the first 2 dims
+    return observation[:, 0:2]
+
+
+def extract_current_puck_position(observation):
+    """Extract current puck (x, y) from common observation layouts."""
+    obs_dim = observation.shape[-1]
+    if obs_dim >= 30:
+        # history layout: puck history [15:30], current puck at indices 27:29
+        return observation[:, 27:29]
+    if obs_dim >= 8:
+        # vel layout: [paddle_pos, paddle_vel, puck_pos, puck_vel]
+        return observation[:, 4:6]
+    if obs_dim >= 4:
+        # pos layout: [paddle_pos, puck_pos]
+        return observation[:, 2:4]
+    raise ValueError(f"Observation dim {obs_dim} is too small to extract puck position.")
+
+
+def parse_scalar_info_from_infos(infos, key, num_envs, device, fallback_values):
+    """Read vectorized scalar infos with mask-aware fallback handling."""
+    if not (isinstance(infos, dict) and key in infos):
+        return fallback_values
+
+    raw = infos[key]
+    values = np.asarray(raw, dtype=np.float32).reshape(-1)
+    if values.shape[0] == num_envs:
+        return torch.as_tensor(values, dtype=torch.float32, device=device)
+
+    mask_key = f"_{key}"
+    mask = infos.get(mask_key)
+    if mask is not None:
+        mask = np.asarray(mask, dtype=bool).reshape(-1)
+        if values.shape[0] == int(mask.sum()):
+            out = fallback_values.clone()
+            out[torch.as_tensor(mask, dtype=torch.bool, device=device)] = torch.as_tensor(
+                values, dtype=torch.float32, device=device
+            )
+            return out
+    return fallback_values
+
+
+def _extract_last_terminal_motion_value(info, motion_key):
+    """Return last terminal motion sample from final_info.motion_data when available."""
+    if not (isinstance(info, dict) and "motion_data" in info):
+        return None
+    values = info["motion_data"].get(motion_key)
+    if values is None or len(values) == 0:
+        return None
+    return float(values[-1])
+
+
+def parse_motion_magnitudes_from_infos(
+    infos,
+    num_envs,
+    device,
+    fallback_velocity_mag,
+    fallback_acceleration_mag,
+    fallback_jerk_mag,
+):
+    """Extract per-env motion magnitudes from infos, including terminal-step fallbacks."""
+    velocity_mag = parse_scalar_info_from_infos(
+        infos, "paddle_velocity_mag", num_envs, device, fallback_velocity_mag
+    )
+    acceleration_mag = parse_scalar_info_from_infos(
+        infos, "paddle_acceleration_mag", num_envs, device, fallback_acceleration_mag
+    )
+    jerk_mag = parse_scalar_info_from_infos(
+        infos, "paddle_jerk_mag", num_envs, device, fallback_jerk_mag
+    )
+
+    if isinstance(infos, dict) and "final_info" in infos:
+        terminal_mask = infos.get("_final_info")
+        if terminal_mask is None:
+            terminal_mask = np.ones(num_envs, dtype=bool)
+        else:
+            terminal_mask = np.asarray(terminal_mask, dtype=bool).reshape(-1)
+
+        final_infos = infos["final_info"]
+        if isinstance(final_infos, np.ndarray):
+            final_infos = final_infos.tolist()
+
+        for env_idx, info in enumerate(final_infos):
+            if env_idx >= num_envs or not terminal_mask[env_idx] or not info:
+                continue
+            terminal_velocity = _extract_last_terminal_motion_value(info, "velocity_mags")
+            terminal_acceleration = _extract_last_terminal_motion_value(info, "acceleration_mags")
+            terminal_jerk = _extract_last_terminal_motion_value(info, "jerk_mags")
+            if terminal_velocity is not None:
+                velocity_mag[env_idx] = terminal_velocity
+            if terminal_acceleration is not None:
+                acceleration_mag[env_idx] = terminal_acceleration
+            if terminal_jerk is not None:
+                jerk_mag[env_idx] = terminal_jerk
+
+    return velocity_mag, acceleration_mag, jerk_mag
+
+
+def warmup_motion_normalizer(envs, motion_normalizer, warmup_steps, seed, device):
+    """Collect random-rollout motion statistics before training starts."""
+    if warmup_steps <= 0:
+        return
+
+    num_envs = envs.num_envs
+    fallback_velocity = torch.zeros(num_envs, dtype=torch.float32, device=device)
+    fallback_acceleration = torch.zeros(num_envs, dtype=torch.float32, device=device)
+    fallback_jerk = torch.zeros(num_envs, dtype=torch.float32, device=device)
+
+    envs.reset(seed=seed)
+    for _ in range(int(warmup_steps)):
+        random_actions = np.stack(
+            [envs.single_action_space.sample() for _ in range(num_envs)],
+            axis=0,
+        )
+        _, _, _, _, infos = envs.step(random_actions)
+        fallback_velocity, fallback_acceleration, fallback_jerk = parse_motion_magnitudes_from_infos(
+            infos=infos,
+            num_envs=num_envs,
+            device=device,
+            fallback_velocity_mag=fallback_velocity,
+            fallback_acceleration_mag=fallback_acceleration,
+            fallback_jerk_mag=fallback_jerk,
+        )
+        motion_batch = torch.stack(
+            [fallback_velocity, fallback_acceleration, fallback_jerk], dim=-1
+        )
+        motion_normalizer.update(motion_batch)
+
+def train_lsgan_discriminator_step(
+    demo_loader,
+    disc_batch_size,
+    b_disc_obs,
+    b_valid,
+    replay_buffer,
+    replay_samples,
+    disc_normalizer,
+    discriminator,
+    disc_optimizer,
+    grad_penalty_weight,
+    logit_reg_weight,
+    max_grad_norm,
+    device,
+):
+    """Run one discriminator update step with the same LSGAN objective used in training."""
+    demo_disc_obs = demo_loader.sample(disc_batch_size)
+    agent_samples = disc_batch_size // 2
+
+    valid_disc_obs = b_disc_obs[b_valid]
+    perm_indices = torch.randperm(len(valid_disc_obs), device=device)
+    agent_disc_obs_current = valid_disc_obs[perm_indices[:agent_samples]]
+
+    num_to_store = min(len(valid_disc_obs), replay_samples)
+    replay_buffer.push(valid_disc_obs[perm_indices[:num_to_store]])
+
+    if len(replay_buffer) > 0:
+        agent_disc_obs_replay = replay_buffer.sample(agent_samples)
+        agent_disc_obs = torch.cat([agent_disc_obs_current, agent_disc_obs_replay], dim=0)
+    else:
+        agent_disc_obs = agent_disc_obs_current
+
+    norm_demo_disc_obs = disc_normalizer.normalize(demo_disc_obs)
+    norm_agent_disc_obs = disc_normalizer.normalize(agent_disc_obs)
+    norm_demo_disc_obs.requires_grad_(True)
+
+    disc_demo_logit = discriminator(norm_demo_disc_obs).squeeze(-1)
+    disc_agent_logit = discriminator(norm_agent_disc_obs).squeeze(-1)
+
+    disc_loss_demo = 0.5 * torch.mean((disc_demo_logit - 1.0) ** 2)
+    disc_loss_agent = 0.5 * torch.mean((disc_agent_logit - (-1.0)) ** 2)
+    disc_loss = disc_loss_demo + disc_loss_agent
+
+    disc_demo_grad = torch.autograd.grad(
+        disc_demo_logit,
+        norm_demo_disc_obs,
+        grad_outputs=torch.ones_like(disc_demo_logit),
+        create_graph=True,
+        retain_graph=True,
+        only_inputs=True,
+    )[0]
+    disc_grad_penalty = torch.mean(torch.sum(disc_demo_grad ** 2, dim=-1))
+    disc_loss = disc_loss + grad_penalty_weight * disc_grad_penalty
+
+    if logit_reg_weight > 0:
+        logit_weights = discriminator.get_logit_weights()
+        disc_logit_reg_loss = torch.sum(logit_weights ** 2)
+        disc_loss = disc_loss + logit_reg_weight * disc_logit_reg_loss
+
+    disc_optimizer.zero_grad()
+    disc_loss.backward()
+    nn.utils.clip_grad_norm_(discriminator.parameters(), max_grad_norm)
+    disc_optimizer.step()
+
+    disc_normalizer.record(b_disc_obs[b_valid])
+    disc_normalizer.record(demo_disc_obs)
+    disc_normalizer.update()
+
+    with torch.no_grad():
+        disc_agent_acc = (disc_agent_logit < 0.0).float().mean().item()
+        disc_demo_acc = (disc_demo_logit > 0.0).float().mean().item()
+
+    return {
+        "disc_loss": disc_loss,
+        "disc_loss_demo": disc_loss_demo,
+        "disc_loss_agent": disc_loss_agent,
+        "disc_grad_penalty": disc_grad_penalty,
+        "disc_agent_acc": disc_agent_acc,
+        "disc_demo_acc": disc_demo_acc,
+        "disc_agent_logit": disc_agent_logit,
+        "disc_demo_logit": disc_demo_logit,
+    }
+
+
+def log_discriminator_metrics(writer, prefix, metrics, replay_buffer_size, global_step):
+    writer.add_scalar(f"{prefix}/disc_loss", metrics["disc_loss"].item(), global_step)
+    writer.add_scalar(f"{prefix}/disc_loss_demo", metrics["disc_loss_demo"].item(), global_step)
+    writer.add_scalar(f"{prefix}/disc_loss_agent", metrics["disc_loss_agent"].item(), global_step)
+    writer.add_scalar(f"{prefix}/disc_grad_penalty", metrics["disc_grad_penalty"].item(), global_step)
+    writer.add_scalar(f"{prefix}/disc_agent_acc", metrics["disc_agent_acc"], global_step)
+    writer.add_scalar(f"{prefix}/disc_demo_acc", metrics["disc_demo_acc"], global_step)
+    writer.add_scalar(f"{prefix}/disc_agent_logit_mean", metrics["disc_agent_logit"].mean().item(), global_step)
+    writer.add_scalar(f"{prefix}/disc_demo_logit_mean", metrics["disc_demo_logit"].mean().item(), global_step)
+    writer.add_scalar(f"{prefix}/replay_buffer_size", replay_buffer_size, global_step)
+
+
+def log_reward_stream_stats(
+    writer,
+    global_step,
+    task_r_raw,
+    task_r_scaled,
+    temporal_alignment_reward_raw,
+    temporal_alignment_reward_scaled,
+    action_magnitude_reward_raw,
+    action_magnitude_reward_scaled,
+    combined_rewards,
+    advantages,
+    values,
+    use_short_discriminator_reward,
+    disc_r_raw,
+    disc_r_scaled,
+):
+    if use_short_discriminator_reward:
+        writer.add_scalar("amp/disc_reward_raw_mean", disc_r_raw.mean().item(), global_step)
+        writer.add_scalar("amp/disc_reward_raw_std", disc_r_raw.std().item(), global_step)
+        writer.add_scalar("amp/disc_reward_scaled_mean", disc_r_scaled.mean().item(), global_step)
+        writer.add_scalar("amp/disc_reward_scaled_std", disc_r_scaled.std().item(), global_step)
+    writer.add_scalar("amp/task_reward_raw_mean", task_r_raw.mean().item(), global_step)
+    writer.add_scalar("amp/task_reward_raw_std", task_r_raw.std().item(), global_step)
+    writer.add_scalar("amp/task_reward_scaled_mean", task_r_scaled.mean().item(), global_step)
+    writer.add_scalar("amp/task_reward_scaled_std", task_r_scaled.std().item(), global_step)
+    writer.add_scalar("amp/temporal_alignment_reward_raw_mean", temporal_alignment_reward_raw.mean().item(), global_step)
+    writer.add_scalar("amp/temporal_alignment_reward_raw_std", temporal_alignment_reward_raw.std().item(), global_step)
+    writer.add_scalar("amp/temporal_alignment_reward_scaled_mean", temporal_alignment_reward_scaled.mean().item(), global_step)
+    writer.add_scalar("amp/temporal_alignment_reward_scaled_std", temporal_alignment_reward_scaled.std().item(), global_step)
+    writer.add_scalar("amp/action_magnitude_reward_raw_mean", action_magnitude_reward_raw.mean().item(), global_step)
+    writer.add_scalar("amp/action_magnitude_reward_raw_std", action_magnitude_reward_raw.std().item(), global_step)
+    writer.add_scalar("amp/action_magnitude_reward_scaled_mean", action_magnitude_reward_scaled.mean().item(), global_step)
+    writer.add_scalar("amp/action_magnitude_reward_scaled_std", action_magnitude_reward_scaled.std().item(), global_step)
+
+    # Backward-compatible logs.
+    if use_short_discriminator_reward:
+        writer.add_scalar("amp/disc_reward_mean", disc_r_raw.mean().item(), global_step)
+        writer.add_scalar("amp/disc_reward_std", disc_r_raw.std().item(), global_step)
+    writer.add_scalar("amp/task_reward_mean", task_r_raw.mean().item(), global_step)
+    writer.add_scalar("amp/combined_reward_mean", combined_rewards.mean().item(), global_step)
+
+    writer.add_scalar("charts/advantage_mean", advantages.mean().item(), global_step)
+    writer.add_scalar("charts/advantage_std", advantages.std().item(), global_step)
+    writer.add_scalar("charts/value_mean", values.mean().item(), global_step)
+    writer.add_scalar("charts/value_std", values.std().item(), global_step)
+
+
+def log_motion_penalty_stats(
+    writer,
+    global_step,
+    velocity_mag,
+    acceleration_mag,
+    jerk_mag,
+    velocity_penalty_raw,
+    acceleration_penalty_raw,
+    jerk_penalty_raw,
+    velocity_penalty_scaled,
+    acceleration_penalty_scaled,
+    jerk_penalty_scaled,
+    motion_normalizer,
+):
+    writer.add_scalar("motion/velocity_mag_mean", velocity_mag.mean().item(), global_step)
+    writer.add_scalar("motion/velocity_mag_std", velocity_mag.std().item(), global_step)
+    writer.add_scalar("motion/acceleration_mag_mean", acceleration_mag.mean().item(), global_step)
+    writer.add_scalar("motion/acceleration_mag_std", acceleration_mag.std().item(), global_step)
+    writer.add_scalar("motion/jerk_mag_mean", jerk_mag.mean().item(), global_step)
+    writer.add_scalar("motion/jerk_mag_std", jerk_mag.std().item(), global_step)
+
+    writer.add_scalar("motion/velocity_penalty_raw_mean", velocity_penalty_raw.mean().item(), global_step)
+    writer.add_scalar("motion/acceleration_penalty_raw_mean", acceleration_penalty_raw.mean().item(), global_step)
+    writer.add_scalar("motion/jerk_penalty_raw_mean", jerk_penalty_raw.mean().item(), global_step)
+    writer.add_scalar("motion/velocity_penalty_scaled_mean", velocity_penalty_scaled.mean().item(), global_step)
+    writer.add_scalar("motion/acceleration_penalty_scaled_mean", acceleration_penalty_scaled.mean().item(), global_step)
+    writer.add_scalar("motion/jerk_penalty_scaled_mean", jerk_penalty_scaled.mean().item(), global_step)
+
+    motion_std = torch.sqrt(motion_normalizer.var).detach().cpu().numpy()
+    writer.add_scalar("motion/normalizer_velocity_std", float(motion_std[0]), global_step)
+    writer.add_scalar("motion/normalizer_acceleration_std", float(motion_std[1]), global_step)
+    writer.add_scalar("motion/normalizer_jerk_std", float(motion_std[2]), global_step)
+    writer.add_scalar("motion/normalizer_count", motion_normalizer.count.item(), global_step)
+
+
+def save_amp_components(save_dir, discriminator, normalizer, replay_buffer):
+    torch.save(discriminator.state_dict(), os.path.join(save_dir, "discriminator.pth"))
+    torch.save(
+        {
+            "normalizer": normalizer.state_dict(),
+            "replay_buffer": replay_buffer.state_dict(),
+        },
+        os.path.join(save_dir, "amp_components.pth"),
+    )
 
 
 @dataclass
@@ -141,6 +435,8 @@ class Args:
     disc_replay_buffer_size: int = 100000
     disc_replay_samples: int = 1024
     disc_batch_size: int = 512
+    disc_reward_warmup_iters: int = 10
+    disc_reward_warmup_value: float = 0.4
     disc_learning_rate: float = 1e-5
     disc_logit_reg: float = 0.01
     disc_grad_penalty: float = 5.0
@@ -148,17 +444,29 @@ class Args:
     task_reward_weight: float = 0.5
     disc_reward_weight: float = 0.5
     num_discriminator_updates: int = 1
-    disc_hidden_sizes: list[int] = field(default_factory=lambda: [64, 64])
-    
+    disc_hidden_layer_size: int = 64
+    disc_num_hidden_layers: int = 2
     # Optional auxiliary rewards (default disabled)
     temporal_alignment_reward_scale: float = 0.0
     action_magnitude_reward_scale: float = 0.0
     temporal_alignment_horizon: int = 4
+    velocity_penalty_weight: float = 0.0
+    acceleration_penalty_weight: float = 0.0
+    jerk_penalty_weight: float = 0.0
+    motion_norm_warmup_steps: int = 2048
+    motion_norm_update_online: bool = True
+    motion_norm_clip: float = 10.0
+    motion_norm_eps: float = 1e-6
 
     # Paths
     config: str = "scripts/smooth_policy/configs/puck_touch/default_config.yaml"
     args_file: str = None
     model_path: str = None  # Path to pre-trained model state dict
+    bc_policy_path: str = None  # Path to frozen BC teacher policy (Agent state_dict)
+    bc_kl_weight: float = 0.01  # Initial KL weight for BC regularization: KL(pi_BC || pi_theta)
+    bc_kl_decay_iters: int = 200  # Linearly decay BC KL weight to 0 over this many iterations
+    reset_actor_logstd_on_model_load: bool = False  # Override actor_logstd immediately after loading model_path
+    actor_logstd_on_model_load: float = 0.0  # Value used when reset_actor_logstd_on_model_load=True
     discriminator_path: str = None  # Path to pre-trained discriminator state dict
     amp_components_path: str = None  # Path to AMP components (normalizer, replay buffer)
     log_parent_dir: str = None
@@ -173,9 +481,9 @@ class Args:
     # action scale for the agent (mostly deprecated, should default to 1)
     action_scale: float = 1
     
-    # agent hidden layer size (2 layers with this size)
-    agent_hidden_size: int = 128
-    
+    # Agent architecture.
+    agent_hidden_layer_size: int = 128
+    agent_num_hidden_layers: int = 2
     # Reference state initialization
     use_reference_state_init: bool = False  # Enable/disable feature
     reference_data_path: str = None  # Path to raw demo data (defaults to demo_data_path)
@@ -183,6 +491,14 @@ class Args:
     
     # Action-conditioned discriminator
     use_action_discriminator: bool = False  # If True, discriminator uses position + 4 transition actions (16D)
+    use_puck_discriminator: bool = False  # If True, discriminator appends puck features (+4D)
+    puck_vertical_axis: int = 0  # Canonical up/down axis (0=x, 1=y)
+    puck_downward_positive_direction: float = 1.0  # +1 if increasing axis is downward, else -1
+    puck_noise_std: float = 0.03  # Gaussian noise std for current puck position features
+    puck_downward_speed_max: float = 0.75  # Max speed used for 3-level downward speed bins
+    puck_speed_dt: float = 0.05  # Time delta for puck speed estimation
+    puck_vertical_pos_min: float = -1.0  # Min vertical puck value mapped to 5-bin range
+    puck_vertical_pos_max: float = 1.0  # Max vertical puck value mapped to 5-bin range
     disc_debug_interval: int = 5000  # Print discriminator feature samples every N env steps (<=0 disables)
     
     
@@ -219,6 +535,12 @@ if __name__ == "__main__":
     # command line args override file args
     args = tyro.cli(Args, default=default_args)
     args.batch_size = args.num_envs * args.num_steps
+    if args.agent_num_hidden_layers < 1:
+        raise ValueError("agent_num_hidden_layers must be >= 1.")
+    validate_discriminator_arch(
+        hidden_layer_size=args.disc_hidden_layer_size,
+        num_hidden_layers=args.disc_num_hidden_layers,
+    )
 
     with open(args.config, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
@@ -301,59 +623,117 @@ if __name__ == "__main__":
         ),
         single_action_space=envs.single_action_space,
     )
-    agent = Agent(policy_env_view, action_scale=action_scale, action_bias=0.0, hidden_size=args.agent_hidden_size).to(args.device)
+    agent = Agent(
+        policy_env_view,
+        action_scale=action_scale,
+        action_bias=0.0,
+        hidden_layer_size=args.agent_hidden_layer_size,
+        num_hidden_layers=args.agent_num_hidden_layers,
+    ).to(args.device)
     # Load pre-trained model if path is provided
     if args.model_path is not None:
         if not os.path.exists(args.model_path):
             raise FileNotFoundError(f"Model path {args.model_path} does not exist.")
         print(f"Loading pre-trained model from {args.model_path}")
         agent.load_state_dict(torch.load(args.model_path, map_location=args.device))
+        if args.reset_actor_logstd_on_model_load:
+            with torch.no_grad():
+                agent.actor_logstd.fill_(float(args.actor_logstd_on_model_load))
+            print(
+                "Applied actor_logstd override after model load: "
+                f"{float(args.actor_logstd_on_model_load):.4f}"
+            )
         print("Model loaded successfully")
+
+    bc_policy = None
+    if args.bc_policy_path is not None:
+        if not os.path.exists(args.bc_policy_path):
+            raise FileNotFoundError(f"BC policy path {args.bc_policy_path} does not exist.")
+        bc_policy = Agent(
+            policy_env_view,
+            action_scale=action_scale,
+            action_bias=0.0,
+            hidden_layer_size=args.agent_hidden_layer_size,
+            num_hidden_layers=args.agent_num_hidden_layers,
+        ).to(args.device)
+        bc_policy.load_state_dict(torch.load(args.bc_policy_path, map_location=args.device))
+        bc_policy.eval()
+        bc_policy.requires_grad_(False)
+        print(f"Loaded frozen BC policy from {args.bc_policy_path}")
     
     optimizer = torch.optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-6)
-    use_discriminator_reward = args.disc_reward_weight > 0.0
+    use_short_discriminator_reward = args.disc_reward_weight > 0.0
+    use_discriminator_reward = use_short_discriminator_reward
+    use_motion_penalty = (
+        args.velocity_penalty_weight > 0.0
+        or args.acceleration_penalty_weight > 0.0
+        or args.jerk_penalty_weight > 0.0
+    )
+    motion_normalizer = RunningStatsNormalizer(shape=(3,), device=args.device, clip=None)
 
     # Initialize AMP components (always enabled)
     print("\n" + "="*80)
     print("Initializing AMP (Adversarial Motion Priors) components")
     print("="*80)
 
-    history_len = 5  # Number of positions to track
+    history_len = 5  # Number of positions to track for short discriminator
     disc_obs_dim = 8
     use_action_disc = False
+    use_puck_disc = False
     discriminator, disc_optimizer, disc_normalizer, replay_buffer, demo_loader = None, None, None, None, None
     
-    if use_discriminator_reward:
-        # Load demonstration data first to determine observation dimension
-        demo_loader = DemoLoaderPositionHistory(args.demo_data_path, device=args.device)
-        print(f"✓ Demo loader initialized ({len(demo_loader):,} demonstrations)")
+    if use_short_discriminator_reward:
+        # Load demonstration data first to determine short observation dimension
+        demo_loader = DemoLoaderPositionHistory(
+            args.demo_data_path,
+            device=args.device,
+            use_actions=args.use_action_discriminator,
+            use_puck=args.use_puck_discriminator,
+            puck_vertical_axis=args.puck_vertical_axis,
+            puck_downward_positive_direction=args.puck_downward_positive_direction,
+            puck_downward_speed_max=args.puck_downward_speed_max,
+            puck_speed_dt=args.puck_speed_dt,
+            puck_noise_std=args.puck_noise_std,
+            puck_vertical_pos_min=args.puck_vertical_pos_min,
+            puck_vertical_pos_max=args.puck_vertical_pos_max,
+        )
+        print(f"✓ Short demo loader initialized ({len(demo_loader):,} demonstrations)")
         
-        # Check if demo data has actions and if we should use them
-        use_action_disc = args.use_action_discriminator
-        if use_action_disc and not demo_loader.has_actions:
-            print("  ⚠ WARNING: --use_action_discriminator is True but demo data has no actions!")
-            print("    Falling back to position-only discriminator.")
-            use_action_disc = False
+        use_action_disc = demo_loader.use_actions
+        use_puck_disc = demo_loader.use_puck
+        disc_obs_dim = demo_loader.get_obs_dim()
+        disc_hidden_layer_size, disc_num_hidden_layers = validate_discriminator_arch(
+            hidden_layer_size=args.disc_hidden_layer_size,
+            num_hidden_layers=args.disc_num_hidden_layers,
+        )
         
-        # Get discriminator observation dimension (position-only is always 8D)
-        disc_obs_dim = demo_loader.get_obs_dim() if use_action_disc else 8
-        disc_hidden_dims = parse_discriminator_hidden_dims(args.disc_hidden_sizes)
-        
+        mode_parts = ["POSITION HISTORY (8D)"]
         if use_action_disc:
-            print("  Mode: POSITION + ACTION HISTORY (5 positions + 4 transition actions)")
-            print(f"  Discriminator input dim: {disc_obs_dim} (8 position + 8 action)")
-        else:
-            print(f"  Mode: POSITION HISTORY (5 positions → 4 relative positions)")
-            print(f"  Discriminator input dim: {disc_obs_dim}")
+            mode_parts.append("ACTION HISTORY (8D)")
+        if use_puck_disc:
+            mode_parts.append(f"PUCK FEATURES ({PUCK_FEATURE_DIM}D)")
+        print(f"  Mode: {' + '.join(mode_parts)}")
+        print(f"  Discriminator input dim: {disc_obs_dim}")
         
-        # Initialize discriminator
+        # Initialize short discriminator
         discriminator = Discriminator(
             disc_obs_dim,
-            hidden_dims=disc_hidden_dims,
+            hidden_layer_size=disc_hidden_layer_size,
+            num_hidden_layers=disc_num_hidden_layers,
             activation='leaky_relu'
         ).to(args.device)
-        disc_optimizer = torch.optim.Adam(discriminator.parameters(), lr=args.disc_learning_rate, eps=1e-6)
-        print(f"✓ Discriminator initialized (input_dim={disc_obs_dim}, hidden={disc_hidden_dims})")
+        disc_optimizer = torch.optim.Adam(
+            discriminator.parameters(),
+            lr=args.disc_learning_rate,
+            weight_decay=args.disc_weight_decay,
+            eps=1e-6,
+            betas=(0.5, 0.95),
+        )
+        print(
+            "✓ Short discriminator initialized "
+            f"(input_dim={disc_obs_dim}, hidden_layer_size={disc_hidden_layer_size}, "
+            f"num_hidden_layers={disc_num_hidden_layers})"
+        )
         
         # Initialize normalizer
         disc_normalizer = Normalizer(shape=(disc_obs_dim,), clip=10.0, device=args.device)
@@ -367,7 +747,7 @@ if __name__ == "__main__":
         )
         print(f"✓ Replay buffer initialized (capacity={args.disc_replay_buffer_size:,})")
         
-        # Load pre-trained discriminator if path is provided
+        # Load pre-trained short discriminator if path is provided
         if args.discriminator_path is not None:
             if not os.path.exists(args.discriminator_path):
                 raise FileNotFoundError(f"Discriminator path {args.discriminator_path} does not exist.")
@@ -375,7 +755,7 @@ if __name__ == "__main__":
             discriminator.load_state_dict(torch.load(args.discriminator_path, map_location=args.device))
             print("✓ Discriminator loaded successfully")
         
-        # Load AMP components (normalizer, replay buffer) if path is provided
+        # Load short AMP components (normalizer, replay buffer) if path is provided
         if args.amp_components_path is not None:
             if not os.path.exists(args.amp_components_path):
                 raise FileNotFoundError(f"AMP components path {args.amp_components_path} does not exist.")
@@ -383,10 +763,10 @@ if __name__ == "__main__":
             amp_components = torch.load(args.amp_components_path, map_location=args.device)
             disc_normalizer.load_state_dict(amp_components['normalizer'])
             replay_buffer.load_state_dict(amp_components['replay_buffer'])
-            print(f"✓ AMP components loaded successfully (replay buffer size: {len(replay_buffer):,})")
+            print(f"✓ Short AMP components loaded successfully (replay buffer size: {len(replay_buffer):,})")
     else:
-        print("  Discriminator reward disabled (disc_reward_weight <= 0). Skipping discriminator setup.")
-    
+        print("  Short discriminator reward disabled (disc_reward_weight <= 0).")
+
     print("="*80 + "\n")
 
 
@@ -400,22 +780,26 @@ if __name__ == "__main__":
     values = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     
     # AMP: Storage for discriminator observations and position history
-    disc_obs = torch.zeros((args.num_steps, args.num_envs, disc_obs_dim)).to(args.device) if use_discriminator_reward else None
+    disc_obs = torch.zeros((args.num_steps, args.num_envs, disc_obs_dim)).to(args.device) if use_short_discriminator_reward else None
     paddle_positions = torch.zeros((args.num_steps, args.num_envs, 2)).to(args.device)
     temporal_alignment_reward_raw = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     temporal_alignment_reward_scaled = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     action_magnitude_reward_raw = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     action_magnitude_reward_scaled = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
+    velocity_mag_rollout = torch.zeros((args.num_steps, args.num_envs), device=args.device)
+    acceleration_mag_rollout = torch.zeros((args.num_steps, args.num_envs), device=args.device)
+    jerk_mag_rollout = torch.zeros((args.num_steps, args.num_envs), device=args.device)
     # Position history buffer: [num_envs, history_len, 2] for (x, y) positions
-    position_history = torch.zeros((args.num_envs, history_len, 2)).to(args.device) if use_discriminator_reward else None
+    position_history = torch.zeros((args.num_envs, history_len, 2)).to(args.device) if use_short_discriminator_reward else None
+    puck_position_history = torch.zeros((args.num_envs, history_len, 2)).to(args.device) if (use_short_discriminator_reward and use_puck_disc) else None
     # Action history buffer: [num_envs, 4, 2] for transition actions between 5 states
     action_history_len = history_len - 1
-    action_history = torch.zeros((args.num_envs, action_history_len, 2)).to(args.device) if use_discriminator_reward else None
+    action_history = torch.zeros((args.num_envs, action_history_len, 2)).to(args.device) if (use_short_discriminator_reward and use_action_disc) else None
     # Track how many valid positions we have per environment (need history_len before valid)
-    position_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if use_discriminator_reward else None
-    action_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if use_discriminator_reward else None
-    valid_transition = torch.zeros((args.num_steps, args.num_envs), dtype=torch.bool).to(args.device) if use_discriminator_reward else None
-
+    position_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if use_short_discriminator_reward else None
+    action_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if (use_short_discriminator_reward and use_action_disc) else None
+    puck_count = torch.zeros(args.num_envs, dtype=torch.long).to(args.device) if (use_short_discriminator_reward and use_puck_disc) else None
+    valid_transition = torch.zeros((args.num_steps, args.num_envs), dtype=torch.bool).to(args.device) if use_short_discriminator_reward else None
     # Tracking lists for motion metrics
     velocity_magnitudes = []
     acceleration_magnitudes = []
@@ -424,11 +808,27 @@ if __name__ == "__main__":
     # Start
     global_step = 0
     start_time = time.time()
+    if use_motion_penalty and args.motion_norm_warmup_steps > 0:
+        print(
+            f"Warming motion normalizer for {args.motion_norm_warmup_steps} steps "
+            f"using random actions..."
+        )
+        warmup_motion_normalizer(
+            envs=envs,
+            motion_normalizer=motion_normalizer,
+            warmup_steps=args.motion_norm_warmup_steps,
+            seed=args.seed + 2026,
+            device=args.device,
+        )
+
     next_obs, _ = envs.reset(seed=args.seed)
     next_obs = torch.Tensor(next_obs).to(args.device)
     next_done = torch.zeros(args.num_envs).to(args.device)
     just_reset = torch.zeros(args.num_envs, dtype=torch.bool).to(args.device)
     last_action_for_policy = torch.zeros((args.num_envs, action_dim), device=args.device)
+    current_velocity_mag = torch.zeros(args.num_envs, dtype=torch.float32, device=args.device)
+    current_acceleration_mag = torch.zeros(args.num_envs, dtype=torch.float32, device=args.device)
+    current_jerk_mag = torch.zeros(args.num_envs, dtype=torch.float32, device=args.device)
     
 
     for iteration in range(1, args.num_iterations + 1):
@@ -441,6 +841,12 @@ if __name__ == "__main__":
             frac = 1.0 - (iteration - 1.0) / args.num_iterations
             lrnow = frac * args.learning_rate
             optimizer.param_groups[0]["lr"] = lrnow
+
+        if args.bc_kl_decay_iters > 0:
+            bc_anneal_frac = max(0.0, 1.0 - (iteration - 1.0) / float(args.bc_kl_decay_iters))
+            current_bc_kl_weight = args.bc_kl_weight * bc_anneal_frac
+        else:
+            current_bc_kl_weight = args.bc_kl_weight
 
         for step in range(0, args.num_steps):
             global_step += args.num_envs
@@ -465,9 +871,22 @@ if __name__ == "__main__":
             next_obs, next_done = torch.Tensor(next_obs).to(args.device), torch.Tensor(next_done).to(args.device)
             last_action_for_policy = action.detach().clone()
             last_action_for_policy[next_done.bool()] = 0
+
+            current_velocity_mag, current_acceleration_mag, current_jerk_mag = parse_motion_magnitudes_from_infos(
+                infos=infos,
+                num_envs=args.num_envs,
+                device=args.device,
+                fallback_velocity_mag=current_velocity_mag,
+                fallback_acceleration_mag=current_acceleration_mag,
+                fallback_jerk_mag=current_jerk_mag,
+            )
+            velocity_mag_rollout[step] = current_velocity_mag
+            acceleration_mag_rollout[step] = current_acceleration_mag
+            jerk_mag_rollout[step] = current_jerk_mag
             
-            # AMP: Construct discriminator observations from position history
-            current_paddle_pos = next_obs[:, 12:14]  # [batch, 2] - just x, y position
+            # AMP: Construct discriminator observations from trajectory history
+            current_paddle_pos = extract_current_paddle_position(next_obs)
+            current_puck_pos = extract_current_puck_position(next_obs) if use_puck_disc else None
             paddle_positions[step] = current_paddle_pos
             
             # Optional action magnitude reward (raw value is independent of scale)
@@ -476,25 +895,35 @@ if __name__ == "__main__":
             action_magnitude_reward_raw[step] = action_mag_raw
             action_magnitude_reward_scaled[step] = action_mag_raw * args.action_magnitude_reward_scale
             
-            if use_discriminator_reward:
+            if use_short_discriminator_reward:
                 # Update position history buffer (rolling buffer: shift left, add new position at end)
                 position_history = torch.roll(position_history, shifts=-1, dims=1)
                 position_history[:, -1, :] = current_paddle_pos
 
-                # Update action history buffer with current transition action (aligned with next_obs)
-                action_history = torch.roll(action_history, shifts=-1, dims=1)
-                action_history[:, -1, :] = action
+                if use_action_disc:
+                    # Update action history buffer with current transition action (aligned with next_obs)
+                    action_history = torch.roll(action_history, shifts=-1, dims=1)
+                    action_history[:, -1, :] = action
+                if use_puck_disc:
+                    puck_position_history = torch.roll(puck_position_history, shifts=-1, dims=1)
+                    puck_position_history[:, -1, :] = current_puck_pos
                 
                 # Increment position count (capped at history_len)
                 position_count = torch.clamp(position_count + 1, max=history_len)
-                action_count = torch.clamp(action_count + 1, max=action_history_len)
+                if use_action_disc:
+                    action_count = torch.clamp(action_count + 1, max=action_history_len)
+                if use_puck_disc:
+                    puck_count = torch.clamp(puck_count + 1, max=history_len)
                 
                 # Valid transition only if we have history_len positions AND not just reset
                 has_enough_history = position_count >= history_len
-                has_enough_actions = action_count >= action_history_len
                 valid_transition[step] = has_enough_history
                 if use_action_disc:
+                    has_enough_actions = action_count >= action_history_len
                     valid_transition[step] = valid_transition[step] & has_enough_actions
+                if use_puck_disc:
+                    has_enough_puck = puck_count >= history_len
+                    valid_transition[step] = valid_transition[step] & has_enough_puck
                 
                 # Invalidate for environments that just reset
                 valid_transition[step, just_reset] = False
@@ -504,53 +933,74 @@ if __name__ == "__main__":
                 normalized_positions = normalize_position_history_batch(position_history)
                 
                 # Store the discriminator observations
+                disc_feature_parts = [normalized_positions]
                 if use_action_disc:
-                    # Concatenate positions with normalized transition action history: [batch, 8] + [batch, 8] -> [batch, 16]
                     normalized_actions = normalize_action_history_batch(action_history)
-                    disc_obs[step] = torch.cat([normalized_positions, normalized_actions], dim=-1)
-                else:
-                    # Position-only mode: [batch, 8]
-                    disc_obs[step] = normalized_positions
+                    disc_feature_parts.append(normalized_actions)
+                if use_puck_disc:
+                    puck_features = build_puck_discriminator_features_torch(
+                        puck_position_history,
+                        current_index=2,  # use puck position 2 steps before final state to match offline demos
+                        vertical_axis=args.puck_vertical_axis,
+                        downward_positive_direction=args.puck_downward_positive_direction,
+                        downward_speed_max=args.puck_downward_speed_max,
+                        speed_dt=args.puck_speed_dt,
+                        noise_std=args.puck_noise_std,
+                        vertical_pos_min=args.puck_vertical_pos_min,
+                        vertical_pos_max=args.puck_vertical_pos_max,
+                    )
+                    disc_feature_parts.append(puck_features)
+                disc_obs[step] = torch.cat(disc_feature_parts, dim=-1)
 
                 # Occasional debug logging for discriminator feature formatting.
                 if args.disc_debug_interval > 0 and global_step % args.disc_debug_interval == 0:
                     sample_idx = 0
                     sample_pos = normalized_positions[sample_idx].detach().cpu().numpy()
+                    sample_disc = disc_obs[step, sample_idx].detach().cpu().numpy()
+                    debug_msg = (
+                        f"[disc-debug][step={global_step}] pos_shape={normalized_positions.shape}, "
+                        f"disc_shape={disc_obs[step].shape}, valid={bool(valid_transition[step, sample_idx].item())}"
+                    )
+                    if use_action_disc:
+                        debug_msg += f", action_shape={action_history.shape}"
+                    if use_puck_disc:
+                        debug_msg += f", puck_shape={puck_position_history.shape}"
+                    print(debug_msg)
+                    print(
+                        "  sample pos[0:4]="
+                        f"{np.array2string(sample_pos[:4], precision=4, suppress_small=True)}"
+                    )
                     if use_action_disc:
                         sample_action = normalize_action_history_batch(action_history)[sample_idx].detach().cpu().numpy()
-                        sample_disc = disc_obs[step, sample_idx].detach().cpu().numpy()
                         print(
-                            f"[disc-debug][step={global_step}] pos_shape={normalized_positions.shape}, "
-                            f"action_shape={action_history.shape}, disc_shape={disc_obs[step].shape}, "
-                            f"valid={bool(valid_transition[step, sample_idx].item())}"
+                            "  sample action[0:4]="
+                            f"{np.array2string(sample_action[:4], precision=4, suppress_small=True)}"
                         )
+                    if use_puck_disc:
+                        sample_puck = puck_features[sample_idx].detach().cpu().numpy()
                         print(
-                            "  sample pos[0:4]="
-                            f"{np.array2string(sample_pos[:4], precision=4, suppress_small=True)} "
-                            "action[0:4]="
-                            f"{np.array2string(sample_action[:4], precision=4, suppress_small=True)} "
-                            "disc[0:8]="
-                            f"{np.array2string(sample_disc[:8], precision=4, suppress_small=True)}"
+                            "  sample puck="
+                            f"{np.array2string(sample_puck, precision=4, suppress_small=True)}"
                         )
-                    else:
-                        print(
-                            f"[disc-debug][step={global_step}] pos_shape={normalized_positions.shape}, "
-                            f"disc_shape={disc_obs[step].shape}, valid={bool(valid_transition[step, sample_idx].item())}"
-                        )
-                        print(
-                            "  sample pos[0:4]="
-                            f"{np.array2string(sample_pos[:4], precision=4, suppress_small=True)}"
-                        )
-            
+                    print(
+                        "  sample disc[0:8]="
+                        f"{np.array2string(sample_disc[:8], precision=4, suppress_small=True)}"
+                    )
+
             # Reset position history and count for environments that are done
             if use_discriminator_reward and next_done.any():
                 done_mask = next_done.bool()
-                position_history[done_mask] = 0
-                position_history[done_mask, -1, :] = current_paddle_pos[done_mask]
-                position_count[done_mask] = 1  # We have 1 position after reset
-                action_history[done_mask] = 0
-                action_count[done_mask] = 0
-            
+                if use_short_discriminator_reward:
+                    position_history[done_mask] = 0
+                    position_history[done_mask, -1, :] = current_paddle_pos[done_mask]
+                    position_count[done_mask] = 1  # We have 1 position after reset
+                    if use_action_disc:
+                        action_history[done_mask] = 0
+                        action_count[done_mask] = 0
+                    if use_puck_disc:
+                        puck_position_history[done_mask] = 0
+                        puck_position_history[done_mask, -1, :] = current_puck_pos[done_mask]
+                        puck_count[done_mask] = 1
             # Track which environments just reset for next step
             just_reset = next_done.bool()
 
@@ -606,33 +1056,50 @@ if __name__ == "__main__":
                 temporal_alignment_reward_raw[t] = cosine_sim * temporal_valid.float()
             temporal_alignment_reward_scaled = temporal_alignment_reward_raw * args.temporal_alignment_reward_scale
             
-            if use_discriminator_reward:
-                # AMP: Compute discriminator rewards and combine with task rewards
-                # Flatten discriminator observations
+            if use_short_discriminator_reward:
                 b_disc_obs = disc_obs.reshape(-1, disc_obs_dim)
-                
-                # Normalize discriminator observations
-                norm_disc_obs = disc_normalizer.normalize(b_disc_obs)
-                
-                # Compute discriminator rewards (LSGAN)
-                disc_scores = discriminator(norm_disc_obs).squeeze(-1)
-                # For LSGAN, discriminator outputs raw scores (not logits)
-                # Reward formula: quadratic function peaked at disc_scores=1, clamped to [0, 1]
-                disc_r_raw = torch.clamp(1 - 0.25 * (disc_scores - 1) ** 2, min=0)
-                
-                # Mask invalid transitions (set reward to 0)
-                b_valid = valid_transition.reshape(-1)
-                disc_r_raw = disc_r_raw * b_valid.float()  # Zero out invalid transitions
-                
-                # Reshape discriminator rewards to match original shape
+                if iteration <= args.disc_reward_warmup_iters:
+                    # Keep discriminator reward fixed during early policy warmup.
+                    disc_r_raw = torch.full(
+                        (args.num_steps * args.num_envs,),
+                        float(args.disc_reward_warmup_value),
+                        device=args.device,
+                    )
+                else:
+                    norm_disc_obs = disc_normalizer.normalize(b_disc_obs)
+                    disc_scores = discriminator(norm_disc_obs).squeeze(-1)
+                    disc_r_raw = torch.clamp(1 - 0.25 * (disc_scores - 1) ** 2, min=0)
+                    b_valid = valid_transition.reshape(-1)
+                    disc_r_raw = disc_r_raw * b_valid.float()
                 disc_r_raw_shaped = disc_r_raw.reshape(args.num_steps, args.num_envs)
                 disc_r_scaled = args.disc_reward_weight * disc_r_raw_shaped
             else:
                 b_disc_obs = None
                 disc_r_raw = torch.zeros(args.num_steps * args.num_envs, device=args.device)
                 disc_r_scaled = torch.zeros((args.num_steps, args.num_envs), device=args.device)
+
             task_r_raw = rewards
             task_r_scaled = args.task_reward_weight * task_r_raw
+
+            motion_raw = torch.stack(
+                [velocity_mag_rollout, acceleration_mag_rollout, jerk_mag_rollout], dim=-1
+            )
+            if use_motion_penalty and args.motion_norm_update_online:
+                motion_normalizer.update(motion_raw.reshape(-1, 3))
+
+            motion_std = torch.sqrt(motion_normalizer.var).clamp_min(args.motion_norm_eps).view(1, 1, 3)
+            motion_penalty_features = motion_raw / motion_std
+            if args.motion_norm_clip is not None and args.motion_norm_clip > 0:
+                motion_penalty_features = torch.clamp(
+                    motion_penalty_features, -args.motion_norm_clip, args.motion_norm_clip
+                )
+
+            velocity_penalty_raw = -motion_penalty_features[:, :, 0]
+            acceleration_penalty_raw = -motion_penalty_features[:, :, 1]
+            jerk_penalty_raw = -motion_penalty_features[:, :, 2]
+            velocity_penalty_scaled = args.velocity_penalty_weight * velocity_penalty_raw
+            acceleration_penalty_scaled = args.acceleration_penalty_weight * acceleration_penalty_raw
+            jerk_penalty_scaled = args.jerk_penalty_weight * jerk_penalty_raw
             
             # Combine scaled reward streams only when building PPO targets.
             combined_rewards = (
@@ -640,6 +1107,9 @@ if __name__ == "__main__":
                 + disc_r_scaled
                 + temporal_alignment_reward_scaled
                 + action_magnitude_reward_scaled
+                + velocity_penalty_scaled
+                + acceleration_penalty_scaled
+                + jerk_penalty_scaled
             )
             
             # Compute advantages with combined rewards
@@ -656,37 +1126,36 @@ if __name__ == "__main__":
                 advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
             returns = advantages + values
             
-            # Log reward stream statistics (raw and scaled)
-            if use_discriminator_reward:
-                writer.add_scalar("amp/disc_reward_raw_mean", disc_r_raw.mean().item(), global_step)
-                writer.add_scalar("amp/disc_reward_raw_std", disc_r_raw.std().item(), global_step)
-                writer.add_scalar("amp/disc_reward_scaled_mean", disc_r_scaled.mean().item(), global_step)
-                writer.add_scalar("amp/disc_reward_scaled_std", disc_r_scaled.std().item(), global_step)
-            writer.add_scalar("amp/task_reward_raw_mean", task_r_raw.mean().item(), global_step)
-            writer.add_scalar("amp/task_reward_raw_std", task_r_raw.std().item(), global_step)
-            writer.add_scalar("amp/task_reward_scaled_mean", task_r_scaled.mean().item(), global_step)
-            writer.add_scalar("amp/task_reward_scaled_std", task_r_scaled.std().item(), global_step)
-            writer.add_scalar("amp/temporal_alignment_reward_raw_mean", temporal_alignment_reward_raw.mean().item(), global_step)
-            writer.add_scalar("amp/temporal_alignment_reward_raw_std", temporal_alignment_reward_raw.std().item(), global_step)
-            writer.add_scalar("amp/temporal_alignment_reward_scaled_mean", temporal_alignment_reward_scaled.mean().item(), global_step)
-            writer.add_scalar("amp/temporal_alignment_reward_scaled_std", temporal_alignment_reward_scaled.std().item(), global_step)
-            writer.add_scalar("amp/action_magnitude_reward_raw_mean", action_magnitude_reward_raw.mean().item(), global_step)
-            writer.add_scalar("amp/action_magnitude_reward_raw_std", action_magnitude_reward_raw.std().item(), global_step)
-            writer.add_scalar("amp/action_magnitude_reward_scaled_mean", action_magnitude_reward_scaled.mean().item(), global_step)
-            writer.add_scalar("amp/action_magnitude_reward_scaled_std", action_magnitude_reward_scaled.std().item(), global_step)
-            
-            # Backward-compatible logs.
-            if use_discriminator_reward:
-                writer.add_scalar("amp/disc_reward_mean", disc_r_raw.mean().item(), global_step)
-                writer.add_scalar("amp/disc_reward_std", disc_r_raw.std().item(), global_step)
-            writer.add_scalar("amp/task_reward_mean", task_r_raw.mean().item(), global_step)
-            writer.add_scalar("amp/combined_reward_mean", combined_rewards.mean().item(), global_step)
-
-            # log statistics of the advantages, values
-            writer.add_scalar("charts/advantage_mean", advantages.mean().item(), global_step)
-            writer.add_scalar("charts/advantage_std", advantages.std().item(), global_step)
-            writer.add_scalar("charts/value_mean", values.mean().item(), global_step)
-            writer.add_scalar("charts/value_std", values.std().item(), global_step)
+            log_reward_stream_stats(
+                writer=writer,
+                global_step=global_step,
+                task_r_raw=task_r_raw,
+                task_r_scaled=task_r_scaled,
+                temporal_alignment_reward_raw=temporal_alignment_reward_raw,
+                temporal_alignment_reward_scaled=temporal_alignment_reward_scaled,
+                action_magnitude_reward_raw=action_magnitude_reward_raw,
+                action_magnitude_reward_scaled=action_magnitude_reward_scaled,
+                combined_rewards=combined_rewards,
+                advantages=advantages,
+                values=values,
+                use_short_discriminator_reward=use_short_discriminator_reward,
+                disc_r_raw=disc_r_raw,
+                disc_r_scaled=disc_r_scaled,
+            )
+            log_motion_penalty_stats(
+                writer=writer,
+                global_step=global_step,
+                velocity_mag=velocity_mag_rollout,
+                acceleration_mag=acceleration_mag_rollout,
+                jerk_mag=jerk_mag_rollout,
+                velocity_penalty_raw=velocity_penalty_raw,
+                acceleration_penalty_raw=acceleration_penalty_raw,
+                jerk_penalty_raw=jerk_penalty_raw,
+                velocity_penalty_scaled=velocity_penalty_scaled,
+                acceleration_penalty_scaled=acceleration_penalty_scaled,
+                jerk_penalty_scaled=jerk_penalty_scaled,
+                motion_normalizer=motion_normalizer,
+            )
 
         # flatten the batch
         b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
@@ -702,6 +1171,7 @@ if __name__ == "__main__":
         # Optimizing the policy and value network
         b_inds = np.arange(args.batch_size)
         clipfracs = []
+        bc_kl_loss = torch.zeros((), device=args.device)
         for epoch in range(args.update_epochs):
             np.random.shuffle(b_inds)
             noise_std = 0.01
@@ -745,7 +1215,25 @@ if __name__ == "__main__":
                     v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
 
                 entropy_loss = (-newlogprob).mean() # unbiased estimate of entropy
-                loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+                # PPO + BC-KL objective:
+                # L_total(theta) = L_PPO(theta) + lambda_BC * E_s[ KL(pi_BC(.|s) || pi_theta(.|s)) ].
+                # Minibatch estimate uses sampled rollout states s_i:
+                # (1/M) * sum_i KL(pi_BC(.|s_i) || pi_theta(.|s_i)).
+                if bc_policy is not None and current_bc_kl_weight > 0.0:
+                    with torch.no_grad():
+                        bc_mean, bc_logstd = bc_policy.get_action_mean_and_logstd(b_policy_obs[mb_inds])
+                    student_mean, student_logstd = agent.get_action_mean_and_logstd(b_policy_obs[mb_inds])
+                    bc_var = torch.exp(2.0 * bc_logstd)
+                    student_var = torch.exp(2.0 * student_logstd)
+                    bc_kl_loss = (
+                        student_logstd - bc_logstd
+                        + (bc_var + (bc_mean - student_mean) ** 2) / (2.0 * student_var)
+                        - 0.5
+                    ).sum(dim=-1).mean()
+                else:
+                    bc_kl_loss = torch.zeros((), device=args.device)
+
+                loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef + current_bc_kl_weight * bc_kl_loss
     
                 optimizer.zero_grad()
                 loss.backward()
@@ -755,111 +1243,46 @@ if __name__ == "__main__":
             if args.target_kl is not None and approx_kl > args.target_kl:
                 break
         
-        # AMP: Train discriminator
-        if use_discriminator_reward:
+        # AMP: Train short discriminator
+        if use_short_discriminator_reward:
             for i in range(args.num_discriminator_updates):
-            # Sample demonstration data
-                demo_disc_obs = demo_loader.sample(args.disc_batch_size)
-            
-                # Sample agent data (mix current batch + replay buffer)
-                agent_samples = args.disc_batch_size // 2
-            
-                # Filter to only valid transitions
                 b_valid = valid_transition.reshape(-1)
-                valid_disc_obs = b_disc_obs[b_valid]
-            
-                # Randomly sample from valid current batch transitions
-                perm_indices = torch.randperm(len(valid_disc_obs), device=args.device)
-                agent_disc_obs_current = valid_disc_obs[perm_indices[:agent_samples]]
-            
-                # Store only valid samples in replay buffer
-                num_to_store = min(len(valid_disc_obs), args.disc_replay_samples)
-                replay_buffer.push(valid_disc_obs[perm_indices[:num_to_store]])
-            
-                # Sample from replay buffer if available
-                if len(replay_buffer) > 0:
-                    agent_disc_obs_replay = replay_buffer.sample(agent_samples)
-                    agent_disc_obs = torch.cat([agent_disc_obs_current, agent_disc_obs_replay], dim=0)
-                else:
-                    agent_disc_obs = agent_disc_obs_current
-            
-                # Normalize observations
-                norm_demo_disc_obs = disc_normalizer.normalize(demo_disc_obs)
-                norm_agent_disc_obs = disc_normalizer.normalize(agent_disc_obs)
-            
-                # Enable gradients for gradient penalty
-                norm_demo_disc_obs.requires_grad_(True)
-            
-                # Forward pass through discriminator (LSGAN outputs raw scores, not logits)
-                disc_demo_logit = discriminator(norm_demo_disc_obs).squeeze(-1)
-                disc_agent_logit = discriminator(norm_agent_disc_obs).squeeze(-1)
-            
-                # LSGAN: Least Squares loss
-                # Demo = 1 (expert), Agent = -1 (fake)
-                # LSGAN uses MSE instead of BCE: 0.5 * E[(D(x_real) - 1)^2] + 0.5 * E[(D(x_fake) - (-1))^2]
-                disc_loss_demo = 0.5 * torch.mean((disc_demo_logit - 1.0) ** 2)
-                disc_loss_agent = 0.5 * torch.mean((disc_agent_logit - (-1.0)) ** 2)
-                disc_loss = disc_loss_demo + disc_loss_agent
-            
-                # Gradient penalty (Lipschitz constraint)
-                disc_demo_grad = torch.autograd.grad(
-                    disc_demo_logit, norm_demo_disc_obs,
-                    grad_outputs=torch.ones_like(disc_demo_logit),
-                    create_graph=True, retain_graph=True, only_inputs=True
-                )[0]
-                disc_grad_penalty = torch.mean(torch.sum(disc_demo_grad ** 2, dim=-1))
-                disc_loss = disc_loss + args.disc_grad_penalty * disc_grad_penalty
-            
-                # Logit regularization
-                if args.disc_logit_reg > 0:
-                    logit_weights = discriminator.get_logit_weights()
-                    disc_logit_reg_loss = torch.sum(logit_weights ** 2)
-                    disc_loss = disc_loss + args.disc_logit_reg * disc_logit_reg_loss
-            
-                # Weight decay
-                if args.disc_weight_decay > 0:
-                    disc_weights = discriminator.get_all_weights()
-                    disc_weight_decay_loss = torch.sum(disc_weights ** 2)
-                    disc_loss = disc_loss + args.disc_weight_decay * disc_weight_decay_loss
-            
-                # Update discriminator
-                disc_optimizer.zero_grad()
-                disc_loss.backward()
-                nn.utils.clip_grad_norm_(discriminator.parameters(), args.max_grad_norm)
-                disc_optimizer.step()
-            
-                # Update normalizer statistics (only with valid transitions)
-                b_valid = valid_transition.reshape(-1)
-                disc_normalizer.record(b_disc_obs[b_valid])
-                disc_normalizer.record(demo_disc_obs)
-                disc_normalizer.update()
-            
-                # Compute discriminator accuracy (LSGAN)
-                # For LSGAN, scores closer to 1 for expert, closer to -1 for agent
-                with torch.no_grad():
-                    disc_agent_acc = (disc_agent_logit < 0.0).float().mean().item()
-                    disc_demo_acc = (disc_demo_logit > 0.0).float().mean().item()
-            
-            # Log discriminator metrics
-            writer.add_scalar("amp/disc_loss", disc_loss.item(), global_step)
-            writer.add_scalar("amp/disc_loss_demo", disc_loss_demo.item(), global_step)
-            writer.add_scalar("amp/disc_loss_agent", disc_loss_agent.item(), global_step)
-            writer.add_scalar("amp/disc_grad_penalty", disc_grad_penalty.item(), global_step)
-            writer.add_scalar("amp/disc_agent_acc", disc_agent_acc, global_step)
-            writer.add_scalar("amp/disc_demo_acc", disc_demo_acc, global_step)
-            writer.add_scalar("amp/disc_agent_logit_mean", disc_agent_logit.mean().item(), global_step)
-            writer.add_scalar("amp/disc_demo_logit_mean", disc_demo_logit.mean().item(), global_step)
-            writer.add_scalar("amp/replay_buffer_size", len(replay_buffer), global_step)
-        
+                disc_metrics = train_lsgan_discriminator_step(
+                    demo_loader=demo_loader,
+                    disc_batch_size=args.disc_batch_size,
+                    b_disc_obs=b_disc_obs,
+                    b_valid=b_valid,
+                    replay_buffer=replay_buffer,
+                    replay_samples=args.disc_replay_samples,
+                    disc_normalizer=disc_normalizer,
+                    discriminator=discriminator,
+                    disc_optimizer=disc_optimizer,
+                    grad_penalty_weight=args.disc_grad_penalty,
+                    logit_reg_weight=args.disc_logit_reg,
+                    max_grad_norm=args.max_grad_norm,
+                    device=args.device,
+                )
+
+            # Log short discriminator metrics
+            log_discriminator_metrics(
+                writer=writer,
+                prefix="amp",
+                metrics=disc_metrics,
+                replay_buffer_size=len(replay_buffer),
+                global_step=global_step,
+            )
+
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
+        writer.add_scalar("losses/bc_kl_weight", current_bc_kl_weight, global_step)
         writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
         writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
         writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
+        writer.add_scalar("losses/bc_kl_loss", bc_kl_loss.item(), global_step)
         writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
         writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
         writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
@@ -913,13 +1336,9 @@ if __name__ == "__main__":
             model_path = f"{checkpoint_dir}/model.pth"
             torch.save(agent.state_dict(), model_path)
             
-            # Save AMP components in checkpoint when discriminator reward is active
-            if use_discriminator_reward:
-                torch.save(discriminator.state_dict(), f"{checkpoint_dir}/discriminator.pth")
-                torch.save({
-                    'normalizer': disc_normalizer.state_dict(),
-                    'replay_buffer': replay_buffer.state_dict()
-                }, f"{checkpoint_dir}/amp_components.pth")
+            # Save short AMP components in checkpoint when short discriminator reward is active
+            if use_short_discriminator_reward:
+                save_amp_components(checkpoint_dir, discriminator, disc_normalizer, replay_buffer)
 
             # evaluate the model
             evaluate_agent(
@@ -931,7 +1350,8 @@ if __name__ == "__main__":
                 reference_states=reference_states,
                 ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None,
                 action_scale=action_scale,
-                agent_hidden_size=args.agent_hidden_size,
+                agent_hidden_layer_size=args.agent_hidden_layer_size,
+                agent_num_hidden_layers=args.agent_num_hidden_layers,
                 use_last_action_in_policy_state=args.use_last_action_in_policy_state,
             )
             
@@ -941,13 +1361,9 @@ if __name__ == "__main__":
     torch.save(agent.state_dict(), f"{log_parent_dir}/model.pth")
     
     # Save AMP components when discriminator reward is active
-    if use_discriminator_reward:
-        torch.save(discriminator.state_dict(), f"{log_parent_dir}/discriminator.pth")
-        torch.save({
-            'normalizer': disc_normalizer.state_dict(),
-            'replay_buffer': replay_buffer.state_dict()
-        }, f"{log_parent_dir}/amp_components.pth")
-        print(f"✓ Saved discriminator and AMP components")
+    if use_short_discriminator_reward:
+        save_amp_components(log_parent_dir, discriminator, disc_normalizer, replay_buffer)
+        print(f"✓ Saved short discriminator and AMP components")
 
     # evaluate the model and save results
     evaluate_agent(
@@ -957,7 +1373,8 @@ if __name__ == "__main__":
         reference_states=reference_states,
         ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None,
         action_scale=action_scale,
-        agent_hidden_size=args.agent_hidden_size,
+        agent_hidden_layer_size=args.agent_hidden_layer_size,
+        agent_num_hidden_layers=args.agent_num_hidden_layers,
         use_last_action_in_policy_state=args.use_last_action_in_policy_state,
     )
     

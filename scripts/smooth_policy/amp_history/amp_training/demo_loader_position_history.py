@@ -1,293 +1,243 @@
 """
-Demo data loader for AMP training with 5 consecutive position history.
-
-Loads expert demonstration data and provides random sampling for discriminator training.
-Uses only paddle (x, y) positions, not velocities.
-
-Supports position history format: [N, 5, 2] where each entry contains 5 consecutive (x, y) positions.
-Compatible with datasets using keys: 'position_sequences', 'position_history', 'normalized_position_history', or 'state_pairs'.
-
-Optionally supports action-conditioned discrimination:
-- If dataset contains 'action_sequences' key, loads actions and appends to observations
-- Actions are delta target positions: action = desired_pose - pose
-- Uses 4 transition actions for a 5-state window (s1->s2, s2->s3, s3->s4, s4->s5)
-- Output format becomes [N, 16] = 8 relative positions + 8 action dims
+Demo data loader for AMP training with support for:
+- legacy 5-step position-history discriminator observations
+- optional action-conditioned features
+- optional puck-conditioned features
+- long-window bucketed sampling for temporal discriminator heads
 """
 
 import torch
 from pathlib import Path
 
-
-def normalize_position_history_batch(position_history):
-    """
-    Normalize batched position history to relative coordinates (translation only).
-    
-    Process:
-    1. Translate all positions so the first position is at (0, 0)
-    2. Remove the first position (now [0, 0], contains no information)
-    3. Return the remaining 4 relative positions (8 dimensions)
-    
-    Args:
-        position_history: Tensor of shape [batch, 5, 2] containing 5 consecutive (x, y) positions
-    
-    Returns:
-        torch.Tensor: Normalized positions of shape [batch, 8]
-                     [pos2_x, pos2_y, pos3_x, pos3_y, pos4_x, pos4_y, pos5_x, pos5_y]
-                     (all relative to pos1 which is at origin)
-    """
-    # Extract the first position
-    pos1 = position_history[:, 0, :]  # [batch, 2]
-    
-    # Translate all positions so first is at origin
-    translated = position_history - pos1.unsqueeze(1)  # [batch, 5, 2]
-    
-    # Remove first position (now [0, 0]) and flatten the remaining 4 positions
-    normalized_state = translated[:, 1:, :].reshape(-1, 8)  # [batch, 8]
-    
-    return normalized_state
+from scripts.smooth_policy.amp_history.amp_training.feature_processing import (
+    PUCK_FEATURE_DIM,
+    build_puck_discriminator_features_torch,
+    normalize_action_history_batch,
+    normalize_position_history_batch,
+    normalize_position_sequence_batch,
+    sample_bucketed_indices_torch,
+)
 
 
 class DemoLoaderPositionHistory:
-    """
-    Loader for expert demonstration data with 5 consecutive positions (position history).
-    
-    Loads position sequences from .pt files and provides random sampling for 
-    training the discriminator.
-    
-    Optionally supports action-conditioned discrimination when dataset contains
-    'action_sequences' key. In this mode, outputs are [N, 16] = 8 positions + 8 action dims.
-    """
-    
-    def __init__(self, demo_path, device='cuda'):
-        """
-        Initialize demo loader for position history.
-        
-        Args:
-            demo_path: Path to .pt file containing demonstration data
-            device: Device to store tensors on
-        """
+    """Loader for expert demonstration data used by AMP discriminators."""
+
+    def __init__(
+        self,
+        demo_path,
+        device='cuda',
+        use_actions=None,
+        use_puck=None,
+        puck_vertical_axis=0,
+        puck_downward_positive_direction=1.0,
+        puck_downward_speed_max=0.75,
+        puck_speed_dt=0.05,
+        puck_noise_std=0.03,
+        puck_vertical_pos_min=-1.0,
+        puck_vertical_pos_max=1.0,
+        position_key='position_sequences',
+        puck_key='puck_sequences',
+        sample_bucketed_points=False,
+        bucket_window_len=30,
+        bucket_num_bins=3,
+        bucket_samples_per_bin=2,
+        puck_current_index=2,
+    ):
         self.demo_path = Path(demo_path)
         self.device = device
-        self.has_actions = False  # Will be set to True if action data is available
-        self.action_sequences = None
-        
+
         if not self.demo_path.exists():
             raise FileNotFoundError(f"Demo data not found at: {demo_path}")
-        
-        # Load data
+
+        self.puck_vertical_axis = int(puck_vertical_axis)
+        self.puck_downward_positive_direction = float(puck_downward_positive_direction)
+        self.puck_downward_speed_max = float(puck_downward_speed_max)
+        self.puck_speed_dt = float(puck_speed_dt)
+        self.puck_noise_std = float(puck_noise_std)
+        self.puck_vertical_pos_min = float(puck_vertical_pos_min)
+        self.puck_vertical_pos_max = float(puck_vertical_pos_max)
+
+        self.sample_bucketed_points = bool(sample_bucketed_points)
+        self.bucket_window_len = int(bucket_window_len)
+        self.bucket_num_bins = int(bucket_num_bins)
+        self.bucket_samples_per_bin = int(bucket_samples_per_bin)
+        self.puck_current_index = int(puck_current_index)
+
         print(f"Loading demonstration position history data from: {demo_path}")
         data = torch.load(demo_path, map_location=device)
-        
-        # Check for action sequences
-        if 'action_sequences' in data:
-            self.has_actions = True
-            self.action_sequences = data['action_sequences'].to(device=device, dtype=torch.float32)
-            print(f"  ✓ Detected action sequences: {self.action_sequences.shape}")
-        
-        # Auto-detect dataset format
-        if 'normalized_position_history' in data:
-            # Pre-normalized dataset [N, 8]
-            print("  Detected pre-normalized position history dataset")
-            self.demo_obs = data['normalized_position_history'].to(device=device, dtype=torch.float32)
-            self.is_normalized = True
-            
-            expected_dim = 16 if self.has_actions else 8
-            if self.demo_obs.dim() != 2 or self.demo_obs.shape[1] != expected_dim:
-                # If we have actions but pre-normalized doesn't include them, that's okay
-                # We'll append them below
-                if not (self.has_actions and self.demo_obs.shape[1] == 8):
-                    raise ValueError(f"Unexpected normalized data shape: {self.demo_obs.shape}. "
-                                   f"Expected [N, {expected_dim}]")
-        
-        elif 'position_history' in data or 'position_sequences' in data:
-            # Non-normalized dataset [N, 5, 2] - apply normalization
-            # Support both 'position_history' and 'position_sequences' keys
-            key = 'position_sequences' if 'position_sequences' in data else 'position_history'
-            print(f"  Detected non-normalized position dataset (key: '{key}') - applying normalization")
-            self.position_history = data[key].to(device=device, dtype=torch.float32)
-            self.is_normalized = False
-            
-            if self.position_history.dim() != 3 or self.position_history.shape[1] != 5 or self.position_history.shape[2] != 2:
-                raise ValueError(f"Unexpected position history shape: {self.position_history.shape}. "
-                               f"Expected [N, 5, 2]")
-            
-            # Apply normalization to convert [N, 5, 2] -> [N, 8]
-            print("  Normalizing position history...")
-            self.demo_obs = normalize_position_history_batch(self.position_history)
-            print(f"  ✓ Normalization complete")
-        
-        elif 'state_pairs' in data:
-            # Fallback: Convert from state_pairs format [N, 2, 4] to position sequences
-            # This creates position history by taking consecutive pairs
-            print("  Detected state_pairs format - converting to position history")
-            state_pairs = data['state_pairs'].to(device=device, dtype=torch.float32)
-            
-            # Extract only positions (x, y) from state pairs
-            # state_pairs: [N, 2, 4] where each state is [x, y, vx, vy]
-            positions = state_pairs[:, :, :2]  # [N, 2, 2]
-            
-            # Build position history by sliding window over consecutive pairs
-            # We need 5 positions, so we need to chain pairs together
-            # For simplicity, construct from overlapping windows of raw position data
-            print("  ⚠ Warning: Building 5-position history from 2-position pairs.")
-            print("    For best results, prepare a dedicated position_history dataset.")
-            
-            # Simple approach: use 5 consecutive pairs to get 5 positions
-            # Assume pairs are ordered sequentially
-            num_pairs = positions.shape[0]
-            num_sequences = num_pairs - 4  # Need 5 consecutive starting positions
-            
-            if num_sequences <= 0:
-                raise ValueError(f"Not enough pairs ({num_pairs}) to create position history. Need at least 5.")
-            
-            # Build position history sequences
-            position_history_list = []
-            for i in range(num_sequences):
-                # Take first position from each of 5 consecutive pairs
-                seq = positions[i:i+5, 0, :]  # [5, 2]
-                position_history_list.append(seq)
-            
-            self.position_history = torch.stack(position_history_list, dim=0)  # [N-4, 5, 2]
-            self.is_normalized = False
-            
-            # Apply normalization
-            print("  Normalizing position history...")
-            self.demo_obs = normalize_position_history_batch(self.position_history)
-            print(f"  ✓ Normalization complete")
-        
-        else:
-            raise ValueError("Dataset must contain 'normalized_position_history', 'position_history', 'position_sequences', or 'state_pairs' key")
-        
-        # If we have action sequences, append all transition actions for the 5-state window.
-        # For a 5-position sequence [p1, p2, p3, p4, p5], use actions [a12, a23, a34, a45].
-        if self.has_actions:
-            # Extract transition actions and drop the final-state action:
-            # [N, 5, 2] -> [N, 4, 2], or keep [N, 4, 2] if already transition-only.
-            if self.action_sequences.dim() != 3 or self.action_sequences.shape[-1] != 2:
-                raise ValueError(f"Unexpected action sequence shape: {self.action_sequences.shape}. Expected [N, T, 2]")
-            if self.action_sequences.shape[1] < 4:
+
+        self.has_actions = 'action_sequences' in data
+        self.has_puck = puck_key in data
+        self.use_actions = self.has_actions if use_actions is None else bool(use_actions)
+        self.use_puck = self.has_puck if use_puck is None else bool(use_puck)
+
+        if self.use_actions and not self.has_actions:
+            raise ValueError("use_actions=True but dataset does not contain 'action_sequences'.")
+        if self.use_puck and not self.has_puck:
+            raise ValueError(f"use_puck=True but dataset does not contain '{puck_key}'.")
+
+        self.action_sequences = None
+        self.puck_sequences = None
+        self.position_history = None
+
+        if self.sample_bucketed_points:
+            if self.use_actions:
+                raise ValueError("sample_bucketed_points=True currently does not support action-conditioned observations.")
+            if position_key not in data:
+                raise ValueError(f"Dataset does not contain required key '{position_key}' for long-window sampling.")
+            self.position_history = data[position_key].to(device=device, dtype=torch.float32)
+            if self.position_history.dim() != 3 or self.position_history.shape[1] != self.bucket_window_len or self.position_history.shape[2] != 2:
                 raise ValueError(
-                    f"Action sequence length must be at least 4 for transition features, got {self.action_sequences.shape[1]}"
+                    f"Unexpected long position history shape: {self.position_history.shape}. "
+                    f"Expected [N, {self.bucket_window_len}, 2]"
                 )
-            if self.action_sequences.shape[1] == 5:
-                transition_actions = self.action_sequences[:, :-1, :]  # [N, 4, 2]
+            sampled_points = 2 + self.bucket_num_bins * self.bucket_samples_per_bin
+            self.demo_obs_base = torch.empty((self.position_history.shape[0], (sampled_points - 1) * 2), device=device)
+            self.is_normalized = False
+        elif 'normalized_position_history' in data:
+            normalized = data['normalized_position_history'].to(device=device, dtype=torch.float32)
+            if normalized.dim() != 2 or normalized.shape[1] < 8:
+                raise ValueError(
+                    f"Unexpected normalized data shape: {normalized.shape}. Expected [N, >=8]"
+                )
+            self.demo_obs_base = normalized[:, :8]
+            self.is_normalized = True
+        else:
+            if position_key not in data:
+                # Legacy fallback
+                position_key = 'position_sequences' if 'position_sequences' in data else 'position_history'
+            if position_key not in data:
+                raise ValueError(
+                    "Dataset must contain 'normalized_position_history', 'position_history', "
+                    f"or '{position_key}' key"
+                )
+            self.position_history = data[position_key].to(device=device, dtype=torch.float32)
+            self.is_normalized = False
+            if self.position_history.dim() != 3 or self.position_history.shape[-1] != 2:
+                raise ValueError(
+                    f"Unexpected position history shape: {self.position_history.shape}. Expected [N, T, 2]"
+                )
+            if self.position_history.shape[1] == 5:
+                self.demo_obs_base = normalize_position_history_batch(self.position_history)
             else:
-                transition_actions = self.action_sequences[:, :4, :]  # [N, 4, 2]
+                self.demo_obs_base = normalize_position_sequence_batch(self.position_history)
 
-            # Normalize each transition action to unit norm for consistent scale.
-            action_norms = torch.norm(transition_actions, dim=-1, keepdim=True)
-            normalized_actions = transition_actions / (action_norms + 1e-8)
-            flattened_actions = normalized_actions.reshape(normalized_actions.shape[0], 8)  # [N, 8]
+        if self.use_actions:
+            self.action_sequences = data['action_sequences'].to(device=device, dtype=torch.float32)
+            if self.action_sequences.dim() != 3 or self.action_sequences.shape[-1] != 2:
+                raise ValueError(
+                    f"Unexpected action sequence shape: {self.action_sequences.shape}. Expected [N, T, 2]"
+                )
+            if self.action_sequences.shape[0] != self.demo_obs_base.shape[0]:
+                raise ValueError("Position and action sequence counts must match.")
+            transition_actions = (
+                self.action_sequences[:, :-1, :]
+                if self.action_sequences.shape[1] == 5
+                else self.action_sequences[:, :4, :]
+            )
+            flattened_actions = normalize_action_history_batch(transition_actions)
+            self.demo_obs_base = torch.cat([self.demo_obs_base, flattened_actions], dim=-1)
 
-            # Concatenate with normalized positions: [N, 8] + [N, 8] -> [N, 16]
-            self.demo_obs = torch.cat([self.demo_obs, flattened_actions], dim=-1)
-            print("  ✓ Appended 4 transition actions to observations (each normalized to unit norm)")
-        
-        self.num_demos = self.demo_obs.shape[0]
-        
-        # Store statistics if available
+        if self.use_puck:
+            self.puck_sequences = data[puck_key].to(device=device, dtype=torch.float32)
+            if self.puck_sequences.dim() != 3 or self.puck_sequences.shape[-1] != 2:
+                raise ValueError(
+                    f"Unexpected puck sequence shape: {self.puck_sequences.shape}. Expected [N, T, 2]"
+                )
+            if self.puck_sequences.shape[0] != self.demo_obs_base.shape[0]:
+                raise ValueError("Position and puck sequence counts must match.")
+
+        self.num_demos = self.demo_obs_base.shape[0]
         self.stats = data.get('stats', None)
-        
-        print(f"✓ Loaded {self.num_demos:,} demonstration position history observations")
-        print(f"  Observation shape: {self.demo_obs.shape}")
-        print(f"  Has actions: {self.has_actions}")
-        
-        # Print data statistics
+        self.obs_dim = self.demo_obs_base.shape[1] + (PUCK_FEATURE_DIM if self.use_puck else 0)
+
+        print(f"✓ Loaded {self.num_demos:,} demonstration observations")
+        print(f"  Base observation shape: {self.demo_obs_base.shape}")
+        print(f"  Observation dim used for discriminator: {self.obs_dim}")
+        print(f"  Dataset has actions: {self.has_actions}, using actions: {self.use_actions}")
+        print(f"  Dataset has puck: {self.has_puck}, using puck: {self.use_puck}")
         self._print_statistics()
-    
+
+    def _sample_base_obs(self, indices):
+        if not self.sample_bucketed_points:
+            return self.demo_obs_base[indices]
+
+        position_window = self.position_history[indices]
+        batch_size = position_window.shape[0]
+        sampled_indices = sample_bucketed_indices_torch(
+            batch_size,
+            window_len=self.bucket_window_len,
+            num_bins=self.bucket_num_bins,
+            samples_per_bin=self.bucket_samples_per_bin,
+            device=position_window.device,
+        )
+        gather_idx = sampled_indices.unsqueeze(-1).expand(-1, -1, 2)
+        sampled_positions = torch.gather(position_window, dim=1, index=gather_idx)
+        return normalize_position_sequence_batch(sampled_positions)
+
     def sample(self, batch_size):
-        """
-        Sample random batch of demonstration observations.
-        
-        Args:
-            batch_size: Number of observations to sample
-            
-        Returns:
-            Tensor of shape [batch_size, obs_dim] where obs_dim is:
-                - 8 (4 relative positions × 2 coords) if no actions
-                - 16 (4 relative positions × 2 + 4 transition actions × 2) if has_actions=True
-        """
+        """Sample random batch of demonstration observations."""
         if batch_size > self.num_demos:
-            # Sample with replacement if requesting more than available
             indices = torch.randint(0, self.num_demos, (batch_size,), device=self.device)
         else:
-            # Sample without replacement
             indices = torch.randperm(self.num_demos, device=self.device)[:batch_size]
-        
-        return self.demo_obs[indices]
-    
+
+        sampled_obs = self._sample_base_obs(indices)
+        if self.use_puck:
+            sampled_puck = self.puck_sequences[indices]
+            puck_features = build_puck_discriminator_features_torch(
+                sampled_puck,
+                current_index=self.puck_current_index,
+                vertical_axis=self.puck_vertical_axis,
+                downward_positive_direction=self.puck_downward_positive_direction,
+                downward_speed_max=self.puck_downward_speed_max,
+                speed_dt=self.puck_speed_dt,
+                noise_std=self.puck_noise_std,
+                vertical_pos_min=self.puck_vertical_pos_min,
+                vertical_pos_max=self.puck_vertical_pos_max,
+            )
+            sampled_obs = torch.cat([sampled_obs, puck_features], dim=-1)
+        return sampled_obs
+
     def get_all(self):
         """Return all demonstration observations."""
-        return self.demo_obs
-    
+        if self.sample_bucketed_points:
+            base = self._sample_base_obs(torch.arange(self.num_demos, device=self.device))
+        else:
+            base = self.demo_obs_base
+        if not self.use_puck:
+            return base
+        puck_features = build_puck_discriminator_features_torch(
+            self.puck_sequences,
+            current_index=self.puck_current_index,
+            vertical_axis=self.puck_vertical_axis,
+            downward_positive_direction=self.puck_downward_positive_direction,
+            downward_speed_max=self.puck_downward_speed_max,
+            speed_dt=self.puck_speed_dt,
+            noise_std=0.0,
+            vertical_pos_min=self.puck_vertical_pos_min,
+            vertical_pos_max=self.puck_vertical_pos_max,
+        )
+        return torch.cat([base, puck_features], dim=-1)
+
     def get_stats(self):
-        """Return dataset statistics if available."""
         return self.stats
-    
+
     def get_obs_dim(self):
-        """
-        Return the observation dimension.
-        
-        Returns:
-            int: 8 for position-only, 16 for position+action
-        """
-        return self.demo_obs.shape[1]
-    
+        return self.obs_dim
+
     def __len__(self):
-        """Return number of demonstration observations."""
         return self.num_demos
-    
+
     def _print_statistics(self):
-        """Print statistics about the demonstration data."""
-        print(f"\n  Demonstration position history data statistics:")
-        
-        # Statistics for normalized position format
-        # [pos2_x, pos2_y, pos3_x, pos3_y, pos4_x, pos4_y, pos5_x, pos5_y]
-        dim_names = [
-            'Position 2 Relative X',
-            'Position 2 Relative Y', 
-            'Position 3 Relative X',
-            'Position 3 Relative Y',
-            'Position 4 Relative X',
-            'Position 4 Relative Y',
-            'Position 5 Relative X',
-            'Position 5 Relative Y'
-        ]
-        
-        # Add action dimension names if we have actions
-        if self.has_actions:
-            dim_names.extend([
-                'Action 1->2 Delta X', 'Action 1->2 Delta Y',
-                'Action 2->3 Delta X', 'Action 2->3 Delta Y',
-                'Action 3->4 Delta X', 'Action 3->4 Delta Y',
-                'Action 4->5 Delta X', 'Action 4->5 Delta Y',
-            ])
-        
-        obs_type = f"{len(dim_names)}D - relative positions" + (" + action" if self.has_actions else "")
-        print(f"\n  Normalized observations ({obs_type}):")
-        for dim_idx, dim_name in enumerate(dim_names):
-            values = self.demo_obs[:, dim_idx]
-            print(f"    {dim_name}: "
-                  f"mean={values.mean():.4f}, "
-                  f"std={values.std():.4f}, "
-                  f"min={values.min():.4f}, "
-                  f"max={values.max():.4f}")
-        
-        # Compute displacement statistics
-        # Displacement from pos1 to pos2
-        disp_12 = torch.sqrt(self.demo_obs[:, 0]**2 + self.demo_obs[:, 1]**2).mean()
-        # Displacement from pos1 to pos5
-        disp_15 = torch.sqrt(self.demo_obs[:, 6]**2 + self.demo_obs[:, 7]**2).mean()
-        print(f"\n  Displacement check:")
-        print(f"    Position 1→2 displacement (average): {disp_12:.6f}")
-        print(f"    Position 1→5 displacement (average): {disp_15:.6f}")
-        
-        # Action magnitude if available
-        if self.has_actions:
-            action_vectors = self.demo_obs[:, 8:].reshape(-1, 2)
-            action_mag = torch.sqrt(action_vectors[:, 0]**2 + action_vectors[:, 1]**2).mean()
-            print(f"    Transition action magnitude (average): {action_mag:.6f}")
-        
-        # Check for any NaN or Inf
-        if not torch.isfinite(self.demo_obs).all():
-            print("\n  ⚠ WARNING: Demo data contains NaN or Inf values!")
+        print("\n  Demonstration data statistics:")
+        print(f"    sample_bucketed_points: {self.sample_bucketed_points}")
+        print(f"    use_puck: {self.use_puck}")
+        print(f"    obs_dim: {self.obs_dim}")
+        if self.sample_bucketed_points:
+            sampled_points = 2 + self.bucket_num_bins * self.bucket_samples_per_bin
+            print(
+                "    long-window sampling: "
+                f"window={self.bucket_window_len}, points={sampled_points}, "
+                f"bins={self.bucket_num_bins}, per_bin={self.bucket_samples_per_bin}"
+            )

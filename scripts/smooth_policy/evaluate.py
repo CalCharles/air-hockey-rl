@@ -9,6 +9,7 @@ import tqdm
 from airhockey import AirHockeyEnv
 from airhockey.renderers import AirHockeyRenderer
 from scripts.smooth_policy.agent import Agent
+from scripts.smooth_policy.deterministic_agent import DeterministicAgent
 import gymnasium as gym
 from tensorboard.backend.event_processing import event_accumulator
 from scripts.utils import save_tensorboard_plots
@@ -41,6 +42,101 @@ def _augment_policy_observation(observation, last_action, use_last_action):
     if not use_last_action:
         return observation
     return torch.cat([observation, last_action], dim=-1)
+
+
+def _unwrap_eval_state_dict(loaded_obj):
+    """Normalize different checkpoint formats to a policy state_dict."""
+    if not isinstance(loaded_obj, dict):
+        raise TypeError(f"Expected checkpoint/state_dict to be a dict, got {type(loaded_obj)}")
+
+    candidate = loaded_obj
+    if "state_dict" in loaded_obj and isinstance(loaded_obj["state_dict"], dict):
+        candidate = loaded_obj["state_dict"]
+    elif "actor" in loaded_obj and isinstance(loaded_obj["actor"], dict):
+        # Training checkpoints usually store actor under "actor".
+        candidate = loaded_obj["actor"]
+
+    tensor_keys = [k for k, v in candidate.items() if isinstance(k, str) and torch.is_tensor(v)]
+    if not tensor_keys:
+        raise ValueError("Could not find tensor parameters in provided checkpoint/state dict.")
+    return candidate
+
+
+def _infer_policy_class_from_state_dict(state_dict):
+    """Infer which policy module to construct for a checkpoint."""
+    keys = set(state_dict.keys())
+    has_agent_only_keys = (
+        "actor_logstd" in keys
+        or "LOG_STD_MIN" in keys
+        or "LOG_STD_MAX" in keys
+        or "EPS" in keys
+        or any(key.startswith("critic.") for key in keys)
+        or "critic_head.weight" in keys
+    )
+    if has_agent_only_keys:
+        return "agent"
+
+    has_actor_keys = any(
+        key.startswith("actor.") or key.startswith("actor_mean_head.") for key in keys
+    )
+    if has_actor_keys:
+        return "deterministic_agent"
+
+    preview_keys = sorted(list(keys))[:10]
+    raise ValueError(
+        f"Unable to infer policy type from checkpoint keys. Example keys: {preview_keys}"
+    )
+
+
+def _build_policy(
+    policy_type,
+    policy_env_view,
+    action_scale,
+    agent_hidden_layer_size,
+    agent_num_hidden_layers,
+):
+    if policy_type == "agent":
+        return Agent(
+            policy_env_view,
+            action_scale=action_scale,
+            action_bias=0.0,
+            hidden_layer_size=agent_hidden_layer_size,
+            num_hidden_layers=agent_num_hidden_layers,
+        )
+    if policy_type == "deterministic_agent":
+        return DeterministicAgent(
+            policy_env_view,
+            action_scale=action_scale,
+            action_bias=0.0,
+            hidden_layer_size=agent_hidden_layer_size,
+            num_hidden_layers=agent_num_hidden_layers,
+        )
+    raise ValueError(
+        f"Unsupported policy_type '{policy_type}'. Use 'agent', 'deterministic_agent', or None."
+    )
+
+
+def _load_policy_for_evaluation(
+    model_path,
+    policy_env_view,
+    action_scale,
+    agent_hidden_layer_size,
+    agent_num_hidden_layers,
+    policy_type=None,
+):
+    loaded_obj = torch.load(model_path, map_location="cpu")
+    state_dict = _unwrap_eval_state_dict(loaded_obj)
+    resolved_policy_type = policy_type or _infer_policy_class_from_state_dict(state_dict)
+    model = _build_policy(
+        policy_type=resolved_policy_type,
+        policy_env_view=policy_env_view,
+        action_scale=action_scale,
+        agent_hidden_layer_size=agent_hidden_layer_size,
+        agent_num_hidden_layers=agent_num_hidden_layers,
+    )
+    model.load_state_dict(state_dict)
+    model.eval()
+    return model
 
 
 def _save_task_gif_with_last_action(
@@ -100,9 +196,16 @@ def evaluate_agent(
     reference_states=None,
     ref_max_episode_steps=None,
     action_scale=0.02,
-    agent_hidden_size=64,
+    agent_hidden_layer_size=64,
+    agent_num_hidden_layers=2,
+    agent_hidden_size=None,
     use_last_action_in_policy_state=False,
+    policy_type=None,
 ):
+    if agent_hidden_size is not None:
+        agent_hidden_layer_size = int(agent_hidden_size)
+    if agent_num_hidden_layers < 1:
+        raise ValueError("agent_num_hidden_layers must be >= 1.")
 
     # Override max_timesteps if reference state initialization is enabled
     eval_air_hockey_params = air_hockey_params.copy()
@@ -130,9 +233,14 @@ def evaluate_agent(
         ),
         single_action_space=envs.single_action_space,
     )
-    model = Agent(policy_env_view, action_scale=action_scale, action_bias=0.0, hidden_size=agent_hidden_size)
-    state_dict = torch.load(model_path)
-    model.load_state_dict(state_dict)
+    model = _load_policy_for_evaluation(
+        model_path=model_path,
+        policy_env_view=policy_env_view,
+        action_scale=action_scale,
+        agent_hidden_layer_size=agent_hidden_layer_size,
+        agent_num_hidden_layers=agent_num_hidden_layers,
+        policy_type=policy_type,
+    )
 
     env = envs.envs[0]
     renderer = AirHockeyRenderer(env, show_target_position=True, show_acceleration_arrow=False)

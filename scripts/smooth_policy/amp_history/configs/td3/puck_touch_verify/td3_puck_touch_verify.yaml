@@ -1,0 +1,96 @@
+# Quick TD3 verification args for puck_touch.
+# Run with:
+# python scripts/smooth_policy/amp_history/amp_training/td3/amp_training_td3.py \
+#   --args-file scripts/smooth_policy/amp_history/configs/td3/puck_touch_verify/td3_puck_touch_verify.yaml
+
+# Basic training parameters
+total_timesteps: 300000
+num_envs: 8
+
+# TD3 core
+buffer_size: 500000
+task_gamma: 0.985
+motion_gamma: 0.8
+tau: 0.005
+batch_size: 512
+learning_starts: 10000
+policy_lr: 0.0003
+q_lr: 0.001
+q_weight_decay: 0.0001
+q_frequency: 1
+q_updates: 4
+policy_frequency: 2
+target_network_frequency: 2
+exploration_noise: 0.1
+policy_noise: 0.2
+noise_clip: 0.5
+
+# Prioritized replay
+per_enabled: true
+per_alpha: 0.6
+per_beta_start: 0.4
+per_beta_end: 1.0
+per_beta_anneal_steps: 50000
+per_eps: 0.000001
+
+# Primitive exploration takeover
+exploration_primitive_chance: 0.01
+exploration_primitive_chance_start: 0.1
+exploration_primitive_chance_pre_learning_starts: 0.5
+exploration_primitive_chance_anneal_steps: 50000
+exploration_primitive_steps: 3
+exploration_primitive_weight_stand_still: 0.25
+exploration_primitive_weight_same_direction: 0.0
+exploration_primitive_weight_y_aligned: 0.5
+exploration_primitive_weight_policy_takeover: 0.0
+
+exploration_primitive_weight_anneal_stand_still: 0.25
+exploration_primitive_weight_anneal_same_direction: 0.0
+exploration_primitive_weight_anneal_y_aligned: 0.5
+exploration_primitive_weight_anneal_policy_takeover: 0.0
+exploration_direction_y_component_weight: 1.5
+exploration_policy_takeover_enabled: false
+
+# Dual-head reward decomposition
+# Keep objective mostly task-driven for algorithm sanity checks.
+task_reward_weight: 1.0
+motion_reward_weight: 0.0
+
+# Motion reward component weights (kept but effectively disabled via motion_reward_weight=0)
+stand_still_reward_weight: 0.5
+temporal_alignment_reward_weight: 0.5
+axis_alignment_reward_weight: 0.5
+velocity_reward_weight: 0.5
+jerk_reward_weight: 0.5
+
+# Motion reward calibration
+stand_still_threshold: 0.015
+temporal_alignment_horizon: 4
+velocity_at_one: 0.3
+velocity_at_zero: 0.6
+jerk_at_one: 10.0
+jerk_at_zero: 23.0
+
+# Paths
+config: "scripts/smooth_policy/amp_history/configs/td3/puck_touch_verify/puck_touch_config.yaml"
+args_file: null
+model_path: null
+log_parent_dir: "runs/td3_training/puck_touch/verify"
+run_name: "td3_puck_touch_verify"
+
+# Runtime
+device: "cuda:0"
+seed: 0
+action_scale: 1.0
+h_transform_eps: 0.001
+
+# Agent / critic architecture
+agent_hidden_layer_size: 64
+agent_num_hidden_layers: 3
+agent_hidden_size: null
+q_hidden_layer_size: 64
+q_num_hidden_layers: 3
+q_hidden_size: null
+
+# Policy state options
+use_last_action_in_policy_state: true

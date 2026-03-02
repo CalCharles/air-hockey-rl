@@ -104,7 +104,7 @@ python scripts/smooth_policy/amp_history/amp_training/amp_training_lsgan.py --ar
 ### SAC with more aggressive value-update frequency (improved sample efficiency)
 
 ```bash
-python scripts/smooth_policy/amp_history/amp_training/amp_training_lsgan_sac.py \
+python scripts/smooth_policy/amp_history/amp_training/sac/amp_training_lsgan_sac.py \
     --args_file scripts/smooth_policy/amp_history/configs/sac/sac_puck_juggle.yaml --q-frequency 10
 ```
 
@@ -133,5 +133,5 @@ python scripts/smooth_policy/amp_history/amp_training/amp_training_lsgan.py --ar
 #### SAC with discriminator
 
 ```bash
-python scripts/smooth_policy/amp_history/amp_training/amp_training_lsgan_sac.py --args-file scripts/smooth_policy/amp_history/configs/sac/sac_amp.yaml --demo_data_path scripts/smooth_policy/amp_history/amp_training/amp_data/dataset_with_action_history.pt --use_action_discriminator --log_parent_dir runs/amp_with_actions/sac/test_with_history/run
+python scripts/smooth_policy/amp_history/amp_training/sac/amp_training_lsgan_sac.py --args-file scripts/smooth_policy/amp_history/configs/sac/sac_amp.yaml --demo_data_path scripts/smooth_policy/amp_history/amp_training/amp_data/dataset_with_action_history.pt --use_action_discriminator --log_parent_dir runs/amp_with_actions/sac/test_with_history/run
 ```
