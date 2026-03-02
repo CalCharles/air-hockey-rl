@@ -40,8 +40,8 @@ critic_success_sample_fraction: 0.3
 critic_failure_sample_fraction: 0.7
 
 # Primitive exploration takeover
-exploration_primitive_chance: 0.02 # at the end
-exploration_primitive_chance_start: 0.10 # at the start of annealing
+exploration_primitive_chance: 0.05 # at the end
+exploration_primitive_chance_start: 0.15 # at the start of annealing
 
 # If set, overrides primitive takeover chance while global_step < learning_starts.
 exploration_primitive_chance_pre_learning_starts: 1.0
@@ -50,18 +50,18 @@ exploration_primitive_chance_anneal_steps: 200000 # around 2000-5000 episodes
 exploration_primitive_steps: 5
 
 # exploration after annealing phase
-exploration_primitive_weight_stand_still: 1.0
-exploration_primitive_weight_same_direction: 0.5
-exploration_primitive_weight_y_aligned: 0.5
-exploration_primitive_weight_policy_takeover: 0.5
-exploration_primitive_weight_target_position_directional: 0.5
+exploration_primitive_weight_stand_still: 0.2
+exploration_primitive_weight_same_direction: 1.0
+exploration_primitive_weight_y_aligned: 1.0
+exploration_primitive_weight_policy_takeover: 0.2
+exploration_primitive_weight_target_position_directional: 1.0
 
 # exploration during annealing phase
-exploration_primitive_weight_anneal_stand_still: 1.0
-exploration_primitive_weight_anneal_same_direction: 0.0
+exploration_primitive_weight_anneal_stand_still: 0.2 # don't need too many of these
+exploration_primitive_weight_anneal_same_direction: 1.0
 exploration_primitive_weight_anneal_y_aligned: 1.0
-exploration_primitive_weight_anneal_policy_takeover: 2.0 # success examples
-exploration_primitive_weight_anneal_target_position_directional: 0.5
+exploration_primitive_weight_anneal_policy_takeover: 0.2 # don't need too many of these
+exploration_primitive_weight_anneal_target_position_directional: 1.0
 
 # exploration specific knobs
 exploration_direction_y_component_weight: 2
@@ -106,7 +106,7 @@ jerk_at_one: 8.0
 jerk_at_zero: 20.0
 
 # Paths
-config: "scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_constant_upper_half_custom_sim_params.yaml"
+config: "scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_sim2real_gap_upper_mid_band.yaml"
 args_file: null
 model_path: "/home/air-hockey/daliu/air-hockey-rl/runs/td3/final/task_only/checkpoint_20000/training_state.pth"
 log_parent_dir: "runs/td3/final/task_only_resume_from_checkpoint"

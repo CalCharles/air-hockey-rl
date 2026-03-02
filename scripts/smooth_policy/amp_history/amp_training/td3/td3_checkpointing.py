@@ -17,6 +17,12 @@ def _cpu_tensor(tensor: torch.Tensor) -> torch.Tensor:
     return tensor.detach().clone().cpu()
 
 
+def _to_rng_byte_tensor(state: object) -> torch.Tensor:
+    if isinstance(state, torch.Tensor):
+        return state.detach().clone().to(device="cpu", dtype=torch.uint8).contiguous()
+    return torch.as_tensor(state, dtype=torch.uint8, device="cpu").contiguous()
+
+
 def get_rng_states() -> Dict[str, object]:
     states: Dict[str, object] = {
         "python": random.getstate(),
@@ -34,9 +40,10 @@ def set_rng_states(states: Dict[str, object]) -> None:
     if "numpy" in states:
         np.random.set_state(states["numpy"])
     if "torch_cpu" in states:
-        torch.set_rng_state(states["torch_cpu"])
+        torch.set_rng_state(_to_rng_byte_tensor(states["torch_cpu"]))
     if "torch_cuda" in states and torch.cuda.is_available():
-        torch.cuda.set_rng_state_all(states["torch_cuda"])
+        cuda_states = [_to_rng_byte_tensor(state) for state in states["torch_cuda"]]
+        torch.cuda.set_rng_state_all(cuda_states)
 
 
 def load_resume_training_state(
@@ -74,6 +81,25 @@ def load_resume_training_state(
     if "rng_states" in resume_checkpoint:
         set_rng_states(resume_checkpoint["rng_states"])
 
+    if "steps_since_done" in resume_checkpoint:
+        steps_since_done = resume_checkpoint["steps_since_done"].to(device)
+    else:
+        # Backward compatibility for older checkpoints that used
+        # temporal_done_history + temporal_position_count.
+        legacy_position_count = resume_checkpoint.get("temporal_position_count")
+        if legacy_position_count is None:
+            steps_since_done = defaults["steps_since_done"]
+        else:
+            steps_since_done = torch.clamp(legacy_position_count.to(device) - 1, min=0)
+        legacy_done_history = resume_checkpoint.get("temporal_done_history")
+        if legacy_done_history is not None:
+            recent_done = legacy_done_history.to(device).any(dim=1)
+            steps_since_done = torch.where(
+                recent_done,
+                torch.zeros_like(steps_since_done),
+                steps_since_done,
+            )
+
     return {
         "global_step": int(resume_checkpoint["global_step"]),
         "iteration": int(resume_checkpoint["iteration"]),
@@ -84,8 +110,7 @@ def load_resume_training_state(
         ).to(device),
         "temporal_paddle_history": resume_checkpoint["temporal_paddle_history"].to(device),
         "temporal_puck_history": resume_checkpoint["temporal_puck_history"].to(device),
-        "temporal_done_history": resume_checkpoint["temporal_done_history"].to(device),
-        "temporal_position_count": resume_checkpoint["temporal_position_count"].to(device),
+        "steps_since_done": steps_since_done,
         "current_velocity_mag": resume_checkpoint["current_velocity_mag"].to(device),
         "current_acceleration_mag": resume_checkpoint["current_acceleration_mag"].to(device),
         "current_jerk_mag": resume_checkpoint["current_jerk_mag"].to(device),
@@ -161,8 +186,7 @@ def build_training_state(
     warm_policy_last_action: torch.Tensor,
     temporal_paddle_history: torch.Tensor,
     temporal_puck_history: torch.Tensor,
-    temporal_done_history: torch.Tensor,
-    temporal_position_count: torch.Tensor,
+    steps_since_done: torch.Tensor,
     current_velocity_mag: torch.Tensor,
     current_acceleration_mag: torch.Tensor,
     current_jerk_mag: torch.Tensor,
@@ -184,7 +208,7 @@ def build_training_state(
     args_dict: Dict[str, Any],
 ) -> Dict[str, Any]:
     return {
-        "checkpoint_version": 1,
+        "checkpoint_version": 2,
         "global_step": global_step,
         "iteration": iteration,
         "actor": actor.state_dict(),
@@ -203,8 +227,7 @@ def build_training_state(
         "warm_policy_last_action": _cpu_tensor(warm_policy_last_action),
         "temporal_paddle_history": _cpu_tensor(temporal_paddle_history),
         "temporal_puck_history": _cpu_tensor(temporal_puck_history),
-        "temporal_done_history": _cpu_tensor(temporal_done_history),
-        "temporal_position_count": _cpu_tensor(temporal_position_count),
+        "steps_since_done": _cpu_tensor(steps_since_done),
         "current_velocity_mag": _cpu_tensor(current_velocity_mag),
         "current_acceleration_mag": _cpu_tensor(current_acceleration_mag),
         "current_jerk_mag": _cpu_tensor(current_jerk_mag),

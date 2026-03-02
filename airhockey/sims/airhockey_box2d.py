@@ -99,7 +99,7 @@ class CollisionForceListener(contactListener):
         self,
         wall_tag="table_wall",
         puck_wall_restitution_threshold_speed=0.25,
-        puck_wall_fixed_impulse_below_threshold=0.0,
+        puck_wall_min_rebound_speed_below_threshold=0.1,
     ):
         contactListener.__init__(self)
         self.collision_forces = list()
@@ -107,8 +107,8 @@ class CollisionForceListener(contactListener):
         self.puck_wall_restitution_threshold_speed = max(
             float(puck_wall_restitution_threshold_speed), 0.0
         )
-        self.puck_wall_fixed_impulse_below_threshold = max(
-            float(puck_wall_fixed_impulse_below_threshold), 0.0
+        self.puck_wall_min_rebound_speed_below_threshold = max(
+            float(puck_wall_min_rebound_speed_below_threshold), 0.0
         )
         self._pending_wall_restitution = {}
     
@@ -217,10 +217,9 @@ class CollisionForceListener(contactListener):
                             if incoming_speed >= self.puck_wall_restitution_threshold_speed:
                                 target_outgoing = incoming_speed * restitution
                             else:
-                                target_outgoing = (
-                                    self.puck_wall_fixed_impulse_below_threshold
-                                    / max(float(puck_body.mass), 1e-8)
-                                )
+                                # For low-speed incoming wall impacts, enforce a deterministic
+                                # minimum rebound speed (applies to all wall orientations).
+                                target_outgoing = self.puck_wall_min_rebound_speed_below_threshold
 
                             post_vel = np.array(
                                 [puck_body.linearVelocity[0], puck_body.linearVelocity[1]],
@@ -274,8 +273,8 @@ class AirHockeyBox2D:
             'end_wall_restitution': 0.7,
             # Deterministic puck-wall restitution gate based on relative normal speed.
             'puck_wall_restitution_threshold_speed': 0.25,
-            # For impacts below threshold, optionally enforce a fixed outward normal impulse.
-            'puck_wall_fixed_impulse_below_threshold': 0.0,
+            # For low-speed incoming wall impacts, enforce this minimum rebound speed (m/s).
+            'puck_wall_min_rebound_speed_below_threshold': 0.1,
             'action_lag': 0.0,
             'puck_noise': False,
             'puck_noise_std': 0.005,
@@ -324,8 +323,8 @@ class AirHockeyBox2D:
         self.side_wall_restitution = float(config.side_wall_restitution)
         self.end_wall_restitution = float(config.end_wall_restitution)
         self.puck_wall_restitution_threshold_speed = max(float(config.puck_wall_restitution_threshold_speed), 0.0)
-        self.puck_wall_fixed_impulse_below_threshold = max(
-            float(config.puck_wall_fixed_impulse_below_threshold), 0.0
+        self.puck_wall_min_rebound_speed_below_threshold = max(
+            float(config.puck_wall_min_rebound_speed_below_threshold), 0.0
         )
         self.puck_min_height = (-config.length / 2) + (config.length / 3)
         self.paddle_max_height = 0
@@ -463,7 +462,7 @@ class AirHockeyBox2D:
         self.collision_listener = CollisionForceListener(
             wall_tag="table_wall",
             puck_wall_restitution_threshold_speed=self.puck_wall_restitution_threshold_speed,
-            puck_wall_fixed_impulse_below_threshold=self.puck_wall_fixed_impulse_below_threshold,
+            puck_wall_min_rebound_speed_below_threshold=self.puck_wall_min_rebound_speed_below_threshold,
         )
         self.world.contactListener = self.collision_listener
         self.total_timesteps = 0

@@ -300,7 +300,7 @@ def create_warm_start_policy(
         hidden_layer_size=warm_hidden_layer_size,
         num_hidden_layers=warm_num_hidden_layers,
     ).to(device)
-    warm_state_dict = torch.load(warm_model_path, map_location=device)
+    warm_state_dict = torch.load(warm_model_path, map_location=device, weights_only=False)
     warm_policy.load_state_dict(warm_state_dict)
     warm_policy.eval()
     return warm_policy, warm_use_last_action
@@ -659,7 +659,7 @@ if __name__ == "__main__":
         if not os.path.exists(args.model_path):
             raise FileNotFoundError(f"Model path {args.model_path} does not exist.")
         print(f"Loading model/checkpoint from {args.model_path}")
-        loaded_obj = torch.load(args.model_path, map_location=args.device)
+        loaded_obj = torch.load(args.model_path, map_location=args.device, weights_only=False)
         if isinstance(loaded_obj, dict) and "actor" in loaded_obj and "qf1" in loaded_obj:
             resume_checkpoint = loaded_obj
             actor.load_state_dict(extract_deterministic_state_dict(resume_checkpoint["actor"]), strict=False)
@@ -754,13 +754,13 @@ if __name__ == "__main__":
     temporal_horizon = args.temporal_alignment_horizon
     temporal_paddle_history = torch.zeros((args.num_envs, temporal_horizon + 1, 2), device=args.device)
     temporal_puck_history = torch.zeros((args.num_envs, temporal_horizon + 1, 2), device=args.device)
-    temporal_done_history = torch.zeros((args.num_envs, temporal_horizon), dtype=torch.bool, device=args.device)
-    temporal_position_count = torch.zeros(args.num_envs, dtype=torch.long, device=args.device)
+    # Consecutive non-terminal transitions since the most recent done.
+    # This replaces done-window + fill-count bookkeeping for temporal_valid.
+    steps_since_done = torch.zeros(args.num_envs, dtype=torch.long, device=args.device)
     initial_obs_tensor = torch.tensor(obs, dtype=torch.float32, device=args.device)
     temporal_paddle_history[:, -1, :] = extract_current_paddle_position(initial_obs_tensor)
     temporal_puck_history[:, -1, :] = extract_current_puck_position(initial_obs_tensor)
     previous_puck_position_for_trigger = extract_current_puck_position(initial_obs_tensor).clone()
-    temporal_position_count[:] = 1
 
     current_velocity_mag = torch.zeros(args.num_envs, dtype=torch.float32, device=args.device)
     current_acceleration_mag = torch.zeros(args.num_envs, dtype=torch.float32, device=args.device)
@@ -862,6 +862,7 @@ if __name__ == "__main__":
                 "interval_target_position_directional_env_steps": (
                     interval_target_position_directional_env_steps
                 ),
+                "steps_since_done": steps_since_done,
                 "recent_episode_returns": recent_episode_returns,
                 "episode_return_success_threshold": episode_return_success_threshold,
             },
@@ -876,8 +877,7 @@ if __name__ == "__main__":
         warm_policy_last_action = restored_state["warm_policy_last_action"]
         temporal_paddle_history = restored_state["temporal_paddle_history"]
         temporal_puck_history = restored_state["temporal_puck_history"]
-        temporal_done_history = restored_state["temporal_done_history"]
-        temporal_position_count = restored_state["temporal_position_count"]
+        steps_since_done = restored_state["steps_since_done"]
         current_velocity_mag = restored_state["current_velocity_mag"]
         current_acceleration_mag = restored_state["current_acceleration_mag"]
         current_jerk_mag = restored_state["current_jerk_mag"]
@@ -1023,15 +1023,17 @@ if __name__ == "__main__":
         temporal_paddle_history[:, -1, :] = current_paddle_pos
         temporal_puck_history = torch.roll(temporal_puck_history, shifts=-1, dims=1)
         temporal_puck_history[:, -1, :] = current_puck_pos
-        temporal_done_history = torch.roll(temporal_done_history, shifts=-1, dims=1)
-        temporal_done_history[:, -1] = done_tensor
-        temporal_position_count = torch.clamp(temporal_position_count + 1, max=temporal_horizon + 1)
+        steps_since_done = torch.where(
+            done_tensor,
+            torch.zeros_like(steps_since_done),
+            steps_since_done + 1,
+        )
 
         realized_movement = temporal_paddle_history[:, -1, :] - temporal_paddle_history[:, 0, :]
         movement_norm = torch.norm(realized_movement, dim=-1)
         eps = 1e-8
 
-        temporal_valid = (temporal_position_count >= temporal_horizon + 1) & (~temporal_done_history.any(dim=1))
+        temporal_valid = steps_since_done >= temporal_horizon
         stand_still_reward_raw = ((movement_norm <= args.stand_still_threshold) & temporal_valid).float()
 
         target_direction = temporal_puck_history[:, 0, :] - temporal_paddle_history[:, 0, :]
@@ -1079,6 +1081,7 @@ if __name__ == "__main__":
         if should_update_train_metrics:
             motion_reward_mean_metrics = tensor_mean_items(
                 {
+                    "rewards/temporal_valid_fraction": temporal_valid.float(),
                     "rewards/stand_still_reward_raw_mean": stand_still_reward_raw,
                     "rewards/temporal_alignment_reward_raw_mean": temporal_alignment_reward_raw,
                     "rewards/axis_alignment_reward_raw_mean": axis_alignment_reward_raw,
@@ -1092,14 +1095,19 @@ if __name__ == "__main__":
                 }
             )
             train_metrics.update(motion_reward_mean_metrics)
+            # Log this rollout diagnostic at collection time so it is not biased
+            # by terminal-step-only training updates.
+            writer.add_scalar(
+                "rewards/temporal_valid_fraction",
+                motion_reward_mean_metrics["rewards/temporal_valid_fraction"],
+                global_step,
+            )
 
         if dones.any():
             temporal_paddle_history[done_tensor] = 0
             temporal_paddle_history[done_tensor, -1, :] = current_paddle_pos[done_tensor]
             temporal_puck_history[done_tensor] = 0
             temporal_puck_history[done_tensor, -1, :] = current_puck_pos[done_tensor]
-            temporal_done_history[done_tensor] = False
-            temporal_position_count[done_tensor] = 1
 
         if "final_info" in infos:
             for info in infos["final_info"]:
@@ -1627,8 +1635,7 @@ if __name__ == "__main__":
                 warm_policy_last_action=warm_policy_last_action,
                 temporal_paddle_history=temporal_paddle_history,
                 temporal_puck_history=temporal_puck_history,
-                temporal_done_history=temporal_done_history,
-                temporal_position_count=temporal_position_count,
+                steps_since_done=steps_since_done,
                 current_velocity_mag=current_velocity_mag,
                 current_acceleration_mag=current_acceleration_mag,
                 current_jerk_mag=current_jerk_mag,
@@ -1713,8 +1720,7 @@ if __name__ == "__main__":
         warm_policy_last_action=warm_policy_last_action,
         temporal_paddle_history=temporal_paddle_history,
         temporal_puck_history=temporal_puck_history,
-        temporal_done_history=temporal_done_history,
-        temporal_position_count=temporal_position_count,
+        steps_since_done=steps_since_done,
         current_velocity_mag=current_velocity_mag,
         current_acceleration_mag=current_acceleration_mag,
         current_jerk_mag=current_jerk_mag,
