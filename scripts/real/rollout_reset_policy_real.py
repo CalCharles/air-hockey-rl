@@ -62,8 +62,11 @@ class ResetPolicyFSM:
         goto_start_arrive_m: float = 0.05,
         waypoint_advance_m: float = 0.05,
         puck_proximity_m: float = 0.5,
-        post_upward_check_steps: int = 5,
+        post_upward_check_steps: int = 20,
         post_upward_down_cmd_start: float = -0.4,
+        post_window_debug_log: bool = False,
+        first_puck_hit_upward_threshold_proportion_from_bottom: float = 0.45,
+        second_puck_hit_upward_threshold_proportion_from_bottom: float = 0.4,
     ):
         self.env = env
         self.rng = rng
@@ -75,6 +78,13 @@ class ResetPolicyFSM:
         self.puck_proximity_m = float(puck_proximity_m)
         self.post_upward_check_steps = max(1, int(post_upward_check_steps))
         self.post_upward_down_cmd_start = float(post_upward_down_cmd_start)
+        self.post_window_debug_log = bool(post_window_debug_log)
+        self.first_puck_hit_upward_threshold_proportion_from_bottom = float(
+            first_puck_hit_upward_threshold_proportion_from_bottom
+        )
+        self.second_puck_hit_upward_threshold_proportion_from_bottom = float(
+            second_puck_hit_upward_threshold_proportion_from_bottom
+        )
         strike_mag = float(self.rng.uniform(0.8, 1.0))
         self._strike_actions = [
             -0.3 * strike_mag,
@@ -83,7 +93,7 @@ class ResetPolicyFSM:
             -strike_mag,
             -strike_mag,
         ]
-        self.puck_proximity_m = float(self.rng.uniform(0.425, 0.5))
+        self.puck_proximity_m = float(self.rng.uniform(0.5, 0.6)) # less delay than before
 
         simulator = self.env.simulator
         self._lims = np.array(
@@ -112,6 +122,9 @@ class ResetPolicyFSM:
         self._window_steps_left = 0
         self._window_any_pass = False
         self._window_kind = "none"
+        self._window_target_offset_x_m = 0.15
+        self._window_start_tcp = None
+        self._window_target_tcp = None
         self._pending_window_finalize = None
         self.path_idx = 0
         self.path_waypoints = np.zeros((1, 2), dtype=np.float32)
@@ -159,6 +172,15 @@ class ResetPolicyFSM:
         move_lims = np.maximum(self._move_lims, 1e-6)
         action = delta_xy_m / move_lims
         return np.clip(action, -1.0, 1.0).astype(np.float32)
+
+    def _project_displacement_to_action_box(self, target_delta_xy_m: np.ndarray) -> np.ndarray:
+        """Project desired displacement to the action box, matching TD3 primitive semantics."""
+        target_delta = np.array(target_delta_xy_m, dtype=np.float32).reshape(2)
+        scale = np.maximum(self._move_lims.astype(np.float32), 1e-6)
+        normalized = target_delta / scale
+        max_abs = float(np.max(np.abs(normalized)))
+        projection_div = max(1.0, max_abs)
+        return (normalized / projection_div).astype(np.float32)
 
     def _build_edge_loop_path(self) -> None:
         """Build waypoints tracing the bottom edge of the trapezoidal workspace."""
@@ -276,10 +298,11 @@ class ResetPolicyFSM:
     def _puck_is_occluded(self, state_info: dict) -> bool:
         return int(np.asarray(state_info["pucks"][0].get("occluded", 0)).reshape(-1)[0]) > 0
 
-    def _midline_tcp_x(self) -> float:
-        """Center line in the same TCP-aligned frame as puck positions."""
-        table_midline = (float(self.env.table_x_top) + float(self.env.table_x_bot)) / 2.0
-        return table_midline - self._center_offset
+    def _first_puck_hit_upward_threshold_tcp_x(self) -> float:
+        """First upward-hit threshold in the same TCP-aligned frame as puck positions."""
+        return self._line_tcp_x_from_bottom_proportion(
+            self.first_puck_hit_upward_threshold_proportion_from_bottom
+        )
 
     def _quarter_line_tcp_x(self) -> float:
         """Quarter line between bottom and midline in TCP-aligned frame."""
@@ -287,12 +310,32 @@ class ResetPolicyFSM:
         quarter_from_bottom = (float(self.env.table_x_bot) + table_midline) / 2.0
         return quarter_from_bottom - self._center_offset
 
-    def _puck_above_midline(self, state_info: dict) -> bool:
-        """True when the puck is visible and above the table midline."""
+    def _second_puck_hit_upward_threshold_tcp_x(self) -> float:
+        """Second upward-hit threshold in the same TCP-aligned frame as puck positions."""
+        return self._line_tcp_x_from_bottom_proportion(
+            self.second_puck_hit_upward_threshold_proportion_from_bottom
+        )
+
+    def _line_tcp_x_from_bottom_proportion(self, proportion_from_bottom: float) -> float:
+        """Line position in TCP frame for a given [bottom->top] table proportion."""
+        bottom = float(self.env.table_x_bot)
+        top = float(self.env.table_x_top)
+        line_world_x = bottom + float(proportion_from_bottom) * (top - bottom)
+        return line_world_x - self._center_offset
+
+    def _puck_above_first_puck_hit_upward_threshold(self, state_info: dict) -> bool:
+        """True when the puck is visible and above the first upward-hit threshold."""
         if self._puck_is_occluded(state_info):
             return False
         puck_tcp_x = float(self._get_puck_pos(state_info)[0])
-        return puck_tcp_x <= self._midline_tcp_x()
+        return puck_tcp_x <= self._first_puck_hit_upward_threshold_tcp_x()
+
+    def _puck_above_second_puck_hit_upward_threshold(self, state_info: dict) -> bool:
+        """True when the puck is visible and above the second upward-hit threshold."""
+        if self._puck_is_occluded(state_info):
+            return False
+        puck_tcp_x = float(self._get_puck_pos(state_info)[0])
+        return puck_tcp_x <= self._second_puck_hit_upward_threshold_tcp_x()
 
     def _puck_above_quarter(self, state_info: dict) -> bool:
         """True when the puck is visible and above the quarter line from the bottom."""
@@ -317,7 +360,12 @@ class ResetPolicyFSM:
         puck = state_info["pucks"][0]
         puck_world_x = float(puck["position"][0])
         puck_tcp_x = float(self._get_puck_pos(state_info)[0])
-        threshold = self._midline_tcp_x() if check_name == "midline" else self._quarter_line_tcp_x()
+        threshold_lookup = {
+            "first_puck_hit_upward_threshold": self._first_puck_hit_upward_threshold_tcp_x(),
+            "second_puck_hit_upward_threshold": self._second_puck_hit_upward_threshold_tcp_x(),
+            "quarter": self._quarter_line_tcp_x(),
+        }
+        threshold = threshold_lookup.get(check_name, self._quarter_line_tcp_x())
         result = "pass" if passed else "fail"
         print(
             f"[reset_fsm] {phase_name}_done check={check_name} result={result} "
@@ -342,19 +390,52 @@ class ResetPolicyFSM:
         self.last_success_motion = motion
         print(f"[reset_fsm] success stage={stage} motion_estimate={motion} total_steps={self.total_steps}")
 
-    def _start_post_upward_window(self, kind: str) -> None:
+    def _start_post_upward_window(self, kind: str, state_info: dict) -> None:
         self._window_kind = str(kind)
         self._window_steps_left = int(self.post_upward_check_steps)
         self._window_any_pass = False
+        window_start_tcp = self._get_tcp_position(state_info)
+        target_tcp = np.array(
+            [window_start_tcp[0] + self._window_target_offset_x_m, window_start_tcp[1]],
+            dtype=np.float32,
+        )
+        self._window_start_tcp = window_start_tcp.astype(np.float32)
+        self._window_target_tcp = target_tcp
+        if self.post_window_debug_log:
+            print(
+                f"[reset_fsm] post_window_start kind={self._window_kind} "
+                f"start_tcp=({self._window_start_tcp[0]:+.4f},{self._window_start_tcp[1]:+.4f}) "
+                f"target_tcp=({self._window_target_tcp[0]:+.4f},{self._window_target_tcp[1]:+.4f}) "
+                f"steps={self._window_steps_left}"
+            )
 
-    def _current_window_downward_action(self) -> np.ndarray:
-        mag = self.post_upward_down_cmd_start
-        return np.array([mag, 0.0], dtype=np.float32)
+    def _clear_post_upward_window_target(self) -> None:
+        self._window_start_tcp = None
+        self._window_target_tcp = None
+
+    def _current_window_downward_action(self, state_info: dict) -> np.ndarray:
+        if self._window_target_tcp is None:
+            return np.zeros(2, dtype=np.float32)
+        current_tcp = self._get_tcp_position(state_info)
+        puck_world = np.array(state_info["pucks"][0]["position"], dtype=np.float32)
+        remaining_delta_m = self._window_target_tcp - current_tcp
+        action = self._project_displacement_to_action_box(remaining_delta_m)
+        action = np.clip(action, -1.0, 1.0).astype(np.float32)
+        if self.post_window_debug_log:
+            print(
+                f"[reset_fsm] post_window_track kind={self._window_kind} steps_left={self._window_steps_left} "
+                f"curr_tcp=({current_tcp[0]:+.4f},{current_tcp[1]:+.4f}) "
+                f"puck_world=({puck_world[0]:+.4f},{puck_world[1]:+.4f}) "
+                f"target_tcp=({self._window_target_tcp[0]:+.4f},{self._window_target_tcp[1]:+.4f}) "
+                f"remaining=({remaining_delta_m[0]:+.4f},{remaining_delta_m[1]:+.4f}) "
+                f"action=({action[0]:+.3f},{action[1]:+.3f})"
+            )
+        return action
 
     def _step_post_upward_window(self, state_info: dict) -> np.ndarray:
         if self.phase == "post_first_upward_check":
-            check_name = "midline"
-            check_passed_now = self._puck_above_midline(state_info)
+            check_name = "second_puck_hit_upward_threshold"
+            check_passed_now = self._puck_above_second_puck_hit_upward_threshold(state_info)
             phase_name = "first_upward"
         elif self.phase == "post_second_upward_check":
             check_name = "quarter"
@@ -364,7 +445,7 @@ class ResetPolicyFSM:
             return np.zeros(2, dtype=np.float32)
 
         self._window_any_pass = bool(self._window_any_pass or check_passed_now)
-        action = self._current_window_downward_action()
+        action = self._current_window_downward_action(state_info)
         self._window_steps_left -= 1
         if self._window_steps_left <= 0:
             self._pending_window_finalize = {
@@ -380,6 +461,7 @@ class ResetPolicyFSM:
             return np.zeros(2, dtype=np.float32)
         finalize = dict(self._pending_window_finalize)
         self._pending_window_finalize = None
+        self._clear_post_upward_window_target()
         self._log_phase_check(
             state_info,
             phase_name=str(finalize["phase_name"]),
@@ -427,7 +509,8 @@ class ResetPolicyFSM:
             f"total_steps={self.total_steps}",
             f"dist={dist_m:.3f}m",
             f"puck_falling={int(bool(puck_falling))}",
-            f"midline_tcp_x={self._midline_tcp_x():+.3f}",
+            f"first_puck_hit_upward_threshold_tcp_x={self._first_puck_hit_upward_threshold_tcp_x():+.3f}",
+            f"second_puck_hit_upward_threshold_tcp_x={self._second_puck_hit_upward_threshold_tcp_x():+.3f}",
             f"quarter_tcp_x={self._quarter_line_tcp_x():+.3f}",
         ]
         for i, row in enumerate(text_rows):
@@ -488,11 +571,19 @@ class ResetPolicyFSM:
             self.phase_steps -= 1
             if self.phase_steps <= 0:
                 self.phase = "post_first_upward_check"
-                self._start_post_upward_window(kind="first")
+                self._start_post_upward_window(kind="first", state_info=state_info)
                 return self._step_post_upward_window(state_info)
             return self._upward_burst_action()
 
         if self.phase == "wait_for_puck":
+            puck_x = float(state_info["pucks"][0]["position"][0])
+            paddle_x = float(state_info["paddles"]["paddle_ego"]["position"][0])
+            if puck_x >= paddle_x:
+                self._log_new_round_start(reason="wait_for_puck_puck_below_paddle")
+                self._build_edge_loop_path()
+                self.phase = "goto_start"
+                self.phase_steps = 0
+                return np.zeros(2, dtype=np.float32)
             if self._puck_is_occluded(state_info):
                 return np.zeros(2, dtype=np.float32)
             paddle_tcp = self._get_tcp_position(state_info)
@@ -514,7 +605,7 @@ class ResetPolicyFSM:
         if self.phase == "strike":
             if self.phase_steps <= 0:
                 self.phase = "post_second_upward_check"
-                self._start_post_upward_window(kind="second")
+                self._start_post_upward_window(kind="second", state_info=state_info)
                 return self._step_post_upward_window(state_info)
             idx = len(self._strike_actions) - self.phase_steps
             action_x = self._strike_actions[idx]
@@ -607,8 +698,29 @@ if __name__ == "__main__":
         action="store_true",
         help="Force zero action during normal/policy mode to visualize reset-to-policy takeover.",
     )
+    parser.add_argument(
+        "--post-window-debug-log",
+        action="store_true",
+        help="Enable detailed post-window target-tracking logs during reset.",
+    )
+    parser.add_argument(
+        "--first-puck-hit-upward-threshold-proportion-from-bottom",
+        type=float,
+        default=0.4,
+        help="Bottom->top table proportion for first puck-hit upward threshold (default: 0.4).",
+    )
+    parser.add_argument(
+        "--second-puck-hit-upward-threshold-proportion-from-bottom",
+        type=float,
+        default=0.5,
+        help="Bottom->top table proportion for second puck-hit upward threshold (default: 0.5).",
+    )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
+    if not (0.0 <= float(args.first_puck_hit_upward_threshold_proportion_from_bottom) <= 1.0):
+        parser.error("--first-puck-hit-upward-threshold-proportion-from-bottom must be in [0.0, 1.0].")
+    if not (0.0 <= float(args.second_puck_hit_upward_threshold_proportion_from_bottom) <= 1.0):
+        parser.error("--second-puck-hit-upward-threshold-proportion-from-bottom must be in [0.0, 1.0].")
 
     params = load_air_hockey_params(args.config_path, save_path_override=args.save_path)
     params["max_timesteps"] = max(400, int(params.get("max_timesteps", 300)))
@@ -659,7 +771,17 @@ if __name__ == "__main__":
                 reset_cooldown -= 1
             if mode == "normal" and fail_now and reset_cooldown <= 0:
                 mode = "reset"
-                reset_fsm = ResetPolicyFSM(eval_env, rng)
+                reset_fsm = ResetPolicyFSM(
+                    eval_env,
+                    rng,
+                    post_window_debug_log=args.post_window_debug_log,
+                    first_puck_hit_upward_threshold_proportion_from_bottom=(
+                        args.first_puck_hit_upward_threshold_proportion_from_bottom
+                    ),
+                    second_puck_hit_upward_threshold_proportion_from_bottom=(
+                        args.second_puck_hit_upward_threshold_proportion_from_bottom
+                    ),
+                )
                 reset_fsm._log_new_round_start(reason="reset_trigger_failure_condition")
                 show_reset_path_on_camera(reset_fsm, eval_env.simulator)
 
@@ -746,7 +868,17 @@ if __name__ == "__main__":
             elif key == "r":
                 print("Force-triggering reset mode...")
                 mode = "reset"
-                reset_fsm = ResetPolicyFSM(eval_env, rng)
+                reset_fsm = ResetPolicyFSM(
+                    eval_env,
+                    rng,
+                    post_window_debug_log=args.post_window_debug_log,
+                    first_puck_hit_upward_threshold_proportion_from_bottom=(
+                        args.first_puck_hit_upward_threshold_proportion_from_bottom
+                    ),
+                    second_puck_hit_upward_threshold_proportion_from_bottom=(
+                        args.second_puck_hit_upward_threshold_proportion_from_bottom
+                    ),
+                )
                 reset_fsm._log_new_round_start(reason="manual_force_reset")
                 show_reset_path_on_camera(reset_fsm, eval_env.simulator)
                 fail_counters = {"bottom": 0, "occ": 0}

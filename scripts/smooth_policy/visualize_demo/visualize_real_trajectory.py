@@ -73,6 +73,7 @@ def extract_paddle_data(train_vals, require_puck=False):
     n_features = train_vals.shape[1]
     has_puck_xy = n_features >= 34
     has_puck_occlusion = n_features >= 35
+    has_target = n_features >= 28
 
     if require_puck and not has_puck_xy:
         raise ValueError(
@@ -86,8 +87,16 @@ def extract_paddle_data(train_vals, require_puck=False):
         'vel_x': train_vals[:, 11],     # X velocity
         'vel_y': train_vals[:, 12],     # Y velocity
         'timestamps': train_vals[:, 0],  # Unix timestamps
-        'has_puck': has_puck_xy
+        'has_puck': has_puck_xy,
+        'has_target': has_target,
     }
+
+    if has_target:
+        data['target_x'] = train_vals[:, 26]  # Table frame desired_pose X
+        data['target_y'] = train_vals[:, 27]  # Table frame desired_pose Y
+    else:
+        data['target_x'] = None
+        data['target_y'] = None
 
     if has_puck_xy:
         data['puck_x'] = train_vals[:, 32]  # Table frame X
@@ -377,6 +386,21 @@ class RealTrajectoryRenderer:
             
             cv2.putText(frame, text, text_pos, font, font_scale, color, 1)
 
+    def draw_target(self, frame, target_x, target_y):
+        """
+        Draw target position as a blue circle (puck-sized) at table-frame coordinates.
+
+        Args:
+            frame: Image to draw on (will be modified in place)
+            target_x: Target X position in table frame (meters)
+            target_y: Target Y position in table frame (meters)
+        """
+        center = self.table_position_to_pixel_coords(target_x, target_y)
+        radius = max(2, int(self.puck_radius * self.ppm))
+        color = (220, 120, 30)  # Blue in BGR
+        cv2.circle(frame, tuple(center), radius, color, -1)
+        cv2.circle(frame, tuple(center), radius, (20, 20, 20), 1)
+
     def draw_puck(self, frame, puck_x, puck_y, puck_occluded=None):
         """
         Draw puck at table-frame coordinates.
@@ -423,6 +447,7 @@ class RealTrajectoryRenderer:
     
     def render_frame(self, pos_x, pos_y, vel_x=None, vel_y=None,
                     puck_x=None, puck_y=None, puck_occluded=None,
+                    target_x=None, target_y=None,
                     timestep=None, total_time=None):
         """
         Render a single frame with paddle at given position.
@@ -435,6 +460,8 @@ class RealTrajectoryRenderer:
             puck_x: Puck X position in table frame (optional)
             puck_y: Puck Y position in table frame (optional)
             puck_occluded: Optional puck occlusion flag
+            target_x: Target X position in table frame (optional)
+            target_y: Target Y position in table frame (optional)
             timestep: Optional timestep number to display
             total_time: Optional total elapsed time to display
             
@@ -443,7 +470,11 @@ class RealTrajectoryRenderer:
         """
         frame = self.table_img.copy()
 
-        # Draw puck first so paddle can appear on top.
+        # Draw target first (behind everything else).
+        if target_x is not None and target_y is not None:
+            self.draw_target(frame, target_x, target_y)
+
+        # Draw puck so paddle can appear on top.
         if puck_x is not None and puck_y is not None:
             self.draw_puck(frame, puck_x, puck_y, puck_occluded)
         
@@ -491,6 +522,11 @@ class RealTrajectoryRenderer:
                 occlusion_text = "occluded" if bool(puck_occluded) else "visible"
                 text = f"Puck: ({puck_x:.3f}, {puck_y:.3f})m [{occlusion_text}]"
             cv2.putText(frame, text, (10, y_offset), font, font_scale, (60, 180, 75), line_type)
+            y_offset += 25
+
+        if target_x is not None and target_y is not None:
+            text = f"Target: ({target_x:.3f}, {target_y:.3f})m"
+            cv2.putText(frame, text, (10, y_offset), font, font_scale, (220, 120, 30), line_type)
         
         # Apply orientation rotation if vertical (matching render.py line 487)
         if self.orientation == 'vertical':
@@ -522,6 +558,9 @@ def create_trajectory_gif(paddle_data, renderer, output_path,
     puck_x = paddle_data.get('puck_x')
     puck_y = paddle_data.get('puck_y')
     puck_occluded = paddle_data.get('puck_occluded')
+    has_target = paddle_data.get('has_target', False)
+    target_x = paddle_data.get('target_x')
+    target_y = paddle_data.get('target_y')
     
     # Calculate relative time
     relative_time = timestamps - timestamps[0]
@@ -560,6 +599,8 @@ def create_trajectory_gif(paddle_data, renderer, output_path,
             puck_x=(puck_x[i] if has_puck else None),
             puck_y=(puck_y[i] if has_puck else None),
             puck_occluded=(puck_occluded[i] if (has_puck and puck_occluded is not None) else None),
+            target_x=(target_x[i] if has_target else None),
+            target_y=(target_y[i] if has_target else None),
             timestep=i,
             total_time=relative_time[i]
         )

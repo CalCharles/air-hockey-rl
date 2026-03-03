@@ -48,6 +48,16 @@ SPLIT_DATASETS = (
     ("puck", 3),
 )
 
+OPTIONAL_SPLIT_DATASETS = (
+    ("timing", 9),
+    ("paddle_actual", 6),
+    ("paddle_cmd", 12),
+    ("puck_meta", 2),
+)
+OPTIONAL_ALLOWED_WIDTHS = {
+    "timing": (8, 9),
+}
+
 
 def _read_2d_dataset(h5_file, key, width):
     """Read dataset as 2D array of shape (N, width)."""
@@ -62,6 +72,23 @@ def _read_2d_dataset(h5_file, key, width):
     if arr.shape[1] != width:
         raise ValueError(
             f"Dataset '{key}' expected width {width}, got shape {arr.shape}"
+        )
+    return arr
+
+
+def _read_2d_dataset_with_allowed_widths(h5_file, key, allowed_widths):
+    """Read dataset as 2D array with width in allowed_widths."""
+    if key not in h5_file:
+        raise KeyError(f"Missing dataset '{key}'")
+
+    arr = np.asarray(h5_file[key][:], dtype=np.float64)
+    if arr.ndim == 1:
+        arr = arr[:, None]
+    if arr.ndim != 2:
+        raise ValueError(f"Dataset '{key}' must be 1D/2D, got shape {arr.shape}")
+    if arr.shape[1] not in tuple(int(w) for w in allowed_widths):
+        raise ValueError(
+            f"Dataset '{key}' expected widths {tuple(allowed_widths)}, got shape {arr.shape}"
         )
     return arr
 
@@ -100,6 +127,35 @@ def load_split_trajectory_data(filepath):
     print(f"  Timesteps: {train_vals.shape[0]}")
     print(f"  Features per timestep: {train_vals.shape[1]}")
     return train_vals
+
+
+def load_split_optional_data(filepath):
+    """Load optional split-schema datasets when present.
+
+    Returns:
+        dict[str, np.ndarray]: Mapping from optional dataset name to array.
+    """
+    optional_data = {}
+    with h5py.File(filepath, "r") as f:
+        n_rows = None
+        for name, width in OPTIONAL_SPLIT_DATASETS:
+            if name not in f:
+                continue
+            if name in OPTIONAL_ALLOWED_WIDTHS:
+                data = _read_2d_dataset_with_allowed_widths(
+                    f, name, OPTIONAL_ALLOWED_WIDTHS[name]
+                )
+            else:
+                data = _read_2d_dataset(f, name, width)
+            if n_rows is None and "cur_time" in f:
+                n_rows = _read_2d_dataset(f, "cur_time", 1).shape[0]
+            if n_rows is not None and data.shape[0] != n_rows:
+                raise ValueError(
+                    f"Inconsistent timestep count for optional '{name}': "
+                    f"{data.shape[0]} vs expected {n_rows}"
+                )
+            optional_data[name] = data
+    return optional_data
 
 
 def visualize_single_file(data_path, output_dir, args):

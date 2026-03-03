@@ -100,7 +100,8 @@ def camera_callback(
     puck_radius=0.03175,
     region_x_offset=1.0,
 ):
-    cap = cv2.VideoCapture(1)
+    cap = cv2.VideoCapture(1, cv2.CAP_V4L2)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     detector_kwargs = puck_detector_kwargs if puck_detector_kwargs is not None else {}
     while True:
         start = time.time()
@@ -187,7 +188,8 @@ def move_event(event, x, y, flags, params):
 
 # callback functions for mimic control
 def mimic_control(shared_array):
-    cap = cv2.VideoCapture(1)
+    cap = cv2.VideoCapture(1, cv2.CAP_V4L2)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     Mimg_tele = np.load(os.path.join(base_dir, 'assets', 'real' ,'Mimg_tele.npy'))
 
@@ -217,7 +219,8 @@ def mimic_control(shared_array):
 
 def save_callback(save_image_check):
     # TODO: changed to 0 for now
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     while True:
         start = time.time()
@@ -239,6 +242,7 @@ def save_callback(save_image_check):
 def save_collect(cap, paddle_info, region_info, goal_info, show=True, lims=None, edge_lims=None, region_x_offset=1.0):
     start = time.time()
     ret, image = cap.read()
+    frame_received_s = time.time()
     showdst, save_image = homography_transform(image, get_save=True, rotate=False)
     if lims is not None and edge_lims is not None:
         draw_robot_edge_limits(showdst, lims, edge_lims)
@@ -256,7 +260,7 @@ def save_collect(cap, paddle_info, region_info, goal_info, show=True, lims=None,
     if show:
         cv2.imshow('showdst',showdst)
         cv2.waitKey(1)
-    return showdst, save_image
+    return showdst, save_image, frame_received_s
 
 def observe_collect(showdst, paddle_info, region_info, goal_info, save_image=False):
     result, changed_image = find_red_hockey_paddle(showdst)

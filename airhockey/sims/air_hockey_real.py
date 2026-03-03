@@ -367,6 +367,7 @@ class AirHockeyReal:
         self.disable_prediction_on_estop = bool(config.disable_prediction_on_estop)
         self._actual_tcp_fallback_warned = False
         self._last_observed_xy = None
+        self._last_step_timing = {}
 
 
         # creating the ground -- need to only call once! otherwise it can be laggy
@@ -477,7 +478,8 @@ class AirHockeyReal:
             self.camera_process = multiprocessing.Process(target=save_callback, args=(self.protected_img_check,))
             self.camera_process.start()
         else:
-            self.cap = cv2.VideoCapture(1)
+            self.cap = cv2.VideoCapture(1, cv2.CAP_V4L2)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     def _compute_state(self, pose, speed, i, puck_history):
         # This should be the only place where it is necessary to correct detection by the offsets
@@ -575,6 +577,7 @@ class AirHockeyReal:
         self.total = time.time()
         self.runtime = 0.0
         self._last_observed_xy = None
+        self._last_step_timing = {}
 
         # TODO: set these with desired values, not yet finished
         self.paddles = dict()
@@ -672,6 +675,7 @@ class AirHockeyReal:
         self.total = time.time()
         self.runtime = 0.0
         self._last_observed_xy = None
+        self._last_step_timing = {}
 
         tcp_target_pose = self.rcv.getTargetTCPPose()
         tcp_target_speed = self.rcv.getTargetTCPSpeed()
@@ -687,10 +691,12 @@ class AirHockeyReal:
     def get_transition(self, action):
         # TODO: change self.block_time if additional computation happens outside of get_transition
         runtime = time.time() - self.transition_start 
-        time.sleep(max(0,self.block_time - runtime))
+        sleep_time = max(0, self.block_time - runtime)
+        time.sleep(sleep_time)
         # print("runtime", time.time() - self.total, runtime)
         self.total = time.time()
         self.transition_start = time.time()
+        step_start_s = self.transition_start
 
         # ret, image = cap.read()
         # cv2.imshow('image',image)
@@ -714,15 +720,17 @@ class AirHockeyReal:
         measured_acc = self.rcv.getActualToolAccelerometer()
         protective_stop = self.rcv.isProtectiveStopped()
         state_pose, state_speed, state_pose_source = self._resolve_state_pose_speed(tcp_target_pose, tcp_target_speed)
+        telemetry_read_s = time.time()
         paddle_display_xy = self._paddle_display_xy_from_pose(state_pose[:2])
         self.protected_paddle_pos[0] = paddle_display_xy[0]
         self.protected_paddle_pos[1] = paddle_display_xy[1]
         self.protected_paddle_pos[2] = self.paddle_radius
 
         image = None
+        camera_frame_received_s = np.nan
         # get image data
         if self.cap is not None:
-            image, save_img = save_collect(
+            image, save_img, camera_frame_received_s = save_collect(
                 self.cap,
                 [paddle_display_xy[0], paddle_display_xy[1], self.paddle_radius],
                 self.region_info if not self.control_mode in ["observe"] else None,
@@ -771,6 +779,7 @@ class AirHockeyReal:
             # print("puck", puck)
             self.puck_history.append(puck)
             srvpose = [[x, y, 0.30] + self.angle, self.vel,self.acc]
+        puck_detection_done_s = time.time()
         ###### servoL #####
         requested_target_xy = (x, y)
 
@@ -851,59 +860,55 @@ class AirHockeyReal:
         # print("unnorm_delta", x- tcp_target_pose[0],y - tcp_target_pose[1], safety_check, self.rcv.isProtectiveStopped())# srvpose[0][:2], x,y, tcp_target_pose[:2], rcv.isProtectiveStopped())# , tcp_target_speed, actual_tcp_force, measured_acc, )
         if safety_check and self.control_mode not in ["observe"]:
             self.ctrl.servoL(srvpose[0], self.vel, self.acc, self.block_time, self.lookahead, self.gain)
+            command_sent_s = time.time()
             if self._should_debug_control():
                 print(
                     "[control_debug] "
                     f"step={self.timestep} servoL_sent=True vel={self.vel:.3f} acc={self.acc:.3f} "
                     f"block_time={self.block_time:.4f} lookahead={self.lookahead:.3f} gain={self.gain}"
                 )
-        elif self._should_debug_control():
-            print(
-                "[control_debug] "
-                f"step={self.timestep} servoL_sent=False reason={'safety_check_failed' if not safety_check else 'observe_mode'}"
-            )
-        prediction_dt = self.state_prediction_horizon_s
-        prediction_blend = self.state_prediction_blend
-        if not safety_check:
-            prediction_blend *= 0.5
-        if self.disable_prediction_on_estop and protective_stop:
-            prediction_blend = 0.0
-        predicted_xy = self._predict_next_pose_xy(state_pose, state_speed, srvpose[0], prediction_dt)
-        observed_xy = (1.0 - prediction_blend) * np.array(state_pose[:2], dtype=float) + prediction_blend * predicted_xy
-        observed_xy = np.array(clip_limits(observed_xy[0], observed_xy[1], self.lims, self.edge_lims), dtype=float)
+        else:
+            command_sent_s = np.nan
+            if self._should_debug_control():
+                print(
+                    "[control_debug] "
+                    f"step={self.timestep} servoL_sent=False reason={'safety_check_failed' if not safety_check else 'observe_mode'}"
+                )
+        # Use telemetry-derived paddle state directly for policy/logging state.
         state_pose_for_observation = np.array(state_pose, dtype=float)
-        state_pose_for_observation[0] = observed_xy[0]
-        state_pose_for_observation[1] = observed_xy[1]
         state_speed_for_observation = np.array(state_speed, dtype=float)
+        self._last_observed_xy = np.array(state_pose_for_observation[:2], dtype=float)
 
-        if self._should_debug_control():
-            cmd_xy = np.array(srvpose[0][:2], dtype=float)
-            if self._last_observed_xy is None:
-                one_step_obs_err = float("nan")
-            else:
-                one_step_obs_err = float(np.linalg.norm(np.array(state_pose[:2], dtype=float) - self._last_observed_xy))
-            print(
-                "[control_debug] "
-                f"step={self.timestep} prediction_dt={prediction_dt:.4f} blend={prediction_blend:.3f} "
-                f"predicted_xy=({predicted_xy[0]:.4f},{predicted_xy[1]:.4f}) "
-                f"observed_xy=({observed_xy[0]:.4f},{observed_xy[1]:.4f}) "
-                f"actual_xy=({state_pose[0]:.4f},{state_pose[1]:.4f}) "
-                f"cmd_xy=({cmd_xy[0]:.4f},{cmd_xy[1]:.4f}) "
-                f"actual_to_cmd={np.linalg.norm(np.array(state_pose[:2], dtype=float) - cmd_xy):.4f} "
-                f"observed_to_cmd={np.linalg.norm(observed_xy - cmd_xy):.4f} "
-                f"prev_observed_to_current_actual={one_step_obs_err:.4f}"
-            )
-        self._last_observed_xy = np.array(observed_xy, dtype=float)
+        step_end_s = time.time()
+        self._last_step_timing = {
+            "step_start_s": float(step_start_s),
+            "telemetry_read_s": float(telemetry_read_s),
+            "puck_detection_done_s": float(puck_detection_done_s),
+            "camera_frame_received_s": float(camera_frame_received_s) if np.isfinite(camera_frame_received_s) else float("nan"),
+            "command_sent_s": float(command_sent_s) if np.isfinite(command_sent_s) else float("nan"),
+            "step_end_s": float(step_end_s),
+            "sleep_before_step_s": float(sleep_time),
+            "loop_runtime_before_sleep_s": float(runtime),
+        }
+
+        puck_occluded = bool(np.asarray(puck).reshape(-1)[2] > 0.5) if np.asarray(puck).size >= 3 else False
+        puck_used_fallback = bool(puck_occluded)
 
         if protective_stop:
             next_state = self._compute_state(state_pose_for_observation, state_speed_for_observation, self.timestep, self.puck_history)
+            next_state["timing"] = copy.deepcopy(self._last_step_timing)
+            next_state["paddle_actual_pose"] = np.array(state_pose, dtype=float)
+            next_state["paddle_actual_speed"] = np.array(state_speed, dtype=float)
+            next_state["paddle_target_pose_pre_filter"] = np.array(pre_filter_srvpose, dtype=float)
+            next_state["paddle_target_pose_post_filter"] = np.array(srvpose[0], dtype=float)
+            next_state["puck_detector_used_fallback"] = puck_used_fallback
             paddle_position = next_state["paddles"]["paddle_ego"]["position"]
             self.paddle_history.append(list(paddle_position) + [0])
             if self._should_debug_control():
                 print(
                     "[control_debug] "
                     f"step={self.timestep} returned_state_xy=({paddle_position[0]:.4f},{paddle_position[1]:.4f}) "
-                    f"state_source=actual_plus_prediction protective_stop=True"
+                    f"state_source=actual_telemetry protective_stop=True"
                 )
             return next_state
 
@@ -912,13 +917,19 @@ class AirHockeyReal:
         self.timestep += 1
         self.runtime = time.time() - self.transition_start
         next_state = self._compute_state(state_pose_for_observation, state_speed_for_observation, self.timestep, self.puck_history)
+        next_state["timing"] = copy.deepcopy(self._last_step_timing)
+        next_state["paddle_actual_pose"] = np.array(state_pose, dtype=float)
+        next_state["paddle_actual_speed"] = np.array(state_speed, dtype=float)
+        next_state["paddle_target_pose_pre_filter"] = np.array(pre_filter_srvpose, dtype=float)
+        next_state["paddle_target_pose_post_filter"] = np.array(srvpose[0], dtype=float)
+        next_state["puck_detector_used_fallback"] = puck_used_fallback
         paddle_position = next_state["paddles"]["paddle_ego"]["position"]
         self.paddle_history.append(list(paddle_position) + [0])
         if self._should_debug_control():
             print(
                 "[control_debug] "
                 f"step={self.timestep} returned_state_xy=({paddle_position[0]:.4f},{paddle_position[1]:.4f}) "
-                f"state_source=actual_plus_prediction protective_stop=False"
+                f"state_source=actual_telemetry protective_stop=False"
             )
         return next_state
 

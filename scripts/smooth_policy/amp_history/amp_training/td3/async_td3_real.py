@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import os
+import re
 import time
+import traceback
 from collections import deque
 from dataclasses import dataclass, fields
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Dict, Tuple
 
@@ -29,6 +32,7 @@ from torch.utils.tensorboard import SummaryWriter
 from airhockey import AirHockeyEnv
 from scripts.smooth_policy.amp_history.amp_training.td3.episode_artifacts import (
     clean_episode_hdf5,
+    generate_episode_camera_video,
     generate_episode_gif,
     save_split_episode_hdf5,
 )
@@ -184,12 +188,19 @@ class Args:
     episode_artifact_dir: str = "runs/async_td3/episode_hdf5"
     episode_gif_dir: str = "runs/async_td3/episode_gifs"
     episode_min_timesteps: int = 30
+    estop_episode_min_timesteps: int = 50
     enable_episode_gif: bool = True
     episode_gif_fps: int = 20
     episode_gif_subsample: int = 1
     # Set to 0 to disable cap.
     episode_gif_max_frames: int = 0
     episode_gif_require_puck: bool = False
+    enable_episode_camera_video: bool = True
+    episode_camera_video_fps: int = 20
+    episode_camera_video_subsample: int = 1
+    # Set to 0 to disable cap.
+    episode_camera_video_max_frames: int = 0
+    episode_camera_video_codec: str = "mp4v"
     log_parent_dir: str | None = None
     run_name: str = "async_td3_real"
 
@@ -244,6 +255,19 @@ def _build_args_file_defaults(
         "use_last_action_in_policy_state": "use_last_action_in_policy_state",
         "exploration_noise": "exploration_noise",
         "collector_policy_stand_still": "collector_policy_stand_still",
+        "enable_episode_gif": "enable_episode_gif",
+        "episode_gif_dir": "episode_gif_dir",
+        "episode_min_timesteps": "episode_min_timesteps",
+        "estop_episode_min_timesteps": "estop_episode_min_timesteps",
+        "episode_gif_fps": "episode_gif_fps",
+        "episode_gif_subsample": "episode_gif_subsample",
+        "episode_gif_max_frames": "episode_gif_max_frames",
+        "episode_gif_require_puck": "episode_gif_require_puck",
+        "enable_episode_camera_video": "enable_episode_camera_video",
+        "episode_camera_video_fps": "episode_camera_video_fps",
+        "episode_camera_video_subsample": "episode_camera_video_subsample",
+        "episode_camera_video_max_frames": "episode_camera_video_max_frames",
+        "episode_camera_video_codec": "episode_camera_video_codec",
         "device": "learner_device",
         "agent_hidden_size": "agent_hidden_layer_size",
         "q_hidden_size": "q_hidden_layer_size",
@@ -272,6 +296,15 @@ def run_reset_fsm(env: AirHockeyEnv, rng: np.random.Generator) -> None:
     Executes FSM actions through env.step() in a tight loop.
     These steps are NOT recorded in the replay buffer.
     """
+    wait_logged = False
+    while _detect_estop(env):
+        if not wait_logged:
+            print("[reset_fsm] protective stop active; waiting for clear...")
+            wait_logged = True
+        time.sleep(0.25)
+    if wait_logged:
+        print("[reset_fsm] protective stop cleared; resuming reset FSM.")
+
     fsm = ResetPolicyFSM(env, rng)
     print(f"[reset_fsm] starting (side={fsm.start_side})")
     while not fsm.done:
@@ -302,6 +335,43 @@ def _vector_with_width(values: np.ndarray | list | tuple, width: int) -> np.ndar
     return out
 
 
+def _finite_or_default(value: float, default: float = -1.0) -> float:
+    value_f = float(value)
+    return value_f if np.isfinite(value_f) else float(default)
+
+
+def _latest_camera_frame(env: AirHockeyEnv) -> np.ndarray | None:
+    """Fetch the latest raw camera frame if available."""
+    simulator = getattr(env, "simulator", None)
+    if simulator is None:
+        return None
+    images = getattr(simulator, "images", None)
+    if not isinstance(images, list) or len(images) == 0:
+        return None
+    latest = images[-1]
+    if latest is None:
+        return None
+    frame = np.asarray(latest)
+    if frame.ndim != 3:
+        return None
+    return np.array(frame, copy=True)
+
+
+def _next_available_episode_id(output_dir: str | Path) -> int:
+    """Return one plus the largest saved trajectory_data*.hdf5 index."""
+    artifact_dir = Path(output_dir).expanduser().resolve()
+    if not artifact_dir.exists():
+        return 0
+    max_seen = -1
+    pattern = re.compile(r"^trajectory_data(\d+)\.hdf5$")
+    for path in artifact_dir.glob("trajectory_data*.hdf5"):
+        match = pattern.match(path.name)
+        if match is None:
+            continue
+        max_seen = max(max_seen, int(match.group(1)))
+    return max_seen + 1
+
+
 def _build_split_episode_row(
     env: AirHockeyEnv,
     action_xy: np.ndarray,
@@ -309,7 +379,9 @@ def _build_split_episode_row(
     episode_step_idx: int,
     estop_active: bool,
 ) -> Dict[str, np.ndarray]:
-    state_info = env.simulator.get_current_state()
+    state_info = getattr(env, "current_state", None)
+    if not isinstance(state_info, dict):
+        state_info = env.simulator.get_current_state()
     paddle = state_info["paddles"]["paddle_ego"]
     puck_info = state_info["pucks"][0]
     paddle_pos = np.asarray(paddle.get("position", [0.0, 0.0]), dtype=np.float64).reshape(-1)
@@ -328,6 +400,45 @@ def _build_split_episode_row(
     acc = np.zeros((3,), dtype=np.float64)
     desired_pose = _vector_with_width(np.concatenate([desired_xy, np.zeros(4, dtype=np.float64)]), 6)
     puck = _vector_with_width(np.concatenate([puck_position[:2], np.array([puck_occluded])]), 3)
+    timing_info = state_info.get("timing", {}) if isinstance(state_info, dict) else {}
+    paddle_actual_pose = np.asarray(state_info.get("paddle_actual_pose", np.zeros(6)), dtype=np.float64).reshape(-1)
+    paddle_actual_speed = np.asarray(state_info.get("paddle_actual_speed", np.zeros(6)), dtype=np.float64).reshape(-1)
+    paddle_target_pre = np.asarray(
+        state_info.get("paddle_target_pose_pre_filter", np.zeros(6)), dtype=np.float64
+    ).reshape(-1)
+    paddle_target_post = np.asarray(
+        state_info.get("paddle_target_pose_post_filter", np.zeros(6)), dtype=np.float64
+    ).reshape(-1)
+    paddle_actual = _vector_with_width(np.concatenate([paddle_actual_pose[:2], paddle_actual_speed[:2], np.zeros(2)]), 6)
+    paddle_cmd = _vector_with_width(np.concatenate([paddle_target_pre[:6], paddle_target_post[:6]]), 12)
+    timing = _vector_with_width(
+        np.array(
+            [
+                time.time(),
+                _finite_or_default(timing_info.get("step_start_s", -1.0)),
+                _finite_or_default(timing_info.get("telemetry_read_s", -1.0)),
+                # Post-homography puck timestamp used by delay analysis.
+                _finite_or_default(timing_info.get("puck_detection_done_s", -1.0)),
+                _finite_or_default(timing_info.get("command_sent_s", -1.0)),
+                _finite_or_default(timing_info.get("step_end_s", -1.0)),
+                _finite_or_default(timing_info.get("sleep_before_step_s", -1.0)),
+                _finite_or_default(timing_info.get("loop_runtime_before_sleep_s", -1.0)),
+                _finite_or_default(timing_info.get("camera_frame_received_s", -1.0)),
+            ],
+            dtype=np.float64,
+        ),
+        9,
+    )
+    puck_meta = _vector_with_width(
+        np.array(
+            [
+                puck_occluded,
+                1.0 if bool(state_info.get("puck_detector_used_fallback", puck_occluded > 0.5)) else 0.0,
+            ],
+            dtype=np.float64,
+        ),
+        2,
+    )
 
     return {
         "cur_time": np.array([time.time()], dtype=np.float64),
@@ -341,6 +452,10 @@ def _build_split_episode_row(
         "acc": acc,
         "desired_pose": desired_pose,
         "puck": puck,
+        "timing": timing,
+        "paddle_actual": paddle_actual,
+        "paddle_cmd": paddle_cmd,
+        "puck_meta": puck_meta,
     }
 
 
@@ -457,7 +572,10 @@ def collector_process(
     applied_version, latest_state = actor_state.read()
     actor.load_state_dict(latest_state, strict=False)
 
-    obs, _ = env.reset(seed=args.seed)
+    # AirHockeyEnv() already performs one reset in its constructor.
+    # Reusing current state here avoids a second back-to-back physical reset
+    # (and duplicate startup prompt / extra startup jitter).
+    obs, _ = env.get_current_state()
     reset_rng = np.random.default_rng(args.seed)
     episode_trajectory = EpisodeTrajectory.empty()
     recent_episode_returns = deque(maxlen=args.recent_episode_window_size)
@@ -466,14 +584,23 @@ def collector_process(
 
     total_steps = 0
     total_episodes = 0
-    next_episode_file_id = 0
+    next_episode_file_id = _next_available_episode_id(args.episode_artifact_dir)
+    if next_episode_file_id > 0:
+        print(
+            f"[collector] continuing episode artifact ids from {next_episode_file_id} "
+            f"(existing data found in {args.episode_artifact_dir})"
+        )
     last_log_time = time.time()
     episode_rows = []
+    episode_images: list[np.ndarray] = []
+    episode_camera_null_frames = 0
     episodes_saved = 0
     episodes_removed_short = 0
     episodes_removed_invalid = 0
     episodes_gif_generated = 0
     episodes_gif_failed = 0
+    episodes_camera_video_generated = 0
+    episodes_camera_video_failed = 0
     estop_episodes = 0
     estop_steps = 0
     estop_penalty_applied_this_episode = False
@@ -501,6 +628,11 @@ def collector_process(
         env_action = action_tensor.squeeze(0).detach().cpu().numpy()
         prev_action = last_action_for_policy.clone()
         next_obs, task_reward, terminated, truncated, step_info = env.step(env_action)
+        camera_frame = _latest_camera_frame(env)
+        if camera_frame is not None:
+            episode_images.append(camera_frame)
+        else:
+            episode_camera_null_frames += 1
         base_done = bool(terminated or truncated)
         estop_now = _detect_estop(env, step_info=step_info)
         done = bool(base_done or estop_now)
@@ -565,37 +697,100 @@ def collector_process(
 
             # Do all slow I/O and actor sync BEFORE the reset FSM,
             # so the transition from reset to policy is immediate.
+            n_episode_steps = len(episode_rows)
+            n_camera_frames = len(episode_images)
+            has_camera_images = n_camera_frames > 0
+            print(
+                f"[collector] episode_id={next_episode_file_id} "
+                f"steps={n_episode_steps} camera_frames={n_camera_frames} "
+                f"null_frames={episode_camera_null_frames} "
+                f"has_images={'yes' if has_camera_images else 'NO'}"
+            )
+            if episode_camera_null_frames > 0 and n_camera_frames == 0:
+                sim = getattr(env, "simulator", None)
+                sim_images_len = len(getattr(sim, "images", [])) if sim else -1
+                sim_cap = getattr(sim, "cap", "N/A")
+                print(
+                    f"[collector] WARNING: zero camera frames captured this episode. "
+                    f"simulator.images len={sim_images_len} simulator.cap={sim_cap}"
+                )
             artifact_path = save_split_episode_hdf5(
                 output_dir=args.episode_artifact_dir,
                 episode_id=next_episode_file_id,
                 episode_rows=episode_rows,
+                episode_images=episode_images if has_camera_images else None,
             )
             episodes_saved += 1
+            min_timesteps = int(args.episode_min_timesteps)
+            if episode_had_estop:
+                # Keep e-stop episodes with a lower floor so safety events are retained.
+                min_timesteps = int(args.estop_episode_min_timesteps)
             clean_result = clean_episode_hdf5(
                 artifact_path,
-                min_timesteps=args.episode_min_timesteps,
+                min_timesteps=min_timesteps,
             )
             if not clean_result.kept:
+                print(
+                    f"[collector] episode_id={next_episode_file_id} "
+                    f"removed: reason={clean_result.reason} timesteps={clean_result.timesteps}"
+                )
                 if clean_result.reason == "short_episode":
                     episodes_removed_short += 1
                 else:
                     episodes_removed_invalid += 1
-            elif args.enable_episode_gif:
-                try:
-                    generate_episode_gif(
-                        episode_hdf5_path=clean_result.path,
-                        gif_root=args.episode_gif_dir,
-                        fps=args.episode_gif_fps,
-                        max_frames=(
-                            args.episode_gif_max_frames if args.episode_gif_max_frames > 0 else None
-                        ),
-                        subsample=args.episode_gif_subsample,
-                        require_puck=args.episode_gif_require_puck,
+            else:
+                if args.enable_episode_gif:
+                    try:
+                        generate_episode_gif(
+                            episode_hdf5_path=clean_result.path,
+                            gif_root=args.episode_gif_dir,
+                            fps=args.episode_gif_fps,
+                            max_frames=(
+                                args.episode_gif_max_frames if args.episode_gif_max_frames > 0 else None
+                            ),
+                            subsample=args.episode_gif_subsample,
+                            require_puck=args.episode_gif_require_puck,
+                        )
+                        episodes_gif_generated += 1
+                    except Exception:
+                        episodes_gif_failed += 1
+                        print(
+                            f"[collector] episode_id={next_episode_file_id} "
+                            f"GIF generation FAILED:\n{traceback.format_exc()}"
+                        )
+                if args.enable_episode_camera_video:
+                    try:
+                        generate_episode_camera_video(
+                            episode_hdf5_path=clean_result.path,
+                            video_root=args.episode_gif_dir,
+                            fps=args.episode_camera_video_fps,
+                            max_frames=(
+                                args.episode_camera_video_max_frames
+                                if args.episode_camera_video_max_frames > 0
+                                else None
+                            ),
+                            subsample=args.episode_camera_video_subsample,
+                            codec=args.episode_camera_video_codec,
+                        )
+                        episodes_camera_video_generated += 1
+                        print(
+                            f"[collector] episode_id={next_episode_file_id} "
+                            f"camera video OK"
+                        )
+                    except Exception:
+                        episodes_camera_video_failed += 1
+                        print(
+                            f"[collector] episode_id={next_episode_file_id} "
+                            f"camera video FAILED:\n{traceback.format_exc()}"
+                        )
+                else:
+                    print(
+                        f"[collector] episode_id={next_episode_file_id} "
+                        f"camera video SKIPPED (enable_episode_camera_video=False)"
                     )
-                    episodes_gif_generated += 1
-                except Exception:
-                    episodes_gif_failed += 1
             episode_rows = []
+            episode_images = []
+            episode_camera_null_frames = 0
             next_episode_file_id += 1
 
             if args.actor_sync_check_every_episode:
@@ -624,6 +819,8 @@ def collector_process(
             stats["episodes_removed_invalid"] = float(episodes_removed_invalid)
             stats["episodes_gif_generated"] = float(episodes_gif_generated)
             stats["episodes_gif_failed"] = float(episodes_gif_failed)
+            stats["episodes_camera_video_generated"] = float(episodes_camera_video_generated)
+            stats["episodes_camera_video_failed"] = float(episodes_camera_video_failed)
             stats["estop_steps"] = float(estop_steps)
             stats["estop_episodes"] = float(estop_episodes)
             writer.add_scalar("replay/success_buffer_size", float(snapshot["success"]["size"]), total_steps)
@@ -655,6 +852,16 @@ def collector_process(
                 total_steps,
             )
             writer.add_scalar("artifacts/episodes_gif_failed", float(episodes_gif_failed), total_steps)
+            writer.add_scalar(
+                "artifacts/episodes_camera_video_generated",
+                float(episodes_camera_video_generated),
+                total_steps,
+            )
+            writer.add_scalar(
+                "artifacts/episodes_camera_video_failed",
+                float(episodes_camera_video_failed),
+                total_steps,
+            )
             writer.add_scalar("safety/estop_steps", float(estop_steps), total_steps)
             writer.add_scalar("safety/estop_episodes", float(estop_episodes), total_steps)
             writer.add_scalar(
@@ -686,6 +893,7 @@ def collector_process(
                 f"success_rb={snapshot['success']['size']} failure_rb={snapshot['failure']['size']} "
                 f"saved={episodes_saved} short_removed={episodes_removed_short} "
                 f"invalid_removed={episodes_removed_invalid} gif_ok={episodes_gif_generated} gif_fail={episodes_gif_failed} "
+                f"cam_video_ok={episodes_camera_video_generated} cam_video_fail={episodes_camera_video_failed} "
                 f"estop_steps={estop_steps} estop_episodes={estop_episodes}"
             )
             last_log_time = now
