@@ -1,0 +1,28 @@
+---
+alwaysApply: true
+description: High-level structure of airhockey environment wrappers and simulator backends.
+---
+# Environment Architecture
+
+The [airhockey](mdc:airhockey) package provides environment/task wrappers around lower-level simulators.
+
+## High-Level Layers
+
+- Base environment interface and shared behavior: [airhockey/airhockey_base.py](mdc:airhockey/airhockey_base.py)
+- Task-level wrappers and variants:
+  - [airhockey/airhockey_tasks](mdc:airhockey/airhockey_tasks)
+  - [airhockey/airhockey_simple_tasks.py](mdc:airhockey/airhockey_simple_tasks.py)
+  - [airhockey/airhockey_hierarchical_tasks.py](mdc:airhockey/airhockey_hierarchical_tasks.py)
+- Reward-specific logic: [airhockey/airhockey_rewards](mdc:airhockey/airhockey_rewards)
+
+## Simulator Backends
+
+- Simulator adapters live in [airhockey/sims](mdc:airhockey/sims)
+- Real-world adapter: [airhockey/sims/air_hockey_real.py](mdc:airhockey/sims/air_hockey_real.py)
+- Box2D adapter: [airhockey/sims/airhockey_box2d.py](mdc:airhockey/sims/airhockey_box2d.py)
+- Shared simulator abstractions/utilities: [airhockey/sims/airhockey_sim.py](mdc:airhockey/sims/airhockey_sim.py)
+
+## Guidance For Edits
+
+- Keep env/task wrappers separated from low-level simulator-specific behavior.
+- Place simulator-specific changes under `airhockey/sims` and keep task APIs stable where possible.

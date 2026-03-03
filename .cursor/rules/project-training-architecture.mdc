@@ -1,0 +1,24 @@
+---
+alwaysApply: true
+description: High-level map of the active smooth_policy training stack and preferred RMA-LSGAN path.
+---
+# Training Architecture
+
+Primary training and data-processing work is under [scripts/smooth_policy](mdc:scripts/smooth_policy).
+
+## Preferred Active Flow
+
+- Main training entrypoint: [scripts/smooth_policy/amp_history/amp_training/amp_training_rma_lsgan.py](mdc:scripts/smooth_policy/amp_history/amp_training/amp_training_rma_lsgan.py)
+- Core training modules live in [scripts/smooth_policy/amp_history/amp_training](mdc:scripts/smooth_policy/amp_history/amp_training), especially:
+  - [demo_loader.py](mdc:scripts/smooth_policy/amp_history/amp_training/demo_loader.py)
+  - [discriminator.py](mdc:scripts/smooth_policy/amp_history/amp_training/discriminator.py)
+  - [feature_processing.py](mdc:scripts/smooth_policy/amp_history/amp_training/feature_processing.py)
+  - [replay_buffer.py](mdc:scripts/smooth_policy/amp_history/amp_training/replay_buffer.py)
+  - [normalizer.py](mdc:scripts/smooth_policy/amp_history/amp_training/normalizer.py)
+- Main configs for this path are in [scripts/smooth_policy/amp_history/configs/rma](mdc:scripts/smooth_policy/amp_history/configs/rma).
+
+## Guidance For Edits
+
+- Treat the RMA-LSGAN path as the default when making training changes.
+- Keep module boundaries clear: data loading, discriminator logic, feature processing, and replay storage should stay decoupled.
+- Other training files in this area are generally legacy or less active; prefer extending the RMA-LSGAN flow unless a task explicitly targets another path.
