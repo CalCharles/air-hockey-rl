@@ -312,7 +312,13 @@ def run_reset_fsm(env: AirHockeyEnv, rng: np.random.Generator) -> None:
         state = env.simulator.get_current_state()
         action = fsm.step(state)
         env.step(action)
-    print(f"[reset_fsm] done after {fsm.total_steps} steps (final phase={fsm.phase})")
+    done_reason = getattr(fsm, "done_reason", "unknown")
+    print(
+        f"[reset_fsm] done after {fsm.total_steps} steps "
+        f"(final phase={fsm.phase}, reason={done_reason})"
+    )
+    if done_reason == "hard_reset_required":
+        _hard_reset_with_pause(env, reason="reset_fsm_stage2_max_retries", pause_s=0.0)
 
 
 def _episode_to_tensors(episode_trajectory: EpisodeTrajectory) -> Dict[str, torch.Tensor]:
@@ -601,6 +607,19 @@ def _should_run_reset_policy_at_episode_start(
 def _hard_reset_with_pause(env: AirHockeyEnv, reason: str, pause_s: float = 3.0) -> tuple[np.ndarray, dict]:
     """Force physical env reset, then wait before returning to policy collection."""
     print(f"[collector_fallback_reset] reason={reason} -> hard env reset")
+    simulator = getattr(env, "simulator", None)
+    if simulator is not None:
+        if hasattr(simulator, "wait_for_space_to_start"):
+            try:
+                simulator.wait_for_space_to_start = False
+            except Exception:
+                pass
+        real_env = getattr(simulator, "air_hockey_env", None)
+        if real_env is not None and hasattr(real_env, "wait_for_space_to_start"):
+            try:
+                real_env.wait_for_space_to_start = False
+            except Exception:
+                pass
     try:
         obs, info = env.reset(seed=None, write_traj=False)
     except TypeError:

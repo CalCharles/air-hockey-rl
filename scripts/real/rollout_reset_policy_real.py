@@ -66,8 +66,10 @@ class ResetPolicyFSM:
         post_upward_check_steps: int = 20,
         post_upward_down_cmd_start: float = -0.4,
         post_window_debug_log: bool = False,
-        first_puck_hit_upward_threshold_proportion_from_bottom: float = 0.45,
-        second_puck_hit_upward_threshold_proportion_from_bottom: float = 0.4,
+        shared_success_threshold_proportion_from_bottom: float = 0.4,
+        off_wall_abs_y_m: float = 0.35,
+        min_off_wall_window_steps: int = 5,
+        max_stage2_cycles: int = 5,
     ):
         self.env = env
         self.rng = rng
@@ -80,21 +82,26 @@ class ResetPolicyFSM:
         self.post_upward_check_steps = max(1, int(post_upward_check_steps))
         self.post_upward_down_cmd_start = float(post_upward_down_cmd_start)
         self.post_window_debug_log = bool(post_window_debug_log)
-        self.first_puck_hit_upward_threshold_proportion_from_bottom = float(
-            first_puck_hit_upward_threshold_proportion_from_bottom
+        self.shared_success_threshold_proportion_from_bottom = float(
+            shared_success_threshold_proportion_from_bottom
         )
-        self.second_puck_hit_upward_threshold_proportion_from_bottom = float(
-            second_puck_hit_upward_threshold_proportion_from_bottom
-        )
+        self.off_wall_abs_y_m = float(off_wall_abs_y_m)
+        self.min_height_window_steps = 1
+        self.min_off_wall_window_steps = max(1, int(min_off_wall_window_steps))
+        self.max_stage2_cycles = max(1, int(max_stage2_cycles))
         strike_mag = float(self.rng.uniform(0.8, 1.0))
         self._strike_actions = [
             -0.3 * strike_mag,
             -0.6 * strike_mag,
+            -0.8 * strike_mag,
+            -strike_mag,
+            -strike_mag,
+            -strike_mag,
             -strike_mag,
             -strike_mag,
             -strike_mag,
         ]
-        self.puck_proximity_m = float(self.rng.uniform(0.5, 0.6)) # less delay than before
+        self.puck_proximity_m = float(self.rng.uniform(0.4, 0.65)) # less delay than before
 
         simulator = self.env.simulator
         self._lims = np.array(
@@ -118,10 +125,14 @@ class ResetPolicyFSM:
         self.phase_steps = 0
         self.total_steps = 0
         self.done = False
+        self.done_reason = "in_progress"
         self.last_success_stage = "unknown"
         self.last_success_motion = "unknown"
+        self.stage2_cycle_count = 0
         self._window_steps_left = 0
-        self._window_any_pass = False
+        self._window_off_wall_count = 0
+        self._window_height_count = 0
+        self._window_shared_gate_count = 0
         self._window_kind = "none"
         self._window_target_offset_x_m = 0.15
         self._window_start_tcp = None
@@ -299,22 +310,16 @@ class ResetPolicyFSM:
     def _puck_is_occluded(self, state_info: dict) -> bool:
         return int(np.asarray(state_info["pucks"][0].get("occluded", 0)).reshape(-1)[0]) > 0
 
-    def _first_puck_hit_upward_threshold_tcp_x(self) -> float:
-        """First upward-hit threshold in the same TCP-aligned frame as puck positions."""
-        return self._line_tcp_x_from_bottom_proportion(
-            self.first_puck_hit_upward_threshold_proportion_from_bottom
-        )
-
     def _quarter_line_tcp_x(self) -> float:
         """Quarter line between bottom and midline in TCP-aligned frame."""
         table_midline = (float(self.env.table_x_top) + float(self.env.table_x_bot)) / 2.0
         quarter_from_bottom = (float(self.env.table_x_bot) + table_midline) / 2.0
         return quarter_from_bottom - self._center_offset
 
-    def _second_puck_hit_upward_threshold_tcp_x(self) -> float:
-        """Second upward-hit threshold in the same TCP-aligned frame as puck positions."""
+    def _shared_success_height_tcp_x(self) -> float:
+        """Shared upward threshold for all stages in TCP-aligned frame."""
         return self._line_tcp_x_from_bottom_proportion(
-            self.second_puck_hit_upward_threshold_proportion_from_bottom
+            self.shared_success_threshold_proportion_from_bottom
         )
 
     def _line_tcp_x_from_bottom_proportion(self, proportion_from_bottom: float) -> float:
@@ -323,20 +328,6 @@ class ResetPolicyFSM:
         top = float(self.env.table_x_top)
         line_world_x = bottom + float(proportion_from_bottom) * (top - bottom)
         return line_world_x - self._center_offset
-
-    def _puck_above_first_puck_hit_upward_threshold(self, state_info: dict) -> bool:
-        """True when the puck is visible and above the first upward-hit threshold."""
-        if self._puck_is_occluded(state_info):
-            return False
-        puck_tcp_x = float(self._get_puck_pos(state_info)[0])
-        return puck_tcp_x <= self._first_puck_hit_upward_threshold_tcp_x()
-
-    def _puck_above_second_puck_hit_upward_threshold(self, state_info: dict) -> bool:
-        """True when the puck is visible and above the second upward-hit threshold."""
-        if self._puck_is_occluded(state_info):
-            return False
-        puck_tcp_x = float(self._get_puck_pos(state_info)[0])
-        return puck_tcp_x <= self._second_puck_hit_upward_threshold_tcp_x()
 
     def _puck_above_quarter(self, state_info: dict) -> bool:
         """True when the puck is visible and above the quarter line from the bottom."""
@@ -356,22 +347,48 @@ class ResetPolicyFSM:
         puck_rising = (curr_x - older_x) < 0
         return puck_falling, puck_rising
 
-    def _log_phase_check(self, state_info: dict, phase_name: str, check_name: str, passed: bool) -> None:
+    def _log_phase_check(
+        self,
+        state_info: dict,
+        phase_name: str,
+        check_name: str,
+        passed: bool,
+        window_stats: dict = None,
+    ) -> None:
         """Single-line log for phase completion checks."""
         puck = state_info["pucks"][0]
         puck_world_x = float(puck["position"][0])
-        puck_tcp_x = float(self._get_puck_pos(state_info)[0])
+        puck_pos = self._get_puck_pos(state_info)
+        puck_tcp_x = float(puck_pos[0])
+        puck_y = float(puck_pos[1])
         threshold_lookup = {
-            "first_puck_hit_upward_threshold": self._first_puck_hit_upward_threshold_tcp_x(),
-            "second_puck_hit_upward_threshold": self._second_puck_hit_upward_threshold_tcp_x(),
             "quarter": self._quarter_line_tcp_x(),
+            "shared_success_gate": self._shared_success_height_tcp_x(),
         }
         threshold = threshold_lookup.get(check_name, self._quarter_line_tcp_x())
         result = "pass" if passed else "fail"
+        off_wall = abs(puck_y) <= self.off_wall_abs_y_m
+        shared_gate_steps = -1
+        off_wall_steps = -1
+        height_steps = -1
+        required_height_steps = 1
+        required_steps = self.min_off_wall_window_steps
+        if isinstance(window_stats, dict):
+            shared_gate_steps = int(window_stats.get("shared_gate_steps", -1))
+            off_wall_steps = int(window_stats.get("off_wall_steps", -1))
+            height_steps = int(window_stats.get("height_steps", -1))
+            required_height_steps = int(window_stats.get("required_height_steps", 1))
+            required_steps = int(window_stats.get("required_steps", self.min_off_wall_window_steps))
         print(
             f"[reset_fsm] {phase_name}_done check={check_name} result={result} "
             f"puck_world_x={puck_world_x:+.4f} puck_tcp_x={puck_tcp_x:+.4f} "
-            f"threshold_tcp_x={threshold:+.4f} total_steps={self.total_steps}"
+            f"threshold_tcp_x={threshold:+.4f} puck_y={puck_y:+.4f} "
+            f"off_wall={int(off_wall)} y_abs_limit={self.off_wall_abs_y_m:.3f} "
+            f"shared_gate_steps={shared_gate_steps} off_wall_steps={off_wall_steps} "
+            f"height_steps={height_steps} required_height_steps={required_height_steps} "
+            f"required_off_wall_steps={required_steps} "
+            f"stage2_cycles={self.stage2_cycle_count}/{self.max_stage2_cycles} "
+            f"total_steps={self.total_steps}"
         )
 
     def _log_new_round_start(self, reason: str) -> None:
@@ -389,12 +406,29 @@ class ResetPolicyFSM:
         motion = self._motion_estimate_label(state_info)
         self.last_success_stage = stage
         self.last_success_motion = motion
+        self.done_reason = "success"
+        self.done = True
         print(f"[reset_fsm] success stage={stage} motion_estimate={motion} total_steps={self.total_steps}")
+
+    def _restart_round(self, reason: str) -> None:
+        self.done_reason = "restart_round"
+        self.stage2_cycle_count = 0
+        self._captured_second_hit_frame = False
+        self._log_new_round_start(reason=reason)
+        self._build_edge_loop_path()
+        self.phase = "goto_start"
+        self.phase_steps = 0
+
+    def _set_terminal_reason(self, reason: str) -> None:
+        self.done_reason = str(reason)
+        self.done = True
 
     def _start_post_upward_window(self, kind: str, state_info: dict) -> None:
         self._window_kind = str(kind)
         self._window_steps_left = int(self.post_upward_check_steps)
-        self._window_any_pass = False
+        self._window_off_wall_count = 0
+        self._window_height_count = 0
+        self._window_shared_gate_count = 0
         window_start_tcp = self._get_tcp_position(state_info)
         target_tcp = np.array(
             [window_start_tcp[0] + self._window_target_offset_x_m, window_start_tcp[1]],
@@ -435,25 +469,48 @@ class ResetPolicyFSM:
 
     def _step_post_upward_window(self, state_info: dict) -> np.ndarray:
         if self.phase == "post_first_upward_check":
-            check_name = "second_puck_hit_upward_threshold"
-            check_passed_now = self._puck_above_second_puck_hit_upward_threshold(state_info)
-            phase_name = "first_upward"
+            check_name = "shared_success_gate"
+            phase_name = "stage1_upward"
         elif self.phase == "post_second_upward_check":
-            check_name = "quarter"
-            check_passed_now = self._puck_above_quarter(state_info)
-            phase_name = "second_upward"
+            check_name = "shared_success_gate"
+            phase_name = "stage2_upward"
         else:
             return np.zeros(2, dtype=np.float32)
 
-        self._window_any_pass = bool(self._window_any_pass or check_passed_now)
+        off_wall_now = False
+        above_height_now = False
+        shared_gate_now = False
+        if not self._puck_is_occluded(state_info):
+            puck_pos = self._get_puck_pos(state_info)
+            puck_tcp_x = float(puck_pos[0])
+            puck_y = float(puck_pos[1])
+            above_height_now = puck_tcp_x <= self._shared_success_height_tcp_x()
+            off_wall_now = abs(puck_y) <= self.off_wall_abs_y_m
+            shared_gate_now = bool(above_height_now and off_wall_now)
+        if off_wall_now:
+            self._window_off_wall_count += 1
+        if above_height_now:
+            self._window_height_count += 1
+        if shared_gate_now:
+            self._window_shared_gate_count += 1
+
         action = self._current_window_downward_action(state_info)
         self._window_steps_left -= 1
         if self._window_steps_left <= 0:
+            passed = bool(
+                (self._window_height_count >= self.min_height_window_steps)
+                and (self._window_off_wall_count >= self.min_off_wall_window_steps)
+            )
             self._pending_window_finalize = {
                 "kind": self._window_kind,
                 "phase_name": phase_name,
                 "check_name": check_name,
-                "passed": bool(self._window_any_pass),
+                "passed": passed,
+                "shared_gate_steps": int(self._window_shared_gate_count),
+                "off_wall_steps": int(self._window_off_wall_count),
+                "height_steps": int(self._window_height_count),
+                "required_height_steps": int(self.min_height_window_steps),
+                "required_steps": int(self.min_off_wall_window_steps),
             }
         return action
 
@@ -468,22 +525,33 @@ class ResetPolicyFSM:
             phase_name=str(finalize["phase_name"]),
             check_name=str(finalize["check_name"]),
             passed=bool(finalize["passed"]),
+            window_stats=finalize,
         )
         if finalize["kind"] == "first":
             if bool(finalize["passed"]):
-                self._mark_success(state_info, stage="first_upward")
-                self.done = True
+                self._mark_success(state_info, stage="stage1_upward")
                 return np.zeros(2, dtype=np.float32)
+            self.stage2_cycle_count = 0
+            self._captured_second_hit_frame = False
             self.phase = "wait_for_puck"
             return np.zeros(2, dtype=np.float32)
         if bool(finalize["passed"]):
-            self._mark_success(state_info, stage="second_upward")
-            self.done = True
+            self._mark_success(state_info, stage="stage2_upward")
             return np.zeros(2, dtype=np.float32)
-        self._log_new_round_start(reason="second_upward_check_failed")
-        self._build_edge_loop_path()
-        self.phase = "goto_start"
-        self.phase_steps = 0
+        self.stage2_cycle_count += 1
+        if self.stage2_cycle_count >= self.max_stage2_cycles:
+            print(
+                f"[reset_fsm] stage2_max_cycles_reached "
+                f"count={self.stage2_cycle_count} limit={self.max_stage2_cycles} -> hard reset required"
+            )
+            self._set_terminal_reason("hard_reset_required")
+            return np.zeros(2, dtype=np.float32)
+        self._captured_second_hit_frame = False
+        print(
+            f"[reset_fsm] stage2_retry cycle={self.stage2_cycle_count}/{self.max_stage2_cycles} "
+            f"reason=shared_success_gate_not_met"
+        )
+        self.phase = "wait_for_puck"
         return np.zeros(2, dtype=np.float32)
 
     def _capture_second_hit_trigger_frame(self, dist_m: float, puck_falling: bool) -> None:
@@ -510,8 +578,7 @@ class ResetPolicyFSM:
             f"total_steps={self.total_steps}",
             f"dist={dist_m:.3f}m",
             f"puck_falling={int(bool(puck_falling))}",
-            f"first_puck_hit_upward_threshold_tcp_x={self._first_puck_hit_upward_threshold_tcp_x():+.3f}",
-            f"second_puck_hit_upward_threshold_tcp_x={self._second_puck_hit_upward_threshold_tcp_x():+.3f}",
+            f"shared_success_threshold_tcp_x={self._shared_success_height_tcp_x():+.3f}",
             f"quarter_tcp_x={self._quarter_line_tcp_x():+.3f}",
         ]
         for i, row in enumerate(text_rows):
@@ -580,10 +647,7 @@ class ResetPolicyFSM:
             puck_x = float(state_info["pucks"][0]["position"][0])
             paddle_x = float(state_info["paddles"]["paddle_ego"]["position"][0])
             if puck_x >= paddle_x:
-                self._log_new_round_start(reason="wait_for_puck_puck_below_paddle")
-                self._build_edge_loop_path()
-                self.phase = "goto_start"
-                self.phase_steps = 0
+                self._restart_round(reason="wait_for_puck_puck_below_paddle")
                 return np.zeros(2, dtype=np.float32)
             if self._puck_is_occluded(state_info):
                 return np.zeros(2, dtype=np.float32)
@@ -613,7 +677,7 @@ class ResetPolicyFSM:
             self.phase_steps -= 1
             return np.array([action_x, 0.0], dtype=np.float32)
 
-        self.done = True
+        self._set_terminal_reason("unknown_phase")
         return np.zeros(2, dtype=np.float32)
 
 
@@ -683,6 +747,19 @@ def compute_failure(
 def hard_reset_with_pause(eval_env: AirHockeyEnv, obs_type: str, reason: str, pause_s: float = 3.0):
     """Force robot to initial pose, wait, and return fresh (state, obs)."""
     print(f"[fallback_reset] reason={reason} -> hard env reset")
+    simulator = getattr(eval_env, "simulator", None)
+    if simulator is not None:
+        if hasattr(simulator, "wait_for_space_to_start"):
+            try:
+                simulator.wait_for_space_to_start = False
+            except Exception:
+                pass
+        real_env = getattr(simulator, "air_hockey_env", None)
+        if real_env is not None and hasattr(real_env, "wait_for_space_to_start"):
+            try:
+                real_env.wait_for_space_to_start = False
+            except Exception:
+                pass
     try:
         eval_env.reset(seed=None, write_traj=False)
     except TypeError:
@@ -724,25 +801,20 @@ if __name__ == "__main__":
         help="Enable detailed post-window target-tracking logs during reset.",
     )
     parser.add_argument(
-        "--first-puck-hit-upward-threshold-proportion-from-bottom",
+        "--shared-success-threshold-proportion-from-bottom",
         type=float,
         default=0.4,
-        help="Bottom->top table proportion for first puck-hit upward threshold (default: 0.4).",
-    )
-    parser.add_argument(
-        "--second-puck-hit-upward-threshold-proportion-from-bottom",
-        type=float,
-        default=0.5,
-        help="Bottom->top table proportion for second puck-hit upward threshold (default: 0.5).",
+        help="Bottom->top table proportion for shared reset success threshold (default: 0.4).",
     )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
-    if not (0.0 <= float(args.first_puck_hit_upward_threshold_proportion_from_bottom) <= 1.0):
-        parser.error("--first-puck-hit-upward-threshold-proportion-from-bottom must be in [0.0, 1.0].")
-    if not (0.0 <= float(args.second_puck_hit_upward_threshold_proportion_from_bottom) <= 1.0):
-        parser.error("--second-puck-hit-upward-threshold-proportion-from-bottom must be in [0.0, 1.0].")
+    if not (0.0 <= float(args.shared_success_threshold_proportion_from_bottom) <= 1.0):
+        parser.error("--shared-success-threshold-proportion-from-bottom must be in [0.0, 1.0].")
 
     params = load_air_hockey_params(args.config_path, save_path_override=args.save_path)
+    sim_params = params.get("simulator_params", {})
+    if isinstance(sim_params, dict):
+        sim_params["wait_for_space_to_start"] = False
     params["max_timesteps"] = max(400, int(params.get("max_timesteps", 300)))
     eval_env = AirHockeyEnv(params)
     model, use_last_action, last_action_for_policy = build_model_if_requested(args, eval_env)
@@ -795,11 +867,8 @@ if __name__ == "__main__":
                     eval_env,
                     rng,
                     post_window_debug_log=args.post_window_debug_log,
-                    first_puck_hit_upward_threshold_proportion_from_bottom=(
-                        args.first_puck_hit_upward_threshold_proportion_from_bottom
-                    ),
-                    second_puck_hit_upward_threshold_proportion_from_bottom=(
-                        args.second_puck_hit_upward_threshold_proportion_from_bottom
+                    shared_success_threshold_proportion_from_bottom=(
+                        args.shared_success_threshold_proportion_from_bottom
                     ),
                 )
                 reset_fsm._log_new_round_start(reason="reset_trigger_failure_condition")
@@ -808,6 +877,23 @@ if __name__ == "__main__":
             if mode == "reset":
                 action = reset_fsm.step(state)
                 if reset_fsm.done:
+                    done_reason = getattr(reset_fsm, "done_reason", "unknown")
+                    if done_reason == "hard_reset_required":
+                        print("[reset] hard reset requested by FSM after max stage-2 retries.")
+                        state, obs = hard_reset_with_pause(
+                            eval_env=eval_env,
+                            obs_type=obs_type,
+                            reason="reset_fsm_stage2_max_retries",
+                            pause_s=3.0,
+                        )
+                        mode = "normal"
+                        reset_fsm = None
+                        fail_counters = {"bottom": 0, "occ": 0}
+                        reset_cooldown = 40
+                        startup_counter = 0
+                        if use_last_action:
+                            last_action_for_policy.zero_()
+                        continue
                     puck_x = float(state["pucks"][0]["position"][0])
                     paddle_x = float(state["paddles"]["paddle_ego"]["position"][0])
                     success_stage = getattr(reset_fsm, "last_success_stage", "unknown")
@@ -908,11 +994,8 @@ if __name__ == "__main__":
                     eval_env,
                     rng,
                     post_window_debug_log=args.post_window_debug_log,
-                    first_puck_hit_upward_threshold_proportion_from_bottom=(
-                        args.first_puck_hit_upward_threshold_proportion_from_bottom
-                    ),
-                    second_puck_hit_upward_threshold_proportion_from_bottom=(
-                        args.second_puck_hit_upward_threshold_proportion_from_bottom
+                    shared_success_threshold_proportion_from_bottom=(
+                        args.shared_success_threshold_proportion_from_bottom
                     ),
                 )
                 reset_fsm._log_new_round_start(reason="manual_force_reset")
