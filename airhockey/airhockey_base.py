@@ -58,6 +58,7 @@ class AirHockeyBaseEnv(ABC, Env):
             'terminate_on_puck_hit_bottom': False,  # TODO Specify this parameter in the yaml config
             'terminate_on_puck_hit_paddle': False,
             'terminate_on_puck_pass_paddle': False,
+            'terminate_on_puck_pass_paddle_consecutive_steps': 10,
             'dense_goal': True,
             'goal_selector': 'stationary',
             'max_timesteps': 1000,
@@ -128,6 +129,10 @@ class AirHockeyBaseEnv(ABC, Env):
         self.terminate_on_puck_hit_bottom = config.terminate_on_puck_hit_bottom
         self.terminate_on_puck_hit_paddle = config.terminate_on_puck_hit_paddle
         self.terminate_on_puck_pass_paddle = config.terminate_on_puck_pass_paddle
+        self.terminate_on_puck_pass_paddle_consecutive_steps = max(
+            1, int(config.terminate_on_puck_pass_paddle_consecutive_steps)
+        )
+        self._puck_pass_paddle_consecutive_count = 0
         
         # reward function
         self.compute_online_rewards = config.compute_online_rewards
@@ -368,6 +373,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.episode_length = 0
         self.episode_motion_data = {'velocity_mags': [], 'acceleration_mags': [], 'jerk_mags': []}
         self._last_done_reasons = {"terminated": [], "truncated": []}
+        self._puck_pass_paddle_consecutive_count = 0
 
         if 'pucks' in state_info and len(state_info['pucks']) > 0:
             self.puck_initial_position = state_info['pucks'][0]['position']
@@ -400,6 +406,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.episode_length = 0
         self.episode_motion_data = {'velocity_mags': [], 'acceleration_mags': [], 'jerk_mags': []}
         self._last_done_reasons = {"terminated": [], "truncated": []}
+        self._puck_pass_paddle_consecutive_count = 0
         return obs, {**{'success': False}, **vars(self.simulator_params)}
 
     def reset_from_state(self, state_vector, seed=None):
@@ -413,6 +420,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.simulator.instantiate_objects()
         state_info = self.simulator.get_current_state()
         self.current_state = state_info
+        self._puck_pass_paddle_consecutive_count = 0
         obs = self.get_observation(state_info, obs_type=self.obs_type, puck_history=self.simulator.puck_history, paddle_history=self.simulator.paddle_history)
         return obs, {'success': False}
 
@@ -522,10 +530,23 @@ class AirHockeyBaseEnv(ABC, Env):
             puck_paddle_distance = np.linalg.norm(np.array(state_info['pucks'][0]['position']) - np.array(state_info['paddles']['paddle_ego']['position']))
 
             if self.terminate_on_puck_pass_paddle:
-                if state_info['pucks'][0]['position'][0] > (state_info['paddles']['paddle_ego']['position'][0] + self.paddle_radius ):
+                puck_passed_now = state_info['pucks'][0]['position'][0] > (
+                    state_info['paddles']['paddle_ego']['position'][0] + self.paddle_radius
+                )
+                if puck_passed_now:
+                    self._puck_pass_paddle_consecutive_count += 1
+                else:
+                    self._puck_pass_paddle_consecutive_count = 0
+
+                if (
+                    self._puck_pass_paddle_consecutive_count
+                    >= self.terminate_on_puck_pass_paddle_consecutive_steps
+                ):
                     truncated = True
                     truncation_reasons.append("puck_passed_paddle")
                     # print("Puck pass paddle")
+            else:
+                self._puck_pass_paddle_consecutive_count = 0
 
             if self.terminate_on_puck_hit_paddle:
                 if puck_paddle_distance <= (self.paddle_radius + self.puck_radius + 0.02):
@@ -533,6 +554,8 @@ class AirHockeyBaseEnv(ABC, Env):
                     terminated = True
                     termination_reasons.append("puck_hit_paddle")
                     # print("Puck hit paddle")
+        else:
+            self._puck_pass_paddle_consecutive_count = 0
         
         puck_within_ego_goal = False
         puck_within_alt_goal = False

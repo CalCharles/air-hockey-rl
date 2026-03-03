@@ -12,6 +12,7 @@ from __future__ import annotations
 import multiprocessing as mp
 import os
 import re
+import shutil
 import time
 import traceback
 from collections import deque
@@ -358,18 +359,52 @@ def _latest_camera_frame(env: AirHockeyEnv) -> np.ndarray | None:
 
 
 def _next_available_episode_id(output_dir: str | Path) -> int:
-    """Return one plus the largest saved trajectory_data*.hdf5 index."""
+    """Return one plus the largest saved trajectory_data*.hdf5 index (recursive)."""
     artifact_dir = Path(output_dir).expanduser().resolve()
     if not artifact_dir.exists():
         return 0
     max_seen = -1
     pattern = re.compile(r"^trajectory_data(\d+)\.hdf5$")
-    for path in artifact_dir.glob("trajectory_data*.hdf5"):
+    for path in artifact_dir.rglob("trajectory_data*.hdf5"):
         match = pattern.match(path.name)
         if match is None:
             continue
         max_seen = max(max_seen, int(match.group(1)))
     return max_seen + 1
+
+
+def _episode_length_bucket_name(episode_steps: int) -> str:
+    """Map episode step count to a quality bucket label."""
+    if episode_steps <= 100:
+        return "50-100"
+    if episode_steps <= 200:
+        return "100-200"
+    return ">200"
+
+
+def _bucketed_output_dir(base_dir: str | Path, episode_steps: int) -> str:
+    """Return a length-bucketed output directory under the given parent."""
+    return str(Path(base_dir).expanduser().resolve() / _episode_length_bucket_name(episode_steps))
+
+
+def _estop_output_dir(base_dir: str | Path) -> str:
+    """Return the additional e-stop-only output directory under the parent."""
+    return str(Path(base_dir).expanduser().resolve() / "estop")
+
+
+def _copy_to_estop_dir(file_path: str | Path, estop_root: str | Path) -> Path:
+    """Copy one artifact file into the e-stop directory and return destination."""
+    src = Path(file_path).expanduser().resolve()
+    estop_root_path = Path(estop_root).expanduser().resolve()
+    if src.suffix == ".hdf5":
+        dst_dir = estop_root_path
+    else:
+        # Keep per-episode media grouping (trajectory_data{N}/...).
+        dst_dir = estop_root_path / src.parent.name
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    dst = dst_dir / src.name
+    shutil.copy2(src, dst)
+    return dst
 
 
 def _build_split_episode_row(
@@ -542,6 +577,7 @@ def collector_process(
     action_high_np: np.ndarray,
     tb_log_dir: str,
 ) -> None:
+    post_reset_stand_still_steps = 5
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     device = torch.device(args.collector_device)
@@ -572,11 +608,12 @@ def collector_process(
     applied_version, latest_state = actor_state.read()
     actor.load_state_dict(latest_state, strict=False)
 
-    # AirHockeyEnv() already performs one reset in its constructor.
-    # Reusing current state here avoids a second back-to-back physical reset
-    # (and duplicate startup prompt / extra startup jitter).
-    obs, _ = env.get_current_state()
     reset_rng = np.random.default_rng(args.seed)
+    # Commit to one startup behavior: run reset FSM once before policy takeover.
+    # This avoids an immediate policy->reset mode flip in the first episode.
+    run_reset_fsm(env, reset_rng)
+    obs, _ = env.soft_reset()
+    post_reset_steps_remaining = int(post_reset_stand_still_steps)
     episode_trajectory = EpisodeTrajectory.empty()
     recent_episode_returns = deque(maxlen=args.recent_episode_window_size)
     episode_return_success_threshold = 0.0
@@ -622,6 +659,9 @@ def collector_process(
             if args.exploration_noise > 0:
                 action_tensor = action_tensor + torch.randn_like(action_tensor) * float(args.exploration_noise)
             action_tensor = torch.clamp(action_tensor, action_low, action_high)
+            if post_reset_steps_remaining > 0:
+                action_tensor = torch.zeros_like(action_tensor)
+                post_reset_steps_remaining -= 1
             if args.collector_policy_stand_still:
                 action_tensor = torch.zeros_like(action_tensor)
 
@@ -673,6 +713,7 @@ def collector_process(
         obs = next_obs
 
         if done:
+            episode_end_wall_time = time.time()
             total_episodes += 1
             if episode_had_estop:
                 estop_episodes += 1
@@ -682,6 +723,27 @@ def collector_process(
             episodic_returns.append(episode_return)
             episodic_lengths.append(episode_length)
             episode_success = bool(step_info.get("success", False)) if isinstance(step_info, dict) else False
+            episode_end_type = (
+                str(step_info.get("episode_end_type"))
+                if isinstance(step_info, dict) and step_info.get("episode_end_type") is not None
+                else None
+            )
+            episode_end_reasons = (
+                list(step_info.get("episode_end_reasons", []))
+                if isinstance(step_info, dict) and isinstance(step_info.get("episode_end_reasons", []), list)
+                else []
+            )
+            episode_end_reason = (
+                str(step_info.get("episode_end_reason"))
+                if isinstance(step_info, dict) and step_info.get("episode_end_reason") is not None
+                else None
+            )
+            if estop_now:
+                # Collector can end an episode on protective stop even if env did not set done metadata.
+                episode_end_type = "estop"
+                episode_end_reasons = ["collector_estop"]
+                episode_end_reason = "collector_estop"
+            episode_ended_estop = (episode_end_type == "estop")
             success_rates.append(1.0 if episode_success else 0.0)
             writer.add_scalar("charts/episodic_return", episode_return, total_steps)
             writer.add_scalar("charts/episodic_length", episode_length, total_steps)
@@ -704,7 +766,9 @@ def collector_process(
                 f"[collector] episode_id={next_episode_file_id} "
                 f"steps={n_episode_steps} camera_frames={n_camera_frames} "
                 f"null_frames={episode_camera_null_frames} "
-                f"has_images={'yes' if has_camera_images else 'NO'}"
+                f"has_images={'yes' if has_camera_images else 'NO'} "
+                f"end_type={episode_end_type} end_reason={episode_end_reason} "
+                f"end_reasons={episode_end_reasons}"
             )
             if episode_camera_null_frames > 0 and n_camera_frames == 0:
                 sim = getattr(env, "simulator", None)
@@ -715,7 +779,7 @@ def collector_process(
                     f"simulator.images len={sim_images_len} simulator.cap={sim_cap}"
                 )
             artifact_path = save_split_episode_hdf5(
-                output_dir=args.episode_artifact_dir,
+                output_dir=_bucketed_output_dir(args.episode_artifact_dir, n_episode_steps),
                 episode_id=next_episode_file_id,
                 episode_rows=episode_rows,
                 episode_images=episode_images if has_camera_images else None,
@@ -739,11 +803,20 @@ def collector_process(
                 else:
                     episodes_removed_invalid += 1
             else:
+                if episode_ended_estop:
+                    estop_copy_path = _copy_to_estop_dir(
+                        clean_result.path,
+                        _estop_output_dir(args.episode_artifact_dir),
+                    )
+                    print(
+                        f"[collector] episode_id={next_episode_file_id} "
+                        f"e-stop HDF5 copied to {estop_copy_path}"
+                    )
                 if args.enable_episode_gif:
                     try:
-                        generate_episode_gif(
+                        gif_path = generate_episode_gif(
                             episode_hdf5_path=clean_result.path,
-                            gif_root=args.episode_gif_dir,
+                            gif_root=_bucketed_output_dir(args.episode_gif_dir, n_episode_steps),
                             fps=args.episode_gif_fps,
                             max_frames=(
                                 args.episode_gif_max_frames if args.episode_gif_max_frames > 0 else None
@@ -752,6 +825,15 @@ def collector_process(
                             require_puck=args.episode_gif_require_puck,
                         )
                         episodes_gif_generated += 1
+                        if episode_ended_estop:
+                            estop_gif_path = _copy_to_estop_dir(
+                                gif_path,
+                                _estop_output_dir(args.episode_gif_dir),
+                            )
+                            print(
+                                f"[collector] episode_id={next_episode_file_id} "
+                                f"e-stop GIF copied to {estop_gif_path}"
+                            )
                     except Exception:
                         episodes_gif_failed += 1
                         print(
@@ -760,9 +842,9 @@ def collector_process(
                         )
                 if args.enable_episode_camera_video:
                     try:
-                        generate_episode_camera_video(
+                        camera_video_path = generate_episode_camera_video(
                             episode_hdf5_path=clean_result.path,
-                            video_root=args.episode_gif_dir,
+                            video_root=_bucketed_output_dir(args.episode_gif_dir, n_episode_steps),
                             fps=args.episode_camera_video_fps,
                             max_frames=(
                                 args.episode_camera_video_max_frames
@@ -773,6 +855,15 @@ def collector_process(
                             codec=args.episode_camera_video_codec,
                         )
                         episodes_camera_video_generated += 1
+                        if episode_ended_estop:
+                            estop_camera_video_path = _copy_to_estop_dir(
+                                camera_video_path,
+                                _estop_output_dir(args.episode_gif_dir),
+                            )
+                            print(
+                                f"[collector] episode_id={next_episode_file_id} "
+                                f"e-stop camera video copied to {estop_camera_video_path}"
+                            )
                         print(
                             f"[collector] episode_id={next_episode_file_id} "
                             f"camera video OK"
@@ -799,9 +890,23 @@ def collector_process(
                     actor.load_state_dict(maybe_new_state, strict=False)
                     applied_version = version
 
-            # Reset FSM + soft_reset: puck goes up, policy resumes immediately.
+            min_reset_delay_s = 3.0
+            processing_elapsed_s = time.time() - episode_end_wall_time
+            artificial_delay_s = max(0.0, min_reset_delay_s - processing_elapsed_s)
+            if artificial_delay_s > 0.0:
+                time.sleep(artificial_delay_s)
+            print(
+                "[collector] "
+                f"episode_id={next_episode_file_id - 1} "
+                f"post_episode_processing_s={processing_elapsed_s:.3f} "
+                f"artificial_delay_s={artificial_delay_s:.3f} "
+                f"min_reset_delay_s={min_reset_delay_s:.3f}"
+            )
+
+            # Reset FSM + soft_reset after minimum end-of-episode delay.
             run_reset_fsm(env, reset_rng)
             obs, _ = env.soft_reset()
+            post_reset_steps_remaining = int(post_reset_stand_still_steps)
             last_action_for_policy.zero_()
             estop_penalty_applied_this_episode = False
             episode_had_estop = False
