@@ -565,40 +565,37 @@ def _detect_estop(env: AirHockeyEnv, step_info: dict | None = None) -> bool:
     return False
 
 
-def _is_puck_stuck_on_paddle(
+def _should_run_reset_policy_at_episode_start(
     state_info: dict | None,
-    xy_proximity_m: float = 0.06,
-    history_window: int = 8,
-    motion_tol_m: float = 0.015,
+    table_x_bot: float | None,
+    bottom_margin: float,
+    bottom_fail_count: int,
+    occluded_fail_count: int,
+    counters: dict[str, int],
 ) -> bool:
-    """Heuristic for the real-world failure mode where puck rides on paddle."""
-    if not isinstance(state_info, dict):
+    """Decide whether to enter reset-policy mode at episode start."""
+    if not isinstance(state_info, dict) or table_x_bot is None or not np.isfinite(float(table_x_bot)):
         return False
     try:
-        puck_info = state_info["pucks"][0]
-        paddle_info = state_info["paddles"]["paddle_ego"]
+        puck = state_info["pucks"][0]
+        puck_x = float(puck["position"][0])
+        puck_occ = int(np.asarray(puck.get("occluded", 0)).reshape(-1)[0]) > 0
     except Exception:
         return False
 
-    puck_pos = np.asarray(puck_info.get("position", [0.0, 0.0]), dtype=np.float64).reshape(-1)
-    paddle_pos = np.asarray(paddle_info.get("position", [0.0, 0.0]), dtype=np.float64).reshape(-1)
-    if puck_pos.shape[0] < 2 or paddle_pos.shape[0] < 2:
-        return False
-    if int(np.asarray(puck_info.get("occluded", [0]), dtype=np.float64).reshape(-1)[0]) > 0:
-        return False
+    if puck_x >= (float(table_x_bot) - float(bottom_margin)):
+        counters["bottom"] = int(counters.get("bottom", 0)) + 1
+    else:
+        counters["bottom"] = 0
 
-    if float(np.linalg.norm(puck_pos[:2] - paddle_pos[:2])) > float(xy_proximity_m):
-        return False
+    if puck_occ:
+        counters["occ"] = int(counters.get("occ", 0)) + 1
+    else:
+        counters["occ"] = 0
 
-    puck_history = puck_info.get("history", [])
-    if not isinstance(puck_history, list) or len(puck_history) < max(3, int(history_window)):
-        return False
-    recent = np.asarray(puck_history[-int(history_window):], dtype=np.float64)
-    if recent.ndim != 2 or recent.shape[1] < 2:
-        return False
-    spread_x = float(np.max(recent[:, 0]) - np.min(recent[:, 0]))
-    spread_y = float(np.max(recent[:, 1]) - np.min(recent[:, 1]))
-    return spread_x <= float(motion_tol_m) and spread_y <= float(motion_tol_m)
+    return bool(
+        counters["bottom"] >= int(bottom_fail_count) or counters["occ"] >= int(occluded_fail_count)
+    )
 
 
 def _hard_reset_with_pause(env: AirHockeyEnv, reason: str, pause_s: float = 3.0) -> tuple[np.ndarray, dict]:
@@ -629,6 +626,10 @@ def collector_process(
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     device = torch.device(args.collector_device)
+    episode_start_reset_bottom_margin = 0.25
+    episode_start_reset_bottom_fail_count = 2
+    episode_start_reset_occluded_fail_count = 6
+    episode_start_reset_counters = {"bottom": 0, "occ": 0}
 
     with open(args.config, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
@@ -690,8 +691,6 @@ def collector_process(
     estop_steps = 0
     estop_penalty_applied_this_episode = False
     episode_had_estop = False
-    puck_stuck_counter = 0
-    puck_stuck_required_steps = 25
     collector_start_time = time.time()
     episodic_returns: list[float] = []
     episodic_lengths: list[float] = []
@@ -726,20 +725,6 @@ def collector_process(
         base_done = bool(terminated or truncated)
         estop_now = _detect_estop(env, step_info=step_info)
         done = bool(base_done or estop_now)
-        fallback_reset_reason: str | None = None
-        if not done:
-            latest_state = getattr(env, "current_state", None)
-            if not isinstance(latest_state, dict):
-                latest_state = env.simulator.get_current_state()
-            if _is_puck_stuck_on_paddle(latest_state):
-                puck_stuck_counter += 1
-            else:
-                puck_stuck_counter = 0
-            if puck_stuck_counter >= int(puck_stuck_required_steps):
-                fallback_reset_reason = "puck_stuck_on_paddle"
-                done = True
-        else:
-            puck_stuck_counter = 0
         if estop_now:
             estop_steps += 1
             episode_had_estop = True
@@ -807,10 +792,6 @@ def collector_process(
                 episode_end_type = "estop"
                 episode_end_reasons = ["collector_estop"]
                 episode_end_reason = "collector_estop"
-            if fallback_reset_reason is not None:
-                episode_end_type = "fallback_hard_reset"
-                episode_end_reasons = [str(fallback_reset_reason)]
-                episode_end_reason = str(fallback_reset_reason)
             episode_ended_estop = (episode_end_type == "estop")
             success_rates.append(1.0 if episode_success else 0.0)
             writer.add_scalar("charts/episodic_return", episode_return, total_steps)
@@ -959,8 +940,9 @@ def collector_process(
                     applied_version = version
 
             min_reset_delay_s = 3.0
-            periodic_hard_reset = (total_episodes % 5) == 0
-            if fallback_reset_reason is None and not periodic_hard_reset:
+            periodic_hard_reset = (total_episodes % 3) == 0
+            estop_hard_reset = bool(episode_had_estop)
+            if not periodic_hard_reset and not estop_hard_reset:
                 processing_elapsed_s = time.time() - episode_end_wall_time
                 artificial_delay_s = max(0.0, min_reset_delay_s - processing_elapsed_s)
                 if artificial_delay_s > 0.0:
@@ -976,11 +958,10 @@ def collector_process(
                 run_reset_fsm(env, reset_rng)
                 obs, _ = env.soft_reset()
             else:
-                hard_reset_reason = (
-                    str(fallback_reset_reason)
-                    if fallback_reset_reason is not None
-                    else "periodic_every_5_episodes"
-                )
+                if estop_hard_reset:
+                    hard_reset_reason = "collector_estop_next_step"
+                else:
+                    hard_reset_reason = "periodic_every_3_episodes"
                 print(
                     "[collector] "
                     f"episode_id={next_episode_file_id - 1} "
@@ -991,11 +972,32 @@ def collector_process(
                     reason=hard_reset_reason,
                     pause_s=min_reset_delay_s,
                 )
+                hard_reset_state = env.simulator.get_current_state()
+                run_reset_policy = _should_run_reset_policy_at_episode_start(
+                    state_info=hard_reset_state,
+                    table_x_bot=getattr(env, "table_x_bot", None),
+                    bottom_margin=episode_start_reset_bottom_margin,
+                    bottom_fail_count=episode_start_reset_bottom_fail_count,
+                    occluded_fail_count=episode_start_reset_occluded_fail_count,
+                    counters=episode_start_reset_counters,
+                )
+                decision = "reset_policy" if run_reset_policy else "policy"
+                print(
+                    "[collector] "
+                    f"episode_id={next_episode_file_id - 1} "
+                    f"hard_reset_start_decision={decision} "
+                    f"bottom_counter={episode_start_reset_counters['bottom']} "
+                    f"occ_counter={episode_start_reset_counters['occ']}"
+                )
+                if run_reset_policy:
+                    run_reset_fsm(env, reset_rng)
+                    obs, _ = env.soft_reset()
+                    episode_start_reset_counters["bottom"] = 0
+                    episode_start_reset_counters["occ"] = 0
             post_reset_steps_remaining = int(post_reset_stand_still_steps)
             last_action_for_policy.zero_()
             estop_penalty_applied_this_episode = False
             episode_had_estop = False
-            puck_stuck_counter = 0
 
         now = time.time()
         if now - last_log_time >= float(args.collector_log_interval_sec):

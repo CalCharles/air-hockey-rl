@@ -133,6 +133,9 @@ class AirHockeyBaseEnv(ABC, Env):
             1, int(config.terminate_on_puck_pass_paddle_consecutive_steps)
         )
         self._puck_pass_paddle_consecutive_count = 0
+        self.puck_low_motion_radius_m = 0.03
+        self.puck_low_motion_window_clean = 10
+        self.puck_low_motion_window_occluded = 20
         
         # reward function
         self.compute_online_rewards = config.compute_online_rewards
@@ -471,6 +474,46 @@ class AirHockeyBaseEnv(ABC, Env):
         vel = (0, 0)
         return (x_pos, 0), vel
 
+    def _puck_low_motion_cluster_window(self, state_info):
+        """Return (is_low_motion_cluster, active_window_size) for puck history."""
+        if "pucks" not in state_info or len(state_info["pucks"]) == 0:
+            return False, 0
+        puck_history = state_info["pucks"][0].get("history", [])
+        if not isinstance(puck_history, list):
+            return False, 0
+
+        clean_window = int(self.puck_low_motion_window_clean)
+        occluded_window = int(self.puck_low_motion_window_occluded)
+        if len(puck_history) < clean_window:
+            return False, 0
+
+        recent_clean = puck_history[-clean_window:]
+        clean_has_occlusion = any(
+            len(entry) >= 3 and int(np.asarray(entry[2]).reshape(-1)[0]) > 0
+            for entry in recent_clean
+        )
+        active_window = occluded_window if clean_has_occlusion else clean_window
+        if len(puck_history) < active_window:
+            return False, active_window
+
+        recent_window = puck_history[-active_window:]
+        positions = []
+        for entry in recent_window:
+            if entry is None or len(entry) < 2:
+                return False, active_window
+            positions.append([float(entry[0]), float(entry[1])])
+        positions_arr = np.asarray(positions, dtype=np.float64)
+        if positions_arr.shape != (active_window, 2):
+            return False, active_window
+
+        radius = float(self.puck_low_motion_radius_m)
+        pairwise_dist = np.linalg.norm(
+            positions_arr[:, None, :] - positions_arr[None, :, :],
+            axis=-1,
+        )
+        within_anchor = np.all(pairwise_dist <= radius, axis=1)
+        return bool(np.any(within_anchor)), active_window
+
     def has_finished(self, state_info, multiagent=False):
         truncated = False
         terminated = False
@@ -520,9 +563,10 @@ class AirHockeyBaseEnv(ABC, Env):
             truncated = False
             
         if self.terminate_on_puck_stop:
-            if not truncated and np.linalg.norm(state_info['pucks'][0]['velocity']) < 0.01:
+            low_motion_cluster, low_motion_window = self._puck_low_motion_cluster_window(state_info)
+            if not truncated and low_motion_cluster:
                 truncated = True
-                truncation_reasons.append("puck_stopped")
+                truncation_reasons.append(f"puck_low_motion_window_{low_motion_window}")
 
 
         if "pucks" in state_info.keys():
