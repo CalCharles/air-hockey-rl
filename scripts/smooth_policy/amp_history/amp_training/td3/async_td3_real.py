@@ -565,6 +565,54 @@ def _detect_estop(env: AirHockeyEnv, step_info: dict | None = None) -> bool:
     return False
 
 
+def _is_puck_stuck_on_paddle(
+    state_info: dict | None,
+    xy_proximity_m: float = 0.06,
+    history_window: int = 8,
+    motion_tol_m: float = 0.015,
+) -> bool:
+    """Heuristic for the real-world failure mode where puck rides on paddle."""
+    if not isinstance(state_info, dict):
+        return False
+    try:
+        puck_info = state_info["pucks"][0]
+        paddle_info = state_info["paddles"]["paddle_ego"]
+    except Exception:
+        return False
+
+    puck_pos = np.asarray(puck_info.get("position", [0.0, 0.0]), dtype=np.float64).reshape(-1)
+    paddle_pos = np.asarray(paddle_info.get("position", [0.0, 0.0]), dtype=np.float64).reshape(-1)
+    if puck_pos.shape[0] < 2 or paddle_pos.shape[0] < 2:
+        return False
+    if int(np.asarray(puck_info.get("occluded", [0]), dtype=np.float64).reshape(-1)[0]) > 0:
+        return False
+
+    if float(np.linalg.norm(puck_pos[:2] - paddle_pos[:2])) > float(xy_proximity_m):
+        return False
+
+    puck_history = puck_info.get("history", [])
+    if not isinstance(puck_history, list) or len(puck_history) < max(3, int(history_window)):
+        return False
+    recent = np.asarray(puck_history[-int(history_window):], dtype=np.float64)
+    if recent.ndim != 2 or recent.shape[1] < 2:
+        return False
+    spread_x = float(np.max(recent[:, 0]) - np.min(recent[:, 0]))
+    spread_y = float(np.max(recent[:, 1]) - np.min(recent[:, 1]))
+    return spread_x <= float(motion_tol_m) and spread_y <= float(motion_tol_m)
+
+
+def _hard_reset_with_pause(env: AirHockeyEnv, reason: str, pause_s: float = 3.0) -> tuple[np.ndarray, dict]:
+    """Force physical env reset, then wait before returning to policy collection."""
+    print(f"[collector_fallback_reset] reason={reason} -> hard env reset")
+    try:
+        obs, info = env.reset(seed=None, write_traj=False)
+    except TypeError:
+        obs, info = env.reset(seed=None)
+    print(f"[collector_fallback_reset] sleeping {pause_s:.1f}s before resume")
+    time.sleep(float(pause_s))
+    return obs, info
+
+
 def collector_process(
     args: Args,
     replay: SharedTD3Replay,
@@ -642,6 +690,8 @@ def collector_process(
     estop_steps = 0
     estop_penalty_applied_this_episode = False
     episode_had_estop = False
+    puck_stuck_counter = 0
+    puck_stuck_required_steps = 25
     collector_start_time = time.time()
     episodic_returns: list[float] = []
     episodic_lengths: list[float] = []
@@ -676,6 +726,20 @@ def collector_process(
         base_done = bool(terminated or truncated)
         estop_now = _detect_estop(env, step_info=step_info)
         done = bool(base_done or estop_now)
+        fallback_reset_reason: str | None = None
+        if not done:
+            latest_state = getattr(env, "current_state", None)
+            if not isinstance(latest_state, dict):
+                latest_state = env.simulator.get_current_state()
+            if _is_puck_stuck_on_paddle(latest_state):
+                puck_stuck_counter += 1
+            else:
+                puck_stuck_counter = 0
+            if puck_stuck_counter >= int(puck_stuck_required_steps):
+                fallback_reset_reason = "puck_stuck_on_paddle"
+                done = True
+        else:
+            puck_stuck_counter = 0
         if estop_now:
             estop_steps += 1
             episode_had_estop = True
@@ -743,6 +807,10 @@ def collector_process(
                 episode_end_type = "estop"
                 episode_end_reasons = ["collector_estop"]
                 episode_end_reason = "collector_estop"
+            if fallback_reset_reason is not None:
+                episode_end_type = "fallback_hard_reset"
+                episode_end_reasons = [str(fallback_reset_reason)]
+                episode_end_reason = str(fallback_reset_reason)
             episode_ended_estop = (episode_end_type == "estop")
             success_rates.append(1.0 if episode_success else 0.0)
             writer.add_scalar("charts/episodic_return", episode_return, total_steps)
@@ -891,25 +959,43 @@ def collector_process(
                     applied_version = version
 
             min_reset_delay_s = 3.0
-            processing_elapsed_s = time.time() - episode_end_wall_time
-            artificial_delay_s = max(0.0, min_reset_delay_s - processing_elapsed_s)
-            if artificial_delay_s > 0.0:
-                time.sleep(artificial_delay_s)
-            print(
-                "[collector] "
-                f"episode_id={next_episode_file_id - 1} "
-                f"post_episode_processing_s={processing_elapsed_s:.3f} "
-                f"artificial_delay_s={artificial_delay_s:.3f} "
-                f"min_reset_delay_s={min_reset_delay_s:.3f}"
-            )
-
-            # Reset FSM + soft_reset after minimum end-of-episode delay.
-            run_reset_fsm(env, reset_rng)
-            obs, _ = env.soft_reset()
+            periodic_hard_reset = (total_episodes % 5) == 0
+            if fallback_reset_reason is None and not periodic_hard_reset:
+                processing_elapsed_s = time.time() - episode_end_wall_time
+                artificial_delay_s = max(0.0, min_reset_delay_s - processing_elapsed_s)
+                if artificial_delay_s > 0.0:
+                    time.sleep(artificial_delay_s)
+                print(
+                    "[collector] "
+                    f"episode_id={next_episode_file_id - 1} "
+                    f"post_episode_processing_s={processing_elapsed_s:.3f} "
+                    f"artificial_delay_s={artificial_delay_s:.3f} "
+                    f"min_reset_delay_s={min_reset_delay_s:.3f}"
+                )
+                # Reset FSM + soft_reset after minimum end-of-episode delay.
+                run_reset_fsm(env, reset_rng)
+                obs, _ = env.soft_reset()
+            else:
+                hard_reset_reason = (
+                    str(fallback_reset_reason)
+                    if fallback_reset_reason is not None
+                    else "periodic_every_5_episodes"
+                )
+                print(
+                    "[collector] "
+                    f"episode_id={next_episode_file_id - 1} "
+                    f"using hard reset path reason={hard_reset_reason}"
+                )
+                obs, _ = _hard_reset_with_pause(
+                    env=env,
+                    reason=hard_reset_reason,
+                    pause_s=min_reset_delay_s,
+                )
             post_reset_steps_remaining = int(post_reset_stand_still_steps)
             last_action_for_policy.zero_()
             estop_penalty_applied_this_episode = False
             episode_had_estop = False
+            puck_stuck_counter = 0
 
         now = time.time()
         if now - last_log_time >= float(args.collector_log_interval_sec):

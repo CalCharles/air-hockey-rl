@@ -1,6 +1,7 @@
 import argparse
 from datetime import datetime
 from pathlib import Path
+import time
 
 import cv2
 import numpy as np
@@ -679,6 +680,25 @@ def compute_failure(
     return counters["bottom"] >= bottom_fail_count or counters["occ"] >= occluded_fail_count
 
 
+def hard_reset_with_pause(eval_env: AirHockeyEnv, obs_type: str, reason: str, pause_s: float = 3.0):
+    """Force robot to initial pose, wait, and return fresh (state, obs)."""
+    print(f"[fallback_reset] reason={reason} -> hard env reset")
+    try:
+        eval_env.reset(seed=None, write_traj=False)
+    except TypeError:
+        eval_env.reset(seed=None)
+    print(f"[fallback_reset] pausing for {pause_s:.1f}s before resuming normal control")
+    time.sleep(float(pause_s))
+    state = eval_env.simulator.get_current_state()
+    obs = get_observation_by_type(
+        state,
+        obs_type=obs_type,
+        puck_history=state["pucks"][0]["history"],
+        paddle_history=state["paddles"]["paddle_ego"]["history"],
+    )
+    return state, obs
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Real-robot rollout with failure-triggered reset policy.")
     parser.add_argument("--config-path", type=str, default="configs/real_configs/rollout_config.yaml")
@@ -837,6 +857,22 @@ if __name__ == "__main__":
                     f"occ={int(np.asarray(puck.get('occluded', 0)).reshape(-1)[0])} "
                     f"rew={float(reward):+.3f} done={terminated or truncated}"
                 )
+
+            if mode == "normal" and bool(terminated or truncated):
+                state, obs = hard_reset_with_pause(
+                    eval_env=eval_env,
+                    obs_type=obs_type,
+                    reason="episode_done_without_reset_activation",
+                    pause_s=3.0,
+                )
+                mode = "normal"
+                reset_fsm = None
+                fail_counters = {"bottom": 0, "occ": 0}
+                startup_counter = 0
+                reset_cooldown = 0
+                if use_last_action:
+                    last_action_for_policy.zero_()
+                continue
 
             state = eval_env.simulator.get_current_state()
             obs = get_observation_by_type(

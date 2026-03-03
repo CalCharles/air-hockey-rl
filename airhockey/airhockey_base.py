@@ -58,7 +58,7 @@ class AirHockeyBaseEnv(ABC, Env):
             'terminate_on_puck_hit_bottom': False,  # TODO Specify this parameter in the yaml config
             'terminate_on_puck_hit_paddle': False,
             'terminate_on_puck_pass_paddle': False,
-            'terminate_on_puck_pass_paddle_consecutive_steps': 10,
+            'terminate_on_puck_pass_paddle_consecutive_steps': 8, # magic number
             'dense_goal': True,
             'goal_selector': 'stationary',
             'max_timesteps': 1000,

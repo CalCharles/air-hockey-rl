@@ -80,8 +80,8 @@ exploration_policy_takeover_model_path: "model2.pth"
 exploration_policy_takeover_args_path: "args.yaml"
 exploration_policy_takeover_config_path: "config.yaml"
 
-# minor final changes to policy takeover (disabled)
-exploration_pre_contact_hit_variant_chance: 0.1
+# minor final changes to policy takeover; this is actually quite bad
+exploration_pre_contact_hit_variant_chance: 0.0
 exploration_pre_contact_hit_variant_steps: 5
 exploration_pre_contact_hit_variant_distance_threshold: 0.45
 exploration_pre_contact_hit_variant_scale_min: 0.5
