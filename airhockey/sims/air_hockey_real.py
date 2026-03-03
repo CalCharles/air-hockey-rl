@@ -105,8 +105,8 @@ class AirHockeyReal:
             # and adds a predictive horizon on top
             "use_actual_tcp_for_state": True,
             # "state_prediction_horizon_s": 0.05,
-            "state_prediction_horizon_s": 0.0,
-            "state_prediction_blend": 0.3,
+            "state_prediction_horizon_s": 0.05,
+            "state_prediction_blend": 0.5, # run regression over a trajectory and see this
             "state_prediction_opposite_dir_brake": 1.5,
             "disable_prediction_on_estop": True,
         }
@@ -290,9 +290,9 @@ class AirHockeyReal:
 
         # magic numbers representing the boundary
         self.x_min_lim = -0.79
-        self.x_max_lim = -0.37
-        self.y_min = -0.36 # temporary for right now
-        self.y_max = 0.350
+        self.x_max_lim = -0.375
+        self.y_min = -0.360 # temporary for right now
+        self.y_max = 0.360
 
         self.bot_abs = config.bot_abs
         self.top_abs = config.top_abs
@@ -517,7 +517,10 @@ class AirHockeyReal:
                 **self.puck_detector_kwargs,
             )
             puck = np.array(puck)
-            if puck[-1] == 0: puck[0] += self.center_offset_constant
+            # Detector hit (occluded==0) is detector-frame x and needs +center offset.
+            # Occlusion fallback (occluded==1) already comes from puck_history/state frame.
+            if int(puck[2]) == 0:
+                puck[0] += self.center_offset_constant
         else: puck = (puck_history[-1][0],puck_history[-1][1],0)
         puck_vals = np.concatenate( [np.array(puck_history[self.puck_history_len-i]) for i in range(1,self.puck_history_len)] + [np.array(puck)])
         puck_vel = (np.array(puck)[:2] - np.array(puck_history[-self.puck_history_len])[:2])
@@ -540,16 +543,22 @@ class AirHockeyReal:
 
 
     def reset(self, seed, **kwargs):
+        # TODO: Consolidate reset motion + force-application into one reusable sequence,
+        # and centralize success / protective-stop handling in one place.
         self.ctrl.servoStop(6)
         self.ctrl.forceModeStop()
-        # print("write_traj" in kwargs)
-        # if "write_traj" in kwargs:
-        #     print( kwargs["write_traj"])
-        if "write_traj" in kwargs and kwargs["write_traj"]: imgs, vals = merge_trajectory(self.image_path, self.images, self.vals)
+
+        # ---- Trajectory finalization for previous rollout ----
+        should_write_traj = "write_traj" in kwargs and kwargs["write_traj"]
+        imgs, vals = None, None
+        if should_write_traj:
+            imgs, vals = merge_trajectory(self.image_path, self.images, self.vals)
         clear_images(folder=self.image_path)
-        if "write_traj" in kwargs and kwargs["write_traj"] and imgs is not None: 
+        if should_write_traj and imgs is not None:
             write_trajectory(self.save_path, self.tidx, imgs, vals) # TODO: not necessarily the best place to do writing
             self.tidx += 1
+
+        # ---- Episode-local buffers and state ----
         self.images = list()
         self.vals = list()
         self.timestep = 0
@@ -581,6 +590,15 @@ class AirHockeyReal:
         self.target_attrs = None
 
         self.object_dict = {}
+
+        def _maybe_assign_random_reset_xy():
+            if self.random_reset:
+                self.reset_pose[0][0], self.reset_pose[0][1] = (
+                    np.random.rand(2) * np.array([self.x_max_lim - self.x_min_lim, self.y_max - self.y_min])
+                    + np.array([self.x_min_lim, self.y_min])
+                )
+
+        # ---- Optional high-reset pre-stage ----
         if self.high_reset and not self.control_off:
             tcp_target_pose = self.rcv.getTargetTCPPose()
             tcp_target_pose[2] = self.very_high_reset_val
@@ -589,12 +607,15 @@ class AirHockeyReal:
                 self.reset_pose[0][0], self.reset_pose[0][1] = self.reset_pose_list[self.reset_idx % len(self.reset_pose_list)]
                 self.reset_pose[0][2] = self.very_high_reset_val
                 high_reset_success = self.ctrl.moveL(self.reset_pose[0], self.reset_pose[1], self.reset_pose[2], False)
+
+        # ---- Main reset move and start gate ----
         with NonBlockingConsole() as nbc:
 
             # Setting a reset pose for the robot
             if not self.high_reset and not self.control_off:
-                if self.random_reset: self.reset_pose[0][0], self.reset_pose[0][1] = np.random.rand(2) * np.array([self.x_max_lim - self.x_min_lim, self.y_max - self.y_min]) + np.array([self.x_min_lim, self.y_min])
+                _maybe_assign_random_reset_xy()
                 reset_success = self.ctrl.moveL(self.reset_pose[0], self.reset_pose[1], self.reset_pose[2], False)
+                # Keep force mode engaged so the tool remains biased toward table contact.
                 apply_negative_z_force(self.ctrl, self.rcv)
                 print("reset to initial pose:", reset_success)
             count = 0
@@ -606,9 +627,10 @@ class AirHockeyReal:
                     time.sleep(0.01)  # To prevent high CPU usage
                     if nbc.get_data() == ' ':  # x1b is ESC
                         break
+
+        # ---- Final reset target setup and move ----
         self.protected_img_check[0] = 1 and bool(self.save_path)
-        # time.sleep(0.1)
-        if self.random_reset: self.reset_pose[0][0], self.reset_pose[0][1] = np.random.rand(2) * np.array([self.x_max_lim - self.x_min_lim, self.y_max - self.y_min]) + np.array([self.x_min_lim, self.y_min])
+        _maybe_assign_random_reset_xy()
         if self.preset_reset:
             self.reset_pose[0][0], self.reset_pose[0][1] = self.reset_pose_list[self.reset_idx % len(self.reset_pose_list)]
             print(self.reset_idx, self.reset_pose_list[self.reset_idx % len(self.reset_pose_list)])
@@ -620,6 +642,9 @@ class AirHockeyReal:
         if self.high_reset and not self.above_table and not self.control_off: apply_negative_z_force(self.ctrl, self.rcv)
         count = 0
         time.sleep(0.7)
+
+        # TODO: Add explicit post-reset verification (actual TCP z / contact checks + retry policy)
+        # in a future behavior-changing pass.
         tcp_target_pose = self.rcv.getTargetTCPPose()
         tcp_target_speed = self.rcv.getTargetTCPSpeed()
         state_pose, state_speed, _ = self._resolve_state_pose_speed(tcp_target_pose, tcp_target_speed)
@@ -627,6 +652,31 @@ class AirHockeyReal:
 
         print("To exit press 'q'") # TODO: make this actually usable
 
+        return state_info
+
+    def soft_reset(self):
+        """Reset episode-local buffers without physical robot movement."""
+        self.images = list()
+        self.vals = list()
+        self.timestep = 0
+        self.pose_hist, self.dpose_hist = deque(maxlen=self.hist_len), deque(maxlen=self.hist_len)
+        self.puck_history = [(-2 + self.center_offset_constant, 0, 1) for i in range(5)]
+        self.paddle_history = [
+            (
+                -2 + self.center_offset_constant + self.paddle_additional_x_offset,
+                self.paddle_additional_y_offset,
+                1,
+            )
+            for i in range(5)
+        ]
+        self.total = time.time()
+        self.runtime = 0.0
+        self._last_observed_xy = None
+
+        tcp_target_pose = self.rcv.getTargetTCPPose()
+        tcp_target_speed = self.rcv.getTargetTCPSpeed()
+        state_pose, state_speed, _ = self._resolve_state_pose_speed(tcp_target_pose, tcp_target_speed)
+        state_info = self._compute_state(state_pose, state_speed, 0, self.puck_history)
         return state_info
 
     def instantiate_objects(self):

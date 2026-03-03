@@ -76,6 +76,8 @@ class AirHockeyBaseEnv(ABC, Env):
             'base_reward_scaling': 1.0,
             'jerk_penalty_coeff': 0.0,
             'velocity_penalty_coeff': 0.0,
+            'enable_survival_bonus': False,
+            'survival_bonus_per_step': 0.25,
         }
         
         # handle defaults, keeps values for duplicate keys from right side!
@@ -149,6 +151,8 @@ class AirHockeyBaseEnv(ABC, Env):
         self.base_reward_scaling = config.base_reward_scaling
         self.jerk_penalty_coeff = config.jerk_penalty_coeff
         self.velocity_penalty_coeff = config.velocity_penalty_coeff
+        self.enable_survival_bonus = bool(config.enable_survival_bonus)
+        self.survival_bonus_per_step = float(config.survival_bonus_per_step)
         self.simulator_params = simulator_params
         self.width = simulator_params.width
         self.length = simulator_params.length
@@ -212,6 +216,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.initialize_spaces(self.obs_type)
         self.falling_time = 25
         self.metadata = {}
+        self._last_done_reasons = {"terminated": [], "truncated": []}
         self.start_callbacks()
         self.domain_random = config.domain_random
         self.reset()
@@ -362,10 +367,39 @@ class AirHockeyBaseEnv(ABC, Env):
         self.episode_return = 0.0
         self.episode_length = 0
         self.episode_motion_data = {'velocity_mags': [], 'acceleration_mags': [], 'jerk_mags': []}
+        self._last_done_reasons = {"terminated": [], "truncated": []}
 
         if 'pucks' in state_info and len(state_info['pucks']) > 0:
             self.puck_initial_position = state_info['pucks'][0]['position']
         
+        return obs, {**{'success': False}, **vars(self.simulator_params)}
+
+    def soft_reset(self):
+        """Reset episode counters without physical robot movement.
+
+        Calls simulator.soft_reset() if available, then resets env-level
+        episode tracking state and returns the current observation.
+        """
+        if hasattr(self.simulator, "soft_reset"):
+            state_info = self.simulator.soft_reset()
+        else:
+            state_info = self.simulator.get_current_state()
+        self.current_state = state_info
+        obs = self.get_observation(
+            state_info,
+            obs_type=self.obs_type,
+            puck_history=self.simulator.puck_history,
+            paddle_history=self.simulator.paddle_history,
+        )
+        self.n_timesteps_so_far += self.current_timestep
+        self.current_timestep = 0
+        self.success_in_ep = False
+        self.max_reward_in_single_step = -np.inf
+        self.min_reward_in_single_step = np.inf
+        self.episode_return = 0.0
+        self.episode_length = 0
+        self.episode_motion_data = {'velocity_mags': [], 'acceleration_mags': [], 'jerk_mags': []}
+        self._last_done_reasons = {"terminated": [], "truncated": []}
         return obs, {**{'success': False}, **vars(self.simulator_params)}
 
     def reset_from_state(self, state_vector, seed=None):
@@ -432,11 +466,14 @@ class AirHockeyBaseEnv(ABC, Env):
     def has_finished(self, state_info, multiagent=False):
         truncated = False
         terminated = False
+        termination_reasons = []
+        truncation_reasons = []
         puck_within_alt_home = False
         puck_within_home = False
 
         if self.current_timestep > self.max_timesteps:
             truncated = True
+            truncation_reasons.append("max_timesteps_exceeded")
         else:
             if self.terminate_on_out_of_bounds:
                 # check if we hit any walls or are above the middle of the board
@@ -445,6 +482,7 @@ class AirHockeyBaseEnv(ABC, Env):
                     state_info['paddles']['paddle_ego']['position'][1] >  self.paddle_y_max or \
                     state_info['paddles']['paddle_ego']['position'][1] < self.paddle_y_min:
                     truncated = True
+                    truncation_reasons.append("paddle_out_of_bounds")
                     print("paddle out of bounds with position: ", state_info['paddles']['paddle_ego']['position'])
                     print("X_min, X_max, Y_min, Y_max: ", self.paddle_x_min + self.paddle_radius, self.paddle_x_max - self.paddle_radius, self.table_y_left + self.paddle_radius, self.table_y_right - self.paddle_radius)
 
@@ -458,18 +496,25 @@ class AirHockeyBaseEnv(ABC, Env):
             puck_pos = state_info['pucks'][0]['position']
             if abs(puck_pos[0] - self.table_x_bot) < self.puck_radius + 0.03:
                 terminated = True
+                termination_reasons.append("puck_hit_bottom")
 
         if self.terminate_on_enemy_goal:
             if not terminated and puck_within_home:
                 truncated = True
+                truncation_reasons.append("enemy_goal")
 
         if multiagent:
+            if truncated and not terminated:
+                termination_reasons.extend(truncation_reasons)
+                truncation_reasons = []
+                termination_reasons.append("multiagent_truncation_promoted_to_termination")
             terminated = terminated or truncated or puck_within_alt_home or puck_within_home
             truncated = False
             
         if self.terminate_on_puck_stop:
             if not truncated and np.linalg.norm(state_info['pucks'][0]['velocity']) < 0.01:
                 truncated = True
+                truncation_reasons.append("puck_stopped")
 
 
         if "pucks" in state_info.keys():
@@ -479,16 +524,22 @@ class AirHockeyBaseEnv(ABC, Env):
             if self.terminate_on_puck_pass_paddle:
                 if state_info['pucks'][0]['position'][0] > (state_info['paddles']['paddle_ego']['position'][0] + self.paddle_radius ):
                     truncated = True
+                    truncation_reasons.append("puck_passed_paddle")
                     # print("Puck pass paddle")
 
             if self.terminate_on_puck_hit_paddle:
                 if puck_paddle_distance <= (self.paddle_radius + self.puck_radius + 0.02):
                     puck_within_home = True
                     terminated = True
+                    termination_reasons.append("puck_hit_paddle")
                     # print("Puck hit paddle")
         
         puck_within_ego_goal = False
         puck_within_alt_goal = False
+        self._last_done_reasons = {
+            "terminated": list(dict.fromkeys(termination_reasons)),
+            "truncated": list(dict.fromkeys(truncation_reasons)),
+        }
                     
         return terminated, truncated, puck_within_home, puck_within_alt_home, puck_within_ego_goal, puck_within_alt_goal
 
@@ -627,6 +678,21 @@ class AirHockeyBaseEnv(ABC, Env):
 
         hit_a_puck = False
         is_finished, truncated, puck_within_home, puck_within_alt_home, puck_within_goal, _ = self.has_finished(next_state)
+        termination_reasons = list(self._last_done_reasons.get("terminated", []))
+        truncation_reasons = list(self._last_done_reasons.get("truncated", []))
+        episode_end_type = None
+        episode_end_reasons = []
+        if is_finished:
+            episode_end_type = "terminated"
+            episode_end_reasons = termination_reasons
+        elif truncated:
+            episode_end_type = "truncated"
+            episode_end_reasons = truncation_reasons
+        info['termination_reasons'] = termination_reasons
+        info['truncation_reasons'] = truncation_reasons
+        info['episode_end_type'] = episode_end_type
+        info['episode_end_reasons'] = episode_end_reasons
+        info['episode_end_reason'] = episode_end_reasons[0] if len(episode_end_reasons) > 0 else None
         if not truncated:
             reward, success = self.get_base_reward(next_state)
             # scale reward
@@ -643,6 +709,11 @@ class AirHockeyBaseEnv(ABC, Env):
             reward += self.get_reward_shaping(next_state)
         if self.use_smooth_penalty:
             pass # TODO: implement smooth penalty
+        survival_bonus = 0.0
+        if self.enable_survival_bonus and (not is_finished) and (not truncated):
+            survival_bonus = self.survival_bonus_per_step
+            reward += survival_bonus
+        info['survival_bonus'] = float(survival_bonus)
         
         self.max_reward_in_single_step = max(self.max_reward_in_single_step, reward)
         self.min_reward_in_single_step = min(self.min_reward_in_single_step, reward)        

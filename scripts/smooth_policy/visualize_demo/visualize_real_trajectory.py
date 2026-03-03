@@ -121,7 +121,8 @@ class RealTrajectoryRenderer:
                  puck_radius=0.03175,
                  render_size=360,
                  robot_x_offset=1.2,
-                 orientation='vertical'):
+                 orientation='vertical',
+                 paddle_input_frame='robot'):
         """
         Initialize renderer with simulation-matching parameters.
         
@@ -133,13 +134,22 @@ class RealTrajectoryRenderer:
             render_size: Render size in pixels (default: 360, matching simulation)
             robot_x_offset: Robot base offset from table center in X (real world: ~1.2m)
             orientation: Render orientation ('vertical' or 'horizontal')
+            paddle_input_frame: Coordinate frame for paddle x/y inputs.
+                - 'robot': inputs are robot-frame and require robot_x_offset transform.
+                - 'table': inputs are already in table/observation-centered frame.
         """
+        if paddle_input_frame not in ('robot', 'table'):
+            raise ValueError(
+                f"Invalid paddle_input_frame='{paddle_input_frame}'. "
+                "Expected one of: 'robot', 'table'."
+            )
         self.length = table_length
         self.width = table_width
         self.paddle_radius = paddle_radius
         self.puck_radius = puck_radius
         self.robot_x_offset = robot_x_offset
         self.orientation = orientation
+        self.paddle_input_frame = paddle_input_frame
         
         # Calculate pixels per meter and render dimensions (matching render.py logic)
         self.ppm = render_size / self.width
@@ -154,6 +164,7 @@ class RealTrajectoryRenderer:
         print(f"  Puck radius: {self.puck_radius}m ({int(self.puck_radius * self.ppm)}px)")
         print(f"  Robot X offset: {self.robot_x_offset}m")
         print(f"  Orientation: {self.orientation}")
+        print(f"  Paddle input frame: {self.paddle_input_frame}")
         
         # Load assets (matching render.py)
         self._load_assets()
@@ -241,19 +252,23 @@ class RealTrajectoryRenderer:
     
     def position_to_pixel_coords(self, pos_x, pos_y):
         """
-        Convert robot frame position to pixel coordinates.
+        Convert paddle position to pixel coordinates.
         
-        This follows the same logic as render.py draw_circle_with_image (lines 241-242).
+        This follows the same logic as render.py draw_circle_with_image (lines 241-242)
+        when using robot-frame input, and also supports direct table-frame input.
         
         Args:
-            pos_x: X position in robot frame (meters)
-            pos_y: Y position in robot frame (meters)
+            pos_x: X position in configured paddle_input_frame (meters)
+            pos_y: Y position in configured paddle_input_frame (meters)
             
         Returns:
             numpy.ndarray: Pixel coordinates [x, y]
         """
-        # Transform to table frame
-        table_x, table_y = self.robot_to_table_frame(pos_x, pos_y)
+        if self.paddle_input_frame == 'table':
+            table_x, table_y = pos_x, pos_y
+        else:
+            # Transform to table frame
+            table_x, table_y = self.robot_to_table_frame(pos_x, pos_y)
         
         # Convert to pixel coordinates
         return self.table_position_to_pixel_coords(table_x, table_y)
@@ -383,6 +398,28 @@ class RealTrajectoryRenderer:
 
         cv2.circle(frame, tuple(center), radius, color, -1)
         cv2.circle(frame, tuple(center), radius, (20, 20, 20), 1)
+
+    def is_paddle_in_frame(self, pos_x, pos_y):
+        """
+        Check whether a paddle centered at the given position intersects the frame.
+
+        Args:
+            pos_x: X position in configured paddle_input_frame (meters)
+            pos_y: Y position in configured paddle_input_frame (meters)
+
+        Returns:
+            bool: True if any part of the paddle would be visible.
+        """
+        center = self.position_to_pixel_coords(pos_x, pos_y)
+        radius = int(self.paddle_radius * self.ppm)
+        top_left = center - radius
+        bottom_right = top_left + 2 * radius
+
+        if bottom_right[0] <= 0 or bottom_right[1] <= 0:
+            return False
+        if top_left[0] >= self.render_length or top_left[1] >= self.render_width:
+            return False
+        return True
     
     def render_frame(self, pos_x, pos_y, vel_x=None, vel_y=None,
                     puck_x=None, puck_y=None, puck_occluded=None,
@@ -505,10 +542,14 @@ def create_trajectory_gif(paddle_data, renderer, output_path,
     print(f"  Playback FPS: {fps}")
     
     frames = []
+    clipped_paddle_frames = 0
     
     for idx, i in enumerate(indices):
         if idx % 50 == 0 and idx > 0:
             print(f"  Rendering frame {idx}/{len(indices)}...")
+
+        if not renderer.is_paddle_in_frame(pos_x[i], pos_y[i]):
+            clipped_paddle_frames += 1
         
         # Render frame
         frame = renderer.render_frame(
@@ -545,6 +586,18 @@ def create_trajectory_gif(paddle_data, renderer, output_path,
     
     file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
     print(f"  File size: {file_size_mb:.2f} MB")
+    if len(indices) > 0:
+        clipped_ratio = clipped_paddle_frames / len(indices)
+        if clipped_paddle_frames > 0:
+            print(
+                f"  ! Paddle out of frame in {clipped_paddle_frames}/{len(indices)} "
+                f"frames ({clipped_ratio * 100:.1f}%)"
+            )
+        if clipped_ratio > 0.5:
+            print(
+                "  ! Warning: paddle is clipped in most frames; "
+                "check coordinate frame / x-offset settings."
+            )
 
 
 def print_trajectory_statistics(paddle_data):
