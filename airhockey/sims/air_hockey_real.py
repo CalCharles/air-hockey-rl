@@ -100,6 +100,10 @@ class AirHockeyReal:
             "wait_for_space_to_start": True,
             "debug_control": False,
             "debug_control_every": 1,
+            "transition_hold_steps_on_estop_enter": 0,
+            "transition_hold_steps_on_estop_clear": 8,
+            "transition_hold_steps_on_safety_rearm": 3,
+            "transition_hold_debug": False,
 
             # The current state prediction algorithm uses true current position
             # and adds a predictive horizon on top
@@ -360,6 +364,10 @@ class AirHockeyReal:
         self.wait_for_space_to_start = config.wait_for_space_to_start
         self.debug_control = bool(config.debug_control)
         self.debug_control_every = max(1, int(config.debug_control_every))
+        self.transition_hold_steps_on_estop_enter = max(0, int(config.transition_hold_steps_on_estop_enter))
+        self.transition_hold_steps_on_estop_clear = max(0, int(config.transition_hold_steps_on_estop_clear))
+        self.transition_hold_steps_on_safety_rearm = max(0, int(config.transition_hold_steps_on_safety_rearm))
+        self.transition_hold_debug = bool(config.transition_hold_debug)
         self.use_actual_tcp_for_state = bool(config.use_actual_tcp_for_state)
         self.state_prediction_horizon_s = float(config.state_prediction_horizon_s)
         self.state_prediction_blend = float(np.clip(config.state_prediction_blend, 0.0, 1.0))
@@ -368,6 +376,13 @@ class AirHockeyReal:
         self._actual_tcp_fallback_warned = False
         self._last_observed_xy = None
         self._last_step_timing = {}
+        self._protective_stop_prev = False
+        self._hold_current_target_after_estop = False
+        self._transition_hold_steps_remaining = 0
+        self._transition_hold_reason = "none"
+        self._command_blocked_prev = False
+        self._command_rearm_event = False
+        self._last_readiness_signature = None
 
 
         # creating the ground -- need to only call once! otherwise it can be laggy
@@ -380,6 +395,105 @@ class AirHockeyReal:
     def _should_debug_control(self):
         timestep = getattr(self, "timestep", 0)
         return self.debug_control and timestep % self.debug_control_every == 0
+
+    @staticmethod
+    def _vector_or_default(values, width, default_value=0.0):
+        vec = np.asarray(values, dtype=float).reshape(-1)
+        out = np.full((int(width),), float(default_value), dtype=float)
+        copy_width = min(int(width), int(vec.shape[0]))
+        if copy_width > 0:
+            out[:copy_width] = vec[:copy_width]
+        return out
+
+    def _safe_target_pose_speed(self):
+        fallback_pose = self._vector_or_default(getattr(self, "pose", self.reset_pose[0]), 6, default_value=0.0)
+        fallback_speed = self._vector_or_default(getattr(self, "speed", np.zeros(6, dtype=float)), 6, default_value=0.0)
+        try:
+            tcp_target_pose = self._vector_or_default(self.rcv.getTargetTCPPose(), 6, default_value=0.0)
+            tcp_target_speed = self._vector_or_default(self.rcv.getTargetTCPSpeed(), 6, default_value=0.0)
+            return tcp_target_pose, tcp_target_speed
+        except Exception:
+            return fallback_pose, fallback_speed
+
+    def robot_command_readiness(self):
+        """Return current robot command/step readiness for safety gating."""
+        ctrl_connected = True
+        rcv_connected = True
+
+        ctrl_is_connected = getattr(self.ctrl, "isConnected", None)
+        if callable(ctrl_is_connected):
+            try:
+                ctrl_connected = bool(ctrl_is_connected())
+            except Exception:
+                ctrl_connected = False
+
+        rcv_is_connected = getattr(self.rcv, "isConnected", None)
+        if callable(rcv_is_connected):
+            try:
+                rcv_connected = bool(rcv_is_connected())
+            except Exception:
+                rcv_connected = False
+
+        controller_connected = bool(ctrl_connected and rcv_connected)
+
+        protective_stop = False
+        protective_stop_read_ok = True
+        try:
+            protective_stop = bool(self.rcv.isProtectiveStopped())
+        except Exception:
+            protective_stop_read_ok = False
+            controller_connected = False
+
+        transition_hold_active = bool(
+            self._transition_hold_steps_remaining > 0 or self._hold_current_target_after_estop
+        )
+        step_ready = bool(controller_connected and protective_stop_read_ok and (not protective_stop))
+        command_ready = bool(step_ready and (not transition_hold_active) and (not self.control_off))
+
+        if not controller_connected:
+            reason = "controller_disconnected"
+        elif not protective_stop_read_ok:
+            reason = "protective_stop_unavailable"
+        elif protective_stop:
+            reason = "protective_stop"
+        elif self.control_off:
+            reason = "observe_mode"
+        elif transition_hold_active:
+            reason = f"transition_hold:{self._transition_hold_reason}"
+        else:
+            reason = "ready"
+
+        signature = (step_ready, command_ready, reason)
+        if signature != self._last_readiness_signature and self._should_debug_control():
+            print(
+                "[control_gate] "
+                f"step_ready={step_ready} command_ready={command_ready} "
+                f"controller_connected={controller_connected} protective_stop={protective_stop} "
+                f"transition_hold_active={transition_hold_active} reason={reason}"
+            )
+        self._last_readiness_signature = signature
+        return {
+            "controller_connected": bool(controller_connected),
+            "protective_stop": bool(protective_stop),
+            "protective_stop_read_ok": bool(protective_stop_read_ok),
+            "transition_hold_active": bool(transition_hold_active),
+            "step_ready": bool(step_ready),
+            "command_ready": bool(command_ready),
+            "reason": str(reason),
+        }
+
+    def _wait_until_robot_step_ready(self, context: str, poll_s: float = 0.25):
+        wait_logged = False
+        while True:
+            readiness = self.robot_command_readiness()
+            if bool(readiness["step_ready"]):
+                if wait_logged:
+                    print(f"[control_gate] {context}: robot ready; resuming.")
+                return readiness
+            if (not wait_logged) or self._should_debug_control():
+                print(f"[control_gate] {context}: waiting for robot readiness ({readiness['reason']})")
+                wait_logged = True
+            time.sleep(float(max(0.01, poll_s)))
 
     def _paddle_display_xy_from_pose(self, pose_xy):
         """Convert robot TCP XY to paddle-center XY for rendering."""
@@ -448,6 +562,50 @@ class AirHockeyReal:
             predicted_xy = current_xy + direction * dist
         predicted_xy = np.array(clip_limits(predicted_xy[0], predicted_xy[1], self.lims, self.edge_lims), dtype=float)
         return predicted_xy
+
+    def _anchor_command_target_to_pose(self, anchor_pose):
+        """Reset command/filter history so desired TCP target matches current TCP pose."""
+        anchor_pose = np.array(anchor_pose, dtype=float).reshape(-1)
+        if anchor_pose.shape[0] < 6:
+            padded_pose = np.zeros(6, dtype=float)
+            padded_pose[: anchor_pose.shape[0]] = anchor_pose
+            anchor_pose = padded_pose
+        hold_z = self.high_reset_val if self.above_table else 0.30
+        hold_cmd_pose = np.array(
+            [float(anchor_pose[0]), float(anchor_pose[1]), hold_z] + self.angle,
+            dtype=float,
+        )
+        self.pose_hist = deque(maxlen=self.hist_len)
+        self.dpose_hist = deque(maxlen=self.hist_len)
+        for _ in range(max(1, int(self.hist_len))):
+            self.pose_hist.append(anchor_pose.copy())
+            self.dpose_hist.append(hold_cmd_pose.copy())
+        self.protected_target_pos[0] = hold_cmd_pose[0]
+        self.protected_target_pos[1] = hold_cmd_pose[1]
+        self.protected_target_pos[2] = 1
+        return hold_cmd_pose
+
+    def begin_transition_hold(self, steps: int, reason: str = "external_transition"):
+        """Force temporary no-motion command behavior during control transitions."""
+        steps_i = max(0, int(steps))
+        if steps_i <= 0:
+            return
+        self._transition_hold_steps_remaining = max(int(self._transition_hold_steps_remaining), steps_i)
+        self._transition_hold_reason = str(reason)
+        self._hold_current_target_after_estop = True
+        try:
+            tcp_target_pose = self.rcv.getTargetTCPPose()
+            tcp_target_speed = self.rcv.getTargetTCPSpeed()
+            state_pose, _, _ = self._resolve_state_pose_speed(tcp_target_pose, tcp_target_speed)
+            self._anchor_command_target_to_pose(state_pose)
+        except Exception:
+            pass
+        if self.transition_hold_debug:
+            print(
+                "[control_transition] "
+                f"begin_transition_hold reason={self._transition_hold_reason} "
+                f"steps={self._transition_hold_steps_remaining}"
+            )
 
     def start_callbacks(self, **kwargs):
         self.region_info = kwargs["region_info"] if "region_info" in kwargs else None
@@ -547,8 +705,16 @@ class AirHockeyReal:
     def reset(self, seed, **kwargs):
         # TODO: Consolidate reset motion + force-application into one reusable sequence,
         # and centralize success / protective-stop handling in one place.
-        self.ctrl.servoStop(6)
-        self.ctrl.forceModeStop()
+        if not self.control_off:
+            self._wait_until_robot_step_ready(context="reset:start")
+            try:
+                self.ctrl.servoStop(6)
+            except Exception as exc:
+                print(f"[control_gate] reset:start servoStop skipped: {exc}")
+            try:
+                self.ctrl.forceModeStop()
+            except Exception as exc:
+                print(f"[control_gate] reset:start forceModeStop skipped: {exc}")
 
         # ---- Trajectory finalization for previous rollout ----
         should_write_traj = "write_traj" in kwargs and kwargs["write_traj"]
@@ -603,13 +769,28 @@ class AirHockeyReal:
 
         # ---- Optional high-reset pre-stage ----
         if self.high_reset and not self.control_off:
-            tcp_target_pose = self.rcv.getTargetTCPPose()
+            self._wait_until_robot_step_ready(context="reset:high_pre_stage")
+            tcp_target_pose, _ = self._safe_target_pose_speed()
             tcp_target_pose[2] = self.very_high_reset_val
-            high_reset_success = self.ctrl.moveL(tcp_target_pose, self.reset_pose[1], self.reset_pose[2], False)
+            try:
+                high_reset_success = self.ctrl.moveL(
+                    tcp_target_pose.tolist(),
+                    self.reset_pose[1],
+                    self.reset_pose[2],
+                    False,
+                )
+            except Exception as exc:
+                high_reset_success = False
+                print(f"[control_gate] reset:high_pre_stage moveL skipped: {exc}")
             if self.preset_reset:
                 self.reset_pose[0][0], self.reset_pose[0][1] = self.reset_pose_list[self.reset_idx % len(self.reset_pose_list)]
                 self.reset_pose[0][2] = self.very_high_reset_val
-                high_reset_success = self.ctrl.moveL(self.reset_pose[0], self.reset_pose[1], self.reset_pose[2], False)
+                self._wait_until_robot_step_ready(context="reset:high_pre_stage_preset")
+                try:
+                    high_reset_success = self.ctrl.moveL(self.reset_pose[0], self.reset_pose[1], self.reset_pose[2], False)
+                except Exception as exc:
+                    high_reset_success = False
+                    print(f"[control_gate] reset:high_pre_stage_preset moveL skipped: {exc}")
 
         # ---- Main reset move and start gate ----
         with NonBlockingConsole() as nbc:
@@ -617,9 +798,19 @@ class AirHockeyReal:
             # Setting a reset pose for the robot
             if not self.high_reset and not self.control_off:
                 _maybe_assign_random_reset_xy()
-                reset_success = self.ctrl.moveL(self.reset_pose[0], self.reset_pose[1], self.reset_pose[2], False)
+                self._wait_until_robot_step_ready(context="reset:main_stage")
+                try:
+                    reset_success = self.ctrl.moveL(self.reset_pose[0], self.reset_pose[1], self.reset_pose[2], False)
+                except Exception as exc:
+                    reset_success = False
+                    print(f"[control_gate] reset:main_stage moveL skipped: {exc}")
                 # Keep force mode engaged so the tool remains biased toward table contact.
-                apply_negative_z_force(self.ctrl, self.rcv)
+                readiness = self.robot_command_readiness()
+                if bool(readiness["command_ready"]):
+                    try:
+                        apply_negative_z_force(self.ctrl, self.rcv)
+                    except Exception as exc:
+                        print(f"[control_gate] reset:main_stage forceMode skipped: {exc}")
                 print("reset to initial pose:", reset_success)
             count = 0
             time.sleep(0.7)
@@ -639,18 +830,36 @@ class AirHockeyReal:
             print(self.reset_idx, self.reset_pose_list[self.reset_idx % len(self.reset_pose_list)])
             self.reset_idx += 1
         if not self.control_off: 
-            reset_success = self.ctrl.moveL(self.reset_pose[0], self.reset_pose[1], self.reset_pose[2], False)
+            self._wait_until_robot_step_ready(context="reset:final_stage")
+            try:
+                reset_success = self.ctrl.moveL(self.reset_pose[0], self.reset_pose[1], self.reset_pose[2], False)
+            except Exception as exc:
+                reset_success = False
+                print(f"[control_gate] reset:final_stage moveL skipped: {exc}")
             print("reset to initial pose:", reset_success)
         time.sleep(0.2)
-        if self.high_reset and not self.above_table and not self.control_off: apply_negative_z_force(self.ctrl, self.rcv)
+        if self.high_reset and not self.above_table and not self.control_off:
+            readiness = self.robot_command_readiness()
+            if bool(readiness["command_ready"]):
+                try:
+                    apply_negative_z_force(self.ctrl, self.rcv)
+                except Exception as exc:
+                    print(f"[control_gate] reset:post_stage forceMode skipped: {exc}")
         count = 0
         time.sleep(0.7)
 
         # TODO: Add explicit post-reset verification (actual TCP z / contact checks + retry policy)
         # in a future behavior-changing pass.
-        tcp_target_pose = self.rcv.getTargetTCPPose()
-        tcp_target_speed = self.rcv.getTargetTCPSpeed()
+        tcp_target_pose, tcp_target_speed = self._safe_target_pose_speed()
         state_pose, state_speed, _ = self._resolve_state_pose_speed(tcp_target_pose, tcp_target_speed)
+        self._anchor_command_target_to_pose(state_pose)
+        readiness = self.robot_command_readiness()
+        self._protective_stop_prev = bool(readiness["protective_stop"])
+        self._hold_current_target_after_estop = False
+        self._transition_hold_steps_remaining = 0
+        self._transition_hold_reason = "none"
+        self._command_blocked_prev = False
+        self._command_rearm_event = False
         state_info = self._compute_state(state_pose, state_speed, 0, self.puck_history) # TODO: not sure if i=0 is correct
 
         print("To exit press 'q'") # TODO: make this actually usable
@@ -677,9 +886,16 @@ class AirHockeyReal:
         self._last_observed_xy = None
         self._last_step_timing = {}
 
-        tcp_target_pose = self.rcv.getTargetTCPPose()
-        tcp_target_speed = self.rcv.getTargetTCPSpeed()
+        tcp_target_pose, tcp_target_speed = self._safe_target_pose_speed()
         state_pose, state_speed, _ = self._resolve_state_pose_speed(tcp_target_pose, tcp_target_speed)
+        self._anchor_command_target_to_pose(state_pose)
+        readiness = self.robot_command_readiness()
+        self._protective_stop_prev = bool(readiness["protective_stop"])
+        self._hold_current_target_after_estop = False
+        self._transition_hold_steps_remaining = 0
+        self._transition_hold_reason = "none"
+        self._command_blocked_prev = False
+        self._command_rearm_event = False
         state_info = self._compute_state(state_pose, state_speed, 0, self.puck_history)
         return state_info
 
@@ -709,17 +925,52 @@ class AirHockeyReal:
         # pixel_coord[2] = protected_mouse_pos[2]
         # print("Consumer Side Pixel Coord: ", pixel_coord)
 
-        # force control, need it to keep it on the table
-        if not self.above_table and not self.control_off: apply_negative_z_force(self.ctrl, self.rcv)
+        readiness = self.robot_command_readiness()
+        controller_connected = bool(readiness["controller_connected"])
+        protective_stop = bool(readiness["protective_stop"])
 
-        
+        # force control, need it to keep it on the table
+        if not self.above_table and not self.control_off and bool(readiness["command_ready"]):
+            try:
+                apply_negative_z_force(self.ctrl, self.rcv)
+            except Exception as exc:
+                controller_connected = False
+                print(f"[control_gate] forceMode skipped in get_transition: {exc}")
+
         # acquire useful statistics
-        tcp_target_pose = self.rcv.getTargetTCPPose()
-        tcp_target_speed = self.rcv.getTargetTCPSpeed()
-        actual_tcp_force = self.rcv.getActualTCPForce()
-        measured_acc = self.rcv.getActualToolAccelerometer()
-        protective_stop = self.rcv.isProtectiveStopped()
+        tcp_target_pose, tcp_target_speed = self._safe_target_pose_speed()
+        actual_tcp_force = np.zeros((6,), dtype=float)
+        measured_acc = np.zeros((3,), dtype=float)
+        if controller_connected:
+            try:
+                actual_tcp_force = self._vector_or_default(self.rcv.getActualTCPForce(), 6, default_value=0.0)
+            except Exception:
+                controller_connected = False
+            try:
+                measured_acc = self._vector_or_default(self.rcv.getActualToolAccelerometer(), 3, default_value=0.0)
+            except Exception:
+                controller_connected = False
         state_pose, state_speed, state_pose_source = self._resolve_state_pose_speed(tcp_target_pose, tcp_target_speed)
+        entered_protective_stop = bool(protective_stop and not self._protective_stop_prev)
+        cleared_protective_stop = bool((not protective_stop) and self._protective_stop_prev)
+        if entered_protective_stop:
+            self._hold_current_target_after_estop = True
+            self.begin_transition_hold(
+                self.transition_hold_steps_on_estop_enter,
+                reason="estop_enter",
+            )
+        if cleared_protective_stop:
+            self.begin_transition_hold(
+                self.transition_hold_steps_on_estop_clear,
+                reason="estop_clear",
+            )
+        transition_hold_active = bool(self._transition_hold_steps_remaining > 0)
+        hold_target_to_current = bool(
+            (not controller_connected)
+            or protective_stop
+            or self._hold_current_target_after_estop
+            or transition_hold_active
+        )
         telemetry_read_s = time.time()
         paddle_display_xy = self._paddle_display_xy_from_pose(state_pose[:2])
         self.protected_paddle_pos[0] = paddle_display_xy[0]
@@ -730,14 +981,16 @@ class AirHockeyReal:
         camera_frame_received_s = np.nan
         # get image data
         if self.cap is not None:
+            # Detection runs on this frame immediately after capture; skip optional
+            # overlay drawing here to reduce per-step CPU overhead.
             image, save_img, camera_frame_received_s = save_collect(
                 self.cap,
                 [paddle_display_xy[0], paddle_display_xy[1], self.paddle_radius],
-                self.region_info if not self.control_mode in ["observe"] else None,
-                self.goal_info,
+                None,
+                None,
                 show=False,
-                lims=self.lims,
-                edge_lims=self.edge_lims,
+                lims=None,
+                edge_lims=None,
                 region_x_offset=self.x_offset,
             )
             self.images.append(save_img)
@@ -800,12 +1053,30 @@ class AirHockeyReal:
         # print("servl", srvpose[0][1], tcp_target_speed, actual_tcp_force, measured_acc, ctrl.servoL(srvpose[0], vel, acc, block_time, lookahead, gain))
         
         pre_filter_srvpose = copy.deepcopy(srvpose[0])
-        self.pose_hist.append(tcp_target_pose)
-        self.dpose_hist.append(srvpose[0])
-        srvpose[0] = filter_update(tcp_target_speed, self.pose_hist, self.dpose_hist)
-        self.protected_target_pos[0] = srvpose[0][0]
-        self.protected_target_pos[1] = srvpose[0][1]
-        self.protected_target_pos[2] = 1
+        if hold_target_to_current:
+            hold_cmd_pose = self._anchor_command_target_to_pose(state_pose)
+            requested_target_xy = (float(hold_cmd_pose[0]), float(hold_cmd_pose[1]))
+            pre_filter_srvpose = hold_cmd_pose.tolist()
+            srvpose[0] = hold_cmd_pose.tolist()
+            if (not protective_stop) and self._hold_current_target_after_estop and (not transition_hold_active):
+                self._hold_current_target_after_estop = False
+            if self._should_debug_control():
+                print(
+                    "[control_debug] "
+                    f"step={self.timestep} estop_target_anchor=True "
+                    f"entered_protective_stop={entered_protective_stop} "
+                    f"protective_stop={protective_stop} "
+                    f"transition_hold_active={transition_hold_active} "
+                    f"transition_hold_reason={self._transition_hold_reason} "
+                    f"anchor_xy=({hold_cmd_pose[0]:.4f},{hold_cmd_pose[1]:.4f})"
+                )
+        else:
+            self.pose_hist.append(tcp_target_pose)
+            self.dpose_hist.append(srvpose[0])
+            srvpose[0] = filter_update(tcp_target_speed, self.pose_hist, self.dpose_hist)
+            self.protected_target_pos[0] = srvpose[0][0]
+            self.protected_target_pos[1] = srvpose[0][1]
+            self.protected_target_pos[2] = 1
         if self.cap is not None and self.control_mode not in ["observe"]:
             draw_target_marker(
                 image,
@@ -833,7 +1104,13 @@ class AirHockeyReal:
             )
             cv2.imshow("showdst", image)
             cv2.waitKey(1)
-        safety_check = self.ctrl.isPoseWithinSafetyLimits(srvpose[0])
+        safety_check = False
+        if controller_connected:
+            try:
+                safety_check = bool(self.ctrl.isPoseWithinSafetyLimits(srvpose[0]))
+            except Exception:
+                controller_connected = False
+                safety_check = False
         if self._should_debug_control():
             if self.control_mode in ["mouse", "mimic"]:
                 action_repr = "mouse/mimic_absolute_target"
@@ -849,31 +1126,82 @@ class AirHockeyReal:
                 f"pre_filter_target_xy=({pre_filter_srvpose[0]:.4f},{pre_filter_srvpose[1]:.4f}) "
                 f"post_filter_target_xy=({srvpose[0][0]:.4f},{srvpose[0][1]:.4f}) "
                 f"action={action_repr} "
-                f"safety_check={safety_check} protective_stop={protective_stop}"
+                f"safety_check={safety_check} protective_stop={protective_stop} "
+                f"controller_connected={controller_connected} "
+                f"transition_hold_active={transition_hold_active}"
             )
-        values = get_state_array(time.time(), self.tidx, self.timestep, state_pose, state_speed, actual_tcp_force, measured_acc, srvpose, protective_stop, safety_check, puck)
+        estop_or_disconnect = bool(protective_stop or (not controller_connected))
+        safety_for_log = bool(safety_check and controller_connected and (not protective_stop))
+        values = get_state_array(
+            time.time(),
+            self.tidx,
+            self.timestep,
+            state_pose,
+            state_speed,
+            actual_tcp_force,
+            measured_acc,
+            srvpose,
+            estop_or_disconnect,
+            safety_for_log,
+            puck,
+        )
         self.vals.append(values), #frames.append(np.array(protected_img[:]).reshape(640,480,3))
 
         # print("servl", tcp_target_speed[:2], srvpose[0][:2], x,y, safety_check)# srvpose[0][:2], x,y, tcp_target_pose[:2], rcv.isProtectiveStopped())# , tcp_target_speed, actual_tcp_force, measured_acc, )
         # print("desired_pose", srvpose[0][:2])
         # print("delta desired", np.array(srvpose[0][:2]) - tcp_target_pose[:2])
         # print("unnorm_delta", x- tcp_target_pose[0],y - tcp_target_pose[1], safety_check, self.rcv.isProtectiveStopped())# srvpose[0][:2], x,y, tcp_target_pose[:2], rcv.isProtectiveStopped())# , tcp_target_speed, actual_tcp_force, measured_acc, )
-        if safety_check and self.control_mode not in ["observe"]:
-            self.ctrl.servoL(srvpose[0], self.vel, self.acc, self.block_time, self.lookahead, self.gain)
-            command_sent_s = time.time()
+        self._command_rearm_event = False
+        if self.control_mode in ["observe"]:
+            command_block_reason = "observe_mode"
+        elif not controller_connected:
+            command_block_reason = "controller_disconnected"
+        elif protective_stop:
+            command_block_reason = "protective_stop_active"
+        elif transition_hold_active:
+            command_block_reason = f"transition_hold:{self._transition_hold_reason}"
+        elif not safety_check:
+            command_block_reason = "safety_check_failed"
+        else:
+            command_block_reason = "none"
+        command_blocked_now = bool(command_block_reason != "none")
+        if not command_blocked_now:
+            try:
+                self.ctrl.servoL(srvpose[0], self.vel, self.acc, self.block_time, self.lookahead, self.gain)
+                command_sent_s = time.time()
+            except Exception as exc:
+                command_blocked_now = True
+                command_block_reason = f"servol_exception:{exc.__class__.__name__}"
+                command_sent_s = np.nan
+                controller_connected = False
             if self._should_debug_control():
                 print(
                     "[control_debug] "
-                    f"step={self.timestep} servoL_sent=True vel={self.vel:.3f} acc={self.acc:.3f} "
-                    f"block_time={self.block_time:.4f} lookahead={self.lookahead:.3f} gain={self.gain}"
+                    f"step={self.timestep} servoL_sent={not command_blocked_now} vel={self.vel:.3f} "
+                    f"acc={self.acc:.3f} block_time={self.block_time:.4f} "
+                    f"lookahead={self.lookahead:.3f} gain={self.gain} reason={command_block_reason}"
                 )
         else:
             command_sent_s = np.nan
             if self._should_debug_control():
                 print(
                     "[control_debug] "
-                    f"step={self.timestep} servoL_sent=False reason={'safety_check_failed' if not safety_check else 'observe_mode'}"
+                    f"step={self.timestep} servoL_sent=False "
+                    f"reason={command_block_reason}"
                 )
+        if (not command_blocked_now) and self._command_blocked_prev:
+            self._command_rearm_event = True
+            self.begin_transition_hold(
+                self.transition_hold_steps_on_safety_rearm,
+                reason="safety_rearm",
+            )
+            transition_hold_active = bool(self._transition_hold_steps_remaining > 0)
+            if self.transition_hold_debug:
+                print(
+                    "[control_transition] "
+                    f"safety_rearm hold_steps={self._transition_hold_steps_remaining}"
+                )
+        self._command_blocked_prev = command_blocked_now
         # Use telemetry-derived paddle state directly for policy/logging state.
         state_pose_for_observation = np.array(state_pose, dtype=float)
         state_speed_for_observation = np.array(state_speed, dtype=float)
@@ -890,26 +1218,47 @@ class AirHockeyReal:
             "sleep_before_step_s": float(sleep_time),
             "loop_runtime_before_sleep_s": float(runtime),
         }
+        if self._transition_hold_steps_remaining > 0 and (not protective_stop) and controller_connected:
+            self._transition_hold_steps_remaining -= 1
+            if self._transition_hold_steps_remaining <= 0:
+                self._transition_hold_steps_remaining = 0
+                self._transition_hold_reason = "none"
+                self._hold_current_target_after_estop = False
 
         puck_occluded = bool(np.asarray(puck).reshape(-1)[2] > 0.5) if np.asarray(puck).size >= 3 else False
         puck_used_fallback = bool(puck_occluded)
+        robot_step_ready = bool(controller_connected and (not protective_stop))
+        robot_command_ready = bool(
+            robot_step_ready and (not transition_hold_active) and (not self.control_mode in ["observe"]) and safety_check
+        )
 
-        if protective_stop:
+        if protective_stop or (not controller_connected):
             next_state = self._compute_state(state_pose_for_observation, state_speed_for_observation, self.timestep, self.puck_history)
             next_state["timing"] = copy.deepcopy(self._last_step_timing)
+            next_state["protective_stop"] = bool(protective_stop)
             next_state["paddle_actual_pose"] = np.array(state_pose, dtype=float)
             next_state["paddle_actual_speed"] = np.array(state_speed, dtype=float)
             next_state["paddle_target_pose_pre_filter"] = np.array(pre_filter_srvpose, dtype=float)
             next_state["paddle_target_pose_post_filter"] = np.array(srvpose[0], dtype=float)
             next_state["puck_detector_used_fallback"] = puck_used_fallback
+            next_state["transition_hold_active"] = bool(self._transition_hold_steps_remaining > 0)
+            next_state["transition_hold_reason"] = str(self._transition_hold_reason)
+            next_state["transition_hold_steps_remaining"] = int(self._transition_hold_steps_remaining)
+            next_state["command_rearm_event"] = bool(self._command_rearm_event)
+            next_state["controller_connected"] = bool(controller_connected)
+            next_state["robot_step_ready"] = bool(robot_step_ready)
+            next_state["robot_command_ready"] = bool(robot_command_ready)
+            next_state["command_block_reason"] = str(command_block_reason)
             paddle_position = next_state["paddles"]["paddle_ego"]["position"]
             self.paddle_history.append(list(paddle_position) + [0])
             if self._should_debug_control():
                 print(
                     "[control_debug] "
                     f"step={self.timestep} returned_state_xy=({paddle_position[0]:.4f},{paddle_position[1]:.4f}) "
-                    f"state_source=actual_telemetry protective_stop=True"
+                    f"state_source=actual_telemetry protective_stop={protective_stop} "
+                    f"controller_connected={controller_connected}"
                 )
+            self._protective_stop_prev = bool(protective_stop)
             return next_state
 
         # print("servl", np.abs(polx - tcp_target_pose[0]), np.abs(poly - tcp_target_pose[1]), pixel_coord, srvpose[0], rcv.isProtectiveStopped())# , tcp_target_speed, actual_tcp_force, measured_acc, )
@@ -918,11 +1267,20 @@ class AirHockeyReal:
         self.runtime = time.time() - self.transition_start
         next_state = self._compute_state(state_pose_for_observation, state_speed_for_observation, self.timestep, self.puck_history)
         next_state["timing"] = copy.deepcopy(self._last_step_timing)
+        next_state["protective_stop"] = bool(protective_stop)
         next_state["paddle_actual_pose"] = np.array(state_pose, dtype=float)
         next_state["paddle_actual_speed"] = np.array(state_speed, dtype=float)
         next_state["paddle_target_pose_pre_filter"] = np.array(pre_filter_srvpose, dtype=float)
         next_state["paddle_target_pose_post_filter"] = np.array(srvpose[0], dtype=float)
         next_state["puck_detector_used_fallback"] = puck_used_fallback
+        next_state["transition_hold_active"] = bool(self._transition_hold_steps_remaining > 0)
+        next_state["transition_hold_reason"] = str(self._transition_hold_reason)
+        next_state["transition_hold_steps_remaining"] = int(self._transition_hold_steps_remaining)
+        next_state["command_rearm_event"] = bool(self._command_rearm_event)
+        next_state["controller_connected"] = bool(controller_connected)
+        next_state["robot_step_ready"] = bool(robot_step_ready)
+        next_state["robot_command_ready"] = bool(robot_command_ready)
+        next_state["command_block_reason"] = str(command_block_reason)
         paddle_position = next_state["paddles"]["paddle_ego"]["position"]
         self.paddle_history.append(list(paddle_position) + [0])
         if self._should_debug_control():
@@ -931,6 +1289,7 @@ class AirHockeyReal:
                 f"step={self.timestep} returned_state_xy=({paddle_position[0]:.4f},{paddle_position[1]:.4f}) "
                 f"state_source=actual_telemetry protective_stop=False"
             )
+        self._protective_stop_prev = bool(protective_stop)
         return next_state
 
     def spawn_puck(self, pos, vel, name, affected_by_gravity=False, movable=True):

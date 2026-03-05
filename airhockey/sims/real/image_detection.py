@@ -1,4 +1,5 @@
 import cv2, os
+from functools import lru_cache
 import numpy as np
 
 def find_red_hockey_paddle(image):
@@ -106,6 +107,7 @@ visual_downscale_constant = 2
 save_downscale_constant = 2
 # offset_constants = np.array((2100, 500)) # change this number
 offset_constants = np.array((2250, 500)) # change this number
+MORPH_KERNEL_3X3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
 
 def _fallback_puck(puck_history):
     if puck_history is not None and len(puck_history) > 0:
@@ -135,11 +137,24 @@ def _pixel_to_robot_xy(x_px, y_px):
     return homo_idx[0], -homo_idx[1]
 
 
+@lru_cache(maxsize=32)
+def _cached_dual_red_hsv_bounds(sat_min, val_min, low_h0, low_h1, high_h0, high_h1):
+    low_1 = np.array([low_h0, sat_min, val_min], dtype=np.uint8)
+    high_1 = np.array([low_h1, 255, 255], dtype=np.uint8)
+    low_2 = np.array([high_h0, sat_min, val_min], dtype=np.uint8)
+    high_2 = np.array([high_h1, 255, 255], dtype=np.uint8)
+    return low_1, high_1, low_2, high_2
+
+
 def _dual_red_mask(hsv_image, sat_min, val_min, low_h=(0, 10), high_h=(170, 180)):
-    low_1 = np.array([low_h[0], sat_min, val_min], dtype=np.uint8)
-    high_1 = np.array([low_h[1], 255, 255], dtype=np.uint8)
-    low_2 = np.array([high_h[0], sat_min, val_min], dtype=np.uint8)
-    high_2 = np.array([high_h[1], 255, 255], dtype=np.uint8)
+    low_1, high_1, low_2, high_2 = _cached_dual_red_hsv_bounds(
+        int(sat_min),
+        int(val_min),
+        int(low_h[0]),
+        int(low_h[1]),
+        int(high_h[0]),
+        int(high_h[1]),
+    )
     return cv2.inRange(hsv_image, low_1, high_1) | cv2.inRange(hsv_image, low_2, high_2)
 
 
@@ -196,6 +211,7 @@ def _apply_antiglare_rescue_mask(
     return rescue_mask
 
 
+@lru_cache(maxsize=64)
 def _convert_raw_bounds_to_detector_bounds(
     antiglare_min_x_px,
     antiglare_max_x_px,
@@ -360,9 +376,8 @@ def find_red_hockey_puck(
     ).astype(np.uint8) * 255
     mask = cv2.bitwise_or(red_mask, gray_red_rescue)
 
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, MORPH_KERNEL_3X3, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, MORPH_KERNEL_3X3, iterations=1)
 
     center = _select_component_centroid(
         mask,
@@ -431,9 +446,8 @@ def find_red_hockey_puck_antiglare(
         antiglare_max_y_px=antiglare_max_y_px,
     )
 
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, MORPH_KERNEL_3X3, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, MORPH_KERNEL_3X3, iterations=1)
 
     center = _select_component_centroid(
         mask,

@@ -1,4 +1,5 @@
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 import time
@@ -64,12 +65,14 @@ class ResetPolicyFSM:
         waypoint_advance_m: float = 0.05,
         puck_proximity_m: float = 0.5,
         post_upward_check_steps: int = 20,
-        post_upward_down_cmd_start: float = -0.4,
         post_window_debug_log: bool = False,
-        shared_success_threshold_proportion_from_bottom: float = 0.4,
+        shared_success_threshold_proportion_from_bottom: float = 0.5,
         off_wall_abs_y_m: float = 0.35,
         min_off_wall_window_steps: int = 5,
         max_stage2_cycles: int = 5,
+        capture_second_hit_frame: bool = True,
+        async_second_hit_write: bool = False,
+        show_second_hit_window: bool = True,
     ):
         self.env = env
         self.rng = rng
@@ -78,9 +81,7 @@ class ResetPolicyFSM:
         self.burst_steps = int(burst_steps)
         self.goto_start_arrive_m = float(goto_start_arrive_m)
         self.waypoint_advance_m = float(waypoint_advance_m)
-        self.puck_proximity_m = float(puck_proximity_m)
         self.post_upward_check_steps = max(1, int(post_upward_check_steps))
-        self.post_upward_down_cmd_start = float(post_upward_down_cmd_start)
         self.post_window_debug_log = bool(post_window_debug_log)
         self.shared_success_threshold_proportion_from_bottom = float(
             shared_success_threshold_proportion_from_bottom
@@ -101,7 +102,7 @@ class ResetPolicyFSM:
             -strike_mag,
             -strike_mag,
         ]
-        self.puck_proximity_m = float(self.rng.uniform(0.4, 0.65)) # less delay than before
+        self.puck_proximity_m = float(self.rng.uniform(0.45, 0.65)) # less delay than before
 
         simulator = self.env.simulator
         self._lims = np.array(
@@ -141,8 +142,21 @@ class ResetPolicyFSM:
         self.path_idx = 0
         self.path_waypoints = np.zeros((1, 2), dtype=np.float32)
         self._captured_second_hit_frame = False
+        self.capture_second_hit_frame = bool(capture_second_hit_frame)
+        self.async_second_hit_write = bool(async_second_hit_write)
+        self.show_second_hit_window = bool(show_second_hit_window)
         self._second_hit_frame_dir = Path("real_runs/async_td3/second_hit_frames")
+        self._second_hit_writer = (
+            ThreadPoolExecutor(max_workers=1)
+            if self.capture_second_hit_frame and self.async_second_hit_write
+            else None
+        )
         self._build_edge_loop_path()
+
+    def close(self) -> None:
+        if self._second_hit_writer is not None:
+            self._second_hit_writer.shutdown(wait=False, cancel_futures=False)
+            self._second_hit_writer = None
 
     def _get_tcp_position(self, state_info: dict) -> np.ndarray:
         """Raw TCP position used for motion commands (path waypoints live in this frame)."""
@@ -164,14 +178,6 @@ class ResetPolicyFSM:
                 paddle_obs[0] - self._x_offset - self._paddle_x_off,
                 paddle_obs[1] - self._paddle_y_off,
             ],
-            dtype=np.float32,
-        )
-
-    def _get_paddle_physical_center(self, state_info: dict) -> np.ndarray:
-        """Physical paddle center = TCP + mechanical offsets (for distance to puck)."""
-        tcp_pos = self._get_tcp_position(state_info)
-        return np.array(
-            [tcp_pos[0] + self._paddle_x_off, tcp_pos[1] + self._paddle_y_off],
             dtype=np.float32,
         )
 
@@ -329,13 +335,6 @@ class ResetPolicyFSM:
         line_world_x = bottom + float(proportion_from_bottom) * (top - bottom)
         return line_world_x - self._center_offset
 
-    def _puck_above_quarter(self, state_info: dict) -> bool:
-        """True when the puck is visible and above the quarter line from the bottom."""
-        if self._puck_is_occluded(state_info):
-            return False
-        puck_tcp_x = float(self._get_puck_pos(state_info)[0])
-        return puck_tcp_x <= self._quarter_line_tcp_x()
-
     def _get_puck_motion_from_history(self, state_info: dict) -> tuple[bool, bool]:
         """Return (puck_falling, puck_rising) from history in table-x convention."""
         puck_history = state_info["pucks"][0].get("history", [])
@@ -423,13 +422,22 @@ class ResetPolicyFSM:
         self.done_reason = str(reason)
         self.done = True
 
-    def _start_post_upward_window(self, kind: str, state_info: dict) -> None:
+    def _start_post_upward_window(
+        self,
+        kind: str,
+        state_info: dict,
+        cached_tcp: np.ndarray  = None,
+    ) -> None:
         self._window_kind = str(kind)
         self._window_steps_left = int(self.post_upward_check_steps)
         self._window_off_wall_count = 0
         self._window_height_count = 0
         self._window_shared_gate_count = 0
-        window_start_tcp = self._get_tcp_position(state_info)
+        window_start_tcp = (
+            np.array(cached_tcp, dtype=np.float32)
+            if cached_tcp is not None
+            else self._get_tcp_position(state_info)
+        )
         target_tcp = np.array(
             [window_start_tcp[0] + self._window_target_offset_x_m, window_start_tcp[1]],
             dtype=np.float32,
@@ -448,10 +456,18 @@ class ResetPolicyFSM:
         self._window_start_tcp = None
         self._window_target_tcp = None
 
-    def _current_window_downward_action(self, state_info: dict) -> np.ndarray:
+    def _current_window_downward_action(
+        self,
+        state_info: dict,
+        cached_tcp: np.ndarray  = None,
+    ) -> np.ndarray:
         if self._window_target_tcp is None:
             return np.zeros(2, dtype=np.float32)
-        current_tcp = self._get_tcp_position(state_info)
+        current_tcp = (
+            np.array(cached_tcp, dtype=np.float32)
+            if cached_tcp is not None
+            else self._get_tcp_position(state_info)
+        )
         puck_world = np.array(state_info["pucks"][0]["position"], dtype=np.float32)
         remaining_delta_m = self._window_target_tcp - current_tcp
         action = self._project_displacement_to_action_box(remaining_delta_m)
@@ -467,7 +483,11 @@ class ResetPolicyFSM:
             )
         return action
 
-    def _step_post_upward_window(self, state_info: dict) -> np.ndarray:
+    def _step_post_upward_window(
+        self,
+        state_info: dict,
+        cached_tcp: np.ndarray  = None,
+    ) -> np.ndarray:
         if self.phase == "post_first_upward_check":
             check_name = "shared_success_gate"
             phase_name = "stage1_upward"
@@ -494,7 +514,25 @@ class ResetPolicyFSM:
         if shared_gate_now:
             self._window_shared_gate_count += 1
 
-        action = self._current_window_downward_action(state_info)
+        action = self._current_window_downward_action(state_info, cached_tcp=cached_tcp)
+        passed_now = bool(
+            (self._window_height_count >= self.min_height_window_steps)
+            and (self._window_off_wall_count >= self.min_off_wall_window_steps)
+        )
+        if passed_now:
+            self._pending_window_finalize = {
+                "kind": self._window_kind,
+                "phase_name": phase_name,
+                "check_name": check_name,
+                "passed": True,
+                "shared_gate_steps": int(self._window_shared_gate_count),
+                "off_wall_steps": int(self._window_off_wall_count),
+                "height_steps": int(self._window_height_count),
+                "required_height_steps": int(self.min_height_window_steps),
+                "required_steps": int(self.min_off_wall_window_steps),
+                "early_exit": True,
+            }
+            return self._finalize_post_upward_window(state_info)
         self._window_steps_left -= 1
         if self._window_steps_left <= 0:
             passed = bool(
@@ -511,6 +549,7 @@ class ResetPolicyFSM:
                 "height_steps": int(self._window_height_count),
                 "required_height_steps": int(self.min_height_window_steps),
                 "required_steps": int(self.min_off_wall_window_steps),
+                "early_exit": False,
             }
         return action
 
@@ -554,8 +593,16 @@ class ResetPolicyFSM:
         self.phase = "wait_for_puck"
         return np.zeros(2, dtype=np.float32)
 
+    @staticmethod
+    def _write_second_hit_frames(frame, out_path: Path, latest_path: Path) -> tuple[bool, bool]:
+        wrote_timestamped = cv2.imwrite(str(out_path), frame)
+        wrote_latest = cv2.imwrite(str(latest_path), frame)
+        return bool(wrote_timestamped), bool(wrote_latest)
+
     def _capture_second_hit_trigger_frame(self, dist_m: float, puck_falling: bool) -> None:
         """Capture transformed camera frame on the same control step before strike is sent."""
+        if not self.capture_second_hit_frame:
+            return
         simulator = self.env.simulator
         cap = getattr(simulator, "cap", None)
         if cap is None:
@@ -589,31 +636,40 @@ class ResetPolicyFSM:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         out_path = self._second_hit_frame_dir / f"second_hit_trigger_{timestamp}_step{self.total_steps}.png"
         latest_path = self._second_hit_frame_dir / "latest_second_hit_trigger.png"
-        wrote_timestamped = cv2.imwrite(str(out_path), frame)
-        wrote_latest = cv2.imwrite(str(latest_path), frame)
+        if self._second_hit_writer is None:
+            wrote_timestamped, wrote_latest = self._write_second_hit_frames(frame, out_path, latest_path)
+        else:
+            self._second_hit_writer.submit(
+                self._write_second_hit_frames,
+                frame.copy(),
+                out_path,
+                latest_path,
+            )
+            wrote_timestamped, wrote_latest = True, True
+            print(f"[second_hit_capture] queued async write {out_path}")
         if wrote_timestamped:
             print(f"[second_hit_capture] saved {out_path}")
             if wrote_latest:
                 print(f"[second_hit_capture] updated {latest_path}")
         else:
             print(f"[second_hit_capture] Failed to save {out_path}")
-        # Show immediately for real-time verification at trigger step.
-        cv2.imshow("second_hit_trigger", frame)
-        cv2.waitKey(1)
+        if self.show_second_hit_window:
+            # Show immediately for real-time verification at trigger step.
+            cv2.imshow("second_hit_trigger", frame)
+            cv2.waitKey(1)
 
     def step(self, state_info: dict) -> np.ndarray:
         if self.done:
             return np.zeros(2, dtype=np.float32)
 
         self.total_steps += 1
+        paddle_tcp = self._get_tcp_position(state_info)
 
         if self._pending_window_finalize is not None:
             return self._finalize_post_upward_window(state_info)
 
         if self.phase in ("post_first_upward_check", "post_second_upward_check"):
-            return self._step_post_upward_window(state_info)
-
-        paddle_tcp = self._get_tcp_position(state_info)
+            return self._step_post_upward_window(state_info, cached_tcp=paddle_tcp)
 
         if self.phase == "goto_start":
             start_pos = self.path_waypoints[0]
@@ -639,8 +695,12 @@ class ResetPolicyFSM:
             self.phase_steps -= 1
             if self.phase_steps <= 0:
                 self.phase = "post_first_upward_check"
-                self._start_post_upward_window(kind="first", state_info=state_info)
-                return self._step_post_upward_window(state_info)
+                self._start_post_upward_window(
+                    kind="first",
+                    state_info=state_info,
+                    cached_tcp=paddle_tcp,
+                )
+                return self._step_post_upward_window(state_info, cached_tcp=paddle_tcp)
             return self._upward_burst_action()
 
         if self.phase == "wait_for_puck":
@@ -651,7 +711,6 @@ class ResetPolicyFSM:
                 return np.zeros(2, dtype=np.float32)
             if self._puck_is_occluded(state_info):
                 return np.zeros(2, dtype=np.float32)
-            paddle_tcp = self._get_tcp_position(state_info)
             puck_pos = self._get_puck_pos(state_info)
             dist = float(np.linalg.norm(paddle_tcp - puck_pos))
             puck_falling, _ = self._get_puck_motion_from_history(state_info)
@@ -670,8 +729,12 @@ class ResetPolicyFSM:
         if self.phase == "strike":
             if self.phase_steps <= 0:
                 self.phase = "post_second_upward_check"
-                self._start_post_upward_window(kind="second", state_info=state_info)
-                return self._step_post_upward_window(state_info)
+                self._start_post_upward_window(
+                    kind="second",
+                    state_info=state_info,
+                    cached_tcp=paddle_tcp,
+                )
+                return self._step_post_upward_window(state_info, cached_tcp=paddle_tcp)
             idx = len(self._strike_actions) - self.phase_steps
             action_x = self._strike_actions[idx]
             self.phase_steps -= 1
@@ -695,6 +758,7 @@ def build_model_if_requested(args, eval_env):
     )
     model.load_state_dict(state_dict)
     model = model.to(device=device)
+    model.eval()
     use_last_action = model_obs_dim > eval_env.single_observation_space.shape[0]
     last_action = torch.zeros((1, model_action_dim), dtype=torch.float32, device=device)
     return model, use_last_action, last_action
@@ -722,6 +786,28 @@ def show_reset_path_on_camera(fsm, simulator):
     cv2.waitKey(1)
 
 
+def build_obs_from_state(state: dict, obs_type: str):
+    return get_observation_by_type(
+        state,
+        obs_type=obs_type,
+        puck_history=state["pucks"][0]["history"],
+        paddle_history=state["paddles"]["paddle_ego"]["history"],
+    )
+
+
+def get_env_state(eval_env: AirHockeyEnv) -> dict:
+    state = getattr(eval_env, "current_state", None)
+    if isinstance(state, dict) and "pucks" in state:
+        return state
+    return eval_env.simulator.get_current_state()
+
+
+def refresh_state_obs(eval_env: AirHockeyEnv, obs_type: str) -> tuple[dict, np.ndarray]:
+    state = get_env_state(eval_env)
+    obs = build_obs_from_state(state, obs_type=obs_type)
+    return state, obs
+
+
 def compute_failure(
     state: dict,
     table_x_bot: float,
@@ -744,8 +830,8 @@ def compute_failure(
     return counters["bottom"] >= bottom_fail_count or counters["occ"] >= occluded_fail_count
 
 
-def hard_reset_with_pause(eval_env: AirHockeyEnv, obs_type: str, reason: str, pause_s: float = 3.0):
-    """Force robot to initial pose, wait, and return fresh (state, obs)."""
+def hard_reset_with_pause(eval_env: AirHockeyEnv, reason: str, pause_s: float = 3.0) -> None:
+    """Force robot to initial pose and wait before normal control resumes."""
     print(f"[fallback_reset] reason={reason} -> hard env reset")
     simulator = getattr(eval_env, "simulator", None)
     if simulator is not None:
@@ -766,14 +852,195 @@ def hard_reset_with_pause(eval_env: AirHockeyEnv, obs_type: str, reason: str, pa
         eval_env.reset(seed=None)
     print(f"[fallback_reset] pausing for {pause_s:.1f}s before resuming normal control")
     time.sleep(float(pause_s))
-    state = eval_env.simulator.get_current_state()
-    obs = get_observation_by_type(
-        state,
-        obs_type=obs_type,
-        puck_history=state["pucks"][0]["history"],
-        paddle_history=state["paddles"]["paddle_ego"]["history"],
+
+
+def enter_reset_mode(
+    eval_env: AirHockeyEnv,
+    rng: np.random.Generator,
+    *,
+    post_window_debug_log: bool,
+    shared_success_threshold_proportion_from_bottom: float,
+    reason: str,
+    show_reset_path_overlay: bool,
+    capture_second_hit_frame: bool,
+    async_second_hit_write: bool,
+    show_second_hit_window: bool,
+) -> tuple[str, ResetPolicyFSM]:
+    reset_fsm = ResetPolicyFSM(
+        eval_env,
+        rng,
+        post_window_debug_log=post_window_debug_log,
+        shared_success_threshold_proportion_from_bottom=(
+            shared_success_threshold_proportion_from_bottom
+        ),
+        capture_second_hit_frame=capture_second_hit_frame,
+        async_second_hit_write=async_second_hit_write,
+        show_second_hit_window=show_second_hit_window,
     )
-    return state, obs
+    reset_fsm._log_new_round_start(reason=reason)
+    if show_reset_path_overlay:
+        show_reset_path_on_camera(reset_fsm, eval_env.simulator)
+    return "reset", reset_fsm
+
+
+def restore_normal_runtime_state(
+    use_last_action: bool,
+    last_action_for_policy,
+    reset_fsm: ResetPolicyFSM ,
+    *,
+    cooldown: int,
+    startup_counter: int,
+    clear_last_action: bool,
+) -> tuple[str, None, dict, int, int]:
+    if reset_fsm is not None:
+        reset_fsm.close()
+    if clear_last_action and use_last_action and last_action_for_policy is not None:
+        last_action_for_policy.zero_()
+    return "normal", None, {"bottom": 0, "occ": 0}, int(startup_counter), int(cooldown)
+
+
+def resolve_timing_optimization_flags(args) -> dict:
+    disable_reset_path_overlay = bool(args.disable_reset_path_overlay)
+    disable_second_hit_capture = bool(args.disable_second_hit_capture)
+    disable_second_hit_preview_window = bool(args.disable_second_hit_preview_window)
+    async_second_hit_write = bool(args.async_second_hit_write)
+
+    if args.timing_optimized_mode:
+        disable_reset_path_overlay = True
+        disable_second_hit_capture = True
+        disable_second_hit_preview_window = True
+        async_second_hit_write = True
+
+    return {
+        "show_reset_path_overlay": not disable_reset_path_overlay,
+        "capture_second_hit_frame": not disable_second_hit_capture,
+        "show_second_hit_window": not disable_second_hit_preview_window,
+        "async_second_hit_write": async_second_hit_write,
+    }
+
+
+def handle_normal_mode_step(
+    obs: np.ndarray,
+    model,
+    use_last_action: bool,
+    last_action_for_policy,
+    normal_action: np.ndarray,
+    startup_counter: int,
+    args,
+) -> tuple[np.ndarray, int, torch.Tensor ]:
+    if model is None:
+        action = np.copy(normal_action)
+    else:
+        obs_t = torch.as_tensor(obs, dtype=torch.float32, device=args.device).unsqueeze(0)
+        policy_obs = obs_t
+        if use_last_action:
+            policy_obs = torch.cat([policy_obs, last_action_for_policy], dim=-1)
+        with torch.inference_mode():
+            action = model(policy_obs).detach().cpu().numpy().squeeze()
+        action = action / float(model.action_scale.item())
+        action = np.clip(action, -1.0, 1.0)
+        if use_last_action:
+            last_action_for_policy = torch.as_tensor(
+                action,
+                dtype=torch.float32,
+                device=args.device,
+            ).unsqueeze(0)
+
+    if args.policy_stand_still:
+        action = np.zeros(2, dtype=np.float32)
+        if use_last_action and last_action_for_policy is not None:
+            last_action_for_policy.zero_()
+
+    if startup_counter < int(args.startup_hold_steps):
+        action = np.zeros(2, dtype=np.float32)
+        startup_counter += 1
+
+    return action, startup_counter, last_action_for_policy
+
+
+def handle_reset_mode_step(
+    state: dict,
+    reset_fsm: ResetPolicyFSM,
+    eval_env: AirHockeyEnv,
+    use_last_action: bool,
+    last_action_for_policy,
+    fail_counters: dict,
+    startup_counter: int,
+    reset_cooldown: int,
+) -> tuple[np.ndarray, str, ResetPolicyFSM , dict, int, int, bool]:
+    action = reset_fsm.step(state)
+    if not reset_fsm.done:
+        return (
+            action,
+            "reset",
+            reset_fsm,
+            fail_counters,
+            startup_counter,
+            reset_cooldown,
+            False,
+        )
+
+    done_reason = getattr(reset_fsm, "done_reason", "unknown")
+    if done_reason == "hard_reset_required":
+        print("[reset] hard reset requested by FSM after max stage-2 retries.")
+        hard_reset_with_pause(
+            eval_env=eval_env,
+            reason="reset_fsm_stage2_max_retries",
+            pause_s=3.0,
+        )
+        mode, reset_fsm, fail_counters, startup_counter, reset_cooldown = (
+            restore_normal_runtime_state(
+                use_last_action=use_last_action,
+                last_action_for_policy=last_action_for_policy,
+                reset_fsm=reset_fsm,
+                cooldown=40,
+                startup_counter=0,
+                clear_last_action=True,
+            )
+        )
+        return (
+            action,
+            mode,
+            reset_fsm,
+            fail_counters,
+            startup_counter,
+            reset_cooldown,
+            True,
+        )
+
+    puck_x = float(state["pucks"][0]["position"][0])
+    paddle_x = float(state["paddles"]["paddle_ego"]["position"][0])
+    success_stage = getattr(reset_fsm, "last_success_stage", "unknown")
+    success_motion = getattr(reset_fsm, "last_success_motion", "unknown")
+    if puck_x < paddle_x:
+        print(
+            f"[reset] SUCCESS: stage={success_stage} motion_estimate={success_motion} "
+            f"puck_x={puck_x:.3f} < paddle_x={paddle_x:.3f}"
+        )
+    else:
+        print(
+            f"[reset] cycle done stage={success_stage} motion_estimate={success_motion} "
+            f"but puck still below paddle (puck_x={puck_x:.3f} >= paddle_x={paddle_x:.3f})"
+        )
+    mode, reset_fsm, fail_counters, startup_counter, reset_cooldown = (
+        restore_normal_runtime_state(
+            use_last_action=use_last_action,
+            last_action_for_policy=last_action_for_policy,
+            reset_fsm=reset_fsm,
+            cooldown=40,
+            startup_counter=startup_counter,
+            clear_last_action=False,
+        )
+    )
+    return (
+        action,
+        mode,
+        reset_fsm,
+        fail_counters,
+        startup_counter,
+        reset_cooldown,
+        False,
+    )
 
 
 if __name__ == "__main__":
@@ -806,10 +1073,45 @@ if __name__ == "__main__":
         default=0.4,
         help="Bottom->top table proportion for shared reset success threshold (default: 0.4).",
     )
+    parser.add_argument(
+        "--disable-reset-path-overlay",
+        action="store_true",
+        help="Disable reset-path camera overlay display (timing optimization).",
+    )
+    parser.add_argument(
+        "--disable-second-hit-capture",
+        action="store_true",
+        help="Disable second-hit trigger frame capture (timing optimization).",
+    )
+    parser.add_argument(
+        "--disable-second-hit-preview-window",
+        action="store_true",
+        help="Disable live OpenCV preview window for second-hit capture.",
+    )
+    parser.add_argument(
+        "--async-second-hit-write",
+        action="store_true",
+        help="Write second-hit capture files asynchronously to reduce control-step blocking.",
+    )
+    parser.add_argument(
+        "--timing-optimized-mode",
+        action="store_true",
+        help="Enable aggressive timing optimizations (disables capture/overlays, async write).",
+    )
+    parser.add_argument(
+        "--timing-log-every",
+        type=int,
+        default=0,
+        help="Print average control-loop time every N steps (0 disables).",
+    )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
     if not (0.0 <= float(args.shared_success_threshold_proportion_from_bottom) <= 1.0):
         parser.error("--shared-success-threshold-proportion-from-bottom must be in [0.0, 1.0].")
+    if int(args.timing_log_every) < 0:
+        parser.error("--timing-log-every must be >= 0.")
+
+    timing_flags = resolve_timing_optimization_flags(args)
 
     params = load_air_hockey_params(args.config_path, save_path_override=args.save_path)
     sim_params = params.get("simulator_params", {})
@@ -820,14 +1122,9 @@ if __name__ == "__main__":
     model, use_last_action, last_action_for_policy = build_model_if_requested(args, eval_env)
     normal_action = np.array([args.normal_action_x, args.normal_action_y], dtype=np.float32)
 
-    state = eval_env.simulator.get_current_state()
+    state = get_env_state(eval_env)
     obs_type = params.get("obs_type", "history")
-    obs = get_observation_by_type(
-        state,
-        obs_type=obs_type,
-        puck_history=state["pucks"][0]["history"],
-        paddle_history=state["paddles"]["paddle_ego"]["history"],
-    )
+    obs = build_obs_from_state(state, obs_type=obs_type)
     rng = np.random.default_rng(int(params.get("seed", 0)))
     reset_fsm = None
     mode = "normal"
@@ -836,10 +1133,20 @@ if __name__ == "__main__":
     reset_cooldown = 0
 
     print("Running real rollout with reset policy. Keys: y=save+reset, q=reset, r=force-reset, x=exit")
+    if args.verbose:
+        print(
+            "[timing_opts] "
+            f"show_reset_path_overlay={int(timing_flags['show_reset_path_overlay'])} "
+            f"capture_second_hit_frame={int(timing_flags['capture_second_hit_frame'])} "
+            f"show_second_hit_window={int(timing_flags['show_second_hit_window'])} "
+            f"async_second_hit_write={int(timing_flags['async_second_hit_write'])}"
+        )
     step_counter = 0
+    timing_accum_s = 0.0
+    timing_count = 0
     with NonBlockingConsole() as nbc:
         while True:
-            state = eval_env.simulator.get_current_state()
+            loop_t0 = time.perf_counter()
             fail_now = compute_failure(
                 state=state,
                 table_x_bot=float(eval_env.table_x_bot),
@@ -862,78 +1169,55 @@ if __name__ == "__main__":
             if reset_cooldown > 0:
                 reset_cooldown -= 1
             if mode == "normal" and fail_now and reset_cooldown <= 0:
-                mode = "reset"
-                reset_fsm = ResetPolicyFSM(
+                mode, reset_fsm = enter_reset_mode(
                     eval_env,
                     rng,
                     post_window_debug_log=args.post_window_debug_log,
                     shared_success_threshold_proportion_from_bottom=(
                         args.shared_success_threshold_proportion_from_bottom
                     ),
+                    reason="reset_trigger_failure_condition",
+                    show_reset_path_overlay=timing_flags["show_reset_path_overlay"],
+                    capture_second_hit_frame=timing_flags["capture_second_hit_frame"],
+                    async_second_hit_write=timing_flags["async_second_hit_write"],
+                    show_second_hit_window=timing_flags["show_second_hit_window"],
                 )
-                reset_fsm._log_new_round_start(reason="reset_trigger_failure_condition")
-                show_reset_path_on_camera(reset_fsm, eval_env.simulator)
 
             if mode == "reset":
-                action = reset_fsm.step(state)
-                if reset_fsm.done:
-                    done_reason = getattr(reset_fsm, "done_reason", "unknown")
-                    if done_reason == "hard_reset_required":
-                        print("[reset] hard reset requested by FSM after max stage-2 retries.")
-                        state, obs = hard_reset_with_pause(
-                            eval_env=eval_env,
-                            obs_type=obs_type,
-                            reason="reset_fsm_stage2_max_retries",
-                            pause_s=3.0,
-                        )
-                        mode = "normal"
-                        reset_fsm = None
-                        fail_counters = {"bottom": 0, "occ": 0}
-                        reset_cooldown = 40
-                        startup_counter = 0
-                        if use_last_action:
-                            last_action_for_policy.zero_()
-                        continue
-                    puck_x = float(state["pucks"][0]["position"][0])
-                    paddle_x = float(state["paddles"]["paddle_ego"]["position"][0])
-                    success_stage = getattr(reset_fsm, "last_success_stage", "unknown")
-                    success_motion = getattr(reset_fsm, "last_success_motion", "unknown")
-                    if puck_x < paddle_x:
-                        print(
-                            f"[reset] SUCCESS: stage={success_stage} motion_estimate={success_motion} "
-                            f"puck_x={puck_x:.3f} < paddle_x={paddle_x:.3f}"
-                        )
-                    else:
-                        print(
-                            f"[reset] cycle done stage={success_stage} motion_estimate={success_motion} "
-                            f"but puck still below paddle (puck_x={puck_x:.3f} >= paddle_x={paddle_x:.3f})"
-                        )
-                    mode = "normal"
-                    reset_fsm = None
-                    fail_counters = {"bottom": 0, "occ": 0}
-                    reset_cooldown = 40
+                (
+                    action,
+                    mode,
+                    reset_fsm,
+                    fail_counters,
+                    startup_counter,
+                    reset_cooldown,
+                    skip_env_step,
+                ) = handle_reset_mode_step(
+                    state=state,
+                    reset_fsm=reset_fsm,
+                    eval_env=eval_env,
+                    use_last_action=use_last_action,
+                    last_action_for_policy=last_action_for_policy,
+                    fail_counters=fail_counters,
+                    startup_counter=startup_counter,
+                    reset_cooldown=reset_cooldown,
+                )
+                if skip_env_step:
+                    state, obs = refresh_state_obs(eval_env, obs_type=obs_type)
+                    continue
             else:
-                if model is None:
-                    action = np.copy(normal_action)
-                else:
-                    obs_t = torch.tensor(obs, dtype=torch.float32, device=args.device).unsqueeze(0)
-                    policy_obs = obs_t
-                    if use_last_action:
-                        policy_obs = torch.cat([policy_obs, last_action_for_policy], dim=-1)
-                    action = model(policy_obs).detach().cpu().numpy().squeeze()
-                    action = action / float(model.action_scale.item())
-                    action = np.clip(action, -1.0, 1.0)
-                    if use_last_action:
-                        last_action_for_policy = torch.tensor(action, dtype=torch.float32, device=args.device).unsqueeze(0)
-                if args.policy_stand_still:
-                    action = np.zeros(2, dtype=np.float32)
-                    if use_last_action and last_action_for_policy is not None:
-                        last_action_for_policy.zero_()
-                if startup_counter < int(args.startup_hold_steps):
-                    action = np.zeros(2, dtype=np.float32)
-                    startup_counter += 1
+                action, startup_counter, last_action_for_policy = handle_normal_mode_step(
+                    obs=obs,
+                    model=model,
+                    use_last_action=use_last_action,
+                    last_action_for_policy=last_action_for_policy,
+                    normal_action=normal_action,
+                    startup_counter=startup_counter,
+                    args=args,
+                )
 
             obs, reward, terminated, truncated, info = eval_env.step(action)
+            state = get_env_state(eval_env)
             if args.verbose:
                 puck = state["pucks"][0]
                 print(
@@ -945,62 +1229,86 @@ if __name__ == "__main__":
                 )
 
             if mode == "normal" and bool(terminated or truncated):
-                state, obs = hard_reset_with_pause(
+                hard_reset_with_pause(
                     eval_env=eval_env,
-                    obs_type=obs_type,
                     reason="episode_done_without_reset_activation",
                     pause_s=3.0,
                 )
-                mode = "normal"
-                reset_fsm = None
-                fail_counters = {"bottom": 0, "occ": 0}
-                startup_counter = 0
-                reset_cooldown = 0
-                if use_last_action:
-                    last_action_for_policy.zero_()
+                mode, reset_fsm, fail_counters, startup_counter, reset_cooldown = (
+                    restore_normal_runtime_state(
+                        use_last_action=use_last_action,
+                        last_action_for_policy=last_action_for_policy,
+                        reset_fsm=reset_fsm,
+                        cooldown=0,
+                        startup_counter=0,
+                        clear_last_action=True,
+                    )
+                )
+                state, obs = refresh_state_obs(eval_env, obs_type=obs_type)
                 continue
-
-            state = eval_env.simulator.get_current_state()
-            obs = get_observation_by_type(
-                state,
-                obs_type=obs_type,
-                puck_history=state["pucks"][0]["history"],
-                paddle_history=state["paddles"]["paddle_ego"]["history"],
-            )
 
             key = nbc.get_data()
             if key == "y":
                 print("Saving trajectory and resetting...")
                 eval_env.reset(seed=None, write_traj=True)
-                mode = "normal"
-                reset_fsm = None
-                fail_counters = {"bottom": 0, "occ": 0}
-                startup_counter = 0
-                if use_last_action:
-                    last_action_for_policy.zero_()
+                mode, reset_fsm, fail_counters, startup_counter, reset_cooldown = (
+                    restore_normal_runtime_state(
+                        use_last_action=use_last_action,
+                        last_action_for_policy=last_action_for_policy,
+                        reset_fsm=reset_fsm,
+                        cooldown=reset_cooldown,
+                        startup_counter=0,
+                        clear_last_action=True,
+                    )
+                )
+                state, obs = refresh_state_obs(eval_env, obs_type=obs_type)
             elif key == "q":
                 print("Resetting without saving...")
                 eval_env.reset(seed=None, write_traj=False)
-                mode = "normal"
-                reset_fsm = None
-                fail_counters = {"bottom": 0, "occ": 0}
-                startup_counter = 0
-                if use_last_action:
-                    last_action_for_policy.zero_()
+                mode, reset_fsm, fail_counters, startup_counter, reset_cooldown = (
+                    restore_normal_runtime_state(
+                        use_last_action=use_last_action,
+                        last_action_for_policy=last_action_for_policy,
+                        reset_fsm=reset_fsm,
+                        cooldown=reset_cooldown,
+                        startup_counter=0,
+                        clear_last_action=True,
+                    )
+                )
+                state, obs = refresh_state_obs(eval_env, obs_type=obs_type)
             elif key == "r":
                 print("Force-triggering reset mode...")
-                mode = "reset"
-                reset_fsm = ResetPolicyFSM(
+                if reset_fsm is not None:
+                    reset_fsm.close()
+                mode, reset_fsm = enter_reset_mode(
                     eval_env,
                     rng,
                     post_window_debug_log=args.post_window_debug_log,
                     shared_success_threshold_proportion_from_bottom=(
                         args.shared_success_threshold_proportion_from_bottom
                     ),
+                    reason="manual_force_reset",
+                    show_reset_path_overlay=timing_flags["show_reset_path_overlay"],
+                    capture_second_hit_frame=timing_flags["capture_second_hit_frame"],
+                    async_second_hit_write=timing_flags["async_second_hit_write"],
+                    show_second_hit_window=timing_flags["show_second_hit_window"],
                 )
-                reset_fsm._log_new_round_start(reason="manual_force_reset")
-                show_reset_path_on_camera(reset_fsm, eval_env.simulator)
                 fail_counters = {"bottom": 0, "occ": 0}
             elif key == "x":
                 print("Exiting...")
+                if reset_fsm is not None:
+                    reset_fsm.close()
                 break
+
+            if int(args.timing_log_every) > 0:
+                timing_accum_s += time.perf_counter() - loop_t0
+                timing_count += 1
+                if timing_count >= int(args.timing_log_every):
+                    avg_ms = 1000.0 * timing_accum_s / max(1, timing_count)
+                    print(
+                        f"[timing] avg_loop_ms={avg_ms:.3f} "
+                        f"mode={mode} steps={timing_count} "
+                        f"opt={int(args.timing_optimized_mode)}"
+                    )
+                    timing_accum_s = 0.0
+                    timing_count = 0

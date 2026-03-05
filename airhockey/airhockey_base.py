@@ -58,7 +58,7 @@ class AirHockeyBaseEnv(ABC, Env):
             'terminate_on_puck_hit_bottom': False,  # TODO Specify this parameter in the yaml config
             'terminate_on_puck_hit_paddle': False,
             'terminate_on_puck_pass_paddle': False,
-            'terminate_on_puck_pass_paddle_consecutive_steps': 8, # magic number
+            'terminate_on_puck_pass_paddle_consecutive_steps': 5, # magic number
             'dense_goal': True,
             'goal_selector': 'stationary',
             'max_timesteps': 1000,
@@ -155,7 +155,6 @@ class AirHockeyBaseEnv(ABC, Env):
         self.diagonal_motion_rew = config.diagonal_motion_rew
         self.stand_still_rew = config.stand_still_rew
         self.use_reward_shaping = config.use_reward_shaping
-        self.use_smooth_penalty = config.use_smooth_penalty
         self.base_reward_scaling = config.base_reward_scaling
         self.jerk_penalty_coeff = config.jerk_penalty_coeff
         self.velocity_penalty_coeff = config.velocity_penalty_coeff
@@ -514,6 +513,32 @@ class AirHockeyBaseEnv(ABC, Env):
         within_anchor = np.all(pairwise_dist <= radius, axis=1)
         return bool(np.any(within_anchor)), active_window
 
+    def _puck_pass_paddle_threshold(self, state_info):
+        """Return consecutive-step threshold for puck_pass_paddle truncation."""
+        clean_threshold = 5
+        occluded_threshold = 10
+        lookback = 5
+
+        if "pucks" not in state_info or len(state_info["pucks"]) == 0:
+            return clean_threshold
+        puck_history = state_info["pucks"][0].get("history", [])
+        if not isinstance(puck_history, list):
+            return clean_threshold
+        if len(puck_history) < lookback:
+            return clean_threshold
+
+        recent_history = puck_history[-lookback:]
+        for entry in recent_history:
+            if entry is None or len(entry) < 3:
+                return clean_threshold
+            try:
+                is_occluded = int(np.asarray(entry[2]).reshape(-1)[0]) > 0
+            except (TypeError, ValueError, IndexError):
+                return clean_threshold
+            if is_occluded:
+                return occluded_threshold
+        return clean_threshold
+
     def has_finished(self, state_info, multiagent=False):
         truncated = False
         terminated = False
@@ -574,6 +599,7 @@ class AirHockeyBaseEnv(ABC, Env):
             puck_paddle_distance = np.linalg.norm(np.array(state_info['pucks'][0]['position']) - np.array(state_info['paddles']['paddle_ego']['position']))
 
             if self.terminate_on_puck_pass_paddle:
+                puck_pass_paddle_threshold = self._puck_pass_paddle_threshold(state_info)
                 puck_passed_now = state_info['pucks'][0]['position'][0] > (
                     state_info['paddles']['paddle_ego']['position'][0] + self.paddle_radius
                 )
@@ -584,7 +610,7 @@ class AirHockeyBaseEnv(ABC, Env):
 
                 if (
                     self._puck_pass_paddle_consecutive_count
-                    >= self.terminate_on_puck_pass_paddle_consecutive_steps
+                    >= puck_pass_paddle_threshold
                 ):
                     truncated = True
                     truncation_reasons.append("puck_passed_paddle")
@@ -736,12 +762,22 @@ class AirHockeyBaseEnv(ABC, Env):
             self.episode_motion_data['acceleration_mags'].append(acc_mag)
             self.episode_motion_data['jerk_mags'].append(jerk_mag)
         success = self.success_in_ep 
+        
         info = {}
         info['success'] = success
         info['paddle_velocity_mag'] = float(vel_mag)
         info['paddle_acceleration_mag'] = float(acc_mag)
         info['paddle_jerk_mag'] = float(jerk_mag)
         info['paddle_puck_collision_count'] = int(next_state.get('paddle_puck_collision_count', 0))
+        info['protective_stop'] = bool(next_state.get('protective_stop', False))
+        info['transition_hold_active'] = bool(next_state.get('transition_hold_active', False))
+        info['transition_hold_reason'] = str(next_state.get('transition_hold_reason', "none"))
+        info['transition_hold_steps_remaining'] = int(next_state.get('transition_hold_steps_remaining', 0))
+        info['command_rearm_event'] = bool(next_state.get('command_rearm_event', False))
+        info['controller_connected'] = bool(next_state.get('controller_connected', True))
+        info['robot_step_ready'] = bool(next_state.get('robot_step_ready', True))
+        info['robot_command_ready'] = bool(next_state.get('robot_command_ready', True))
+        info['command_block_reason'] = str(next_state.get('command_block_reason', "none"))
 
         hit_a_puck = False
         is_finished, truncated, puck_within_home, puck_within_alt_home, puck_within_goal, _ = self.has_finished(next_state)
@@ -774,8 +810,6 @@ class AirHockeyBaseEnv(ABC, Env):
         
         if self.use_reward_shaping:
             reward += self.get_reward_shaping(next_state)
-        if self.use_smooth_penalty:
-            pass # TODO: implement smooth penalty
         survival_bonus = 0.0
         if self.enable_survival_bonus and (not is_finished) and (not truncated):
             survival_bonus = self.survival_bonus_per_step

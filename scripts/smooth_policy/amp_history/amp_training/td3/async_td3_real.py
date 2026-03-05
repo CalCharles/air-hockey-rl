@@ -12,7 +12,9 @@ from __future__ import annotations
 import multiprocessing as mp
 import os
 import re
+import json
 import shutil
+import inspect
 import time
 import traceback
 from collections import deque
@@ -183,11 +185,20 @@ class Args:
     # Collector behavior
     exploration_noise: float = 0.1
     collector_policy_stand_still: bool = False
+    transition_hold_steps_post_reset: int = 8
+    transition_hold_steps_post_estop_enter: int = 0
+    transition_hold_steps_post_estop_clear: int = 8
+    transition_hold_steps_post_actor_sync: int = 3
+    transition_hold_steps_post_safety_rearm: int = 3
+    transition_disable_exploration_noise: bool = True
+    transition_last_action_mode: str = "zero"
+    transition_hold_log_every_step: bool = False
     actor_sync_check_every_episode: bool = True
     collector_log_interval_sec: float = 5.0
     learner_log_interval_sec: float = 5.0
     episode_artifact_dir: str = "runs/async_td3/episode_hdf5"
     episode_gif_dir: str = "runs/async_td3/episode_gifs"
+    episode_camera_video_dir: str | None = None
     episode_min_timesteps: int = 30
     estop_episode_min_timesteps: int = 50
     enable_episode_gif: bool = True
@@ -207,6 +218,9 @@ class Args:
 
     # Optional smoke-test mode (0 disables)
     smoke_test_seconds: float = 0.0
+    enable_latency_profiling: bool = False
+    latency_profile_output_dir: str | None = None
+    latency_profile_hist_bins: int = 40
 
 
 def _build_args_file_defaults(
@@ -219,71 +233,33 @@ def _build_args_file_defaults(
     if not isinstance(loaded_yaml, dict):
         raise ValueError(f"Expected args_file YAML to be a mapping, got {type(loaded_yaml)}")
 
-    # TD3 args-file keys that map directly or approximately into async Args.
-    key_map = {
-        "config": "config",
-        "model_path": "model_path",
-        "log_parent_dir": "log_parent_dir",
-        "run_name": "run_name",
-        "seed": "seed",
-        "success_buffer_size": "success_buffer_size",
-        "failure_buffer_size": "failure_buffer_size",
-        "recent_episode_window_size": "recent_episode_window_size",
-        "success_top_fraction": "success_top_fraction",
-        "task_gamma": "task_gamma",
-        "motion_gamma": "motion_gamma",
-        "tau": "tau",
-        "batch_size": "batch_size",
+    valid_async_keys = {field.name for field in fields(Args)}
+    legacy_alias_key_map = {
         "learning_starts": "min_replay_size_before_learning",
-        "policy_lr": "policy_lr",
-        "q_lr": "q_lr",
-        "q_weight_decay": "q_weight_decay",
-        "q_updates": "q_updates",
-        "target_network_frequency": "target_network_frequency",
-        "actor_updates_per_iteration": "actor_updates_per_iteration",
-        "policy_noise": "policy_noise",
-        "noise_clip": "noise_clip",
-        "h_transform_eps": "h_transform_eps",
-        "task_reward_weight": "task_reward_weight",
-        "motion_reward_weight": "motion_reward_weight",
-        "critic_success_sample_fraction": "critic_success_sample_fraction",
-        "critic_failure_sample_fraction": "critic_failure_sample_fraction",
-        "action_scale": "action_scale",
-        "agent_hidden_layer_size": "agent_hidden_layer_size",
-        "agent_num_hidden_layers": "agent_num_hidden_layers",
-        "q_hidden_layer_size": "q_hidden_layer_size",
-        "q_num_hidden_layers": "q_num_hidden_layers",
-        "use_last_action_in_policy_state": "use_last_action_in_policy_state",
-        "exploration_noise": "exploration_noise",
-        "collector_policy_stand_still": "collector_policy_stand_still",
-        "enable_episode_gif": "enable_episode_gif",
-        "episode_gif_dir": "episode_gif_dir",
-        "episode_min_timesteps": "episode_min_timesteps",
-        "estop_episode_min_timesteps": "estop_episode_min_timesteps",
-        "episode_gif_fps": "episode_gif_fps",
-        "episode_gif_subsample": "episode_gif_subsample",
-        "episode_gif_max_frames": "episode_gif_max_frames",
-        "episode_gif_require_puck": "episode_gif_require_puck",
-        "enable_episode_camera_video": "enable_episode_camera_video",
-        "episode_camera_video_fps": "episode_camera_video_fps",
-        "episode_camera_video_subsample": "episode_camera_video_subsample",
-        "episode_camera_video_max_frames": "episode_camera_video_max_frames",
-        "episode_camera_video_codec": "episode_camera_video_codec",
         "device": "learner_device",
         "agent_hidden_size": "agent_hidden_layer_size",
         "q_hidden_size": "q_hidden_layer_size",
-        # keep this self-mapped so explicit YAML args_file doesn't appear as ignored.
-        "args_file": "args_file",
     }
-    valid_async_keys = {field.name for field in fields(Args)}
     mapped_defaults: dict = {}
     applied_source_keys: list[str] = []
     ignored_source_keys: list[str] = []
 
+    # First pass: apply all canonical async Args keys directly.
     for source_key, source_value in loaded_yaml.items():
-        target_key = key_map.get(source_key)
-        if target_key is None or target_key not in valid_async_keys:
+        if source_key in valid_async_keys:
+            mapped_defaults[source_key] = source_value
+            applied_source_keys.append(source_key)
+        elif source_key not in legacy_alias_key_map:
             ignored_source_keys.append(source_key)
+
+    # Second pass: apply legacy aliases only when canonical key is absent.
+    for source_key, target_key in legacy_alias_key_map.items():
+        if source_key not in loaded_yaml:
+            continue
+        if target_key in loaded_yaml:
+            continue
+        source_value = loaded_yaml[source_key]
+        if source_value is None:
             continue
         mapped_defaults[target_key] = source_value
         applied_source_keys.append(source_key)
@@ -413,6 +389,93 @@ def _copy_to_estop_dir(file_path: str | Path, estop_root: str | Path) -> Path:
     return dst
 
 
+def _safe_nonnegative_ms(value: float) -> float:
+    value_f = float(value)
+    if not np.isfinite(value_f):
+        return 0.0
+    return max(0.0, value_f)
+
+
+def _env_timing_info(env: AirHockeyEnv) -> dict:
+    state_info = getattr(env, "current_state", None)
+    if not isinstance(state_info, dict):
+        return {}
+    timing_info = state_info.get("timing", {})
+    if not isinstance(timing_info, dict):
+        return {}
+    return timing_info
+
+
+def _latency_bucket_stats(values_ms: list[float]) -> dict:
+    values = np.asarray(values_ms, dtype=np.float64)
+    if values.size == 0:
+        return {
+            "count": 0,
+            "mean_ms": float("nan"),
+            "median_ms": float("nan"),
+            "p90_ms": float("nan"),
+            "p99_ms": float("nan"),
+        }
+    return {
+        "count": int(values.size),
+        "mean_ms": float(np.mean(values)),
+        "median_ms": float(np.median(values)),
+        "p90_ms": float(np.percentile(values, 90)),
+        "p99_ms": float(np.percentile(values, 99)),
+    }
+
+
+def _write_latency_profile_episode(
+    output_dir: str | Path,
+    episode_id: int,
+    puck_detection_ms: list[float],
+    model_inference_ms: list[float],
+    block_sleep_ms: list[float],
+    other_ms: list[float],
+    hist_bins: int,
+) -> tuple[Path, Path, dict]:
+    # Keep matplotlib import local so normal training path has no extra import cost.
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+    import matplotlib.pyplot as plt
+
+    output_path = Path(output_dir).expanduser().resolve()
+    output_path.mkdir(parents=True, exist_ok=True)
+    bucket_arrays = {
+        "puck_detection_ms": np.asarray(puck_detection_ms, dtype=np.float64),
+        "model_inference_ms": np.asarray(model_inference_ms, dtype=np.float64),
+        "block_sleep_ms": np.asarray(block_sleep_ms, dtype=np.float64),
+        "other_ms": np.asarray(other_ms, dtype=np.float64),
+    }
+    summary = {
+        "episode_id": int(episode_id),
+        "step_count": int(max((arr.size for arr in bucket_arrays.values()), default=0)),
+        "buckets": {name: _latency_bucket_stats(arr.tolist()) for name, arr in bucket_arrays.items()},
+        "per_step_ms": {name: arr.tolist() for name, arr in bucket_arrays.items()},
+    }
+    json_path = output_path / f"episode_{int(episode_id):06d}_latency.json"
+    with open(json_path, "w") as f:
+        json.dump(summary, f, indent=2, sort_keys=True)
+
+    fig, axes = plt.subplots(2, 2, figsize=(10, 7))
+    fig.suptitle(f"Episode {int(episode_id)} latency (ms)")
+    ordered_names = ("puck_detection_ms", "model_inference_ms", "block_sleep_ms", "other_ms")
+    bins = max(5, int(hist_bins))
+    for axis, name in zip(axes.flatten(), ordered_names):
+        values = bucket_arrays[name]
+        if values.size > 0:
+            axis.hist(values, bins=bins)
+        axis.set_title(name)
+        axis.set_xlabel("ms")
+        axis.set_ylabel("count")
+    fig.tight_layout()
+    png_path = output_path / f"episode_{int(episode_id):06d}_latency.png"
+    fig.savefig(png_path, dpi=120)
+    plt.close(fig)
+    return json_path, png_path, summary
+
+
 def _build_split_episode_row(
     env: AirHockeyEnv,
     action_xy: np.ndarray,
@@ -505,7 +568,7 @@ def _mixed_sample_from_shared(
     batch_size: int,
     success_fraction: float,
     device: str,
-) -> Dict[str, torch.Tensor] | None:
+) -> tuple[Dict[str, torch.Tensor] | None, int, int]:
     success_count, failure_count = critic_success_failure_counts(
         batch_size=batch_size,
         success_fraction=success_fraction,
@@ -513,7 +576,7 @@ def _mixed_sample_from_shared(
         failure_available=replay.len("failure") > 0,
     )
     if success_count + failure_count == 0:
-        return None
+        return None, success_count, failure_count
 
     chunks = []
     if success_count > 0:
@@ -535,12 +598,18 @@ def _mixed_sample_from_shared(
                 "dones",
             )
         }
-    return batch
+    return batch, success_count, failure_count
 
 
 def _detect_estop(env: AirHockeyEnv, step_info: dict | None = None) -> bool:
     """Best-effort e-stop/protective-stop detection from available real-world signals."""
     if isinstance(step_info, dict):
+        if "robot_step_ready" in step_info and not bool(step_info.get("robot_step_ready", True)):
+            return True
+        if "robot_command_ready" in step_info and not bool(step_info.get("robot_command_ready", True)):
+            return True
+        if "controller_connected" in step_info and not bool(step_info.get("controller_connected", True)):
+            return True
         if "estop" in step_info:
             estop_value = np.asarray(step_info["estop"], dtype=np.float64).reshape(-1)
             if estop_value.size > 0:
@@ -557,7 +626,8 @@ def _detect_estop(env: AirHockeyEnv, step_info: dict | None = None) -> bool:
         try:
             return bool(rcv.isProtectiveStopped())
         except Exception:
-            pass
+            # Telemetry failure is unsafe for real robot control; treat as estop-like.
+            return True
 
     # Fallback: real simulator appends canonical state arrays where index 3 is estop.
     vals = getattr(simulator, "vals", None)
@@ -620,13 +690,92 @@ def _hard_reset_with_pause(env: AirHockeyEnv, reason: str, pause_s: float = 3.0)
                 real_env.wait_for_space_to_start = False
             except Exception:
                 pass
+    supports_write_traj = False
     try:
+        reset_signature = inspect.signature(env.reset)
+        supports_write_traj = "write_traj" in reset_signature.parameters or any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in reset_signature.parameters.values()
+        )
+    except (TypeError, ValueError):
+        supports_write_traj = False
+    if supports_write_traj:
         obs, info = env.reset(seed=None, write_traj=False)
-    except TypeError:
+    else:
         obs, info = env.reset(seed=None)
     print(f"[collector_fallback_reset] sleeping {pause_s:.1f}s before resume")
     time.sleep(float(pause_s))
     return obs, info
+
+
+def _prime_paddle_history_stand_still_non_occluded(env: AirHockeyEnv) -> np.ndarray:
+    """Fill paddle history with stationary non-occluded entries and rebuild observation."""
+    simulator = getattr(env, "simulator", None)
+    if simulator is None:
+        obs, _ = env.get_current_state()
+        return np.asarray(obs, dtype=np.float32)
+    state_info = simulator.get_current_state()
+    try:
+        paddle_position = np.asarray(
+            state_info["paddles"]["paddle_ego"]["position"],
+            dtype=np.float64,
+        ).reshape(-1)
+        paddle_x = float(paddle_position[0])
+        paddle_y = float(paddle_position[1])
+    except Exception:
+        return env.get_observation(
+            state_info,
+            obs_type=env.obs_type,
+            puck_history=simulator.puck_history,
+            paddle_history=simulator.paddle_history,
+        )
+    history_len = int(getattr(simulator, "paddle_history_len", 5))
+    simulator.paddle_history = [(paddle_x, paddle_y, 0) for _ in range(max(1, history_len))]
+    return env.get_observation(
+        state_info,
+        obs_type=env.obs_type,
+        puck_history=simulator.puck_history,
+        paddle_history=simulator.paddle_history,
+    )
+
+
+def _normalize_transition_last_action_mode(mode: str) -> str:
+    mode_norm = str(mode).strip().lower()
+    if mode_norm in {"zero", "executed", "keep"}:
+        return mode_norm
+    print(f"[collector_transition] unsupported transition_last_action_mode='{mode}', defaulting to 'zero'")
+    return "zero"
+
+
+def _request_sim_transition_hold(env: AirHockeyEnv, steps: int, reason: str) -> bool:
+    simulator = getattr(env, "simulator", None)
+    if simulator is None:
+        return False
+    begin_fn = getattr(simulator, "begin_transition_hold", None)
+    if not callable(begin_fn):
+        return False
+    try:
+        begin_fn(int(steps), reason=str(reason))
+        return True
+    except Exception as exc:
+        print(f"[collector_transition] begin_transition_hold failed for reason={reason}: {exc}")
+        return False
+
+
+def _simulator_step_readiness(env: AirHockeyEnv) -> tuple[bool, str]:
+    simulator = getattr(env, "simulator", None)
+    if simulator is None:
+        return True, "no_simulator"
+    readiness_fn = getattr(simulator, "robot_command_readiness", None)
+    if callable(readiness_fn):
+        try:
+            readiness = readiness_fn()
+            step_ready = bool(readiness.get("step_ready", True))
+            reason = str(readiness.get("reason", "ready"))
+            return step_ready, reason
+        except Exception as exc:
+            return False, f"readiness_exception:{exc.__class__.__name__}"
+    return (not _detect_estop(env)), "legacy_estop_fallback"
 
 
 def collector_process(
@@ -641,7 +790,6 @@ def collector_process(
     action_high_np: np.ndarray,
     tb_log_dir: str,
 ) -> None:
-    post_reset_stand_still_steps = 5
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     device = torch.device(args.collector_device)
@@ -656,8 +804,18 @@ def collector_process(
     sim_params = collector_config.get("simulator_params", {})
     if isinstance(sim_params, dict):
         sim_params["wait_for_space_to_start"] = False
+        sim_params["transition_hold_steps_on_estop_enter"] = int(args.transition_hold_steps_post_estop_enter)
+        sim_params["transition_hold_steps_on_estop_clear"] = int(args.transition_hold_steps_post_estop_clear)
+        sim_params["transition_hold_steps_on_safety_rearm"] = int(args.transition_hold_steps_post_safety_rearm)
     env = AirHockeyEnv(collector_config)
     writer = SummaryWriter(tb_log_dir)
+    latency_output_dir: Path | None = None
+    if args.enable_latency_profiling:
+        if args.latency_profile_output_dir is not None:
+            latency_output_dir = Path(args.latency_profile_output_dir).expanduser().resolve()
+        else:
+            latency_output_dir = Path(tb_log_dir).resolve().parent / "latency_profiles"
+        latency_output_dir.mkdir(parents=True, exist_ok=True)
 
     policy_obs_dim = obs_dim + act_dim if args.use_last_action_in_policy_state else obs_dim
     policy_env_view = build_policy_env_view(policy_obs_dim, act_dim)
@@ -681,11 +839,53 @@ def collector_process(
     # This avoids an immediate policy->reset mode flip in the first episode.
     run_reset_fsm(env, reset_rng)
     obs, _ = env.soft_reset()
-    post_reset_steps_remaining = int(post_reset_stand_still_steps)
+    obs = _prime_paddle_history_stand_still_non_occluded(env)
     episode_trajectory = EpisodeTrajectory.empty()
     recent_episode_returns = deque(maxlen=args.recent_episode_window_size)
     episode_return_success_threshold = 0.0
     last_action_for_policy = torch.zeros((1, act_dim), dtype=torch.float32, device=device)
+    transition_last_action_mode = _normalize_transition_last_action_mode(args.transition_last_action_mode)
+    transition_hold_steps_remaining = 0
+    transition_hold_reason = "none"
+    transition_hold_events_total = 0
+    transition_hold_reason_counts: dict[str, int] = {}
+    last_executed_action = torch.zeros((1, act_dim), dtype=torch.float32, device=device)
+
+    def begin_transition_hold(
+        reason: str,
+        hold_steps: int,
+        *,
+        request_sim_hold: bool = True,
+    ) -> None:
+        nonlocal transition_hold_steps_remaining
+        nonlocal transition_hold_reason
+        nonlocal transition_hold_events_total
+        nonlocal last_action_for_policy
+        hold_steps = max(int(hold_steps), 0)
+        transition_hold_events_total += 1
+        transition_hold_reason_counts[reason] = int(transition_hold_reason_counts.get(reason, 0)) + 1
+        transition_hold_reason = str(reason)
+        transition_hold_steps_remaining = max(int(transition_hold_steps_remaining), hold_steps)
+        if args.use_last_action_in_policy_state:
+            if transition_last_action_mode == "zero":
+                last_action_for_policy.zero_()
+            elif transition_last_action_mode == "executed":
+                last_action_for_policy = last_executed_action.detach().clone()
+        sim_hold_started = False
+        if request_sim_hold and hold_steps > 0:
+            sim_hold_started = _request_sim_transition_hold(env, steps=hold_steps, reason=reason)
+        print(
+            "[collector_transition] "
+            f"reason={reason} hold_steps={hold_steps} "
+            f"collector_hold_remaining={transition_hold_steps_remaining} "
+            f"sim_hold_started={sim_hold_started} last_action_mode={transition_last_action_mode}"
+        )
+
+    begin_transition_hold(
+        reason="startup_reset_to_policy",
+        hold_steps=int(args.transition_hold_steps_post_reset),
+        request_sim_hold=True,
+    )
 
     total_steps = 0
     total_episodes = 0
@@ -697,6 +897,10 @@ def collector_process(
         )
     last_log_time = time.time()
     episode_rows = []
+    episode_puck_detection_latency_ms: list[float] = []
+    episode_model_inference_latency_ms: list[float] = []
+    episode_block_sleep_latency_ms: list[float] = []
+    episode_other_latency_ms: list[float] = []
     episode_images: list[np.ndarray] = []
     episode_camera_null_frames = 0
     episodes_saved = 0
@@ -714,28 +918,81 @@ def collector_process(
     episodic_returns: list[float] = []
     episodic_lengths: list[float] = []
     success_rates: list[float] = []
+    robot_not_ready_prev = False
+    robot_not_ready_reason = "none"
 
     while not stop_event.is_set():
+        step_ready, step_ready_reason = _simulator_step_readiness(env)
+        if not step_ready:
+            if (not robot_not_ready_prev) or (step_ready_reason != robot_not_ready_reason):
+                print(
+                    "[collector_safety] "
+                    f"robot_step_ready=False reason={step_ready_reason}; pausing collector stepping."
+                )
+            robot_not_ready_prev = True
+            robot_not_ready_reason = str(step_ready_reason)
+            time.sleep(0.1)
+            continue
+        if robot_not_ready_prev:
+            print(
+                "[collector_safety] "
+                f"robot step readiness restored after reason={robot_not_ready_reason}; resuming collection."
+            )
+            begin_transition_hold(
+                reason="robot_recovered_to_ready",
+                hold_steps=int(args.transition_hold_steps_post_estop_clear),
+                request_sim_hold=True,
+            )
+            robot_not_ready_prev = False
+            robot_not_ready_reason = "none"
+
+        collector_step_start_s = time.perf_counter() if args.enable_latency_profiling else 0.0
+        transition_hold_active = bool(transition_hold_steps_remaining > 0)
         obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
         policy_obs = augment_policy_observation(
             obs_tensor,
             last_action_for_policy,
             args.use_last_action_in_policy_state,
         )
+        model_inference_ms = 0.0
         with torch.no_grad():
+            inference_start_s = time.perf_counter() if args.enable_latency_profiling else 0.0
             action_tensor = deterministic_actor_action(actor, policy_obs)
-            if args.exploration_noise > 0:
+            disable_noise_for_transition = bool(
+                transition_hold_active and args.transition_disable_exploration_noise
+            )
+            if args.exploration_noise > 0 and not disable_noise_for_transition:
                 action_tensor = action_tensor + torch.randn_like(action_tensor) * float(args.exploration_noise)
             action_tensor = torch.clamp(action_tensor, action_low, action_high)
-            if post_reset_steps_remaining > 0:
+            if transition_hold_active:
                 action_tensor = torch.zeros_like(action_tensor)
-                post_reset_steps_remaining -= 1
             if args.collector_policy_stand_still:
                 action_tensor = torch.zeros_like(action_tensor)
 
         env_action = action_tensor.squeeze(0).detach().cpu().numpy()
+        if args.enable_latency_profiling: # includes transferring between CPU and GPU
+                model_inference_ms = _safe_nonnegative_ms((time.perf_counter() - inference_start_s) * 1000.0)
+
         prev_action = last_action_for_policy.clone()
         next_obs, task_reward, terminated, truncated, step_info = env.step(env_action)
+        if args.enable_latency_profiling:
+            collector_step_end_s = time.perf_counter()
+            step_total_ms = _safe_nonnegative_ms((collector_step_end_s - collector_step_start_s) * 1000.0)
+            timing_info = _env_timing_info(env)
+            camera_received_s = float(timing_info.get("camera_frame_received_s", float("nan")))
+            puck_done_s = float(timing_info.get("puck_detection_done_s", float("nan")))
+            if np.isfinite(camera_received_s) and np.isfinite(puck_done_s):
+                puck_detection_ms = _safe_nonnegative_ms((puck_done_s - camera_received_s) * 1000.0)
+            else:
+                puck_detection_ms = 0.0
+            block_sleep_ms = _safe_nonnegative_ms(float(timing_info.get("sleep_before_step_s", 0.0)) * 1000.0)
+            other_ms = _safe_nonnegative_ms(
+                step_total_ms - model_inference_ms - puck_detection_ms - block_sleep_ms
+            )
+            episode_model_inference_latency_ms.append(model_inference_ms)
+            episode_puck_detection_latency_ms.append(puck_detection_ms)
+            episode_block_sleep_latency_ms.append(block_sleep_ms)
+            episode_other_latency_ms.append(other_ms)
         camera_frame = _latest_camera_frame(env)
         if camera_frame is not None:
             episode_images.append(camera_frame)
@@ -775,10 +1032,21 @@ def collector_process(
             prev_action=prev_action[0],
         )
         total_steps += 1
+        last_executed_action = action_tensor.detach().clone()
 
         if args.use_last_action_in_policy_state:
-            last_action_for_policy = action_tensor.detach().clone()
+            if not (transition_hold_active and transition_last_action_mode == "keep"):
+                last_action_for_policy = last_executed_action.clone()
         obs = next_obs
+        if transition_hold_active:
+            transition_hold_steps_remaining = max(0, int(transition_hold_steps_remaining) - 1)
+            if args.transition_hold_log_every_step:
+                print(
+                    "[collector_transition] "
+                    f"hold_step reason={transition_hold_reason} remaining={transition_hold_steps_remaining}"
+                )
+            elif transition_hold_steps_remaining == 0:
+                print(f"[collector_transition] hold_complete reason={transition_hold_reason}")
 
         if done:
             episode_end_wall_time = time.time()
@@ -822,7 +1090,7 @@ def collector_process(
                     np.quantile(np.asarray(recent_episode_returns, dtype=np.float32), quantile)
                 )
             partition = "success" if episode_return >= episode_return_success_threshold else "failure"
-            written = replay.add_episode(partition, _episode_to_tensors(episode_trajectory))
+            replay.add_episode(partition, _episode_to_tensors(episode_trajectory))
             episode_trajectory.reset()
 
             # Do all slow I/O and actor sync BEFORE the reset FSM,
@@ -846,6 +1114,32 @@ def collector_process(
                     f"[collector] WARNING: zero camera frames captured this episode. "
                     f"simulator.images len={sim_images_len} simulator.cap={sim_cap}"
                 )
+            if args.enable_latency_profiling and latency_output_dir is not None:
+                try:
+                    latency_json_path, latency_plot_path, latency_summary = _write_latency_profile_episode(
+                        output_dir=latency_output_dir,
+                        episode_id=next_episode_file_id,
+                        puck_detection_ms=episode_puck_detection_latency_ms,
+                        model_inference_ms=episode_model_inference_latency_ms,
+                        block_sleep_ms=episode_block_sleep_latency_ms,
+                        other_ms=episode_other_latency_ms,
+                        hist_bins=args.latency_profile_hist_bins,
+                    )
+                    bucket_summary = latency_summary["buckets"]
+                    print(
+                        "[latency] "
+                        f"episode_id={next_episode_file_id} "
+                        f"puck_p50={bucket_summary['puck_detection_ms']['median_ms']:.3f} "
+                        f"model_p50={bucket_summary['model_inference_ms']['median_ms']:.3f} "
+                        f"sleep_p50={bucket_summary['block_sleep_ms']['median_ms']:.3f} "
+                        f"other_p50={bucket_summary['other_ms']['median_ms']:.3f} "
+                        f"json={latency_json_path} plot={latency_plot_path}"
+                    )
+                except Exception:
+                    print(
+                        f"[latency] episode_id={next_episode_file_id} "
+                        f"latency output FAILED:\n{traceback.format_exc()}"
+                    )
             artifact_path = save_split_episode_hdf5(
                 output_dir=_bucketed_output_dir(args.episode_artifact_dir, n_episode_steps),
                 episode_id=next_episode_file_id,
@@ -912,7 +1206,10 @@ def collector_process(
                     try:
                         camera_video_path = generate_episode_camera_video(
                             episode_hdf5_path=clean_result.path,
-                            video_root=_bucketed_output_dir(args.episode_gif_dir, n_episode_steps),
+                            video_root=_bucketed_output_dir(
+                                args.episode_camera_video_dir or args.episode_gif_dir,
+                                n_episode_steps,
+                            ),
                             fps=args.episode_camera_video_fps,
                             max_frames=(
                                 args.episode_camera_video_max_frames
@@ -926,7 +1223,7 @@ def collector_process(
                         if episode_ended_estop:
                             estop_camera_video_path = _copy_to_estop_dir(
                                 camera_video_path,
-                                _estop_output_dir(args.episode_gif_dir),
+                                _estop_output_dir(args.episode_camera_video_dir or args.episode_gif_dir),
                             )
                             print(
                                 f"[collector] episode_id={next_episode_file_id} "
@@ -948,6 +1245,10 @@ def collector_process(
                         f"camera video SKIPPED (enable_episode_camera_video=False)"
                     )
             episode_rows = []
+            episode_puck_detection_latency_ms = []
+            episode_model_inference_latency_ms = []
+            episode_block_sleep_latency_ms = []
+            episode_other_latency_ms = []
             episode_images = []
             episode_camera_null_frames = 0
             next_episode_file_id += 1
@@ -957,6 +1258,11 @@ def collector_process(
                 if version != applied_version:
                     actor.load_state_dict(maybe_new_state, strict=False)
                     applied_version = version
+                    begin_transition_hold(
+                        reason="actor_sync_update",
+                        hold_steps=int(args.transition_hold_steps_post_actor_sync),
+                        request_sim_hold=False,
+                    )
 
             min_reset_delay_s = 3.0
             periodic_hard_reset = (total_episodes % 3) == 0
@@ -976,6 +1282,12 @@ def collector_process(
                 # Reset FSM + soft_reset after minimum end-of-episode delay.
                 run_reset_fsm(env, reset_rng)
                 obs, _ = env.soft_reset()
+                obs = _prime_paddle_history_stand_still_non_occluded(env)
+                begin_transition_hold(
+                    reason="reset_fsm_to_policy",
+                    hold_steps=int(args.transition_hold_steps_post_reset),
+                    request_sim_hold=True,
+                )
             else:
                 if estop_hard_reset:
                     hard_reset_reason = "collector_estop_next_step"
@@ -1011,10 +1323,20 @@ def collector_process(
                 if run_reset_policy:
                     run_reset_fsm(env, reset_rng)
                     obs, _ = env.soft_reset()
+                    obs = _prime_paddle_history_stand_still_non_occluded(env)
+                    begin_transition_hold(
+                        reason="hard_reset_reset_fsm_to_policy",
+                        hold_steps=int(args.transition_hold_steps_post_reset),
+                        request_sim_hold=True,
+                    )
                     episode_start_reset_counters["bottom"] = 0
                     episode_start_reset_counters["occ"] = 0
-            post_reset_steps_remaining = int(post_reset_stand_still_steps)
-            last_action_for_policy.zero_()
+                else:
+                    begin_transition_hold(
+                        reason="hard_reset_to_policy",
+                        hold_steps=int(args.transition_hold_steps_post_reset),
+                        request_sim_hold=True,
+                    )
             estop_penalty_applied_this_episode = False
             episode_had_estop = False
 
@@ -1024,6 +1346,9 @@ def collector_process(
             stats["collector_steps"] = float(total_steps)
             stats["collector_episodes"] = float(total_episodes)
             stats["collector_actor_version"] = float(applied_version)
+            stats["transition_hold_events_total"] = float(transition_hold_events_total)
+            stats["transition_hold_active"] = float(1.0 if transition_hold_steps_remaining > 0 else 0.0)
+            stats["transition_hold_steps_remaining"] = float(transition_hold_steps_remaining)
             stats["replay_success_size"] = float(snapshot["success"]["size"])
             stats["replay_failure_size"] = float(snapshot["failure"]["size"])
             stats["episodes_saved"] = float(episodes_saved)
@@ -1077,6 +1402,21 @@ def collector_process(
             writer.add_scalar("safety/estop_steps", float(estop_steps), total_steps)
             writer.add_scalar("safety/estop_episodes", float(estop_episodes), total_steps)
             writer.add_scalar(
+                "transitions/hold_active",
+                float(1.0 if transition_hold_steps_remaining > 0 else 0.0),
+                total_steps,
+            )
+            writer.add_scalar(
+                "transitions/hold_steps_remaining",
+                float(transition_hold_steps_remaining),
+                total_steps,
+            )
+            writer.add_scalar(
+                "transitions/hold_events_total",
+                float(transition_hold_events_total),
+                total_steps,
+            )
+            writer.add_scalar(
                 "charts/SPS",
                 float(total_steps) / max(now - collector_start_time, 1e-6),
                 total_steps,
@@ -1106,8 +1446,14 @@ def collector_process(
                 f"saved={episodes_saved} short_removed={episodes_removed_short} "
                 f"invalid_removed={episodes_removed_invalid} gif_ok={episodes_gif_generated} gif_fail={episodes_gif_failed} "
                 f"cam_video_ok={episodes_camera_video_generated} cam_video_fail={episodes_camera_video_failed} "
-                f"estop_steps={estop_steps} estop_episodes={estop_episodes}"
+                f"estop_steps={estop_steps} estop_episodes={estop_episodes} "
+                f"transition_hold_active={int(transition_hold_steps_remaining > 0)} "
+                f"transition_hold_remaining={transition_hold_steps_remaining} "
+                f"transition_events_total={transition_hold_events_total} "
+                f"transition_reason={transition_hold_reason}"
             )
+            if transition_hold_reason_counts:
+                print(f"[collector_transition] reason_counts={dict(sorted(transition_hold_reason_counts.items()))}")
             last_log_time = now
 
     env.close()
@@ -1220,13 +1566,7 @@ def learner_process(
         actor_updated = False
 
         for q_update_idx in range(args.q_updates):
-            success_batch_count, failure_batch_count = critic_success_failure_counts(
-                batch_size=args.batch_size,
-                success_fraction=args.critic_success_sample_fraction,
-                success_available=replay.len("success") > 0,
-                failure_available=replay.len("failure") > 0,
-            )
-            batch = _mixed_sample_from_shared(
+            batch, success_batch_count, failure_batch_count = _mixed_sample_from_shared(
                 replay=replay,
                 batch_size=args.batch_size,
                 success_fraction=args.critic_success_sample_fraction,
@@ -1345,7 +1685,7 @@ def learner_process(
                             )
 
         for _ in range(args.actor_updates_per_iteration):
-            actor_batch = _mixed_sample_from_shared(
+            actor_batch, _, _ = _mixed_sample_from_shared(
                 replay=replay,
                 batch_size=args.batch_size,
                 success_fraction=args.critic_success_sample_fraction,
@@ -1441,6 +1781,10 @@ def main(args: Args) -> None:
         raise ValueError("target_network_frequency must be > 0.")
     if abs(float(args.critic_success_sample_fraction + args.critic_failure_sample_fraction) - 1.0) > 1e-6:
         raise ValueError("critic_success_sample_fraction + critic_failure_sample_fraction must equal 1.0.")
+    if _normalize_transition_last_action_mode(args.transition_last_action_mode) != str(
+        args.transition_last_action_mode
+    ).strip().lower():
+        print("[main] transition_last_action_mode normalized to 'zero' due to invalid input.")
 
     with open(args.config, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
