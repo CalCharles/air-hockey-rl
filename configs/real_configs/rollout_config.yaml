@@ -36,6 +36,7 @@ air_hockey:
     save_path: ./data/rollout/temp_saving/RL_test
     debug_control: false
     debug_control_every: 3
+    # async_render_enabled: true
   stand_still_rew: 0.01
   task: puck_velocity
   terminate_on_enemy_goal: true

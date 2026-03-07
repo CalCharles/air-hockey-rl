@@ -1070,7 +1070,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--shared-success-threshold-proportion-from-bottom",
         type=float,
-        default=0.4,
+        default=0.5,
         help="Bottom->top table proportion for shared reset success threshold (default: 0.4).",
     )
     parser.add_argument(

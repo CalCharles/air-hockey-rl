@@ -1,6 +1,7 @@
 import time
 from collections import deque
 import numpy as np
+from multiprocessing import shared_memory
 from .real.multiprocessing import ProtectedArray, NonBlockingConsole
 from .real.control_parameters import (
     camera_callback,
@@ -33,6 +34,90 @@ reset_positions = {
     "forward_hitting": [-0.78, 0., 0.33],
     "negative_regions": [-0.38, -0.345, 0.33]
 }
+
+
+_ASYNC_RENDER_METADATA_WIDTH = 7
+
+
+def _async_render_worker(
+    frame_shm_name,
+    frame_shape,
+    metadata,
+    metadata_lock,
+    frame_seq,
+    frame_epoch,
+    stop_event,
+    window_name,
+    puck_radius,
+    paddle_radius,
+    center_offset_constant,
+    offset_constants,
+    visual_downscale_constant,
+    poll_sleep_s,
+    debug,
+):
+    frame_shm = None
+    try:
+        frame_shm = shared_memory.SharedMemory(name=frame_shm_name)
+        shared_frame = np.ndarray(tuple(frame_shape), dtype=np.uint8, buffer=frame_shm.buf)
+        poll_sleep_s = max(0.0005, float(poll_sleep_s))
+        last_seq = -1
+        last_epoch = int(frame_epoch.value)
+        while not stop_event.is_set():
+            current_epoch = int(frame_epoch.value)
+            current_seq = int(frame_seq.value)
+            if current_epoch != last_epoch:
+                last_epoch = current_epoch
+                last_seq = -1
+            if current_seq <= last_seq:
+                time.sleep(poll_sleep_s)
+                continue
+
+            with metadata_lock:
+                frame = np.array(shared_frame, copy=True)
+                data = np.array(metadata[:], dtype=float)
+                current_seq = int(frame_seq.value)
+
+            target_xy = (float(data[0]), float(data[1]))
+            puck_state = np.array((data[2], data[3], data[4]), dtype=float)
+            paddle_xy = (float(data[5]), float(data[6]))
+            draw_target_marker(
+                frame,
+                target_xy,
+                offset_constants=offset_constants,
+                visual_downscale_constant=visual_downscale_constant,
+            )
+            draw_puck_marker_from_state(
+                frame,
+                puck_state,
+                puck_radius,
+                x_offset_for_state=center_offset_constant,
+                offset_constants=offset_constants,
+                visual_downscale_constant=visual_downscale_constant,
+                color=(0, 255, 0),
+                require_visible=True,
+            )
+            draw_paddle_marker(
+                frame,
+                paddle_xy,
+                paddle_radius,
+                offset_constants=offset_constants,
+                visual_downscale_constant=visual_downscale_constant,
+                color=(255, 0, 0),
+            )
+            cv2.imshow(window_name, frame)
+            cv2.waitKey(1)
+            last_seq = current_seq
+    except Exception as exc:
+        if debug:
+            print(f"[async_render] worker disabled after exception: {exc}")
+    finally:
+        try:
+            cv2.destroyWindow(window_name)
+        except Exception:
+            pass
+        if frame_shm is not None:
+            frame_shm.close()
 
 
 class AirHockeyReal:
@@ -113,6 +198,12 @@ class AirHockeyReal:
             "state_prediction_blend": 0.5, # run regression over a trajectory and see this
             "state_prediction_opposite_dir_brake": 1.5,
             "disable_prediction_on_estop": True,
+            "async_render_enabled": False,
+            "async_render_debug": False,
+            "async_render_poll_sleep_s": 0.001,
+            "async_render_window_name": "showdst",
+            "async_render_frame_width": 960,
+            "async_render_frame_height": 720,
         }
         kwargs = {**defaults, **kwargs}
         config = dict_to_namespace(kwargs)
@@ -225,6 +316,24 @@ class AirHockeyReal:
         self.protected_paddle_pos = ProtectedArray(shared_paddle_pos)
         self.protected_target_pos = ProtectedArray(shared_target_pos)
         self.cap, self.camera_process, self.mimic_process = None, None, None
+        self.async_render_enabled = bool(config.async_render_enabled)
+        self.async_render_debug = bool(config.async_render_debug)
+        self.async_render_poll_sleep_s = max(0.0005, float(config.async_render_poll_sleep_s))
+        self.async_render_window_name = str(config.async_render_window_name)
+        self._async_render_runtime_enabled = bool(self.async_render_enabled)
+        self._async_render_default_frame_shape = (
+            int(config.async_render_frame_height),
+            int(config.async_render_frame_width),
+            3,
+        )
+        self._render_shared_mem = None
+        self._render_frame_shape = None
+        self._render_metadata = None
+        self._render_metadata_lock = None
+        self._render_seq = None
+        self._render_epoch = None
+        self._render_stop_event = None
+        self._render_process = None
         if self.control_type == "prim":
             self.motion_primitive = MotionPrimitive()
 
@@ -638,10 +747,175 @@ class AirHockeyReal:
         else:
             self.cap = cv2.VideoCapture(1, cv2.CAP_V4L2)
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            if self._async_render_runtime_enabled and self.control_mode not in ["observe"]:
+                self._start_async_renderer(self._async_render_default_frame_shape)
+
+    def _render_overlay_inline(self, image, target_xy, puck_state, paddle_xy):
+        if image is None:
+            return
+        draw_target_marker(
+            image,
+            target_xy,
+            offset_constants=self.offset_constants,
+            visual_downscale_constant=self.visual_downscale_constant,
+        )
+        draw_puck_marker_from_state(
+            image,
+            puck_state,
+            self.puck_radius,
+            x_offset_for_state=self.center_offset_constant,
+            offset_constants=self.offset_constants,
+            visual_downscale_constant=self.visual_downscale_constant,
+            color=(0, 255, 0),
+            require_visible=True,
+        )
+        draw_paddle_marker(
+            image,
+            paddle_xy,
+            self.paddle_radius,
+            offset_constants=self.offset_constants,
+            visual_downscale_constant=self.visual_downscale_constant,
+            color=(255, 0, 0),
+        )
+        cv2.imshow(self.async_render_window_name, image)
+        cv2.waitKey(1)
+
+    def _stop_async_renderer(self):
+        if self._render_stop_event is not None:
+            self._render_stop_event.set()
+        if self._render_process is not None:
+            try:
+                self._render_process.join(timeout=1.0)
+                if self._render_process.is_alive():
+                    self._render_process.terminate()
+                    self._render_process.join(timeout=0.5)
+            except Exception:
+                pass
+        self._render_process = None
+        self._render_stop_event = None
+        self._render_metadata = None
+        self._render_metadata_lock = None
+        self._render_seq = None
+        self._render_epoch = None
+        self._render_frame_shape = None
+        if self._render_shared_mem is not None:
+            try:
+                self._render_shared_mem.close()
+            except Exception:
+                pass
+            try:
+                self._render_shared_mem.unlink()
+            except Exception:
+                pass
+            self._render_shared_mem = None
+
+    def _start_async_renderer(self, frame_shape):
+        if (not self._async_render_runtime_enabled) or self.control_mode in ["observe"]:
+            return False
+        frame_shape = tuple(int(v) for v in frame_shape)
+        if len(frame_shape) != 3 or any(v <= 0 for v in frame_shape):
+            return False
+
+        if (
+            self._render_process is not None
+            and self._render_process.is_alive()
+            and self._render_shared_mem is not None
+            and self._render_frame_shape == frame_shape
+        ):
+            return True
+
+        self._stop_async_renderer()
+        frame_nbytes = int(np.prod(np.array(frame_shape, dtype=np.int64)) * np.dtype(np.uint8).itemsize)
+        try:
+            self._render_shared_mem = shared_memory.SharedMemory(create=True, size=frame_nbytes)
+            self._render_frame_shape = frame_shape
+            self._render_metadata = multiprocessing.Array("d", _ASYNC_RENDER_METADATA_WIDTH, lock=False)
+            self._render_metadata_lock = multiprocessing.Lock()
+            self._render_seq = multiprocessing.Value("q", -1, lock=False)
+            self._render_epoch = multiprocessing.Value("i", 0, lock=False)
+            self._render_stop_event = multiprocessing.Event()
+            self._render_process = multiprocessing.Process(
+                target=_async_render_worker,
+                args=(
+                    self._render_shared_mem.name,
+                    self._render_frame_shape,
+                    self._render_metadata,
+                    self._render_metadata_lock,
+                    self._render_seq,
+                    self._render_epoch,
+                    self._render_stop_event,
+                    self.async_render_window_name,
+                    self.puck_radius,
+                    self.paddle_radius,
+                    self.center_offset_constant,
+                    self.offset_constants,
+                    self.visual_downscale_constant,
+                    self.async_render_poll_sleep_s,
+                    self.async_render_debug,
+                ),
+                daemon=True,
+            )
+            self._render_process.start()
+            return True
+        except Exception as exc:
+            if self.async_render_debug:
+                print(f"[async_render] failed to start worker: {exc}")
+            self._stop_async_renderer()
+            self._async_render_runtime_enabled = False
+            return False
+
+    def _mark_async_render_reset(self):
+        if self._render_epoch is None:
+            return
+        try:
+            self._render_epoch.value = int(self._render_epoch.value) + 1
+        except Exception:
+            pass
+
+    def _publish_async_render_frame(self, image, target_xy, puck_state, paddle_xy):
+        if (not self._async_render_runtime_enabled) or image is None:
+            return False
+        frame = np.asarray(image)
+        if frame.ndim != 3:
+            return False
+        if frame.dtype != np.uint8:
+            frame = np.clip(frame, 0, 255).astype(np.uint8)
+        frame_shape = tuple(int(v) for v in frame.shape)
+        if not self._start_async_renderer(frame_shape):
+            return False
+        if (
+            self._render_process is None
+            or (not self._render_process.is_alive())
+            or self._render_shared_mem is None
+            or self._render_metadata is None
+            or self._render_metadata_lock is None
+            or self._render_seq is None
+        ):
+            self._async_render_runtime_enabled = False
+            return False
+        try:
+            with self._render_metadata_lock:
+                shared_frame = np.ndarray(self._render_frame_shape, dtype=np.uint8, buffer=self._render_shared_mem.buf)
+                np.copyto(shared_frame, frame, casting="unsafe")
+                self._render_metadata[0] = float(target_xy[0])
+                self._render_metadata[1] = float(target_xy[1])
+                self._render_metadata[2] = float(puck_state[0])
+                self._render_metadata[3] = float(puck_state[1])
+                self._render_metadata[4] = float(puck_state[2]) if len(puck_state) > 2 else 1.0
+                self._render_metadata[5] = float(paddle_xy[0])
+                self._render_metadata[6] = float(paddle_xy[1])
+                self._render_seq.value = int(self._render_seq.value) + 1
+            return True
+        except Exception as exc:
+            if self.async_render_debug:
+                print(f"[async_render] publish failed: {exc}")
+            self._stop_async_renderer()
+            self._async_render_runtime_enabled = False
+            return False
 
     def _compute_state(self, pose, speed, i, puck_history):
         # This should be the only place where it is necessary to correct detection by the offsets
-        puck = np.array(puck_history[i])[:2]
+        puck = np.array(puck_history[-1-i])[:2] # the i-th most recent position
         # puck[0] += self.x_offset
         self.puck = puck
         self.pose = pose
@@ -744,6 +1018,7 @@ class AirHockeyReal:
         self.runtime = 0.0
         self._last_observed_xy = None
         self._last_step_timing = {}
+        self._mark_async_render_reset()
 
         # TODO: set these with desired values, not yet finished
         self.paddles = dict()
@@ -885,6 +1160,7 @@ class AirHockeyReal:
         self.runtime = 0.0
         self._last_observed_xy = None
         self._last_step_timing = {}
+        self._mark_async_render_reset()
 
         tcp_target_pose, tcp_target_speed = self._safe_target_pose_speed()
         state_pose, state_speed, _ = self._resolve_state_pose_speed(tcp_target_pose, tcp_target_speed)
@@ -906,7 +1182,7 @@ class AirHockeyReal:
     
     def get_transition(self, action):
         # TODO: change self.block_time if additional computation happens outside of get_transition
-        runtime = time.time() - self.transition_start 
+        runtime = time.time() - self.transition_start
         sleep_time = max(0, self.block_time - runtime)
         time.sleep(sleep_time)
         # print("runtime", time.time() - self.total, runtime)
@@ -979,6 +1255,10 @@ class AirHockeyReal:
 
         image = None
         camera_frame_received_s = np.nan
+        render_publish_started_s = np.nan
+        render_publish_done_s = np.nan
+        render_publish_ms = 0.0
+        render_used_async = False
         # get image data
         if self.cap is not None:
             # Detection runs on this frame immediately after capture; skip optional
@@ -1078,32 +1358,22 @@ class AirHockeyReal:
             self.protected_target_pos[1] = srvpose[0][1]
             self.protected_target_pos[2] = 1
         if self.cap is not None and self.control_mode not in ["observe"]:
-            draw_target_marker(
-                image,
-                srvpose[0][:2],
-                offset_constants=self.offset_constants,
-                visual_downscale_constant=self.visual_downscale_constant,
+            render_publish_started_s = time.time()
+            render_used_async = self._publish_async_render_frame(
+                image=image,
+                target_xy=srvpose[0][:2],
+                puck_state=puck,
+                paddle_xy=paddle_display_xy,
             )
-            draw_puck_marker_from_state(
-                image,
-                puck,
-                self.puck_radius,
-                x_offset_for_state=self.center_offset_constant,
-                offset_constants=self.offset_constants,
-                visual_downscale_constant=self.visual_downscale_constant,
-                color=(0, 255, 0),
-                require_visible=True,
-            )
-            draw_paddle_marker(
-                image,
-                paddle_display_xy,
-                self.paddle_radius,
-                offset_constants=self.offset_constants,
-                visual_downscale_constant=self.visual_downscale_constant,
-                color=(255, 0, 0),
-            )
-            cv2.imshow("showdst", image)
-            cv2.waitKey(1)
+            if not render_used_async:
+                self._render_overlay_inline(
+                    image=image,
+                    target_xy=srvpose[0][:2],
+                    puck_state=puck,
+                    paddle_xy=paddle_display_xy,
+                )
+            render_publish_done_s = time.time()
+            render_publish_ms = max(0.0, (render_publish_done_s - render_publish_started_s) * 1000.0)
         safety_check = False
         if controller_connected:
             try:
@@ -1213,6 +1483,11 @@ class AirHockeyReal:
             "telemetry_read_s": float(telemetry_read_s),
             "puck_detection_done_s": float(puck_detection_done_s),
             "camera_frame_received_s": float(camera_frame_received_s) if np.isfinite(camera_frame_received_s) else float("nan"),
+            "render_publish_started_s": float(render_publish_started_s) if np.isfinite(render_publish_started_s) else float("nan"),
+            "render_publish_done_s": float(render_publish_done_s) if np.isfinite(render_publish_done_s) else float("nan"),
+            "render_publish_ms": float(render_publish_ms),
+            "render_used_async": bool(render_used_async),
+            "render_async_enabled": bool(self._async_render_runtime_enabled),
             "command_sent_s": float(command_sent_s) if np.isfinite(command_sent_s) else float("nan"),
             "step_end_s": float(step_end_s),
             "sleep_before_step_s": float(sleep_time),
@@ -1291,6 +1566,36 @@ class AirHockeyReal:
             )
         self._protective_stop_prev = bool(protective_stop)
         return next_state
+
+    def close(self):
+        self._stop_async_renderer()
+        if self.cap is not None:
+            try:
+                self.cap.release()
+            except Exception:
+                pass
+            self.cap = None
+        for proc_name in ("camera_process", "mimic_process"):
+            proc = getattr(self, proc_name, None)
+            if proc is None:
+                continue
+            try:
+                if proc.is_alive():
+                    proc.terminate()
+                    proc.join(timeout=0.5)
+            except Exception:
+                pass
+            setattr(self, proc_name, None)
+        try:
+            cv2.destroyWindow(self.async_render_window_name)
+        except Exception:
+            pass
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def spawn_puck(self, pos, vel, name, affected_by_gravity=False, movable=True):
         pass
