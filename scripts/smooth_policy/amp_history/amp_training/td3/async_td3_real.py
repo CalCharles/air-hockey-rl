@@ -127,6 +127,254 @@ def linear_anneal(start: float, end: float, step: int, anneal_steps: int) -> flo
     return start + progress * (end - start)
 
 
+def velocity_reward_from_magnitude(
+    velocity_mag: float,
+    velocity_at_one: float,
+    velocity_at_zero: float,
+) -> float:
+    denom = max(float(velocity_at_zero) - float(velocity_at_one), 1e-6)
+    reward = 1.0 - (float(velocity_mag) - float(velocity_at_one)) / denom
+    return min(reward, 1.0)
+
+
+def jerk_reward_from_magnitude(
+    jerk_mag: float,
+    jerk_at_one: float,
+    jerk_at_zero: float,
+) -> float:
+    denom = max(float(jerk_at_zero) - float(jerk_at_one), 1e-6)
+    return 1.0 - (float(jerk_mag) - float(jerk_at_one)) / denom
+
+
+@dataclass
+class MotionRewardState:
+    temporal_horizon: int
+    paddle_history: deque[np.ndarray]
+    puck_history: deque[np.ndarray]
+    steps_since_reset: int = 0
+    current_velocity_mag: float = 0.0
+    current_acceleration_mag: float = 0.0
+    current_jerk_mag: float = 0.0
+
+
+def _finite_or_fallback(value: object, fallback: float) -> float:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return float(fallback)
+    return out if np.isfinite(out) else float(fallback)
+
+
+def _extract_motion_positions_from_state_info(state_info: dict | None) -> tuple[np.ndarray, np.ndarray]:
+    zero_xy = np.zeros((2,), dtype=np.float64)
+    if not isinstance(state_info, dict):
+        return zero_xy.copy(), zero_xy.copy()
+    try:
+        paddle_xy = np.asarray(
+            state_info["paddles"]["paddle_ego"]["position"],
+            dtype=np.float64,
+        ).reshape(-1)[:2]
+    except Exception:
+        paddle_xy = zero_xy.copy()
+    try:
+        puck_xy = np.asarray(
+            state_info["pucks"][0]["position"],
+            dtype=np.float64,
+        ).reshape(-1)[:2]
+    except Exception:
+        puck_xy = zero_xy.copy()
+    if paddle_xy.shape[0] < 2:
+        paddle_xy = zero_xy.copy()
+    if puck_xy.shape[0] < 2:
+        puck_xy = zero_xy.copy()
+    return paddle_xy.copy(), puck_xy.copy()
+
+
+def _extract_motion_magnitudes_from_step_info(
+    step_info: dict | None,
+    state: MotionRewardState,
+) -> tuple[float, float, float]:
+    velocity_mag = state.current_velocity_mag
+    acceleration_mag = state.current_acceleration_mag
+    jerk_mag = state.current_jerk_mag
+    if isinstance(step_info, dict):
+        velocity_mag = _finite_or_fallback(step_info.get("paddle_velocity_mag"), velocity_mag)
+        acceleration_mag = _finite_or_fallback(
+            step_info.get("paddle_acceleration_mag"),
+            acceleration_mag,
+        )
+        jerk_mag = _finite_or_fallback(step_info.get("paddle_jerk_mag"), jerk_mag)
+    state.current_velocity_mag = float(velocity_mag)
+    state.current_acceleration_mag = float(acceleration_mag)
+    state.current_jerk_mag = float(jerk_mag)
+    return float(velocity_mag), float(acceleration_mag), float(jerk_mag)
+
+
+def _extract_motion_magnitudes_from_state_info(
+    state_info: dict | None,
+    state: MotionRewardState,
+) -> tuple[float, float, float]:
+    velocity_mag = state.current_velocity_mag
+    acceleration_mag = state.current_acceleration_mag
+    jerk_mag = state.current_jerk_mag
+    if isinstance(state_info, dict):
+        paddle = state_info.get("paddles", {}).get("paddle_ego", {})
+        if isinstance(paddle, dict):
+            if "velocity" in paddle:
+                velocity_mag = _finite_or_fallback(
+                    np.linalg.norm(np.asarray(paddle["velocity"], dtype=np.float64).reshape(-1)[:2]),
+                    velocity_mag,
+                )
+            if "acceleration" in paddle:
+                acceleration_mag = _finite_or_fallback(
+                    np.linalg.norm(np.asarray(paddle["acceleration"], dtype=np.float64).reshape(-1)[:2]),
+                    acceleration_mag,
+                )
+            if "jerk" in paddle:
+                jerk_mag = _finite_or_fallback(
+                    np.linalg.norm(np.asarray(paddle["jerk"], dtype=np.float64).reshape(-1)[:2]),
+                    jerk_mag,
+                )
+    state.current_velocity_mag = float(velocity_mag)
+    state.current_acceleration_mag = float(acceleration_mag)
+    state.current_jerk_mag = float(jerk_mag)
+    return float(velocity_mag), float(acceleration_mag), float(jerk_mag)
+
+
+def _init_motion_reward_state(
+    temporal_horizon: int,
+    anchor_paddle_xy: np.ndarray | None = None,
+    anchor_puck_xy: np.ndarray | None = None,
+) -> MotionRewardState:
+    horizon = max(int(temporal_horizon), 1)
+    history_len = horizon + 1
+    zeros = np.zeros((2,), dtype=np.float64)
+    paddle_anchor = np.asarray(anchor_paddle_xy, dtype=np.float64).reshape(-1)[:2] if anchor_paddle_xy is not None else zeros
+    puck_anchor = np.asarray(anchor_puck_xy, dtype=np.float64).reshape(-1)[:2] if anchor_puck_xy is not None else zeros
+    if paddle_anchor.shape[0] < 2:
+        paddle_anchor = zeros
+    if puck_anchor.shape[0] < 2:
+        puck_anchor = zeros
+    paddle_history = deque(
+        [zeros.copy() for _ in range(history_len - 1)] + [paddle_anchor.copy()],
+        maxlen=history_len,
+    )
+    puck_history = deque(
+        [zeros.copy() for _ in range(history_len - 1)] + [puck_anchor.copy()],
+        maxlen=history_len,
+    )
+    return MotionRewardState(
+        temporal_horizon=horizon,
+        paddle_history=paddle_history,
+        puck_history=puck_history,
+    )
+
+
+def _reset_motion_reward_state(
+    state: MotionRewardState,
+    anchor_paddle_xy: np.ndarray | None,
+    anchor_puck_xy: np.ndarray | None,
+) -> None:
+    state.steps_since_reset = 0
+    state.current_velocity_mag = 0.0
+    state.current_acceleration_mag = 0.0
+    state.current_jerk_mag = 0.0
+    refreshed = _init_motion_reward_state(
+        state.temporal_horizon,
+        anchor_paddle_xy=anchor_paddle_xy,
+        anchor_puck_xy=anchor_puck_xy,
+    )
+    state.paddle_history = refreshed.paddle_history
+    state.puck_history = refreshed.puck_history
+
+
+def _compute_motion_reward_components(
+    *,
+    args: "Args",
+    motion_state: MotionRewardState,
+    paddle_xy: np.ndarray,
+    puck_xy: np.ndarray,
+    velocity_mag: float,
+    jerk_mag: float,
+) -> dict[str, float]:
+    motion_state.paddle_history.append(np.asarray(paddle_xy, dtype=np.float64).reshape(-1)[:2].copy())
+    motion_state.puck_history.append(np.asarray(puck_xy, dtype=np.float64).reshape(-1)[:2].copy())
+    motion_state.steps_since_reset = int(motion_state.steps_since_reset) + 1
+
+    paddle_hist = np.asarray(list(motion_state.paddle_history), dtype=np.float64)
+    puck_hist = np.asarray(list(motion_state.puck_history), dtype=np.float64)
+    realized_movement = paddle_hist[-1, :] - paddle_hist[0, :]
+    movement_norm = float(np.linalg.norm(realized_movement))
+    eps = 1e-8
+
+    temporal_valid = float(1.0 if motion_state.steps_since_reset >= int(motion_state.temporal_horizon) else 0.0)
+    stand_still_reward_raw = float(
+        1.0 if (movement_norm <= float(args.stand_still_threshold) and temporal_valid > 0.5) else 0.0
+    )
+
+    target_direction = puck_hist[0, :] - paddle_hist[0, :]
+    movement_norm_safe = max(movement_norm, eps)
+    target_norm_safe = max(float(np.linalg.norm(target_direction)), eps)
+    temporal_cosine = float(np.dot(realized_movement, target_direction) / (movement_norm_safe * target_norm_safe))
+    temporal_alignment_reward_raw = float(np.clip((temporal_cosine + 1.0) * 0.5, 0.0, 1.0)) * temporal_valid
+    if stand_still_reward_raw > 0.5:
+        temporal_alignment_reward_raw = 1.0
+
+    movement_unit = realized_movement / movement_norm_safe
+    max_axis_cosine = max(abs(float(movement_unit[0])), abs(float(movement_unit[1])))
+    min_axis_cosine = float(1.0 / np.sqrt(2.0))
+    axis_alignment_reward_raw = (
+        (max_axis_cosine - min_axis_cosine) / (1.0 - min_axis_cosine + eps)
+    )
+    axis_alignment_reward_raw = float(np.clip(axis_alignment_reward_raw, 0.0, 1.0)) * temporal_valid
+    if stand_still_reward_raw > 0.5:
+        axis_alignment_reward_raw = 1.0
+
+    velocity_reward_raw = float(
+        velocity_reward_from_magnitude(
+            velocity_mag,
+            velocity_at_one=float(args.velocity_at_one),
+            velocity_at_zero=float(args.velocity_at_zero),
+        )
+    )
+    jerk_reward_raw = float(
+        jerk_reward_from_magnitude(
+            jerk_mag,
+            jerk_at_one=float(args.jerk_at_one),
+            jerk_at_zero=float(args.jerk_at_zero),
+        )
+    )
+
+    stand_still_reward_weighted = float(args.stand_still_reward_weight) * stand_still_reward_raw
+    temporal_alignment_reward_weighted = (
+        float(args.temporal_alignment_reward_weight) * temporal_alignment_reward_raw
+    )
+    axis_alignment_reward_weighted = float(args.axis_alignment_reward_weight) * axis_alignment_reward_raw
+    velocity_reward_weighted = float(args.velocity_reward_weight) * velocity_reward_raw
+    jerk_reward_weighted = float(args.jerk_reward_weight) * jerk_reward_raw
+    motion_reward_total = (
+        stand_still_reward_weighted
+        + temporal_alignment_reward_weighted
+        + axis_alignment_reward_weighted
+        + velocity_reward_weighted
+        + jerk_reward_weighted
+    )
+    return {
+        "temporal_valid_fraction": temporal_valid,
+        "stand_still_reward_raw": stand_still_reward_raw,
+        "temporal_alignment_reward_raw": temporal_alignment_reward_raw,
+        "axis_alignment_reward_raw": axis_alignment_reward_raw,
+        "velocity_reward_raw": velocity_reward_raw,
+        "jerk_reward_raw": jerk_reward_raw,
+        "stand_still_reward_weighted": stand_still_reward_weighted,
+        "temporal_alignment_reward_weighted": temporal_alignment_reward_weighted,
+        "axis_alignment_reward_weighted": axis_alignment_reward_weighted,
+        "velocity_reward_weighted": velocity_reward_weighted,
+        "jerk_reward_weighted": jerk_reward_weighted,
+        "motion_reward_total": motion_reward_total,
+    }
+
+
 def primitive_exploration_chance_for_step(args: "Args", step: int) -> float:
     return linear_anneal(
         args.exploration_primitive_chance_start,
@@ -233,39 +481,49 @@ def _build_async_training_state(
     total_updates: int,
     total_actor_updates: int,
     latest_train_metrics: Dict[str, float],
+    collector_total_steps: int,
     run_elapsed_total_s: float,
     rolling50_task_reward_values: Sequence[float],
     rolling50_motion_reward_values: Sequence[float],
     rolling50_episode_length_values: Sequence[float],
     rolling50_estop_episode_flags: Sequence[float],
+    include_non_vital_training_state_fields: bool,
 ) -> Dict[str, object]:
     replay_state = replay.state_dict()
-    return {
+    payload: Dict[str, object] = {
         "checkpoint_version": 2,
-        "global_step": int(total_updates),
-        "iteration": int(total_updates),
         "actor": actor.state_dict(),
         "actor_target": actor_target.state_dict(),
         "qf1": qf1.state_dict(),
         "qf2": qf2.state_dict(),
         "qf1_target": qf1_target.state_dict(),
         "qf2_target": qf2_target.state_dict(),
-        "q_optimizer": q_optimizer.state_dict(),
-        "actor_optimizer": actor_optimizer.state_dict(),
         "success_replay_buffer": replay_state["success"],
         "failure_replay_buffer": replay_state["failure"],
-        "train_metrics": dict(latest_train_metrics),
-        "learner_q_updates": int(total_updates),
-        "learner_actor_updates": int(total_actor_updates),
-        "run_elapsed_total_s": float(run_elapsed_total_s),
-        "rolling_window_size": int(ROLLING_PERF_WINDOW_EPISODES),
-        "rolling50_task_reward_values": list(rolling50_task_reward_values),
-        "rolling50_motion_reward_values": list(rolling50_motion_reward_values),
-        "rolling50_episode_length_values": list(rolling50_episode_length_values),
-        "rolling50_estop_episode_flags": list(rolling50_estop_episode_flags),
         "rng_states": get_rng_states(),
-        "args": asdict(args),
     }
+    if include_non_vital_training_state_fields:
+        payload.update(
+            {
+                "global_step": int(total_updates),
+                "iteration": int(total_updates),
+                "q_optimizer": q_optimizer.state_dict(),
+                "actor_optimizer": actor_optimizer.state_dict(),
+                "train_metrics": dict(latest_train_metrics),
+                "learner_q_updates": int(total_updates),
+                "learner_actor_updates": int(total_actor_updates),
+                "collector_total_steps": int(collector_total_steps),
+                "run_elapsed_total_s": float(run_elapsed_total_s),
+                "rolling_window_size": int(ROLLING_PERF_WINDOW_EPISODES),
+                "rolling50_task_reward_values": list(rolling50_task_reward_values),
+                "rolling50_motion_reward_values": list(rolling50_motion_reward_values),
+                "rolling50_episode_length_values": list(rolling50_episode_length_values),
+                "rolling50_estop_episode_flags": list(rolling50_estop_episode_flags),
+                # Metadata only; runtime args always come from external CLI/args_file.
+                "args": asdict(args),
+            }
+        )
+    return payload
 
 
 def _save_async_checkpoint(
@@ -309,6 +567,7 @@ def _save_async_checkpoint(
         total_updates=total_updates,
         total_actor_updates=total_actor_updates,
         latest_train_metrics=latest_train_metrics,
+        collector_total_steps=int(stats.get("collector_total_steps", stats.get("collector_steps", 0.0))),
         run_elapsed_total_s=float(stats.get("run_elapsed_total_s", 0.0)),
         rolling50_task_reward_values=_coerce_float_list(
             stats.get("rolling50_task_reward_values", []),
@@ -326,6 +585,7 @@ def _save_async_checkpoint(
             stats.get("rolling50_estop_episode_flags", []),
             max_items=ROLLING_PERF_WINDOW_EPISODES,
         ),
+        include_non_vital_training_state_fields=args.include_non_vital_training_state_fields,
     )
     _atomic_torch_save(training_state, checkpoint_dir / "training_state.pth")
     return checkpoint_dir
@@ -360,12 +620,22 @@ class Args:
     q_updates: int = 1
     actor_updates_per_iteration: int = 1
     target_network_frequency: int = 1
-    updates_per_second: float = 10.0
     policy_noise: float = 0.2
     noise_clip: float = 0.5
     h_transform_eps: float = 1e-3
     task_reward_weight: float = 1.0
     motion_reward_weight: float = 1.0
+    stand_still_reward_weight: float = 0.5
+    temporal_alignment_reward_weight: float = 0.5
+    axis_alignment_reward_weight: float = 0.5
+    velocity_reward_weight: float = 0.5
+    jerk_reward_weight: float = 0.5
+    stand_still_threshold: float = 0.015
+    temporal_alignment_horizon: int = 4
+    velocity_at_one: float = 0.3
+    velocity_at_zero: float = 0.6
+    jerk_at_one: float = 10.0
+    jerk_at_zero: float = 23.0
     critic_success_sample_fraction: float = 0.3
     critic_failure_sample_fraction: float = 0.7
 
@@ -444,6 +714,7 @@ class Args:
     checkpoint_root_dir: str | None = None
     load_replay_from_checkpoint: bool = True
     replay_source_priority: str = "warmstart_only"
+    include_non_vital_training_state_fields: bool = False
 
     # Optional smoke-test mode (0 disables)
     smoke_test_seconds: float = 0.0
@@ -648,8 +919,12 @@ def _list_warm_start_hdf5_files(
     input_roots: Sequence[str],
     *,
     recursive: bool,
+    rng: np.random.Generator | None = None,
 ) -> list[Path]:
-    unique_paths: dict[Path, None] = {}
+    if rng is None:
+        rng = np.random.default_rng()
+    seen_paths: set[Path] = set()
+    shuffled_buckets: list[list[Path]] = []
     for input_root in input_roots:
         root_str = str(input_root).strip()
         if not root_str:
@@ -660,13 +935,42 @@ def _list_warm_start_hdf5_files(
         if root.is_file():
             if root.suffix.lower() != ".hdf5":
                 raise ValueError(f"Warm-start file must end with .hdf5: {root}")
-            unique_paths[root] = None
+            if root not in seen_paths:
+                seen_paths.add(root)
+                shuffled_buckets.append([root])
             continue
         iterator = root.rglob("*.hdf5") if recursive else root.glob("*.hdf5")
+        bucket: list[Path] = []
         for path in iterator:
             if path.is_file():
-                unique_paths[path.resolve()] = None
-    return sorted(unique_paths.keys())
+                resolved = path.resolve()
+                if resolved in seen_paths:
+                    continue
+                seen_paths.add(resolved)
+                bucket.append(resolved)
+        if bucket:
+            rng.shuffle(bucket)
+            shuffled_buckets.append(bucket)
+
+    if not shuffled_buckets:
+        return []
+
+    # Interleave folder/file buckets so warm-start ingestion is mixed across sources.
+    mixed_paths: list[Path] = []
+    active_bucket_indices = [idx for idx, bucket in enumerate(shuffled_buckets) if bucket]
+    while active_bucket_indices:
+        visit_order = list(active_bucket_indices)
+        rng.shuffle(visit_order)
+        next_active_indices: list[int] = []
+        for bucket_idx in visit_order:
+            bucket = shuffled_buckets[bucket_idx]
+            if not bucket:
+                continue
+            mixed_paths.append(bucket.pop())
+            if bucket:
+                next_active_indices.append(bucket_idx)
+        active_bucket_indices = next_active_indices
+    return mixed_paths
 
 
 def _estimate_xy_derivative(values: np.ndarray, times: np.ndarray) -> np.ndarray:
@@ -785,10 +1089,12 @@ def _reset_warm_start_env_state(env: AirHockeyEnv, first_state: dict) -> None:
 
 
 def _recompute_warm_start_rewards(
+    args: "Args",
     env: AirHockeyEnv,
     *,
     prev_state: dict,
     next_state: dict,
+    motion_state: MotionRewardState,
     step_index: int,
     stop_state: StopEventState,
     is_last_transition: bool,
@@ -812,7 +1118,17 @@ def _recompute_warm_start_rewards(
     if env.enable_survival_bonus and (not terminated) and (not truncated):
         task_reward += float(env.survival_bonus_per_step)
 
-    motion_reward = 0.0
+    next_paddle_xy, next_puck_xy = _extract_motion_positions_from_state_info(next_state)
+    velocity_mag, _, jerk_mag = _extract_motion_magnitudes_from_state_info(next_state, motion_state)
+    motion_components = _compute_motion_reward_components(
+        args=args,
+        motion_state=motion_state,
+        paddle_xy=next_paddle_xy,
+        puck_xy=next_puck_xy,
+        velocity_mag=velocity_mag,
+        jerk_mag=jerk_mag,
+    )
+    motion_reward = float(motion_components["motion_reward_total"])
     if stop_state.active and not stop_penalty_applied:
         motion_reward -= 5.0
         stop_penalty_applied = True
@@ -824,6 +1140,7 @@ def _recompute_warm_start_rewards(
 def _load_warm_start_episode(
     episode_hdf5_path: Path,
     *,
+    args: Args,
     env: AirHockeyEnv,
 ) -> EpisodeTrajectory:
     train_vals = np.asarray(load_split_trajectory_data(str(episode_hdf5_path)), dtype=np.float64)
@@ -909,6 +1226,12 @@ def _load_warm_start_episode(
     env.reset(seed=int(getattr(env, "rng", np.random.RandomState(0)).randint(0, int(1e8))))
     _reset_warm_start_env_state(env, state_infos[0])
 
+    initial_paddle_xy, initial_puck_xy = _extract_motion_positions_from_state_info(state_infos[0])
+    motion_reward_state = _init_motion_reward_state(
+        int(args.temporal_alignment_horizon),
+        anchor_paddle_xy=initial_paddle_xy,
+        anchor_puck_xy=initial_puck_xy,
+    )
     episode_trajectory = EpisodeTrajectory.empty()
     stop_penalty_applied = False
     for row_idx in range(1, train_vals.shape[0]):
@@ -928,9 +1251,11 @@ def _load_warm_start_episode(
         )
         stop_state = _stop_state_from_saved_row(train_vals, optional_data, row_idx)
         task_reward, motion_reward, done, stop_penalty_applied = _recompute_warm_start_rewards(
+            args,
             env,
             prev_state=prev_state,
             next_state=next_state,
+            motion_state=motion_reward_state,
             step_index=int(step_indices[row_idx]),
             stop_state=stop_state,
             is_last_transition=bool(row_idx == (train_vals.shape[0] - 1)),
@@ -954,9 +1279,11 @@ def _warm_start_replay_from_hdf5(
     replay: SharedTD3Replay,
     env: AirHockeyEnv,
 ) -> dict[str, float]:
+    warm_start_rng = np.random.default_rng(int(args.seed))
     episode_paths = _list_warm_start_hdf5_files(
         args.warm_start_hdf5_dirs,
         recursive=bool(args.warm_start_hdf5_recursive),
+        rng=warm_start_rng,
     )
     if not episode_paths:
         raise ValueError("No warm-start HDF5 files found in the configured input directories.")
@@ -970,7 +1297,7 @@ def _warm_start_replay_from_hdf5(
     print(f"[warm_start] loading {len(episode_paths)} HDF5 files into shared replay")
     for episode_path in episode_paths:
         try:
-            episode_trajectory = _load_warm_start_episode(episode_path, env=env)
+            episode_trajectory = _load_warm_start_episode(episode_path, args=args, env=env)
         except Exception:
             skipped_files += 1
             print(f"[warm_start] failed to load {episode_path}:\n{traceback.format_exc()}")
@@ -1037,6 +1364,7 @@ def _load_replay_from_checkpoint_file(
 
 def _load_runtime_perf_from_checkpoint_file(model_path: str) -> Dict[str, object]:
     runtime_state: Dict[str, object] = {
+        "collector_total_steps": 0.0,
         "run_elapsed_total_s": 0.0,
         "rolling50_task_reward_values": [],
         "rolling50_motion_reward_values": [],
@@ -1051,6 +1379,7 @@ def _load_runtime_perf_from_checkpoint_file(model_path: str) -> Dict[str, object
         return runtime_state
     if not isinstance(loaded_obj, dict):
         return runtime_state
+    runtime_state["collector_total_steps"] = float(loaded_obj.get("collector_total_steps", 0.0))
     runtime_state["run_elapsed_total_s"] = float(loaded_obj.get("run_elapsed_total_s", 0.0))
     runtime_state["rolling50_task_reward_values"] = _coerce_float_list(
         loaded_obj.get("rolling50_task_reward_values", []),
@@ -1819,7 +2148,7 @@ def collector_process(
         request_sim_hold=True,
     )
 
-    total_steps = 0
+    total_steps = int(stats.get("collector_total_steps", stats.get("collector_steps", 0.0)))
     total_episodes = 0
     next_episode_file_id = _next_available_episode_id(args.episode_artifact_dir)
     if next_episode_file_id > 0:
@@ -1853,6 +2182,35 @@ def collector_process(
     episode_had_stop = False
     episode_had_protective_stop = False
     episode_had_controller_disconnect = False
+    motion_metric_names = (
+        "temporal_valid_fraction",
+        "stand_still_reward_raw",
+        "temporal_alignment_reward_raw",
+        "axis_alignment_reward_raw",
+        "velocity_reward_raw",
+        "jerk_reward_raw",
+        "stand_still_reward_weighted",
+        "temporal_alignment_reward_weighted",
+        "axis_alignment_reward_weighted",
+        "velocity_reward_weighted",
+        "jerk_reward_weighted",
+    )
+    episode_motion_metric_sums = {name: 0.0 for name in motion_metric_names}
+    episode_motion_metric_count = 0
+    initial_state_info = getattr(env, "current_state", None)
+    if not isinstance(initial_state_info, dict):
+        simulator = getattr(env, "simulator", None)
+        if simulator is not None and hasattr(simulator, "get_current_state"):
+            try:
+                initial_state_info = simulator.get_current_state()
+            except Exception:
+                initial_state_info = None
+    initial_paddle_xy, initial_puck_xy = _extract_motion_positions_from_state_info(initial_state_info)
+    motion_reward_state = _init_motion_reward_state(
+        int(args.temporal_alignment_horizon),
+        anchor_paddle_xy=initial_paddle_xy,
+        anchor_puck_xy=initial_puck_xy,
+    )
     rolling50_task_reward_values = deque(
         _coerce_float_list(
             stats.get("rolling50_task_reward_values", []),
@@ -2006,8 +2364,21 @@ def collector_process(
         if stop_now:
             episode_had_stop = True
 
-        # TODO: Replace this placeholder with real motion reward decomposition if needed.
-        motion_reward = 0.0
+        next_state_info = getattr(env, "current_state", None)
+        next_paddle_xy, next_puck_xy = _extract_motion_positions_from_state_info(next_state_info)
+        velocity_mag, _, jerk_mag = _extract_motion_magnitudes_from_step_info(step_info, motion_reward_state)
+        motion_components = _compute_motion_reward_components(
+            args=args,
+            motion_state=motion_reward_state,
+            paddle_xy=next_paddle_xy,
+            puck_xy=next_puck_xy,
+            velocity_mag=velocity_mag,
+            jerk_mag=jerk_mag,
+        )
+        motion_reward = float(motion_components["motion_reward_total"])
+        for metric_name in motion_metric_names:
+            episode_motion_metric_sums[metric_name] += float(motion_components[metric_name])
+        episode_motion_metric_count += 1
         if stop_now and not stop_penalty_applied_this_episode:
             motion_reward += -5.0
             stop_penalty_applied_this_episode = True
@@ -2109,6 +2480,11 @@ def collector_process(
             writer.add_scalar("charts/episodic_return", episode_return, total_steps)
             writer.add_scalar("charts/episodic_length", episode_length, total_steps)
             writer.add_scalar("charts/episodic_success", float(1.0 if episode_success else 0.0), total_steps)
+            if episode_motion_metric_count > 0:
+                for metric_name in motion_metric_names:
+                    metric_mean = float(episode_motion_metric_sums[metric_name] / float(episode_motion_metric_count))
+                    stats[f"rewards/{metric_name}_mean"] = metric_mean
+                    writer.add_scalar(f"rewards/{metric_name}_mean", metric_mean, total_steps)
             _, _, episode_return_success_threshold, _ = _add_episode_to_shared_replay(
                 replay=replay,
                 episode_trajectory=episode_trajectory,
@@ -2148,6 +2524,8 @@ def collector_process(
             rolling50_episode_length_avg = _rolling_mean(rolling50_episode_length_values)
             rolling50_estop_episode_count = float(sum(rolling50_estop_episode_flags))
             stats["run_elapsed_total_s"] = float(elapsed_s)
+            stats["collector_steps"] = float(total_steps)
+            stats["collector_total_steps"] = float(total_steps)
             stats["rolling50_window_size"] = float(ROLLING_PERF_WINDOW_EPISODES)
             stats["rolling50_window_count"] = float(rolling50_window_count)
             stats["rolling50_task_reward_avg"] = float(rolling50_task_reward_avg)
@@ -2158,6 +2536,11 @@ def collector_process(
             stats["rolling50_motion_reward_values"] = list(rolling50_motion_reward_values)
             stats["rolling50_episode_length_values"] = list(rolling50_episode_length_values)
             stats["rolling50_estop_episode_flags"] = list(rolling50_estop_episode_flags)
+            writer.add_scalar("rolling50/task_reward_avg", float(rolling50_task_reward_avg), total_steps)
+            writer.add_scalar("rolling50/motion_reward_avg", float(rolling50_motion_reward_avg), total_steps)
+            writer.add_scalar("rolling50/episode_length_avg", float(rolling50_episode_length_avg), total_steps)
+            writer.add_scalar("rolling50/estop_episode_count", float(rolling50_estop_episode_count), total_steps)
+            writer.add_scalar("rolling50/window_count", float(rolling50_window_count), total_steps)
             print(
                 f"[collector] episode_id={next_episode_file_id} "
                 f"steps={n_episode_steps} camera_frames={n_camera_frames} "
@@ -2525,6 +2908,22 @@ def collector_process(
             episode_had_stop = False
             episode_had_protective_stop = False
             episode_had_controller_disconnect = False
+            episode_motion_metric_sums = {name: 0.0 for name in motion_metric_names}
+            episode_motion_metric_count = 0
+            current_state_info = getattr(env, "current_state", None)
+            if not isinstance(current_state_info, dict):
+                simulator = getattr(env, "simulator", None)
+                if simulator is not None and hasattr(simulator, "get_current_state"):
+                    try:
+                        current_state_info = simulator.get_current_state()
+                    except Exception:
+                        current_state_info = None
+            current_paddle_xy, current_puck_xy = _extract_motion_positions_from_state_info(current_state_info)
+            _reset_motion_reward_state(
+                motion_reward_state,
+                anchor_paddle_xy=current_paddle_xy,
+                anchor_puck_xy=current_puck_xy,
+            )
 
         now = time.time()
         if now - last_log_time >= float(args.collector_log_interval_sec):
@@ -2536,6 +2935,7 @@ def collector_process(
             rolling50_episode_length_avg = _rolling_mean(rolling50_episode_length_values)
             rolling50_estop_episode_count = float(sum(rolling50_estop_episode_flags))
             stats["collector_steps"] = float(total_steps)
+            stats["collector_total_steps"] = float(total_steps)
             stats["collector_episodes"] = float(total_episodes)
             stats["collector_actor_version"] = float(learner_state.total_actor_updates)
             stats["transition_hold_events_total"] = float(transition_hold_events_total)
@@ -3154,6 +3554,7 @@ def main(args: Args) -> None:
     stats["successful_online_episodes_kept"] = float(0)
     stats["checkpoint_save_request_id"] = float(0)
     stats["checkpoint_trigger_successful_online_episodes_kept"] = float(0)
+    stats["collector_total_steps"] = float(0.0)
     stats["run_elapsed_total_s"] = float(0.0)
     stats["rolling50_window_size"] = float(ROLLING_PERF_WINDOW_EPISODES)
     stats["rolling50_window_count"] = float(0.0)
@@ -3167,6 +3568,7 @@ def main(args: Args) -> None:
     stats["rolling50_estop_episode_flags"] = []
     if args.model_path is not None:
         loaded_runtime_state = _load_runtime_perf_from_checkpoint_file(args.model_path)
+        stats["collector_total_steps"] = float(loaded_runtime_state.get("collector_total_steps", 0.0))
         loaded_task_values = _coerce_float_list(
             loaded_runtime_state.get("rolling50_task_reward_values", []),
             max_items=ROLLING_PERF_WINDOW_EPISODES,

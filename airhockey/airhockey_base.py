@@ -146,7 +146,7 @@ class AirHockeyBaseEnv(ABC, Env):
         )
         self._puck_pass_paddle_score = 0
         self.puck_low_motion_radius_m = 0.03
-        self.puck_low_motion_window_clean = 10
+        self.puck_low_motion_window_clean = 20
         self.puck_low_motion_window_occluded = 20
         
         # reward function
@@ -495,6 +495,14 @@ class AirHockeyBaseEnv(ABC, Env):
 
         clean_window = int(self.puck_low_motion_window_clean)
         occluded_window = int(self.puck_low_motion_window_occluded)
+        # Real-world simulator states may intentionally expose a short history
+        # for observation compatibility. For low-motion termination only, fallback
+        # to the simulator's full internal puck history when available.
+        if len(puck_history) < clean_window and getattr(self, "simulator_name", None) == "real":
+            simulator_puck_history = getattr(getattr(self, "simulator", None), "puck_history", None)
+            if isinstance(simulator_puck_history, list):
+                puck_history = simulator_puck_history
+
         if len(puck_history) < clean_window:
             return False, 0
 
