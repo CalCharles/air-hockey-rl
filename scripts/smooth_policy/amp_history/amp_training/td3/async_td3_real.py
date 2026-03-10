@@ -40,6 +40,9 @@ from scripts.smooth_policy.amp_history.amp_training.td3.episode_artifacts import
     save_split_episode_hdf5,
 )
 from scripts.smooth_policy.amp_history.amp_training.td3.dual_head_q import TD3DualHeadQNetwork
+from scripts.smooth_policy.amp_history.amp_training.td3.exploration_selector import (
+    PrimitiveExplorationSelector,
+)
 from scripts.smooth_policy.amp_history.amp_training.td3.shared_replay import SharedTD3Replay
 from scripts.smooth_policy.amp_history.amp_training.td3.td3_episode_collection import EpisodeTrajectory
 from scripts.smooth_policy.amp_history.amp_training.td3.td3_replay_sampling import (
@@ -109,6 +112,68 @@ def build_policy_env_view(obs_dim: int, act_dim: int) -> SimpleNamespace:
         single_observation_space=gym.spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32),
         single_action_space=gym.spaces.Box(low=-1.0, high=1.0, shape=(act_dim,), dtype=np.float32),
     )
+
+
+def linear_anneal(start: float, end: float, step: int, anneal_steps: int) -> float:
+    if anneal_steps <= 0:
+        return end
+    progress = min(max(step, 0) / float(anneal_steps), 1.0)
+    return start + progress * (end - start)
+
+
+def primitive_exploration_chance_for_step(args: "Args", step: int) -> float:
+    return linear_anneal(
+        args.exploration_primitive_chance_start,
+        args.exploration_primitive_chance,
+        step,
+        args.exploration_primitive_chance_anneal_steps,
+    )
+
+
+def _primitive_state_tensor(values: object, device: torch.device) -> torch.Tensor:
+    return torch.as_tensor(values, dtype=torch.float32, device=device).reshape(1, -1)[:, :2]
+
+
+def _extract_primitive_state_tensors(
+    env: AirHockeyEnv,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    zeros = torch.zeros((1, 2), dtype=torch.float32, device=device)
+    state_info = None
+    simulator = getattr(env, "simulator", None)
+    if simulator is not None and hasattr(simulator, "get_current_state"):
+        try:
+            state_info = simulator.get_current_state()
+        except Exception:
+            state_info = None
+    if state_info is None:
+        state_info = getattr(env, "current_state", None)
+    if not isinstance(state_info, dict):
+        return zeros.clone(), zeros.clone(), zeros.clone()
+    try:
+        paddle_position = _primitive_state_tensor(
+            state_info["paddles"]["paddle_ego"]["position"],
+            device=device,
+        )
+        puck_position = _primitive_state_tensor(
+            state_info["pucks"][0]["position"],
+            device=device,
+        )
+        puck_velocity = _primitive_state_tensor(
+            state_info["pucks"][0]["velocity"],
+            device=device,
+        )
+        return paddle_position, puck_position, puck_velocity
+    except Exception:
+        return zeros.clone(), zeros.clone(), zeros.clone()
+
+
+def _reset_primitive_rollout_state(
+    primitive_selector: PrimitiveExplorationSelector | None,
+) -> None:
+    if primitive_selector is not None:
+        done_mask = torch.ones(primitive_selector.num_envs, dtype=torch.bool, device=primitive_selector.device)
+        primitive_selector.reset(done_mask)
 
 
 class SharedActorState:
@@ -184,6 +249,20 @@ class Args:
 
     # Collector behavior
     exploration_noise: float = 0.1
+    exploration_primitive_chance: float = 0.0
+    exploration_primitive_chance_start: float = 0.0
+    exploration_primitive_chance_anneal_steps: int = 200000
+    exploration_primitive_steps: int = 5
+    exploration_primitive_weight_stand_still: float = 1.0
+    exploration_primitive_weight_same_direction: float = 1.0
+    exploration_primitive_weight_y_aligned: float = 1.0
+    exploration_primitive_weight_target_position_directional: float = 1.0
+    exploration_direction_y_component_weight: float = 2.0
+    exploration_target_position_min_distance: float = 0.2
+    exploration_target_position_max_distance: float = 0.5
+    exploration_target_position_delta_x: float = 0.26
+    exploration_target_position_delta_y: float = 0.12
+    exploration_target_position_steps: int = 5
     collector_policy_stand_still: bool = False
     transition_hold_steps_post_reset: int = 8
     transition_hold_steps_post_estop_enter: int = 0
@@ -267,20 +346,25 @@ def _build_args_file_defaults(
     return mapped_defaults, sorted(applied_source_keys), sorted(ignored_source_keys)
 
 
-def run_reset_fsm(env: AirHockeyEnv, rng: np.random.Generator) -> None:
+def run_reset_fsm(env: AirHockeyEnv, rng: np.random.Generator) -> int:
     """Run the ResetPolicyFSM to get the puck back in play.
 
     Executes FSM actions through env.step() in a tight loop.
     These steps are NOT recorded in the replay buffer.
     """
     wait_logged = False
-    while _detect_estop(env):
+    stop_state = _classify_stop_event(env)
+    while stop_state.active:
         if not wait_logged:
-            print("[reset_fsm] protective stop active; waiting for clear...")
+            print(
+                "[reset_fsm] "
+                f"stop active; waiting for clear (reason={stop_state.reason})..."
+            )
             wait_logged = True
         time.sleep(0.25)
+        stop_state = _classify_stop_event(env)
     if wait_logged:
-        print("[reset_fsm] protective stop cleared; resuming reset FSM.")
+        print("[reset_fsm] stop cleared; resuming reset FSM.")
 
     fsm = ResetPolicyFSM(env, rng)
     print(f"[reset_fsm] starting (side={fsm.start_side})")
@@ -295,6 +379,7 @@ def run_reset_fsm(env: AirHockeyEnv, rng: np.random.Generator) -> None:
     )
     if done_reason == "hard_reset_required":
         _hard_reset_with_pause(env, reason="reset_fsm_stage2_max_retries", pause_s=0.0)
+    return int(fsm.total_steps)
 
 
 def _episode_to_tensors(episode_trajectory: EpisodeTrajectory) -> Dict[str, torch.Tensor]:
@@ -369,24 +454,139 @@ def _bucketed_output_dir(base_dir: str | Path, episode_steps: int) -> str:
     return str(Path(base_dir).expanduser().resolve() / _episode_length_bucket_name(episode_steps))
 
 
-def _estop_output_dir(base_dir: str | Path) -> str:
-    """Return the additional e-stop-only output directory under the parent."""
-    return str(Path(base_dir).expanduser().resolve() / "estop")
+def _stop_output_dir(base_dir: str | Path, stop_label: str) -> str:
+    """Return the additional stop-specific output directory under the parent."""
+    return str(Path(base_dir).expanduser().resolve() / str(stop_label))
 
 
-def _copy_to_estop_dir(file_path: str | Path, estop_root: str | Path) -> Path:
-    """Copy one artifact file into the e-stop directory and return destination."""
+def _copy_to_stop_dir(file_path: str | Path, stop_root: str | Path) -> Path:
+    """Copy one artifact file into the stop-specific directory and return destination."""
     src = Path(file_path).expanduser().resolve()
-    estop_root_path = Path(estop_root).expanduser().resolve()
+    stop_root_path = Path(stop_root).expanduser().resolve()
     if src.suffix == ".hdf5":
-        dst_dir = estop_root_path
+        dst_dir = stop_root_path
     else:
         # Keep per-episode media grouping (trajectory_data{N}/...).
-        dst_dir = estop_root_path / src.parent.name
+        dst_dir = stop_root_path / src.parent.name
     dst_dir.mkdir(parents=True, exist_ok=True)
     dst = dst_dir / src.name
     shutil.copy2(src, dst)
     return dst
+
+
+@dataclass(frozen=True)
+class StopEventState:
+    protective_stop: bool = False
+    controller_disconnected: bool = False
+    active: bool = False
+    reason: str = "none"
+    episode_end_type: str | None = None
+    episode_end_reason: str | None = None
+    artifact_label: str | None = None
+
+
+def _build_stop_event_state(
+    *,
+    protective_stop: bool = False,
+    controller_connected: bool | None = None,
+    legacy_estop_signal: bool = False,
+) -> StopEventState:
+    controller_disconnected = bool(controller_connected is False)
+    if bool(protective_stop):
+        return StopEventState(
+            protective_stop=True,
+            controller_disconnected=controller_disconnected,
+            active=True,
+            reason="protective_stop",
+            episode_end_type="estop",
+            episode_end_reason="collector_protective_stop",
+            artifact_label="estop",
+        )
+    if controller_disconnected:
+        return StopEventState(
+            protective_stop=False,
+            controller_disconnected=True,
+            active=True,
+            reason="controller_disconnected",
+            episode_end_type="controller_disconnected",
+            episode_end_reason="collector_controller_disconnected",
+            artifact_label="controller_disconnected",
+        )
+    if bool(legacy_estop_signal):
+        return StopEventState(
+            protective_stop=True,
+            controller_disconnected=False,
+            active=True,
+            reason="legacy_estop_signal",
+            episode_end_type="estop",
+            episode_end_reason="collector_estop_legacy_signal",
+            artifact_label="estop",
+        )
+    return StopEventState()
+
+
+def _classify_stop_event(
+    env: AirHockeyEnv,
+    step_info: dict | None = None,
+) -> StopEventState:
+    """Classify collector stop conditions without conflating them with readiness summaries."""
+    if isinstance(step_info, dict):
+        protective_stop_present = "protective_stop" in step_info
+        controller_connected_present = "controller_connected" in step_info
+        if protective_stop_present or controller_connected_present:
+            return _build_stop_event_state(
+                protective_stop=bool(step_info.get("protective_stop", False)),
+                controller_connected=(
+                    bool(step_info.get("controller_connected", True))
+                    if controller_connected_present
+                    else None
+                ),
+            )
+        if "estop" in step_info:
+            estop_value = np.asarray(step_info["estop"], dtype=np.float64).reshape(-1)
+            if estop_value.size > 0 and bool(estop_value[0] > 0.5):
+                return _build_stop_event_state(legacy_estop_signal=True)
+
+    simulator = getattr(env, "simulator", None)
+    if simulator is None:
+        return StopEventState()
+
+    readiness_fn = getattr(simulator, "robot_command_readiness", None)
+    if callable(readiness_fn):
+        try:
+            readiness = readiness_fn()
+            if isinstance(readiness, dict):
+                protective_stop_present = "protective_stop" in readiness
+                controller_connected_present = "controller_connected" in readiness
+                if protective_stop_present or controller_connected_present:
+                    return _build_stop_event_state(
+                        protective_stop=bool(readiness.get("protective_stop", False)),
+                        controller_connected=(
+                            bool(readiness.get("controller_connected", True))
+                            if controller_connected_present
+                            else None
+                        ),
+                    )
+        except Exception:
+            pass
+
+    rcv = getattr(simulator, "rcv", None)
+    if rcv is not None and hasattr(rcv, "isProtectiveStopped"):
+        try:
+            return _build_stop_event_state(protective_stop=bool(rcv.isProtectiveStopped()))
+        except Exception:
+            # Telemetry failure is unsafe; treat as a disconnected controller path.
+            return _build_stop_event_state(controller_connected=False)
+
+    vals = getattr(simulator, "vals", None)
+    if isinstance(vals, list) and len(vals) > 0:
+        try:
+            latest = np.asarray(vals[-1], dtype=np.float64).reshape(-1)
+            if latest.shape[0] > 3 and bool(latest[3] > 0.5):
+                return _build_stop_event_state(legacy_estop_signal=True)
+        except Exception:
+            return StopEventState()
+    return StopEventState()
 
 
 def _safe_nonnegative_ms(value: float) -> float:
@@ -481,7 +681,8 @@ def _build_split_episode_row(
     action_xy: np.ndarray,
     episode_id: int,
     episode_step_idx: int,
-    estop_active: bool,
+    protective_stop_active: bool,
+    controller_disconnected: bool,
 ) -> Dict[str, np.ndarray]:
     state_info = getattr(env, "current_state", None)
     if not isinstance(state_info, dict):
@@ -543,12 +744,23 @@ def _build_split_episode_row(
         ),
         2,
     )
+    stop_flags = _vector_with_width(
+        np.array(
+            [
+                1.0 if protective_stop_active else 0.0,
+                1.0 if controller_disconnected else 0.0,
+                1.0 if (protective_stop_active or controller_disconnected) else 0.0,
+            ],
+            dtype=np.float64,
+        ),
+        3,
+    )
 
     return {
         "cur_time": np.array([time.time()], dtype=np.float64),
         "tidx": np.array([float(episode_id)], dtype=np.float64),
         "i": np.array([float(episode_step_idx)], dtype=np.float64),
-        "estop": np.array([1.0 if estop_active else 0.0], dtype=np.float64),
+        "estop": np.array([1.0 if protective_stop_active else 0.0], dtype=np.float64),
         "safety": np.array([1.0], dtype=np.float64),
         "pose": pose,
         "speed": speed,
@@ -560,6 +772,7 @@ def _build_split_episode_row(
         "paddle_actual": paddle_actual,
         "paddle_cmd": paddle_cmd,
         "puck_meta": puck_meta,
+        "stop_flags": stop_flags,
     }
 
 
@@ -602,43 +815,8 @@ def _mixed_sample_from_shared(
 
 
 def _detect_estop(env: AirHockeyEnv, step_info: dict | None = None) -> bool:
-    """Best-effort e-stop/protective-stop detection from available real-world signals."""
-    if isinstance(step_info, dict):
-        if "robot_step_ready" in step_info and not bool(step_info.get("robot_step_ready", True)):
-            return True
-        if "robot_command_ready" in step_info and not bool(step_info.get("robot_command_ready", True)):
-            return True
-        if "controller_connected" in step_info and not bool(step_info.get("controller_connected", True)):
-            return True
-        if "estop" in step_info:
-            estop_value = np.asarray(step_info["estop"], dtype=np.float64).reshape(-1)
-            if estop_value.size > 0:
-                return bool(estop_value[0] > 0.5)
-        if "protective_stop" in step_info:
-            return bool(step_info["protective_stop"])
-
-    simulator = getattr(env, "simulator", None)
-    if simulator is None:
-        return False
-
-    rcv = getattr(simulator, "rcv", None)
-    if rcv is not None and hasattr(rcv, "isProtectiveStopped"):
-        try:
-            return bool(rcv.isProtectiveStopped())
-        except Exception:
-            # Telemetry failure is unsafe for real robot control; treat as estop-like.
-            return True
-
-    # Fallback: real simulator appends canonical state arrays where index 3 is estop.
-    vals = getattr(simulator, "vals", None)
-    if isinstance(vals, list) and len(vals) > 0:
-        try:
-            latest = np.asarray(vals[-1], dtype=np.float64).reshape(-1)
-            if latest.shape[0] > 3:
-                return bool(latest[3] > 0.5)
-        except Exception:
-            return False
-    return False
+    """Detect protective stops without conflating them with command-readiness metadata."""
+    return _classify_stop_event(env, step_info=step_info).protective_stop
 
 
 def _should_run_reset_policy_at_episode_start(
@@ -830,6 +1008,28 @@ def collector_process(
 
     action_low = torch.as_tensor(action_low_np, dtype=torch.float32, device=device).unsqueeze(0)
     action_high = torch.as_tensor(action_high_np, dtype=torch.float32, device=device).unsqueeze(0)
+    primitive_selector = PrimitiveExplorationSelector(
+        num_envs=1,
+        chance=float(primitive_exploration_chance_for_step(args, step=0)),
+        takeover_steps=int(args.exploration_primitive_steps),
+        device=device,
+        dtype=torch.float32,
+        direction_y_component_weight=float(args.exploration_direction_y_component_weight),
+        target_min_distance=float(args.exploration_target_position_min_distance),
+        target_max_distance=float(args.exploration_target_position_max_distance),
+        target_action_delta_x=float(args.exploration_target_position_delta_x),
+        target_action_delta_y=float(args.exploration_target_position_delta_y),
+        target_takeover_steps=int(args.exploration_target_position_steps),
+        pre_contact_hit_variant_chance=0.0,
+    )
+    primitive_selector.set_primitive_weights(
+        stand_still=float(args.exploration_primitive_weight_stand_still),
+        same_direction=float(args.exploration_primitive_weight_same_direction),
+        y_aligned=float(args.exploration_primitive_weight_y_aligned),
+        policy_takeover=0.0,
+        target_position_directional=float(args.exploration_primitive_weight_target_position_directional),
+        pre_contact_hit_variant=0.0,
+    )
 
     applied_version, latest_state = actor_state.read()
     actor.load_state_dict(latest_state, strict=False)
@@ -837,19 +1037,23 @@ def collector_process(
     reset_rng = np.random.default_rng(args.seed)
     # Commit to one startup behavior: run reset FSM once before policy takeover.
     # This avoids an immediate policy->reset mode flip in the first episode.
-    run_reset_fsm(env, reset_rng)
+    reset_fsm_steps_total = run_reset_fsm(env, reset_rng)
     obs, _ = env.soft_reset()
     obs = _prime_paddle_history_stand_still_non_occluded(env)
     episode_trajectory = EpisodeTrajectory.empty()
     recent_episode_returns = deque(maxlen=args.recent_episode_window_size)
     episode_return_success_threshold = 0.0
     last_action_for_policy = torch.zeros((1, act_dim), dtype=torch.float32, device=device)
+    _, previous_puck_position_for_primitive, _ = _extract_primitive_state_tensors(env, device=device)
     transition_last_action_mode = _normalize_transition_last_action_mode(args.transition_last_action_mode)
     transition_hold_steps_remaining = 0
     transition_hold_reason = "none"
     transition_hold_events_total = 0
     transition_hold_reason_counts: dict[str, int] = {}
     last_executed_action = torch.zeros((1, act_dim), dtype=torch.float32, device=device)
+    interval_primitive_env_steps = 0
+    interval_primitive_horizontal_env_steps = 0
+    interval_target_position_directional_env_steps = 0
 
     def begin_transition_hold(
         reason: str,
@@ -861,11 +1065,14 @@ def collector_process(
         nonlocal transition_hold_reason
         nonlocal transition_hold_events_total
         nonlocal last_action_for_policy
+        nonlocal previous_puck_position_for_primitive
         hold_steps = max(int(hold_steps), 0)
         transition_hold_events_total += 1
         transition_hold_reason_counts[reason] = int(transition_hold_reason_counts.get(reason, 0)) + 1
         transition_hold_reason = str(reason)
         transition_hold_steps_remaining = max(int(transition_hold_steps_remaining), hold_steps)
+        _reset_primitive_rollout_state(primitive_selector)
+        _, previous_puck_position_for_primitive, _ = _extract_primitive_state_tensors(env, device=device)
         if args.use_last_action_in_policy_state:
             if transition_last_action_mode == "zero":
                 last_action_for_policy.zero_()
@@ -910,10 +1117,15 @@ def collector_process(
     episodes_gif_failed = 0
     episodes_camera_video_generated = 0
     episodes_camera_video_failed = 0
-    estop_episodes = 0
-    estop_steps = 0
-    estop_penalty_applied_this_episode = False
-    episode_had_estop = False
+    protective_stop_episodes = 0
+    protective_stop_steps = 0
+    controller_disconnect_episodes = 0
+    controller_disconnect_steps = 0
+    transition_hold_steps_total = 0
+    stop_penalty_applied_this_episode = False
+    episode_had_stop = False
+    episode_had_protective_stop = False
+    episode_had_controller_disconnect = False
     collector_start_time = time.time()
     episodic_returns: list[float] = []
     episodic_lengths: list[float] = []
@@ -955,6 +1167,11 @@ def collector_process(
             args.use_last_action_in_policy_state,
         )
         model_inference_ms = 0.0
+        primitive_step_stats = {
+            "primitive_applied_count": 0,
+            "primitive_horizontal_dominant_count": 0,
+            "target_position_directional_applied_count": 0,
+        }
         with torch.no_grad():
             inference_start_s = time.perf_counter() if args.enable_latency_profiling else 0.0
             action_tensor = deterministic_actor_action(actor, policy_obs)
@@ -964,6 +1181,25 @@ def collector_process(
             if args.exploration_noise > 0 and not disable_noise_for_transition:
                 action_tensor = action_tensor + torch.randn_like(action_tensor) * float(args.exploration_noise)
             action_tensor = torch.clamp(action_tensor, action_low, action_high)
+            if not transition_hold_active and not args.collector_policy_stand_still:
+                primitive_selector.chance = float(primitive_exploration_chance_for_step(args, total_steps))
+                current_paddle_pos, current_puck_pos, current_puck_vel = _extract_primitive_state_tensors(
+                    env,
+                    device=device,
+                )
+                if torch.all(current_puck_vel == 0):
+                    current_puck_vel = current_puck_pos - previous_puck_position_for_primitive
+                y_alignment_sign = torch.sign(current_puck_pos[:, 1] - current_paddle_pos[:, 1])
+                action_tensor, primitive_step_stats = primitive_selector.apply(
+                    action_tensor,
+                    action_low=action_low,
+                    action_high=action_high,
+                    y_alignment_sign=y_alignment_sign,
+                    current_paddle_position=current_paddle_pos,
+                    current_puck_position=current_puck_pos,
+                    current_puck_velocity=current_puck_vel,
+                    return_stats=True,
+                )
             if transition_hold_active:
                 action_tensor = torch.zeros_like(action_tensor)
             if args.collector_policy_stand_still:
@@ -999,17 +1235,23 @@ def collector_process(
         else:
             episode_camera_null_frames += 1
         base_done = bool(terminated or truncated)
-        estop_now = _detect_estop(env, step_info=step_info)
-        done = bool(base_done or estop_now)
-        if estop_now:
-            estop_steps += 1
-            episode_had_estop = True
+        stop_state = _classify_stop_event(env, step_info=step_info)
+        stop_now = bool(stop_state.active)
+        done = bool(base_done or stop_now)
+        if stop_state.protective_stop:
+            protective_stop_steps += 1
+            episode_had_protective_stop = True
+        if stop_state.controller_disconnected:
+            controller_disconnect_steps += 1
+            episode_had_controller_disconnect = True
+        if stop_now:
+            episode_had_stop = True
 
         # TODO: Replace this placeholder with real motion reward decomposition if needed.
         motion_reward = 0.0
-        if estop_now and not estop_penalty_applied_this_episode:
+        if stop_now and not stop_penalty_applied_this_episode:
             motion_reward += -5.0
-            estop_penalty_applied_this_episode = True
+            stop_penalty_applied_this_episode = True
 
         episode_rows.append(
             _build_split_episode_row(
@@ -1017,10 +1259,18 @@ def collector_process(
                 action_xy=env_action,
                 episode_id=next_episode_file_id,
                 episode_step_idx=len(episode_rows),
-                estop_active=estop_now,
+                protective_stop_active=stop_state.protective_stop,
+                controller_disconnected=stop_state.controller_disconnected,
             )
         )
         done_val = 1.0 if done else 0.0
+        interval_primitive_env_steps += int(primitive_step_stats["primitive_applied_count"])
+        interval_primitive_horizontal_env_steps += int(
+            primitive_step_stats["primitive_horizontal_dominant_count"]
+        )
+        interval_target_position_directional_env_steps += int(
+            primitive_step_stats["target_position_directional_applied_count"]
+        )
 
         episode_trajectory.append_step(
             obs=obs_tensor[0],
@@ -1032,7 +1282,11 @@ def collector_process(
             prev_action=prev_action[0],
         )
         total_steps += 1
+        if transition_hold_active:
+            transition_hold_steps_total += 1
         last_executed_action = action_tensor.detach().clone()
+        previous_puck_position_for_primitive = _extract_primitive_state_tensors(env, device=device)[1]
+        primitive_selector.reset(torch.tensor([done], dtype=torch.bool, device=device))
 
         if args.use_last_action_in_policy_state:
             if not (transition_hold_active and transition_last_action_mode == "keep"):
@@ -1051,8 +1305,10 @@ def collector_process(
         if done:
             episode_end_wall_time = time.time()
             total_episodes += 1
-            if episode_had_estop:
-                estop_episodes += 1
+            if episode_had_protective_stop:
+                protective_stop_episodes += 1
+            if episode_had_controller_disconnect:
+                controller_disconnect_episodes += 1
             episode_return = float(episode_trajectory.episode_return)
             episode_length = float(len(episode_trajectory.observations))
             recent_episode_returns.append(episode_return)
@@ -1074,12 +1330,12 @@ def collector_process(
                 if isinstance(step_info, dict) and step_info.get("episode_end_reason") is not None
                 else None
             )
-            if estop_now:
-                # Collector can end an episode on protective stop even if env did not set done metadata.
-                episode_end_type = "estop"
-                episode_end_reasons = ["collector_estop"]
-                episode_end_reason = "collector_estop"
-            episode_ended_estop = (episode_end_type == "estop")
+            if stop_now:
+                # Collector can end an episode on stop conditions even if env did not set done metadata.
+                episode_end_type = stop_state.episode_end_type
+                episode_end_reasons = [str(stop_state.episode_end_reason)]
+                episode_end_reason = str(stop_state.episode_end_reason)
+            episode_stop_artifact_label = stop_state.artifact_label if stop_now else None
             success_rates.append(1.0 if episode_success else 0.0)
             writer.add_scalar("charts/episodic_return", episode_return, total_steps)
             writer.add_scalar("charts/episodic_length", episode_length, total_steps)
@@ -1092,19 +1348,39 @@ def collector_process(
             partition = "success" if episode_return >= episode_return_success_threshold else "failure"
             replay.add_episode(partition, _episode_to_tensors(episode_trajectory))
             episode_trajectory.reset()
+            _reset_primitive_rollout_state(primitive_selector)
 
             # Do all slow I/O and actor sync BEFORE the reset FSM,
             # so the transition from reset to policy is immediate.
             n_episode_steps = len(episode_rows)
             n_camera_frames = len(episode_images)
             has_camera_images = n_camera_frames > 0
+            elapsed_s = max(0.0, time.time() - collector_start_time)
+            elapsed_min = elapsed_s / 60.0
+            elapsed_hr = elapsed_s / 3600.0
             print(
                 f"[collector] episode_id={next_episode_file_id} "
                 f"steps={n_episode_steps} camera_frames={n_camera_frames} "
                 f"null_frames={episode_camera_null_frames} "
                 f"has_images={'yes' if has_camera_images else 'NO'} "
                 f"end_type={episode_end_type} end_reason={episode_end_reason} "
+                f"stop_reason={stop_state.reason if stop_now else 'none'} "
+                f"protective_stop={int(stop_state.protective_stop)} "
+                f"controller_disconnected={int(stop_state.controller_disconnected)} "
                 f"end_reasons={episode_end_reasons}"
+            )
+            print(
+                "[collector_progress] "
+                f"episode_policy_steps={n_episode_steps} "
+                f"policy_steps={total_steps} "
+                f"reset_fsm_steps={reset_fsm_steps_total} "
+                f"transition_hold_steps={transition_hold_steps_total} "
+                f"estop_steps={protective_stop_steps} "
+                f"disconnect_steps={controller_disconnect_steps} "
+                f"episodes={total_episodes} "
+                f"elapsed_s={elapsed_s:.1f} "
+                f"elapsed_min={elapsed_min:.2f} "
+                f"elapsed_hr={elapsed_hr:.3f}"
             )
             if episode_camera_null_frames > 0 and n_camera_frames == 0:
                 sim = getattr(env, "simulator", None)
@@ -1148,8 +1424,8 @@ def collector_process(
             )
             episodes_saved += 1
             min_timesteps = int(args.episode_min_timesteps)
-            if episode_had_estop:
-                # Keep e-stop episodes with a lower floor so safety events are retained.
+            if episode_had_stop:
+                # Keep stop episodes with a lower floor so safety events are retained.
                 min_timesteps = int(args.estop_episode_min_timesteps)
             clean_result = clean_episode_hdf5(
                 artifact_path,
@@ -1165,14 +1441,14 @@ def collector_process(
                 else:
                     episodes_removed_invalid += 1
             else:
-                if episode_ended_estop:
-                    estop_copy_path = _copy_to_estop_dir(
+                if episode_stop_artifact_label is not None:
+                    stop_copy_path = _copy_to_stop_dir(
                         clean_result.path,
-                        _estop_output_dir(args.episode_artifact_dir),
+                        _stop_output_dir(args.episode_artifact_dir, episode_stop_artifact_label),
                     )
                     print(
                         f"[collector] episode_id={next_episode_file_id} "
-                        f"e-stop HDF5 copied to {estop_copy_path}"
+                        f"{episode_stop_artifact_label} HDF5 copied to {stop_copy_path}"
                     )
                 if args.enable_episode_gif:
                     try:
@@ -1187,14 +1463,14 @@ def collector_process(
                             require_puck=args.episode_gif_require_puck,
                         )
                         episodes_gif_generated += 1
-                        if episode_ended_estop:
-                            estop_gif_path = _copy_to_estop_dir(
+                        if episode_stop_artifact_label is not None:
+                            stop_gif_path = _copy_to_stop_dir(
                                 gif_path,
-                                _estop_output_dir(args.episode_gif_dir),
+                                _stop_output_dir(args.episode_gif_dir, episode_stop_artifact_label),
                             )
                             print(
                                 f"[collector] episode_id={next_episode_file_id} "
-                                f"e-stop GIF copied to {estop_gif_path}"
+                                f"{episode_stop_artifact_label} GIF copied to {stop_gif_path}"
                             )
                     except Exception:
                         episodes_gif_failed += 1
@@ -1220,14 +1496,18 @@ def collector_process(
                             codec=args.episode_camera_video_codec,
                         )
                         episodes_camera_video_generated += 1
-                        if episode_ended_estop:
-                            estop_camera_video_path = _copy_to_estop_dir(
+                        if episode_stop_artifact_label is not None:
+                            stop_camera_video_path = _copy_to_stop_dir(
                                 camera_video_path,
-                                _estop_output_dir(args.episode_camera_video_dir or args.episode_gif_dir),
+                                _stop_output_dir(
+                                    args.episode_camera_video_dir or args.episode_gif_dir,
+                                    episode_stop_artifact_label,
+                                ),
                             )
                             print(
                                 f"[collector] episode_id={next_episode_file_id} "
-                                f"e-stop camera video copied to {estop_camera_video_path}"
+                                f"{episode_stop_artifact_label} camera video copied to "
+                                f"{stop_camera_video_path}"
                             )
                         print(
                             f"[collector] episode_id={next_episode_file_id} "
@@ -1266,8 +1546,8 @@ def collector_process(
 
             min_reset_delay_s = 3.0
             periodic_hard_reset = (total_episodes % 3) == 0
-            estop_hard_reset = bool(episode_had_estop)
-            if not periodic_hard_reset and not estop_hard_reset:
+            stop_hard_reset = bool(episode_had_stop)
+            if not periodic_hard_reset and not stop_hard_reset:
                 processing_elapsed_s = time.time() - episode_end_wall_time
                 artificial_delay_s = max(0.0, min_reset_delay_s - processing_elapsed_s)
                 if artificial_delay_s > 0.0:
@@ -1280,17 +1560,23 @@ def collector_process(
                     f"min_reset_delay_s={min_reset_delay_s:.3f}"
                 )
                 # Reset FSM + soft_reset after minimum end-of-episode delay.
-                run_reset_fsm(env, reset_rng)
+                reset_fsm_steps_total += run_reset_fsm(env, reset_rng)
                 obs, _ = env.soft_reset()
                 obs = _prime_paddle_history_stand_still_non_occluded(env)
+                _, previous_puck_position_for_primitive, _ = _extract_primitive_state_tensors(
+                    env,
+                    device=device,
+                )
                 begin_transition_hold(
                     reason="reset_fsm_to_policy",
                     hold_steps=int(args.transition_hold_steps_post_reset),
                     request_sim_hold=True,
                 )
             else:
-                if estop_hard_reset:
+                if episode_had_protective_stop:
                     hard_reset_reason = "collector_estop_next_step"
+                elif episode_had_controller_disconnect:
+                    hard_reset_reason = "collector_controller_disconnected_next_step"
                 else:
                     hard_reset_reason = "periodic_every_3_episodes"
                 print(
@@ -1321,9 +1607,13 @@ def collector_process(
                     f"occ_counter={episode_start_reset_counters['occ']}"
                 )
                 if run_reset_policy:
-                    run_reset_fsm(env, reset_rng)
+                    reset_fsm_steps_total += run_reset_fsm(env, reset_rng)
                     obs, _ = env.soft_reset()
                     obs = _prime_paddle_history_stand_still_non_occluded(env)
+                    _, previous_puck_position_for_primitive, _ = _extract_primitive_state_tensors(
+                        env,
+                        device=device,
+                    )
                     begin_transition_hold(
                         reason="hard_reset_reset_fsm_to_policy",
                         hold_steps=int(args.transition_hold_steps_post_reset),
@@ -1332,13 +1622,19 @@ def collector_process(
                     episode_start_reset_counters["bottom"] = 0
                     episode_start_reset_counters["occ"] = 0
                 else:
+                    _, previous_puck_position_for_primitive, _ = _extract_primitive_state_tensors(
+                        env,
+                        device=device,
+                    )
                     begin_transition_hold(
                         reason="hard_reset_to_policy",
                         hold_steps=int(args.transition_hold_steps_post_reset),
                         request_sim_hold=True,
                     )
-            estop_penalty_applied_this_episode = False
-            episode_had_estop = False
+            stop_penalty_applied_this_episode = False
+            episode_had_stop = False
+            episode_had_protective_stop = False
+            episode_had_controller_disconnect = False
 
         now = time.time()
         if now - last_log_time >= float(args.collector_log_interval_sec):
@@ -1358,10 +1654,31 @@ def collector_process(
             stats["episodes_gif_failed"] = float(episodes_gif_failed)
             stats["episodes_camera_video_generated"] = float(episodes_camera_video_generated)
             stats["episodes_camera_video_failed"] = float(episodes_camera_video_failed)
-            stats["estop_steps"] = float(estop_steps)
-            stats["estop_episodes"] = float(estop_episodes)
+            stats["estop_steps"] = float(protective_stop_steps)
+            stats["estop_episodes"] = float(protective_stop_episodes)
+            stats["controller_disconnect_steps"] = float(controller_disconnect_steps)
+            stats["controller_disconnect_episodes"] = float(controller_disconnect_episodes)
+            stats["reset_fsm_steps"] = float(reset_fsm_steps_total)
+            stats["transition_hold_steps"] = float(transition_hold_steps_total)
+            stats["primitive_chance"] = float(primitive_selector.chance)
+            stats["interval_primitive_env_steps"] = float(interval_primitive_env_steps)
+            stats["interval_target_position_directional_env_steps"] = float(
+                interval_target_position_directional_env_steps
+            )
             writer.add_scalar("replay/success_buffer_size", float(snapshot["success"]["size"]), total_steps)
             writer.add_scalar("replay/failure_buffer_size", float(snapshot["failure"]["size"]), total_steps)
+            writer.add_scalar("exploration/primitive_chance", float(primitive_selector.chance), total_steps)
+            writer.add_scalar("exploration/primitive_env_steps", float(interval_primitive_env_steps), total_steps)
+            writer.add_scalar(
+                "exploration/primitive_horizontal_env_steps",
+                float(interval_primitive_horizontal_env_steps),
+                total_steps,
+            )
+            writer.add_scalar(
+                "exploration/target_position_directional_env_steps",
+                float(interval_target_position_directional_env_steps),
+                total_steps,
+            )
             writer.add_scalar(
                 "replay/episode_return_success_threshold",
                 float(episode_return_success_threshold),
@@ -1399,8 +1716,18 @@ def collector_process(
                 float(episodes_camera_video_failed),
                 total_steps,
             )
-            writer.add_scalar("safety/estop_steps", float(estop_steps), total_steps)
-            writer.add_scalar("safety/estop_episodes", float(estop_episodes), total_steps)
+            writer.add_scalar("safety/estop_steps", float(protective_stop_steps), total_steps)
+            writer.add_scalar("safety/estop_episodes", float(protective_stop_episodes), total_steps)
+            writer.add_scalar(
+                "safety/controller_disconnect_steps",
+                float(controller_disconnect_steps),
+                total_steps,
+            )
+            writer.add_scalar(
+                "safety/controller_disconnect_episodes",
+                float(controller_disconnect_episodes),
+                total_steps,
+            )
             writer.add_scalar(
                 "transitions/hold_active",
                 float(1.0 if transition_hold_steps_remaining > 0 else 0.0),
@@ -1446,7 +1773,14 @@ def collector_process(
                 f"saved={episodes_saved} short_removed={episodes_removed_short} "
                 f"invalid_removed={episodes_removed_invalid} gif_ok={episodes_gif_generated} gif_fail={episodes_gif_failed} "
                 f"cam_video_ok={episodes_camera_video_generated} cam_video_fail={episodes_camera_video_failed} "
-                f"estop_steps={estop_steps} estop_episodes={estop_episodes} "
+                f"estop_steps={protective_stop_steps} estop_episodes={protective_stop_episodes} "
+                f"disconnect_steps={controller_disconnect_steps} "
+                f"disconnect_episodes={controller_disconnect_episodes} "
+                f"reset_fsm_steps={reset_fsm_steps_total} "
+                f"transition_hold_steps={transition_hold_steps_total} "
+                f"primitive_chance={primitive_selector.chance:.4f} "
+                f"primitive_steps={interval_primitive_env_steps} "
+                f"target_position_steps={interval_target_position_directional_env_steps} "
                 f"transition_hold_active={int(transition_hold_steps_remaining > 0)} "
                 f"transition_hold_remaining={transition_hold_steps_remaining} "
                 f"transition_events_total={transition_hold_events_total} "
@@ -1454,6 +1788,9 @@ def collector_process(
             )
             if transition_hold_reason_counts:
                 print(f"[collector_transition] reason_counts={dict(sorted(transition_hold_reason_counts.items()))}")
+            interval_primitive_env_steps = 0
+            interval_primitive_horizontal_env_steps = 0
+            interval_target_position_directional_env_steps = 0
             last_log_time = now
 
     env.close()

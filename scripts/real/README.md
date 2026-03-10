@@ -1,5 +1,28 @@
-
 ### Trajectory Saving for Real Rollouts
+
+### Transition Hold Notes
+
+There are two different "slowdown/smoothing" mechanisms in the real stack:
+
+- Async TD3 transition holds
+  - configured in `scripts/smooth_policy/amp_history/amp_training/td3/async_td3_real.py`
+  - used for reset-to-policy handoff, actor sync, and genuine safety recovery
+- Rollout startup/cooldown logic in `rollout_reset_policy_real.py`
+  - `--startup-hold-steps` forces zero action for the first few normal-mode steps
+  - `reset_cooldown` prevents immediate re-entry into reset mode after leaving it
+
+These are not the same thing:
+
+- `--startup-hold-steps` is a simple zero-action buffer in normal mode
+- `reset_cooldown` is a reset-trigger debounce
+- simulator `safety_rearm` / `estop_clear` holds are command-path recovery smoothing in `airhockey/sims/air_hockey_real.py`
+
+If you want to tune the real simulator holds directly in YAML, the relevant keys live under `air_hockey.simulator_params`:
+
+- `transition_hold_steps_on_estop_enter`
+- `transition_hold_steps_on_estop_clear`
+- `transition_hold_steps_on_safety_rearm`
+- `transition_hold_debug`
 
 When running `rollout_new.py`:
 

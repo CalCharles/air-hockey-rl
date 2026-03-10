@@ -59,6 +59,9 @@ class AirHockeyBaseEnv(ABC, Env):
             'terminate_on_puck_hit_paddle': False,
             'terminate_on_puck_pass_paddle': False,
             'terminate_on_puck_pass_paddle_consecutive_steps': 5, # magic number
+            'puck_pass_paddle_enter_margin_m': 0.01,
+            'puck_pass_paddle_exit_margin_m': -0.01,
+            'puck_pass_paddle_score_threshold': 3,
             'dense_goal': True,
             'goal_selector': 'stationary',
             'max_timesteps': 1000,
@@ -132,7 +135,16 @@ class AirHockeyBaseEnv(ABC, Env):
         self.terminate_on_puck_pass_paddle_consecutive_steps = max(
             1, int(config.terminate_on_puck_pass_paddle_consecutive_steps)
         )
-        self._puck_pass_paddle_consecutive_count = 0
+        self.puck_pass_paddle_enter_margin_m = float(
+            config.puck_pass_paddle_enter_margin_m
+        )
+        self.puck_pass_paddle_exit_margin_m = float(
+            config.puck_pass_paddle_exit_margin_m
+        )
+        self.puck_pass_paddle_score_threshold = max(
+            1, int(config.puck_pass_paddle_score_threshold)
+        )
+        self._puck_pass_paddle_score = 0
         self.puck_low_motion_radius_m = 0.03
         self.puck_low_motion_window_clean = 10
         self.puck_low_motion_window_occluded = 20
@@ -375,7 +387,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.episode_length = 0
         self.episode_motion_data = {'velocity_mags': [], 'acceleration_mags': [], 'jerk_mags': []}
         self._last_done_reasons = {"terminated": [], "truncated": []}
-        self._puck_pass_paddle_consecutive_count = 0
+        self._puck_pass_paddle_score = 0
 
         if 'pucks' in state_info and len(state_info['pucks']) > 0:
             self.puck_initial_position = state_info['pucks'][0]['position']
@@ -408,7 +420,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.episode_length = 0
         self.episode_motion_data = {'velocity_mags': [], 'acceleration_mags': [], 'jerk_mags': []}
         self._last_done_reasons = {"terminated": [], "truncated": []}
-        self._puck_pass_paddle_consecutive_count = 0
+        self._puck_pass_paddle_score = 0
         return obs, {**{'success': False}, **vars(self.simulator_params)}
 
     def reset_from_state(self, state_vector, seed=None):
@@ -422,7 +434,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.simulator.instantiate_objects()
         state_info = self.simulator.get_current_state()
         self.current_state = state_info
-        self._puck_pass_paddle_consecutive_count = 0
+        self._puck_pass_paddle_score = 0
         obs = self.get_observation(state_info, obs_type=self.obs_type, puck_history=self.simulator.puck_history, paddle_history=self.simulator.paddle_history)
         return obs, {'success': False}
 
@@ -513,31 +525,36 @@ class AirHockeyBaseEnv(ABC, Env):
         within_anchor = np.all(pairwise_dist <= radius, axis=1)
         return bool(np.any(within_anchor)), active_window
 
-    def _puck_pass_paddle_threshold(self, state_info):
-        """Return consecutive-step threshold for puck_pass_paddle truncation."""
-        clean_threshold = 5
-        occluded_threshold = 10
-        lookback = 5
+    def _is_puck_observation_occluded(self, puck_state):
+        occluded_raw = puck_state.get("occluded", 0)
+        try:
+            return int(np.asarray(occluded_raw).reshape(-1)[0]) > 0
+        except (TypeError, ValueError, IndexError):
+            return False
 
-        if "pucks" not in state_info or len(state_info["pucks"]) == 0:
-            return clean_threshold
-        puck_history = state_info["pucks"][0].get("history", [])
-        if not isinstance(puck_history, list):
-            return clean_threshold
-        if len(puck_history) < lookback:
-            return clean_threshold
+    def _update_puck_pass_paddle_score(self, puck_state, paddle_state):
+        puck_x = float(puck_state["position"][0])
+        paddle_x = float(paddle_state["position"][0])
+        rel_x = puck_x - (paddle_x + self.paddle_radius)
+        is_occluded = self._is_puck_observation_occluded(puck_state)
 
-        recent_history = puck_history[-lookback:]
-        for entry in recent_history:
-            if entry is None or len(entry) < 3:
-                return clean_threshold
-            try:
-                is_occluded = int(np.asarray(entry[2]).reshape(-1)[0]) > 0
-            except (TypeError, ValueError, IndexError):
-                return clean_threshold
-            if is_occluded:
-                return occluded_threshold
-        return clean_threshold
+        if is_occluded:
+            if rel_x < self.puck_pass_paddle_exit_margin_m:
+                self._puck_pass_paddle_score = 0
+        elif rel_x > self.puck_pass_paddle_enter_margin_m:
+            self._puck_pass_paddle_score = min(
+                self.puck_pass_paddle_score_threshold,
+                self._puck_pass_paddle_score + 1,
+            )
+        elif rel_x < self.puck_pass_paddle_exit_margin_m:
+            self._puck_pass_paddle_score = 0
+        else:
+            self._puck_pass_paddle_score = max(
+                self._puck_pass_paddle_score - 1,
+                0,
+            )
+
+        return self._puck_pass_paddle_score >= self.puck_pass_paddle_score_threshold
 
     def has_finished(self, state_info, multiagent=False):
         truncated = False
@@ -599,24 +616,16 @@ class AirHockeyBaseEnv(ABC, Env):
             puck_paddle_distance = np.linalg.norm(np.array(state_info['pucks'][0]['position']) - np.array(state_info['paddles']['paddle_ego']['position']))
 
             if self.terminate_on_puck_pass_paddle:
-                puck_pass_paddle_threshold = self._puck_pass_paddle_threshold(state_info)
-                puck_passed_now = state_info['pucks'][0]['position'][0] > (
-                    state_info['paddles']['paddle_ego']['position'][0] + self.paddle_radius
+                puck_passed_now = self._update_puck_pass_paddle_score(
+                    state_info['pucks'][0],
+                    state_info['paddles']['paddle_ego'],
                 )
                 if puck_passed_now:
-                    self._puck_pass_paddle_consecutive_count += 1
-                else:
-                    self._puck_pass_paddle_consecutive_count = 0
-
-                if (
-                    self._puck_pass_paddle_consecutive_count
-                    >= puck_pass_paddle_threshold
-                ):
                     truncated = True
                     truncation_reasons.append("puck_passed_paddle")
                     # print("Puck pass paddle")
             else:
-                self._puck_pass_paddle_consecutive_count = 0
+                self._puck_pass_paddle_score = 0
 
             if self.terminate_on_puck_hit_paddle:
                 if puck_paddle_distance <= (self.paddle_radius + self.puck_radius + 0.02):
@@ -625,7 +634,7 @@ class AirHockeyBaseEnv(ABC, Env):
                     termination_reasons.append("puck_hit_paddle")
                     # print("Puck hit paddle")
         else:
-            self._puck_pass_paddle_consecutive_count = 0
+            self._puck_pass_paddle_score = 0
         
         puck_within_ego_goal = False
         puck_within_alt_goal = False
@@ -762,7 +771,7 @@ class AirHockeyBaseEnv(ABC, Env):
             self.episode_motion_data['acceleration_mags'].append(acc_mag)
             self.episode_motion_data['jerk_mags'].append(jerk_mag)
         success = self.success_in_ep 
-        
+
         info = {}
         info['success'] = success
         info['paddle_velocity_mag'] = float(vel_mag)
@@ -775,6 +784,7 @@ class AirHockeyBaseEnv(ABC, Env):
         info['transition_hold_steps_remaining'] = int(next_state.get('transition_hold_steps_remaining', 0))
         info['command_rearm_event'] = bool(next_state.get('command_rearm_event', False))
         info['controller_connected'] = bool(next_state.get('controller_connected', True))
+        info['control_program_running'] = bool(next_state.get('control_program_running', True))
         info['robot_step_ready'] = bool(next_state.get('robot_step_ready', True))
         info['robot_command_ready'] = bool(next_state.get('robot_command_ready', True))
         info['command_block_reason'] = str(next_state.get('command_block_reason', "none"))

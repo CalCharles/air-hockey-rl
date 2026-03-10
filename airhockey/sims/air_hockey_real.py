@@ -404,8 +404,8 @@ class AirHockeyReal:
         # magic numbers representing the boundary
         self.x_min_lim = -0.79
         self.x_max_lim = -0.375
-        self.y_min = -0.360 # temporary for right now
-        self.y_max = 0.360
+        self.y_min = -0.370 # temporary for right now
+        self.y_max = 0.350 
 
         self.bot_abs = config.bot_abs
         self.top_abs = config.top_abs
@@ -491,6 +491,8 @@ class AirHockeyReal:
         self._transition_hold_reason = "none"
         self._command_blocked_prev = False
         self._command_rearm_event = False
+        self._rearm_pending = False
+        self._rearm_pending_reason = "none"
         self._last_readiness_signature = None
 
 
@@ -528,6 +530,8 @@ class AirHockeyReal:
         """Return current robot command/step readiness for safety gating."""
         ctrl_connected = True
         rcv_connected = True
+        control_program_running = True
+        control_program_running_read_ok = True
 
         ctrl_is_connected = getattr(self.ctrl, "isConnected", None)
         if callable(ctrl_is_connected):
@@ -544,6 +548,16 @@ class AirHockeyReal:
                 rcv_connected = False
 
         controller_connected = bool(ctrl_connected and rcv_connected)
+        ctrl_is_program_running = getattr(self.ctrl, "isProgramRunning", None)
+        if controller_connected and callable(ctrl_is_program_running):
+            try:
+                control_program_running = bool(ctrl_is_program_running())
+            except Exception:
+                control_program_running = False
+                control_program_running_read_ok = False
+                controller_connected = False
+        elif not controller_connected:
+            control_program_running = False
 
         protective_stop = False
         protective_stop_read_ok = True
@@ -556,11 +570,20 @@ class AirHockeyReal:
         transition_hold_active = bool(
             self._transition_hold_steps_remaining > 0 or self._hold_current_target_after_estop
         )
-        step_ready = bool(controller_connected and protective_stop_read_ok and (not protective_stop))
+        step_ready = bool(
+            controller_connected
+            and control_program_running
+            and protective_stop_read_ok
+            and (not protective_stop)
+        )
         command_ready = bool(step_ready and (not transition_hold_active) and (not self.control_off))
 
         if not controller_connected:
             reason = "controller_disconnected"
+        elif not control_program_running_read_ok:
+            reason = "rtde_program_state_unavailable"
+        elif not control_program_running:
+            reason = "rtde_program_not_running"
         elif not protective_stop_read_ok:
             reason = "protective_stop_unavailable"
         elif protective_stop:
@@ -577,12 +600,16 @@ class AirHockeyReal:
             print(
                 "[control_gate] "
                 f"step_ready={step_ready} command_ready={command_ready} "
-                f"controller_connected={controller_connected} protective_stop={protective_stop} "
+                f"controller_connected={controller_connected} "
+                f"control_program_running={control_program_running} "
+                f"protective_stop={protective_stop} "
                 f"transition_hold_active={transition_hold_active} reason={reason}"
             )
         self._last_readiness_signature = signature
         return {
             "controller_connected": bool(controller_connected),
+            "control_program_running": bool(control_program_running),
+            "control_program_running_read_ok": bool(control_program_running_read_ok),
             "protective_stop": bool(protective_stop),
             "protective_stop_read_ok": bool(protective_stop_read_ok),
             "transition_hold_active": bool(transition_hold_active),
@@ -915,7 +942,7 @@ class AirHockeyReal:
 
     def _compute_state(self, pose, speed, i, puck_history):
         # This should be the only place where it is necessary to correct detection by the offsets
-        puck = np.array(puck_history[-1-i])[:2] # the i-th most recent position
+        puck = np.array(puck_history[i])[:2] # the i-th most recent position
         # puck[0] += self.x_offset
         self.puck = puck
         self.pose = pose
@@ -982,11 +1009,15 @@ class AirHockeyReal:
         if not self.control_off:
             self._wait_until_robot_step_ready(context="reset:start")
             try:
+                print("[control_gate] reset:start servoStop begin")
                 self.ctrl.servoStop(6)
+                print("[control_gate] reset:start servoStop done")
             except Exception as exc:
                 print(f"[control_gate] reset:start servoStop skipped: {exc}")
             try:
+                print("[control_gate] reset:start forceModeStop begin")
                 self.ctrl.forceModeStop()
+                print("[control_gate] reset:start forceModeStop done")
             except Exception as exc:
                 print(f"[control_gate] reset:start forceModeStop skipped: {exc}")
 
@@ -1075,7 +1106,9 @@ class AirHockeyReal:
                 _maybe_assign_random_reset_xy()
                 self._wait_until_robot_step_ready(context="reset:main_stage")
                 try:
+                    print("[control_gate] reset:main_stage moveL begin")
                     reset_success = self.ctrl.moveL(self.reset_pose[0], self.reset_pose[1], self.reset_pose[2], False)
+                    print(f"[control_gate] reset:main_stage moveL done success={reset_success}")
                 except Exception as exc:
                     reset_success = False
                     print(f"[control_gate] reset:main_stage moveL skipped: {exc}")
@@ -1107,7 +1140,9 @@ class AirHockeyReal:
         if not self.control_off: 
             self._wait_until_robot_step_ready(context="reset:final_stage")
             try:
+                print("[control_gate] reset:final_stage moveL begin")
                 reset_success = self.ctrl.moveL(self.reset_pose[0], self.reset_pose[1], self.reset_pose[2], False)
+                print(f"[control_gate] reset:final_stage moveL done success={reset_success}")
             except Exception as exc:
                 reset_success = False
                 print(f"[control_gate] reset:final_stage moveL skipped: {exc}")
@@ -1135,7 +1170,9 @@ class AirHockeyReal:
         self._transition_hold_reason = "none"
         self._command_blocked_prev = False
         self._command_rearm_event = False
-        state_info = self._compute_state(state_pose, state_speed, 0, self.puck_history) # TODO: not sure if i=0 is correct
+        self._rearm_pending = False
+        self._rearm_pending_reason = "none"
+        state_info = self._compute_state(state_pose, state_speed, -1, self.puck_history)
 
         print("To exit press 'q'") # TODO: make this actually usable
 
@@ -1172,7 +1209,9 @@ class AirHockeyReal:
         self._transition_hold_reason = "none"
         self._command_blocked_prev = False
         self._command_rearm_event = False
-        state_info = self._compute_state(state_pose, state_speed, 0, self.puck_history)
+        self._rearm_pending = False
+        self._rearm_pending_reason = "none"
+        state_info = self._compute_state(state_pose, state_speed, -1, self.puck_history)
         return state_info
 
     def instantiate_objects(self):
@@ -1203,6 +1242,7 @@ class AirHockeyReal:
 
         readiness = self.robot_command_readiness()
         controller_connected = bool(readiness["controller_connected"])
+        control_program_running = bool(readiness.get("control_program_running", True))
         protective_stop = bool(readiness["protective_stop"])
 
         # force control, need it to keep it on the table
@@ -1243,6 +1283,7 @@ class AirHockeyReal:
         transition_hold_active = bool(self._transition_hold_steps_remaining > 0)
         hold_target_to_current = bool(
             (not controller_connected)
+            or (not control_program_running)
             or protective_stop
             or self._hold_current_target_after_estop
             or transition_hold_active
@@ -1375,7 +1416,7 @@ class AirHockeyReal:
             render_publish_done_s = time.time()
             render_publish_ms = max(0.0, (render_publish_done_s - render_publish_started_s) * 1000.0)
         safety_check = False
-        if controller_connected:
+        if controller_connected and control_program_running:
             try:
                 safety_check = bool(self.ctrl.isPoseWithinSafetyLimits(srvpose[0]))
             except Exception:
@@ -1398,10 +1439,18 @@ class AirHockeyReal:
                 f"action={action_repr} "
                 f"safety_check={safety_check} protective_stop={protective_stop} "
                 f"controller_connected={controller_connected} "
+                f"control_program_running={control_program_running} "
                 f"transition_hold_active={transition_hold_active}"
             )
-        estop_or_disconnect = bool(protective_stop or (not controller_connected))
-        safety_for_log = bool(safety_check and controller_connected and (not protective_stop))
+        estop_or_disconnect = bool(
+            protective_stop or (not controller_connected) or (not control_program_running)
+        )
+        safety_for_log = bool(
+            safety_check
+            and controller_connected
+            and control_program_running
+            and (not protective_stop)
+        )
         values = get_state_array(
             time.time(),
             self.tidx,
@@ -1426,6 +1475,8 @@ class AirHockeyReal:
             command_block_reason = "observe_mode"
         elif not controller_connected:
             command_block_reason = "controller_disconnected"
+        elif not control_program_running:
+            command_block_reason = "rtde_program_not_running"
         elif protective_stop:
             command_block_reason = "protective_stop_active"
         elif transition_hold_active:
@@ -1435,6 +1486,7 @@ class AirHockeyReal:
         else:
             command_block_reason = "none"
         command_blocked_now = bool(command_block_reason != "none")
+        recovery_block_reason = command_block_reason
         if not command_blocked_now:
             try:
                 self.ctrl.servoL(srvpose[0], self.vel, self.acc, self.block_time, self.lookahead, self.gain)
@@ -1442,6 +1494,7 @@ class AirHockeyReal:
             except Exception as exc:
                 command_blocked_now = True
                 command_block_reason = f"servol_exception:{exc.__class__.__name__}"
+                recovery_block_reason = command_block_reason
                 command_sent_s = np.nan
                 controller_connected = False
             if self._should_debug_control():
@@ -1459,8 +1512,25 @@ class AirHockeyReal:
                     f"step={self.timestep} servoL_sent=False "
                     f"reason={command_block_reason}"
                 )
-        if (not command_blocked_now) and self._command_blocked_prev:
+        if command_blocked_now and (
+            recovery_block_reason in {
+                "controller_disconnected",
+                "rtde_program_not_running",
+                "protective_stop_active",
+                "safety_check_failed",
+            }
+            or str(recovery_block_reason).startswith("servol_exception:")
+        ):
+            # Only arm safety rearm after genuine command-path recovery events.
+            # Internal transition holds already provide their own smoothing and
+            # must not recursively qualify as a new recovery.
+            self._rearm_pending = True
+            self._rearm_pending_reason = str(recovery_block_reason)
+        if (not command_blocked_now) and self._rearm_pending:
             self._command_rearm_event = True
+            rearm_trigger_reason = self._rearm_pending_reason
+            self._rearm_pending = False
+            self._rearm_pending_reason = "none"
             self.begin_transition_hold(
                 self.transition_hold_steps_on_safety_rearm,
                 reason="safety_rearm",
@@ -1469,7 +1539,8 @@ class AirHockeyReal:
             if self.transition_hold_debug:
                 print(
                     "[control_transition] "
-                    f"safety_rearm hold_steps={self._transition_hold_steps_remaining}"
+                    f"safety_rearm hold_steps={self._transition_hold_steps_remaining} "
+                    f"triggered_by={rearm_trigger_reason}"
                 )
         self._command_blocked_prev = command_blocked_now
         # Use telemetry-derived paddle state directly for policy/logging state.
@@ -1493,7 +1564,12 @@ class AirHockeyReal:
             "sleep_before_step_s": float(sleep_time),
             "loop_runtime_before_sleep_s": float(runtime),
         }
-        if self._transition_hold_steps_remaining > 0 and (not protective_stop) and controller_connected:
+        if (
+            self._transition_hold_steps_remaining > 0
+            and (not protective_stop)
+            and controller_connected
+            and control_program_running
+        ):
             self._transition_hold_steps_remaining -= 1
             if self._transition_hold_steps_remaining <= 0:
                 self._transition_hold_steps_remaining = 0
@@ -1502,13 +1578,13 @@ class AirHockeyReal:
 
         puck_occluded = bool(np.asarray(puck).reshape(-1)[2] > 0.5) if np.asarray(puck).size >= 3 else False
         puck_used_fallback = bool(puck_occluded)
-        robot_step_ready = bool(controller_connected and (not protective_stop))
+        robot_step_ready = bool(controller_connected and control_program_running and (not protective_stop))
         robot_command_ready = bool(
             robot_step_ready and (not transition_hold_active) and (not self.control_mode in ["observe"]) and safety_check
         )
 
-        if protective_stop or (not controller_connected):
-            next_state = self._compute_state(state_pose_for_observation, state_speed_for_observation, self.timestep, self.puck_history)
+        if protective_stop or (not controller_connected) or (not control_program_running):
+            next_state = self._compute_state(state_pose_for_observation, state_speed_for_observation, -1, self.puck_history)
             next_state["timing"] = copy.deepcopy(self._last_step_timing)
             next_state["protective_stop"] = bool(protective_stop)
             next_state["paddle_actual_pose"] = np.array(state_pose, dtype=float)
@@ -1521,6 +1597,7 @@ class AirHockeyReal:
             next_state["transition_hold_steps_remaining"] = int(self._transition_hold_steps_remaining)
             next_state["command_rearm_event"] = bool(self._command_rearm_event)
             next_state["controller_connected"] = bool(controller_connected)
+            next_state["control_program_running"] = bool(control_program_running)
             next_state["robot_step_ready"] = bool(robot_step_ready)
             next_state["robot_command_ready"] = bool(robot_command_ready)
             next_state["command_block_reason"] = str(command_block_reason)
@@ -1531,7 +1608,8 @@ class AirHockeyReal:
                     "[control_debug] "
                     f"step={self.timestep} returned_state_xy=({paddle_position[0]:.4f},{paddle_position[1]:.4f}) "
                     f"state_source=actual_telemetry protective_stop={protective_stop} "
-                    f"controller_connected={controller_connected}"
+                    f"controller_connected={controller_connected} "
+                    f"control_program_running={control_program_running}"
                 )
             self._protective_stop_prev = bool(protective_stop)
             return next_state
@@ -1540,7 +1618,7 @@ class AirHockeyReal:
         # print("time", time.time() - start)
         self.timestep += 1
         self.runtime = time.time() - self.transition_start
-        next_state = self._compute_state(state_pose_for_observation, state_speed_for_observation, self.timestep, self.puck_history)
+        next_state = self._compute_state(state_pose_for_observation, state_speed_for_observation, -1, self.puck_history)
         next_state["timing"] = copy.deepcopy(self._last_step_timing)
         next_state["protective_stop"] = bool(protective_stop)
         next_state["paddle_actual_pose"] = np.array(state_pose, dtype=float)
@@ -1553,6 +1631,7 @@ class AirHockeyReal:
         next_state["transition_hold_steps_remaining"] = int(self._transition_hold_steps_remaining)
         next_state["command_rearm_event"] = bool(self._command_rearm_event)
         next_state["controller_connected"] = bool(controller_connected)
+        next_state["control_program_running"] = bool(control_program_running)
         next_state["robot_step_ready"] = bool(robot_step_ready)
         next_state["robot_command_ready"] = bool(robot_command_ready)
         next_state["command_block_reason"] = str(command_block_reason)

@@ -1,5 +1,7 @@
 """Primitive action generators for TD3 exploration takeover."""
 
+from __future__ import annotations
+
 import torch
 
 

@@ -34,9 +34,15 @@ air_hockey:
     control_mode: RL
     wait_for_space_to_start: true
     save_path: ./data/rollout/temp_saving/RL_test
-    debug_control: false
-    debug_control_every: 3
-    async_render_enabled: true
+    debug_control: true
+    debug_control_every: 5
+    # Optional simulator-side recovery/transition holds for standalone real rollouts.
+    # Async TD3 can override these from its own args file / CLI transition_hold_steps_* flags.
+    transition_hold_steps_on_estop_enter: 0
+    transition_hold_steps_on_estop_clear: 8
+    transition_hold_steps_on_safety_rearm: 3
+    transition_hold_debug: false
+    async_render_enabled: false
   stand_still_rew: 0.01
   task: puck_juggle_upper_half_reward
   terminate_on_enemy_goal: true
@@ -44,7 +50,7 @@ air_hockey:
   terminate_on_puck_hit_bottom: true
   terminate_on_puck_hit_paddle: false
   terminate_on_puck_pass_paddle: true
-  terminate_on_puck_stop: false
+  terminate_on_puck_stop: true
   truncate_rew: 0
   wall_bumping_rew: 0
 

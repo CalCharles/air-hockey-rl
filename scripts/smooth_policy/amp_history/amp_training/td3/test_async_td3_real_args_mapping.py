@@ -60,6 +60,14 @@ class AsyncTd3ArgsFileMappingTests(unittest.TestCase):
             episode_artifact_dir: "/tmp/episodes"
             smoke_test_seconds: 15
             episode_camera_video_dir: "/tmp/camera"
+            exploration_primitive_chance_start: 0.4
+            exploration_primitive_chance: 0.1
+            exploration_primitive_steps: 7
+            exploration_primitive_weight_stand_still: 0.25
+            exploration_primitive_weight_same_direction: 1.5
+            exploration_primitive_weight_y_aligned: 0.75
+            exploration_primitive_weight_target_position_directional: 2.0
+            exploration_target_position_steps: 6
             enable_latency_profiling: true
             latency_profile_output_dir: "/tmp/latency"
             latency_profile_hist_bins: 50
@@ -76,11 +84,20 @@ class AsyncTd3ArgsFileMappingTests(unittest.TestCase):
         self.assertEqual(mapped["episode_artifact_dir"], "/tmp/episodes")
         self.assertEqual(mapped["smoke_test_seconds"], 15)
         self.assertEqual(mapped["episode_camera_video_dir"], "/tmp/camera")
+        self.assertEqual(mapped["exploration_primitive_chance_start"], 0.4)
+        self.assertEqual(mapped["exploration_primitive_chance"], 0.1)
+        self.assertEqual(mapped["exploration_primitive_steps"], 7)
+        self.assertEqual(mapped["exploration_primitive_weight_stand_still"], 0.25)
+        self.assertEqual(mapped["exploration_primitive_weight_same_direction"], 1.5)
+        self.assertEqual(mapped["exploration_primitive_weight_y_aligned"], 0.75)
+        self.assertEqual(mapped["exploration_primitive_weight_target_position_directional"], 2.0)
+        self.assertEqual(mapped["exploration_target_position_steps"], 6)
         self.assertTrue(mapped["enable_latency_profiling"])
         self.assertEqual(mapped["latency_profile_output_dir"], "/tmp/latency")
         self.assertEqual(mapped["latency_profile_hist_bins"], 50)
         self.assertIn("collector_device", applied)
         self.assertIn("episode_camera_video_dir", applied)
+        self.assertIn("exploration_primitive_chance_start", applied)
         self.assertEqual(ignored, [])
 
     def test_legacy_alias_applies_when_canonical_absent(self) -> None:
@@ -119,6 +136,10 @@ class AsyncTd3ArgsFileMappingTests(unittest.TestCase):
             """
             totally_unknown_key: 42
             device: "cuda:0"
+            exploration_primitive_chance_pre_learning_starts: 0.5
+            exploration_primitive_weight_anneal_same_direction: 1.0
+            exploration_policy_takeover_enabled: true
+            exploration_pre_contact_hit_variant_chance: 0.25
             """
         )
 
@@ -127,6 +148,10 @@ class AsyncTd3ArgsFileMappingTests(unittest.TestCase):
         self.assertEqual(mapped["learner_device"], "cuda:0")
         self.assertIn("device", applied)
         self.assertIn("totally_unknown_key", ignored)
+        self.assertIn("exploration_primitive_chance_pre_learning_starts", ignored)
+        self.assertIn("exploration_primitive_weight_anneal_same_direction", ignored)
+        self.assertIn("exploration_policy_takeover_enabled", ignored)
+        self.assertIn("exploration_pre_contact_hit_variant_chance", ignored)
 
 
 if __name__ == "__main__":

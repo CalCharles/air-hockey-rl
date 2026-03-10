@@ -102,7 +102,7 @@ class ResetPolicyFSM:
             -strike_mag,
             -strike_mag,
         ]
-        self.puck_proximity_m = float(self.rng.uniform(0.45, 0.65)) # less delay than before
+        self.puck_proximity_m = float(self.rng.uniform(0.5, 0.6)) # less delay than before
 
         simulator = self.env.simulator
         self._lims = np.array(
@@ -141,6 +141,7 @@ class ResetPolicyFSM:
         self._pending_window_finalize = None
         self.path_idx = 0
         self.path_waypoints = np.zeros((1, 2), dtype=np.float32)
+        self.force_log_interval_steps = 25
         self._captured_second_hit_frame = False
         self.capture_second_hit_frame = bool(capture_second_hit_frame)
         self.async_second_hit_write = bool(async_second_hit_write)
@@ -185,6 +186,40 @@ class ResetPolicyFSM:
         """Puck position in TCP-aligned frame (center_offset removed)."""
         puck_obs = np.array(state_info["pucks"][0]["position"], dtype=np.float32)
         return np.array([puck_obs[0] - self._center_offset, puck_obs[1]], dtype=np.float32)
+
+    def _read_robot_wrench(self) -> np.ndarray:
+        """Read the current TCP wrench from the real robot receiver when available."""
+        simulator = self.env.simulator
+        rcv = getattr(simulator, "rcv", None)
+        if rcv is None:
+            return None
+        try:
+            wrench = np.asarray(rcv.getActualTCPForce(), dtype=np.float32).reshape(-1)
+        except Exception:
+            return None
+        if wrench.size < 6:
+            return None
+        return wrench[:6].astype(np.float32, copy=False)
+
+    def _maybe_log_robot_normal_force(self) -> None:
+        interval = int(self.force_log_interval_steps)
+        if interval <= 0 or (self.total_steps % interval) != 0:
+            return
+        wrench = self._read_robot_wrench()
+        if wrench is None:
+            print(
+                f"[reset_fsm_force] step={self.total_steps} phase={self.phase} "
+                "robot_wrench_unavailable=1"
+            )
+            return
+        raw_fz = float(wrench[2])
+        normal_force_n = abs(raw_fz)
+        print(
+            f"[reset_fsm_force] step={self.total_steps} phase={self.phase} "
+            f"normal_force_n={normal_force_n:.3f} raw_fz={raw_fz:+.3f} "
+            f"wrench=({float(wrench[0]):+.3f},{float(wrench[1]):+.3f},{float(wrench[2]):+.3f},"
+            f"{float(wrench[3]):+.3f},{float(wrench[4]):+.3f},{float(wrench[5]):+.3f})"
+        )
 
     def _meters_delta_to_action(self, delta_xy_m: np.ndarray) -> np.ndarray:
         move_lims = np.maximum(self._move_lims, 1e-6)
@@ -663,6 +698,7 @@ class ResetPolicyFSM:
             return np.zeros(2, dtype=np.float32)
 
         self.total_steps += 1
+        self._maybe_log_robot_normal_force()
         paddle_tcp = self._get_tcp_position(state_info)
 
         if self._pending_window_finalize is not None:
@@ -1157,13 +1193,29 @@ if __name__ == "__main__":
             )
             if args.verbose and step_counter % 60 == 0:
                 puck_diag = state["pucks"][0]
+                paddle_diag = state["paddles"]["paddle_ego"]
                 puck_x_diag = float(puck_diag["position"][0])
+                paddle_x_diag = float(paddle_diag["position"][0])
                 puck_occ_diag = int(np.asarray(puck_diag.get("occluded", 0)).reshape(-1)[0])
+                center_offset_diag = float(
+                    getattr(
+                        getattr(eval_env, "simulator", None),
+                        "center_offset_constant",
+                        getattr(eval_env, "center_offset_constant", 0.0),
+                    )
+                )
+                bottom_threshold_diag = float(eval_env.table_x_bot) - float(args.bottom_margin)
+                puck_tcp_x_diag = puck_x_diag - center_offset_diag
                 print(
                     f"[diag] step={step_counter} mode={mode} "
-                    f"puck_x={puck_x_diag:+.4f} puck_occ={puck_occ_diag} "
+                    f"[env/state frame] puck_x={puck_x_diag:+.4f} paddle_x={paddle_x_diag:+.4f} "
+                    f"bottom_threshold_x={bottom_threshold_diag:+.4f} "
+                    f"table_x_top={float(eval_env.table_x_top):+.4f} table_x_bot={float(eval_env.table_x_bot):+.4f} "
+                    f"[tcp-aligned puck frame] puck_x={puck_tcp_x_diag:+.4f} "
+                    f"(env_puck_x - center_offset={center_offset_diag:+.4f}) "
+                    f"puck_occ={puck_occ_diag} "
                     f"bottom_count={fail_counters['bottom']} occ_count={fail_counters['occ']} "
-                    f"threshold={float(eval_env.table_x_bot) - float(args.bottom_margin):.4f}"
+                    f"trigger_now={int(puck_x_diag >= bottom_threshold_diag)}"
                 )
             step_counter += 1
             if reset_cooldown > 0:

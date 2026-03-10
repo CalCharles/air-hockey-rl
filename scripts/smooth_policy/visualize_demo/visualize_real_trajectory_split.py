@@ -53,6 +53,7 @@ OPTIONAL_SPLIT_DATASETS = (
     ("paddle_actual", 6),
     ("paddle_cmd", 12),
     ("puck_meta", 2),
+    ("stop_flags", 3),
 )
 OPTIONAL_ALLOWED_WIDTHS = {
     "timing": (8, 9),

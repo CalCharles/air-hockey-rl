@@ -1,5 +1,7 @@
 """Selection/state manager for primitive TD3 exploration takeover."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 import torch
