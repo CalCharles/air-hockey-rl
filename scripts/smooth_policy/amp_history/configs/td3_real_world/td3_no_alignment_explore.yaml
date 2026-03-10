@@ -48,14 +48,31 @@ exploration_primitive_chance_start: 0.05 # at the start of annealing
 exploration_primitive_chance_anneal_steps: 200000 # around 2000-5000 episodes
 exploration_primitive_steps: 5
 exploration_primitive_weight_stand_still: 0.2
-exploration_primitive_weight_same_direction: 1.0
+exploration_primitive_weight_same_direction: 0.35
 exploration_primitive_weight_y_aligned: 1.0
-exploration_primitive_weight_target_position_directional: 1.0
+exploration_primitive_weight_target_position_directional: 0.35
 
 # exploration specific knobs
-exploration_direction_y_component_weight: 2
-exploration_target_position_min_distance: 0.2
-exploration_target_position_max_distance: 0.5
+# Angles are in simulator displacement coordinates:
+#   0 deg = +x (right), 90 deg = +y (up), 180/-180 deg = -x (left), -90 deg = -y (down)
+# The sampler is uniform over [min_angle_deg, max_angle_deg].
+# To cover the full circle, use [-180, 180], [0, 360], or any span >= 360 deg.
+# If max_angle_deg < min_angle_deg, the range wraps around across the branch cut.
+# Magnitudes are simulator-space per-step displacements before conversion into normalized action space.
+# For `y_aligned`, the sampled angle band is mirrored to the puck-relative y sign automatically.
+# Legacy action-space skew knob kept for compatibility; simulator-space ranges below drive real primitive sampling.
+exploration_same_direction_min_angle_deg: -180.0
+exploration_same_direction_max_angle_deg: 180.0
+exploration_same_direction_min_magnitude: 0.075
+exploration_same_direction_max_magnitude: 0.200
+exploration_y_aligned_min_angle_deg: 45.0
+exploration_y_aligned_max_angle_deg: 135.0
+exploration_y_aligned_min_magnitude: 0.075
+exploration_y_aligned_max_magnitude: 0.200
+exploration_target_position_directional_min_angle_deg: -180.0
+exploration_target_position_directional_max_angle_deg: 180.0
+exploration_target_position_directional_min_magnitude: 0.075
+exploration_target_position_directional_max_magnitude: 0.250
 exploration_target_position_delta_x: 0.26
 exploration_target_position_delta_y: 0.12
 exploration_target_position_steps: 5

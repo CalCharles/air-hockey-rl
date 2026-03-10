@@ -146,6 +146,62 @@ class SharedReplayPartition:
     def __len__(self) -> int:
         return int(self.size.value)
 
+    def state_dict(self) -> Dict[str, torch.Tensor | int]:
+        with self.lock:
+            size = int(self.size.value)
+            position = int(self.position.value)
+            return {
+                "observations": self.observations[:size].clone(),
+                "next_observations": self.next_observations[:size].clone(),
+                "actions": self.actions[:size].clone(),
+                "prev_actions": self.prev_actions[:size].clone(),
+                "task_rewards": self.task_rewards[:size].clone(),
+                "motion_rewards": self.motion_rewards[:size].clone(),
+                "dones": self.dones[:size].clone(),
+                "position": int(position),
+                "size": int(size),
+                "capacity": int(self.capacity),
+            }
+
+    def load_state_dict(self, state: Dict[str, torch.Tensor | int]) -> None:
+        observations = _as_cpu_float_tensor(state["observations"])
+        next_observations = _as_cpu_float_tensor(state["next_observations"])
+        actions = _as_cpu_float_tensor(state["actions"])
+        prev_actions = _as_cpu_float_tensor(state["prev_actions"])
+        task_rewards = _as_cpu_float_tensor(state["task_rewards"]).reshape(-1)
+        motion_rewards = _as_cpu_float_tensor(state["motion_rewards"]).reshape(-1)
+        dones = _as_cpu_float_tensor(state["dones"]).reshape(-1)
+        size = int(state["size"])
+        position = int(state["position"])
+        expected_capacity = int(state.get("capacity", self.capacity))
+        if expected_capacity != int(self.capacity):
+            raise ValueError(
+                f"Replay capacity mismatch: checkpoint={expected_capacity} current={self.capacity}"
+            )
+        if size < 0 or size > self.capacity:
+            raise ValueError(f"Invalid replay size in checkpoint: {size}")
+        if position < 0 or position >= self.capacity:
+            raise ValueError(f"Invalid replay position in checkpoint: {position}")
+
+        with self.lock:
+            self.observations.zero_()
+            self.next_observations.zero_()
+            self.actions.zero_()
+            self.prev_actions.zero_()
+            self.task_rewards.zero_()
+            self.motion_rewards.zero_()
+            self.dones.zero_()
+            if size > 0:
+                self.observations[:size] = observations[:size]
+                self.next_observations[:size] = next_observations[:size]
+                self.actions[:size] = actions[:size]
+                self.prev_actions[:size] = prev_actions[:size]
+                self.task_rewards[:size] = task_rewards[:size]
+                self.motion_rewards[:size] = motion_rewards[:size]
+                self.dones[:size] = dones[:size]
+            self.size.value = int(size)
+            self.position.value = int(position)
+
 
 class SharedTD3Replay:
     """Shared replay with success/failure partitions accessed by multiple processes."""
@@ -194,3 +250,15 @@ class SharedTD3Replay:
             }
             for partition_name, partition in self.partitions.items()
         }
+
+    def state_dict(self) -> Dict[str, Dict[str, torch.Tensor | int]]:
+        return {
+            partition_name: partition.state_dict()
+            for partition_name, partition in self.partitions.items()
+        }
+
+    def load_state_dict(self, state: Dict[str, Dict[str, torch.Tensor | int]]) -> None:
+        for partition_name in PARTITIONS:
+            if partition_name not in state:
+                raise KeyError(f"Missing replay partition '{partition_name}' in checkpoint.")
+            self.partitions[partition_name].load_state_dict(state[partition_name])

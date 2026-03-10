@@ -1,15 +1,11 @@
-"""Asynchronous TD3 training for real-world adaptation.
+"""Synchronous TD3 training for real-world adaptation.
 
-This script starts:
-1) a collector process that continuously rolls out in the environment and writes
-   episode transitions to a shared replay service with success/failure partitions,
-2) a learner process that continuously samples from that same replay service and
-   performs TD3 updates at a configurable update rate.
+This script runs collection and learning in a single process. One learner
+iteration is executed at each policy-episode boundary when learning is active.
 """
 
 from __future__ import annotations
 
-import multiprocessing as mp
 import os
 import re
 import json
@@ -18,11 +14,11 @@ import inspect
 import time
 import traceback
 from collections import deque
-from dataclasses import dataclass, fields
+from dataclasses import asdict, dataclass, fields
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Dict, Tuple
+from typing import Dict, Sequence, Tuple
 
 import gymnasium as gym
 import numpy as np
@@ -48,8 +44,18 @@ from scripts.smooth_policy.amp_history.amp_training.td3.td3_episode_collection i
 from scripts.smooth_policy.amp_history.amp_training.td3.td3_replay_sampling import (
     critic_success_failure_counts,
 )
+from scripts.smooth_policy.amp_history.amp_training.td3.td3_checkpointing import (
+    get_rng_states,
+    set_rng_states,
+)
+from scripts.smooth_policy.visualize_demo.visualize_real_trajectory_split import (
+    load_split_optional_data,
+    load_split_trajectory_data,
+)
 from scripts.real.rollout_reset_policy_real import ResetPolicyFSM
 from scripts.smooth_policy.deterministic_agent import DeterministicAgent
+
+ROLLING_PERF_WINDOW_EPISODES = 50
 
 
 def _prepare_air_hockey_config(config: dict, seed: int = 0, return_goal_obs: bool = False) -> dict:
@@ -176,31 +182,153 @@ def _reset_primitive_rollout_state(
         primitive_selector.reset(done_mask)
 
 
-class SharedActorState:
-    """Versioned shared actor parameter storage for collector sync at episode boundaries."""
+def _normalize_replay_source_priority(value: str) -> str:
+    normalized = str(value).strip().lower()
+    if normalized in {"warmstart_only", "checkpoint_only", "checkpoint_then_append"}:
+        return normalized
+    return "warmstart_only"
 
-    def __init__(self, initial_state_dict: Dict[str, torch.Tensor]) -> None:
-        self.lock = mp.Lock()
-        self.version = mp.Value("i", 0, lock=False)
-        self.tensors: Dict[str, torch.Tensor] = {}
-        for key, value in initial_state_dict.items():
-            self.tensors[key] = value.detach().to("cpu").clone().share_memory_()
 
-    def publish(self, state_dict: Dict[str, torch.Tensor]) -> int:
-        with self.lock:
-            for key, value in state_dict.items():
-                if key not in self.tensors:
-                    self.tensors[key] = value.detach().to("cpu").clone().share_memory_()
-                else:
-                    self.tensors[key].copy_(value.detach().to("cpu"))
-            self.version.value += 1
-            return int(self.version.value)
+def _atomic_torch_save(payload: object, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    torch.save(payload, tmp_path)
+    os.replace(tmp_path, path)
 
-    def read(self) -> Tuple[int, Dict[str, torch.Tensor]]:
-        with self.lock:
-            version = int(self.version.value)
-            state_dict = {key: tensor.clone() for key, tensor in self.tensors.items()}
-        return version, state_dict
+
+def _checkpoint_root_from_tb(tb_log_dir: str, override_root: str | None) -> Path:
+    if override_root is not None and str(override_root).strip():
+        return Path(override_root).expanduser().resolve()
+    # learner_tb and collector_tb are children of the same run root.
+    return Path(tb_log_dir).expanduser().resolve().parent
+
+
+def _coerce_float_list(values: object, *, max_items: int | None = None) -> list[float]:
+    if not isinstance(values, (list, tuple)):
+        return []
+    coerced = [float(item) for item in values]
+    if max_items is not None and max_items > 0 and len(coerced) > max_items:
+        coerced = coerced[-int(max_items) :]
+    return coerced
+
+
+def _rolling_mean(values: Sequence[float]) -> float:
+    if len(values) <= 0:
+        return 0.0
+    return float(np.mean(np.asarray(values, dtype=np.float32)))
+
+
+def _build_async_training_state(
+    *,
+    args: Args,
+    replay: SharedTD3Replay,
+    actor,
+    actor_target,
+    qf1,
+    qf2,
+    qf1_target,
+    qf2_target,
+    q_optimizer,
+    actor_optimizer,
+    total_updates: int,
+    total_actor_updates: int,
+    latest_train_metrics: Dict[str, float],
+    run_elapsed_total_s: float,
+    rolling50_task_reward_values: Sequence[float],
+    rolling50_motion_reward_values: Sequence[float],
+    rolling50_episode_length_values: Sequence[float],
+    rolling50_estop_episode_flags: Sequence[float],
+) -> Dict[str, object]:
+    replay_state = replay.state_dict()
+    return {
+        "checkpoint_version": 2,
+        "global_step": int(total_updates),
+        "iteration": int(total_updates),
+        "actor": actor.state_dict(),
+        "actor_target": actor_target.state_dict(),
+        "qf1": qf1.state_dict(),
+        "qf2": qf2.state_dict(),
+        "qf1_target": qf1_target.state_dict(),
+        "qf2_target": qf2_target.state_dict(),
+        "q_optimizer": q_optimizer.state_dict(),
+        "actor_optimizer": actor_optimizer.state_dict(),
+        "success_replay_buffer": replay_state["success"],
+        "failure_replay_buffer": replay_state["failure"],
+        "train_metrics": dict(latest_train_metrics),
+        "learner_q_updates": int(total_updates),
+        "learner_actor_updates": int(total_actor_updates),
+        "run_elapsed_total_s": float(run_elapsed_total_s),
+        "rolling_window_size": int(ROLLING_PERF_WINDOW_EPISODES),
+        "rolling50_task_reward_values": list(rolling50_task_reward_values),
+        "rolling50_motion_reward_values": list(rolling50_motion_reward_values),
+        "rolling50_episode_length_values": list(rolling50_episode_length_values),
+        "rolling50_estop_episode_flags": list(rolling50_estop_episode_flags),
+        "rng_states": get_rng_states(),
+        "args": asdict(args),
+    }
+
+
+def _save_async_checkpoint(
+    *,
+    checkpoint_root: Path,
+    checkpoint_tag: str,
+    args: Args,
+    replay: SharedTD3Replay,
+    actor,
+    actor_target,
+    qf1,
+    qf2,
+    qf1_target,
+    qf2_target,
+    q_optimizer,
+    actor_optimizer,
+    total_updates: int,
+    total_actor_updates: int,
+    latest_train_metrics: Dict[str, float],
+    stats: Dict[str, object],
+) -> Path:
+    checkpoint_dir = checkpoint_root / f"checkpoint_{checkpoint_tag}"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    torch.save(actor.state_dict(), checkpoint_dir / "model.pth")
+    torch.save(actor_target.state_dict(), checkpoint_dir / "actor_target.pth")
+    torch.save(qf1.state_dict(), checkpoint_dir / "qf1.pth")
+    torch.save(qf2.state_dict(), checkpoint_dir / "qf2.pth")
+    torch.save(qf1_target.state_dict(), checkpoint_dir / "qf1_target.pth")
+    torch.save(qf2_target.state_dict(), checkpoint_dir / "qf2_target.pth")
+    training_state = _build_async_training_state(
+        args=args,
+        replay=replay,
+        actor=actor,
+        actor_target=actor_target,
+        qf1=qf1,
+        qf2=qf2,
+        qf1_target=qf1_target,
+        qf2_target=qf2_target,
+        q_optimizer=q_optimizer,
+        actor_optimizer=actor_optimizer,
+        total_updates=total_updates,
+        total_actor_updates=total_actor_updates,
+        latest_train_metrics=latest_train_metrics,
+        run_elapsed_total_s=float(stats.get("run_elapsed_total_s", 0.0)),
+        rolling50_task_reward_values=_coerce_float_list(
+            stats.get("rolling50_task_reward_values", []),
+            max_items=ROLLING_PERF_WINDOW_EPISODES,
+        ),
+        rolling50_motion_reward_values=_coerce_float_list(
+            stats.get("rolling50_motion_reward_values", []),
+            max_items=ROLLING_PERF_WINDOW_EPISODES,
+        ),
+        rolling50_episode_length_values=_coerce_float_list(
+            stats.get("rolling50_episode_length_values", []),
+            max_items=ROLLING_PERF_WINDOW_EPISODES,
+        ),
+        rolling50_estop_episode_flags=_coerce_float_list(
+            stats.get("rolling50_estop_episode_flags", []),
+            max_items=ROLLING_PERF_WINDOW_EPISODES,
+        ),
+    )
+    _atomic_torch_save(training_state, checkpoint_dir / "training_state.pth")
+    return checkpoint_dir
 
 
 @dataclass
@@ -217,6 +345,8 @@ class Args:
     failure_buffer_size: int = int(8e5)
     recent_episode_window_size: int = 500
     success_top_fraction: float = 0.2
+    warm_start_hdf5_dirs: Tuple[str, ...] = ()
+    warm_start_hdf5_recursive: bool = True
 
     # TD3 core
     task_gamma: float = 0.975
@@ -257,7 +387,21 @@ class Args:
     exploration_primitive_weight_same_direction: float = 1.0
     exploration_primitive_weight_y_aligned: float = 1.0
     exploration_primitive_weight_target_position_directional: float = 1.0
+    # Legacy action-space skew knob kept for compatibility with older configs.
     exploration_direction_y_component_weight: float = 2.0
+    # Simulator-space per-step displacement ranges for directional primitives.
+    exploration_same_direction_min_angle_deg: float = -180.0
+    exploration_same_direction_max_angle_deg: float = 180.0
+    exploration_same_direction_min_magnitude: float = 0.012
+    exploration_same_direction_max_magnitude: float = 0.26
+    exploration_y_aligned_min_angle_deg: float = 45.0
+    exploration_y_aligned_max_angle_deg: float = 135.0
+    exploration_y_aligned_min_magnitude: float = 0.012
+    exploration_y_aligned_max_magnitude: float = 0.12
+    exploration_target_position_directional_min_angle_deg: float = -180.0
+    exploration_target_position_directional_max_angle_deg: float = 180.0
+    exploration_target_position_directional_min_magnitude: float = 0.2
+    exploration_target_position_directional_max_magnitude: float = 0.5
     exploration_target_position_min_distance: float = 0.2
     exploration_target_position_max_distance: float = 0.5
     exploration_target_position_delta_x: float = 0.26
@@ -276,6 +420,7 @@ class Args:
     collector_log_interval_sec: float = 5.0
     learner_log_interval_sec: float = 5.0
     episode_artifact_dir: str = "runs/async_td3/episode_hdf5"
+    reset_artifact_dir: str = "runs/async_td3/reset_hdf5"
     episode_gif_dir: str = "runs/async_td3/episode_gifs"
     episode_camera_video_dir: str | None = None
     episode_min_timesteps: int = 30
@@ -294,6 +439,11 @@ class Args:
     episode_camera_video_codec: str = "mp4v"
     log_parent_dir: str | None = None
     run_name: str = "async_td3_real"
+    enable_periodic_checkpointing: bool = True
+    checkpoint_every_successful_online_episodes: int = 10
+    checkpoint_root_dir: str | None = None
+    load_replay_from_checkpoint: bool = True
+    replay_source_priority: str = "warmstart_only"
 
     # Optional smoke-test mode (0 disables)
     smoke_test_seconds: float = 0.0
@@ -346,7 +496,33 @@ def _build_args_file_defaults(
     return mapped_defaults, sorted(applied_source_keys), sorted(ignored_source_keys)
 
 
-def run_reset_fsm(env: AirHockeyEnv, rng: np.random.Generator) -> int:
+@dataclass(frozen=True)
+class PendingResetArtifact:
+    episode_id: int
+    partition: str
+    done_reason: str
+    step_count: int
+    rows: list[Dict[str, np.ndarray]]
+    images: list[np.ndarray]
+    camera_null_frames: int
+
+
+@dataclass(frozen=True)
+class ResetFSMRunResult:
+    total_steps: int
+    done_reason: str
+    artifact: PendingResetArtifact | None = None
+
+
+def _reset_artifact_partition(done_reason: str) -> str:
+    return "success" if str(done_reason) == "success" else "failure"
+
+
+def run_reset_fsm(
+    env: AirHockeyEnv,
+    rng: np.random.Generator,
+    artifact_episode_id: int,
+) -> ResetFSMRunResult:
     """Run the ResetPolicyFSM to get the puck back in play.
 
     Executes FSM actions through env.step() in a tight loop.
@@ -367,19 +543,56 @@ def run_reset_fsm(env: AirHockeyEnv, rng: np.random.Generator) -> int:
         print("[reset_fsm] stop cleared; resuming reset FSM.")
 
     fsm = ResetPolicyFSM(env, rng)
+    reset_rows: list[Dict[str, np.ndarray]] = []
+    reset_images: list[np.ndarray] = []
+    reset_camera_null_frames = 0
     print(f"[reset_fsm] starting (side={fsm.start_side})")
-    while not fsm.done:
-        state = env.simulator.get_current_state()
-        action = fsm.step(state)
-        env.step(action)
+    try:
+        while not fsm.done:
+            state = env.simulator.get_current_state()
+            action = fsm.step(state)
+            _, _, _, _, step_info = env.step(action)
+            stop_state = _classify_stop_event(env, step_info=step_info)
+            camera_frame = _latest_camera_frame(env)
+            if camera_frame is not None:
+                reset_images.append(camera_frame)
+            else:
+                reset_camera_null_frames += 1
+            reset_rows.append(
+                _build_split_episode_row(
+                    env=env,
+                    action_xy=action,
+                    episode_id=artifact_episode_id,
+                    episode_step_idx=len(reset_rows),
+                    protective_stop_active=stop_state.protective_stop,
+                    controller_disconnected=stop_state.controller_disconnected,
+                )
+            )
+    finally:
+        fsm.close()
     done_reason = getattr(fsm, "done_reason", "unknown")
+    artifact = None
+    if reset_rows:
+        artifact = PendingResetArtifact(
+            episode_id=int(artifact_episode_id),
+            partition=_reset_artifact_partition(done_reason),
+            done_reason=str(done_reason),
+            step_count=len(reset_rows),
+            rows=reset_rows,
+            images=reset_images,
+            camera_null_frames=int(reset_camera_null_frames),
+        )
     print(
         f"[reset_fsm] done after {fsm.total_steps} steps "
         f"(final phase={fsm.phase}, reason={done_reason})"
     )
     if done_reason == "hard_reset_required":
         _hard_reset_with_pause(env, reason="reset_fsm_stage2_max_retries", pause_s=0.0)
-    return int(fsm.total_steps)
+    return ResetFSMRunResult(
+        total_steps=int(fsm.total_steps),
+        done_reason=str(done_reason),
+        artifact=artifact,
+    )
 
 
 def _episode_to_tensors(episode_trajectory: EpisodeTrajectory) -> Dict[str, torch.Tensor]:
@@ -392,6 +605,470 @@ def _episode_to_tensors(episode_trajectory: EpisodeTrajectory) -> Dict[str, torc
         "motion_rewards": torch.stack(episode_trajectory.motion_rewards, dim=0).view(-1),
         "dones": torch.stack(episode_trajectory.dones, dim=0).view(-1),
     }
+
+
+_TRAIN_VALS_CUR_TIME = 0
+_TRAIN_VALS_STEP_INDEX = 2
+_TRAIN_VALS_POSE = slice(5, 11)
+_TRAIN_VALS_SPEED = slice(11, 17)
+_TRAIN_VALS_FORCE = slice(17, 23)
+_TRAIN_VALS_ACC = slice(23, 26)
+_TRAIN_VALS_DESIRED_POSE = slice(26, 32)
+_TRAIN_VALS_PUCK = slice(32, 35)
+
+
+def _compute_episode_return_success_threshold(
+    recent_episode_returns: deque[float],
+    success_top_fraction: float,
+) -> float:
+    if len(recent_episode_returns) <= 0:
+        return 0.0
+    quantile = 1.0 - float(success_top_fraction)
+    return float(np.quantile(np.asarray(recent_episode_returns, dtype=np.float32), quantile))
+
+
+def _add_episode_to_shared_replay(
+    replay: SharedTD3Replay,
+    episode_trajectory: EpisodeTrajectory,
+    recent_episode_returns: deque[float],
+    success_top_fraction: float,
+) -> tuple[str, float, float, int]:
+    episode_return = float(episode_trajectory.episode_return)
+    recent_episode_returns.append(episode_return)
+    episode_return_success_threshold = _compute_episode_return_success_threshold(
+        recent_episode_returns=recent_episode_returns,
+        success_top_fraction=success_top_fraction,
+    )
+    partition = "success" if episode_return >= episode_return_success_threshold else "failure"
+    inserted_steps = replay.add_episode(partition, _episode_to_tensors(episode_trajectory))
+    return partition, episode_return, episode_return_success_threshold, inserted_steps
+
+
+def _list_warm_start_hdf5_files(
+    input_roots: Sequence[str],
+    *,
+    recursive: bool,
+) -> list[Path]:
+    unique_paths: dict[Path, None] = {}
+    for input_root in input_roots:
+        root_str = str(input_root).strip()
+        if not root_str:
+            continue
+        root = Path(root_str).expanduser().resolve()
+        if not root.exists():
+            raise FileNotFoundError(f"Warm-start path does not exist: {root}")
+        if root.is_file():
+            if root.suffix.lower() != ".hdf5":
+                raise ValueError(f"Warm-start file must end with .hdf5: {root}")
+            unique_paths[root] = None
+            continue
+        iterator = root.rglob("*.hdf5") if recursive else root.glob("*.hdf5")
+        for path in iterator:
+            if path.is_file():
+                unique_paths[path.resolve()] = None
+    return sorted(unique_paths.keys())
+
+
+def _estimate_xy_derivative(values: np.ndarray, times: np.ndarray) -> np.ndarray:
+    values_arr = np.asarray(values, dtype=np.float64)
+    if values_arr.ndim != 2:
+        raise ValueError(f"Expected rank-2 derivative input, got shape {values_arr.shape}")
+    derivative = np.zeros_like(values_arr, dtype=np.float64)
+    if values_arr.shape[0] <= 1:
+        return derivative
+
+    times_arr = np.asarray(times, dtype=np.float64).reshape(-1)
+    if times_arr.shape[0] != values_arr.shape[0]:
+        raise ValueError(
+            f"Expected one timestamp per row, got {times_arr.shape[0]} timestamps and "
+            f"{values_arr.shape[0]} values"
+        )
+
+    for idx in range(1, values_arr.shape[0]):
+        dt = float(times_arr[idx] - times_arr[idx - 1])
+        if (not np.isfinite(dt)) or abs(dt) < 1e-6:
+            dt = 1.0
+        derivative[idx] = (values_arr[idx] - values_arr[idx - 1]) / dt
+    derivative[0] = derivative[1]
+    return derivative
+
+
+def _padded_history_window(
+    entries: Sequence[tuple[float, float, float]],
+    *,
+    default_entry: tuple[float, float, float],
+    window_size: int = 5,
+) -> list[tuple[float, float, float]]:
+    if window_size <= 0:
+        return []
+    entries_list = list(entries)
+    if len(entries_list) >= window_size:
+        return entries_list[-window_size:]
+    if not entries_list:
+        return [default_entry for _ in range(window_size)]
+    pad_entry = entries_list[0]
+    return [pad_entry for _ in range(window_size - len(entries_list))] + entries_list
+
+
+def _build_split_state_info(
+    *,
+    paddle_position_xy: np.ndarray,
+    paddle_velocity_xy: np.ndarray,
+    paddle_acceleration_xy: np.ndarray,
+    paddle_force_xy: np.ndarray,
+    paddle_jerk_xy: np.ndarray,
+    puck_position_xy: np.ndarray,
+    puck_velocity_xy: np.ndarray,
+    puck_occluded: float,
+    puck_history_entries: Sequence[tuple[float, float, float]],
+) -> dict:
+    return {
+        "paddles": {
+            "paddle_ego": {
+                "position": np.asarray(paddle_position_xy, dtype=np.float64).copy(),
+                "velocity": np.asarray(paddle_velocity_xy, dtype=np.float64).copy(),
+                "acceleration": np.asarray(paddle_acceleration_xy, dtype=np.float64).copy(),
+                "force": np.asarray(paddle_force_xy, dtype=np.float64).copy(),
+                "jerk": np.asarray(paddle_jerk_xy, dtype=np.float64).copy(),
+            }
+        },
+        "pucks": [
+            {
+                "position": np.asarray(puck_position_xy, dtype=np.float64).copy(),
+                "velocity": np.asarray(puck_velocity_xy, dtype=np.float64).copy(),
+                "occluded": np.array([float(puck_occluded)], dtype=np.float64),
+                "history": [
+                    (float(x), float(y), float(occluded))
+                    for x, y, occluded in puck_history_entries
+                ],
+            }
+        ],
+    }
+
+
+def _stop_state_from_saved_row(
+    train_vals: np.ndarray,
+    optional_data: dict[str, np.ndarray],
+    row_idx: int,
+) -> StopEventState:
+    stop_flags = optional_data.get("stop_flags")
+    protective_stop = bool(float(train_vals[row_idx, 3]) > 0.5)
+    controller_connected: bool | None = None
+    if stop_flags is not None and stop_flags.shape[0] > row_idx:
+        stop_row = np.asarray(stop_flags[row_idx], dtype=np.float64).reshape(-1)
+        if stop_row.size > 0:
+            protective_stop = protective_stop or bool(float(stop_row[0]) > 0.5)
+        if stop_row.size > 1:
+            controller_connected = not bool(float(stop_row[1]) > 0.5)
+    return _build_stop_event_state(
+        protective_stop=protective_stop,
+        controller_connected=controller_connected,
+    )
+
+
+def _reset_warm_start_env_state(env: AirHockeyEnv, first_state: dict) -> None:
+    env.current_state = first_state
+    env.old_state = first_state
+    env.current_timestep = 0
+    env.success_in_ep = False
+    env.max_reward_in_single_step = -np.inf
+    env.min_reward_in_single_step = np.inf
+    env.episode_return = 0.0
+    env.episode_length = 0
+    env.episode_motion_data = {"velocity_mags": [], "acceleration_mags": [], "jerk_mags": []}
+    env._last_done_reasons = {"terminated": [], "truncated": []}
+    env._puck_pass_paddle_score = 0
+    if "pucks" in first_state and len(first_state["pucks"]) > 0:
+        env.puck_initial_position = np.asarray(
+            first_state["pucks"][0]["position"], dtype=np.float64
+        ).copy()
+
+
+def _recompute_warm_start_rewards(
+    env: AirHockeyEnv,
+    *,
+    prev_state: dict,
+    next_state: dict,
+    step_index: int,
+    stop_state: StopEventState,
+    is_last_transition: bool,
+    stop_penalty_applied: bool,
+) -> tuple[float, float, float, bool]:
+    env.current_timestep = int(max(step_index, 0))
+    env.old_state = prev_state
+    env.current_state = next_state
+
+    terminated, truncated, _, _, _, _ = env.has_finished(next_state)
+    if not truncated:
+        task_reward, success = env.get_base_reward(next_state)
+        task_reward = float(task_reward) * float(env.base_reward_scaling)
+        if (not env.success_in_ep) and bool(success):
+            env.success_in_ep = True
+    else:
+        task_reward = float(env.truncate_rew)
+
+    if env.use_reward_shaping:
+        task_reward += float(env.get_reward_shaping(next_state))
+    if env.enable_survival_bonus and (not terminated) and (not truncated):
+        task_reward += float(env.survival_bonus_per_step)
+
+    motion_reward = 0.0
+    if stop_state.active and not stop_penalty_applied:
+        motion_reward -= 5.0
+        stop_penalty_applied = True
+
+    done = float(1.0 if (terminated or truncated or stop_state.active or is_last_transition) else 0.0)
+    return float(task_reward), float(motion_reward), done, stop_penalty_applied
+
+
+def _load_warm_start_episode(
+    episode_hdf5_path: Path,
+    *,
+    env: AirHockeyEnv,
+) -> EpisodeTrajectory:
+    train_vals = np.asarray(load_split_trajectory_data(str(episode_hdf5_path)), dtype=np.float64)
+    optional_data = load_split_optional_data(str(episode_hdf5_path))
+    if train_vals.ndim != 2 or train_vals.shape[0] < 2:
+        return EpisodeTrajectory.empty()
+
+    if int(getattr(env, "num_pucks", 1)) != 1 or int(getattr(env, "num_paddles", 1)) != 1:
+        raise NotImplementedError("Warm-start HDF5 loading currently supports one puck and one paddle.")
+    if int(getattr(env, "num_blocks", 0)) != 0 or int(getattr(env, "num_targets", 0)) != 0:
+        raise NotImplementedError("Warm-start HDF5 loading does not support block/target observations.")
+
+    timestamps = train_vals[:, _TRAIN_VALS_CUR_TIME]
+    step_indices = np.rint(train_vals[:, _TRAIN_VALS_STEP_INDEX]).astype(np.int64)
+    pose_xy = np.asarray(train_vals[:, _TRAIN_VALS_POSE][:, :2], dtype=np.float64)
+    speed_xy = np.asarray(train_vals[:, _TRAIN_VALS_SPEED][:, :2], dtype=np.float64)
+    force_xy = np.asarray(train_vals[:, _TRAIN_VALS_FORCE][:, :2], dtype=np.float64)
+    stored_acc_xy = np.asarray(train_vals[:, _TRAIN_VALS_ACC][:, :2], dtype=np.float64)
+    desired_pose_xy = np.asarray(train_vals[:, _TRAIN_VALS_DESIRED_POSE][:, :2], dtype=np.float64)
+    puck_xy = np.asarray(train_vals[:, _TRAIN_VALS_PUCK][:, :2], dtype=np.float64)
+    puck_occluded = np.asarray(train_vals[:, _TRAIN_VALS_PUCK][:, 2], dtype=np.float64)
+
+    paddle_acc_xy = stored_acc_xy
+    if not np.any(np.abs(paddle_acc_xy) > 1e-8):
+        paddle_acc_xy = _estimate_xy_derivative(speed_xy, timestamps)
+    paddle_jerk_xy = _estimate_xy_derivative(paddle_acc_xy, timestamps)
+    puck_vel_xy = _estimate_xy_derivative(puck_xy, timestamps)
+
+    move_lims = np.asarray(getattr(env.simulator, "move_lims", (1.0, 1.0)), dtype=np.float64).reshape(-1)
+    if move_lims.shape[0] < 2:
+        move_lims = np.array([1.0, 1.0], dtype=np.float64)
+    move_lims = move_lims[:2].copy()
+    move_lims[np.abs(move_lims) < 1e-6] = 1.0
+    actions_xy = np.clip((desired_pose_xy - pose_xy) / move_lims[None, :], -1.0, 1.0)
+
+    full_puck_history: list[tuple[float, float, float]] = []
+    full_paddle_history: list[tuple[float, float, float]] = []
+    padded_puck_histories: list[list[tuple[float, float, float]]] = []
+    padded_paddle_histories: list[list[tuple[float, float, float]]] = []
+    state_infos: list[dict] = []
+    default_puck_entry = (0.0, 0.0, 1.0)
+    default_paddle_entry = (0.0, 0.0, 0.0)
+
+    for row_idx in range(train_vals.shape[0]):
+        puck_entry = (
+            float(puck_xy[row_idx, 0]),
+            float(puck_xy[row_idx, 1]),
+            float(puck_occluded[row_idx]),
+        )
+        paddle_entry = (
+            float(pose_xy[row_idx, 0]),
+            float(pose_xy[row_idx, 1]),
+            0.0,
+        )
+        full_puck_history.append(puck_entry)
+        full_paddle_history.append(paddle_entry)
+        padded_puck_histories.append(
+            _padded_history_window(
+                full_puck_history,
+                default_entry=default_puck_entry,
+            )
+        )
+        padded_paddle_histories.append(
+            _padded_history_window(
+                full_paddle_history,
+                default_entry=default_paddle_entry,
+            )
+        )
+        state_infos.append(
+            _build_split_state_info(
+                paddle_position_xy=pose_xy[row_idx],
+                paddle_velocity_xy=speed_xy[row_idx],
+                paddle_acceleration_xy=paddle_acc_xy[row_idx],
+                paddle_force_xy=force_xy[row_idx],
+                paddle_jerk_xy=paddle_jerk_xy[row_idx],
+                puck_position_xy=puck_xy[row_idx],
+                puck_velocity_xy=puck_vel_xy[row_idx],
+                puck_occluded=puck_occluded[row_idx],
+                puck_history_entries=full_puck_history,
+            )
+        )
+
+    env.reset(seed=int(getattr(env, "rng", np.random.RandomState(0)).randint(0, int(1e8))))
+    _reset_warm_start_env_state(env, state_infos[0])
+
+    episode_trajectory = EpisodeTrajectory.empty()
+    stop_penalty_applied = False
+    for row_idx in range(1, train_vals.shape[0]):
+        prev_state = state_infos[row_idx - 1]
+        next_state = state_infos[row_idx]
+        prev_obs = env.get_observation(
+            prev_state,
+            obs_type=env.obs_type,
+            puck_history=padded_puck_histories[row_idx - 1],
+            paddle_history=padded_paddle_histories[row_idx - 1],
+        )
+        next_obs = env.get_observation(
+            next_state,
+            obs_type=env.obs_type,
+            puck_history=padded_puck_histories[row_idx],
+            paddle_history=padded_paddle_histories[row_idx],
+        )
+        stop_state = _stop_state_from_saved_row(train_vals, optional_data, row_idx)
+        task_reward, motion_reward, done, stop_penalty_applied = _recompute_warm_start_rewards(
+            env,
+            prev_state=prev_state,
+            next_state=next_state,
+            step_index=int(step_indices[row_idx]),
+            stop_state=stop_state,
+            is_last_transition=bool(row_idx == (train_vals.shape[0] - 1)),
+            stop_penalty_applied=stop_penalty_applied,
+        )
+        episode_trajectory.append_step(
+            obs=torch.as_tensor(prev_obs, dtype=torch.float32),
+            next_obs=torch.as_tensor(next_obs, dtype=torch.float32),
+            action=torch.as_tensor(actions_xy[row_idx], dtype=torch.float32),
+            task_reward=torch.tensor(task_reward, dtype=torch.float32),
+            motion_reward=torch.tensor(motion_reward, dtype=torch.float32),
+            done=torch.tensor(done, dtype=torch.float32),
+            prev_action=torch.as_tensor(actions_xy[row_idx - 1], dtype=torch.float32),
+        )
+    return episode_trajectory
+
+
+def _warm_start_replay_from_hdf5(
+    *,
+    args: Args,
+    replay: SharedTD3Replay,
+    env: AirHockeyEnv,
+) -> dict[str, float]:
+    episode_paths = _list_warm_start_hdf5_files(
+        args.warm_start_hdf5_dirs,
+        recursive=bool(args.warm_start_hdf5_recursive),
+    )
+    if not episode_paths:
+        raise ValueError("No warm-start HDF5 files found in the configured input directories.")
+
+    recent_episode_returns = deque(maxlen=args.recent_episode_window_size)
+    loaded_files = 0
+    skipped_files = 0
+    loaded_transitions = 0
+    last_threshold = 0.0
+
+    print(f"[warm_start] loading {len(episode_paths)} HDF5 files into shared replay")
+    for episode_path in episode_paths:
+        try:
+            episode_trajectory = _load_warm_start_episode(episode_path, env=env)
+        except Exception:
+            skipped_files += 1
+            print(f"[warm_start] failed to load {episode_path}:\n{traceback.format_exc()}")
+            continue
+        if len(episode_trajectory.observations) <= 0:
+            skipped_files += 1
+            print(f"[warm_start] skipped {episode_path} (not enough transitions)")
+            continue
+        partition, episode_return, last_threshold, inserted_steps = _add_episode_to_shared_replay(
+            replay=replay,
+            episode_trajectory=episode_trajectory,
+            recent_episode_returns=recent_episode_returns,
+            success_top_fraction=args.success_top_fraction,
+        )
+        loaded_files += 1
+        loaded_transitions += int(inserted_steps)
+        print(
+            f"[warm_start] loaded {episode_path} partition={partition} "
+            f"transitions={inserted_steps} episode_return={episode_return:.4f}"
+        )
+
+    snapshot = replay.state_snapshot()
+    print(
+        "[warm_start] "
+        f"loaded_files={loaded_files} skipped_files={skipped_files} "
+        f"loaded_transitions={loaded_transitions} "
+        f"success_rb={snapshot['success']['size']} failure_rb={snapshot['failure']['size']}"
+    )
+    return {
+        "files_loaded": float(loaded_files),
+        "files_skipped": float(skipped_files),
+        "transitions_loaded": float(loaded_transitions),
+        "episode_return_success_threshold": float(last_threshold),
+        "success_buffer_size": float(snapshot["success"]["size"]),
+        "failure_buffer_size": float(snapshot["failure"]["size"]),
+    }
+
+
+def _load_replay_from_checkpoint_file(
+    *,
+    model_path: str,
+    replay: SharedTD3Replay,
+) -> bool:
+    if not os.path.exists(model_path):
+        return False
+    loaded_obj = torch.load(model_path, map_location="cpu", weights_only=False)
+    if not isinstance(loaded_obj, dict):
+        return False
+    if "success_replay_buffer" not in loaded_obj or "failure_replay_buffer" not in loaded_obj:
+        return False
+    replay.load_state_dict(
+        {
+            "success": loaded_obj["success_replay_buffer"],
+            "failure": loaded_obj["failure_replay_buffer"],
+        }
+    )
+    snapshot = replay.state_snapshot()
+    print(
+        "[resume_replay] loaded from checkpoint "
+        f"success_rb={snapshot['success']['size']} failure_rb={snapshot['failure']['size']}"
+    )
+    return True
+
+
+def _load_runtime_perf_from_checkpoint_file(model_path: str) -> Dict[str, object]:
+    runtime_state: Dict[str, object] = {
+        "run_elapsed_total_s": 0.0,
+        "rolling50_task_reward_values": [],
+        "rolling50_motion_reward_values": [],
+        "rolling50_episode_length_values": [],
+        "rolling50_estop_episode_flags": [],
+    }
+    if not model_path or not os.path.exists(model_path):
+        return runtime_state
+    try:
+        loaded_obj = torch.load(model_path, map_location="cpu", weights_only=False)
+    except Exception:
+        return runtime_state
+    if not isinstance(loaded_obj, dict):
+        return runtime_state
+    runtime_state["run_elapsed_total_s"] = float(loaded_obj.get("run_elapsed_total_s", 0.0))
+    runtime_state["rolling50_task_reward_values"] = _coerce_float_list(
+        loaded_obj.get("rolling50_task_reward_values", []),
+        max_items=ROLLING_PERF_WINDOW_EPISODES,
+    )
+    runtime_state["rolling50_motion_reward_values"] = _coerce_float_list(
+        loaded_obj.get("rolling50_motion_reward_values", []),
+        max_items=ROLLING_PERF_WINDOW_EPISODES,
+    )
+    runtime_state["rolling50_episode_length_values"] = _coerce_float_list(
+        loaded_obj.get("rolling50_episode_length_values", []),
+        max_items=ROLLING_PERF_WINDOW_EPISODES,
+    )
+    runtime_state["rolling50_estop_episode_flags"] = _coerce_float_list(
+        loaded_obj.get("rolling50_estop_episode_flags", []),
+        max_items=ROLLING_PERF_WINDOW_EPISODES,
+    )
+    return runtime_state
 
 
 def _vector_with_width(values: np.ndarray | list | tuple, width: int) -> np.ndarray:
@@ -457,6 +1134,12 @@ def _bucketed_output_dir(base_dir: str | Path, episode_steps: int) -> str:
 def _stop_output_dir(base_dir: str | Path, stop_label: str) -> str:
     """Return the additional stop-specific output directory under the parent."""
     return str(Path(base_dir).expanduser().resolve() / str(stop_label))
+
+
+def _reset_output_dir(base_dir: str | Path, partition: str, episode_steps: int) -> str:
+    """Return the reset artifact directory under success/failure partition buckets."""
+    partition_root = Path(base_dir).expanduser().resolve() / str(partition)
+    return _bucketed_output_dir(partition_root, episode_steps)
 
 
 def _copy_to_stop_dir(file_path: str | Path, stop_root: str | Path) -> Path:
@@ -959,9 +1642,8 @@ def _simulator_step_readiness(env: AirHockeyEnv) -> tuple[bool, str]:
 def collector_process(
     args: Args,
     replay: SharedTD3Replay,
-    actor_state: SharedActorState,
-    stop_event: mp.Event,
-    stats: Dict[str, float],
+    stats: Dict[str, object],
+    learner_state: LearnerRuntimeState,
     obs_dim: int,
     act_dim: int,
     action_low_np: np.ndarray,
@@ -1019,6 +1701,26 @@ def collector_process(
         target_max_distance=float(args.exploration_target_position_max_distance),
         target_action_delta_x=float(args.exploration_target_position_delta_x),
         target_action_delta_y=float(args.exploration_target_position_delta_y),
+        same_direction_min_angle_deg=float(args.exploration_same_direction_min_angle_deg),
+        same_direction_max_angle_deg=float(args.exploration_same_direction_max_angle_deg),
+        same_direction_min_magnitude=float(args.exploration_same_direction_min_magnitude),
+        same_direction_max_magnitude=float(args.exploration_same_direction_max_magnitude),
+        y_aligned_min_angle_deg=float(args.exploration_y_aligned_min_angle_deg),
+        y_aligned_max_angle_deg=float(args.exploration_y_aligned_max_angle_deg),
+        y_aligned_min_magnitude=float(args.exploration_y_aligned_min_magnitude),
+        y_aligned_max_magnitude=float(args.exploration_y_aligned_max_magnitude),
+        target_position_directional_min_angle_deg=float(
+            args.exploration_target_position_directional_min_angle_deg
+        ),
+        target_position_directional_max_angle_deg=float(
+            args.exploration_target_position_directional_max_angle_deg
+        ),
+        target_position_directional_min_magnitude=float(
+            args.exploration_target_position_directional_min_magnitude
+        ),
+        target_position_directional_max_magnitude=float(
+            args.exploration_target_position_directional_max_magnitude
+        ),
         target_takeover_steps=int(args.exploration_target_position_steps),
         pre_contact_hit_variant_chance=0.0,
     )
@@ -1030,14 +1732,37 @@ def collector_process(
         target_position_directional=float(args.exploration_primitive_weight_target_position_directional),
         pre_contact_hit_variant=0.0,
     )
+    actor.load_state_dict(
+        {key: value.detach().cpu() for key, value in learner_state.actor.state_dict().items()},
+        strict=False,
+    )
 
-    applied_version, latest_state = actor_state.read()
-    actor.load_state_dict(latest_state, strict=False)
-
+    next_reset_file_id = _next_available_episode_id(args.reset_artifact_dir)
+    if next_reset_file_id > 0:
+        print(
+            f"[collector] continuing reset artifact ids from {next_reset_file_id} "
+            f"(existing data found in {args.reset_artifact_dir})"
+        )
+    pending_reset_artifact: PendingResetArtifact | None = None
     reset_rng = np.random.default_rng(args.seed)
     # Commit to one startup behavior: run reset FSM once before policy takeover.
     # This avoids an immediate policy->reset mode flip in the first episode.
-    reset_fsm_steps_total = run_reset_fsm(env, reset_rng)
+    startup_reset_result = run_reset_fsm(
+        env,
+        reset_rng,
+        artifact_episode_id=next_reset_file_id,
+    )
+    reset_fsm_steps_total = startup_reset_result.total_steps
+    if startup_reset_result.artifact is not None:
+        pending_reset_artifact = startup_reset_result.artifact
+        next_reset_file_id += 1
+        print(
+            "[collector_reset_artifact] "
+            f"buffered startup episode_id={pending_reset_artifact.episode_id} "
+            f"partition={pending_reset_artifact.partition} "
+            f"reason={pending_reset_artifact.done_reason} "
+            f"steps={pending_reset_artifact.step_count}"
+        )
     obs, _ = env.soft_reset()
     obs = _prime_paddle_history_stand_still_non_occluded(env)
     episode_trajectory = EpisodeTrajectory.empty()
@@ -1117,6 +1842,8 @@ def collector_process(
     episodes_gif_failed = 0
     episodes_camera_video_generated = 0
     episodes_camera_video_failed = 0
+    successful_online_episodes_kept = int(stats.get("successful_online_episodes_kept", 0))
+    checkpoint_save_request_id = int(stats.get("checkpoint_save_request_id", 0))
     protective_stop_episodes = 0
     protective_stop_steps = 0
     controller_disconnect_episodes = 0
@@ -1126,6 +1853,35 @@ def collector_process(
     episode_had_stop = False
     episode_had_protective_stop = False
     episode_had_controller_disconnect = False
+    rolling50_task_reward_values = deque(
+        _coerce_float_list(
+            stats.get("rolling50_task_reward_values", []),
+            max_items=ROLLING_PERF_WINDOW_EPISODES,
+        ),
+        maxlen=ROLLING_PERF_WINDOW_EPISODES,
+    )
+    rolling50_motion_reward_values = deque(
+        _coerce_float_list(
+            stats.get("rolling50_motion_reward_values", []),
+            max_items=ROLLING_PERF_WINDOW_EPISODES,
+        ),
+        maxlen=ROLLING_PERF_WINDOW_EPISODES,
+    )
+    rolling50_episode_length_values = deque(
+        _coerce_float_list(
+            stats.get("rolling50_episode_length_values", []),
+            max_items=ROLLING_PERF_WINDOW_EPISODES,
+        ),
+        maxlen=ROLLING_PERF_WINDOW_EPISODES,
+    )
+    rolling50_estop_episode_flags = deque(
+        _coerce_float_list(
+            stats.get("rolling50_estop_episode_flags", []),
+            max_items=ROLLING_PERF_WINDOW_EPISODES,
+        ),
+        maxlen=ROLLING_PERF_WINDOW_EPISODES,
+    )
+    collector_elapsed_resume_offset_s = float(stats.get("run_elapsed_total_s", 0.0))
     collector_start_time = time.time()
     episodic_returns: list[float] = []
     episodic_lengths: list[float] = []
@@ -1133,7 +1889,10 @@ def collector_process(
     robot_not_ready_prev = False
     robot_not_ready_reason = "none"
 
-    while not stop_event.is_set():
+    while True:
+        if args.smoke_test_seconds > 0 and (time.time() - collector_start_time) >= float(args.smoke_test_seconds):
+            print(f"[collector] smoke-test duration reached ({args.smoke_test_seconds:.1f}s), stopping.")
+            break
         step_ready, step_ready_reason = _simulator_step_readiness(env)
         if not step_ready:
             if (not robot_not_ready_prev) or (step_ready_reason != robot_not_ready_reason):
@@ -1311,7 +2070,17 @@ def collector_process(
                 controller_disconnect_episodes += 1
             episode_return = float(episode_trajectory.episode_return)
             episode_length = float(len(episode_trajectory.observations))
-            recent_episode_returns.append(episode_return)
+            episode_task_reward = float(
+                torch.stack(episode_trajectory.task_rewards, dim=0).sum().item()
+            )
+            episode_motion_reward = float(
+                torch.stack(episode_trajectory.motion_rewards, dim=0).sum().item()
+            )
+            episode_estop_flag = 1.0 if episode_had_protective_stop else 0.0
+            rolling50_task_reward_values.append(episode_task_reward)
+            rolling50_motion_reward_values.append(episode_motion_reward)
+            rolling50_episode_length_values.append(episode_length)
+            rolling50_estop_episode_flags.append(episode_estop_flag)
             episodic_returns.append(episode_return)
             episodic_lengths.append(episode_length)
             episode_success = bool(step_info.get("success", False)) if isinstance(step_info, dict) else False
@@ -1340,13 +2109,28 @@ def collector_process(
             writer.add_scalar("charts/episodic_return", episode_return, total_steps)
             writer.add_scalar("charts/episodic_length", episode_length, total_steps)
             writer.add_scalar("charts/episodic_success", float(1.0 if episode_success else 0.0), total_steps)
-            if len(recent_episode_returns) > 0:
-                quantile = 1.0 - float(args.success_top_fraction)
-                episode_return_success_threshold = float(
-                    np.quantile(np.asarray(recent_episode_returns, dtype=np.float32), quantile)
+            _, _, episode_return_success_threshold, _ = _add_episode_to_shared_replay(
+                replay=replay,
+                episode_trajectory=episode_trajectory,
+                recent_episode_returns=recent_episode_returns,
+                success_top_fraction=args.success_top_fraction,
+            )
+            actor_updated = _run_sync_learner_iteration(
+                args=args,
+                replay=replay,
+                stats=stats,
+                state=learner_state,
+            )
+            if actor_updated:
+                actor.load_state_dict(
+                    {key: value.detach().cpu() for key, value in learner_state.actor.state_dict().items()},
+                    strict=False,
                 )
-            partition = "success" if episode_return >= episode_return_success_threshold else "failure"
-            replay.add_episode(partition, _episode_to_tensors(episode_trajectory))
+                begin_transition_hold(
+                    reason="actor_sync_update",
+                    hold_steps=int(args.transition_hold_steps_post_actor_sync),
+                    request_sim_hold=False,
+                )
             episode_trajectory.reset()
             _reset_primitive_rollout_state(primitive_selector)
 
@@ -1355,9 +2139,25 @@ def collector_process(
             n_episode_steps = len(episode_rows)
             n_camera_frames = len(episode_images)
             has_camera_images = n_camera_frames > 0
-            elapsed_s = max(0.0, time.time() - collector_start_time)
+            elapsed_s = max(0.0, collector_elapsed_resume_offset_s + (time.time() - collector_start_time))
             elapsed_min = elapsed_s / 60.0
             elapsed_hr = elapsed_s / 3600.0
+            rolling50_window_count = len(rolling50_episode_length_values)
+            rolling50_task_reward_avg = _rolling_mean(rolling50_task_reward_values)
+            rolling50_motion_reward_avg = _rolling_mean(rolling50_motion_reward_values)
+            rolling50_episode_length_avg = _rolling_mean(rolling50_episode_length_values)
+            rolling50_estop_episode_count = float(sum(rolling50_estop_episode_flags))
+            stats["run_elapsed_total_s"] = float(elapsed_s)
+            stats["rolling50_window_size"] = float(ROLLING_PERF_WINDOW_EPISODES)
+            stats["rolling50_window_count"] = float(rolling50_window_count)
+            stats["rolling50_task_reward_avg"] = float(rolling50_task_reward_avg)
+            stats["rolling50_motion_reward_avg"] = float(rolling50_motion_reward_avg)
+            stats["rolling50_episode_length_avg"] = float(rolling50_episode_length_avg)
+            stats["rolling50_estop_episode_count"] = float(rolling50_estop_episode_count)
+            stats["rolling50_task_reward_values"] = list(rolling50_task_reward_values)
+            stats["rolling50_motion_reward_values"] = list(rolling50_motion_reward_values)
+            stats["rolling50_episode_length_values"] = list(rolling50_episode_length_values)
+            stats["rolling50_estop_episode_flags"] = list(rolling50_estop_episode_flags)
             print(
                 f"[collector] episode_id={next_episode_file_id} "
                 f"steps={n_episode_steps} camera_frames={n_camera_frames} "
@@ -1380,7 +2180,11 @@ def collector_process(
                 f"episodes={total_episodes} "
                 f"elapsed_s={elapsed_s:.1f} "
                 f"elapsed_min={elapsed_min:.2f} "
-                f"elapsed_hr={elapsed_hr:.3f}"
+                f"elapsed_hr={elapsed_hr:.3f} "
+                f"rolling50_task_avg={rolling50_task_reward_avg:.4f} "
+                f"rolling50_motion_avg={rolling50_motion_reward_avg:.4f} "
+                f"rolling50_len_avg={rolling50_episode_length_avg:.2f} "
+                f"rolling50_estops={rolling50_estop_episode_count:.0f}"
             )
             if episode_camera_null_frames > 0 and n_camera_frames == 0:
                 sim = getattr(env, "simulator", None)
@@ -1441,6 +2245,20 @@ def collector_process(
                 else:
                     episodes_removed_invalid += 1
             else:
+                successful_online_episodes_kept += 1
+                stats["successful_online_episodes_kept"] = float(successful_online_episodes_kept)
+                if (
+                    args.enable_periodic_checkpointing
+                    and int(args.checkpoint_every_successful_online_episodes) > 0
+                    and (successful_online_episodes_kept % int(args.checkpoint_every_successful_online_episodes) == 0)
+                ):
+                    checkpoint_save_request_id += 1
+                    stats["checkpoint_save_request_id"] = float(checkpoint_save_request_id)
+                    stats["checkpoint_reason"] = "periodic_successful_online_episode"
+                    stats["checkpoint_trigger_episode_id"] = float(next_episode_file_id)
+                    stats["checkpoint_trigger_successful_online_episodes_kept"] = float(
+                        successful_online_episodes_kept
+                    )
                 if episode_stop_artifact_label is not None:
                     stop_copy_path = _copy_to_stop_dir(
                         clean_result.path,
@@ -1524,6 +2342,47 @@ def collector_process(
                         f"[collector] episode_id={next_episode_file_id} "
                         f"camera video SKIPPED (enable_episode_camera_video=False)"
                     )
+            if pending_reset_artifact is not None:
+                reset_camera_frames = len(pending_reset_artifact.images)
+                has_reset_images = reset_camera_frames > 0
+                print(
+                    "[collector_reset_artifact] "
+                    f"episode_id={pending_reset_artifact.episode_id} "
+                    f"partition={pending_reset_artifact.partition} "
+                    f"reason={pending_reset_artifact.done_reason} "
+                    f"steps={pending_reset_artifact.step_count} "
+                    f"camera_frames={reset_camera_frames} "
+                    f"null_frames={pending_reset_artifact.camera_null_frames} "
+                    f"flush_after_policy_episode={next_episode_file_id}"
+                )
+                reset_artifact_path = save_split_episode_hdf5(
+                    output_dir=_reset_output_dir(
+                        args.reset_artifact_dir,
+                        pending_reset_artifact.partition,
+                        pending_reset_artifact.step_count,
+                    ),
+                    episode_id=pending_reset_artifact.episode_id,
+                    episode_rows=pending_reset_artifact.rows,
+                    episode_images=pending_reset_artifact.images if has_reset_images else None,
+                )
+                reset_clean_result = clean_episode_hdf5(
+                    reset_artifact_path,
+                    min_timesteps=1,
+                )
+                if not reset_clean_result.kept:
+                    print(
+                        "[collector_reset_artifact] "
+                        f"episode_id={pending_reset_artifact.episode_id} "
+                        f"removed: reason={reset_clean_result.reason} "
+                        f"timesteps={reset_clean_result.timesteps}"
+                    )
+                else:
+                    print(
+                        "[collector_reset_artifact] "
+                        f"episode_id={pending_reset_artifact.episode_id} "
+                        f"saved to {reset_clean_result.path}"
+                    )
+                pending_reset_artifact = None
             episode_rows = []
             episode_puck_detection_latency_ms = []
             episode_model_inference_latency_ms = []
@@ -1532,17 +2391,6 @@ def collector_process(
             episode_images = []
             episode_camera_null_frames = 0
             next_episode_file_id += 1
-
-            if args.actor_sync_check_every_episode:
-                version, maybe_new_state = actor_state.read()
-                if version != applied_version:
-                    actor.load_state_dict(maybe_new_state, strict=False)
-                    applied_version = version
-                    begin_transition_hold(
-                        reason="actor_sync_update",
-                        hold_steps=int(args.transition_hold_steps_post_actor_sync),
-                        request_sim_hold=False,
-                    )
 
             min_reset_delay_s = 3.0
             periodic_hard_reset = (total_episodes % 3) == 0
@@ -1560,7 +2408,28 @@ def collector_process(
                     f"min_reset_delay_s={min_reset_delay_s:.3f}"
                 )
                 # Reset FSM + soft_reset after minimum end-of-episode delay.
-                reset_fsm_steps_total += run_reset_fsm(env, reset_rng)
+                reset_result = run_reset_fsm(
+                    env,
+                    reset_rng,
+                    artifact_episode_id=next_reset_file_id,
+                )
+                reset_fsm_steps_total += reset_result.total_steps
+                if reset_result.artifact is not None:
+                    if pending_reset_artifact is not None:
+                        print(
+                            "[collector_reset_artifact] "
+                            f"WARNING: overwriting unsaved pending reset artifact "
+                            f"episode_id={pending_reset_artifact.episode_id}"
+                        )
+                    pending_reset_artifact = reset_result.artifact
+                    next_reset_file_id += 1
+                    print(
+                        "[collector_reset_artifact] "
+                        f"buffered episode_id={pending_reset_artifact.episode_id} "
+                        f"partition={pending_reset_artifact.partition} "
+                        f"reason={pending_reset_artifact.done_reason} "
+                        f"steps={pending_reset_artifact.step_count}"
+                    )
                 obs, _ = env.soft_reset()
                 obs = _prime_paddle_history_stand_still_non_occluded(env)
                 _, previous_puck_position_for_primitive, _ = _extract_primitive_state_tensors(
@@ -1607,7 +2476,28 @@ def collector_process(
                     f"occ_counter={episode_start_reset_counters['occ']}"
                 )
                 if run_reset_policy:
-                    reset_fsm_steps_total += run_reset_fsm(env, reset_rng)
+                    reset_result = run_reset_fsm(
+                        env,
+                        reset_rng,
+                        artifact_episode_id=next_reset_file_id,
+                    )
+                    reset_fsm_steps_total += reset_result.total_steps
+                    if reset_result.artifact is not None:
+                        if pending_reset_artifact is not None:
+                            print(
+                                "[collector_reset_artifact] "
+                                f"WARNING: overwriting unsaved pending reset artifact "
+                                f"episode_id={pending_reset_artifact.episode_id}"
+                            )
+                        pending_reset_artifact = reset_result.artifact
+                        next_reset_file_id += 1
+                        print(
+                            "[collector_reset_artifact] "
+                            f"buffered episode_id={pending_reset_artifact.episode_id} "
+                            f"partition={pending_reset_artifact.partition} "
+                            f"reason={pending_reset_artifact.done_reason} "
+                            f"steps={pending_reset_artifact.step_count}"
+                        )
                     obs, _ = env.soft_reset()
                     obs = _prime_paddle_history_stand_still_non_occluded(env)
                     _, previous_puck_position_for_primitive, _ = _extract_primitive_state_tensors(
@@ -1639,9 +2529,15 @@ def collector_process(
         now = time.time()
         if now - last_log_time >= float(args.collector_log_interval_sec):
             snapshot = replay.state_snapshot()
+            elapsed_s = max(0.0, collector_elapsed_resume_offset_s + (now - collector_start_time))
+            rolling50_window_count = len(rolling50_episode_length_values)
+            rolling50_task_reward_avg = _rolling_mean(rolling50_task_reward_values)
+            rolling50_motion_reward_avg = _rolling_mean(rolling50_motion_reward_values)
+            rolling50_episode_length_avg = _rolling_mean(rolling50_episode_length_values)
+            rolling50_estop_episode_count = float(sum(rolling50_estop_episode_flags))
             stats["collector_steps"] = float(total_steps)
             stats["collector_episodes"] = float(total_episodes)
-            stats["collector_actor_version"] = float(applied_version)
+            stats["collector_actor_version"] = float(learner_state.total_actor_updates)
             stats["transition_hold_events_total"] = float(transition_hold_events_total)
             stats["transition_hold_active"] = float(1.0 if transition_hold_steps_remaining > 0 else 0.0)
             stats["transition_hold_steps_remaining"] = float(transition_hold_steps_remaining)
@@ -1654,6 +2550,7 @@ def collector_process(
             stats["episodes_gif_failed"] = float(episodes_gif_failed)
             stats["episodes_camera_video_generated"] = float(episodes_camera_video_generated)
             stats["episodes_camera_video_failed"] = float(episodes_camera_video_failed)
+            stats["successful_online_episodes_kept"] = float(successful_online_episodes_kept)
             stats["estop_steps"] = float(protective_stop_steps)
             stats["estop_episodes"] = float(protective_stop_episodes)
             stats["controller_disconnect_steps"] = float(controller_disconnect_steps)
@@ -1665,6 +2562,17 @@ def collector_process(
             stats["interval_target_position_directional_env_steps"] = float(
                 interval_target_position_directional_env_steps
             )
+            stats["run_elapsed_total_s"] = float(elapsed_s)
+            stats["rolling50_window_size"] = float(ROLLING_PERF_WINDOW_EPISODES)
+            stats["rolling50_window_count"] = float(rolling50_window_count)
+            stats["rolling50_task_reward_avg"] = float(rolling50_task_reward_avg)
+            stats["rolling50_motion_reward_avg"] = float(rolling50_motion_reward_avg)
+            stats["rolling50_episode_length_avg"] = float(rolling50_episode_length_avg)
+            stats["rolling50_estop_episode_count"] = float(rolling50_estop_episode_count)
+            stats["rolling50_task_reward_values"] = list(rolling50_task_reward_values)
+            stats["rolling50_motion_reward_values"] = list(rolling50_motion_reward_values)
+            stats["rolling50_episode_length_values"] = list(rolling50_episode_length_values)
+            stats["rolling50_estop_episode_flags"] = list(rolling50_estop_episode_flags)
             writer.add_scalar("replay/success_buffer_size", float(snapshot["success"]["size"]), total_steps)
             writer.add_scalar("replay/failure_buffer_size", float(snapshot["failure"]["size"]), total_steps)
             writer.add_scalar("exploration/primitive_chance", float(primitive_selector.chance), total_steps)
@@ -1745,9 +2653,15 @@ def collector_process(
             )
             writer.add_scalar(
                 "charts/SPS",
-                float(total_steps) / max(now - collector_start_time, 1e-6),
+                float(total_steps) / max((now - collector_start_time), 1e-6),
                 total_steps,
             )
+            writer.add_scalar("runtime/elapsed_total_s", float(elapsed_s), total_steps)
+            writer.add_scalar("rolling50/task_reward_avg", float(rolling50_task_reward_avg), total_steps)
+            writer.add_scalar("rolling50/motion_reward_avg", float(rolling50_motion_reward_avg), total_steps)
+            writer.add_scalar("rolling50/episode_length_avg", float(rolling50_episode_length_avg), total_steps)
+            writer.add_scalar("rolling50/estop_episode_count", float(rolling50_estop_episode_count), total_steps)
+            writer.add_scalar("rolling50/window_count", float(rolling50_window_count), total_steps)
             if episodic_returns:
                 writer.add_scalar("charts/avg_episodic_return", float(np.mean(episodic_returns)), total_steps)
                 writer.add_scalar("charts/min_episodic_return", float(np.min(episodic_returns)), total_steps)
@@ -1768,7 +2682,7 @@ def collector_process(
             print(
                 "[collector] "
                 f"steps={total_steps} episodes={total_episodes} "
-                f"actor_version={applied_version} "
+                f"actor_version={learner_state.total_actor_updates} "
                 f"success_rb={snapshot['success']['size']} failure_rb={snapshot['failure']['size']} "
                 f"saved={episodes_saved} short_removed={episodes_removed_short} "
                 f"invalid_removed={episodes_removed_invalid} gif_ok={episodes_gif_generated} gif_fail={episodes_gif_failed} "
@@ -1784,7 +2698,12 @@ def collector_process(
                 f"transition_hold_active={int(transition_hold_steps_remaining > 0)} "
                 f"transition_hold_remaining={transition_hold_steps_remaining} "
                 f"transition_events_total={transition_hold_events_total} "
-                f"transition_reason={transition_hold_reason}"
+                f"transition_reason={transition_hold_reason} "
+                f"elapsed_total_s={elapsed_s:.1f} "
+                f"rolling50_task_avg={rolling50_task_reward_avg:.4f} "
+                f"rolling50_motion_avg={rolling50_motion_reward_avg:.4f} "
+                f"rolling50_len_avg={rolling50_episode_length_avg:.2f} "
+                f"rolling50_estops={rolling50_estop_episode_count:.0f}"
             )
             if transition_hold_reason_counts:
                 print(f"[collector_transition] reason_counts={dict(sorted(transition_hold_reason_counts.items()))}")
@@ -1797,18 +2716,38 @@ def collector_process(
     writer.close()
 
 
-def learner_process(
+@dataclass
+class LearnerRuntimeState:
+    actor: DeterministicAgent
+    actor_target: DeterministicAgent
+    qf1: TD3DualHeadQNetwork
+    qf2: TD3DualHeadQNetwork
+    qf1_target: TD3DualHeadQNetwork
+    qf2_target: TD3DualHeadQNetwork
+    q_optimizer: optim.Optimizer
+    actor_optimizer: optim.Optimizer
+    action_low: torch.Tensor
+    action_high: torch.Tensor
+    writer: SummaryWriter
+    checkpoint_root: Path
+    last_log_time: float
+    learner_start_time: float
+    total_updates: int
+    total_actor_updates: int
+    last_handled_checkpoint_request_id: int
+    latest_train_metrics: Dict[str, float]
+
+
+def _init_sync_learner_state(
     args: Args,
     replay: SharedTD3Replay,
-    actor_state: SharedActorState,
-    stop_event: mp.Event,
-    stats: Dict[str, float],
+    stats: Dict[str, object],
     obs_dim: int,
     act_dim: int,
     action_low_np: np.ndarray,
     action_high_np: np.ndarray,
     tb_log_dir: str,
-) -> None:
+) -> LearnerRuntimeState:
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     device = torch.device(args.learner_device)
@@ -1816,7 +2755,6 @@ def learner_process(
 
     policy_obs_dim = obs_dim + act_dim if args.use_last_action_in_policy_state else obs_dim
     policy_env_view = build_policy_env_view(policy_obs_dim, act_dim)
-
     actor = DeterministicAgent(
         policy_env_view,
         action_scale=args.action_scale,
@@ -1832,7 +2770,6 @@ def learner_process(
         num_hidden_layers=args.agent_num_hidden_layers,
     ).to(device)
     actor_target.load_state_dict(actor.state_dict())
-
     qf1 = TD3DualHeadQNetwork(
         obs_dim=obs_dim,
         act_dim=act_dim,
@@ -1859,7 +2796,7 @@ def learner_process(
     ).to(device)
     qf1_target.load_state_dict(qf1.state_dict())
     qf2_target.load_state_dict(qf2.state_dict())
-
+    resume_checkpoint: Dict[str, object] | None = None
     if args.model_path is not None and os.path.exists(args.model_path):
         loaded_obj = torch.load(args.model_path, map_location=device, weights_only=False)
         if isinstance(loaded_obj, dict) and "actor" in loaded_obj:
@@ -1871,242 +2808,305 @@ def learner_process(
                 if "qf1_target" in loaded_obj and "qf2_target" in loaded_obj:
                     qf1_target.load_state_dict(loaded_obj["qf1_target"])
                     qf2_target.load_state_dict(loaded_obj["qf2_target"])
+            if "q_optimizer" in loaded_obj and "actor_optimizer" in loaded_obj:
+                resume_checkpoint = loaded_obj
         else:
             actor.load_state_dict(extract_deterministic_state_dict(loaded_obj), strict=False)
             actor_target.load_state_dict(actor.state_dict())
-
-    actor_state.publish({key: value.detach().cpu() for key, value in actor.state_dict().items()})
-
     q_optimizer = optim.Adam(
         list(qf1.parameters()) + list(qf2.parameters()),
         lr=args.q_lr,
         weight_decay=args.q_weight_decay,
     )
     actor_optimizer = optim.Adam(actor.parameters(), lr=args.policy_lr)
-
-    action_low = torch.as_tensor(action_low_np, dtype=torch.float32, device=device).unsqueeze(0)
-    action_high = torch.as_tensor(action_high_np, dtype=torch.float32, device=device).unsqueeze(0)
-
     total_updates = 0
     total_actor_updates = 0
-    last_log_time = time.time()
-    learner_start_time = time.time()
     latest_train_metrics: Dict[str, float] = {}
-
-    while not stop_event.is_set():
-        total_replay_size = replay.len("success") + replay.len("failure")
-        if total_replay_size < int(args.min_replay_size_before_learning):
-            time.sleep(0.05)
-            continue
-
-        iter_start = time.time()
-        actor_updated = False
-
-        for q_update_idx in range(args.q_updates):
-            batch, success_batch_count, failure_batch_count = _mixed_sample_from_shared(
-                replay=replay,
-                batch_size=args.batch_size,
-                success_fraction=args.critic_success_sample_fraction,
-                device=args.learner_device,
-            )
-            if batch is None:
-                continue
-
-            sampled_observations = batch["observations"]
-            sampled_next_observations = batch["next_observations"]
-            sampled_actions = batch["actions"]
-            sampled_task_rewards = batch["task_rewards"]
-            sampled_motion_rewards = batch["motion_rewards"]
-            sampled_dones = batch["dones"]
-
-            sampled_next_prev_actions = sampled_actions * (1.0 - sampled_dones.unsqueeze(-1))
-            sampled_next_policy_observations = augment_policy_observation(
-                sampled_next_observations,
-                sampled_next_prev_actions,
-                args.use_last_action_in_policy_state,
-            )
-
-            with torch.no_grad():
-                target_next_action = deterministic_actor_action(actor_target, sampled_next_policy_observations)
-                noise = torch.randn_like(target_next_action) * float(args.policy_noise)
-                noise = torch.clamp(noise, -float(args.noise_clip), float(args.noise_clip))
-                target_next_action = torch.clamp(target_next_action + noise, action_low, action_high)
-
-                q1_next_task_h, q1_next_motion_h = qf1_target(sampled_next_observations, target_next_action)
-                q2_next_task_h, q2_next_motion_h = qf2_target(sampled_next_observations, target_next_action)
-                min_next_task = h_inverse(
-                    torch.min(q1_next_task_h, q2_next_task_h),
-                    eps=float(args.h_transform_eps),
-                ).view(-1)
-                min_next_motion = h_inverse(
-                    torch.min(q1_next_motion_h, q2_next_motion_h),
-                    eps=float(args.h_transform_eps),
-                ).view(-1)
-
-                bellman_task = sampled_task_rewards + (1.0 - sampled_dones) * float(args.task_gamma) * min_next_task
-                bellman_motion = sampled_motion_rewards + (1.0 - sampled_dones) * float(args.motion_gamma) * min_next_motion
-                target_task_h = h_transform(bellman_task, eps=float(args.h_transform_eps))
-                target_motion_h = h_transform(bellman_motion, eps=float(args.h_transform_eps))
-
-            q1_task_h, q1_motion_h = qf1(sampled_observations, sampled_actions)
-            q2_task_h, q2_motion_h = qf2(sampled_observations, sampled_actions)
-            q1_task_loss = torch.nn.functional.mse_loss(q1_task_h.view(-1), target_task_h)
-            q2_task_loss = torch.nn.functional.mse_loss(q2_task_h.view(-1), target_task_h)
-            q1_motion_loss = torch.nn.functional.mse_loss(q1_motion_h.view(-1), target_motion_h)
-            q2_motion_loss = torch.nn.functional.mse_loss(q2_motion_h.view(-1), target_motion_h)
-
-            q_loss = (
-                q1_task_loss
-                + q2_task_loss
-                + q1_motion_loss
-                + q2_motion_loss
-            )
-            q_optimizer.zero_grad(set_to_none=True)
-            q_loss.backward()
-            q_optimizer.step()
-            total_updates += 1
-            positive_task_reward_mask = sampled_task_rewards > 0
-            positive_task_reward_count = float(positive_task_reward_mask.sum().item())
-            minibatch_size = max(int(sampled_task_rewards.numel()), 1)
-            positive_task_rewards = sampled_task_rewards[positive_task_reward_mask]
-            latest_train_metrics.update(
-                {
-                    "losses/q_task_loss": float(((q1_task_loss + q2_task_loss) / 2.0).item()),
-                    "losses/q_motion_loss": float(((q1_motion_loss + q2_motion_loss) / 2.0).item()),
-                    "losses/q_total_loss": float(q_loss.item()),
-                    "losses/q1_task_mean": float(q1_task_h.mean().item()),
-                    "losses/q1_motion_mean": float(q1_motion_h.mean().item()),
-                    "losses/q1_total_mean": float((q1_task_h + q1_motion_h).mean().item()),
-                    "rewards/sampled_task_reward_mean": float(sampled_task_rewards.mean().item()),
-                    "rewards/sampled_task_reward_min": float(sampled_task_rewards.min().item()),
-                    "rewards/sampled_task_reward_std": float(sampled_task_rewards.std(unbiased=False).item()),
-                    "rewards/sampled_task_reward_positive_count": positive_task_reward_count,
-                    "rewards/sampled_task_reward_positive_fraction": (
-                        positive_task_reward_count / float(minibatch_size)
-                    ),
-                    "rewards/sampled_task_reward_positive_mean": (
-                        float(positive_task_rewards.mean().item()) if positive_task_rewards.numel() > 0 else 0.0
-                    ),
-                    "rewards/sampled_task_reward_positive_std": (
-                        float(positive_task_rewards.std(unbiased=False).item())
-                        if positive_task_rewards.numel() > 0
-                        else 0.0
-                    ),
-                    "rewards/sampled_motion_reward_mean": float(sampled_motion_rewards.mean().item()),
-                    "rewards/sampled_combined_reward_mean": float(
-                        (sampled_task_rewards + sampled_motion_rewards).mean().item()
-                    ),
-                    "replay/success_buffer_size": float(replay.len("success")),
-                    "replay/failure_buffer_size": float(replay.len("failure")),
-                    "replay/critic_success_sample_count": float(success_batch_count),
-                    "replay/critic_failure_sample_count": float(failure_batch_count),
-                    "replay/critic_success_sample_fraction": (
-                        float(success_batch_count) / float(max(args.batch_size, 1))
-                    ),
-                    "replay/critic_failure_sample_fraction": (
-                        float(failure_batch_count) / float(max(args.batch_size, 1))
-                    ),
-                }
-            )
-
-            if (q_update_idx + 1) % int(args.target_network_frequency) == 0:
-                with torch.no_grad():
-                    for source, target in (
-                        (qf1, qf1_target),
-                        (qf2, qf2_target),
-                        (actor, actor_target),
-                    ):
-                        for param, target_param in zip(source.parameters(), target.parameters()):
-                            target_param.data.copy_(
-                                float(args.tau) * param.data + (1.0 - float(args.tau)) * target_param.data
-                            )
-
-        for _ in range(args.actor_updates_per_iteration):
-            actor_batch, _, _ = _mixed_sample_from_shared(
-                replay=replay,
-                batch_size=args.batch_size,
-                success_fraction=args.critic_success_sample_fraction,
-                device=args.learner_device,
-            )
-            if actor_batch is None:
-                continue
-            actor_obs = actor_batch["observations"]
-            actor_prev_actions = actor_batch["prev_actions"]
-            actor_policy_obs = augment_policy_observation(
-                actor_obs,
-                actor_prev_actions,
-                args.use_last_action_in_policy_state,
-            )
-            policy_actions = deterministic_actor_action(actor, actor_policy_obs)
-            q1_task_h, q1_motion_h = qf1(actor_obs, policy_actions)
-            q1_task = h_inverse(q1_task_h, eps=float(args.h_transform_eps)).view(-1)
-            q1_motion = h_inverse(q1_motion_h, eps=float(args.h_transform_eps)).view(-1)
-            actor_objective = float(args.task_reward_weight) * q1_task + float(args.motion_reward_weight) * q1_motion
-            actor_loss = -actor_objective.mean()
-            actor_optimizer.zero_grad(set_to_none=True)
-            actor_loss.backward()
-            actor_optimizer.step()
-            total_actor_updates += 1
-            actor_updated = True
-            norm_task = (1.0 - float(args.task_gamma)) * q1_task
-            norm_motion = (1.0 - float(args.motion_gamma)) * q1_motion
-            latest_train_metrics.update(
-                {
-                    "losses/actor_loss": float(actor_loss.item()),
-                    "losses/actor_norm_task_mean": float(norm_task.mean().item()),
-                    "losses/actor_norm_motion_mean": float(norm_motion.mean().item()),
-                }
-            )
-
-        if actor_updated:
-            published_version = actor_state.publish(
-                {key: value.detach().cpu() for key, value in actor.state_dict().items()}
-            )
-            stats["learner_actor_version"] = float(published_version)
-
-        elapsed = time.time() - iter_start
-        if args.updates_per_second > 0:
-            sleep_time = max(0.0, (1.0 / float(args.updates_per_second)) - elapsed)
-            if sleep_time > 0:
-                time.sleep(sleep_time)
-
-        now = time.time()
-        if now - last_log_time >= float(args.learner_log_interval_sec):
-            stats["learner_q_updates"] = float(total_updates)
-            stats["learner_actor_updates"] = float(total_actor_updates)
-            stats["learner_replay_size"] = float(total_replay_size)
-            step_index = max(total_updates, 1)
-            for metric_name, metric_value in latest_train_metrics.items():
-                writer.add_scalar(metric_name, float(metric_value), step_index)
-            writer.add_scalar("charts/SPS", float(total_updates) / max(now - learner_start_time, 1e-6), step_index)
-            writer.add_scalar("replay/success_buffer_size", float(replay.len("success")), step_index)
-            writer.add_scalar("replay/failure_buffer_size", float(replay.len("failure")), step_index)
-            print(
-                "[learner] "
-                f"q_updates={total_updates} actor_updates={total_actor_updates} replay_size={total_replay_size}"
-            )
-            last_log_time = now
-    writer.close()
-
-
-def _load_initial_actor_state(args: Args, policy_obs_dim: int, act_dim: int) -> Dict[str, torch.Tensor]:
-    policy_env_view = build_policy_env_view(policy_obs_dim, act_dim)
-    actor = DeterministicAgent(
-        policy_env_view,
-        action_scale=args.action_scale,
-        action_bias=0.0,
-        hidden_layer_size=args.agent_hidden_layer_size,
-        num_hidden_layers=args.agent_num_hidden_layers,
+    if resume_checkpoint is not None:
+        q_optimizer.load_state_dict(resume_checkpoint["q_optimizer"])
+        actor_optimizer.load_state_dict(resume_checkpoint["actor_optimizer"])
+        total_updates = int(resume_checkpoint.get("global_step", resume_checkpoint.get("learner_q_updates", 0)))
+        total_actor_updates = int(resume_checkpoint.get("learner_actor_updates", 0))
+        if isinstance(resume_checkpoint.get("train_metrics"), dict):
+            latest_train_metrics = {
+                str(key): float(value)
+                for key, value in resume_checkpoint["train_metrics"].items()
+            }
+        if "rng_states" in resume_checkpoint:
+            set_rng_states(resume_checkpoint["rng_states"])
+        print(
+            "[learner] resumed optimizer state "
+            f"q_updates={total_updates} actor_updates={total_actor_updates}"
+        )
+    return LearnerRuntimeState(
+        actor=actor,
+        actor_target=actor_target,
+        qf1=qf1,
+        qf2=qf2,
+        qf1_target=qf1_target,
+        qf2_target=qf2_target,
+        q_optimizer=q_optimizer,
+        actor_optimizer=actor_optimizer,
+        action_low=torch.as_tensor(action_low_np, dtype=torch.float32, device=device).unsqueeze(0),
+        action_high=torch.as_tensor(action_high_np, dtype=torch.float32, device=device).unsqueeze(0),
+        writer=writer,
+        checkpoint_root=_checkpoint_root_from_tb(tb_log_dir, args.checkpoint_root_dir),
+        last_log_time=time.time(),
+        learner_start_time=time.time(),
+        total_updates=total_updates,
+        total_actor_updates=total_actor_updates,
+        last_handled_checkpoint_request_id=int(stats.get("checkpoint_save_request_id", 0)),
+        latest_train_metrics=latest_train_metrics,
     )
-    if args.model_path is not None and os.path.exists(args.model_path):
-        loaded_obj = torch.load(args.model_path, map_location="cpu", weights_only=False)
-        if isinstance(loaded_obj, dict) and "actor" in loaded_obj:
-            actor.load_state_dict(extract_deterministic_state_dict(loaded_obj["actor"]), strict=False)
-        else:
-            actor.load_state_dict(extract_deterministic_state_dict(loaded_obj), strict=False)
-    return {key: value.detach().cpu() for key, value in actor.state_dict().items()}
 
 
+def _run_sync_learner_iteration(
+    args: Args,
+    replay: SharedTD3Replay,
+    stats: Dict[str, object],
+    state: LearnerRuntimeState,
+) -> bool:
+    current_checkpoint_request_id = int(stats.get("checkpoint_save_request_id", 0))
+    if (
+        args.enable_periodic_checkpointing
+        and current_checkpoint_request_id > state.last_handled_checkpoint_request_id
+    ):
+        successful_kept = int(stats.get("checkpoint_trigger_successful_online_episodes_kept", 0))
+        checkpoint_tag = f"successeps_{successful_kept}_qupdates_{state.total_updates}"
+        try:
+            checkpoint_dir = _save_async_checkpoint(
+                checkpoint_root=state.checkpoint_root,
+                checkpoint_tag=checkpoint_tag,
+                args=args,
+                replay=replay,
+                actor=state.actor,
+                actor_target=state.actor_target,
+                qf1=state.qf1,
+                qf2=state.qf2,
+                qf1_target=state.qf1_target,
+                qf2_target=state.qf2_target,
+                q_optimizer=state.q_optimizer,
+                actor_optimizer=state.actor_optimizer,
+                total_updates=state.total_updates,
+                total_actor_updates=state.total_actor_updates,
+                latest_train_metrics=state.latest_train_metrics,
+                stats=stats,
+            )
+            stats["last_checkpoint_dir"] = str(checkpoint_dir)
+            stats["last_checkpoint_success_episode_count"] = float(successful_kept)
+            stats["last_checkpoint_q_updates"] = float(state.total_updates)
+            stats["last_checkpoint_request_id"] = float(current_checkpoint_request_id)
+            print(
+                "[learner_checkpoint] "
+                f"request_id={current_checkpoint_request_id} "
+                f"successful_kept={successful_kept} path={checkpoint_dir}"
+            )
+        except Exception:
+            print(f"[learner_checkpoint] save FAILED:\n{traceback.format_exc()}")
+        state.last_handled_checkpoint_request_id = current_checkpoint_request_id
+
+    total_replay_size = replay.len("success") + replay.len("failure")
+    if total_replay_size < int(args.min_replay_size_before_learning):
+        return False
+
+    actor_updated = False
+    for q_update_idx in range(args.q_updates):
+        batch, success_batch_count, failure_batch_count = _mixed_sample_from_shared(
+            replay=replay,
+            batch_size=args.batch_size,
+            success_fraction=args.critic_success_sample_fraction,
+            device=args.learner_device,
+        )
+        if batch is None:
+            continue
+        sampled_observations = batch["observations"]
+        sampled_next_observations = batch["next_observations"]
+        sampled_actions = batch["actions"]
+        sampled_task_rewards = batch["task_rewards"]
+        sampled_motion_rewards = batch["motion_rewards"]
+        sampled_dones = batch["dones"]
+        sampled_next_prev_actions = sampled_actions * (1.0 - sampled_dones.unsqueeze(-1))
+        sampled_next_policy_observations = augment_policy_observation(
+            sampled_next_observations,
+            sampled_next_prev_actions,
+            args.use_last_action_in_policy_state,
+        )
+        with torch.no_grad():
+            target_next_action = deterministic_actor_action(state.actor_target, sampled_next_policy_observations)
+            noise = torch.randn_like(target_next_action) * float(args.policy_noise)
+            noise = torch.clamp(noise, -float(args.noise_clip), float(args.noise_clip))
+            target_next_action = torch.clamp(target_next_action + noise, state.action_low, state.action_high)
+            q1_next_task_h, q1_next_motion_h = state.qf1_target(sampled_next_observations, target_next_action)
+            q2_next_task_h, q2_next_motion_h = state.qf2_target(sampled_next_observations, target_next_action)
+            min_next_task = h_inverse(
+                torch.min(q1_next_task_h, q2_next_task_h),
+                eps=float(args.h_transform_eps),
+            ).view(-1)
+            min_next_motion = h_inverse(
+                torch.min(q1_next_motion_h, q2_next_motion_h),
+                eps=float(args.h_transform_eps),
+            ).view(-1)
+            bellman_task = sampled_task_rewards + (1.0 - sampled_dones) * float(args.task_gamma) * min_next_task
+            bellman_motion = sampled_motion_rewards + (1.0 - sampled_dones) * float(args.motion_gamma) * min_next_motion
+            target_task_h = h_transform(bellman_task, eps=float(args.h_transform_eps))
+            target_motion_h = h_transform(bellman_motion, eps=float(args.h_transform_eps))
+        q1_task_h, q1_motion_h = state.qf1(sampled_observations, sampled_actions)
+        q2_task_h, q2_motion_h = state.qf2(sampled_observations, sampled_actions)
+        q1_task_loss = torch.nn.functional.mse_loss(q1_task_h.view(-1), target_task_h)
+        q2_task_loss = torch.nn.functional.mse_loss(q2_task_h.view(-1), target_task_h)
+        q1_motion_loss = torch.nn.functional.mse_loss(q1_motion_h.view(-1), target_motion_h)
+        q2_motion_loss = torch.nn.functional.mse_loss(q2_motion_h.view(-1), target_motion_h)
+        q_loss = q1_task_loss + q2_task_loss + q1_motion_loss + q2_motion_loss
+        state.q_optimizer.zero_grad(set_to_none=True)
+        q_loss.backward()
+        state.q_optimizer.step()
+        state.total_updates += 1
+        positive_task_reward_mask = sampled_task_rewards > 0
+        positive_task_reward_count = float(positive_task_reward_mask.sum().item())
+        minibatch_size = max(int(sampled_task_rewards.numel()), 1)
+        positive_task_rewards = sampled_task_rewards[positive_task_reward_mask]
+        state.latest_train_metrics.update(
+            {
+                "losses/q_task_loss": float(((q1_task_loss + q2_task_loss) / 2.0).item()),
+                "losses/q_motion_loss": float(((q1_motion_loss + q2_motion_loss) / 2.0).item()),
+                "losses/q_total_loss": float(q_loss.item()),
+                "losses/q1_task_mean": float(q1_task_h.mean().item()),
+                "losses/q1_motion_mean": float(q1_motion_h.mean().item()),
+                "losses/q1_total_mean": float((q1_task_h + q1_motion_h).mean().item()),
+                "rewards/sampled_task_reward_mean": float(sampled_task_rewards.mean().item()),
+                "rewards/sampled_task_reward_min": float(sampled_task_rewards.min().item()),
+                "rewards/sampled_task_reward_std": float(sampled_task_rewards.std(unbiased=False).item()),
+                "rewards/sampled_task_reward_positive_count": positive_task_reward_count,
+                "rewards/sampled_task_reward_positive_fraction": (
+                    positive_task_reward_count / float(minibatch_size)
+                ),
+                "rewards/sampled_task_reward_positive_mean": (
+                    float(positive_task_rewards.mean().item()) if positive_task_rewards.numel() > 0 else 0.0
+                ),
+                "rewards/sampled_task_reward_positive_std": (
+                    float(positive_task_rewards.std(unbiased=False).item())
+                    if positive_task_rewards.numel() > 0
+                    else 0.0
+                ),
+                "rewards/sampled_motion_reward_mean": float(sampled_motion_rewards.mean().item()),
+                "rewards/sampled_combined_reward_mean": float(
+                    (sampled_task_rewards + sampled_motion_rewards).mean().item()
+                ),
+                "replay/success_buffer_size": float(replay.len("success")),
+                "replay/failure_buffer_size": float(replay.len("failure")),
+                "replay/critic_success_sample_count": float(success_batch_count),
+                "replay/critic_failure_sample_count": float(failure_batch_count),
+                "replay/critic_success_sample_fraction": (
+                    float(success_batch_count) / float(max(args.batch_size, 1))
+                ),
+                "replay/critic_failure_sample_fraction": (
+                    float(failure_batch_count) / float(max(args.batch_size, 1))
+                ),
+            }
+        )
+        if (q_update_idx + 1) % int(args.target_network_frequency) == 0:
+            with torch.no_grad():
+                for source, target in (
+                    (state.qf1, state.qf1_target),
+                    (state.qf2, state.qf2_target),
+                    (state.actor, state.actor_target),
+                ):
+                    for param, target_param in zip(source.parameters(), target.parameters()):
+                        target_param.data.copy_(
+                            float(args.tau) * param.data + (1.0 - float(args.tau)) * target_param.data
+                        )
+    for _ in range(args.actor_updates_per_iteration):
+        actor_batch, _, _ = _mixed_sample_from_shared(
+            replay=replay,
+            batch_size=args.batch_size,
+            success_fraction=args.critic_success_sample_fraction,
+            device=args.learner_device,
+        )
+        if actor_batch is None:
+            continue
+        actor_obs = actor_batch["observations"]
+        actor_prev_actions = actor_batch["prev_actions"]
+        actor_policy_obs = augment_policy_observation(
+            actor_obs,
+            actor_prev_actions,
+            args.use_last_action_in_policy_state,
+        )
+        policy_actions = deterministic_actor_action(state.actor, actor_policy_obs)
+        q1_task_h, q1_motion_h = state.qf1(actor_obs, policy_actions)
+        q1_task = h_inverse(q1_task_h, eps=float(args.h_transform_eps)).view(-1)
+        q1_motion = h_inverse(q1_motion_h, eps=float(args.h_transform_eps)).view(-1)
+        actor_objective = float(args.task_reward_weight) * q1_task + float(args.motion_reward_weight) * q1_motion
+        actor_loss = -actor_objective.mean()
+        state.actor_optimizer.zero_grad(set_to_none=True)
+        actor_loss.backward()
+        state.actor_optimizer.step()
+        state.total_actor_updates += 1
+        actor_updated = True
+        norm_task = (1.0 - float(args.task_gamma)) * q1_task
+        norm_motion = (1.0 - float(args.motion_gamma)) * q1_motion
+        state.latest_train_metrics.update(
+            {
+                "losses/actor_loss": float(actor_loss.item()),
+                "losses/actor_norm_task_mean": float(norm_task.mean().item()),
+                "losses/actor_norm_motion_mean": float(norm_motion.mean().item()),
+            }
+        )
+    now = time.time()
+    if now - state.last_log_time >= float(args.learner_log_interval_sec):
+        stats["learner_q_updates"] = float(state.total_updates)
+        stats["learner_actor_updates"] = float(state.total_actor_updates)
+        stats["learner_replay_size"] = float(total_replay_size)
+        step_index = max(state.total_updates, 1)
+        for metric_name, metric_value in state.latest_train_metrics.items():
+            state.writer.add_scalar(metric_name, float(metric_value), step_index)
+        state.writer.add_scalar(
+            "charts/SPS",
+            float(state.total_updates) / max(now - state.learner_start_time, 1e-6),
+            step_index,
+        )
+        state.writer.add_scalar("replay/success_buffer_size", float(replay.len("success")), step_index)
+        state.writer.add_scalar("replay/failure_buffer_size", float(replay.len("failure")), step_index)
+        print(
+            "[learner] "
+            f"q_updates={state.total_updates} actor_updates={state.total_actor_updates} replay_size={total_replay_size}"
+        )
+        state.last_log_time = now
+    return actor_updated
+
+
+def _finalize_sync_learner_state(
+    args: Args,
+    replay: SharedTD3Replay,
+    stats: Dict[str, object],
+    state: LearnerRuntimeState,
+) -> None:
+    if args.enable_periodic_checkpointing:
+        final_tag = f"final_qupdates_{state.total_updates}"
+        try:
+            final_checkpoint_dir = _save_async_checkpoint(
+                checkpoint_root=state.checkpoint_root,
+                checkpoint_tag=final_tag,
+                args=args,
+                replay=replay,
+                actor=state.actor,
+                actor_target=state.actor_target,
+                qf1=state.qf1,
+                qf2=state.qf2,
+                qf1_target=state.qf1_target,
+                qf2_target=state.qf2_target,
+                q_optimizer=state.q_optimizer,
+                actor_optimizer=state.actor_optimizer,
+                total_updates=state.total_updates,
+                total_actor_updates=state.total_actor_updates,
+                latest_train_metrics=state.latest_train_metrics,
+                stats=stats,
+            )
+            stats["last_checkpoint_dir"] = str(final_checkpoint_dir)
+            stats["last_checkpoint_q_updates"] = float(state.total_updates)
+            print(f"[learner_checkpoint] final path={final_checkpoint_dir}")
+        except Exception:
+            print(f"[learner_checkpoint] final save FAILED:\n{traceback.format_exc()}")
+    state.writer.close()
 def main(args: Args) -> None:
     if not (0.0 < args.success_top_fraction < 1.0):
         raise ValueError("success_top_fraction must be in (0, 1).")
@@ -2118,6 +3118,11 @@ def main(args: Args) -> None:
         raise ValueError("target_network_frequency must be > 0.")
     if abs(float(args.critic_success_sample_fraction + args.critic_failure_sample_fraction) - 1.0) > 1e-6:
         raise ValueError("critic_success_sample_fraction + critic_failure_sample_fraction must equal 1.0.")
+    if args.enable_periodic_checkpointing and int(args.checkpoint_every_successful_online_episodes) <= 0:
+        raise ValueError("checkpoint_every_successful_online_episodes must be > 0 when checkpointing is enabled.")
+    normalized_replay_priority = _normalize_replay_source_priority(args.replay_source_priority)
+    if normalized_replay_priority != str(args.replay_source_priority).strip().lower():
+        print("[main] replay_source_priority normalized to 'warmstart_only' due to invalid input.")
     if _normalize_transition_last_action_mode(args.transition_last_action_mode) != str(
         args.transition_last_action_mode
     ).strip().lower():
@@ -2138,10 +3143,6 @@ def main(args: Args) -> None:
     act_dim = int(np.prod(probe_env.action_space.shape))
     action_low_np = np.asarray(probe_env.action_space.low, dtype=np.float32)
     action_high_np = np.asarray(probe_env.action_space.high, dtype=np.float32)
-    probe_env.close()
-
-    policy_obs_dim = obs_dim + act_dim if args.use_last_action_in_policy_state else obs_dim
-    initial_actor_state = _load_initial_actor_state(args, policy_obs_dim=policy_obs_dim, act_dim=act_dim)
 
     replay = SharedTD3Replay(
         success_capacity=args.success_buffer_size,
@@ -2149,10 +3150,87 @@ def main(args: Args) -> None:
         obs_shape=(obs_dim,),
         action_shape=(act_dim,),
     )
-    actor_state = SharedActorState(initial_actor_state)
-    stop_event = mp.Event()
-    manager = mp.Manager()
-    stats = manager.dict()
+    stats: Dict[str, object] = {}
+    stats["successful_online_episodes_kept"] = float(0)
+    stats["checkpoint_save_request_id"] = float(0)
+    stats["checkpoint_trigger_successful_online_episodes_kept"] = float(0)
+    stats["run_elapsed_total_s"] = float(0.0)
+    stats["rolling50_window_size"] = float(ROLLING_PERF_WINDOW_EPISODES)
+    stats["rolling50_window_count"] = float(0.0)
+    stats["rolling50_task_reward_avg"] = float(0.0)
+    stats["rolling50_motion_reward_avg"] = float(0.0)
+    stats["rolling50_episode_length_avg"] = float(0.0)
+    stats["rolling50_estop_episode_count"] = float(0.0)
+    stats["rolling50_task_reward_values"] = []
+    stats["rolling50_motion_reward_values"] = []
+    stats["rolling50_episode_length_values"] = []
+    stats["rolling50_estop_episode_flags"] = []
+    if args.model_path is not None:
+        loaded_runtime_state = _load_runtime_perf_from_checkpoint_file(args.model_path)
+        loaded_task_values = _coerce_float_list(
+            loaded_runtime_state.get("rolling50_task_reward_values", []),
+            max_items=ROLLING_PERF_WINDOW_EPISODES,
+        )
+        loaded_motion_values = _coerce_float_list(
+            loaded_runtime_state.get("rolling50_motion_reward_values", []),
+            max_items=ROLLING_PERF_WINDOW_EPISODES,
+        )
+        loaded_length_values = _coerce_float_list(
+            loaded_runtime_state.get("rolling50_episode_length_values", []),
+            max_items=ROLLING_PERF_WINDOW_EPISODES,
+        )
+        loaded_estop_flags = _coerce_float_list(
+            loaded_runtime_state.get("rolling50_estop_episode_flags", []),
+            max_items=ROLLING_PERF_WINDOW_EPISODES,
+        )
+        stats["run_elapsed_total_s"] = float(loaded_runtime_state.get("run_elapsed_total_s", 0.0))
+        stats["rolling50_task_reward_values"] = loaded_task_values
+        stats["rolling50_motion_reward_values"] = loaded_motion_values
+        stats["rolling50_episode_length_values"] = loaded_length_values
+        stats["rolling50_estop_episode_flags"] = loaded_estop_flags
+        stats["rolling50_window_count"] = float(
+            max(
+                len(loaded_task_values),
+                len(loaded_motion_values),
+                len(loaded_length_values),
+                len(loaded_estop_flags),
+            )
+        )
+        stats["rolling50_task_reward_avg"] = float(_rolling_mean(loaded_task_values))
+        stats["rolling50_motion_reward_avg"] = float(_rolling_mean(loaded_motion_values))
+        stats["rolling50_episode_length_avg"] = float(_rolling_mean(loaded_length_values))
+        stats["rolling50_estop_episode_count"] = float(sum(loaded_estop_flags))
+
+    warm_start_requested = len(args.warm_start_hdf5_dirs) > 0
+    checkpoint_replay_loaded = False
+    if args.load_replay_from_checkpoint and args.model_path is not None:
+        should_load_checkpoint_replay = True
+        if warm_start_requested and normalized_replay_priority == "warmstart_only":
+            should_load_checkpoint_replay = False
+            print("[resume_replay] skipping checkpoint replay because warmstart_only is active.")
+        if should_load_checkpoint_replay:
+            checkpoint_replay_loaded = _load_replay_from_checkpoint_file(
+                model_path=args.model_path,
+                replay=replay,
+            )
+            if checkpoint_replay_loaded:
+                stats["resume_replay_loaded"] = float(1)
+    try:
+        if warm_start_requested:
+            if checkpoint_replay_loaded and normalized_replay_priority == "checkpoint_only":
+                print("[warm_start] skipped because replay_source_priority=checkpoint_only")
+            else:
+                if checkpoint_replay_loaded and normalized_replay_priority == "checkpoint_then_append":
+                    print("[warm_start] appending warm-start data on top of checkpoint replay.")
+                warm_start_summary = _warm_start_replay_from_hdf5(
+                    args=args,
+                    replay=replay,
+                    env=probe_env,
+                )
+                for key, value in warm_start_summary.items():
+                    stats[f"warm_start/{key}"] = float(value)
+    finally:
+        probe_env.close()
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     base_log_dir = args.log_parent_dir or f"runs/async_td3/{args.run_name}_{timestamp}"
     collector_tb_dir = os.path.join(base_log_dir, "collector_tb")
@@ -2161,67 +3239,41 @@ def main(args: Args) -> None:
     os.makedirs(learner_tb_dir, exist_ok=True)
     print(f"TensorBoard logs: {base_log_dir}")
 
-    collector = mp.Process(
-        target=collector_process,
-        args=(
+    learner_state = _init_sync_learner_state(
+        args=args,
+        replay=replay,
+        stats=stats,
+        obs_dim=obs_dim,
+        act_dim=act_dim,
+        action_low_np=action_low_np,
+        action_high_np=action_high_np,
+        tb_log_dir=learner_tb_dir,
+    )
+    try:
+        collector_process(
             args,
             replay,
-            actor_state,
-            stop_event,
             stats,
+            learner_state,
             obs_dim,
             act_dim,
             action_low_np,
             action_high_np,
             collector_tb_dir,
-        ),
-        name="td3_collector",
-    )
-    learner = mp.Process(
-        target=learner_process,
-        args=(
-            args,
-            replay,
-            actor_state,
-            stop_event,
-            stats,
-            obs_dim,
-            act_dim,
-            action_low_np,
-            action_high_np,
-            learner_tb_dir,
-        ),
-        name="td3_learner",
-    )
-
-    collector.start()
-    learner.start()
-
-    try:
-        if args.smoke_test_seconds > 0:
-            print(f"Running smoke test for {args.smoke_test_seconds:.1f} seconds...")
-            time.sleep(float(args.smoke_test_seconds))
-            stop_event.set()
-        while collector.is_alive() and learner.is_alive() and not stop_event.is_set():
-            time.sleep(1.0)
+        )
     except KeyboardInterrupt:
-        stop_event.set()
+        print("[main] interrupted by user; shutting down.")
     finally:
-        stop_event.set()
-        collector.join(timeout=15.0)
-        learner.join(timeout=15.0)
-        if collector.is_alive():
-            collector.terminate()
-        if learner.is_alive():
-            learner.terminate()
+        _finalize_sync_learner_state(
+            args=args,
+            replay=replay,
+            stats=stats,
+            state=learner_state,
+        )
         print("Final stats:", dict(stats))
 
 
 if __name__ == "__main__":
-    try:
-        mp.set_start_method("spawn", force=True)
-    except RuntimeError:
-        pass
     temp_args = tyro.cli(Args)
     if temp_args.args_file is not None:
         mapped_defaults, applied_keys, ignored_keys = _build_args_file_defaults(temp_args.args_file)

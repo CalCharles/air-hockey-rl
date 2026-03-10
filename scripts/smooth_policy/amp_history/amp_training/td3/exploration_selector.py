@@ -8,7 +8,10 @@ import torch
 
 from scripts.smooth_policy.amp_history.amp_training.td3.exploration_primitives import (
     actions_from_direction_and_magnitude,
+    max_magnitude_for_directions_in_action_box,
     project_displacement_to_action_box,
+    sample_directions_from_angle_range,
+    sample_simulator_displacements_from_ranges,
     sample_target_distances,
     sample_uniform_magnitude,
     sample_unit_directions,
@@ -42,6 +45,18 @@ class PrimitiveExplorationSelector:
         target_max_distance: float = 0.5,
         target_action_delta_x: float = 0.26,
         target_action_delta_y: float = 0.12,
+        same_direction_min_angle_deg: float | None = None,
+        same_direction_max_angle_deg: float | None = None,
+        same_direction_min_magnitude: float | None = None,
+        same_direction_max_magnitude: float | None = None,
+        y_aligned_min_angle_deg: float | None = None,
+        y_aligned_max_angle_deg: float | None = None,
+        y_aligned_min_magnitude: float | None = None,
+        y_aligned_max_magnitude: float | None = None,
+        target_position_directional_min_angle_deg: float | None = None,
+        target_position_directional_max_angle_deg: float | None = None,
+        target_position_directional_min_magnitude: float | None = None,
+        target_position_directional_max_magnitude: float | None = None,
         target_takeover_steps: int | None = None,
         pre_contact_hit_variant_chance: float = 0.15,
         pre_contact_hit_variant_steps: int = 5,
@@ -62,6 +77,26 @@ class PrimitiveExplorationSelector:
         self.target_max_distance = float(target_max_distance)
         self.target_action_delta_x = float(target_action_delta_x)
         self.target_action_delta_y = float(target_action_delta_y)
+        self.same_direction_min_angle_deg = self._maybe_float(same_direction_min_angle_deg)
+        self.same_direction_max_angle_deg = self._maybe_float(same_direction_max_angle_deg)
+        self.same_direction_min_magnitude = self._maybe_float(same_direction_min_magnitude)
+        self.same_direction_max_magnitude = self._maybe_float(same_direction_max_magnitude)
+        self.y_aligned_min_angle_deg = self._maybe_float(y_aligned_min_angle_deg)
+        self.y_aligned_max_angle_deg = self._maybe_float(y_aligned_max_angle_deg)
+        self.y_aligned_min_magnitude = self._maybe_float(y_aligned_min_magnitude)
+        self.y_aligned_max_magnitude = self._maybe_float(y_aligned_max_magnitude)
+        self.target_position_directional_min_angle_deg = self._maybe_float(
+            target_position_directional_min_angle_deg
+        )
+        self.target_position_directional_max_angle_deg = self._maybe_float(
+            target_position_directional_max_angle_deg
+        )
+        self.target_position_directional_min_magnitude = self._maybe_float(
+            target_position_directional_min_magnitude
+        )
+        self.target_position_directional_max_magnitude = self._maybe_float(
+            target_position_directional_max_magnitude
+        )
         self.target_takeover_steps = int(target_takeover_steps or takeover_steps)
         self.pre_contact_hit_variant_chance = float(pre_contact_hit_variant_chance)
         self.pre_contact_hit_variant_steps = int(pre_contact_hit_variant_steps)
@@ -87,6 +122,27 @@ class PrimitiveExplorationSelector:
             raise ValueError("pre_contact_hit_variant_scale_max must be >= pre_contact_hit_variant_scale_min")
         if self.pre_contact_hit_variant_min_upward_displacement_x < 0.0:
             raise ValueError("pre_contact_hit_variant_min_upward_displacement_x must be >= 0")
+        self._validate_optional_range(
+            "same_direction",
+            self.same_direction_min_angle_deg,
+            self.same_direction_max_angle_deg,
+            self.same_direction_min_magnitude,
+            self.same_direction_max_magnitude,
+        )
+        self._validate_optional_range(
+            "y_aligned",
+            self.y_aligned_min_angle_deg,
+            self.y_aligned_max_angle_deg,
+            self.y_aligned_min_magnitude,
+            self.y_aligned_max_magnitude,
+        )
+        self._validate_optional_range(
+            "target_position_directional",
+            self.target_position_directional_min_angle_deg,
+            self.target_position_directional_max_angle_deg,
+            self.target_position_directional_min_magnitude,
+            self.target_position_directional_max_magnitude,
+        )
         self.primitive_ids = PrimitiveIds()
         self.primitive_weights = torch.tensor(
             [0.25, 0.25, 0.25, 0.25, 0.0, 0.0], dtype=self.dtype, device=self.device
@@ -104,6 +160,54 @@ class PrimitiveExplorationSelector:
         self.hit_variant_scale = torch.ones(self.num_envs, dtype=self.dtype, device=self.device)
         self.hit_variant_base_action = torch.zeros((self.num_envs, 2), dtype=self.dtype, device=self.device)
         self.hit_variant_running_action = torch.zeros((self.num_envs, 2), dtype=self.dtype, device=self.device)
+
+    @staticmethod
+    def _maybe_float(value: float | None) -> float | None:
+        return None if value is None else float(value)
+
+    @staticmethod
+    def _validate_optional_range(
+        primitive_name: str,
+        min_angle_deg: float | None,
+        max_angle_deg: float | None,
+        min_magnitude: float | None,
+        max_magnitude: float | None,
+    ) -> None:
+        values = (min_angle_deg, max_angle_deg, min_magnitude, max_magnitude)
+        if all(value is None for value in values):
+            return
+        if any(value is None for value in values):
+            raise ValueError(
+                f"{primitive_name} simulator-space range requires angle min/max and magnitude min/max"
+            )
+        if min_magnitude is not None and min_magnitude < 0.0:
+            raise ValueError(f"{primitive_name} min_magnitude must be >= 0")
+        if (
+            min_magnitude is not None
+            and max_magnitude is not None
+            and max_magnitude < min_magnitude
+        ):
+            raise ValueError(f"{primitive_name} max_magnitude must be >= min_magnitude")
+
+    def _uses_simulator_space_range(self, primitive_name: str) -> bool:
+        return getattr(self, f"{primitive_name}_min_angle_deg") is not None
+
+    def _sample_simulator_range(
+        self,
+        primitive_name: str,
+        count: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        return sample_simulator_displacements_from_ranges(
+            count=count,
+            min_angle_deg=getattr(self, f"{primitive_name}_min_angle_deg"),
+            max_angle_deg=getattr(self, f"{primitive_name}_max_angle_deg"),
+            min_magnitude=getattr(self, f"{primitive_name}_min_magnitude"),
+            max_magnitude=getattr(self, f"{primitive_name}_max_magnitude"),
+            max_delta_x=self.target_action_delta_x,
+            max_delta_y=self.target_action_delta_y,
+            device=self.device,
+            dtype=self.dtype,
+        )
 
     def _clear_mask(self, mask: torch.Tensor) -> None:
         if not torch.any(mask):
@@ -155,12 +259,21 @@ class PrimitiveExplorationSelector:
 
     def _sample_y_aligned_directions(self, y_alignment_sign: torch.Tensor) -> torch.Tensor:
         count = int(y_alignment_sign.numel())
-        directions = sample_unit_directions(
-            count,
-            self.device,
-            self.dtype,
-            y_component_weight=self.direction_y_component_weight,
-        )
+        if self._uses_simulator_space_range("y_aligned"):
+            directions = sample_directions_from_angle_range(
+                count=count,
+                min_angle_deg=self.y_aligned_min_angle_deg,
+                max_angle_deg=self.y_aligned_max_angle_deg,
+                device=self.device,
+                dtype=self.dtype,
+            )
+        else:
+            directions = sample_unit_directions(
+                count,
+                self.device,
+                self.dtype,
+                y_component_weight=self.direction_y_component_weight,
+            )
         nonzero_mask = y_alignment_sign != 0
         if torch.any(nonzero_mask):
             desired_sign = y_alignment_sign[nonzero_mask].to(self.dtype)
@@ -273,15 +386,20 @@ class PrimitiveExplorationSelector:
         if torch.any(same_dir_mask):
             same_indices = indices[same_dir_mask]
             same_count = int(same_indices.numel())
-            self.direction[same_indices] = sample_unit_directions(
-                same_count,
-                self.device,
-                self.dtype,
-                y_component_weight=self.direction_y_component_weight,
-            )
-            self.magnitude[same_indices] = sample_uniform_magnitude(
-                same_count, max_magnitude=1.0, min_magnitude=0.1, device=self.device, dtype=self.dtype
-            )
+            if self._uses_simulator_space_range("same_direction"):
+                directions, magnitudes, _ = self._sample_simulator_range("same_direction", same_count)
+                self.direction[same_indices] = directions
+                self.magnitude[same_indices] = magnitudes
+            else:
+                self.direction[same_indices] = sample_unit_directions(
+                    same_count,
+                    self.device,
+                    self.dtype,
+                    y_component_weight=self.direction_y_component_weight,
+                )
+                self.magnitude[same_indices] = sample_uniform_magnitude(
+                    same_count, max_magnitude=1.0, min_magnitude=0.1, device=self.device, dtype=self.dtype
+                )
 
         y_aligned_mask = sampled_primitive == self.primitive_ids.Y_ALIGNED_DIRECTION
         if torch.any(y_aligned_mask):
@@ -289,28 +407,50 @@ class PrimitiveExplorationSelector:
             aligned_count = int(aligned_indices.numel())
             aligned_signs = sampled_y_alignment_sign[y_aligned_mask]
             self.direction[aligned_indices] = self._sample_y_aligned_directions(aligned_signs)
-            self.magnitude[aligned_indices] = sample_uniform_magnitude(
-                aligned_count, max_magnitude=1.0, min_magnitude=0.1, device=self.device, dtype=self.dtype
-            )
+            if self._uses_simulator_space_range("y_aligned"):
+                feasible_max = max_magnitude_for_directions_in_action_box(
+                    self.direction[aligned_indices],
+                    max_delta_x=self.target_action_delta_x,
+                    max_delta_y=self.target_action_delta_y,
+                )
+                capped_max = torch.clamp(feasible_max, min=0.0, max=float(self.y_aligned_max_magnitude))
+                lower = torch.minimum(
+                    capped_max,
+                    torch.full_like(capped_max, float(self.y_aligned_min_magnitude)),
+                )
+                self.magnitude[aligned_indices] = (
+                    lower
+                    + torch.rand(aligned_count, device=self.device, dtype=self.dtype) * (capped_max - lower)
+                )
+            else:
+                self.magnitude[aligned_indices] = sample_uniform_magnitude(
+                    aligned_count, max_magnitude=1.0, min_magnitude=0.1, device=self.device, dtype=self.dtype
+                )
 
         target_position_mask = sampled_primitive == self.primitive_ids.TARGET_POSITION_DIRECTIONAL
         if torch.any(target_position_mask):
             target_indices = indices[target_position_mask]
             target_count = int(target_indices.numel())
-            target_directions = sample_unit_directions(
-                target_count,
-                self.device,
-                self.dtype,
-                y_component_weight=self.direction_y_component_weight,
-            )
-            target_distances = sample_target_distances(
-                target_count,
-                min_distance=self.target_min_distance,
-                max_distance=self.target_max_distance,
-                device=self.device,
-                dtype=self.dtype,
-            )
-            target_displacements = actions_from_direction_and_magnitude(target_directions, target_distances)
+            if self._uses_simulator_space_range("target_position_directional"):
+                _, _, target_displacements = self._sample_simulator_range(
+                    "target_position_directional",
+                    target_count,
+                )
+            else:
+                target_directions = sample_unit_directions(
+                    target_count,
+                    self.device,
+                    self.dtype,
+                    y_component_weight=self.direction_y_component_weight,
+                )
+                target_distances = sample_target_distances(
+                    target_count,
+                    min_distance=self.target_min_distance,
+                    max_distance=self.target_max_distance,
+                    device=self.device,
+                    dtype=self.dtype,
+                )
+                target_displacements = actions_from_direction_and_magnitude(target_directions, target_distances)
             target_actions, achievable_displacements, _ = project_displacement_to_action_box(
                 target_displacements,
                 max_delta_x=self.target_action_delta_x,
@@ -402,16 +542,38 @@ class PrimitiveExplorationSelector:
         same_mask = active_primitive == self.primitive_ids.SAME_DIRECTION_SMALL_MAG
         if torch.any(same_mask):
             same_indices = active_indices[same_mask]
-            actions[same_indices] = actions_from_direction_and_magnitude(
-                self.direction[same_indices], self.magnitude[same_indices]
-            )
+            if self._uses_simulator_space_range("same_direction"):
+                same_displacements = actions_from_direction_and_magnitude(
+                    self.direction[same_indices], self.magnitude[same_indices]
+                )
+                same_actions, _, _ = project_displacement_to_action_box(
+                    same_displacements,
+                    max_delta_x=self.target_action_delta_x,
+                    max_delta_y=self.target_action_delta_y,
+                )
+                actions[same_indices] = same_actions
+            else:
+                actions[same_indices] = actions_from_direction_and_magnitude(
+                    self.direction[same_indices], self.magnitude[same_indices]
+                )
 
         y_aligned_mask = active_primitive == self.primitive_ids.Y_ALIGNED_DIRECTION
         if torch.any(y_aligned_mask):
             aligned_indices = active_indices[y_aligned_mask]
-            actions[aligned_indices] = actions_from_direction_and_magnitude(
-                self.direction[aligned_indices], self.magnitude[aligned_indices]
-            )
+            if self._uses_simulator_space_range("y_aligned"):
+                aligned_displacements = actions_from_direction_and_magnitude(
+                    self.direction[aligned_indices], self.magnitude[aligned_indices]
+                )
+                aligned_actions, _, _ = project_displacement_to_action_box(
+                    aligned_displacements,
+                    max_delta_x=self.target_action_delta_x,
+                    max_delta_y=self.target_action_delta_y,
+                )
+                actions[aligned_indices] = aligned_actions
+            else:
+                actions[aligned_indices] = actions_from_direction_and_magnitude(
+                    self.direction[aligned_indices], self.magnitude[aligned_indices]
+                )
         if torch.any(target_position_mask):
             target_indices = active_indices[target_position_mask]
             actions[target_indices] = self.target_action[target_indices]
@@ -466,6 +628,18 @@ class PrimitiveExplorationSelector:
             "target_takeover_steps": self.target_takeover_steps,
             "pre_contact_hit_variant_chance": self.pre_contact_hit_variant_chance,
             "pre_contact_hit_variant_steps": self.pre_contact_hit_variant_steps,
+            "same_direction_min_angle_deg": self.same_direction_min_angle_deg,
+            "same_direction_max_angle_deg": self.same_direction_max_angle_deg,
+            "same_direction_min_magnitude": self.same_direction_min_magnitude,
+            "same_direction_max_magnitude": self.same_direction_max_magnitude,
+            "y_aligned_min_angle_deg": self.y_aligned_min_angle_deg,
+            "y_aligned_max_angle_deg": self.y_aligned_max_angle_deg,
+            "y_aligned_min_magnitude": self.y_aligned_min_magnitude,
+            "y_aligned_max_magnitude": self.y_aligned_max_magnitude,
+            "target_position_directional_min_angle_deg": self.target_position_directional_min_angle_deg,
+            "target_position_directional_max_angle_deg": self.target_position_directional_max_angle_deg,
+            "target_position_directional_min_magnitude": self.target_position_directional_min_magnitude,
+            "target_position_directional_max_magnitude": self.target_position_directional_max_magnitude,
             "pre_contact_hit_variant_distance_threshold": self.pre_contact_hit_variant_distance_threshold,
             "pre_contact_hit_variant_scale_min": self.pre_contact_hit_variant_scale_min,
             "pre_contact_hit_variant_scale_max": self.pre_contact_hit_variant_scale_max,
@@ -513,6 +687,54 @@ class PrimitiveExplorationSelector:
         )
         self.pre_contact_hit_variant_steps = int(
             state_dict.get("pre_contact_hit_variant_steps", self.pre_contact_hit_variant_steps)
+        )
+        self.same_direction_min_angle_deg = self._maybe_float(
+            state_dict.get("same_direction_min_angle_deg", self.same_direction_min_angle_deg)
+        )
+        self.same_direction_max_angle_deg = self._maybe_float(
+            state_dict.get("same_direction_max_angle_deg", self.same_direction_max_angle_deg)
+        )
+        self.same_direction_min_magnitude = self._maybe_float(
+            state_dict.get("same_direction_min_magnitude", self.same_direction_min_magnitude)
+        )
+        self.same_direction_max_magnitude = self._maybe_float(
+            state_dict.get("same_direction_max_magnitude", self.same_direction_max_magnitude)
+        )
+        self.y_aligned_min_angle_deg = self._maybe_float(
+            state_dict.get("y_aligned_min_angle_deg", self.y_aligned_min_angle_deg)
+        )
+        self.y_aligned_max_angle_deg = self._maybe_float(
+            state_dict.get("y_aligned_max_angle_deg", self.y_aligned_max_angle_deg)
+        )
+        self.y_aligned_min_magnitude = self._maybe_float(
+            state_dict.get("y_aligned_min_magnitude", self.y_aligned_min_magnitude)
+        )
+        self.y_aligned_max_magnitude = self._maybe_float(
+            state_dict.get("y_aligned_max_magnitude", self.y_aligned_max_magnitude)
+        )
+        self.target_position_directional_min_angle_deg = self._maybe_float(
+            state_dict.get(
+                "target_position_directional_min_angle_deg",
+                self.target_position_directional_min_angle_deg,
+            )
+        )
+        self.target_position_directional_max_angle_deg = self._maybe_float(
+            state_dict.get(
+                "target_position_directional_max_angle_deg",
+                self.target_position_directional_max_angle_deg,
+            )
+        )
+        self.target_position_directional_min_magnitude = self._maybe_float(
+            state_dict.get(
+                "target_position_directional_min_magnitude",
+                self.target_position_directional_min_magnitude,
+            )
+        )
+        self.target_position_directional_max_magnitude = self._maybe_float(
+            state_dict.get(
+                "target_position_directional_max_magnitude",
+                self.target_position_directional_max_magnitude,
+            )
         )
         self.pre_contact_hit_variant_distance_threshold = float(
             state_dict.get(
