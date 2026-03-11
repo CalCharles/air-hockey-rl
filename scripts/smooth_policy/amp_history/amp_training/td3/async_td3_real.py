@@ -693,8 +693,9 @@ class Args:
     reset_artifact_dir: str = "runs/async_td3/reset_hdf5"
     episode_gif_dir: str = "runs/async_td3/episode_gifs"
     episode_camera_video_dir: str | None = None
-    episode_min_timesteps: int = 30
-    estop_episode_min_timesteps: int = 50
+    # Kept for config compatibility; short-episode filtering is disabled.
+    episode_min_timesteps: int = 1
+    estop_episode_min_timesteps: int = 1
     enable_episode_gif: bool = True
     episode_gif_fps: int = 20
     episode_gif_subsample: int = 1
@@ -876,6 +877,28 @@ def _episode_to_tensors(episode_trajectory: EpisodeTrajectory) -> Dict[str, torc
         "motion_rewards": torch.stack(episode_trajectory.motion_rewards, dim=0).view(-1),
         "dones": torch.stack(episode_trajectory.dones, dim=0).view(-1),
     }
+
+
+def _truncate_episode_trajectory_inplace(episode_trajectory: EpisodeTrajectory, keep_count: int) -> int:
+    """Keep the first keep_count transitions and drop the rest."""
+    keep_count = max(0, int(keep_count))
+    original_count = len(episode_trajectory.observations)
+    if original_count <= keep_count:
+        return 0
+    episode_trajectory.observations = episode_trajectory.observations[:keep_count]
+    episode_trajectory.next_observations = episode_trajectory.next_observations[:keep_count]
+    episode_trajectory.actions = episode_trajectory.actions[:keep_count]
+    episode_trajectory.task_rewards = episode_trajectory.task_rewards[:keep_count]
+    episode_trajectory.motion_rewards = episode_trajectory.motion_rewards[:keep_count]
+    episode_trajectory.dones = episode_trajectory.dones[:keep_count]
+    episode_trajectory.prev_actions = episode_trajectory.prev_actions[:keep_count]
+    if keep_count > 0:
+        episode_trajectory.episode_return = float(
+            torch.stack(episode_trajectory.task_rewards, dim=0).sum().item()
+        )
+    else:
+        episode_trajectory.episode_return = 0.0
+    return int(original_count - keep_count)
 
 
 _TRAIN_VALS_CUR_TIME = 0
@@ -1448,6 +1471,8 @@ def _next_available_episode_id(output_dir: str | Path) -> int:
 
 def _episode_length_bucket_name(episode_steps: int) -> str:
     """Map episode step count to a quality bucket label."""
+    if episode_steps < 50:
+        return "<50"
     if episode_steps <= 100:
         return "50-100"
     if episode_steps <= 200:
@@ -2182,6 +2207,9 @@ def collector_process(
     episode_had_stop = False
     episode_had_protective_stop = False
     episode_had_controller_disconnect = False
+    episode_had_readiness_fail_estop = False
+    episode_readiness_first_fail_step_idx: int | None = None
+    episode_readiness_first_fail_reason: str | None = None
     motion_metric_names = (
         "temporal_valid_fraction",
         "stand_still_reward_raw",
@@ -2244,8 +2272,15 @@ def collector_process(
     episodic_returns: list[float] = []
     episodic_lengths: list[float] = []
     success_rates: list[float] = []
-    robot_not_ready_prev = False
-    robot_not_ready_reason = "none"
+    readiness_fail_streak = 0
+    readiness_fail_first_episode_step_idx: int | None = None
+    readiness_fail_first_total_step: int | None = None
+    readiness_fail_window = 5
+    readiness_fail_steps_total = 0
+    readiness_fail_estop_episodes = 0
+    readiness_fail_estop_dropped_steps_total = 0
+    readiness_fail_prev = False
+    readiness_fail_prev_reason = "none"
 
     while True:
         if args.smoke_test_seconds > 0 and (time.time() - collector_start_time) >= float(args.smoke_test_seconds):
@@ -2253,27 +2288,53 @@ def collector_process(
             break
         step_ready, step_ready_reason = _simulator_step_readiness(env)
         if not step_ready:
-            if (not robot_not_ready_prev) or (step_ready_reason != robot_not_ready_reason):
+            readiness_fail_steps_total += 1
+            if readiness_fail_streak == 0:
+                readiness_fail_first_episode_step_idx = int(len(episode_rows))
+                readiness_fail_first_total_step = int(total_steps)
+                episode_readiness_first_fail_step_idx = readiness_fail_first_episode_step_idx
+                episode_readiness_first_fail_reason = str(step_ready_reason)
+            readiness_fail_streak += 1
+            if (not readiness_fail_prev) or (step_ready_reason != readiness_fail_prev_reason):
                 print(
                     "[collector_safety] "
-                    f"robot_step_ready=False reason={step_ready_reason}; pausing collector stepping."
+                    f"robot_step_ready=False reason={step_ready_reason}; continuing collection "
+                    f"(consecutive_failures={readiness_fail_streak}/{readiness_fail_window})"
                 )
-            robot_not_ready_prev = True
-            robot_not_ready_reason = str(step_ready_reason)
-            time.sleep(0.1)
-            continue
-        if robot_not_ready_prev:
+            elif readiness_fail_streak <= readiness_fail_window:
+                print(
+                    "[collector_safety] "
+                    f"robot_step_ready still false reason={step_ready_reason}; "
+                    f"consecutive_failures={readiness_fail_streak}/{readiness_fail_window}"
+                )
+            readiness_fail_prev = True
+            readiness_fail_prev_reason = str(step_ready_reason)
+        else:
+            if readiness_fail_prev:
+                recovered_from_reason = str(readiness_fail_prev_reason)
+                recovered_streak = int(readiness_fail_streak)
+                had_triggered_window = recovered_streak >= readiness_fail_window
+                print(
+                    "[collector_safety] "
+                    f"robot step readiness restored after reason={recovered_from_reason}; "
+                    f"consecutive_failures={recovered_streak} "
+                    f"window_triggered={int(had_triggered_window)}"
+                )
+            readiness_fail_streak = 0
+            readiness_fail_first_episode_step_idx = None
+            readiness_fail_first_total_step = None
+            episode_readiness_first_fail_step_idx = None
+            episode_readiness_first_fail_reason = None
+            readiness_fail_prev = False
+            readiness_fail_prev_reason = "none"
+        if readiness_fail_prev and readiness_fail_streak == readiness_fail_window:
             print(
                 "[collector_safety] "
-                f"robot step readiness restored after reason={robot_not_ready_reason}; resuming collection."
+                f"readiness failure window reached ({readiness_fail_window} consecutive); "
+                f"will terminate episode at first failure step "
+                f"(episode_step_idx={readiness_fail_first_episode_step_idx}, "
+                f"total_step={readiness_fail_first_total_step})"
             )
-            begin_transition_hold(
-                reason="robot_recovered_to_ready",
-                hold_steps=int(args.transition_hold_steps_post_estop_clear),
-                request_sim_hold=True,
-            )
-            robot_not_ready_prev = False
-            robot_not_ready_reason = "none"
 
         collector_step_start_s = time.perf_counter() if args.enable_latency_profiling else 0.0
         transition_hold_active = bool(transition_hold_steps_remaining > 0)
@@ -2353,7 +2414,15 @@ def collector_process(
             episode_camera_null_frames += 1
         base_done = bool(terminated or truncated)
         stop_state = _classify_stop_event(env, step_info=step_info)
-        stop_now = bool(stop_state.active)
+        readiness_fail_stop_now = bool(
+            readiness_fail_streak >= readiness_fail_window
+            and episode_readiness_first_fail_step_idx is not None
+        )
+        # Keep collector stop behavior for normal states, but while readiness is
+        # currently failing we defer termination to the 5-step readiness rule.
+        stop_now = bool(stop_state.active and step_ready)
+        if readiness_fail_stop_now:
+            stop_now = True
         done = bool(base_done or stop_now)
         if stop_state.protective_stop:
             protective_stop_steps += 1
@@ -2361,6 +2430,8 @@ def collector_process(
         if stop_state.controller_disconnected:
             controller_disconnect_steps += 1
             episode_had_controller_disconnect = True
+        if readiness_fail_stop_now:
+            episode_had_readiness_fail_estop = True
         if stop_now:
             episode_had_stop = True
 
@@ -2439,6 +2510,58 @@ def collector_process(
                 protective_stop_episodes += 1
             if episode_had_controller_disconnect:
                 controller_disconnect_episodes += 1
+            readiness_fail_dropped_steps = 0
+            if episode_had_readiness_fail_estop and episode_readiness_first_fail_step_idx is not None:
+                keep_count = min(
+                    len(episode_trajectory.observations),
+                    max(0, int(episode_readiness_first_fail_step_idx) + 1),
+                )
+                readiness_fail_dropped_steps = _truncate_episode_trajectory_inplace(
+                    episode_trajectory,
+                    keep_count=keep_count,
+                )
+                if keep_count > 0 and len(episode_trajectory.dones) >= keep_count:
+                    episode_trajectory.dones[keep_count - 1] = torch.tensor(
+                        1.0,
+                        dtype=torch.float32,
+                        device=device,
+                    )
+                if len(episode_rows) > keep_count:
+                    episode_rows = episode_rows[:keep_count]
+                if len(episode_images) > keep_count:
+                    episode_images = episode_images[:keep_count]
+                if len(episode_puck_detection_latency_ms) > keep_count:
+                    episode_puck_detection_latency_ms = episode_puck_detection_latency_ms[:keep_count]
+                if len(episode_model_inference_latency_ms) > keep_count:
+                    episode_model_inference_latency_ms = episode_model_inference_latency_ms[:keep_count]
+                if len(episode_block_sleep_latency_ms) > keep_count:
+                    episode_block_sleep_latency_ms = episode_block_sleep_latency_ms[:keep_count]
+                if len(episode_other_latency_ms) > keep_count:
+                    episode_other_latency_ms = episode_other_latency_ms[:keep_count]
+                episode_camera_null_frames = max(
+                    0,
+                    int(episode_camera_null_frames) - int(readiness_fail_dropped_steps),
+                )
+                if keep_count > 0 and len(episode_rows) >= keep_count:
+                    cutoff_row = dict(episode_rows[keep_count - 1])
+                    cutoff_row["estop"] = np.array([1.0], dtype=np.float64)
+                    stop_flags = np.asarray(
+                        cutoff_row.get("stop_flags", np.zeros((3,), dtype=np.float64)),
+                        dtype=np.float64,
+                    ).reshape(-1)
+                    if stop_flags.shape[0] < 3:
+                        stop_flags = _vector_with_width(stop_flags, 3)
+                    stop_flags[2] = 1.0
+                    cutoff_row["stop_flags"] = stop_flags
+                    episode_rows[keep_count - 1] = cutoff_row
+                readiness_fail_estop_dropped_steps_total += int(readiness_fail_dropped_steps)
+                print(
+                    "[collector_safety] "
+                    f"episode_id={next_episode_file_id} readiness_fail_estop=1 "
+                    f"first_fail_step_idx={episode_readiness_first_fail_step_idx} "
+                    f"dropped_post_fail_steps={readiness_fail_dropped_steps} "
+                    f"reason={episode_readiness_first_fail_reason}"
+                )
             episode_return = float(episode_trajectory.episode_return)
             episode_length = float(len(episode_trajectory.observations))
             episode_task_reward = float(
@@ -2447,7 +2570,7 @@ def collector_process(
             episode_motion_reward = float(
                 torch.stack(episode_trajectory.motion_rewards, dim=0).sum().item()
             )
-            episode_estop_flag = 1.0 if episode_had_protective_stop else 0.0
+            episode_estop_flag = 1.0 if (episode_had_protective_stop or episode_had_readiness_fail_estop) else 0.0
             rolling50_task_reward_values.append(episode_task_reward)
             rolling50_motion_reward_values.append(episode_motion_reward)
             rolling50_episode_length_values.append(episode_length)
@@ -2476,6 +2599,12 @@ def collector_process(
                 episode_end_reasons = [str(stop_state.episode_end_reason)]
                 episode_end_reason = str(stop_state.episode_end_reason)
             episode_stop_artifact_label = stop_state.artifact_label if stop_now else None
+            if episode_had_readiness_fail_estop:
+                episode_end_type = "estop"
+                episode_end_reasons = ["collector_readiness_fail_5steps"]
+                episode_end_reason = "collector_readiness_fail_5steps"
+                episode_stop_artifact_label = "estop"
+                readiness_fail_estop_episodes += 1
             success_rates.append(1.0 if episode_success else 0.0)
             writer.add_scalar("charts/episodic_return", episode_return, total_steps)
             writer.add_scalar("charts/episodic_length", episode_length, total_steps)
@@ -2550,6 +2679,7 @@ def collector_process(
                 f"stop_reason={stop_state.reason if stop_now else 'none'} "
                 f"protective_stop={int(stop_state.protective_stop)} "
                 f"controller_disconnected={int(stop_state.controller_disconnected)} "
+                f"readiness_fail_estop={int(episode_had_readiness_fail_estop)} "
                 f"end_reasons={episode_end_reasons}"
             )
             print(
@@ -2560,6 +2690,9 @@ def collector_process(
                 f"transition_hold_steps={transition_hold_steps_total} "
                 f"estop_steps={protective_stop_steps} "
                 f"disconnect_steps={controller_disconnect_steps} "
+                f"readiness_fail_steps={readiness_fail_steps_total} "
+                f"readiness_fail_estop_episodes={readiness_fail_estop_episodes} "
+                f"readiness_fail_dropped_steps={readiness_fail_estop_dropped_steps_total} "
                 f"episodes={total_episodes} "
                 f"elapsed_s={elapsed_s:.1f} "
                 f"elapsed_min={elapsed_min:.2f} "
@@ -2610,13 +2743,10 @@ def collector_process(
                 episode_images=episode_images if has_camera_images else None,
             )
             episodes_saved += 1
-            min_timesteps = int(args.episode_min_timesteps)
-            if episode_had_stop:
-                # Keep stop episodes with a lower floor so safety events are retained.
-                min_timesteps = int(args.estop_episode_min_timesteps)
             clean_result = clean_episode_hdf5(
                 artifact_path,
-                min_timesteps=min_timesteps,
+                # Always keep non-empty episodes regardless of length.
+                min_timesteps=1,
             )
             if not clean_result.kept:
                 print(
@@ -2908,6 +3038,14 @@ def collector_process(
             episode_had_stop = False
             episode_had_protective_stop = False
             episode_had_controller_disconnect = False
+            episode_had_readiness_fail_estop = False
+            episode_readiness_first_fail_step_idx = None
+            episode_readiness_first_fail_reason = None
+            readiness_fail_streak = 0
+            readiness_fail_first_episode_step_idx = None
+            readiness_fail_first_total_step = None
+            readiness_fail_prev = False
+            readiness_fail_prev_reason = "none"
             episode_motion_metric_sums = {name: 0.0 for name in motion_metric_names}
             episode_motion_metric_count = 0
             current_state_info = getattr(env, "current_state", None)
@@ -3090,6 +3228,9 @@ def collector_process(
                 f"estop_steps={protective_stop_steps} estop_episodes={protective_stop_episodes} "
                 f"disconnect_steps={controller_disconnect_steps} "
                 f"disconnect_episodes={controller_disconnect_episodes} "
+                f"readiness_fail_steps={readiness_fail_steps_total} "
+                f"readiness_fail_estop_episodes={readiness_fail_estop_episodes} "
+                f"readiness_fail_dropped_steps={readiness_fail_estop_dropped_steps_total} "
                 f"reset_fsm_steps={reset_fsm_steps_total} "
                 f"transition_hold_steps={transition_hold_steps_total} "
                 f"primitive_chance={primitive_selector.chance:.4f} "
