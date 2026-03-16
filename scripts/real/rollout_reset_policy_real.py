@@ -139,6 +139,7 @@ class ResetPolicyFSM:
         self._window_start_tcp = None
         self._window_target_tcp = None
         self._pending_window_finalize = None
+        self._wait_hold_y_tcp = None
         self.path_idx = 0
         self.path_waypoints = np.zeros((1, 2), dtype=np.float32)
         self.force_log_interval_steps = 25
@@ -448,6 +449,7 @@ class ResetPolicyFSM:
         self.done_reason = "restart_round"
         self.stage2_cycle_count = 0
         self._captured_second_hit_frame = False
+        self._wait_hold_y_tcp = None
         self._log_new_round_start(reason=reason)
         self._build_edge_loop_path()
         self.phase = "goto_start"
@@ -490,6 +492,37 @@ class ResetPolicyFSM:
     def _clear_post_upward_window_target(self) -> None:
         self._window_start_tcp = None
         self._window_target_tcp = None
+
+    def _enter_wait_for_puck(self, cached_tcp: np.ndarray = None) -> None:
+        self.phase = "wait_for_puck"
+        tcp = (
+            np.array(cached_tcp, dtype=np.float32)
+            if cached_tcp is not None
+            else None
+        )
+        if tcp is not None and tcp.shape[0] >= 2:
+            self._wait_hold_y_tcp = float(tcp[1])
+        else:
+            self._wait_hold_y_tcp = None
+
+    def _wait_for_puck_hold_action(
+        self,
+        state_info: dict,
+        cached_tcp: np.ndarray = None,
+    ) -> np.ndarray:
+        current_tcp = (
+            np.array(cached_tcp, dtype=np.float32)
+            if cached_tcp is not None
+            else self._get_tcp_position(state_info)
+        )
+        if self._wait_hold_y_tcp is None:
+            self._wait_hold_y_tcp = float(current_tcp[1])
+        y_delta_m = float(self._wait_hold_y_tcp) - float(current_tcp[1])
+        hold_delta_m = np.array([0.0, y_delta_m], dtype=np.float32)
+        action = self._project_displacement_to_action_box(hold_delta_m)
+        action = np.clip(action, -1.0, 1.0).astype(np.float32)
+        action[0] = 0.0
+        return action
 
     def _current_window_downward_action(
         self,
@@ -607,7 +640,7 @@ class ResetPolicyFSM:
                 return np.zeros(2, dtype=np.float32)
             self.stage2_cycle_count = 0
             self._captured_second_hit_frame = False
-            self.phase = "wait_for_puck"
+            self._enter_wait_for_puck()
             return np.zeros(2, dtype=np.float32)
         if bool(finalize["passed"]):
             self._mark_success(state_info, stage="stage2_upward")
@@ -625,7 +658,7 @@ class ResetPolicyFSM:
             f"[reset_fsm] stage2_retry cycle={self.stage2_cycle_count}/{self.max_stage2_cycles} "
             f"reason=shared_success_gate_not_met"
         )
-        self.phase = "wait_for_puck"
+        self._enter_wait_for_puck()
         return np.zeros(2, dtype=np.float32)
 
     @staticmethod
@@ -740,13 +773,14 @@ class ResetPolicyFSM:
             return self._upward_burst_action()
 
         if self.phase == "wait_for_puck":
+            hold_action = self._wait_for_puck_hold_action(state_info, cached_tcp=paddle_tcp)
             puck_x = float(state_info["pucks"][0]["position"][0])
             paddle_x = float(state_info["paddles"]["paddle_ego"]["position"][0])
             if puck_x >= paddle_x:
                 self._restart_round(reason="wait_for_puck_puck_below_paddle")
                 return np.zeros(2, dtype=np.float32)
             if self._puck_is_occluded(state_info):
-                return np.zeros(2, dtype=np.float32)
+                return hold_action
             puck_pos = self._get_puck_pos(state_info)
             dist = float(np.linalg.norm(paddle_tcp - puck_pos))
             puck_falling, _ = self._get_puck_motion_from_history(state_info)
@@ -756,11 +790,12 @@ class ResetPolicyFSM:
                     self._capture_second_hit_trigger_frame(dist_m=dist, puck_falling=puck_falling)
                     self._captured_second_hit_frame = True
                 self.phase = "strike"
+                self._wait_hold_y_tcp = None
                 self.phase_steps = len(self._strike_actions)
                 action_x = self._strike_actions[0]
                 self.phase_steps -= 1
                 return np.array([action_x, 0.0], dtype=np.float32)
-            return np.zeros(2, dtype=np.float32)
+            return hold_action
 
         if self.phase == "strike":
             if self.phase_steps <= 0:

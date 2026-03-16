@@ -130,6 +130,11 @@ class AirHockeyBaseEnv(ABC, Env):
         self.terminate_on_enemy_goal = config.terminate_on_enemy_goal
         self.terminate_on_puck_stop = config.terminate_on_puck_stop
         self.terminate_on_puck_hit_bottom = config.terminate_on_puck_hit_bottom
+        # Optional simulator parameter: additional boundary margin (meters)
+        # around table_x_bot for puck-hit-bottom termination.
+        self.puck_hit_bottom_boundary_m = float(
+            getattr(simulator_params, "puck_hit_bottom_boundary_m", 0.03)
+        )
         self.terminate_on_puck_hit_paddle = config.terminate_on_puck_hit_paddle
         self.terminate_on_puck_pass_paddle = config.terminate_on_puck_pass_paddle
         self.terminate_on_puck_pass_paddle_consecutive_steps = max(
@@ -595,7 +600,9 @@ class AirHockeyBaseEnv(ABC, Env):
 
         if self.terminate_on_puck_hit_bottom:
             puck_pos = state_info['pucks'][0]['position']
-            if abs(puck_pos[0] - self.table_x_bot) < self.puck_radius + 0.03:
+            if abs(puck_pos[0] - self.table_x_bot) < (
+                self.puck_radius + self.puck_hit_bottom_boundary_m
+            ):
                 terminated = True
                 termination_reasons.append("puck_hit_bottom")
 

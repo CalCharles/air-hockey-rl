@@ -687,8 +687,8 @@ class Args:
     transition_last_action_mode: str = "zero"
     transition_hold_log_every_step: bool = False
     actor_sync_check_every_episode: bool = True
-    collector_log_interval_sec: float = 5.0
-    learner_log_interval_sec: float = 5.0
+    collector_log_interval_sec: float = 60.0
+    learner_log_interval_sec: float = 60.0
     episode_artifact_dir: str = "runs/async_td3/episode_hdf5"
     reset_artifact_dir: str = "runs/async_td3/reset_hdf5"
     episode_gif_dir: str = "runs/async_td3/episode_gifs"
@@ -3775,7 +3775,19 @@ def main(args: Args) -> None:
     finally:
         probe_env.close()
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    base_log_dir = args.log_parent_dir or f"runs/async_td3/{args.run_name}_{timestamp}"
+    # Keep TensorBoard logs co-located with checkpoint parent when an explicit
+    # checkpoint root is configured, so run artifacts stay under one root.
+    if args.checkpoint_root_dir is not None and str(args.checkpoint_root_dir).strip():
+        base_log_dir = str(Path(args.checkpoint_root_dir).expanduser().resolve())
+        if args.log_parent_dir is not None and str(args.log_parent_dir).strip():
+            requested_log_dir = str(Path(args.log_parent_dir).expanduser().resolve())
+            if requested_log_dir != base_log_dir:
+                print(
+                    "[main] log_parent_dir differs from checkpoint_root_dir; "
+                    "using checkpoint_root_dir for TensorBoard logs."
+                )
+    else:
+        base_log_dir = args.log_parent_dir or f"runs/async_td3/{args.run_name}_{timestamp}"
     collector_tb_dir = os.path.join(base_log_dir, "collector_tb")
     learner_tb_dir = os.path.join(base_log_dir, "learner_tb")
     os.makedirs(collector_tb_dir, exist_ok=True)
