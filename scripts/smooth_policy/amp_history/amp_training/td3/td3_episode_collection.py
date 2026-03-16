@@ -20,6 +20,7 @@ class EpisodeTrajectory:
     task_rewards: List[torch.Tensor]
     motion_rewards: List[torch.Tensor]
     dones: List[torch.Tensor]
+    bootstrap_terminals: List[torch.Tensor]
     prev_actions: List[torch.Tensor]
     episode_return: float = 0.0
 
@@ -32,6 +33,7 @@ class EpisodeTrajectory:
             task_rewards=[],
             motion_rewards=[],
             dones=[],
+            bootstrap_terminals=[],
             prev_actions=[],
             episode_return=0.0,
         )
@@ -45,13 +47,19 @@ class EpisodeTrajectory:
         motion_reward: torch.Tensor,
         done: torch.Tensor,
         prev_action: torch.Tensor,
+        bootstrap_terminal: torch.Tensor | None = None,
     ) -> None:
         self.observations.append(obs.detach().clone())
         self.next_observations.append(next_obs.detach().clone())
         self.actions.append(action.detach().clone())
         self.task_rewards.append(task_reward.detach().clone())
         self.motion_rewards.append(motion_reward.detach().clone())
-        self.dones.append(done.detach().clone())
+        done_tensor = done.detach().clone()
+        self.dones.append(done_tensor)
+        if bootstrap_terminal is None:
+            self.bootstrap_terminals.append(done_tensor.detach().clone())
+        else:
+            self.bootstrap_terminals.append(bootstrap_terminal.detach().clone())
         self.prev_actions.append(prev_action.detach().clone())
         self.episode_return += float(task_reward.item())
 
@@ -78,6 +86,7 @@ class EpisodeTrajectory:
         self.task_rewards.clear()
         self.motion_rewards.clear()
         self.dones.clear()
+        self.bootstrap_terminals.clear()
         self.prev_actions.clear()
         self.episode_return = 0.0
 
@@ -89,6 +98,7 @@ class EpisodeTrajectory:
             "task_rewards": [_cpu_tensor(item) for item in self.task_rewards],
             "motion_rewards": [_cpu_tensor(item) for item in self.motion_rewards],
             "dones": [_cpu_tensor(item) for item in self.dones],
+            "bootstrap_terminals": [_cpu_tensor(item) for item in self.bootstrap_terminals],
             "prev_actions": [_cpu_tensor(item) for item in self.prev_actions],
             "episode_return": float(self.episode_return),
         }
@@ -114,6 +124,16 @@ class EpisodeTrajectory:
                     attr,
                     [torch.as_tensor(item, dtype=torch.float32, device=device) for item in values],
                 )
+        bootstrap_terminal_values = state_dict.get("bootstrap_terminals", None)
+        if isinstance(bootstrap_terminal_values, list):
+            trajectory.bootstrap_terminals = [
+                torch.as_tensor(item, dtype=torch.float32, device=device)
+                for item in bootstrap_terminal_values
+            ]
+        else:
+            trajectory.bootstrap_terminals = [
+                item.detach().clone() for item in trajectory.dones
+            ]
         trajectory.episode_return = float(state_dict.get("episode_return", 0.0))
         return trajectory
 

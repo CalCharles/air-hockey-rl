@@ -876,6 +876,7 @@ def _episode_to_tensors(episode_trajectory: EpisodeTrajectory) -> Dict[str, torc
         "task_rewards": torch.stack(episode_trajectory.task_rewards, dim=0).view(-1),
         "motion_rewards": torch.stack(episode_trajectory.motion_rewards, dim=0).view(-1),
         "dones": torch.stack(episode_trajectory.dones, dim=0).view(-1),
+        "bootstrap_terminals": torch.stack(episode_trajectory.bootstrap_terminals, dim=0).view(-1),
     }
 
 
@@ -891,6 +892,7 @@ def _truncate_episode_trajectory_inplace(episode_trajectory: EpisodeTrajectory, 
     episode_trajectory.task_rewards = episode_trajectory.task_rewards[:keep_count]
     episode_trajectory.motion_rewards = episode_trajectory.motion_rewards[:keep_count]
     episode_trajectory.dones = episode_trajectory.dones[:keep_count]
+    episode_trajectory.bootstrap_terminals = episode_trajectory.bootstrap_terminals[:keep_count]
     episode_trajectory.prev_actions = episode_trajectory.prev_actions[:keep_count]
     if keep_count > 0:
         episode_trajectory.episode_return = float(
@@ -1122,7 +1124,7 @@ def _recompute_warm_start_rewards(
     stop_state: StopEventState,
     is_last_transition: bool,
     stop_penalty_applied: bool,
-) -> tuple[float, float, float, bool]:
+) -> tuple[float, float, float, float, bool]:
     env.current_timestep = int(max(step_index, 0))
     env.old_state = prev_state
     env.current_state = next_state
@@ -1157,7 +1159,8 @@ def _recompute_warm_start_rewards(
         stop_penalty_applied = True
 
     done = float(1.0 if (terminated or truncated or stop_state.active or is_last_transition) else 0.0)
-    return float(task_reward), float(motion_reward), done, stop_penalty_applied
+    bootstrap_terminal = float(1.0 if (terminated or stop_state.active or is_last_transition) else 0.0)
+    return float(task_reward), float(motion_reward), done, bootstrap_terminal, stop_penalty_applied
 
 
 def _load_warm_start_episode(
@@ -1273,7 +1276,7 @@ def _load_warm_start_episode(
             paddle_history=padded_paddle_histories[row_idx],
         )
         stop_state = _stop_state_from_saved_row(train_vals, optional_data, row_idx)
-        task_reward, motion_reward, done, stop_penalty_applied = _recompute_warm_start_rewards(
+        task_reward, motion_reward, done, bootstrap_terminal, stop_penalty_applied = _recompute_warm_start_rewards(
             args,
             env,
             prev_state=prev_state,
@@ -1292,6 +1295,7 @@ def _load_warm_start_episode(
             motion_reward=torch.tensor(motion_reward, dtype=torch.float32),
             done=torch.tensor(done, dtype=torch.float32),
             prev_action=torch.as_tensor(actions_xy[row_idx - 1], dtype=torch.float32),
+            bootstrap_terminal=torch.tensor(bootstrap_terminal, dtype=torch.float32),
         )
     return episode_trajectory
 
@@ -1846,6 +1850,7 @@ def _mixed_sample_from_shared(
                 "task_rewards",
                 "motion_rewards",
                 "dones",
+                "bootstrap_terminals",
             )
         }
     return batch, success_count, failure_count
@@ -2412,7 +2417,8 @@ def collector_process(
             episode_images.append(camera_frame)
         else:
             episode_camera_null_frames += 1
-        base_done = bool(terminated or truncated)
+        env_done = bool(terminated or truncated)
+        env_bootstrap_terminal = bool(terminated and (not truncated))
         stop_state = _classify_stop_event(env, step_info=step_info)
         readiness_fail_stop_now = bool(
             readiness_fail_streak >= readiness_fail_window
@@ -2423,7 +2429,8 @@ def collector_process(
         stop_now = bool(stop_state.active and step_ready)
         if readiness_fail_stop_now:
             stop_now = True
-        done = bool(base_done or stop_now)
+        done = bool(env_done or stop_now)
+        bootstrap_terminal = bool(env_bootstrap_terminal or stop_now)
         if stop_state.protective_stop:
             protective_stop_steps += 1
             episode_had_protective_stop = True
@@ -2465,6 +2472,7 @@ def collector_process(
             )
         )
         done_val = 1.0 if done else 0.0
+        bootstrap_terminal_val = 1.0 if bootstrap_terminal else 0.0
         interval_primitive_env_steps += int(primitive_step_stats["primitive_applied_count"])
         interval_primitive_horizontal_env_steps += int(
             primitive_step_stats["primitive_horizontal_dominant_count"]
@@ -2481,6 +2489,7 @@ def collector_process(
             motion_reward=torch.tensor(float(motion_reward), dtype=torch.float32, device=device),
             done=torch.tensor(done_val, dtype=torch.float32, device=device),
             prev_action=prev_action[0],
+            bootstrap_terminal=torch.tensor(bootstrap_terminal_val, dtype=torch.float32, device=device),
         )
         total_steps += 1
         if transition_hold_active:
@@ -2522,6 +2531,12 @@ def collector_process(
                 )
                 if keep_count > 0 and len(episode_trajectory.dones) >= keep_count:
                     episode_trajectory.dones[keep_count - 1] = torch.tensor(
+                        1.0,
+                        dtype=torch.float32,
+                        device=device,
+                    )
+                if keep_count > 0 and len(episode_trajectory.bootstrap_terminals) >= keep_count:
+                    episode_trajectory.bootstrap_terminals[keep_count - 1] = torch.tensor(
                         1.0,
                         dtype=torch.float32,
                         device=device,
@@ -3465,8 +3480,8 @@ def _run_sync_learner_iteration(
         sampled_actions = batch["actions"]
         sampled_task_rewards = batch["task_rewards"]
         sampled_motion_rewards = batch["motion_rewards"]
-        sampled_dones = batch["dones"]
-        sampled_next_prev_actions = sampled_actions * (1.0 - sampled_dones.unsqueeze(-1))
+        sampled_bootstrap_terminals = batch["bootstrap_terminals"]
+        sampled_next_prev_actions = sampled_actions * (1.0 - sampled_bootstrap_terminals.unsqueeze(-1))
         sampled_next_policy_observations = augment_policy_observation(
             sampled_next_observations,
             sampled_next_prev_actions,
@@ -3487,8 +3502,14 @@ def _run_sync_learner_iteration(
                 torch.min(q1_next_motion_h, q2_next_motion_h),
                 eps=float(args.h_transform_eps),
             ).view(-1)
-            bellman_task = sampled_task_rewards + (1.0 - sampled_dones) * float(args.task_gamma) * min_next_task
-            bellman_motion = sampled_motion_rewards + (1.0 - sampled_dones) * float(args.motion_gamma) * min_next_motion
+            bellman_task = (
+                sampled_task_rewards
+                + (1.0 - sampled_bootstrap_terminals) * float(args.task_gamma) * min_next_task
+            )
+            bellman_motion = (
+                sampled_motion_rewards
+                + (1.0 - sampled_bootstrap_terminals) * float(args.motion_gamma) * min_next_motion
+            )
             target_task_h = h_transform(bellman_task, eps=float(args.h_transform_eps))
             target_motion_h = h_transform(bellman_motion, eps=float(args.h_transform_eps))
         q1_task_h, q1_motion_h = state.qf1(sampled_observations, sampled_actions)

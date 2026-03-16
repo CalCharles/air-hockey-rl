@@ -2,17 +2,21 @@ import numpy as np
 import time
 from .coordinate_transform import clip_limits
 
-def apply_negative_z_force(ctrl, rcv=None):
+def apply_negative_z_force(ctrl, rcv=None, wrench_z=None):
     # Keep a constant Z-axis force mode active for table contact bias.
     # This helper intentionally preserves existing frame/sign behavior.
     using_rcv_frame = rcv is not None
     frame_mode = "target_tcp_frame" if using_rcv_frame else "world_origin_frame"
     if rcv is None:
         force_frame = [0, 0, 0, 0, 0, 0]
-        z_axis_wrench = [0.0, 0.0, -5, 0.0, 0.0, 0.0]
+        default_wrench_z = -5.0
     else:
         force_frame = rcv.getTargetTCPPose()
-        z_axis_wrench = [0.0, 0.0, 5, 0.0, 0.0, 0.0] # why was this 5?
+        default_wrench_z = 5.0  # why was this 5?
+    sign = -1.0 if float(default_wrench_z) < 0.0 else 1.0
+    magnitude = abs(float(default_wrench_z)) if wrench_z is None else abs(float(wrench_z))
+    applied_wrench_z = sign * magnitude
+    z_axis_wrench = [0.0, 0.0, applied_wrench_z, 0.0, 0.0, 0.0]
 
     # TODO: Verify and unify wrench sign convention across force-frame choices.
     # Current behavior uses opposite Z signs depending on frame source.
