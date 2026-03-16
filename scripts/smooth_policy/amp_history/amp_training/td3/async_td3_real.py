@@ -786,6 +786,22 @@ class ResetFSMRunResult:
     artifact: PendingResetArtifact | None = None
 
 
+def _reset_stage_id_from_phase(phase: str) -> int:
+    """Map reset FSM phase to a coarse stage id.
+
+    Stage ids:
+      0: before first upward motion is completed
+      1: after first upward motion is completed
+     -1: unknown/unmapped phase
+    """
+    phase_name = str(phase)
+    if phase_name in ("goto_start", "edge_loop", "upward_burst", "post_first_upward_check"):
+        return 0
+    if phase_name in ("wait_for_puck", "strike", "post_second_upward_check"):
+        return 1
+    return -1
+
+
 def _reset_artifact_partition(done_reason: str) -> str:
     return "success" if str(done_reason) == "success" else "failure"
 
@@ -823,6 +839,7 @@ def run_reset_fsm(
         while not fsm.done:
             state = env.simulator.get_current_state()
             action = fsm.step(state)
+            reset_stage_id = _reset_stage_id_from_phase(getattr(fsm, "phase", "unknown"))
             _, _, _, _, step_info = env.step(action)
             stop_state = _classify_stop_event(env, step_info=step_info)
             camera_frame = _latest_camera_frame(env)
@@ -838,6 +855,7 @@ def run_reset_fsm(
                     episode_step_idx=len(reset_rows),
                     protective_stop_active=stop_state.protective_stop,
                     controller_disconnected=stop_state.controller_disconnected,
+                    reset_stage_id=reset_stage_id,
                 )
             )
     finally:
@@ -1724,6 +1742,7 @@ def _build_split_episode_row(
     episode_step_idx: int,
     protective_stop_active: bool,
     controller_disconnected: bool,
+    reset_stage_id: int | None = None,
 ) -> Dict[str, np.ndarray]:
     state_info = getattr(env, "current_state", None)
     if not isinstance(state_info, dict):
@@ -1797,7 +1816,7 @@ def _build_split_episode_row(
         3,
     )
 
-    return {
+    row = {
         "cur_time": np.array([time.time()], dtype=np.float64),
         "tidx": np.array([float(episode_id)], dtype=np.float64),
         "i": np.array([float(episode_step_idx)], dtype=np.float64),
@@ -1815,6 +1834,9 @@ def _build_split_episode_row(
         "puck_meta": puck_meta,
         "stop_flags": stop_flags,
     }
+    if reset_stage_id is not None:
+        row["reset_stage_id"] = np.array([float(reset_stage_id)], dtype=np.float64)
+    return row
 
 
 def _mixed_sample_from_shared(
