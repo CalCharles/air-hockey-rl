@@ -22,6 +22,64 @@ Each run uses:
 
 You can either specify the config file inside the args file or pass it directly from the command line.
 
+## Async TD3 Real Transition Holds
+
+The async real collector has two hold layers during sensitive transitions:
+
+- Collector hold in `scripts/smooth_policy/amp_history/amp_training/td3/async_td3_real.py`
+  - zeros policy actions for a few steps
+  - can disable exploration noise during the hold
+  - can reset or preserve the policy's last-action state
+- Simulator hold in `airhockey/sims/air_hockey_real.py`
+  - anchors the commanded TCP target to the current pose
+  - blocks `servoL` while the hold is active
+
+Intended collector hold reasons are:
+
+- `startup_reset_to_policy`
+- `reset_fsm_to_policy`
+- `hard_reset_reset_fsm_to_policy`
+- `hard_reset_to_policy`
+- `robot_recovered_to_ready`
+- `actor_sync_update`
+
+Intended simulator-side recovery smoothing is:
+
+- `estop_clear`
+- `safety_rearm` after a genuine recovery from:
+  - protective stop
+  - controller disconnect
+  - failed safety check
+
+Important implementation note:
+
+- Internal `transition_hold:*` blocks should not create a fresh `safety_rearm`.
+- `safety_rearm` is meant for real command-path recovery, not for ordinary reset-to-policy smoothing.
+
+Main async TD3 parameters to tune:
+
+- `transition_hold_steps_post_reset`
+  - hold length for reset-to-policy handoffs
+- `transition_hold_steps_post_estop_enter`
+  - optional immediate hold on entering protective stop
+- `transition_hold_steps_post_estop_clear`
+  - hold after protective stop / readiness recovery
+- `transition_hold_steps_post_actor_sync`
+  - hold after loading a newly published actor
+- `transition_hold_steps_post_safety_rearm`
+  - simulator-side rearm hold after genuine command recovery
+- `transition_disable_exploration_noise`
+  - disables exploration noise while collector hold is active
+- `transition_last_action_mode`
+  - only relevant when `use_last_action_in_policy_state=True`
+  - `zero`, `executed`, or `keep`
+
+Practical guidance:
+
+- If reset-to-policy handoff feels abrupt, adjust `transition_hold_steps_post_reset`.
+- If recovery after a real e-stop or controller issue feels abrupt, adjust `transition_hold_steps_post_estop_clear` and `transition_hold_steps_post_safety_rearm`.
+- If you only want to inspect the mechanism, enable `debug_control`, `debug_control_every`, and `transition_hold_debug` in the real simulator config.
+
 ### Reward Scaling Note (Puck Juggle)
 
 - Base reward scaling is relevant for puck juggle because the original reward scale is high.

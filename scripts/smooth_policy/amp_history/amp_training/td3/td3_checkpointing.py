@@ -41,9 +41,8 @@ def set_rng_states(states: Dict[str, object]) -> None:
         np.random.set_state(states["numpy"])
     if "torch_cpu" in states:
         torch.set_rng_state(_to_rng_byte_tensor(states["torch_cpu"]))
-    if "torch_cuda" in states and torch.cuda.is_available():
-        cuda_states = [_to_rng_byte_tensor(state) for state in states["torch_cuda"]]
-        torch.cuda.set_rng_state_all(cuda_states)
+    # Intentionally skip CUDA RNG restore on resume to avoid GPU topology/device-count
+    # mismatch failures across runs (e.g., different CUDA_VISIBLE_DEVICES settings).
 
 
 def load_resume_training_state(

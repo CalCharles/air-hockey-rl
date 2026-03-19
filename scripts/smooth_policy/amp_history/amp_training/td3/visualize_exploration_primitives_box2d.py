@@ -133,6 +133,18 @@ class Args:
 
     exploration_primitive_steps: int = 5
     exploration_direction_y_component_weight: float = 1.5
+    exploration_same_direction_min_angle_deg: float = -180.0
+    exploration_same_direction_max_angle_deg: float = 180.0
+    exploration_same_direction_min_magnitude: float = 0.012
+    exploration_same_direction_max_magnitude: float = 0.26
+    exploration_y_aligned_min_angle_deg: float = 45.0
+    exploration_y_aligned_max_angle_deg: float = 135.0
+    exploration_y_aligned_min_magnitude: float = 0.012
+    exploration_y_aligned_max_magnitude: float = 0.12
+    exploration_target_position_directional_min_angle_deg: float = -180.0
+    exploration_target_position_directional_max_angle_deg: float = 180.0
+    exploration_target_position_directional_min_magnitude: float = 0.2
+    exploration_target_position_directional_max_magnitude: float = 0.5
 
     exploration_target_position_min_distance: float = 0.2
     exploration_target_position_max_distance: float = 0.5
@@ -228,6 +240,26 @@ def render_primitive_gif(
         target_max_distance=float(args.exploration_target_position_max_distance),
         target_action_delta_x=float(args.exploration_target_position_delta_x),
         target_action_delta_y=float(args.exploration_target_position_delta_y),
+        same_direction_min_angle_deg=float(args.exploration_same_direction_min_angle_deg),
+        same_direction_max_angle_deg=float(args.exploration_same_direction_max_angle_deg),
+        same_direction_min_magnitude=float(args.exploration_same_direction_min_magnitude),
+        same_direction_max_magnitude=float(args.exploration_same_direction_max_magnitude),
+        y_aligned_min_angle_deg=float(args.exploration_y_aligned_min_angle_deg),
+        y_aligned_max_angle_deg=float(args.exploration_y_aligned_max_angle_deg),
+        y_aligned_min_magnitude=float(args.exploration_y_aligned_min_magnitude),
+        y_aligned_max_magnitude=float(args.exploration_y_aligned_max_magnitude),
+        target_position_directional_min_angle_deg=float(
+            args.exploration_target_position_directional_min_angle_deg
+        ),
+        target_position_directional_max_angle_deg=float(
+            args.exploration_target_position_directional_max_angle_deg
+        ),
+        target_position_directional_min_magnitude=float(
+            args.exploration_target_position_directional_min_magnitude
+        ),
+        target_position_directional_max_magnitude=float(
+            args.exploration_target_position_directional_max_magnitude
+        ),
         target_takeover_steps=int(args.exploration_target_position_steps),
         pre_contact_hit_variant_chance=float(args.exploration_pre_contact_hit_variant_chance),
         pre_contact_hit_variant_steps=int(args.exploration_pre_contact_hit_variant_steps),
