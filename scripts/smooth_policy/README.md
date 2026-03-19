@@ -9,6 +9,7 @@ The most recent training scripts are located in:
 - `scripts/smooth_policy/amp_history/amp_training`
   - `lsgan` corresponds to PPO training.
   - `lsgan_sac` corresponds to SAC training.
+  - `td3` corresponds to TD3 training
 
 Although these scripts are labeled "amp", AMP can be disabled to run standard (non-AMP) training.
 

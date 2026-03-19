@@ -181,6 +181,7 @@ def build_training_state(
     success_rb,
     failure_rb,
     primitive_selector,
+    include_replay_buffer: bool = True,
     obs: np.ndarray,
     last_action_for_policy: torch.Tensor,
     warm_policy_last_action: torch.Tensor,
@@ -207,7 +208,7 @@ def build_training_state(
     episode_return_success_threshold: float,
     args_dict: Dict[str, Any],
 ) -> Dict[str, Any]:
-    return {
+    state: Dict[str, Any] = {
         "checkpoint_version": 2,
         "global_step": global_step,
         "iteration": iteration,
@@ -219,8 +220,6 @@ def build_training_state(
         "qf2_target": qf2_target.state_dict(),
         "q_optimizer": q_optimizer.state_dict(),
         "actor_optimizer": actor_optimizer.state_dict(),
-        "success_replay_buffer": success_rb.state_dict(),
-        "failure_replay_buffer": failure_rb.state_dict(),
         "primitive_selector": primitive_selector.state_dict(),
         "obs": np.array(obs, copy=True),
         "last_action_for_policy": _cpu_tensor(last_action_for_policy),
@@ -249,3 +248,7 @@ def build_training_state(
         "rng_states": get_rng_states(),
         "args": args_dict,
     }
+    if include_replay_buffer:
+        state["success_replay_buffer"] = success_rb.state_dict()
+        state["failure_replay_buffer"] = failure_rb.state_dict()
+    return state

@@ -476,6 +476,10 @@ class Args:
     jerk_at_one: float = 10.0
     jerk_at_zero: float = 23.0
 
+    # Checkpointing
+    checkpoint_interval: int = 25000
+    save_replay_buffer: bool = True
+
     # Paths
     config: str = "scripts/smooth_policy/configs/puck_touch/default_config.yaml"
     args_file: str | None = None
@@ -1606,7 +1610,7 @@ if __name__ == "__main__":
             interval_policy_takeover_env_steps = 0
             interval_target_position_directional_env_steps = 0
 
-        if global_step > 0 and global_step % 5000 == 0: # save more frequently (Need to look at visualizations)
+        if global_step > 0 and global_step % args.checkpoint_interval == 0:
             checkpoint_dir = os.path.join(log_parent_dir, f"checkpoint_{global_step}")
             os.makedirs(checkpoint_dir, exist_ok=True)
             model_path = f"{checkpoint_dir}/model.pth"
@@ -1657,6 +1661,7 @@ if __name__ == "__main__":
                 recent_episode_returns=recent_episode_returns,
                 episode_return_success_threshold=episode_return_success_threshold,
                 args_dict=vars(args),
+                include_replay_buffer=args.save_replay_buffer,
             )
             torch.save(training_state, f"{checkpoint_dir}/training_state.pth")
             print(f"\nCheckpoint saved at step {global_step}")
@@ -1740,6 +1745,7 @@ if __name__ == "__main__":
         recent_episode_returns=recent_episode_returns,
         episode_return_success_threshold=episode_return_success_threshold,
         args_dict=vars(args),
+        include_replay_buffer=args.save_replay_buffer,
     )
     torch.save(final_training_state, f"{log_parent_dir}/training_state.pth")
 
