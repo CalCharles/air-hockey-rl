@@ -865,7 +865,20 @@ class AirHockeyBaseEnv(ABC, Env):
         # if self.current_timestep >= self.max_timesteps:
         #     is_finished = True
 
-        obs = self.get_observation(next_state, obs_type=self.obs_type, puck_history=self.simulator.puck_history, paddle_history=self.simulator.paddle_history)
+        obs_state = getattr(self.simulator, "observation_state_info", None)
+        if obs_state is None:
+            obs_state = next_state
+            obs_puck_history = self.simulator.puck_history
+            obs_paddle_history = self.simulator.paddle_history
+        else:
+            obs_puck_history = getattr(self.simulator, "observation_puck_history", self.simulator.puck_history)
+            obs_paddle_history = getattr(self.simulator, "observation_paddle_history", self.simulator.paddle_history)
+        obs = self.get_observation(
+            obs_state,
+            obs_type=self.obs_type,
+            puck_history=obs_puck_history,
+            paddle_history=obs_paddle_history,
+        )
         info.update(vars(self.simulator_params))
         return obs, reward, is_finished, truncated, info
     

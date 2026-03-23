@@ -45,6 +45,17 @@ If configured bounds exceed these, reachable motion is still capped by table wal
   - `convert_from_box2d_coords()`
 - Keep frame conventions consistent when adding or diagnosing bounds logic.
 
+## Delay toggles and shared delay value
+
+- Box2D now supports independent toggles for:
+  - `enable_action_delay`
+  - `enable_observation_delay`
+- Both features use the same `delay_seconds` value (clamped per step to `[0, time_per_step]`).
+- Optional fluctuation:
+  - `randomize_delay` enables per-step randomization of the realized delay.
+  - `delay_relative_range` controls multiplicative half-width (for example `0.25` means `delay_seconds * [0.75, 1.25]` before clamping).
+- Observation-delay snapshots can show stale paddle `acceleration`/`jerk` fields because those derivatives are refreshed after the full step; positions/velocities remain mid-step consistent.
+
 ## Paddle-puck contact caveat (important)
 
 Empirically in this Box2D setup, paddle-puck outcomes are often less stable than expected from ideal rigid-body intuition:
