@@ -759,7 +759,7 @@ class AirHockeyBaseEnv(ABC, Env):
             action[0] = min(action[0], 0)
         if paddle_y_pos < paddle_y_min + self.paddle_radius:
             action[1] = max(action[1], 0)
-        if paddle_y_pos > paddle_y_max + self.paddle_radius:
+        if paddle_y_pos > paddle_y_max - self.paddle_radius:
             action[1] = min(action[1], 0)
 
         self.last_action = action

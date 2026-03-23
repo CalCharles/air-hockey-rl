@@ -44,3 +44,55 @@ If configured bounds exceed these, reachable motion is still capped by table wal
   - `base_coord_to_box2d()`
   - `convert_from_box2d_coords()`
 - Keep frame conventions consistent when adding or diagnosing bounds logic.
+
+## Paddle-puck contact caveat (important)
+
+Empirically in this Box2D setup, paddle-puck outcomes are often less stable than expected from ideal rigid-body intuition:
+
+- Contact behavior is highly sensitive to **relative velocity at impact** (especially along the collision normal).
+- Changing `paddle_density` / `puck_density` can matter, but in many practical runs it has a weaker effect than impact timing and approach speed.
+- Small differences in pre-contact motion (controller force limits, damping, jitter cadence, action lag, and step timing) can dominate the post-contact result.
+
+Practical guidance:
+
+- Treat density sweeps as a secondary knob for tuning contact behavior.
+- First tune and compare pre-contact velocity profiles and impact timing, then use density for finer adjustment.
+
+Evidence reference:
+
+- Contact-scenario implementation and metrics collection: [`scripts/box2d_paddle_puck_contact_scenario.py`](../../../../scripts/box2d_paddle_puck_contact_scenario.py) (see parsing of `paddle:puck` sweep pairs, per-run `paddle_density` / `puck_density` recording, and pre/post-contact speed logging).
+
+## Paddle boundary visualization utility
+
+For Box2D boundary debugging and validation, use:
+
+- [`scripts/box2d_boundary_validation/validate_paddle_bounds_gif.py`](../../../../scripts/box2d_boundary_validation/validate_paddle_bounds_gif.py)
+
+This script renders a looped GIF of the paddle tracing the effective boundary and overlays the actual clipped boundary polygon (including corner cuts from edge-shaping).
+
+### Parameters (brief)
+
+- **Workspace bounds**
+  - `--x-min`, `--x-max`, `--y-min`, `--y-max`: rectangle-style workspace limits to test.
+- **Corner / edge shaping**
+  - `--top-abs`: slope factor for right-side corner tapering versus `y`.
+  - `--max-bias-m`, `--max-bias-p`: right-edge bias terms used in `x_max(y) = min(x_max, max_bias_m - top_abs*y, max_bias_p + top_abs*y)`.
+  - `--bot-abs`: accepted for parity with config, but current clip math keeps `x_min` fixed and does not currently apply this term.
+- **Coordinate-frame interpretation**
+  - `--limits-frame raw_robot|centered`: whether input x-limits are raw-robot style (converted by `center_offset_constant`) or already centered.
+- **Traversal controls**
+  - `--loops`: number of perimeter loops.
+  - `--steps-per-edge`: sampling density along each perimeter segment.
+  - `--control-substeps`: inner control updates per waypoint.
+  - `--action-scale`: per-update movement magnitude scaling.
+  - `--position-tol`: tolerance used for boundary-touch and violation checks.
+- **Rendering / outputs**
+  - `--fps`: GIF framerate.
+  - `--name`, `--output-dir`: output naming/path.
+  - `--renderer-orientation`: renderer orientation (project rule defaults this to `vertical`).
+  - `--config-path`: YAML source of `air_hockey.simulator_params`.
+
+### Artifacts
+
+- GIF: `runs/paddle_boundary_validation/<name>.gif`
+- Summary JSON: `runs/paddle_boundary_validation/<name>.json`

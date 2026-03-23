@@ -245,9 +245,9 @@ class AirHockeyBox2D:
             'rmax_y': 0.12,
             # Real-equivalent workspace and edge shaping limits (base frame).
             'x_min_lim': -0.8,
-            'x_max_lim': -0.37,
-            'y_min': -0.33,
-            'y_max': 0.33,
+            'x_max_lim': -0.35,
+            'y_min': -0.35,
+            'y_max': 0.35,
             'top_abs': 0.8,
             'bot_abs': 0.1,
             'max_bias_p': -0.15,
