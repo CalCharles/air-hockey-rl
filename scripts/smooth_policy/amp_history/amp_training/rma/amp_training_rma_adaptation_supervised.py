@@ -45,7 +45,7 @@ def inject_latent_noise(env_latent, noise_std):
 
 
 def get_env_spec_ranges():
-    # Keep defaults aligned with stage-1 LSGAN randomization ranges.
+    # Keep defaults aligned with stage-1 AMP (PPO) randomization ranges.
     return {
         "paddle_density": (2500 * 0.5, 2500 * 1.5),
         "paddle_damping": (3 * 0.5, 3 * 1.5),

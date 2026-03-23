@@ -1,5 +1,0 @@
----
-alwaysApply: true
----
-
-If user asks for a script to accomplish something, always try running it, debugging until it is fixed. Provide the command to run the script in the end. 

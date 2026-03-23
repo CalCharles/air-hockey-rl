@@ -5,7 +5,7 @@
 There are two different "slowdown/smoothing" mechanisms in the real stack:
 
 - Async TD3 transition holds
-  - configured in `scripts/smooth_policy/amp_history/amp_training/td3/async_td3_real.py`
+  - configured in `scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py`
   - used for reset-to-policy handoff, actor sync, and genuine safety recovery
 - Rollout startup/cooldown logic in `rollout_reset_policy_real.py`
   - `--startup-hold-steps` forces zero action for the first few normal-mode steps

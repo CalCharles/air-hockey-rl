@@ -31,7 +31,7 @@ scripts_module = importlib.util.module_from_spec(scripts_spec)
 sys.modules["scripts"] = scripts_module
 scripts_spec.loader.exec_module(scripts_module)
 
-from scripts.smooth_policy.amp_history.amp_training.td3.exploration_selector import (  # noqa: E402
+from scripts.smooth_policy.amp_history.amp_training.td3.helper.exploration_selector import (  # noqa: E402
     PrimitiveExplorationSelector,
 )
 

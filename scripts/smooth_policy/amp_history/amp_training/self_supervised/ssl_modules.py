@@ -1,4 +1,4 @@
-"""Self-supervised learning modules for AMP-LSGAN training."""
+"""Self-supervised learning modules for AMP training."""
 
 from __future__ import annotations
 

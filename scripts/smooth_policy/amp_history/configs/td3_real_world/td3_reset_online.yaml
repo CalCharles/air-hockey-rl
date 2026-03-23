@@ -1,5 +1,5 @@
 # Config for:
-# scripts/smooth_policy/amp_history/amp_training/td3/async_td3_real_reset_policy.py
+# scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real_reset_policy.py
 
 args_file: null
 config: "scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_constant_upper_half_custom_sim_params.yaml"

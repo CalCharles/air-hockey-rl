@@ -53,7 +53,7 @@ jerk_at_zero: 23.0
 # Paths
 config: "scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_constant_upper_half_custom_sim_params.yaml"
 args_file: null
-model_path: "scripts/smooth_policy/amp_history/amp_training/td3/warm_start/model1.pth"
+model_path: "scripts/smooth_policy/amp_history/amp_training/td3/extras/warm_start/model1.pth"
 log_parent_dir: "runs/td3_training/pid/q_only_warm_start_model1"
 run_name: "td3_q_only_warm_start_model1"
 
