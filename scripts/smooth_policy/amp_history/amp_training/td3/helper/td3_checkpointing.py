@@ -114,8 +114,6 @@ def load_resume_training_state(
         "current_acceleration_mag": resume_checkpoint["current_acceleration_mag"].to(device),
         "current_jerk_mag": resume_checkpoint["current_jerk_mag"].to(device),
         "train_metrics": dict(resume_checkpoint.get("train_metrics", defaults["train_metrics"])),
-        "episodic_returns": list(resume_checkpoint.get("episodic_returns", defaults["episodic_returns"])),
-        "success_rates": list(resume_checkpoint.get("success_rates", defaults["success_rates"])),
         "velocity_magnitudes": list(
             resume_checkpoint.get("velocity_magnitudes", defaults["velocity_magnitudes"])
         ),
@@ -162,6 +160,36 @@ def load_resume_training_state(
                 defaults["episode_return_success_threshold"],
             )
         ),
+        "rolling_step_stats_window": deque(
+            [
+                (
+                    int(item[0]),
+                    int(item[1]),
+                    float(item[2]),
+                    float(item[3]),
+                )
+                for item in resume_checkpoint.get(
+                    "rolling_step_stats_window",
+                    defaults["rolling_step_stats_window"],
+                )
+                if isinstance(item, (list, tuple)) and len(item) >= 4
+            ]
+        ),
+        "rolling_episode_stats_window": deque(
+            [
+                (
+                    int(item[0]),
+                    float(item[1]),
+                    float(item[2]),
+                    float(item[3]),
+                )
+                for item in resume_checkpoint.get(
+                    "rolling_episode_stats_window",
+                    defaults["rolling_episode_stats_window"],
+                )
+                if isinstance(item, (list, tuple)) and len(item) >= 4
+            ]
+        ),
     }
 
 
@@ -191,8 +219,6 @@ def build_training_state(
     current_acceleration_mag: torch.Tensor,
     current_jerk_mag: torch.Tensor,
     train_metrics: Dict[str, float],
-    episodic_returns,
-    success_rates,
     velocity_magnitudes,
     acceleration_magnitudes,
     jerk_magnitudes,
@@ -205,6 +231,8 @@ def build_training_state(
     episode_trajectory: EpisodeTrajectory,
     recent_episode_returns,
     episode_return_success_threshold: float,
+    rolling_step_stats_window,
+    rolling_episode_stats_window,
     args_dict: Dict[str, Any],
 ) -> Dict[str, Any]:
     state: Dict[str, Any] = {
@@ -230,8 +258,6 @@ def build_training_state(
         "current_acceleration_mag": _cpu_tensor(current_acceleration_mag),
         "current_jerk_mag": _cpu_tensor(current_jerk_mag),
         "train_metrics": dict(train_metrics),
-        "episodic_returns": list(episodic_returns),
-        "success_rates": list(success_rates),
         "velocity_magnitudes": list(velocity_magnitudes),
         "acceleration_magnitudes": list(acceleration_magnitudes),
         "jerk_magnitudes": list(jerk_magnitudes),
@@ -244,6 +270,24 @@ def build_training_state(
         "episode_trajectory": episode_trajectory.state_dict(),
         "recent_episode_returns": list(recent_episode_returns),
         "episode_return_success_threshold": episode_return_success_threshold,
+        "rolling_step_stats_window": [
+            (
+                int(item[0]),
+                int(item[1]),
+                float(item[2]),
+                float(item[3]),
+            )
+            for item in rolling_step_stats_window
+        ],
+        "rolling_episode_stats_window": [
+            (
+                int(item[0]),
+                float(item[1]),
+                float(item[2]),
+                float(item[3]),
+            )
+            for item in rolling_episode_stats_window
+        ],
         "rng_states": get_rng_states(),
         "args": args_dict,
     }

@@ -65,6 +65,8 @@ from scripts.smooth_policy.amp_history.amp_training.amp_training import (
 from scripts.smooth_policy.evaluate import evaluate_agent
 from scripts.utils import save_tensorboard_plots
 
+ROLLING_STATS_WINDOW_STEPS = 2000
+
 
 def h_transform(x: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
     return torch.sign(x) * (torch.sqrt(torch.abs(x) + 1) - 1) + eps * x
@@ -376,6 +378,24 @@ def primitive_exploration_chance_for_step(args, step: int) -> float:
     )
 
 
+def validate_optional_exploration_range(
+    *,
+    primitive_name: str,
+    min_angle_deg: float | None,
+    max_angle_deg: float | None,
+    min_magnitude: float | None,
+    max_magnitude: float | None,
+) -> None:
+    values = (min_angle_deg, max_angle_deg, min_magnitude, max_magnitude)
+    if all(value is None for value in values):
+        return
+    if any(value is None for value in values):
+        raise ValueError(
+            f"{primitive_name} exploration range requires all four fields: "
+            "min_angle_deg, max_angle_deg, min_magnitude, max_magnitude."
+        )
+
+
 def sum_info_metric(infos: dict, metric_name: str) -> float:
     metric_values = infos.get(metric_name)
     if metric_values is None:
@@ -386,8 +406,21 @@ def sum_info_metric(infos: dict, metric_name: str) -> float:
         return 0.0
 
 
+def sum_info_bool_metric(infos: dict, metric_name: str) -> float:
+    metric_values = infos.get(metric_name)
+    if metric_values is None:
+        return 0.0
+    try:
+        return float(np.asarray(metric_values, dtype=np.bool_).sum())
+    except Exception:
+        return 0.0
+
+
 @dataclass
 class Args:
+    # Evaluation-only mode (no exploration, no replay writes, no updates).
+    # In this mode, total_timesteps is the rollout horizon in env-steps.
+    eval_mode: bool = False
     total_timesteps: int = 1000000
     num_envs: int = 1
 
@@ -446,6 +479,18 @@ class Args:
     exploration_target_position_delta_x: float = 0.26
     exploration_target_position_delta_y: float = 0.12
     exploration_target_position_steps: int = 5
+    exploration_same_direction_min_angle_deg: float | None = None
+    exploration_same_direction_max_angle_deg: float | None = None
+    exploration_same_direction_min_magnitude: float | None = None
+    exploration_same_direction_max_magnitude: float | None = None
+    exploration_y_aligned_min_angle_deg: float | None = None
+    exploration_y_aligned_max_angle_deg: float | None = None
+    exploration_y_aligned_min_magnitude: float | None = None
+    exploration_y_aligned_max_magnitude: float | None = None
+    exploration_target_position_directional_min_angle_deg: float | None = None
+    exploration_target_position_directional_max_angle_deg: float | None = None
+    exploration_target_position_directional_min_magnitude: float | None = None
+    exploration_target_position_directional_max_magnitude: float | None = None
     exploration_pre_contact_hit_variant_chance: float = 0.15
     exploration_pre_contact_hit_variant_steps: int = 5
     exploration_pre_contact_hit_variant_distance_threshold: float = 0.25
@@ -569,6 +614,27 @@ if __name__ == "__main__":
         raise ValueError("target_network_frequency must be > 0.")
     if args.actor_updates_per_iteration <= 0:
         raise ValueError("actor_updates_per_iteration must be > 0.")
+    validate_optional_exploration_range(
+        primitive_name="same_direction",
+        min_angle_deg=args.exploration_same_direction_min_angle_deg,
+        max_angle_deg=args.exploration_same_direction_max_angle_deg,
+        min_magnitude=args.exploration_same_direction_min_magnitude,
+        max_magnitude=args.exploration_same_direction_max_magnitude,
+    )
+    validate_optional_exploration_range(
+        primitive_name="y_aligned",
+        min_angle_deg=args.exploration_y_aligned_min_angle_deg,
+        max_angle_deg=args.exploration_y_aligned_max_angle_deg,
+        min_magnitude=args.exploration_y_aligned_min_magnitude,
+        max_magnitude=args.exploration_y_aligned_max_magnitude,
+    )
+    validate_optional_exploration_range(
+        primitive_name="target_position_directional",
+        min_angle_deg=args.exploration_target_position_directional_min_angle_deg,
+        max_angle_deg=args.exploration_target_position_directional_max_angle_deg,
+        min_magnitude=args.exploration_target_position_directional_min_magnitude,
+        max_magnitude=args.exploration_target_position_directional_max_magnitude,
+    )
 
     with open(args.config, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
@@ -679,6 +745,10 @@ if __name__ == "__main__":
             qf1_target.load_state_dict(resume_checkpoint["qf1_target"])
             qf2_target.load_state_dict(resume_checkpoint["qf2_target"])
             print("Full training checkpoint loaded (network weights).")
+            if args.eval_mode:
+                # In eval mode, use checkpoint weights but do not restore rollout/replay/optimizer state.
+                resume_checkpoint = None
+                print("Eval mode enabled: skipping resume of optimizer/replay/runtime state.")
         else:
             actor.load_state_dict(extract_deterministic_state_dict(loaded_obj), strict=False)
             actor_target.load_state_dict(actor.state_dict())
@@ -740,14 +810,15 @@ if __name__ == "__main__":
 
     obs, _ = envs.reset(seed=args.seed)
     last_action_for_policy = torch.zeros((args.num_envs, act_dim), dtype=torch.float32, device=args.device)
-    episodic_returns = []
-    success_rates = []
     interval_paddle_puck_collisions = 0.0
     interval_env_steps = 0
     interval_primitive_env_steps = 0
     interval_primitive_horizontal_env_steps = 0
     interval_policy_takeover_env_steps = 0
     interval_target_position_directional_env_steps = 0
+    rolling_step_stats_window = deque()
+    rolling_episode_stats_window = deque()
+    prev_protective_stop_flags = np.zeros(args.num_envs, dtype=bool)
     episode_trajectory = EpisodeTrajectory.empty()
     recent_episode_returns = deque(maxlen=args.recent_episode_window_size)
     episode_return_success_threshold = 0.0
@@ -794,7 +865,7 @@ if __name__ == "__main__":
     warm_policy_actor = None
     warm_policy_use_last_action = False
     warm_policy_last_action = torch.zeros((args.num_envs, act_dim), dtype=torch.float32, device=args.device)
-    if args.exploration_policy_takeover_enabled:
+    if args.exploration_policy_takeover_enabled and not args.eval_mode:
         warm_policy_actor, warm_policy_use_last_action = create_warm_start_policy(
             warm_model_path=warm_model_path,
             warm_args_path=warm_args_path,
@@ -817,6 +888,26 @@ if __name__ == "__main__":
         target_max_distance=args.exploration_target_position_max_distance,
         target_action_delta_x=args.exploration_target_position_delta_x,
         target_action_delta_y=args.exploration_target_position_delta_y,
+        same_direction_min_angle_deg=args.exploration_same_direction_min_angle_deg,
+        same_direction_max_angle_deg=args.exploration_same_direction_max_angle_deg,
+        same_direction_min_magnitude=args.exploration_same_direction_min_magnitude,
+        same_direction_max_magnitude=args.exploration_same_direction_max_magnitude,
+        y_aligned_min_angle_deg=args.exploration_y_aligned_min_angle_deg,
+        y_aligned_max_angle_deg=args.exploration_y_aligned_max_angle_deg,
+        y_aligned_min_magnitude=args.exploration_y_aligned_min_magnitude,
+        y_aligned_max_magnitude=args.exploration_y_aligned_max_magnitude,
+        target_position_directional_min_angle_deg=(
+            args.exploration_target_position_directional_min_angle_deg
+        ),
+        target_position_directional_max_angle_deg=(
+            args.exploration_target_position_directional_max_angle_deg
+        ),
+        target_position_directional_min_magnitude=(
+            args.exploration_target_position_directional_min_magnitude
+        ),
+        target_position_directional_max_magnitude=(
+            args.exploration_target_position_directional_max_magnitude
+        ),
         target_takeover_steps=args.exploration_target_position_steps,
         pre_contact_hit_variant_chance=args.exploration_pre_contact_hit_variant_chance,
         pre_contact_hit_variant_steps=args.exploration_pre_contact_hit_variant_steps,
@@ -840,6 +931,9 @@ if __name__ == "__main__":
         ),
         target_position_directional=args.exploration_primitive_weight_target_position_directional,
     )
+    if args.eval_mode:
+        primitive_selector.chance = 0.0
+        primitive_selector.pre_contact_hit_variant_chance = 0.0
     if resume_checkpoint is not None:
         restored_state = load_resume_training_state(
             resume_checkpoint,
@@ -853,8 +947,6 @@ if __name__ == "__main__":
             defaults={
                 "warm_policy_last_action": warm_policy_last_action,
                 "train_metrics": train_metrics,
-                "episodic_returns": episodic_returns,
-                "success_rates": success_rates,
                 "velocity_magnitudes": velocity_magnitudes,
                 "acceleration_magnitudes": acceleration_magnitudes,
                 "jerk_magnitudes": jerk_magnitudes,
@@ -869,6 +961,8 @@ if __name__ == "__main__":
                 "steps_since_done": steps_since_done,
                 "recent_episode_returns": recent_episode_returns,
                 "episode_return_success_threshold": episode_return_success_threshold,
+                "rolling_step_stats_window": rolling_step_stats_window,
+                "rolling_episode_stats_window": rolling_episode_stats_window,
             },
         )
         global_step = restored_state["global_step"]
@@ -886,8 +980,6 @@ if __name__ == "__main__":
         current_acceleration_mag = restored_state["current_acceleration_mag"]
         current_jerk_mag = restored_state["current_jerk_mag"]
         train_metrics = restored_state["train_metrics"]
-        episodic_returns = restored_state["episodic_returns"]
-        success_rates = restored_state["success_rates"]
         velocity_magnitudes = restored_state["velocity_magnitudes"]
         acceleration_magnitudes = restored_state["acceleration_magnitudes"]
         jerk_magnitudes = restored_state["jerk_magnitudes"]
@@ -902,11 +994,13 @@ if __name__ == "__main__":
         episode_trajectory = restored_state["episode_trajectory"]
         recent_episode_returns = restored_state["recent_episode_returns"]
         episode_return_success_threshold = restored_state["episode_return_success_threshold"]
+        rolling_step_stats_window = restored_state["rolling_step_stats_window"]
+        rolling_episode_stats_window = restored_state["rolling_episode_stats_window"]
         print(f"Resuming training from global_step={global_step}, iteration={iteration}")
 
     while global_step < args.total_timesteps:
         should_update_train_metrics = global_step > 0 and np.random.rand() < 0.1
-        should_refresh_annealing = np.random.rand() < 0.1
+        should_refresh_annealing = (not args.eval_mode) and (np.random.rand() < 0.1)
         
         if should_refresh_annealing:
             annealing_active = global_step < args.exploration_primitive_chance_anneal_steps
@@ -945,53 +1039,83 @@ if __name__ == "__main__":
             obs_tensor, last_action_for_policy, args.use_last_action_in_policy_state
         )
 
-        if global_step < args.learning_starts:
+        if global_step < args.learning_starts and not args.eval_mode:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
             with torch.no_grad():
                 deterministic_actions = deterministic_actor_action(actor, policy_obs_tensor)
-                exploration = torch.randn_like(deterministic_actions) * args.exploration_noise
-                deterministic_actions = torch.clamp(deterministic_actions + exploration, action_low, action_high)
+                if not args.eval_mode:
+                    exploration = torch.randn_like(deterministic_actions) * args.exploration_noise
+                    deterministic_actions = torch.clamp(
+                        deterministic_actions + exploration, action_low, action_high
+                    )
+                else:
+                    deterministic_actions = torch.clamp(deterministic_actions, action_low, action_high)
                 actions = deterministic_actions.cpu().numpy()
 
         action_tensor = torch.as_tensor(actions, dtype=torch.float32, device=args.device)
-        current_paddle_pos_for_primitive = extract_current_paddle_position(obs_tensor)
-        current_puck_pos_for_primitive = extract_current_puck_position(obs_tensor)
-        current_puck_vel_for_primitive = extract_current_puck_velocity(obs_tensor)
-        if torch.all(current_puck_vel_for_primitive == 0):
-            current_puck_vel_for_primitive = (
-                current_puck_pos_for_primitive - previous_puck_position_for_trigger
+        if not args.eval_mode:
+            current_paddle_pos_for_primitive = extract_current_paddle_position(obs_tensor)
+            current_puck_pos_for_primitive = extract_current_puck_position(obs_tensor)
+            current_puck_vel_for_primitive = extract_current_puck_velocity(obs_tensor)
+            if torch.all(current_puck_vel_for_primitive == 0):
+                current_puck_vel_for_primitive = (
+                    current_puck_pos_for_primitive - previous_puck_position_for_trigger
+                )
+            y_alignment_sign = torch.sign(
+                current_puck_pos_for_primitive[:, 1] - current_paddle_pos_for_primitive[:, 1]
             )
-        y_alignment_sign = torch.sign(current_puck_pos_for_primitive[:, 1] - current_paddle_pos_for_primitive[:, 1])
-        action_tensor, primitive_step_stats = primitive_selector.apply(
-            action_tensor,
-            action_low=action_low,
-            action_high=action_high,
-            y_alignment_sign=y_alignment_sign,
-            current_paddle_position=current_paddle_pos_for_primitive,
-            current_puck_position=current_puck_pos_for_primitive,
-            current_puck_velocity=current_puck_vel_for_primitive,
-            return_stats=True,
-        )
-        if args.exploration_policy_takeover_enabled and warm_policy_actor is not None:
-            policy_takeover_mask = primitive_selector.active & (
-                primitive_selector.primitive_id == primitive_selector.primitive_ids.POLICY_TAKEOVER
+            action_tensor, primitive_step_stats = primitive_selector.apply(
+                action_tensor,
+                action_low=action_low,
+                action_high=action_high,
+                y_alignment_sign=y_alignment_sign,
+                current_paddle_position=current_paddle_pos_for_primitive,
+                current_puck_position=current_puck_pos_for_primitive,
+                current_puck_velocity=current_puck_vel_for_primitive,
+                return_stats=True,
             )
-            if torch.any(policy_takeover_mask):
-                with torch.no_grad():
-                    warm_policy_obs = augment_policy_observation(
-                        obs_tensor,
-                        warm_policy_last_action,
-                        warm_policy_use_last_action,
-                    )
-                    warm_policy_actions = deterministic_actor_action(warm_policy_actor, warm_policy_obs)
-                    warm_policy_actions = torch.clamp(warm_policy_actions, action_low, action_high)
-                    action_tensor[policy_takeover_mask] = warm_policy_actions[policy_takeover_mask]
+            if args.exploration_policy_takeover_enabled and warm_policy_actor is not None:
+                policy_takeover_mask = primitive_selector.active & (
+                    primitive_selector.primitive_id == primitive_selector.primitive_ids.POLICY_TAKEOVER
+                )
+                if torch.any(policy_takeover_mask):
+                    with torch.no_grad():
+                        warm_policy_obs = augment_policy_observation(
+                            obs_tensor,
+                            warm_policy_last_action,
+                            warm_policy_use_last_action,
+                        )
+                        warm_policy_actions = deterministic_actor_action(warm_policy_actor, warm_policy_obs)
+                        warm_policy_actions = torch.clamp(warm_policy_actions, action_low, action_high)
+                        action_tensor[policy_takeover_mask] = warm_policy_actions[policy_takeover_mask]
+        else:
+            primitive_step_stats = {
+                "primitive_applied_count": 0,
+                "primitive_horizontal_dominant_count": 0,
+                "policy_takeover_applied_count": 0,
+                "target_position_directional_applied_count": 0,
+            }
         actions = action_tensor.cpu().numpy()
 
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
         dones = np.logical_or(terminations, truncations)
-        interval_paddle_puck_collisions += sum_info_metric(infos, "paddle_puck_collision_count")
+        step_puck_hits = sum_info_metric(infos, "paddle_puck_collision_count")
+        interval_paddle_puck_collisions += step_puck_hits
+        current_protective_stop_flags = np.asarray(
+            infos.get("protective_stop", np.zeros(args.num_envs, dtype=bool)),
+            dtype=np.bool_,
+        )
+        current_protective_stop_flags = np.atleast_1d(current_protective_stop_flags)
+        if current_protective_stop_flags.size == args.num_envs:
+            step_estop_events = float(
+                np.logical_and(current_protective_stop_flags, np.logical_not(prev_protective_stop_flags)).sum()
+            )
+            prev_protective_stop_flags = current_protective_stop_flags.copy()
+            prev_protective_stop_flags[dones] = False
+        else:
+            step_estop_events = sum_info_bool_metric(infos, "protective_stop")
+            prev_protective_stop_flags = np.zeros(args.num_envs, dtype=bool)
         interval_env_steps += args.num_envs
         interval_primitive_env_steps += int(primitive_step_stats["primitive_applied_count"])
         interval_primitive_horizontal_env_steps += int(
@@ -1116,14 +1240,33 @@ if __name__ == "__main__":
         if "final_info" in infos:
             for info in infos["final_info"]:
                 if info and "episode_return" in info:
-                    episodic_returns.append(info["episode_return"])
-                    success_rates.append(1.0 if info.get("success", False) else 0.0)
                     writer.add_scalar("charts/episodic_return", info["episode_return"], global_step)
                     writer.add_scalar("charts/episodic_length", info["episode_length"], global_step)
+                    rolling_episode_stats_window.append(
+                        (
+                            int(global_step + args.num_envs),
+                            float(info["episode_return"]),
+                            float(info["episode_length"]),
+                            1.0 if info.get("success", False) else 0.0,
+                        )
+                    )
                     if "motion_data" in info:
                         velocity_magnitudes.extend(info["motion_data"]["velocity_mags"])
                         acceleration_magnitudes.extend(info["motion_data"]["acceleration_mags"])
                         jerk_magnitudes.extend(info["motion_data"]["jerk_mags"])
+        rolling_step_stats_window.append(
+            (
+                int(global_step + args.num_envs),
+                int(args.num_envs),
+                float(step_puck_hits),
+                float(step_estop_events),
+            )
+        )
+        rolling_cutoff_step = int(global_step + args.num_envs - ROLLING_STATS_WINDOW_STEPS)
+        while rolling_step_stats_window and int(rolling_step_stats_window[0][0]) <= rolling_cutoff_step:
+            rolling_step_stats_window.popleft()
+        while rolling_episode_stats_window and int(rolling_episode_stats_window[0][0]) <= rolling_cutoff_step:
+            rolling_episode_stats_window.popleft()
 
         real_next_obs = next_obs.copy()
         for idx, trunc in enumerate(truncations):
@@ -1131,29 +1274,30 @@ if __name__ == "__main__":
                 real_next_obs[idx] = infos["final_observation"][idx]
         real_next_obs_tensor = torch.as_tensor(real_next_obs, dtype=torch.float32, device=args.device)
         terminations_tensor = torch.as_tensor(terminations, dtype=torch.float32, device=args.device)
-        episode_trajectory.append_step(
-            obs=obs_tensor[0],
-            next_obs=real_next_obs_tensor[0],
-            action=action_tensor[0],
-            task_reward=task_rewards[0],
-            motion_reward=motion_rewards[0],
-            done=terminations_tensor[0],
-            prev_action=prev_action_for_transition[0],
-        )
-        episode_return_success_threshold = finalize_episode_if_done(
-            episode_done=bool(dones[0]),
-            episode_trajectory=episode_trajectory,
-            recent_episode_returns=recent_episode_returns,
-            success_top_fraction=args.success_top_fraction,
-            episode_return_success_threshold=episode_return_success_threshold,
-            success_rb=success_rb,
-            failure_rb=failure_rb,
-        )
+        if not args.eval_mode:
+            episode_trajectory.append_step(
+                obs=obs_tensor[0],
+                next_obs=real_next_obs_tensor[0],
+                action=action_tensor[0],
+                task_reward=task_rewards[0],
+                motion_reward=motion_rewards[0],
+                done=terminations_tensor[0],
+                prev_action=prev_action_for_transition[0],
+            )
+            episode_return_success_threshold = finalize_episode_if_done(
+                episode_done=bool(dones[0]),
+                episode_trajectory=episode_trajectory,
+                recent_episode_returns=recent_episode_returns,
+                success_top_fraction=args.success_top_fraction,
+                episode_return_success_threshold=episode_return_success_threshold,
+                success_rb=success_rb,
+                failure_rb=failure_rb,
+            )
         episode_finished = bool(dones[0])
 
         obs = next_obs
 
-        if global_step > args.learning_starts and episode_finished:
+        if global_step > args.learning_starts and episode_finished and not args.eval_mode:
             for q_update_idx in range(args.q_updates):
                 success_batch_count, failure_batch_count = critic_success_failure_counts(
                     batch_size=args.batch_size,
@@ -1479,24 +1623,58 @@ if __name__ == "__main__":
 
         # LOGGING AND EVALUATION
         if global_step > 0 and global_step % 500 == 0:
-            if episodic_returns:
-                avg_return = np.mean(episodic_returns)
-                min_return = np.min(episodic_returns)
-                max_return = np.max(episodic_returns)
-                avg_success = np.mean(success_rates) if success_rates else 0.0
+            if rolling_episode_stats_window:
+                rolling_returns = [item[1] for item in rolling_episode_stats_window]
+                rolling_lengths = [item[2] for item in rolling_episode_stats_window]
+                rolling_success = [item[3] for item in rolling_episode_stats_window]
+                avg_return = float(np.mean(rolling_returns))
+                min_return = float(np.min(rolling_returns))
+                max_return = float(np.max(rolling_returns))
+                avg_success = float(np.mean(rolling_success))
+                avg_episode_length = float(np.mean(rolling_lengths))
                 print(
-                    f"Step {global_step}: Avg Return: {avg_return:.2f}, "
+                    f"Step {global_step}: Rolling(2k) Avg Return: {avg_return:.2f}, "
                     f"Min: {min_return:.2f}, Max: {max_return:.2f}, "
-                    f"Success Rate: {avg_success:.2f}, Episodes: {len(episodic_returns)}"
+                    f"Success Rate: {avg_success:.2f}, Avg Episode Length: {avg_episode_length:.2f}, "
+                    f"Episodes: {len(rolling_episode_stats_window)}"
                 )
                 writer.add_scalar("charts/avg_episodic_return", avg_return, global_step)
                 writer.add_scalar("charts/min_episodic_return", min_return, global_step)
                 writer.add_scalar("charts/max_episodic_return", max_return, global_step)
                 writer.add_scalar("charts/avg_success_rate", avg_success, global_step)
-                episodic_returns.clear()
-                success_rates.clear()
+                writer.add_scalar("charts/rolling2k_avg_episode_return", avg_return, global_step)
+                writer.add_scalar("charts/rolling2k_avg_episode_length", avg_episode_length, global_step)
+                writer.add_scalar("charts/rolling2k_episode_count", len(rolling_episode_stats_window), global_step)
             else:
-                print(f"Step {global_step}: No episodes completed in last 500 steps")
+                print(f"Step {global_step}: No episodes in rolling 2k-step window")
+
+            rolling_window_env_steps = int(sum(item[1] for item in rolling_step_stats_window))
+            rolling_window_puck_hits = float(sum(item[2] for item in rolling_step_stats_window))
+            rolling_window_estop_events = float(sum(item[3] for item in rolling_step_stats_window))
+            rolling_puck_hits_per_env_step = (
+                rolling_window_puck_hits / float(rolling_window_env_steps)
+                if rolling_window_env_steps > 0
+                else 0.0
+            )
+            rolling_estop_rate = (
+                rolling_window_estop_events / float(rolling_window_env_steps)
+                if rolling_window_env_steps > 0
+                else 0.0
+            )
+            print(
+                f"Step {global_step}: Rolling(2k) Puck Hits: {int(rolling_window_puck_hits)}, "
+                f"E-Stop Events: {int(rolling_window_estop_events)}, "
+                f"Puck Hits/env-step: {rolling_puck_hits_per_env_step:.4f}, "
+                f"E-Stop Rate: {rolling_estop_rate:.4f}"
+            )
+            writer.add_scalar("charts/rolling2k_puck_hits_total", rolling_window_puck_hits, global_step)
+            writer.add_scalar("charts/rolling2k_estop_events_total", rolling_window_estop_events, global_step)
+            writer.add_scalar(
+                "charts/rolling2k_puck_hits_per_env_step",
+                rolling_puck_hits_per_env_step,
+                global_step,
+            )
+            writer.add_scalar("charts/rolling2k_estop_rate", rolling_estop_rate, global_step)
 
             if velocity_magnitudes:
                 avg_vel_mag = np.mean(velocity_magnitudes)
@@ -1644,8 +1822,6 @@ if __name__ == "__main__":
                 current_acceleration_mag=current_acceleration_mag,
                 current_jerk_mag=current_jerk_mag,
                 train_metrics=train_metrics,
-                episodic_returns=episodic_returns,
-                success_rates=success_rates,
                 velocity_magnitudes=velocity_magnitudes,
                 acceleration_magnitudes=acceleration_magnitudes,
                 jerk_magnitudes=jerk_magnitudes,
@@ -1660,6 +1836,8 @@ if __name__ == "__main__":
                 episode_trajectory=episode_trajectory,
                 recent_episode_returns=recent_episode_returns,
                 episode_return_success_threshold=episode_return_success_threshold,
+                rolling_step_stats_window=rolling_step_stats_window,
+                rolling_episode_stats_window=rolling_episode_stats_window,
                 args_dict=vars(args),
                 include_replay_buffer=args.save_replay_buffer,
             )
@@ -1684,7 +1862,7 @@ if __name__ == "__main__":
                     action_low=action_low,
                     action_high=action_high,
                     use_last_action_in_policy_state=args.use_last_action_in_policy_state,
-                    exploration_noise=args.exploration_noise,
+                    exploration_noise=(0.0 if args.eval_mode else args.exploration_noise),
                     primitive_selector=primitive_selector,
                     warm_policy_actor=warm_policy_actor if args.exploration_policy_takeover_enabled else None,
                     warm_policy_use_last_action=warm_policy_use_last_action,
@@ -1700,58 +1878,68 @@ if __name__ == "__main__":
 
     envs.close()
 
-    torch.save(actor.state_dict(), f"{log_parent_dir}/model.pth")
-    torch.save(actor_target.state_dict(), f"{log_parent_dir}/actor_target.pth")
-    torch.save(qf1.state_dict(), f"{log_parent_dir}/qf1.pth")
-    torch.save(qf2.state_dict(), f"{log_parent_dir}/qf2.pth")
-    torch.save(qf1_target.state_dict(), f"{log_parent_dir}/qf1_target.pth")
-    torch.save(qf2_target.state_dict(), f"{log_parent_dir}/qf2_target.pth")
-    final_training_state = build_training_state(
-        global_step=global_step,
-        iteration=iteration,
-        actor=actor,
-        actor_target=actor_target,
-        qf1=qf1,
-        qf2=qf2,
-        qf1_target=qf1_target,
-        qf2_target=qf2_target,
-        q_optimizer=q_optimizer,
-        actor_optimizer=actor_optimizer,
-        success_rb=success_rb,
-        failure_rb=failure_rb,
-        primitive_selector=primitive_selector,
-        obs=obs,
-        last_action_for_policy=last_action_for_policy,
-        warm_policy_last_action=warm_policy_last_action,
-        temporal_paddle_history=temporal_paddle_history,
-        temporal_puck_history=temporal_puck_history,
-        steps_since_done=steps_since_done,
-        current_velocity_mag=current_velocity_mag,
-        current_acceleration_mag=current_acceleration_mag,
-        current_jerk_mag=current_jerk_mag,
-        train_metrics=train_metrics,
-        episodic_returns=episodic_returns,
-        success_rates=success_rates,
-        velocity_magnitudes=velocity_magnitudes,
-        acceleration_magnitudes=acceleration_magnitudes,
-        jerk_magnitudes=jerk_magnitudes,
-        interval_paddle_puck_collisions=interval_paddle_puck_collisions,
-        interval_env_steps=interval_env_steps,
-        interval_primitive_env_steps=interval_primitive_env_steps,
-        interval_primitive_horizontal_env_steps=interval_primitive_horizontal_env_steps,
-        interval_policy_takeover_env_steps=interval_policy_takeover_env_steps,
-        interval_target_position_directional_env_steps=interval_target_position_directional_env_steps,
-        episode_trajectory=episode_trajectory,
-        recent_episode_returns=recent_episode_returns,
-        episode_return_success_threshold=episode_return_success_threshold,
-        args_dict=vars(args),
-        include_replay_buffer=args.save_replay_buffer,
-    )
-    torch.save(final_training_state, f"{log_parent_dir}/training_state.pth")
+    if not args.eval_mode:
+        torch.save(actor.state_dict(), f"{log_parent_dir}/model.pth")
+        torch.save(actor_target.state_dict(), f"{log_parent_dir}/actor_target.pth")
+        torch.save(qf1.state_dict(), f"{log_parent_dir}/qf1.pth")
+        torch.save(qf2.state_dict(), f"{log_parent_dir}/qf2.pth")
+        torch.save(qf1_target.state_dict(), f"{log_parent_dir}/qf1_target.pth")
+        torch.save(qf2_target.state_dict(), f"{log_parent_dir}/qf2_target.pth")
+        final_training_state = build_training_state(
+            global_step=global_step,
+            iteration=iteration,
+            actor=actor,
+            actor_target=actor_target,
+            qf1=qf1,
+            qf2=qf2,
+            qf1_target=qf1_target,
+            qf2_target=qf2_target,
+            q_optimizer=q_optimizer,
+            actor_optimizer=actor_optimizer,
+            success_rb=success_rb,
+            failure_rb=failure_rb,
+            primitive_selector=primitive_selector,
+            obs=obs,
+            last_action_for_policy=last_action_for_policy,
+            warm_policy_last_action=warm_policy_last_action,
+            temporal_paddle_history=temporal_paddle_history,
+            temporal_puck_history=temporal_puck_history,
+            steps_since_done=steps_since_done,
+            current_velocity_mag=current_velocity_mag,
+            current_acceleration_mag=current_acceleration_mag,
+            current_jerk_mag=current_jerk_mag,
+            train_metrics=train_metrics,
+            velocity_magnitudes=velocity_magnitudes,
+            acceleration_magnitudes=acceleration_magnitudes,
+            jerk_magnitudes=jerk_magnitudes,
+            interval_paddle_puck_collisions=interval_paddle_puck_collisions,
+            interval_env_steps=interval_env_steps,
+            interval_primitive_env_steps=interval_primitive_env_steps,
+            interval_primitive_horizontal_env_steps=interval_primitive_horizontal_env_steps,
+            interval_policy_takeover_env_steps=interval_policy_takeover_env_steps,
+            interval_target_position_directional_env_steps=interval_target_position_directional_env_steps,
+            episode_trajectory=episode_trajectory,
+            recent_episode_returns=recent_episode_returns,
+            episode_return_success_threshold=episode_return_success_threshold,
+            rolling_step_stats_window=rolling_step_stats_window,
+            rolling_episode_stats_window=rolling_episode_stats_window,
+            args_dict=vars(args),
+            include_replay_buffer=args.save_replay_buffer,
+        )
+        torch.save(final_training_state, f"{log_parent_dir}/training_state.pth")
+    elif args.model_path is None:
+        print("Eval mode is enabled without model_path; final evaluate_agent will be skipped.")
 
     try:
+        if args.eval_mode:
+            final_eval_model_path = os.path.join(log_parent_dir, "eval_mode_model.pth")
+            torch.save(actor.state_dict(), final_eval_model_path)
+        else:
+            final_eval_model_path = f"{log_parent_dir}/model.pth"
+        if final_eval_model_path is None:
+            raise ValueError("No model path available for final evaluation.")
         evaluate_agent(
-            f"{log_parent_dir}/model.pth",
+            final_eval_model_path,
             log_parent_dir,
             config["air_hockey"],
             action_scale=action_scale,

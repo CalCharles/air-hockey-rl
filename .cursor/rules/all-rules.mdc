@@ -58,6 +58,20 @@ This file consolidates cross-cutting rules and guardrails. Domain-specific rules
 
 ---
 
+## Implementation Plans
+
+Use this whenever work is captured as a **multi-step implementation plan** (staged features, refactors, or rollouts), whether it lives in chat, `notes/scratch/`, or `notes/docs/`.
+
+### Required plan content
+
+- **Subagent use (when and where)**: For each phase or step, state explicitly whether it should run **via subagent(s)** or **in the main session only**. If subagents are not used, say so explicitly (e.g., "no subagents — single session") so the default is not ambiguous.
+- **Parallel vs synchronous**: Whenever subagents appear, state whether they run **in parallel** (independent lanes, no ordering dependency on each other's outputs) or **synchronously / sequentially** (later steps wait for named deliverables from earlier steps). If both appear, define **phases** (e.g., "Phase 1: one subagent, sync; Phase 2: two subagents in parallel after interfaces are frozen").
+- **Handoffs**: For synchronous chains, name what artifact or decision unblocks the next step (files merged, interface agreed, tests passing).
+
+Plans that omit subagent placement or parallel/sync choice should be revised before execution.
+
+---
+
 ## Project Conventions
 
 ### README Files
@@ -114,6 +128,8 @@ notes/
 ---
 
 ## Parallel Execution Workflows
+
+Implementation plans must already specify **where** subagents apply and **parallel vs synchronous** execution; this section defines how to apply that in practice.
 
 ### Core Rule
 
