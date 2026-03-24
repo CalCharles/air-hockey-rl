@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Dict
 
 import torch
+import wandb
 from torch.utils.tensorboard import SummaryWriter
 
 
@@ -18,6 +19,8 @@ def tensor_mean_items(values: Dict[str, torch.Tensor]) -> Dict[str, float]:
 def log_scalar_metrics(writer: SummaryWriter, metrics: Dict[str, float], global_step: int) -> None:
     for name, value in metrics.items():
         writer.add_scalar(name, value, global_step)
+    if wandb.run is not None:
+        wandb.log(metrics, step=global_step)
 
 
 def initialize_train_metrics() -> Dict[str, float]:

@@ -78,7 +78,26 @@ def save_tensorboard_plots(log_dir, air_hockey_cfg, metrics=None):
                 if hasattr(event_accumulator, "ScalarEvent") and isinstance(scalar_events, event_accumulator.ScalarEvent):
                     scalar_events = [scalar_events]
                 times, step_nums, values = zip(*[(event.wall_time, event.step, event.value) for event in scalar_events])
-                ax.plot(step_nums, values, label=metric)
+                steps = np.array(step_nums)
+                vals = np.array(values)
+
+                # Plot raw data faintly
+                ax.plot(steps, vals, alpha=0.2, color='steelblue', linewidth=0.8)
+
+                # Smooth with a rolling window and show std error region
+                window = max(1, len(vals) // 20)  # ~5% of data points
+                if len(vals) >= window:
+                    kernel = np.ones(window) / window
+                    smoothed = np.convolve(vals, kernel, mode='valid')
+                    # rolling std over same window
+                    rolling_std = np.array([vals[j:j+window].std() for j in range(len(vals) - window + 1)])
+                    smooth_steps = steps[window - 1:]
+                    ax.plot(smooth_steps, smoothed, label=metric, color='steelblue', linewidth=1.5)
+                    ax.fill_between(smooth_steps, smoothed - rolling_std, smoothed + rolling_std,
+                                    alpha=0.25, color='steelblue')
+                else:
+                    ax.plot(steps, vals, label=metric, color='steelblue', linewidth=1.5)
+
                 ax.set_title(metric)
                 ax.set_xlabel("Steps")
                 ax.set_ylabel("Value")

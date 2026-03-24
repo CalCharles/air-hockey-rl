@@ -61,9 +61,25 @@ def save_tensorboard_plots(log_dir, air_hockey_cfg):
         if metric in ea.Tags()['scalars']:
             # Extract time steps and values for the metric
             times, step_nums, values = zip(*ea.Scalars(metric))
+            steps = np.array(step_nums)
+            vals = np.array(values)
 
-            # Plot on the i-th subplot
-            axs[i].plot(step_nums, values, label=metric)
+            # Plot raw data faintly
+            axs[i].plot(steps, vals, alpha=0.2, color='steelblue', linewidth=0.8)
+
+            # Smooth with a rolling window and show std error region
+            window = max(1, len(vals) // 20)  # ~5% of data points
+            if len(vals) >= window:
+                kernel = np.ones(window) / window
+                smoothed = np.convolve(vals, kernel, mode='valid')
+                rolling_std = np.array([vals[j:j+window].std() for j in range(len(vals) - window + 1)])
+                smooth_steps = steps[window - 1:]
+                axs[i].plot(smooth_steps, smoothed, label=metric, color='steelblue', linewidth=1.5)
+                axs[i].fill_between(smooth_steps, smoothed - rolling_std, smoothed + rolling_std,
+                                    alpha=0.25, color='steelblue')
+            else:
+                axs[i].plot(steps, vals, label=metric, color='steelblue', linewidth=1.5)
+
             axs[i].set_title(metric)
             axs[i].set_xlabel("Steps")
             axs[i].set_ylabel("Value")

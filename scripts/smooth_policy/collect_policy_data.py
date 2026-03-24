@@ -1,17 +1,16 @@
 """
-Collect trajectory and per-timestep policy rollout data for smooth_policy models.
+Collect trajectory data and generate rollout GIFs for smooth_policy models.
 
-This script mirrors the loading/evaluation pattern in `evaluate.py`:
-- load model state dict and environment config
-- instantiate `AirHockeyEnv` + `Agent`
-- run policy rollouts
+Handles both stochastic (Agent) and deterministic (DeterministicAgent) policies.
+Can be pointed at a TD3 training run directory via --run-dir, which auto-reads
+args.yaml and config.yaml so no manual architecture flags are needed.
 
-It exports:
+Exports:
+- eval_0.gif, eval_1.gif, ...: rollout visualizations
 - per_timestep.csv: flattened per-step records
 - trajectory.npz: compact array-based trajectory tensors
 - metadata.yaml: run metadata and collection settings
 - model_used.pth / config_used.yaml: copied input artifacts
-- example_episode.gif: one rollout visualization capped at 250 steps
 """
 
 from __future__ import annotations
@@ -20,7 +19,9 @@ import argparse
 import csv
 import os
 import shutil
+import sys
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 import cv2
@@ -32,7 +33,10 @@ import yaml
 
 from airhockey import AirHockeyEnv
 from airhockey.renderers import AirHockeyRenderer
-from scripts.smooth_policy.agent import Agent
+from scripts.smooth_policy.evaluate import (
+    _augment_policy_observation,
+    _load_policy_for_evaluation,
+)
 
 
 @dataclass
@@ -77,25 +81,41 @@ def _extract_state_components(state_info: dict[str, Any]) -> tuple[np.ndarray, n
     return paddle_pos, paddle_vel, paddle_acc, puck_pos, puck_vel
 
 
-def _predict_action(agent: Agent, obs: np.ndarray, device: torch.device) -> np.ndarray:
+def _predict_action(
+    model,
+    obs: np.ndarray,
+    last_action: torch.Tensor,
+    use_last_action: bool,
+) -> np.ndarray:
     """Run one policy forward pass and return a single action vector."""
     with torch.no_grad():
-        obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
-        action_tensor, _, _, _ = agent.get_action_and_value(obs_tensor)
+        obs_tensor = torch.as_tensor(obs, dtype=torch.float32)
+        policy_obs = _augment_policy_observation(obs_tensor.unsqueeze(0), last_action, use_last_action)
+        result = model(policy_obs)
+        action_tensor = result[0] if isinstance(result, tuple) else result
         return action_tensor.squeeze(0).detach().cpu().numpy().astype(np.float32)
 
 
-def save_example_gif(
+def _should_stop(limits: CollectionLimits, episodes_completed: int, total_steps: int) -> bool:
+    """Stop when either configured limit is reached (whichever-first semantics)."""
+    hit_episode_limit = limits.num_episodes is not None and episodes_completed >= limits.num_episodes
+    hit_step_limit = limits.total_timesteps is not None and total_steps >= limits.total_timesteps
+    return hit_episode_limit or hit_step_limit
+
+
+def save_rollout_gif(
     env,
-    agent: Agent,
-    device: torch.device,
+    model,
     renderer: AirHockeyRenderer,
     gif_path: str,
+    action_dim: int,
+    use_last_action_in_policy_state: bool = False,
     max_steps: int = 250,
 ) -> int:
-    """Save one rollout GIF capped by max_steps. Returns rendered frame count."""
+    """Save one rollout GIF. Returns rendered frame count."""
     frames = []
     obs, _ = env.reset()
+    last_action = torch.zeros((1, action_dim), dtype=torch.float32)
     done = False
     steps = 0
 
@@ -106,21 +126,17 @@ def save_example_gif(
         frame = cv2.resize(frame, (160, int(160 / aspect_ratio)))
         frames.append(frame)
 
-        action = _predict_action(agent, obs, device)
+        action = _predict_action(model, obs, last_action, use_last_action_in_policy_state)
         obs, _, terminated, truncated, _ = env.step(action)
         done = bool(terminated or truncated)
+        last_action = torch.tensor(action, dtype=torch.float32).reshape(1, -1)
+        if done:
+            last_action.zero_()
         steps += 1
 
-    if len(frames) > 0:
+    if frames:
         imageio.mimsave(gif_path, frames, format="GIF", loop=0, duration=int(1000 * (1 / 20)))
     return len(frames)
-
-
-def _should_stop(limits: CollectionLimits, episodes_completed: int, total_steps: int) -> bool:
-    """Stop when either configured limit is reached (whichever-first semantics)."""
-    hit_episode_limit = limits.num_episodes is not None and episodes_completed >= limits.num_episodes
-    hit_step_limit = limits.total_timesteps is not None and total_steps >= limits.total_timesteps
-    return hit_episode_limit or hit_step_limit
 
 
 def collect_policy_data(
@@ -128,10 +144,14 @@ def collect_policy_data(
     config_path: str,
     save_dir: str,
     limits: CollectionLimits,
-    agent_hidden_size: int,
-    device: torch.device,
+    agent_hidden_layer_size: int = 64,
+    agent_num_hidden_layers: int = 2,
+    action_scale: float = 0.02,
+    use_last_action_in_policy_state: bool = False,
+    policy_type: str | None = None,
+    n_gifs: int = 1,
 ) -> dict[str, Any]:
-    """Run rollouts and export trajectory/per-step metrics and artifacts."""
+    """Run rollouts, export trajectory/per-step metrics, and save GIFs."""
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
     air_hockey_params = config["air_hockey"]
@@ -143,17 +163,26 @@ def collect_policy_data(
     env = envs.envs[0]
     renderer = AirHockeyRenderer(env, show_target_position=True, show_acceleration_arrow=False)
 
-    state_dict = torch.load(model_path, map_location=device)
-    if "action_scale" not in state_dict:
-        raise KeyError("Model checkpoint does not contain 'action_scale'; cannot infer policy action scaling.")
-    action_scale = float(torch.as_tensor(state_dict["action_scale"]).item())
-    agent = Agent(envs, action_scale=action_scale, action_bias=0.0, hidden_size=agent_hidden_size).to(device)
-    agent.load_state_dict(state_dict)
-    agent.eval()
+    obs_dim = int(np.prod(envs.single_observation_space.shape))
+    action_dim = int(np.prod(envs.single_action_space.shape))
+    policy_obs_dim = obs_dim + action_dim if use_last_action_in_policy_state else obs_dim
+    policy_env_view = SimpleNamespace(
+        single_observation_space=gym.spaces.Box(
+            low=-np.inf, high=np.inf, shape=(policy_obs_dim,), dtype=np.float32
+        ),
+        single_action_space=envs.single_action_space,
+    )
+
+    model = _load_policy_for_evaluation(
+        model_path=model_path,
+        policy_env_view=policy_env_view,
+        action_scale=action_scale,
+        agent_hidden_layer_size=agent_hidden_layer_size,
+        agent_num_hidden_layers=agent_num_hidden_layers,
+        policy_type=policy_type,
+    )
 
     os.makedirs(save_dir, exist_ok=True)
-
-    # Store exact artifacts used for reproducibility.
     shutil.copy2(model_path, os.path.join(save_dir, "model_used.pth"))
     shutil.copy2(config_path, os.path.join(save_dir, "config_used.yaml"))
 
@@ -183,6 +212,7 @@ def collect_policy_data(
     while not _should_stop(limits, episodes_completed, total_steps):
         obs, _ = env.reset()
         prev_puck_vel: np.ndarray | None = None
+        last_action = torch.zeros((1, action_dim), dtype=torch.float32)
         episode_step = 0
         done = False
         episodes_started += 1
@@ -190,7 +220,8 @@ def collect_policy_data(
         dt = float(getattr(env.simulator, "time_per_step", 1.0))
 
         while not done:
-            action = _predict_action(agent, obs, device)
+            action = _predict_action(model, obs, last_action, use_last_action_in_policy_state)
+
             pre_state_info = env.current_state
             pre_paddle_pos, _, _, _, _ = _extract_state_components(pre_state_info)
             next_obs, reward, terminated, truncated, _ = env.step(action)
@@ -253,11 +284,14 @@ def collect_policy_data(
                 row[f"action_{i}"] = float(val)
             step_records.append(row)
 
+            last_action = torch.tensor(action_vec, dtype=torch.float32).reshape(1, -1)
+            if done:
+                last_action.zero_()
+
             total_steps += 1
             episode_step += 1
             obs = next_obs
 
-            # Episode limits are checked between episodes; timestep limit is immediate.
             if limits.total_timesteps is not None and total_steps >= limits.total_timesteps:
                 break
 
@@ -294,8 +328,14 @@ def collect_policy_data(
         puck_acceleration=np.asarray(trajectory["puck_acceleration"], dtype=np.float32),
     )
 
-    gif_path = os.path.join(save_dir, "example_episode.gif")
-    gif_frames = save_example_gif(env, agent, device, renderer, gif_path, max_steps=250)
+    gif_frame_counts = []
+    for i in range(n_gifs):
+        gif_path = os.path.join(save_dir, f"eval_{i}.gif")
+        frames = save_rollout_gif(
+            env, model, renderer, gif_path, action_dim,
+            use_last_action_in_policy_state=use_last_action_in_policy_state,
+        )
+        gif_frame_counts.append(frames)
 
     metadata = {
         "inputs": {
@@ -306,23 +346,24 @@ def collect_policy_data(
             "requested_num_episodes": limits.num_episodes,
             "requested_total_timesteps": limits.total_timesteps,
             "stop_rule": "whichever_first",
-            "action_scale_loaded_from_model": action_scale,
+            "action_scale": action_scale,
+            "use_last_action_in_policy_state": use_last_action_in_policy_state,
             "episodes_started": episodes_started,
             "episodes_completed": episodes_completed,
             "total_timesteps_collected": total_steps,
         },
         "shapes": {
             "observation_dim": int(np.asarray(trajectory["observations"][0]).shape[0]),
-            "action_dim": int(np.asarray(trajectory["actions"][0]).shape[0]),
+            "action_dim": action_dim,
             "num_rows_csv": len(step_records),
         },
         "outputs": {
+            "gifs": [f"eval_{i}.gif" for i in range(n_gifs)],
+            "gif_frame_counts": gif_frame_counts,
             "per_timestep_csv": "per_timestep.csv",
             "trajectory_npz": "trajectory.npz",
             "model_copy": "model_used.pth",
             "config_copy": "config_used.yaml",
-            "example_gif": "example_episode.gif",
-            "example_gif_frames": gif_frames,
         },
     }
     with open(os.path.join(save_dir, "metadata.yaml"), "w", encoding="utf-8") as f:
@@ -331,32 +372,121 @@ def collect_policy_data(
     return metadata
 
 
+def _args_from_run_dir(run_dir: str) -> tuple[str, str, dict]:
+    """Read model path, env config path, and policy kwargs from a TD3 run directory."""
+    args_yaml = os.path.join(run_dir, "args.yaml")
+    if not os.path.isfile(args_yaml):
+        print(f"ERROR: args.yaml not found in {run_dir}", file=sys.stderr)
+        sys.exit(1)
+    with open(args_yaml, "r") as f:
+        run_args = yaml.safe_load(f)
+
+    model_path = os.path.join(run_dir, "model.pth")
+    if not os.path.isfile(model_path):
+        print(f"ERROR: model.pth not found in {run_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    # Env config: prefer path recorded in args.yaml, fall back to config.yaml in run dir
+    config_path = run_args.get("config")
+    if config_path and not os.path.isabs(config_path):
+        config_path = os.path.join(os.getcwd(), config_path)
+    if not config_path or not os.path.isfile(config_path):
+        config_path = os.path.join(run_dir, "config.yaml")
+    if not os.path.isfile(config_path):
+        print(f"ERROR: env config not found in {run_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    policy_kwargs = {
+        "action_scale": float(run_args.get("action_scale", 0.02)),
+        "agent_hidden_layer_size": int(run_args.get("agent_hidden_layer_size", 64)),
+        "agent_num_hidden_layers": int(run_args.get("agent_num_hidden_layers", 2)),
+        "use_last_action_in_policy_state": bool(run_args.get("use_last_action_in_policy_state", False)),
+        "policy_type": "deterministic_agent",
+    }
+    return model_path, config_path, policy_kwargs
+
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Collect smooth_policy rollout data into CSV/NPZ artifacts.")
-    parser.add_argument("--model", type=str, required=True, help="Path to policy model state dict (.pth).")
-    parser.add_argument("--config-path", type=str, required=True, help="Path to YAML config containing air_hockey settings.")
-    parser.add_argument("--save-dir", type=str, required=True, help="Directory to save exported artifacts.")
+    parser = argparse.ArgumentParser(
+        description="Collect smooth_policy rollout data into CSV/NPZ/GIF artifacts.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "TD3 run directory (auto-reads args.yaml/config.yaml):\n"
+            "  uv run scripts/smooth_policy/collect_policy_data.py \\\n"
+            "      --run-dir /data2/.../my_run --num-episodes 20 --n-gifs 5\n\n"
+            "Explicit paths:\n"
+            "  uv run scripts/smooth_policy/collect_policy_data.py \\\n"
+            "      --model /path/model.pth --config-path /path/config.yaml \\\n"
+            "      --num-episodes 20 --n-gifs 5 --action-scale 1.0 --use-last-action"
+        ),
+    )
+    # --- run-dir shortcut (TD3) ---
+    parser.add_argument("--run-dir", type=str, default=None,
+                        help="TD3 training run directory. Auto-reads model.pth, args.yaml, config.yaml.")
+    parser.add_argument("--save-dir", type=str, default=None,
+                        help="Output directory. Defaults to <run-dir>/rollout when --run-dir is used.")
+
+    # --- explicit model/config (used when --run-dir is not given) ---
+    parser.add_argument("--model", type=str, default=None, help="Path to policy model state dict (.pth).")
+    parser.add_argument("--config-path", type=str, default=None,
+                        help="Path to YAML config containing air_hockey settings.")
+    parser.add_argument("--action-scale", type=float, default=0.02, help="Policy action scale.")
+    parser.add_argument("--agent-hidden-layer-size", type=int, default=64)
+    parser.add_argument("--agent-num-hidden-layers", type=int, default=2)
+    parser.add_argument("--use-last-action", action="store_true",
+                        help="Augment observations with last action.")
+    parser.add_argument("--policy-type", type=str, default=None,
+                        choices=["agent", "deterministic_agent"],
+                        help="Policy class override. Inferred from checkpoint if not set.")
+
+    # --- collection limits ---
     parser.add_argument("--num-episodes", type=int, default=None, help="Episode limit for collection.")
-    parser.add_argument("--total-timesteps", type=int, default=None, help="Global timestep limit for collection.")
-    parser.add_argument("--agent-hidden-size", type=int, default=64, help="Hidden layer width for Agent MLPs.")
-    parser.add_argument("--device", type=str, default="cpu", help="Torch device (for example: cpu, cuda:0).")
+    parser.add_argument("--total-timesteps", type=int, default=None, help="Global timestep limit.")
+    parser.add_argument("--n-gifs", type=int, default=3, help="Number of rollout GIFs to generate.")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
+
+    if args.run_dir is not None:
+        model_path, config_path, policy_kwargs = _args_from_run_dir(os.path.abspath(args.run_dir))
+        save_dir = args.save_dir or os.path.join(os.path.abspath(args.run_dir), "rollout")
+    else:
+        if not args.model or not args.config_path:
+            print("ERROR: provide --run-dir or both --model and --config-path.", file=sys.stderr)
+            sys.exit(1)
+        model_path = args.model
+        config_path = args.config_path
+        save_dir = args.save_dir
+        if not save_dir:
+            print("ERROR: --save-dir is required when not using --run-dir.", file=sys.stderr)
+            sys.exit(1)
+        policy_kwargs = {
+            "action_scale": args.action_scale,
+            "agent_hidden_layer_size": args.agent_hidden_layer_size,
+            "agent_num_hidden_layers": args.agent_num_hidden_layers,
+            "use_last_action_in_policy_state": args.use_last_action,
+            "policy_type": args.policy_type,
+        }
+
     num_episodes = _require_positive_or_none(args.num_episodes, "--num-episodes")
     total_timesteps = _require_positive_or_none(args.total_timesteps, "--total-timesteps")
-
     if num_episodes is None and total_timesteps is None:
-        raise ValueError("Provide at least one stopping limit: --num-episodes and/or --total-timesteps.")
+        print("ERROR: provide at least one stopping limit: --num-episodes and/or --total-timesteps.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Model:      {model_path}")
+    print(f"Config:     {config_path}")
+    print(f"Save dir:   {save_dir}")
+    print(f"Policy:     {policy_kwargs}")
 
     metadata = collect_policy_data(
-        model_path=args.model,
-        config_path=args.config_path,
-        save_dir=args.save_dir,
+        model_path=model_path,
+        config_path=config_path,
+        save_dir=save_dir,
         limits=CollectionLimits(num_episodes=num_episodes, total_timesteps=total_timesteps),
-        agent_hidden_size=args.agent_hidden_size,
-        device=torch.device(args.device),
+        n_gifs=args.n_gifs,
+        **policy_kwargs,
     )
     print(yaml.safe_dump(metadata, sort_keys=False))

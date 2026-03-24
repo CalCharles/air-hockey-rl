@@ -24,6 +24,7 @@ import numpy as np
 import torch
 import torch.optim as optim
 import tyro
+import wandb
 import yaml
 from torch.utils.tensorboard import SummaryWriter
 
@@ -541,6 +542,10 @@ class Args:
     log_parent_dir: str | None = None
     run_name: str = "default"
 
+    # Wandb (disabled if wandb_project is None)
+    wandb_project: str | None = None
+    wandb_entity: str | None = None
+
     # Runtime
     device: str = "cuda:0"
     seed: int = 0
@@ -693,6 +698,15 @@ if __name__ == "__main__":
         "hyperparameters",
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{k}|{v}|" for k, v in vars(args).items()])),
     )
+    if args.wandb_project is not None:
+        wandb.init(
+            project=args.wandb_project,
+            entity=args.wandb_entity,
+            name=run_name,
+            config=vars(args),
+            dir=log_parent_dir,
+            sync_tensorboard=False,
+        )
     with open(f"{log_parent_dir}/config.yaml", "w") as f:
         yaml.dump(config, f)
     with open(f"{log_parent_dir}/args.yaml", "w") as f:
@@ -1299,6 +1313,8 @@ if __name__ == "__main__":
                 motion_reward_mean_metrics["rewards/temporal_valid_fraction"],
                 global_step,
             )
+            if wandb.run is not None:
+                wandb.log({"rewards/temporal_valid_fraction": motion_reward_mean_metrics["rewards/temporal_valid_fraction"]}, step=global_step)
 
         if dones.any():
             temporal_paddle_history[done_tensor] = 0
@@ -1319,6 +1335,8 @@ if __name__ == "__main__":
                             1.0 if info.get("success", False) else 0.0,
                         )
                     )
+                    if wandb.run is not None:
+                        wandb.log({"charts/episodic_return": info["episode_return"], "charts/episodic_length": info["episode_length"]}, step=global_step)
                     if "motion_data" in info:
                         velocity_magnitudes.extend(info["motion_data"]["velocity_mags"])
                         acceleration_magnitudes.extend(info["motion_data"]["acceleration_mags"])
@@ -1688,6 +1706,11 @@ if __name__ == "__main__":
                 log_scalar_metrics(writer, train_metrics, global_step)
                 writer.add_scalar("charts/exploration_primitive_chance", primitive_selector.chance, global_step)
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+                if wandb.run is not None:
+                    wandb.log({
+                        "charts/exploration_primitive_chance": primitive_selector.chance,
+                        "charts/SPS": int(global_step / (time.time() - start_time)),
+                    }, step=global_step)
 
 
         # LOGGING AND EVALUATION
@@ -1714,6 +1737,16 @@ if __name__ == "__main__":
                 writer.add_scalar("charts/rolling2k_avg_episode_return", avg_return, global_step)
                 writer.add_scalar("charts/rolling2k_avg_episode_length", avg_episode_length, global_step)
                 writer.add_scalar("charts/rolling2k_episode_count", len(rolling_episode_stats_window), global_step)
+                if wandb.run is not None:
+                    wandb.log({
+                        "charts/avg_episodic_return": avg_return,
+                        "charts/min_episodic_return": min_return,
+                        "charts/max_episodic_return": max_return,
+                        "charts/avg_success_rate": avg_success,
+                        "charts/rolling2k_avg_episode_return": avg_return,
+                        "charts/rolling2k_avg_episode_length": avg_episode_length,
+                        "charts/rolling2k_episode_count": len(rolling_episode_stats_window),
+                    }, step=global_step)
             else:
                 print(f"Step {global_step}: No episodes in rolling 2k-step window")
 
@@ -1756,6 +1789,12 @@ if __name__ == "__main__":
                 writer.add_scalar("motion/avg_velocity_magnitude", avg_vel_mag, global_step)
                 writer.add_scalar("motion/avg_acceleration_magnitude", avg_acc_mag, global_step)
                 writer.add_scalar("motion/avg_jerk_magnitude", avg_jerk_mag, global_step)
+                if wandb.run is not None:
+                    wandb.log({
+                        "motion/avg_velocity_magnitude": avg_vel_mag,
+                        "motion/avg_acceleration_magnitude": avg_acc_mag,
+                        "motion/avg_jerk_magnitude": avg_jerk_mag,
+                    }, step=global_step)
                 velocity_magnitudes.clear()
                 acceleration_magnitudes.clear()
                 jerk_magnitudes.clear()
@@ -1850,6 +1889,19 @@ if __name__ == "__main__":
                 target_position_directional_fraction,
                 global_step,
             )
+            if wandb.run is not None:
+                wandb.log({
+                    "contacts/interval_paddle_puck_collisions_total": interval_paddle_puck_collisions,
+                    "contacts/interval_paddle_puck_collisions_per_env_step": collisions_per_env_step,
+                    "exploration/interval_primitive_env_steps": interval_primitive_env_steps,
+                    "exploration/interval_primitive_env_step_fraction": primitive_fraction,
+                    "exploration/interval_primitive_horizontal_env_steps": interval_primitive_horizontal_env_steps,
+                    "exploration/interval_primitive_horizontal_fraction": primitive_horizontal_fraction,
+                    "exploration/interval_policy_takeover_env_steps": interval_policy_takeover_env_steps,
+                    "exploration/interval_policy_takeover_fraction": policy_takeover_fraction,
+                    "exploration/interval_target_position_directional_env_steps": interval_target_position_directional_env_steps,
+                    "exploration/interval_target_position_directional_fraction": target_position_directional_fraction,
+                }, step=global_step)
             interval_paddle_puck_collisions = 0.0
             interval_env_steps = 0
             interval_primitive_env_steps = 0
@@ -2035,4 +2087,6 @@ if __name__ == "__main__":
     ]
     save_tensorboard_plots(log_parent_dir, config, metrics=metrics)
     writer.close()
+    if wandb.run is not None:
+        wandb.finish()
 

@@ -184,7 +184,6 @@ pyrightconfig.json
 # VSCode
 .vscode/
 
-<<<<<<< HEAD
 # End of https://www.toptal.com/developers/gitignore/api/py
 
 testt/
@@ -192,23 +191,22 @@ traj_videos/
 data/
 temp/
 gat_log/
-<<<<<<< HEAD
 
 *.gif
 *.zip
 *.0
-=======
 *.txt
->>>>>>> d3bce21c8ed03150ce2b91407dc3fa5b6993943b
-=======
 # End of https://www.toptal.com/developers/gitignore/api/python
 testt/
 traj_videos/
->>>>>>> goal_cond_verify
+.claude
 
 # pytorch
 *.pth
 *.pt
+
+# bash files
+*.sh
 
 # more data folders
 gifs/
