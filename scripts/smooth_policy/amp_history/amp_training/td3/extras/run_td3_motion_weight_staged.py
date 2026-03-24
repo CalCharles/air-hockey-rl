@@ -3,7 +3,8 @@
 
 This script launches TD3 runs sequentially, monitors TensorBoard scalars from each
 run directory, and stops each stage when both q1 metrics stabilize or a hard
-step cap is reached.
+step cap is reached. If no initial checkpoint is provided, stage 0 can run from
+scratch with YAML-only exploration settings when its motion reward weight is zero.
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ class StageResult:
     checkpoint_path: str
     rel_delta_task: float | None
     rel_delta_motion: float | None
-    started_from_checkpoint: str
+    started_from_checkpoint: str | None
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,8 +63,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--initial-checkpoint",
-        required=True,
-        help="Initial training_state.pth checkpoint to resume from.",
+        default=None,
+        help=(
+            "Optional initial training_state.pth checkpoint to resume from. "
+            "If omitted, stage 0 can start from scratch when motion reward weight is 0."
+        ),
     )
     parser.add_argument(
         "--log-parent-dir",
@@ -202,6 +206,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("stage exploration primitive chance pre-learning starts must be >= 0")
     if args.stage_exploration_primitive_chance_start < 0.0:
         raise ValueError("stage exploration primitive chance start must be >= 0")
+    if args.initial_checkpoint is None and abs(args.start_motion_reward_weight) > 1e-12:
+        raise ValueError(
+            "When --initial-checkpoint is omitted, --start-motion-reward-weight must be 0."
+        )
 
 
 def build_weight_schedule(start: float, final: float, increment: float) -> List[float]:
@@ -222,6 +230,10 @@ def build_weight_schedule(start: float, final: float, increment: float) -> List[
 
 def format_weight_tag(weight: float) -> str:
     return f"{weight:.6f}".rstrip("0").rstrip(".").replace("-", "neg").replace(".", "p")
+
+
+def is_effectively_zero(value: float, eps: float = 1e-12) -> bool:
+    return abs(value) <= eps
 
 
 def parse_checkpoint_step_from_path(checkpoint_path: Path) -> int | None:
@@ -388,10 +400,12 @@ def build_stage_command(
     stage_dir: Path,
     run_name: str,
     motion_reward_weight: float,
-    stage_start_checkpoint: Path,
+    stage_start_checkpoint: Path | None,
     stage_total_timesteps: int,
+    include_model_path: bool,
+    include_stage_exploration_overrides: bool,
 ) -> List[str]:
-    return [
+    command: List[str] = [
         args.python_executable,
         str(train_script_path),
         "--args-file",
@@ -404,27 +418,36 @@ def build_stage_command(
         run_name,
         "--motion-reward-weight",
         str(motion_reward_weight),
-        "--model-path",
-        str(stage_start_checkpoint),
         "--total-timesteps",
         str(stage_total_timesteps),
-        "--learning-starts",
-        str(args.stage_learning_starts),
-        "--exploration-primitive-chance-pre-learning-starts",
-        str(args.stage_exploration_primitive_chance_pre_learning_starts),
-        "--exploration-primitive-chance-start",
-        str(args.stage_exploration_primitive_chance_start),
-        "--exploration-primitive-chance-anneal-steps",
-        str(args.stage_exploration_primitive_chance_anneal_steps),
     ]
+    if include_model_path:
+        if stage_start_checkpoint is None:
+            raise ValueError("stage_start_checkpoint must be provided when include_model_path is True.")
+        command.extend(["--model-path", str(stage_start_checkpoint)])
+    if include_stage_exploration_overrides:
+        command.extend(
+            [
+                "--learning-starts",
+                str(args.stage_learning_starts),
+                "--exploration-primitive-chance-pre-learning-starts",
+                str(args.stage_exploration_primitive_chance_pre_learning_starts),
+                "--exploration-primitive-chance-start",
+                str(args.stage_exploration_primitive_chance_start),
+                "--exploration-primitive-chance-anneal-steps",
+                str(args.stage_exploration_primitive_chance_anneal_steps),
+            ]
+        )
+    return command
 
 
 def run_stage(
     *,
     stage_index: int,
     motion_reward_weight: float,
-    stage_start_checkpoint: Path,
+    stage_start_checkpoint: Path | None,
     stage_start_step: int,
+    use_yaml_only_exploration: bool,
     args: argparse.Namespace,
     repo_root: Path,
 ) -> StageResult:
@@ -443,6 +466,16 @@ def run_stage(
     )
     print(f"[stage {stage_index}] log_dir={stage_dir}")
     print(f"[stage {stage_index}] resume_checkpoint={stage_start_checkpoint}")
+    if use_yaml_only_exploration:
+        print(
+            f"[stage {stage_index}] stage mode=yaml_only_exploration "
+            "(no --model-path, no stage exploration CLI overrides)"
+        )
+    else:
+        print(
+            f"[stage {stage_index}] stage mode=resume_overrides "
+            "(stage exploration CLI overrides enabled)"
+        )
     command = build_stage_command(
         args=args,
         train_script_path=train_script_path,
@@ -451,6 +484,8 @@ def run_stage(
         motion_reward_weight=motion_reward_weight,
         stage_start_checkpoint=stage_start_checkpoint,
         stage_total_timesteps=stage_total_timesteps,
+        include_model_path=not use_yaml_only_exploration,
+        include_stage_exploration_overrides=not use_yaml_only_exploration,
     )
 
     launcher_log_path = Path(args.log_parent_dir) / f"{stage_dir.name}_launcher.log"
@@ -554,7 +589,9 @@ def run_stage(
         checkpoint_path=str(latest_checkpoint),
         rel_delta_task=convergence_status.rel_delta_task,
         rel_delta_motion=convergence_status.rel_delta_motion,
-        started_from_checkpoint=str(stage_start_checkpoint),
+        started_from_checkpoint=(
+            str(stage_start_checkpoint) if stage_start_checkpoint is not None else None
+        ),
     )
 
 
@@ -575,11 +612,14 @@ def main() -> None:
 
     repo_root = Path.cwd()
     args_file_path = Path(args.args_file).resolve()
-    initial_checkpoint = Path(args.initial_checkpoint).resolve()
+    initial_checkpoint = (
+        Path(args.initial_checkpoint).resolve() if args.initial_checkpoint is not None else None
+    )
     log_parent_dir = Path(args.log_parent_dir).resolve()
 
     ensure_exists(args_file_path, "args file")
-    ensure_exists(initial_checkpoint, "initial checkpoint")
+    if initial_checkpoint is not None:
+        ensure_exists(initial_checkpoint, "initial checkpoint")
     ensure_exists(Path(args.python_executable), "python executable")
 
     train_script_path = Path(args.train_script)
@@ -611,12 +651,27 @@ def main() -> None:
     stage_results: List[StageResult] = []
     current_checkpoint = initial_checkpoint
     for stage_index, motion_reward_weight in enumerate(weights):
-        stage_start_step = load_checkpoint_step(current_checkpoint)
+        use_yaml_only_exploration = (
+            stage_index == 0
+            and current_checkpoint is None
+            and is_effectively_zero(motion_reward_weight)
+        )
+        if current_checkpoint is None and not use_yaml_only_exploration:
+            raise ValueError(
+                f"Stage {stage_index} requires a checkpoint, but none is available."
+            )
+
+        stage_start_step = (
+            0
+            if use_yaml_only_exploration
+            else load_checkpoint_step(current_checkpoint)
+        )
         stage_result = run_stage(
             stage_index=stage_index,
             motion_reward_weight=motion_reward_weight,
             stage_start_checkpoint=current_checkpoint,
             stage_start_step=stage_start_step,
+            use_yaml_only_exploration=use_yaml_only_exploration,
             args=args,
             repo_root=repo_root,
         )

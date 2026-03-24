@@ -199,6 +199,26 @@ class AirHockeyPuckJuggleEnv(AirHockeyBaseEnv):
     #     return obs
 
 class AirHockeyPuckJuggleLinearTopEnv(AirHockeyPuckJuggleEnv):
+    def __init__(self, **kwargs):
+        spawn_prob = float(kwargs.get("puck_spawn_near_paddle_prob", 0.0))
+        offset_min_m = float(kwargs.get("puck_near_paddle_offset_min_m", 0.025))
+        offset_max_m = float(kwargs.get("puck_near_paddle_offset_max_m", 0.05))
+        horizontal_std_m = float(kwargs.get("puck_near_paddle_horizontal_std_m", 0.015))
+        speed_max_m_s = float(kwargs.get("puck_near_paddle_speed_max_m_s", 0.2))
+
+        self.puck_spawn_near_paddle_prob = float(np.clip(spawn_prob, 0.0, 1.0))
+        self.puck_near_paddle_offset_min_m = float(max(0.0, offset_min_m))
+        self.puck_near_paddle_offset_max_m = float(max(0.0, offset_max_m))
+        if self.puck_near_paddle_offset_max_m < self.puck_near_paddle_offset_min_m:
+            self.puck_near_paddle_offset_min_m, self.puck_near_paddle_offset_max_m = (
+                self.puck_near_paddle_offset_max_m,
+                self.puck_near_paddle_offset_min_m,
+            )
+        self.puck_near_paddle_horizontal_std_m = float(max(0.0, horizontal_std_m))
+        self.puck_near_paddle_speed_max_m_s = float(max(0.0, speed_max_m_s))
+
+        super().__init__(**kwargs)
+
     def initialize_spaces(self, obs_type):
         low, high = self.init_observation(obs_type)
         self.action_space = self.single_action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32)
@@ -230,7 +250,32 @@ class AirHockeyPuckJuggleLinearTopEnv(AirHockeyPuckJuggleEnv):
         else:
             raise ValueError("Invalid paddle name")
 
-    def get_puck_configuration(self, bad_regions=None):
+    def create_world_objects(self):
+        if self.num_pucks != 1 or self.puck_spawn_near_paddle_prob <= 0.0:
+            return super().create_world_objects()
+
+        spawn_near_paddle = (
+            self.rng.uniform(low=0.0, high=1.0) < self.puck_spawn_near_paddle_prob
+        )
+        if not spawn_near_paddle:
+            return super().create_world_objects()
+
+        paddle_name = "paddle_ego"
+        paddle_pos, paddle_vel = self.get_paddle_configuration(paddle_name)
+        puck_name = "puck_0"
+        puck_pos, puck_vel = self.get_puck_configuration(
+            paddle_pos=paddle_pos,
+            spawn_near_paddle=True,
+        )
+        self.simulator.spawn_puck(puck_pos, puck_vel, puck_name)
+        self.simulator.spawn_paddle(paddle_pos, paddle_vel, paddle_name)
+
+    def _sample_puck_speed_velocity(self, max_speed):
+        speed = self.rng.uniform(low=0.0, high=max_speed)
+        heading = self.rng.uniform(low=0.0, high=2 * math.pi)
+        return (speed * math.cos(heading), speed * math.sin(heading))
+
+    def _sample_puck_upper_half_linear_top(self, bad_regions=None, max_speed=1.2):
         # Use base-frame coordinates here; Box2D conversion happens in spawn_puck.
         # "Upper half" is the top side of the table (x from table_x_top to centerline).
         x_low = self.table_x_top + self.puck_radius
@@ -248,10 +293,48 @@ class AirHockeyPuckJuggleLinearTopEnv(AirHockeyPuckJuggleEnv):
             y_pos = self.rng.uniform(low=y_low, high=y_high)
 
         x_pos = self.rng.uniform(low=x_low, high=x_high)
-        speed = self.rng.uniform(low=0.0, high=1.2)
-        heading = self.rng.uniform(low=0.0, high=2 * math.pi)
-        vel = (speed * math.cos(heading), speed * math.sin(heading))
+        vel = self._sample_puck_speed_velocity(max_speed=max_speed)
         return (x_pos, y_pos), vel
+
+    def _sample_puck_near_paddle(self, paddle_pos):
+        paddle_x, paddle_y = paddle_pos
+        offset = self.rng.uniform(
+            low=self.puck_near_paddle_offset_min_m,
+            high=self.puck_near_paddle_offset_max_m,
+        )
+        x_pos = paddle_x - offset
+        y_pos = paddle_y + self.rng.normal(
+            loc=0.0,
+            scale=self.puck_near_paddle_horizontal_std_m,
+        )
+        x_pos = float(
+            np.clip(
+                x_pos,
+                self.table_x_top + self.puck_radius,
+                self.table_x_bot - self.puck_radius,
+            )
+        )
+        y_pos = float(
+            np.clip(
+                y_pos,
+                self.table_y_left + self.puck_radius,
+                self.table_y_right - self.puck_radius,
+            )
+        )
+        vel = self._sample_puck_speed_velocity(
+            max_speed=self.puck_near_paddle_speed_max_m_s
+        )
+        return (x_pos, y_pos), vel
+
+    def get_puck_configuration(
+        self,
+        bad_regions=None,
+        paddle_pos=None,
+        spawn_near_paddle=False,
+    ):
+        if spawn_near_paddle and paddle_pos is not None:
+            return self._sample_puck_near_paddle(paddle_pos=paddle_pos)
+        return self._sample_puck_upper_half_linear_top(bad_regions=bad_regions)
 
 
 class AirHockeyPuckJuggleNoBaseRewardEnv(AirHockeyPuckJuggleLinearTopEnv):
@@ -315,18 +398,20 @@ class AirHockeyPuckJuggleUpperHalfMidBandRewardEnv(AirHockeyPuckJuggleLinearTopE
             return (x_pos, 0), (0, 0)
         raise ValueError("Invalid paddle name")
 
-    def get_puck_configuration(self, bad_regions=None):
+    def get_puck_configuration(
+        self,
+        bad_regions=None,
+        paddle_pos=None,
+        spawn_near_paddle=False,
+    ):
+        if spawn_near_paddle and paddle_pos is not None:
+            return super().get_puck_configuration(
+                bad_regions=bad_regions,
+                paddle_pos=paddle_pos,
+                spawn_near_paddle=True,
+            )
         del bad_regions
-        x_low = self.table_x_top + self.puck_radius
-        x_high = 0.0 - self.puck_radius
-        y_low = self.table_y_left + self.puck_radius
-        y_high = self.table_y_right - self.puck_radius
-        x_pos = self.rng.uniform(low=x_low, high=x_high)
-        y_pos = self.rng.uniform(low=y_low, high=y_high)
-        speed = self.rng.uniform(low=0.0, high=0.5)
-        heading = self.rng.uniform(low=0.0, high=2 * math.pi)
-        vel = (speed * math.cos(heading), speed * math.sin(heading))
-        return (x_pos, y_pos), vel
+        return self._sample_puck_upper_half_linear_top(bad_regions=None, max_speed=0.5)
 
 class AirHockeyPuckStrikeEnv(AirHockeyBaseEnv):
     def initialize_spaces(self, obs_type):

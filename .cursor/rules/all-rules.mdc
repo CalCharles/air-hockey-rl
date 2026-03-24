@@ -1,0 +1,187 @@
+---
+description: Consolidated always-applied project rules and guardrails
+alwaysApply: true
+---
+
+# Unified Project Rules
+
+This file consolidates cross-cutting rules and guardrails. Domain-specific rules remain in sibling `.mdc` files under `.cursor/rules/` (training, environment, Box2D, project goal, etc.).
+
+**Doc mirror:** [notes/docs/index.md](mdc:notes/docs/index.md) (see `notes/docs/repo/`, `notes/docs/environments/`, `notes/docs/training/`)
+
+---
+
+## Project Idea Awareness
+
+### Core Rule
+
+- In every response, keep the project's general ideas, goals, and direction in mind.
+- Prefer suggestions and implementations that align with the project's broader purpose, not just the immediate local change.
+
+### Response Guidance
+
+- Before proposing or making changes, quickly check whether they fit the overall project intent.
+- If multiple valid options exist, prioritize the one that best supports long-term project coherence.
+- When trade-offs are present, briefly call out how the chosen path supports the project's bigger picture.
+
+---
+
+## Subagent Context Delegation
+
+### Core Rule
+
+- When a task does not require deep session context, delegate it to a subagent by default.
+- Prefer delegation for any self-contained task with clear boundaries and outputs.
+- Keep the main process focused on integration decisions, user-facing synthesis, and final execution.
+
+### Good Delegation Candidates
+
+- Exploring repository structure and locating relevant files.
+- Searching for implementations, usage patterns, or references.
+- Investigating where behavior is defined before making edits.
+- Gathering evidence for options, trade-offs, or root-cause hypotheses.
+- Implementing isolated code changes in files with minimal shared coupling.
+- Writing or updating targeted tests for a single module or behavior.
+- Performing focused refactors or documentation updates with clear scope.
+
+### Execution Modes
+
+- **Parallel delegation**: Use when multiple independent tasks can run safely at once.
+- **Synchronous delegation**: Use when later tasks depend on earlier outputs.
+- Prefer parallel by default for independent lanes; use synchronous when dependency order matters.
+
+### Guardrails
+
+- Do not delegate heavily context-coupled decisions that depend on nuanced user intent.
+- Do not delegate tasks that require tight coordination on the same file at the same time.
+- Provide each subagent with clear scope, expected output, and completion criteria.
+
+---
+
+## Project Conventions
+
+### README Files
+
+- Only generate a `README.md` if necessary (e.g., new package, new top-level component, or user explicitly requests it).
+- Do not create more than one `README.md`. Prefer a single project-level README.
+- When possible, add documentation to relevant existing MD files instead of creating new ones
+
+**Examples:**
+
+- New subpackage with no README -> add a short section to the project README, or create one only if the subpackage is substantial and standalone.
+- Documentation for a new feature -> append to the existing MD file in the appropriate section.
+
+### Virtual Environment
+
+- Before running code or tests, determine the most relevant virtual environment.
+- Check for: `venv/`, `.venv/`, `env/`, pip `requirements.txt`, uv `pyproject.toml`, or other project-specific env setup.
+- Use the project's preferred tool (e.g., `uv run`, `pip install -e .`, `poetry run`) when available.
+
+### Test files (validation)
+
+- When writing tests to validate a change, **create as few new test files as possible**: prefer **one** module that groups related cases (functions or classes) over many tiny files.
+- Add another file only when there is a clear split the project already uses or the user asks for it (for example, different top-level packages, incompatible fixtures, or an established per-component test layout).
+
+---
+
+## Notes and Documentation
+
+### Location Conventions
+
+| Content Type | Location |
+|--------------|----------|
+| **Documentation** | `notes/docs/` - store as `.md` files |
+| **Ideas, plans, scratch work** | `notes/scratch/` |
+
+### Rules
+
+- **Docs**: Formal documentation (architecture, API notes, design decisions, how-tos) -> `notes/docs/*.md`
+- **Scratch**: Drafts, brainstorming, ad-hoc plans, work-in-progress notes -> `notes/scratch/`
+
+### Examples
+
+```
+notes/
+  docs/
+    architecture.md      # System design, component overview
+    api-reference.md     # API notes, endpoints
+    setup-guide.md       # How-to documentation
+  scratch/
+    feature-ideas.md     # Brainstorming, rough plans
+    experiment-log.md    # Ad-hoc notes, WIP
+```
+
+---
+
+## Parallel Execution Workflows
+
+### Core Rule
+
+- For tasks with 2+ independent workstreams, dispatch subagents in parallel.
+- Use one subagent per isolated domain (for example: model lane, dataset pipeline, reporting module).
+- If no specialized subagent type exists, use a focused general-purpose subagent.
+
+### When To Parallelize
+
+- Different files/modules with minimal shared state.
+- Tasks that can be validated independently.
+- Lane-based implementations (for example, one model adapter per lane).
+
+### When Not To Parallelize
+
+- Shared contracts are still unstable.
+- Tasks modify the same files heavily.
+- One result is required before another task can begin.
+
+### Required Execution Pattern
+
+1. Build scaffold and shared interfaces first.
+2. Freeze interface expectations.
+3. Launch parallel subagents for independent implementations.
+4. Merge sequentially behind verification gates.
+
+### Integration Gates
+
+- Each subagent must declare: scope, files to touch, tests to run, and summary.
+- Run lane-level tests before merge.
+- Run one end-to-end smoke test after integration.
+- Keep concise stage docs in `notes/docs/` after each major stage. Write inside subfolder when appropriate.
+
+---
+
+## Runtime Guardrails
+
+### Core Policy
+
+- Never wait indefinitely for long-running commands or evaluations.
+- Prefer bounded verification with explicit timeouts and progress checks.
+- If a run exceeds the wait budget, stop waiting and report how to inspect results.
+
+### Smoke Run Rules (Must Be Fast)
+
+- Smoke runs must be intentionally small (for example, `--max-samples` in low single digits).
+- Smoke runs must use short timeouts and should finish quickly.
+- If a smoke run does not finish within a short window, abort waiting and report as "smoke failed or stalled."
+
+### Long Run Monitoring Rules
+
+- Use periodic polling to check run status instead of passive waiting.
+- If no meaningful progress appears after multiple polls, stop waiting.
+- Do not block the session for very long runs; return control with monitoring guidance.
+
+### Stop-And-Report Behavior
+
+- When a run is still active after the waiting budget:
+  - report current status,
+  - provide exact artifact paths to inspect,
+  - provide exact next commands/checks for the user to continue monitoring.
+- For incomplete runs, clearly separate:
+  - completed verification,
+  - still-running work,
+  - known blockers/errors.
+
+### Minimum Reporting Checklist
+
+- Include whether process is running or ended.
+- Include latest known output/artifact paths.
+- Include a concise "how to monitor next" checklist.

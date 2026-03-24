@@ -77,6 +77,20 @@ class AirHockeyRenderer:
         
     def convert_to_render_coords_sys(self, pos):
         return np.array((pos[1], -pos[0]))  # coords -> box2d
+
+    def world_xy_to_output_pixel(self, x, y):
+        """
+        Map world/base-frame (x, y) to pixel coordinates in get_frame() output.
+        """
+        render_xy = self.convert_to_render_coords_sys((x, y))
+        center = render_xy + np.array((self.width / 2, self.length / 2), dtype=float)
+        pre_rot = np.array((center[1], center[0]), dtype=float) * float(self.ppm)
+        x_px, y_px = float(pre_rot[0]), float(pre_rot[1])
+        if self.orientation == 'vertical':
+            pre_width = float(self.render_length)
+            # Match cv2.rotate(..., ROTATE_90_COUNTERCLOCKWISE) in get_frame().
+            return y_px, pre_width - 1.0 - x_px
+        return x_px, y_px
     
     def set_action(self, action):
         """

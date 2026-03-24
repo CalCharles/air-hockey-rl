@@ -31,7 +31,6 @@ class SharedReplayPartition:
     task_rewards: torch.Tensor
     motion_rewards: torch.Tensor
     dones: torch.Tensor
-    bootstrap_terminals: torch.Tensor
     position: mp.Value
     size: mp.Value
     lock: mp.Lock
@@ -46,7 +45,6 @@ class SharedReplayPartition:
         task_rewards = torch.zeros((capacity,), dtype=torch.float32).share_memory_()
         motion_rewards = torch.zeros((capacity,), dtype=torch.float32).share_memory_()
         dones = torch.zeros((capacity,), dtype=torch.float32).share_memory_()
-        bootstrap_terminals = torch.zeros((capacity,), dtype=torch.float32).share_memory_()
         return cls(
             observations=observations,
             next_observations=next_observations,
@@ -55,7 +53,6 @@ class SharedReplayPartition:
             task_rewards=task_rewards,
             motion_rewards=motion_rewards,
             dones=dones,
-            bootstrap_terminals=bootstrap_terminals,
             position=mp.Value("i", 0, lock=False),
             size=mp.Value("i", 0, lock=False),
             lock=mp.Lock(),
@@ -71,7 +68,6 @@ class SharedReplayPartition:
         task_rewards: torch.Tensor,
         motion_rewards: torch.Tensor,
         dones: torch.Tensor,
-        bootstrap_terminals: torch.Tensor,
     ) -> int:
         obs = _as_cpu_float_tensor(observations)
         next_obs = _as_cpu_float_tensor(next_observations)
@@ -80,7 +76,6 @@ class SharedReplayPartition:
         task_rew = _as_cpu_float_tensor(task_rewards).reshape(-1)
         motion_rew = _as_cpu_float_tensor(motion_rewards).reshape(-1)
         done_vals = _as_cpu_float_tensor(dones).reshape(-1)
-        bootstrap_terminal_vals = _as_cpu_float_tensor(bootstrap_terminals).reshape(-1)
 
         batch_size = int(obs.shape[0])
         if batch_size <= 0:
@@ -95,7 +90,6 @@ class SharedReplayPartition:
             task_rew = task_rew[start_idx:]
             motion_rew = motion_rew[start_idx:]
             done_vals = done_vals[start_idx:]
-            bootstrap_terminal_vals = bootstrap_terminal_vals[start_idx:]
             batch_size = self.capacity
 
         with self.lock:
@@ -110,7 +104,6 @@ class SharedReplayPartition:
             self.task_rewards[first_slice] = task_rew[:first_chunk]
             self.motion_rewards[first_slice] = motion_rew[:first_chunk]
             self.dones[first_slice] = done_vals[:first_chunk]
-            self.bootstrap_terminals[first_slice] = bootstrap_terminal_vals[:first_chunk]
 
             second_chunk = batch_size - first_chunk
             if second_chunk > 0:
@@ -122,7 +115,6 @@ class SharedReplayPartition:
                 self.task_rewards[second_slice] = task_rew[first_chunk:]
                 self.motion_rewards[second_slice] = motion_rew[first_chunk:]
                 self.dones[second_slice] = done_vals[first_chunk:]
-                self.bootstrap_terminals[second_slice] = bootstrap_terminal_vals[first_chunk:]
 
             self.position.value = (position + batch_size) % self.capacity
             self.size.value = min(int(self.size.value) + batch_size, self.capacity)
@@ -145,7 +137,6 @@ class SharedReplayPartition:
                 "task_rewards": self.task_rewards[indices].clone(),
                 "motion_rewards": self.motion_rewards[indices].clone(),
                 "dones": self.dones[indices].clone(),
-                "bootstrap_terminals": self.bootstrap_terminals[indices].clone(),
             }
 
         if device == "cpu":
@@ -167,7 +158,6 @@ class SharedReplayPartition:
                 "task_rewards": self.task_rewards[:size].clone(),
                 "motion_rewards": self.motion_rewards[:size].clone(),
                 "dones": self.dones[:size].clone(),
-                "bootstrap_terminals": self.bootstrap_terminals[:size].clone(),
                 "position": int(position),
                 "size": int(size),
                 "capacity": int(self.capacity),
@@ -180,9 +170,9 @@ class SharedReplayPartition:
         prev_actions = _as_cpu_float_tensor(state["prev_actions"])
         task_rewards = _as_cpu_float_tensor(state["task_rewards"]).reshape(-1)
         motion_rewards = _as_cpu_float_tensor(state["motion_rewards"]).reshape(-1)
-        dones = _as_cpu_float_tensor(state["dones"]).reshape(-1)
-        bootstrap_terminals_raw = state.get("bootstrap_terminals", state["dones"])
-        bootstrap_terminals = _as_cpu_float_tensor(bootstrap_terminals_raw).reshape(-1)
+        # Prefer legacy bootstrap_terminals (critic mask) when present; else td3_training-style dones.
+        dones_raw = state.get("bootstrap_terminals", state["dones"])
+        dones = _as_cpu_float_tensor(dones_raw).reshape(-1)
         size = int(state["size"])
         position = int(state["position"])
         expected_capacity = int(state.get("capacity", self.capacity))
@@ -203,7 +193,6 @@ class SharedReplayPartition:
             self.task_rewards.zero_()
             self.motion_rewards.zero_()
             self.dones.zero_()
-            self.bootstrap_terminals.zero_()
             if size > 0:
                 self.observations[:size] = observations[:size]
                 self.next_observations[:size] = next_observations[:size]
@@ -212,7 +201,6 @@ class SharedReplayPartition:
                 self.task_rewards[:size] = task_rewards[:size]
                 self.motion_rewards[:size] = motion_rewards[:size]
                 self.dones[:size] = dones[:size]
-                self.bootstrap_terminals[:size] = bootstrap_terminals[:size]
             self.size.value = int(size)
             self.position.value = int(position)
 
@@ -247,7 +235,6 @@ class SharedTD3Replay:
             task_rewards=episode_tensors["task_rewards"],
             motion_rewards=episode_tensors["motion_rewards"],
             dones=episode_tensors["dones"],
-            bootstrap_terminals=episode_tensors["bootstrap_terminals"],
         )
 
     def sample(self, partition: str, batch_size: int, device: str | torch.device) -> Dict[str, torch.Tensor]:

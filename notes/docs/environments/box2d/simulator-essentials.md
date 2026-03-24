@@ -6,10 +6,11 @@ Primary simulator file: [`airhockey/sims/airhockey_box2d.py`](../../../../airhoc
 
 ## Bound-related configs (important)
 
-- **PID workspace clipping** (`use_pid=True` path):
+- **PID workspace clipping** (`use_pid=True` path), **inside Box2D only**:
   - `x_min_lim`, `x_max_lim`, `y_min`, `y_max`
   - `top_abs`, `bot_abs`, `max_bias_p`, `max_bias_m`
-  - Applied by `_clip_limits()` and `_clip_pid_target_to_workspace()`.
+  - These become `lims` / `edge_lims` in [`airhockey_box2d.py`](../../../../airhockey/sims/airhockey_box2d.py); applied by `_clip_limits()` and `_clip_pid_target_to_workspace()`.
+  - Keys `paddle_bounds` / `paddle_edge_bounds` may appear under `simulator_params` (the env copies them for API parity) but **this simulator does not read them**.
 - **Per-step movement limits** (not global workspace):
   - `rmax_x`, `rmax_y` (stored as `move_lims`)
   - Applied in `_compute_pid_target_pos()` via `_get_edge()`.
@@ -17,12 +18,13 @@ Primary simulator file: [`airhockey/sims/airhockey_box2d.py`](../../../../airhoc
   - From `length`, `width` → `table_x_min/max`, `table_y_min/max`.
   - These are hard world walls in Box2D.
 
-## Env-level bounds interaction
+## Two layers: sim vs env (paddle limits)
 
-- Environment-level action clipping is handled in [`airhockey/airhockey_base.py`](../../../../airhockey/airhockey_base.py), using:
-  - `paddle_bounds` (x/y min/max)
-  - `paddle_edge_bounds` (edge shaping)
-- This clipping occurs in `single_agent_step()` before calling simulator transition.
+1. **Box2D** (`air_hockey.simulator_params`): `x_min_lim` … `y_max` and `top_abs` … `max_bias_m` constrain targets inside the sim (PID / transition). See class docstring on `AirHockeyBox2D`.
+
+2. **Base env** ([`airhockey_base.py`](../../../../airhockey/airhockey_base.py)): top-level `air_hockey.paddle_bounds` (rectangle `x_min`, `x_max`, `y_min`, `y_max`) and `air_hockey.paddle_edge_bounds` (`top_abs`, `bot_abs`, `max_bias_p`, `max_bias_m`) feed `get_clip_limits()` in `single_agent_step()` and **clip the policy action before** `simulator.get_transition()`.
+
+Keep YAML values consistent across both places; otherwise pre-step action gating and in-sim clipping can disagree. If `paddle_bounds` / `paddle_edge_bounds` are omitted, the env falls back to table-wide defaults and loose edge defaults, while Box2D still uses its own `lims`.
 
 ## Practical maximum reach (default table)
 

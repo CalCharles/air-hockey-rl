@@ -4,7 +4,7 @@ Task wrappers and simulator backends for air hockey: shared env APIs, Box2D, and
 
 - **Architecture (layers and adapters):** this page below.
 - **Box2D:** [`box2d/simulator-essentials.md`](box2d/simulator-essentials.md)
-- **Real world:** [`real-world/overview.md`](real-world/overview.md)
+- **Real world:** [`real-world/overview.md`](real-world/overview.md) · [`real-world/homography.md`](real-world/homography.md) · [`real-world/td3-async-replay.md`](real-world/td3-async-replay.md) (async TD3 replay semantics and legacy buffers)
 
 ---
 

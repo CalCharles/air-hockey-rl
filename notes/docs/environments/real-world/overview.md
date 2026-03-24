@@ -10,6 +10,10 @@ The real-hardware path mirrors the same environment abstractions as simulation, 
 | Control, camera, detection helpers | [`airhockey/sims/real/`](../../../../airhockey/sims/real) (imported by `air_hockey_real.py`) |
 | Scripts (teleop, collection, etc.) | [`scripts/real/`](../../../../scripts/real) |
 
+**Homography (rectified camera view and coordinates):** [`homography.md`](homography.md)
+
+**Async TD3 (real collection, replay `dones`, legacy checkpoints):** [`td3-async-replay.md`](td3-async-replay.md)
+
 The high-level env/task layering is the same as for Box2D; see [`../README.md`](../README.md).
 
 ## Operating the robot

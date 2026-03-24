@@ -1,0 +1,54 @@
+---
+description: Box2D air-hockey environment changes, rendering, and qualitative verification via GIFs (align with AMP training artifacts)
+globs: airhockey/sims/airhockey_box2d.py,airhockey/**/*.py
+alwaysApply: false
+---
+
+# Box2D environment and qualitative verification
+
+## When this applies
+
+Use these rules when modifying or testing behavior built on the Box2D-backed air hockey simulation (`airhockey/sims/airhockey_box2d.py`, tasks, rewards, renderers, or env wiring in `airhockey/`).
+
+## GIFs for qualitative changes
+
+If a change is **qualitative** (anything you would judge by eye or by short rollouts: visuals, dynamics, contacts, resets, task geometry, reward-driven behavior, overlay semantics), you **must** generate **GIFs** so the user can inspect the outcome. Do not rely on prose or metrics alone for those cases.
+
+## Match AMP training’s default GIF style
+
+Follow the same rendering and encoding conventions used by AMP TD3 training checkpoints:
+
+- **Capture pipeline:** `AirHockeyRenderer` on the env under test, `renderer.get_frame()`, convert **BGR → RGB** (e.g. `cv2.cvtColor`), **resize width to 160** with aspect ratio preserved (same pattern as `scripts/smooth_policy/evaluate.py` `_save_task_gif_with_last_action` and `scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py` `save_training_data_like_rollout_gif`).
+- **Encoding:** `imageio.mimsave(path, frames, format="GIF", loop=0, duration=int(1000 / fps))` with **fps 20** for eval-style clips unless a script already standardizes otherwise (AMP rollout GIF uses **fps 20**; some legacy paths use 30—prefer **20** for consistency with smooth-policy eval).
+- **Overlays:** When the task involves rewards or returns, draw **per-step reward and cumulative return** on the frame (top-right, same style as the AMP/eval helpers above). Add other on-frame annotations only when they clarify the change (e.g. phase labels, seed, variant name).
+- **Renderer options:** Set `AirHockeyRenderer` flags (e.g. target position, acceleration arrow) so the GIF **shows the behavior under review**, not a minimal default that hides the feature.
+- **Renderer orientation:** Use `AirHockeyRenderer(..., orientation="vertical")` by default for Box2D qualitative GIFs and boundary-validation utilities. Only use `horizontal` if the user explicitly requests it for a specific comparison or debug purpose.
+
+## Box2D config source of truth
+
+For Box2D runs and Box2D GIF rendering, default to this config unless the user explicitly asks for a different one:
+
+- `scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_constant_upper_half_custom_sim_params.yaml`
+
+When writing one-off scripts or validation utilities:
+
+- Load `air_hockey.simulator_params` from that file first (geometry/scale/render parameters come from config).
+- Apply experiment-specific overrides (for example, densities, seeds, step count, or temporary restitution changes) on top of the loaded simulator params.
+- Do not hard-code alternative table geometry (`length`, `width`, `render_size`) for Box2D visualization unless explicitly requested by the user.
+
+Reference implementations:
+
+- `scripts/smooth_policy/evaluate.py` — `_save_task_gif_with_last_action`
+- `scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py` — `save_training_data_like_rollout_gif` (checkpoint GIF next to `evaluate_agent`)
+
+## Task-shaped GIFs
+
+Design GIFs for the **actual task or hypothesis**:
+
+- Use **descriptive paths/filenames** (scenario, flag, seed, before/after if comparing).
+- Prefer **short, focused** rollouts that highlight the change (contact event, reset, failure mode, success).
+- When comparing behaviors, produce **paired** GIFs (same seed / same initial conditions) when feasible.
+
+## Delivery
+
+After generating GIFs, **point the user to the output paths** (e.g. under the run or checkpoint directory, mirroring `eval_0.gif` / `rollout_data_like_0.gif` style layout). If you add a one-off script for the GIF, keep it scoped to the test and reuse the shared patterns above rather than inventing a divergent renderer or file format.

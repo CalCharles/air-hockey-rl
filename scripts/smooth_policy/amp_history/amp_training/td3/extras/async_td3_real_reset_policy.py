@@ -212,7 +212,6 @@ class ReplayBufferSingle:
         self.prev_actions = torch.zeros((capacity, *action_shape), dtype=torch.float32, device=device)
         self.rewards = torch.zeros((capacity,), dtype=torch.float32, device=device)
         self.dones = torch.zeros((capacity,), dtype=torch.float32, device=device)
-        self.bootstrap_terminals = torch.zeros((capacity,), dtype=torch.float32, device=device)
         self.position = 0
         self.size = 0
 
@@ -232,7 +231,6 @@ class ReplayBufferSingle:
         self.prev_actions[s1] = batch["prev_actions"][:first]
         self.rewards[s1] = batch["rewards"][:first]
         self.dones[s1] = batch["dones"][:first]
-        self.bootstrap_terminals[s1] = batch["bootstrap_terminals"][:first]
         second = n - first
         if second > 0:
             s2 = slice(0, second)
@@ -242,7 +240,6 @@ class ReplayBufferSingle:
             self.prev_actions[s2] = batch["prev_actions"][first:]
             self.rewards[s2] = batch["rewards"][first:]
             self.dones[s2] = batch["dones"][first:]
-            self.bootstrap_terminals[s2] = batch["bootstrap_terminals"][first:]
         self.position = (self.position + n) % self.capacity
         self.size = min(self.size + n, self.capacity)
         return n
@@ -256,7 +253,6 @@ class ReplayBufferSingle:
             "prev_actions": self.prev_actions[idx],
             "rewards": self.rewards[idx],
             "dones": self.dones[idx],
-            "bootstrap_terminals": self.bootstrap_terminals[idx],
         }
 
     def __len__(self) -> int:
@@ -345,7 +341,6 @@ def _episode_batch_from_hdf5(path: Path, env: AirHockeyEnv, device: torch.device
     prev_act_list = []
     rew_list = []
     done_list = []
-    bt_list = []
     for i in range(1, vals.shape[0]):
         s_prev = _state_at(i - 1)
         s_next = _state_at(i)
@@ -359,7 +354,6 @@ def _episode_batch_from_hdf5(path: Path, env: AirHockeyEnv, device: torch.device
         prev_act_list.append(torch.as_tensor(actions_xy[i - 1], dtype=torch.float32, device=device))
         rew_list.append(torch.tensor(reward, dtype=torch.float32, device=device))
         done_list.append(torch.tensor(done, dtype=torch.float32, device=device))
-        bt_list.append(torch.tensor(done, dtype=torch.float32, device=device))
     if len(obs_list) == 0:
         return None
     return {
@@ -369,7 +363,6 @@ def _episode_batch_from_hdf5(path: Path, env: AirHockeyEnv, device: torch.device
         "prev_actions": torch.stack(prev_act_list, dim=0),
         "rewards": torch.stack(rew_list, dim=0).view(-1),
         "dones": torch.stack(done_list, dim=0).view(-1),
-        "bootstrap_terminals": torch.stack(bt_list, dim=0).view(-1),
     }
 
 
@@ -494,7 +487,7 @@ def main(args: Args) -> None:
         )
         last_action = torch.zeros((1, act_dim), dtype=torch.float32, device=device)
         ep_obs, ep_next_obs, ep_actions, ep_prev_actions = [], [], [], []
-        ep_rewards, ep_dones, ep_bootstrap = [], [], []
+        ep_rewards, ep_dones = [], []
         fail_counters = {"bottom": 0, "occ": 0}
 
         for ep_step in range(int(args.max_reset_window_steps)):
@@ -522,26 +515,23 @@ def main(args: Args) -> None:
                 counters=fail_counters,
             )
 
-            done = bool(estop or success or fail or terminated or truncated or ep_step == int(args.max_reset_window_steps) - 1)
-            if done:
+            dones = bool(estop or success or fail or terminated or truncated or ep_step == int(args.max_reset_window_steps) - 1)
+            if dones:
                 reward = -1.0 if estop else (1.0 if success else 0.0)
-                bootstrap_terminal = 1.0
             else:
                 reward = 0.0
-                bootstrap_terminal = 0.0
 
             ep_obs.append(obs_t[0])
             ep_next_obs.append(torch.as_tensor(next_obs, dtype=torch.float32, device=device))
             ep_actions.append(action_t[0])
             ep_prev_actions.append(prev_action[0])
             ep_rewards.append(torch.tensor(reward, dtype=torch.float32, device=device))
-            ep_dones.append(torch.tensor(1.0 if done else 0.0, dtype=torch.float32, device=device))
-            ep_bootstrap.append(torch.tensor(bootstrap_terminal, dtype=torch.float32, device=device))
+            ep_dones.append(torch.tensor(1.0 if dones else 0.0, dtype=torch.float32, device=device))
             total_steps += 1
             last_action = action_t.detach().clone()
             obs = next_obs
 
-            if done:
+            if dones:
                 break
 
         ep_len = len(ep_obs)
@@ -553,7 +543,6 @@ def main(args: Args) -> None:
                 "prev_actions": torch.stack(ep_prev_actions, dim=0),
                 "rewards": torch.stack(ep_rewards, dim=0).view(-1),
                 "dones": torch.stack(ep_dones, dim=0).view(-1),
-                "bootstrap_terminals": torch.stack(ep_bootstrap, dim=0).view(-1),
             }
             replay.add_batch(batch)
             accepted_online_episodes += 1
@@ -568,7 +557,7 @@ def main(args: Args) -> None:
                 with torch.no_grad():
                     next_pol_obs = augment_policy_observation(
                         batch["next_observations"],
-                        batch["actions"] * (1.0 - batch["bootstrap_terminals"].unsqueeze(-1)),
+                        batch["actions"] * (1.0 - batch["dones"].unsqueeze(-1)),
                         args.use_last_action_in_policy_state,
                     )
                     next_action = deterministic_actor_action(actor_target, next_pol_obs)
@@ -578,7 +567,7 @@ def main(args: Args) -> None:
                     q1_next = h_inverse(qf1_target(batch["next_observations"], next_action), eps=float(args.h_transform_eps)).view(-1)
                     q2_next = h_inverse(qf2_target(batch["next_observations"], next_action), eps=float(args.h_transform_eps)).view(-1)
                     min_next = torch.min(q1_next, q2_next)
-                    bellman = batch["rewards"] + (1.0 - batch["bootstrap_terminals"]) * float(args.gamma) * min_next
+                    bellman = batch["rewards"] + (1.0 - batch["dones"]) * float(args.gamma) * min_next
                     target_h = h_transform(bellman, eps=float(args.h_transform_eps))
                 q1 = qf1(batch["observations"], batch["actions"]).view(-1)
                 q2 = qf2(batch["observations"], batch["actions"]).view(-1)
