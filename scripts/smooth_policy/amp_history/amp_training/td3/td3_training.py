@@ -15,7 +15,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from types import SimpleNamespace
-from typing import Dict, List, Tuple
+from typing import Dict, List, Literal, Tuple
 
 import cv2
 import gymnasium as gym
@@ -42,6 +42,7 @@ from scripts.smooth_policy.amp_history.amp_training.td3.helper.prioritized_repla
 )
 from scripts.smooth_policy.amp_history.amp_training.td3.helper.td3_checkpointing import (
     build_training_state,
+    load_fine_tune_optimizer_state,
     load_resume_training_state,
 )
 from scripts.smooth_policy.amp_history.amp_training.td3.helper.td3_episode_collection import (
@@ -461,6 +462,7 @@ class Args:
     exploration_primitive_chance: float = 0.05
     exploration_primitive_chance_start: float = 0.5
     exploration_primitive_chance_pre_learning_starts: float | None = None
+    exploration_pre_learning_action_source: Literal["random", "policy"] = "random"
     exploration_primitive_chance_anneal_steps: int = 50000
     exploration_primitive_steps: int = 3
     exploration_primitive_weight_stand_still: float = 1.0 / 3.0
@@ -505,6 +507,7 @@ class Args:
     # Dual-head reward decomposition
     task_reward_weight: float = 1.0
     motion_reward_weight: float = 1.0
+    estop_motion_reward_penalty: float = -5.0
 
     # Motion reward component weights
     stand_still_reward_weight: float = 0.5
@@ -529,6 +532,12 @@ class Args:
     config: str = "scripts/smooth_policy/configs/puck_touch/default_config.yaml"
     args_file: str | None = None
     model_path: str | None = None
+    # Full checkpoint load behavior when model_path points to a training-state dict.
+    # - "full_resume": restore full training runtime state (legacy/default behavior)
+    # - "weights_only": restore actor/Q networks only, keep runtime fresh
+    # - "fine_tune": restore actor/Q networks + optimizer states, keep runtime fresh
+    # Note: optimizer state restore may overwrite optimizer param-group values such as lr.
+    full_checkpoint_load: Literal["full_resume", "weights_only", "fine_tune"] = "full_resume"
     log_parent_dir: str | None = None
     run_name: str = "default"
 
@@ -724,6 +733,7 @@ if __name__ == "__main__":
     qf1_target.load_state_dict(qf1.state_dict())
     qf2_target.load_state_dict(qf2.state_dict())
     resume_checkpoint = None
+    checkpoint_load_mode = args.full_checkpoint_load
 
     if args.model_path is not None:
         if not os.path.exists(args.model_path):
@@ -732,6 +742,18 @@ if __name__ == "__main__":
         loaded_obj = torch.load(args.model_path, map_location=args.device, weights_only=False)
         if isinstance(loaded_obj, dict) and "actor" in loaded_obj and "qf1" in loaded_obj:
             resume_checkpoint = loaded_obj
+            if args.eval_mode:
+                if checkpoint_load_mode == "fine_tune":
+                    raise ValueError(
+                        "full_checkpoint_load='fine_tune' is incompatible with eval_mode=True."
+                    )
+                if checkpoint_load_mode == "full_resume":
+                    print(
+                        "Deprecation warning: eval_mode with full_checkpoint_load='full_resume' "
+                        "will load as weights_only. Set full_checkpoint_load='weights_only' "
+                        "explicitly to silence this warning."
+                    )
+                checkpoint_load_mode = "weights_only"
             actor.load_state_dict(extract_deterministic_state_dict(resume_checkpoint["actor"]), strict=False)
             if "actor_target" in resume_checkpoint:
                 actor_target.load_state_dict(
@@ -745,10 +767,10 @@ if __name__ == "__main__":
             qf1_target.load_state_dict(resume_checkpoint["qf1_target"])
             qf2_target.load_state_dict(resume_checkpoint["qf2_target"])
             print("Full training checkpoint loaded (network weights).")
-            if args.eval_mode:
-                # In eval mode, use checkpoint weights but do not restore rollout/replay/optimizer state.
+            if checkpoint_load_mode == "weights_only":
+                # Weights-only mode: keep networks, skip optimizer/replay/runtime restore.
                 resume_checkpoint = None
-                print("Eval mode enabled: skipping resume of optimizer/replay/runtime state.")
+                print("Weights-only load enabled: skipping resume of optimizer/replay/runtime state.")
         else:
             actor.load_state_dict(extract_deterministic_state_dict(loaded_obj), strict=False)
             actor_target.load_state_dict(actor.state_dict())
@@ -758,6 +780,14 @@ if __name__ == "__main__":
         list(qf1.parameters()) + list(qf2.parameters()), lr=args.q_lr, weight_decay=args.q_weight_decay
     )
     actor_optimizer = optim.Adam(actor.parameters(), lr=args.policy_lr)
+    if resume_checkpoint is not None and checkpoint_load_mode == "fine_tune":
+        load_fine_tune_optimizer_state(
+            resume_checkpoint,
+            q_optimizer=q_optimizer,
+            actor_optimizer=actor_optimizer,
+        )
+        resume_checkpoint = None
+        print("Fine-tune load enabled: restored optimizer state, skipping replay/runtime resume.")
 
     if args.per_enabled:
         success_rb = TD3PrioritizedReplayBuffer(
@@ -1040,7 +1070,16 @@ if __name__ == "__main__":
         )
 
         if global_step < args.learning_starts and not args.eval_mode:
-            actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
+            if args.exploration_pre_learning_action_source == "random":
+                actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
+            else:
+                with torch.no_grad():
+                    deterministic_actions = deterministic_actor_action(actor, policy_obs_tensor)
+                    exploration = torch.randn_like(deterministic_actions) * args.exploration_noise
+                    deterministic_actions = torch.clamp(
+                        deterministic_actions + exploration, action_low, action_high
+                    )
+                    actions = deterministic_actions.cpu().numpy()
         else:
             with torch.no_grad():
                 deterministic_actions = deterministic_actor_action(actor, policy_obs_tensor)
@@ -1107,10 +1146,10 @@ if __name__ == "__main__":
             dtype=np.bool_,
         )
         current_protective_stop_flags = np.atleast_1d(current_protective_stop_flags)
+        estop_event_mask = np.zeros(args.num_envs, dtype=bool)
         if current_protective_stop_flags.size == args.num_envs:
-            step_estop_events = float(
-                np.logical_and(current_protective_stop_flags, np.logical_not(prev_protective_stop_flags)).sum()
-            )
+            estop_event_mask = np.logical_and(current_protective_stop_flags, np.logical_not(prev_protective_stop_flags))
+            step_estop_events = float(estop_event_mask.sum())
             prev_protective_stop_flags = current_protective_stop_flags.copy()
             prev_protective_stop_flags[dones] = False
         else:
@@ -1205,6 +1244,9 @@ if __name__ == "__main__":
             + velocity_reward_weighted
             + jerk_reward_weighted
         )
+        if np.any(estop_event_mask):
+            estop_event_mask_tensor = torch.as_tensor(estop_event_mask, dtype=torch.float32, device=args.device)
+            motion_rewards = motion_rewards + args.estop_motion_reward_penalty * estop_event_mask_tensor
 
         if should_update_train_metrics:
             motion_reward_mean_metrics = tensor_mean_items(

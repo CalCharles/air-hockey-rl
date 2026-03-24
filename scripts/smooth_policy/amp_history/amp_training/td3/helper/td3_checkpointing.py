@@ -193,6 +193,17 @@ def load_resume_training_state(
     }
 
 
+def load_fine_tune_optimizer_state(
+    checkpoint: Dict[str, Any], *, q_optimizer, actor_optimizer
+) -> None:
+    if "q_optimizer" not in checkpoint:
+        raise KeyError("Missing 'q_optimizer' in checkpoint; cannot run fine-tune optimizer restore.")
+    if "actor_optimizer" not in checkpoint:
+        raise KeyError("Missing 'actor_optimizer' in checkpoint; cannot run fine-tune optimizer restore.")
+    q_optimizer.load_state_dict(checkpoint["q_optimizer"])
+    actor_optimizer.load_state_dict(checkpoint["actor_optimizer"])
+
+
 def build_training_state(
     *,
     global_step: int,
