@@ -1,6 +1,6 @@
 # Quick TD3 verification args for puck_touch.
 # Run with:
-# python scripts/smooth_policy/amp_history/amp_training/td3/amp_training_td3.py \
+# python scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py \
 #   --args-file scripts/smooth_policy/amp_history/configs/td3/puck_touch_verify/td3_puck_touch_verify.yaml
 
 # Basic training parameters

@@ -1,2 +1,2 @@
-"""TD3 training components (trainer, critics, replay buffer)."""
+"""TD3 package: sim trainer `td3_training.py`, `helper/`, `extras/`, `tests/`."""
 

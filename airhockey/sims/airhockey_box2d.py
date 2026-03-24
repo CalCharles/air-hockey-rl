@@ -1,12 +1,15 @@
 from Box2D.b2 import world, contactListener
 from Box2D import (b2CircleShape, b2EdgeShape, b2FixtureDef, b2PolygonShape,
                    b2_dynamicBody, b2_staticBody, b2Filter, b2Vec2)
+import math
 import numpy as np
 from collections import deque
+import copy
 import yaml
 import inspect
 from types import SimpleNamespace
 from ..utils import dict_to_namespace
+from ..observation_homography import sample_near_identity_homography
 
 from matplotlib import pyplot as plt
 
@@ -237,7 +240,20 @@ class CollisionForceListener(contactListener):
                                 )
 
 class AirHockeyBox2D:
+    """Box2D backend.
+
+    Paddle workspace: ``x_min_lim`` … ``y_max`` and ``top_abs`` … ``max_bias_m`` become
+    ``self.lims`` / ``self.edge_lims`` and are applied inside this sim (PID / target clip).
+
+    ``AirHockeyBaseEnv`` also clips the policy action *before* ``get_transition`` using
+    top-level env config ``paddle_bounds`` / ``paddle_edge_bounds``; those should match
+    the same geometry. Keys ``paddle_bounds`` / ``paddle_edge_bounds`` may appear in
+    ``kwargs`` (env copies them onto ``simulator_params``) but are not read here.
+    """
+
     def __init__(self, **kwargs):
+        explicit_delay_seconds = 'delay_seconds' in kwargs
+        explicit_action_lag = 'action_lag' in kwargs
         defaults = {
             'action_x_scaling': 1.0,
             'action_y_scaling': 1.0,
@@ -245,9 +261,9 @@ class AirHockeyBox2D:
             'rmax_y': 0.12,
             # Real-equivalent workspace and edge shaping limits (base frame).
             'x_min_lim': -0.8,
-            'x_max_lim': -0.37,
-            'y_min': -0.33,
-            'y_max': 0.33,
+            'x_max_lim': -0.35,
+            'y_min': -0.35,
+            'y_max': 0.35,
             'top_abs': 0.8,
             'bot_abs': 0.1,
             'max_bias_p': -0.15,
@@ -256,12 +272,16 @@ class AirHockeyBox2D:
             'render_masks': False,
             'gravity': -5,
             'paddle_density': 1000,
+            'enable_paddle_density_fluctuation': False,
+            'paddle_density_fluctuation_relative_range': 0.25,
+            'paddle_density_fluctuation_hold_steps': 5,
             'puck_density': 250,
             'block_density': 1000,
             'max_paddle_vel': 2,
             'time_frequency': 20,
             'step_frequency': 20,
             'action_step_lag': 0,
+            # Ignored in this class; env uses air_hockey.paddle_* for pre-step action clip.
             'paddle_bounds': [],
             'paddle_edge_bounds': [],
             'center_offset_constant': 1.2,
@@ -275,6 +295,11 @@ class AirHockeyBox2D:
             'puck_wall_restitution_threshold_speed': 0.25,
             # For low-speed incoming wall impacts, enforce this minimum rebound speed (m/s).
             'puck_wall_min_rebound_speed_below_threshold': 0.1,
+            'enable_action_delay': False,
+            'enable_observation_delay': False,
+            'delay_seconds': 0.025,
+            'randomize_delay': False,
+            'delay_relative_range': 0.25,
             'action_lag': 0.0,
             'puck_noise': False,
             'puck_noise_std': 0.005,
@@ -291,6 +316,12 @@ class AirHockeyBox2D:
             'random_occlusion_bad_region_box_x': [-0.4, -0.35],
             'random_occlusion_bad_region_box_y': [-0.3, 0.0],
             'random_occlusion_bad_region_right_x': [0.35, 0.8],
+            # When True, multiply occlusion start probability if puck is within
+            # random_occlusion_near_paddle_distance_m of any paddle (base frame).
+            'random_occlusion_near_paddle_boost': False,
+            'random_occlusion_near_paddle_distance_m': 0.05,
+            # e.g. 2.5 => 150% more likely than the region's default start rate.
+            'random_occlusion_near_paddle_rate_multiplier': 3,
             # Robust derivative-estimation controls used for accel/jerk readouts.
             'derivative_min_dt': 1e-6,
             'acceleration_ema_alpha': 0.35,
@@ -298,10 +329,59 @@ class AirHockeyBox2D:
             # <= 0 disables norm clipping.
             'max_acceleration_norm': 0.0,
             'max_jerk_norm': 0.0,
+            # Optional crude e-stop simulation using jerk magnitude (m/s^3).
+            'simulate_jerk_estop': False,
+            'jerk_estop_consecutive_steps': 10,
+            'jerk_estop_consecutive_threshold': 18.0,
+            'jerk_estop_avg_window_steps': 50,
+            'jerk_estop_avg_threshold': 15.0,
+            # Optional observation-only position mismatch using a shared
+            # world-plane homography for paddle and puck positions.
+            'enable_obs_position_homography': False,
+            # If provided, must be a 3x3 matrix (or flat length-9 array).
+            'obs_position_homography_matrix': None,
+            # Used only when enabled and matrix is None.
+            'obs_position_homography_seed': 0,
+            # Optionally replace returned state-info motion values to mimic
+            # unavailable real-world velocity/jerk sensing.
+            'enable_fixed_state_velocity_jerk': False,
+            'fixed_state_paddle_velocity': (0.0, 0.0),
+            'fixed_state_paddle_jerk': (0.0, 0.0),
+            'fixed_state_puck_velocity': (0.0, 0.0),
+            'mask_puck_velocity': True,
         }
 
         kwargs = {**defaults, **kwargs}
         config = dict_to_namespace(kwargs)
+        self.enable_obs_position_homography = bool(config.enable_obs_position_homography)
+        self.obs_position_homography = None
+        if self.enable_obs_position_homography:
+            matrix_cfg = config.obs_position_homography_matrix
+            if matrix_cfg is not None:
+                matrix = np.asarray(matrix_cfg, dtype=np.float64)
+                if matrix.size != 9:
+                    raise ValueError(
+                        "obs_position_homography_matrix must have exactly 9 values."
+                    )
+                matrix = matrix.reshape(3, 3)
+                if abs(matrix[2, 2]) < 1e-8:
+                    raise ValueError("obs_position_homography_matrix[2, 2] must be non-zero.")
+                self.obs_position_homography = matrix / matrix[2, 2]
+            else:
+                homography_seed = int(config.obs_position_homography_seed)
+                rng = np.random.default_rng(homography_seed)
+                self.obs_position_homography = sample_near_identity_homography(rng)
+        self.enable_fixed_state_velocity_jerk = bool(config.enable_fixed_state_velocity_jerk)
+        self.mask_puck_velocity = bool(config.mask_puck_velocity)
+        self.fixed_state_paddle_velocity = self._coerce_fixed_xy_pair(
+            config.fixed_state_paddle_velocity, "fixed_state_paddle_velocity"
+        )
+        self.fixed_state_paddle_jerk = self._coerce_fixed_xy_pair(
+            config.fixed_state_paddle_jerk, "fixed_state_paddle_jerk"
+        )
+        self.fixed_state_puck_velocity = self._coerce_fixed_xy_pair(
+            config.fixed_state_puck_velocity, "fixed_state_puck_velocity"
+        )
         
 
         # physics / world params
@@ -331,7 +411,17 @@ class AirHockeyBox2D:
         self.block_min_height = 0
         self.max_speed_start = config.width
         self.min_speed_start = -config.width
-        self.paddle_density = config.paddle_density
+        self.paddle_density = float(config.paddle_density)
+        self._paddle_density_base = float(config.paddle_density)
+        self.enable_paddle_density_fluctuation = bool(config.enable_paddle_density_fluctuation)
+        self.paddle_density_fluctuation_relative_range = max(
+            float(config.paddle_density_fluctuation_relative_range), 0.0
+        )
+        self.paddle_density_fluctuation_hold_steps = max(
+            int(config.paddle_density_fluctuation_hold_steps), 1
+        )
+        self._paddle_density_hold_remaining = 0
+        self._current_paddle_density_multiplier = 1.0
         self.puck_density = config.puck_density
         self.block_density = config.block_density
         self.action_x_scaling = config.action_x_scaling
@@ -352,13 +442,33 @@ class AirHockeyBox2D:
         self.edge_lims = (self.top_abs, self.bot_abs, self.max_bias_p, self.max_bias_m)
         self.hist_len = config.hist_len
         self.center_offset_constant = config.center_offset_constant
-        self.action_lag = config.action_lag 
+        self.enable_action_delay = bool(config.enable_action_delay)
+        self.enable_observation_delay = bool(config.enable_observation_delay)
+        self.randomize_delay = bool(config.randomize_delay)
+        self.delay_relative_range = max(float(config.delay_relative_range), 0.0)
+        self.action_lag = float(config.action_lag)
         assert self.action_lag >= 0 and self.action_lag <= 1, "Action lag must be between 0 and 1"
+        base_delay_seconds = float(config.delay_seconds)
+        if self.enable_action_delay and (not explicit_delay_seconds) and explicit_action_lag:
+            base_delay_seconds = self.action_lag * self.time_per_step
+        self.delay_seconds = max(base_delay_seconds, 0.0)
         self.derivative_min_dt = max(float(config.derivative_min_dt), 1e-8)
         self.acceleration_ema_alpha = float(np.clip(config.acceleration_ema_alpha, 0.0, 1.0))
         self.jerk_ema_alpha = float(np.clip(config.jerk_ema_alpha, 0.0, 1.0))
         self.max_acceleration_norm = float(config.max_acceleration_norm)
         self.max_jerk_norm = float(config.max_jerk_norm)
+        self.simulate_jerk_estop = bool(config.simulate_jerk_estop)
+        self.jerk_estop_consecutive_steps = max(1, int(config.jerk_estop_consecutive_steps))
+        self.jerk_estop_consecutive_threshold = float(config.jerk_estop_consecutive_threshold)
+        self.jerk_estop_avg_window_steps = max(1, int(config.jerk_estop_avg_window_steps))
+        self.jerk_estop_avg_threshold = float(config.jerk_estop_avg_threshold)
+        self._jerk_estop_window_len = max(
+            self.jerk_estop_consecutive_steps,
+            self.jerk_estop_avg_window_steps,
+        )
+        self._jerk_mag_history = deque(maxlen=self._jerk_estop_window_len)
+        self._jerk_estop_latched = False
+        self._jerk_estop_reason = None
         self.puck_noise = config.puck_noise
         self.puck_noise_std = float(config.puck_noise_std)
         # random occlusion simulation
@@ -383,9 +493,19 @@ class AirHockeyBox2D:
         self.random_occlusion_bad_region_rate = float(
             np.clip(self.random_occlusion_target_rate / self._occlusion_expected_run, 0.0, 1.0)
         )
+        self.random_occlusion_near_paddle_boost = bool(config.random_occlusion_near_paddle_boost)
+        self.random_occlusion_near_paddle_distance_m = max(
+            float(config.random_occlusion_near_paddle_distance_m), 0.0
+        )
+        self.random_occlusion_near_paddle_rate_multiplier = max(
+            float(config.random_occlusion_near_paddle_rate_multiplier), 0.0
+        )
         self._occlusion_run_remaining = {}
         self._occlusion_last_visible_base = {}
         self._occlusion_prev_occluded = {}
+        self._jerk_mag_history.clear()
+        self._jerk_estop_latched = False
+        self._jerk_estop_reason = None
 
         self.last_action = np.zeros(2) # keep the last action taken, used for action lag
         self.last_target_position = None  # base-frame target used for visualization/debugging
@@ -396,6 +516,10 @@ class AirHockeyBox2D:
         self.jerk = np.zeros(2)
         self.pose_hist = deque(maxlen=self.hist_len)
         self.dpose_hist = deque(maxlen=self.hist_len)
+        self.observation_state_info = None
+        self.observation_puck_history = None
+        self.observation_paddle_history = None
+        self.last_step_delay_seconds = 0.0
         
         # Initialize PID controller with configurable gains
         # Default values are tuned for the air hockey environment
@@ -481,6 +605,8 @@ class AirHockeyBox2D:
     def reset(self, seed, **kwargs):
         self.rng = np.random.RandomState(seed)
         self.timestep = 0
+        self._paddle_density_hold_remaining = 0
+        self._current_paddle_density_multiplier = 1.0
 
         if hasattr(self, "object_dict"):
             for body in self.object_dict.values():
@@ -515,9 +641,16 @@ class AirHockeyBox2D:
         self.jerk = np.zeros(2)
         self.pose_hist = deque(maxlen=self.hist_len)
         self.dpose_hist = deque(maxlen=self.hist_len)
+        self.observation_state_info = None
+        self.observation_puck_history = None
+        self.observation_paddle_history = None
+        self.last_step_delay_seconds = 0.0
         self._occlusion_run_remaining = {}
         self._occlusion_last_visible_base = {}
         self._occlusion_prev_occluded = {}
+        self._jerk_mag_history.clear()
+        self._jerk_estop_latched = False
+        self._jerk_estop_reason = None
         
         # Reset PID controller
         if hasattr(self, 'pid_controller'):
@@ -563,6 +696,29 @@ class AirHockeyBox2D:
     
     def base_coord_to_box2d(self, coord):
         return (coord[1], -coord[0])
+
+    def _coerce_fixed_xy_pair(self, value, field_name):
+        arr = np.asarray(value, dtype=float).reshape(-1)
+        if arr.size != 2:
+            raise ValueError(f"{field_name} must contain exactly 2 numeric values.")
+        if not np.isfinite(arr).all():
+            raise ValueError(f"{field_name} must contain only finite numeric values.")
+        return float(arr[0]), float(arr[1])
+
+    def _apply_fixed_state_velocity_jerk(self, state_info):
+        if not self.enable_fixed_state_velocity_jerk:
+            return state_info
+        paddles = state_info.get("paddles", {})
+        paddle_ego = paddles.get("paddle_ego", {})
+        if isinstance(paddle_ego, dict):
+            paddle_ego["velocity"] = self.fixed_state_paddle_velocity
+            if "jerk" in paddle_ego:
+                paddle_ego["jerk"] = self.fixed_state_paddle_jerk
+        if self.mask_puck_velocity:
+            for puck in state_info.get("pucks", []):
+                if isinstance(puck, dict):
+                    puck["velocity"] = self.fixed_state_puck_velocity
+        return state_info
     
     def get_current_state(self):
 
@@ -614,7 +770,10 @@ class AirHockeyBox2D:
                 puck_y_pos_true = self.pucks[puck_name].position[1]
                 puck_x_pos_true, puck_y_pos_true = self._get_noisy_puck_position((puck_x_pos_true, puck_y_pos_true))
                 puck_base_xy_true = self._box2d_to_base_coords((puck_x_pos_true, puck_y_pos_true))
-                occluded, puck_base_xy_observed = self._update_random_occlusion(puck_name, puck_base_xy_true)
+                min_pd = self._min_puck_paddle_distance_base_m(puck_base_xy_true)
+                occluded, puck_base_xy_observed = self._update_random_occlusion(
+                    puck_name, puck_base_xy_true, min_paddle_distance_m=min_pd
+                )
                 puck_box2d_observed = self._base_to_box2d_coords(puck_base_xy_observed)
                 puck_x_vel = self.pucks[puck_name].linearVelocity[0]
                 puck_y_vel = self.pucks[puck_name].linearVelocity[1]
@@ -622,7 +781,8 @@ class AirHockeyBox2D:
                                 'velocity': (puck_x_vel, puck_y_vel),
                                 'occluded': int(occluded)})
 
-        return self.convert_from_box2d_coords(state_info)
+        state_info = self.convert_from_box2d_coords(state_info)
+        return self._apply_fixed_state_velocity_jerk(state_info)
 
     def _get_noisy_puck_position(self, position):
         if not self.puck_noise:
@@ -651,7 +811,30 @@ class AirHockeyBox2D:
         probs = weights / weight_sum
         return int(self.rng.choice(lengths, p=probs))
 
-    def _update_random_occlusion(self, puck_name, true_puck_base_xy):
+    def _min_puck_paddle_distance_base_m(self, puck_base_xy):
+        """Minimum center-to-center distance from puck to any paddle in base coordinates (m)."""
+        puck = np.asarray(puck_base_xy, dtype=float).reshape(2)
+        best = None
+        for name in ("paddle_ego", "paddle_alt"):
+            body = self.paddles.get(name)
+            if body is None:
+                continue
+            pos_b = self._box2d_to_base_coords(body.position)
+            d = float(np.linalg.norm(puck - pos_b))
+            best = d if best is None else min(best, d)
+        return float("inf") if best is None else best
+
+    def _occlusion_start_prob_with_near_paddle_boost(self, base_start_prob, min_paddle_distance_m):
+        if not self.random_occlusion_near_paddle_boost:
+            return base_start_prob
+        if min_paddle_distance_m is None or not math.isfinite(min_paddle_distance_m):
+            return base_start_prob
+        if min_paddle_distance_m > self.random_occlusion_near_paddle_distance_m:
+            return base_start_prob
+        scaled = base_start_prob * self.random_occlusion_near_paddle_rate_multiplier
+        return float(np.clip(scaled, 0.0, 1.0))
+
+    def _update_random_occlusion(self, puck_name, true_puck_base_xy, min_paddle_distance_m=None):
         if not self.enable_random_occlusions:
             self._occlusion_last_visible_base[puck_name] = (
                 float(true_puck_base_xy[0]),
@@ -682,6 +865,9 @@ class AirHockeyBox2D:
 
         in_bad_region = self._is_in_bad_occlusion_region_base(true_puck_base_xy)
         start_prob = self.random_occlusion_bad_region_rate if in_bad_region else self.random_occlusion_other_region_rate
+        start_prob = self._occlusion_start_prob_with_near_paddle_boost(
+            start_prob, min_paddle_distance_m
+        )
         if self.rng.uniform(0.0, 1.0) < start_prob:
             run_len = self._sample_occlusion_run_length()
             self._occlusion_run_remaining[puck_name] = max(run_len - 1, 0)
@@ -700,6 +886,27 @@ class AirHockeyBox2D:
     
     def instantiate_objects(self):
         pass # we don't need to do anything here
+
+    def _apply_paddle_density_from_multiplier(self, multiplier):
+        target_density = float(self._paddle_density_base) * float(multiplier)
+        for paddle_name in ("paddle_ego", "paddle_alt"):
+            paddle_body = self.paddles.get(paddle_name)
+            if paddle_body is None:
+                continue
+            for fixture in paddle_body.fixtures:
+                fixture.density = target_density
+            paddle_body.ResetMassData()
+        self._current_paddle_density_multiplier = float(multiplier)
+
+    def _refresh_paddle_density_fluctuation(self):
+        if not self.enable_paddle_density_fluctuation:
+            return
+        if self._paddle_density_hold_remaining > 0:
+            return
+        density_range = self.paddle_density_fluctuation_relative_range
+        multiplier = self.rng.uniform(1.0 - density_range, 1.0 + density_range)
+        self._apply_paddle_density_from_multiplier(multiplier)
+        self._paddle_density_hold_remaining = self.paddle_density_fluctuation_hold_steps
     
     def spawn_paddle(self, pos, vel, name, affected_by_gravity=False, movable=True):
         assert name == 'paddle_ego' or name == 'paddle_alt'
@@ -910,18 +1117,72 @@ class AirHockeyBox2D:
         self.jerk = filtered_jerk.copy()
         return filtered_acceleration, filtered_jerk
 
+    def _update_simulated_jerk_estop(self, jerk_vector):
+        jerk_mag = float(np.linalg.norm(np.asarray(jerk_vector, dtype=float)))
+        self._jerk_mag_history.append(jerk_mag)
+        if self._jerk_estop_latched:
+            return
+        if not self.simulate_jerk_estop:
+            return
+
+        recent_vals = list(self._jerk_mag_history)
+        if len(recent_vals) < 1:
+            return
+
+        if len(recent_vals) >= self.jerk_estop_consecutive_steps:
+            tail = recent_vals[-self.jerk_estop_consecutive_steps:]
+            if all(v > self.jerk_estop_consecutive_threshold for v in tail):
+                self._jerk_estop_latched = True
+                self._jerk_estop_reason = "jerk_consecutive"
+                return
+
+        if len(recent_vals) >= self.jerk_estop_avg_window_steps:
+            tail = recent_vals[-self.jerk_estop_avg_window_steps:]
+            if float(np.mean(tail)) > self.jerk_estop_avg_threshold:
+                self._jerk_estop_latched = True
+                self._jerk_estop_reason = "jerk_avg"
+
+    def _resolve_delay_seconds_for_step(self):
+        delay_seconds = max(float(self.delay_seconds), 0.0)
+        if self.randomize_delay and self.delay_relative_range > 0.0:
+            random_scale = 1.0 + self.rng.uniform(-self.delay_relative_range, self.delay_relative_range)
+            delay_seconds *= random_scale
+        return float(np.clip(delay_seconds, 0.0, self.time_per_step))
+
     def get_singleagent_transition(self, action):
         collision_start_idx = len(self.collision_listener.collision_forces)
+        self._refresh_paddle_density_fluctuation()
+        self.observation_state_info = None
+        self.observation_puck_history = None
+        self.observation_paddle_history = None
 
-        action_list = [np.copy(self.last_action), np.copy(action)]
-        time_to_sim = [self.time_per_step * self.action_lag, self.time_per_step * (1 - self.action_lag)]
+        use_delay_logic = self.enable_action_delay or self.enable_observation_delay
+        t_delay = self._resolve_delay_seconds_for_step() if use_delay_logic else 0.0
+        self.last_step_delay_seconds = t_delay
+        t_action = t_delay if self.enable_action_delay else 0.0
+        t_obs = t_delay if self.enable_observation_delay else None
+        breakpoints = [0.0, self.time_per_step, t_action]
+        if t_obs is not None:
+            breakpoints.append(t_obs)
+        breakpoints = sorted(set(float(np.clip(t, 0.0, self.time_per_step)) for t in breakpoints))
         
         # Store initial velocity for acceleration calculation over the entire step
         initial_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0], self.paddles['paddle_ego'].linearVelocity[1]])
+        obs_snapshot_recorded = False
+        if t_obs is not None and t_obs <= 0.0:
+            self.observation_state_info = copy.deepcopy(self.get_current_state())
+            self.observation_puck_history = list(self.puck_history)
+            self.observation_paddle_history = list(self.paddle_history)
+            obs_snapshot_recorded = True
 
-        for act, sim_time in zip(action_list, time_to_sim):
+        for start_t, end_t in zip(breakpoints[:-1], breakpoints[1:]):
+            sim_time = end_t - start_t
             if sim_time <= 0.0:
                 continue
+            if end_t <= (t_action + 1e-12):
+                act = np.copy(self.last_action)
+            else:
+                act = np.copy(action)
             pos = np.array([self.paddles['paddle_ego'].position[0], self.paddles['paddle_ego'].position[1]])
             
             # Boundary constraint: prevent paddle from going into opponent's side
@@ -1048,15 +1309,32 @@ class AirHockeyBox2D:
                     total_force[1] -= collision['normal_force'] * collision['contact_normal'][1]
 
                 self.paddles['paddle_ego_force'] = total_force
+
+            if t_obs is not None and (not obs_snapshot_recorded) and (end_t >= (t_obs - 1e-12)):
+                # Mid-step snapshots reuse currently tracked derivative fields.
+                # Acceleration/jerk are only fully refreshed at end-of-step.
+                self.observation_state_info = copy.deepcopy(state_info)
+                self.observation_puck_history = list(self.puck_history)
+                self.observation_paddle_history = list(self.paddle_history)
+                obs_snapshot_recorded = True
         
         # Calculate robust acceleration and jerk AFTER the entire action step.
         final_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0], self.paddles['paddle_ego'].linearVelocity[1]])
         current_acceleration, current_jerk = self._update_motion_derivatives(initial_vel, final_vel)
         self.paddles['paddle_ego_acceleration'] = current_acceleration
         self.paddles['paddle_ego_jerk'] = current_jerk
+        self._update_simulated_jerk_estop(current_jerk)
 
         # Refresh state so acceleration/jerk in returned transition are current-step values.
         state_info = self.get_current_state()
+        if self._jerk_estop_latched:
+            state_info["protective_stop"] = True
+            if self._jerk_estop_reason is not None:
+                state_info["protective_stop_reason"] = str(self._jerk_estop_reason)
+        if t_obs is not None and not obs_snapshot_recorded:
+            self.observation_state_info = copy.deepcopy(state_info)
+            self.observation_puck_history = list(self.puck_history)
+            self.observation_paddle_history = list(self.paddle_history)
         # Count unique paddle<->puck contacts per env step.
         # PostSolve can emit multiple entries for the same physical collision
         # (multiple manifold points / sub-steps), which overestimates counts.
@@ -1076,6 +1354,8 @@ class AirHockeyBox2D:
         #     print(f"Debug - Acceleration: {current_acceleration}, magnitude: {np.linalg.norm(current_acceleration):.6f}")
         
         self.timestep += 1
+        if self.enable_paddle_density_fluctuation and self._paddle_density_hold_remaining > 0:
+            self._paddle_density_hold_remaining -= 1
         self.last_action = action
 
         return state_info

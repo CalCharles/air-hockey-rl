@@ -21,6 +21,7 @@ air_hockey:
     puck_radius: 0.03175
     puck_damping: 0.5
     puck_density: 250
+    puck_hit_bottom_boundary_m: 0.2
     block_density: 500
     render_size: 360
     width: 0.8636

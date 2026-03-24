@@ -8,15 +8,20 @@ import select
 class NonBlockingConsole(object):
 
     def __enter__(self):
-        self.old_settings = termios.tcgetattr(sys.stdin)
-        tty.setcbreak(sys.stdin.fileno())
+        try:
+            self.old_settings = termios.tcgetattr(sys.stdin)
+            tty.setcbreak(sys.stdin.fileno())
+        except (termios.error, ValueError):
+            self.old_settings = None
         return self
 
     def __exit__(self, type, value, traceback):
-        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.old_settings)
-
+        if self.old_settings is not None:
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.old_settings)
 
     def get_data(self):
+        if self.old_settings is None:
+            return False
         if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
             return sys.stdin.read(1)
         return False

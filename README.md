@@ -48,6 +48,8 @@ pip install -e .
 
 ## Other
 
+- Project notes and formal docs (architecture, Cursor rule mirrors): [`notes/docs/index.md`](notes/docs/index.md)
+
 #### Having this issue?
 AttributeError: 'MjRenderContextOffscreen' object has no attribute 'con'
 `echo 'export MUJOCO_GL="glx"' >> ~/.bashrc`

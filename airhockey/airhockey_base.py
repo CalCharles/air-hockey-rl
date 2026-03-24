@@ -58,6 +58,10 @@ class AirHockeyBaseEnv(ABC, Env):
             'terminate_on_puck_hit_bottom': False,  # TODO Specify this parameter in the yaml config
             'terminate_on_puck_hit_paddle': False,
             'terminate_on_puck_pass_paddle': False,
+            'terminate_on_puck_pass_paddle_consecutive_steps': 5, # magic number
+            'puck_pass_paddle_enter_margin_m': 0.01,
+            'puck_pass_paddle_exit_margin_m': -0.01,
+            'puck_pass_paddle_score_threshold': 3,
             'dense_goal': True,
             'goal_selector': 'stationary',
             'max_timesteps': 1000,
@@ -76,6 +80,8 @@ class AirHockeyBaseEnv(ABC, Env):
             'base_reward_scaling': 1.0,
             'jerk_penalty_coeff': 0.0,
             'velocity_penalty_coeff': 0.0,
+            'enable_survival_bonus': False,
+            'survival_bonus_per_step': 0.25,
         }
         
         # handle defaults, keeps values for duplicate keys from right side!
@@ -124,8 +130,29 @@ class AirHockeyBaseEnv(ABC, Env):
         self.terminate_on_enemy_goal = config.terminate_on_enemy_goal
         self.terminate_on_puck_stop = config.terminate_on_puck_stop
         self.terminate_on_puck_hit_bottom = config.terminate_on_puck_hit_bottom
+        # Optional simulator parameter: additional boundary margin (meters)
+        # around table_x_bot for puck-hit-bottom termination.
+        self.puck_hit_bottom_boundary_m = float(
+            getattr(simulator_params, "puck_hit_bottom_boundary_m", 0.03)
+        )
         self.terminate_on_puck_hit_paddle = config.terminate_on_puck_hit_paddle
         self.terminate_on_puck_pass_paddle = config.terminate_on_puck_pass_paddle
+        self.terminate_on_puck_pass_paddle_consecutive_steps = max(
+            1, int(config.terminate_on_puck_pass_paddle_consecutive_steps)
+        )
+        self.puck_pass_paddle_enter_margin_m = float(
+            config.puck_pass_paddle_enter_margin_m
+        )
+        self.puck_pass_paddle_exit_margin_m = float(
+            config.puck_pass_paddle_exit_margin_m
+        )
+        self.puck_pass_paddle_score_threshold = max(
+            1, int(config.puck_pass_paddle_score_threshold)
+        )
+        self._puck_pass_paddle_score = 0
+        self.puck_low_motion_radius_m = 0.03
+        self.puck_low_motion_window_clean = 20
+        self.puck_low_motion_window_occluded = 20
         
         # reward function
         self.compute_online_rewards = config.compute_online_rewards
@@ -145,10 +172,11 @@ class AirHockeyBaseEnv(ABC, Env):
         self.diagonal_motion_rew = config.diagonal_motion_rew
         self.stand_still_rew = config.stand_still_rew
         self.use_reward_shaping = config.use_reward_shaping
-        self.use_smooth_penalty = config.use_smooth_penalty
         self.base_reward_scaling = config.base_reward_scaling
         self.jerk_penalty_coeff = config.jerk_penalty_coeff
         self.velocity_penalty_coeff = config.velocity_penalty_coeff
+        self.enable_survival_bonus = bool(config.enable_survival_bonus)
+        self.survival_bonus_per_step = float(config.survival_bonus_per_step)
         self.simulator_params = simulator_params
         self.width = simulator_params.width
         self.length = simulator_params.length
@@ -196,7 +224,8 @@ class AirHockeyBaseEnv(ABC, Env):
         self.max_puck_vel = self.simulator.max_puck_vel
         self.goal_set = None
 
-        self.get_observation_by_type = get_observation_by_type
+        self._base_get_observation_by_type = get_observation_by_type
+        self.get_observation_by_type = self._get_observation_by_type_with_position_homography
         self.obs_type = config.obs_type
         
         self.num_pucks = config.num_pucks
@@ -212,6 +241,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.initialize_spaces(self.obs_type)
         self.falling_time = 25
         self.metadata = {}
+        self._last_done_reasons = {"terminated": [], "truncated": []}
         self.start_callbacks()
         self.domain_random = config.domain_random
         self.reset()
@@ -304,6 +334,14 @@ class AirHockeyBaseEnv(ABC, Env):
         obs = self.get_observation(state_info, obs_type=self.obs_type, puck_history=self.simulator.puck_history, paddle_history=self.simulator.paddle_history)
         return obs, state_info
 
+    def _get_observation_by_type_with_position_homography(self, state_info, obs_type='vel', **kwargs):
+        return self._base_get_observation_by_type(
+            state_info,
+            obs_type=obs_type,
+            position_homography=getattr(self.simulator, "obs_position_homography", None),
+            **kwargs,
+        )
+
     def define_get_observation(self, getter, obs_type=""):
         if len(obs_type) > 0: self.obs_type = obs_type
         self.get_observation_by_type = getter
@@ -362,10 +400,41 @@ class AirHockeyBaseEnv(ABC, Env):
         self.episode_return = 0.0
         self.episode_length = 0
         self.episode_motion_data = {'velocity_mags': [], 'acceleration_mags': [], 'jerk_mags': []}
+        self._last_done_reasons = {"terminated": [], "truncated": []}
+        self._puck_pass_paddle_score = 0
 
         if 'pucks' in state_info and len(state_info['pucks']) > 0:
             self.puck_initial_position = state_info['pucks'][0]['position']
         
+        return obs, {**{'success': False}, **vars(self.simulator_params)}
+
+    def soft_reset(self):
+        """Reset episode counters without physical robot movement.
+
+        Calls simulator.soft_reset() if available, then resets env-level
+        episode tracking state and returns the current observation.
+        """
+        if hasattr(self.simulator, "soft_reset"):
+            state_info = self.simulator.soft_reset()
+        else:
+            state_info = self.simulator.get_current_state()
+        self.current_state = state_info
+        obs = self.get_observation(
+            state_info,
+            obs_type=self.obs_type,
+            puck_history=self.simulator.puck_history,
+            paddle_history=self.simulator.paddle_history,
+        )
+        self.n_timesteps_so_far += self.current_timestep
+        self.current_timestep = 0
+        self.success_in_ep = False
+        self.max_reward_in_single_step = -np.inf
+        self.min_reward_in_single_step = np.inf
+        self.episode_return = 0.0
+        self.episode_length = 0
+        self.episode_motion_data = {'velocity_mags': [], 'acceleration_mags': [], 'jerk_mags': []}
+        self._last_done_reasons = {"terminated": [], "truncated": []}
+        self._puck_pass_paddle_score = 0
         return obs, {**{'success': False}, **vars(self.simulator_params)}
 
     def reset_from_state(self, state_vector, seed=None):
@@ -379,6 +448,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.simulator.instantiate_objects()
         state_info = self.simulator.get_current_state()
         self.current_state = state_info
+        self._puck_pass_paddle_score = 0
         obs = self.get_observation(state_info, obs_type=self.obs_type, puck_history=self.simulator.puck_history, paddle_history=self.simulator.paddle_history)
         return obs, {'success': False}
 
@@ -429,14 +499,100 @@ class AirHockeyBaseEnv(ABC, Env):
         vel = (0, 0)
         return (x_pos, 0), vel
 
+    def _puck_low_motion_cluster_window(self, state_info):
+        """Return (is_low_motion_cluster, active_window_size) for puck history."""
+        if "pucks" not in state_info or len(state_info["pucks"]) == 0:
+            return False, 0
+        puck_history = state_info["pucks"][0].get("history", [])
+        if not isinstance(puck_history, list):
+            return False, 0
+
+        clean_window = int(self.puck_low_motion_window_clean)
+        occluded_window = int(self.puck_low_motion_window_occluded)
+        # Real-world simulator states may intentionally expose a short history
+        # for observation compatibility. For low-motion termination only, fallback
+        # to the simulator's full internal puck history when available.
+        if len(puck_history) < clean_window and getattr(self, "simulator_name", None) == "real":
+            simulator_puck_history = getattr(getattr(self, "simulator", None), "puck_history", None)
+            if isinstance(simulator_puck_history, list):
+                puck_history = simulator_puck_history
+
+        if len(puck_history) < clean_window:
+            return False, 0
+
+        recent_clean = puck_history[-clean_window:]
+        clean_has_occlusion = any(
+            len(entry) >= 3 and int(np.asarray(entry[2]).reshape(-1)[0]) > 0
+            for entry in recent_clean
+        )
+        active_window = occluded_window if clean_has_occlusion else clean_window
+        if len(puck_history) < active_window:
+            return False, active_window
+
+        recent_window = puck_history[-active_window:]
+        positions = []
+        for entry in recent_window:
+            if entry is None or len(entry) < 2:
+                return False, active_window
+            positions.append([float(entry[0]), float(entry[1])])
+        positions_arr = np.asarray(positions, dtype=np.float64)
+        if positions_arr.shape != (active_window, 2):
+            return False, active_window
+
+        radius = float(self.puck_low_motion_radius_m)
+        pairwise_dist = np.linalg.norm(
+            positions_arr[:, None, :] - positions_arr[None, :, :],
+            axis=-1,
+        )
+        within_anchor = np.all(pairwise_dist <= radius, axis=1)
+        return bool(np.any(within_anchor)), active_window
+
+    def _is_puck_observation_occluded(self, puck_state):
+        occluded_raw = puck_state.get("occluded", 0)
+        try:
+            return int(np.asarray(occluded_raw).reshape(-1)[0]) > 0
+        except (TypeError, ValueError, IndexError):
+            return False
+
+    def _update_puck_pass_paddle_score(self, puck_state, paddle_state):
+        puck_x = float(puck_state["position"][0])
+        paddle_x = float(paddle_state["position"][0])
+        rel_x = puck_x - (paddle_x + self.paddle_radius)
+        is_occluded = self._is_puck_observation_occluded(puck_state)
+
+        if is_occluded:
+            if rel_x < self.puck_pass_paddle_exit_margin_m:
+                self._puck_pass_paddle_score = 0
+        elif rel_x > self.puck_pass_paddle_enter_margin_m:
+            self._puck_pass_paddle_score = min(
+                self.puck_pass_paddle_score_threshold,
+                self._puck_pass_paddle_score + 1,
+            )
+        elif rel_x < self.puck_pass_paddle_exit_margin_m:
+            self._puck_pass_paddle_score = 0
+        else:
+            self._puck_pass_paddle_score = max(
+                self._puck_pass_paddle_score - 1,
+                0,
+            )
+
+        return self._puck_pass_paddle_score >= self.puck_pass_paddle_score_threshold
+
     def has_finished(self, state_info, multiagent=False):
         truncated = False
         terminated = False
+        termination_reasons = []
+        truncation_reasons = []
         puck_within_alt_home = False
         puck_within_home = False
 
+        if bool(state_info.get("protective_stop", False)):
+            terminated = True
+            termination_reasons.append("protective_stop")
+
         if self.current_timestep > self.max_timesteps:
             truncated = True
+            truncation_reasons.append("max_timesteps_exceeded")
         else:
             if self.terminate_on_out_of_bounds:
                 # check if we hit any walls or are above the middle of the board
@@ -445,6 +601,7 @@ class AirHockeyBaseEnv(ABC, Env):
                     state_info['paddles']['paddle_ego']['position'][1] >  self.paddle_y_max or \
                     state_info['paddles']['paddle_ego']['position'][1] < self.paddle_y_min:
                     truncated = True
+                    truncation_reasons.append("paddle_out_of_bounds")
                     print("paddle out of bounds with position: ", state_info['paddles']['paddle_ego']['position'])
                     print("X_min, X_max, Y_min, Y_max: ", self.paddle_x_min + self.paddle_radius, self.paddle_x_max - self.paddle_radius, self.table_y_left + self.paddle_radius, self.table_y_right - self.paddle_radius)
 
@@ -456,20 +613,30 @@ class AirHockeyBaseEnv(ABC, Env):
 
         if self.terminate_on_puck_hit_bottom:
             puck_pos = state_info['pucks'][0]['position']
-            if abs(puck_pos[0] - self.table_x_bot) < self.puck_radius + 0.03:
+            if abs(puck_pos[0] - self.table_x_bot) < (
+                self.puck_radius + self.puck_hit_bottom_boundary_m
+            ):
                 terminated = True
+                termination_reasons.append("puck_hit_bottom")
 
         if self.terminate_on_enemy_goal:
             if not terminated and puck_within_home:
                 truncated = True
+                truncation_reasons.append("enemy_goal")
 
         if multiagent:
+            if truncated and not terminated:
+                termination_reasons.extend(truncation_reasons)
+                truncation_reasons = []
+                termination_reasons.append("multiagent_truncation_promoted_to_termination")
             terminated = terminated or truncated or puck_within_alt_home or puck_within_home
             truncated = False
             
         if self.terminate_on_puck_stop:
-            if not truncated and np.linalg.norm(state_info['pucks'][0]['velocity']) < 0.01:
+            low_motion_cluster, low_motion_window = self._puck_low_motion_cluster_window(state_info)
+            if not truncated and low_motion_cluster:
                 truncated = True
+                truncation_reasons.append(f"puck_low_motion_window_{low_motion_window}")
 
 
         if "pucks" in state_info.keys():
@@ -477,18 +644,32 @@ class AirHockeyBaseEnv(ABC, Env):
             puck_paddle_distance = np.linalg.norm(np.array(state_info['pucks'][0]['position']) - np.array(state_info['paddles']['paddle_ego']['position']))
 
             if self.terminate_on_puck_pass_paddle:
-                if state_info['pucks'][0]['position'][0] > (state_info['paddles']['paddle_ego']['position'][0] + self.paddle_radius ):
+                puck_passed_now = self._update_puck_pass_paddle_score(
+                    state_info['pucks'][0],
+                    state_info['paddles']['paddle_ego'],
+                )
+                if puck_passed_now:
                     truncated = True
+                    truncation_reasons.append("puck_passed_paddle")
                     # print("Puck pass paddle")
+            else:
+                self._puck_pass_paddle_score = 0
 
             if self.terminate_on_puck_hit_paddle:
                 if puck_paddle_distance <= (self.paddle_radius + self.puck_radius + 0.02):
                     puck_within_home = True
                     terminated = True
+                    termination_reasons.append("puck_hit_paddle")
                     # print("Puck hit paddle")
+        else:
+            self._puck_pass_paddle_score = 0
         
         puck_within_ego_goal = False
         puck_within_alt_goal = False
+        self._last_done_reasons = {
+            "terminated": list(dict.fromkeys(termination_reasons)),
+            "truncated": list(dict.fromkeys(truncation_reasons)),
+        }
                     
         return terminated, truncated, puck_within_home, puck_within_alt_home, puck_within_ego_goal, puck_within_alt_goal
 
@@ -591,7 +772,7 @@ class AirHockeyBaseEnv(ABC, Env):
             action[0] = min(action[0], 0)
         if paddle_y_pos < paddle_y_min + self.paddle_radius:
             action[1] = max(action[1], 0)
-        if paddle_y_pos > paddle_y_max + self.paddle_radius:
+        if paddle_y_pos > paddle_y_max - self.paddle_radius:
             action[1] = min(action[1], 0)
 
         self.last_action = action
@@ -618,15 +799,41 @@ class AirHockeyBaseEnv(ABC, Env):
             self.episode_motion_data['acceleration_mags'].append(acc_mag)
             self.episode_motion_data['jerk_mags'].append(jerk_mag)
         success = self.success_in_ep 
+
         info = {}
         info['success'] = success
         info['paddle_velocity_mag'] = float(vel_mag)
         info['paddle_acceleration_mag'] = float(acc_mag)
         info['paddle_jerk_mag'] = float(jerk_mag)
         info['paddle_puck_collision_count'] = int(next_state.get('paddle_puck_collision_count', 0))
+        info['protective_stop'] = bool(next_state.get('protective_stop', False))
+        info['transition_hold_active'] = bool(next_state.get('transition_hold_active', False))
+        info['transition_hold_reason'] = str(next_state.get('transition_hold_reason', "none"))
+        info['transition_hold_steps_remaining'] = int(next_state.get('transition_hold_steps_remaining', 0))
+        info['command_rearm_event'] = bool(next_state.get('command_rearm_event', False))
+        info['controller_connected'] = bool(next_state.get('controller_connected', True))
+        info['control_program_running'] = bool(next_state.get('control_program_running', True))
+        info['robot_step_ready'] = bool(next_state.get('robot_step_ready', True))
+        info['robot_command_ready'] = bool(next_state.get('robot_command_ready', True))
+        info['command_block_reason'] = str(next_state.get('command_block_reason', "none"))
 
         hit_a_puck = False
         is_finished, truncated, puck_within_home, puck_within_alt_home, puck_within_goal, _ = self.has_finished(next_state)
+        termination_reasons = list(self._last_done_reasons.get("terminated", []))
+        truncation_reasons = list(self._last_done_reasons.get("truncated", []))
+        episode_end_type = None
+        episode_end_reasons = []
+        if is_finished:
+            episode_end_type = "terminated"
+            episode_end_reasons = termination_reasons
+        elif truncated:
+            episode_end_type = "truncated"
+            episode_end_reasons = truncation_reasons
+        info['termination_reasons'] = termination_reasons
+        info['truncation_reasons'] = truncation_reasons
+        info['episode_end_type'] = episode_end_type
+        info['episode_end_reasons'] = episode_end_reasons
+        info['episode_end_reason'] = episode_end_reasons[0] if len(episode_end_reasons) > 0 else None
         if not truncated:
             reward, success = self.get_base_reward(next_state)
             # scale reward
@@ -641,8 +848,11 @@ class AirHockeyBaseEnv(ABC, Env):
         
         if self.use_reward_shaping:
             reward += self.get_reward_shaping(next_state)
-        if self.use_smooth_penalty:
-            pass # TODO: implement smooth penalty
+        survival_bonus = 0.0
+        if self.enable_survival_bonus and (not is_finished) and (not truncated):
+            survival_bonus = self.survival_bonus_per_step
+            reward += survival_bonus
+        info['survival_bonus'] = float(survival_bonus)
         
         self.max_reward_in_single_step = max(self.max_reward_in_single_step, reward)
         self.min_reward_in_single_step = min(self.min_reward_in_single_step, reward)        
@@ -668,7 +878,20 @@ class AirHockeyBaseEnv(ABC, Env):
         # if self.current_timestep >= self.max_timesteps:
         #     is_finished = True
 
-        obs = self.get_observation(next_state, obs_type=self.obs_type, puck_history=self.simulator.puck_history, paddle_history=self.simulator.paddle_history)
+        obs_state = getattr(self.simulator, "observation_state_info", None)
+        if obs_state is None:
+            obs_state = next_state
+            obs_puck_history = self.simulator.puck_history
+            obs_paddle_history = self.simulator.paddle_history
+        else:
+            obs_puck_history = getattr(self.simulator, "observation_puck_history", self.simulator.puck_history)
+            obs_paddle_history = getattr(self.simulator, "observation_paddle_history", self.simulator.paddle_history)
+        obs = self.get_observation(
+            obs_state,
+            obs_type=self.obs_type,
+            puck_history=obs_puck_history,
+            paddle_history=obs_paddle_history,
+        )
         info.update(vars(self.simulator_params))
         return obs, reward, is_finished, truncated, info
     

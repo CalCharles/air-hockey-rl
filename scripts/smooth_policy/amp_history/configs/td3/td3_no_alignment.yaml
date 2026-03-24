@@ -1,10 +1,10 @@
 # Standard TD3 config for:
-# scripts/smooth_policy/amp_history/amp_training/td3/amp_training_td3.py
+# scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py
 #
 # Modeled after ppo/amp_larger.yaml structure, but aligned to TD3 args.
 
 # Basic training parameters
-total_timesteps: 1000000
+total_timesteps: 350000
 num_envs: 1
 
 # TD3 core
@@ -75,7 +75,7 @@ exploration_target_position_steps: 5
 
 # TODO: not clean; demonstration policy takeover source
 exploration_policy_takeover_enabled: true
-# relative paths are resolved against scripts/smooth_policy/amp_history/amp_training/td3/warm_start
+# relative paths are resolved against scripts/smooth_policy/amp_history/amp_training/td3/extras/warm_start
 exploration_policy_takeover_model_path: "model2.pth"
 exploration_policy_takeover_args_path: "args.yaml"
 exploration_policy_takeover_config_path: "config.yaml"
@@ -106,7 +106,6 @@ velocity_at_one: 0.2
 velocity_at_zero: 0.6
 jerk_at_one: 8.0
 jerk_at_zero: 20.0
-
 # Paths
 config: "scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_constant_upper_half_custom_sim_params.yaml"
 args_file: null

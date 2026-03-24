@@ -1,6 +1,6 @@
 # Distillation configuration for converting stochastic Agent to deterministic policy
 model_path: "runs/new_architecture_ppo_disc/test/run/checkpoint_150/model.pth"
-output_path: "scripts/smooth_policy/amp_history/amp_training/td3/warm_start/model1.pth"
+output_path: "scripts/smooth_policy/amp_history/amp_training/td3/extras/warm_start/model1.pth"
 config: "runs/new_architecture_ppo_disc/test/run/config.yaml"
 use_last_action_in_policy_state: true
 action_scale: 1.0
