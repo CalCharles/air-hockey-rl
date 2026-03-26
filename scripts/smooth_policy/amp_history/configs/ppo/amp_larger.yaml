@@ -3,6 +3,9 @@
 # Total dataset size: ~480 position sequences (96 sequences per trajectory * 5 trajectories)
 # Each sequence contains 5 consecutive positions
 
+# to run: python scripts/smooth_policy/amp_history/amp_training/amp_training_lsgan.py --args-file scripts/smooth_policy/
+# amp_history/configs/ppo/amp_larger.yaml --device=cuda:0
+
 # Basic training parameters
 num_envs: 8  # Can use more envs with larger dataset
 num_steps: 512  # Increased from 64 to ensure enough valid transitions
@@ -41,6 +44,9 @@ disc_num_hidden_layers: 3
 task_reward_weight: 0.5
 disc_reward_weight: 0.5
 
+# Whether to add the inherited LinearTop/PuckJuggle reward on top of upper_half_reward
+include_inherited_reward: false
+
 # reward terms
 temporal_alignment_reward_scale: 0.4
 action_magnitude_reward_scale: 0.4
@@ -51,9 +57,9 @@ args_file: null
 model_path: null  # Start from scratch
 discriminator_path: null  # Start from scratch
 amp_components_path: null  # Start from scratch
-log_parent_dir: runs/amp_training/pid/test
-run_name: "pid_test"
-demo_data_path: "scripts/smooth_policy/amp_history/amp_training/amp_data/amp_paddle_puck_dataset.pt"
+run_name: "b8_equal_weights_with_inherited_reward"
+log_parent_dir: "runs/amp_baselines/b8_equal_weights_with_inherited_reward"
+demo_data_path: "scripts/smooth_policy/amp_history/amp_training/amp_data/all_trajectories_bc.pt"
 
 # Others
 seed: 0

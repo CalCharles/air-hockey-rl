@@ -1,0 +1,60 @@
+# PPO + motion rewards for puck_touch verification.
+# Run with:
+# python scripts/smooth_policy/amp_history/amp_training/ppo/amp_training_ppo.py \
+#   --args-file scripts/smooth_policy/amp_history/configs/ppo/puck_touch/ppo_puck_touch.yaml
+
+# PPO core
+num_envs: 8
+num_steps: 512
+learning_rate: 0.0001
+num_iterations: 5000
+anneal_lr: false
+gamma: 0.99
+gae_lambda: 0.95
+minibatch_size: 32
+update_epochs: 10
+clip_coef: 0.2
+clip_vloss: false
+ent_coef: 0.0
+vf_coef: 0.5
+max_grad_norm: 0.5
+target_kl: null
+batch_size: 0  # computed at runtime
+norm_adv: true
+
+use_last_action_in_policy_state: true
+
+# Reward weighting — pure task reward for initial verification
+task_reward_weight: 0.5
+motion_reward_weight: 0.5
+
+# Motion reward component weights (kept for future use)
+stand_still_reward_weight: 0.5
+temporal_alignment_reward_weight: 0.5
+axis_alignment_reward_weight: 0.5
+velocity_reward_weight: 0.5
+jerk_reward_weight: 0.5
+
+# Motion reward calibration
+stand_still_threshold: 0.015
+temporal_alignment_horizon: 4
+velocity_at_one: 0.3
+velocity_at_zero: 0.6
+jerk_at_one: 10.0
+jerk_at_zero: 23.0
+
+# Paths — reuses the TD3 puck_touch environment config
+config: "scripts/smooth_policy/amp_history/configs/ppo/puck_touch/puck_touch_config.yaml"
+args_file: null
+model_path: null
+log_parent_dir: "runs/ppo/puck_touch/motion_reward_0.5"
+run_name: "ppo_puck_touch_motion_0.5"
+
+# Runtime
+seed: 0
+device: "cuda:0"
+action_scale: 1
+
+# Agent architecture
+agent_hidden_layer_size: 64
+agent_num_hidden_layers: 5

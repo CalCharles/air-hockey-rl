@@ -82,6 +82,7 @@ class AirHockeyBaseEnv(ABC, Env):
             'velocity_penalty_coeff': 0.0,
             'enable_survival_bonus': False,
             'survival_bonus_per_step': 0.25,
+            'include_inherited_reward': False,
         }
         
         # handle defaults, keeps values for duplicate keys from right side!
@@ -177,6 +178,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.velocity_penalty_coeff = config.velocity_penalty_coeff
         self.enable_survival_bonus = bool(config.enable_survival_bonus)
         self.survival_bonus_per_step = float(config.survival_bonus_per_step)
+        self.include_inherited_reward = config.include_inherited_reward
         self.simulator_params = simulator_params
         self.width = simulator_params.width
         self.length = simulator_params.length

@@ -1,0 +1,58 @@
+# Pure PPO with temporal alignment and action magnitude rewards
+# No discriminator, but auxiliary shaping rewards enabled
+
+# Basic training parameters
+num_envs: 8
+num_steps: 512
+learning_rate: 0.0001
+num_iterations: 5000
+anneal_lr: false
+gamma: 0.99
+gae_lambda: 0.95
+minibatch_size: 32
+update_epochs: 10
+clip_coef: 0.2
+clip_vloss: false
+ent_coef: 0.0
+vf_coef: 0.5
+max_grad_norm: 0.5
+target_kl: null
+batch_size: 0  # computed at runtime
+norm_adv: true
+
+use_last_action_in_policy_state: true
+
+# AMP disabled
+disc_reward_weight: 0.0
+
+# Reward weighting
+task_reward_weight: 1.0
+temporal_alignment_reward_scale: 0.4
+action_magnitude_reward_scale: 0.4
+
+# Motion penalties disabled
+velocity_penalty_weight: 0.0
+acceleration_penalty_weight: 0.0
+jerk_penalty_weight: 0.0
+
+# Paths
+config: "scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_constant_upper_half_custom_sim_params.yaml"
+args_file: null
+model_path: null
+log_parent_dir: runs/pure_ppo/with_aux
+run_name: "pure_ppo_with_aux"
+demo_data_path: "scripts/smooth_policy/amp_history/amp_training/amp_data/amp_paddle_puck_dataset.pt"
+
+# Others
+seed: 0
+device: "cuda:0"
+action_scale: 1
+
+# No reference state initialization
+use_reference_state_init: false
+reference_data_path: null
+ref_max_episode_steps: 30
+
+# Agent architecture (same as amp_larger)
+agent_hidden_layer_size: 64
+agent_num_hidden_layers: 5

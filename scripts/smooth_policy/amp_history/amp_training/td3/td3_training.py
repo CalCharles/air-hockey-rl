@@ -398,13 +398,26 @@ def validate_optional_exploration_range(
 
 
 def sum_info_metric(infos: dict, metric_name: str) -> float:
+    total = 0.0
     metric_values = infos.get(metric_name)
-    if metric_values is None:
-        return 0.0
-    try:
-        return float(np.asarray(metric_values, dtype=np.float32).sum())
-    except Exception:
-        return 0.0
+    if metric_values is not None:
+        try:
+            total += float(np.asarray(metric_values, dtype=np.float32).sum())
+        except Exception:
+            pass
+    # Also check final_info for terminal steps (AsyncVectorEnv moves
+    # terminal-step info there, so metrics that only fire on done are missed).
+    final_infos = infos.get("final_info")
+    if final_infos is not None:
+        for fi in final_infos:
+            if isinstance(fi, dict):
+                val = fi.get(metric_name)
+                if val is not None:
+                    try:
+                        total += float(val)
+                    except (TypeError, ValueError):
+                        pass
+    return total
 
 
 def sum_info_bool_metric(infos: dict, metric_name: str) -> float:

@@ -1,21 +1,27 @@
 """
-AMP training (PPO)
+AMP Training with LSGAN Objective + EIPO (Extrinsic-Intrinsic Policy Optimization)
 
-This script implements Adversarial Motion Priors (AMP) with a least-squares
-discriminator objective (MSE on real/fake scores toward 1 / -1) instead of
-binary cross-entropy.
+This script extends the AMP-LSGAN training with EIPO from
+"Redeeming Intrinsic Rewards via Constrained Optimization" (NeurIPS 2022).
 
-Uses MSE loss: 0.5 * E[(D(x_real) - 1)^2] + 0.5 * E[(D(x_fake) - (-1))^2]
-This variant uses [-1, 1] targets instead of [0, 1] for better gradient flow.
-This often provides more stable gradients compared to standard GAN training.
+EIPO dynamically balances task (extrinsic) and discriminator (intrinsic) rewards
+using a Lagrangian multiplier alpha and two policies:
+  - pi_{E+I} (mixed): trained on (1+alpha)*task + disc reward
+  - pi_E (task-only): trained on alpha*task reward only
 
-Supports discriminator modes:
-1. Position-only (default): 8D
-2. Position + Action: 16D
-3. Position (+ Action) + Puck features: +4D
-   Enable with --use_action_discriminator / --use_puck_discriminator.
+The two policies alternate rollouts/updates. Alpha adjusts based on the task
+performance gap between them.
+
+Supports discriminator stationarity modes for handling non-stationary disc reward:
+  - "live"     : use live disc for rewards (simplest)
+  - "target"   : EMA target network for rewards (recommended)
+  - "snapshot" : freeze disc copy at each stage switch
+  - "frozen"   : fully frozen disc (matches paper's RND assumption)
+
+When use_eipo=False, behavior is identical to the original amp_training_lsgan.py.
 """
 
+import copy
 import random
 import time
 import torch
@@ -53,22 +59,22 @@ from scripts.smooth_policy.amp_history.amp_training.feature_processing import (
 # used for possible reference state initialization from demonstrations
 class ReferenceStateWrapper(gym.Wrapper):
     """Wrapper that initializes paddle from demonstration states."""
-    
+
     def __init__(self, env, reference_states):
         super().__init__(env)
         self.reference_states = reference_states  # numpy array [N, 4]
-    
+
     def reset(self, **kwargs):
         # Sample random reference state [x, y, vx, vy]
         idx = np.random.randint(0, len(self.reference_states))
         ref_state = self.reference_states[idx]
-        
+
         # Set reference state on underlying environment
         self.env.unwrapped._ref_paddle_state = (
             (float(ref_state[0]), float(ref_state[1])),  # pos
             (float(ref_state[2]), float(ref_state[3]))   # vel
         )
-        
+
         return self.env.reset(**kwargs)
 
 
@@ -223,7 +229,7 @@ def warmup_motion_normalizer(envs, motion_normalizer, warmup_steps, seed, device
         )
         motion_normalizer.update(motion_batch)
 
-def train_discriminator_step(
+def train_lsgan_discriminator_step(
     demo_loader,
     disc_batch_size,
     b_disc_obs,
@@ -238,7 +244,7 @@ def train_discriminator_step(
     max_grad_norm,
     device,
 ):
-    """Run one discriminator update step (same least-squares objective as training)."""
+    """Run one discriminator update step with the same LSGAN objective used in training."""
     demo_disc_obs = demo_loader.sample(disc_batch_size)
     agent_samples = disc_batch_size // 2
 
@@ -412,6 +418,53 @@ def save_amp_components(save_dir, discriminator, normalizer, replay_buffer):
     )
 
 
+def save_eipo_checkpoint(
+    checkpoint_dir,
+    agent_mixed,
+    agent_task,
+    discriminator,
+    disc_normalizer,
+    replay_buffer,
+    alpha,
+    max_stage,
+    iteration,
+    disc_target=None,
+    disc_snapshot=None,
+):
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
+    # Mixed policy (pi_{E+I}) — this is the deployable agent
+    torch.save(agent_mixed.state_dict(), os.path.join(checkpoint_dir, "model_mixed.pth"))
+
+    # Task-only policy (pi_E) — the reference anchor
+    torch.save(agent_task.state_dict(), os.path.join(checkpoint_dir, "model_task.pth"))
+
+    # Backward-compatible: also save mixed as "model.pth" so evaluate_agent works unchanged
+    torch.save(agent_mixed.state_dict(), os.path.join(checkpoint_dir, "model.pth"))
+
+    # Discriminator and AMP components
+    if discriminator is not None:
+        torch.save(discriminator.state_dict(), os.path.join(checkpoint_dir, "discriminator.pth"))
+        if disc_normalizer is not None and replay_buffer is not None:
+            torch.save({
+                "normalizer": disc_normalizer.state_dict(),
+                "replay_buffer": replay_buffer.state_dict(),
+            }, os.path.join(checkpoint_dir, "amp_components.pth"))
+
+    # Target/snapshot discriminator (for resuming with correct reward network)
+    if disc_target is not None:
+        torch.save(disc_target.state_dict(), os.path.join(checkpoint_dir, "discriminator_target.pth"))
+    if disc_snapshot is not None:
+        torch.save(disc_snapshot.state_dict(), os.path.join(checkpoint_dir, "discriminator_snapshot.pth"))
+
+    # EIPO state
+    torch.save({
+        "alpha": alpha,
+        "max_stage": max_stage,
+        "iteration": iteration,
+    }, os.path.join(checkpoint_dir, "eipo_state.pth"))
+
+
 @dataclass
 class Args:
     num_envs: int = 8
@@ -481,7 +534,7 @@ class Args:
 
     # action scale for the agent (mostly deprecated, should default to 1)
     action_scale: float = 1
-    
+
     # Agent architecture.
     agent_hidden_layer_size: int = 128
     agent_num_hidden_layers: int = 2
@@ -489,7 +542,7 @@ class Args:
     use_reference_state_init: bool = False  # Enable/disable feature
     reference_data_path: str = None  # Path to raw demo data (defaults to demo_data_path)
     ref_max_episode_steps: int = 200  # Episode length when using reference init
-    
+
     # Task reward
     include_inherited_reward: bool = False  # If True, add LinearTop/PuckJuggle reward on top of upper_half_reward
 
@@ -504,24 +557,42 @@ class Args:
     puck_vertical_pos_min: float = -1.0  # Min vertical puck value mapped to 5-bin range
     puck_vertical_pos_max: float = 1.0  # Max vertical puck value mapped to 5-bin range
     disc_debug_interval: int = 5000  # Print discriminator feature samples every N env steps (<=0 disables)
-    
-    
+
+    # EIPO hyperparameters
+    use_eipo: bool = True                    # Enable EIPO dynamic balancing
+    eipo_alpha_init: float = 1.0             # Initial Lagrangian multiplier
+    eipo_alpha_lr: float = 0.01              # Step size for alpha updates
+    eipo_alpha_min: float = 0.0              # Floor for alpha
+    eipo_alpha_max: float = 100.0            # Ceiling to prevent runaway
+    # Discriminator stationarity mode for EIPO
+    # "live"     - use the live discriminator for rewards (simplest)
+    # "target"   - use a slow-moving EMA copy for rewards (RECOMMENDED)
+    # "snapshot" - freeze a copy at each stage switch
+    # "frozen"   - freeze disc entirely before EIPO starts
+    disc_stationarity_mode: str = "target"
+    disc_ema_tau: float = 0.005              # EMA update rate for "target" mode
+    disc_pretrain_iters: int = 0             # For "frozen" mode: iters of standard AMP before freezing
+    # EIPO resume paths
+    eipo_state_path: str = None              # Path to saved EIPO state for resuming
+    task_model_path: str = None              # Path to task-only policy for resuming
+    disc_target_path: str = None             # Path to target disc for resuming (target mode)
+
 
 def make_env(env_id, reference_states=None, max_episode_steps=20):
     def _thunk():
         curr_seed = random.randint(0, int(1e8))
         config["air_hockey"]["seed"] = curr_seed
-        
+
         # Override max_timesteps if using reference state initialization
         if reference_states is not None:
             config["air_hockey"]["max_timesteps"] = max_episode_steps
-        
+
         env = AirHockeyEnv(config["air_hockey"])
-        
+
         # Wrap with reference state initialization if provided
         if reference_states is not None:
             env = ReferenceStateWrapper(env, reference_states)
-        
+
         return env
     return _thunk
 
@@ -546,6 +617,13 @@ if __name__ == "__main__":
         num_hidden_layers=args.disc_num_hidden_layers,
     )
 
+    # Validate EIPO-specific args
+    if args.use_eipo and args.disc_stationarity_mode not in ("live", "target", "snapshot", "frozen"):
+        raise ValueError(
+            f"disc_stationarity_mode must be one of 'live', 'target', 'snapshot', 'frozen', "
+            f"got '{args.disc_stationarity_mode}'"
+        )
+
     with open(args.config, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
 
@@ -567,14 +645,14 @@ if __name__ == "__main__":
             first_positions,
             np.zeros_like(first_positions)  # Zero velocity
         ], axis=1)
-        print(f"✓ Loaded {len(reference_states):,} reference states (position-based)")
+        print(f"Loaded {len(reference_states):,} reference states (position-based)")
         print(f"  Note: Velocities initialized to zero")
         print(f"  Episode length will be {args.ref_max_episode_steps} timesteps")
         print(f"{'='*80}\n")
 
     # should just create parallel envs for future use (can just use sync, async as placeholders)
     envs = gym.vector.AsyncVectorEnv([
-        make_env(i, reference_states, args.ref_max_episode_steps) 
+        make_env(i, reference_states, args.ref_max_episode_steps)
         for i in range(args.num_envs)
     ])
 
@@ -596,7 +674,6 @@ if __name__ == "__main__":
             log_parent_dir = f"{base_log_parent_dir}r{i}"
             i += 1
         print(f"Log directory exists. Saving to alternate log directory: {log_parent_dir}")
-        # raise FileExistsError(f"Log directory {log_parent_dir} already exists.")
     os.makedirs(log_parent_dir, exist_ok=True)
 
     writer = SummaryWriter(log_parent_dir)
@@ -604,13 +681,13 @@ if __name__ == "__main__":
         "hyperparameters",
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
-    
+
     # save yaml args and config into log_parent_dir
     with open(f"{log_parent_dir}/config.yaml", "w") as f:
         yaml.dump(config, f)
     with open(f"{log_parent_dir}/args.yaml", "w") as f:
         yaml.dump(vars(args), f)
-    
+
     if 'use_pid' in config["air_hockey"] and config["air_hockey"]["use_pid"]:
         action_scale = 1
     else:
@@ -629,28 +706,89 @@ if __name__ == "__main__":
         ),
         single_action_space=envs.single_action_space,
     )
-    agent = Agent(
-        policy_env_view,
-        action_scale=action_scale,
-        action_bias=0.0,
-        hidden_layer_size=args.agent_hidden_layer_size,
-        num_hidden_layers=args.agent_num_hidden_layers,
-    ).to(args.device)
-    # Load pre-trained model if path is provided
-    if args.model_path is not None:
-        if not os.path.exists(args.model_path):
-            raise FileNotFoundError(f"Model path {args.model_path} does not exist.")
-        print(f"Loading pre-trained model from {args.model_path}")
-        agent.load_state_dict(torch.load(args.model_path, map_location=args.device))
-        if args.reset_actor_logstd_on_model_load:
-            with torch.no_grad():
-                agent.actor_logstd.fill_(float(args.actor_logstd_on_model_load))
-            print(
-                "Applied actor_logstd override after model load: "
-                f"{float(args.actor_logstd_on_model_load):.4f}"
-            )
-        print("Model loaded successfully")
 
+    # =========================================================================
+    # Agent setup — EIPO uses two agents, non-EIPO uses one
+    # =========================================================================
+    if args.use_eipo:
+        agent_mixed = Agent(
+            policy_env_view,
+            action_scale=action_scale,
+            action_bias=0.0,
+            hidden_layer_size=args.agent_hidden_layer_size,
+            num_hidden_layers=args.agent_num_hidden_layers,
+        ).to(args.device)
+        agent_task = Agent(
+            policy_env_view,
+            action_scale=action_scale,
+            action_bias=0.0,
+            hidden_layer_size=args.agent_hidden_layer_size,
+            num_hidden_layers=args.agent_num_hidden_layers,
+        ).to(args.device)
+
+        # Load pre-trained model into BOTH agents if provided
+        if args.model_path is not None:
+            if not os.path.exists(args.model_path):
+                raise FileNotFoundError(f"Model path {args.model_path} does not exist.")
+            print(f"Loading pre-trained model from {args.model_path}")
+            state_dict = torch.load(args.model_path, map_location=args.device)
+            agent_mixed.load_state_dict(state_dict)
+            agent_task.load_state_dict(state_dict)
+            if args.reset_actor_logstd_on_model_load:
+                with torch.no_grad():
+                    agent_mixed.actor_logstd.fill_(float(args.actor_logstd_on_model_load))
+                    agent_task.actor_logstd.fill_(float(args.actor_logstd_on_model_load))
+                print(
+                    "Applied actor_logstd override after model load: "
+                    f"{float(args.actor_logstd_on_model_load):.4f}"
+                )
+            print("Model loaded into both mixed and task agents")
+
+        # Load task-only model if resuming
+        if args.task_model_path is not None:
+            if not os.path.exists(args.task_model_path):
+                raise FileNotFoundError(f"Task model path {args.task_model_path} does not exist.")
+            print(f"Loading task-only model from {args.task_model_path}")
+            agent_task.load_state_dict(torch.load(args.task_model_path, map_location=args.device))
+            print("Task-only model loaded successfully")
+
+        optimizer_mixed = torch.optim.Adam(agent_mixed.parameters(), lr=args.learning_rate, eps=1e-6)
+        optimizer_task = torch.optim.Adam(agent_task.parameters(), lr=args.learning_rate, eps=1e-6)
+
+        print(f"\n{'='*80}")
+        print("EIPO enabled: two independent agents created")
+        print(f"  Alpha init: {args.eipo_alpha_init}")
+        print(f"  Alpha lr: {args.eipo_alpha_lr}")
+        print(f"  Alpha range: [{args.eipo_alpha_min}, {args.eipo_alpha_max}]")
+        print(f"  Disc stationarity mode: {args.disc_stationarity_mode}")
+        if args.disc_stationarity_mode == "target":
+            print(f"  Disc EMA tau: {args.disc_ema_tau}")
+        print(f"{'='*80}\n")
+    else:
+        agent = Agent(
+            policy_env_view,
+            action_scale=action_scale,
+            action_bias=0.0,
+            hidden_layer_size=args.agent_hidden_layer_size,
+            num_hidden_layers=args.agent_num_hidden_layers,
+        ).to(args.device)
+        # Load pre-trained model if path is provided
+        if args.model_path is not None:
+            if not os.path.exists(args.model_path):
+                raise FileNotFoundError(f"Model path {args.model_path} does not exist.")
+            print(f"Loading pre-trained model from {args.model_path}")
+            agent.load_state_dict(torch.load(args.model_path, map_location=args.device))
+            if args.reset_actor_logstd_on_model_load:
+                with torch.no_grad():
+                    agent.actor_logstd.fill_(float(args.actor_logstd_on_model_load))
+                print(
+                    "Applied actor_logstd override after model load: "
+                    f"{float(args.actor_logstd_on_model_load):.4f}"
+                )
+            print("Model loaded successfully")
+        optimizer = torch.optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-6)
+
+    # BC policy (shared between EIPO and non-EIPO)
     bc_policy = None
     if args.bc_policy_path is not None:
         if not os.path.exists(args.bc_policy_path):
@@ -666,9 +804,14 @@ if __name__ == "__main__":
         bc_policy.eval()
         bc_policy.requires_grad_(False)
         print(f"Loaded frozen BC policy from {args.bc_policy_path}")
-    
-    optimizer = torch.optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-6)
-    use_short_discriminator_reward = args.disc_reward_weight > 0.0
+
+    # Determine discriminator usage (same logic as original, ignoring weights when EIPO)
+    if args.use_eipo:
+        # EIPO always needs discriminator reward if disc_reward_weight > 0 or
+        # if we want style reward at all. Use disc_reward_weight > 0 as the signal.
+        use_short_discriminator_reward = args.disc_reward_weight > 0.0
+    else:
+        use_short_discriminator_reward = args.disc_reward_weight > 0.0
     use_discriminator_reward = use_short_discriminator_reward
     use_motion_penalty = (
         args.velocity_penalty_weight > 0.0
@@ -687,7 +830,9 @@ if __name__ == "__main__":
     use_action_disc = False
     use_puck_disc = False
     discriminator, disc_optimizer, disc_normalizer, replay_buffer, demo_loader = None, None, None, None, None
-    
+    disc_target = None
+    disc_snapshot = None
+
     if use_short_discriminator_reward:
         # Load demonstration data first to determine short observation dimension
         demo_loader = DemoLoaderPositionHistory(
@@ -703,8 +848,8 @@ if __name__ == "__main__":
             puck_vertical_pos_min=args.puck_vertical_pos_min,
             puck_vertical_pos_max=args.puck_vertical_pos_max,
         )
-        print(f"✓ Short demo loader initialized ({len(demo_loader):,} demonstrations)")
-        
+        print(f"Short demo loader initialized ({len(demo_loader):,} demonstrations)")
+
         use_action_disc = demo_loader.use_actions
         use_puck_disc = demo_loader.use_puck
         disc_obs_dim = demo_loader.get_obs_dim()
@@ -712,7 +857,7 @@ if __name__ == "__main__":
             hidden_layer_size=args.disc_hidden_layer_size,
             num_hidden_layers=args.disc_num_hidden_layers,
         )
-        
+
         mode_parts = ["POSITION HISTORY (8D)"]
         if use_action_disc:
             mode_parts.append("ACTION HISTORY (8D)")
@@ -720,7 +865,7 @@ if __name__ == "__main__":
             mode_parts.append(f"PUCK FEATURES ({PUCK_FEATURE_DIM}D)")
         print(f"  Mode: {' + '.join(mode_parts)}")
         print(f"  Discriminator input dim: {disc_obs_dim}")
-        
+
         # Initialize short discriminator
         discriminator = Discriminator(
             disc_obs_dim,
@@ -736,31 +881,31 @@ if __name__ == "__main__":
             betas=(0.5, 0.95),
         )
         print(
-            "✓ Short discriminator initialized "
+            "Short discriminator initialized "
             f"(input_dim={disc_obs_dim}, hidden_layer_size={disc_hidden_layer_size}, "
             f"num_hidden_layers={disc_num_hidden_layers})"
         )
-        
+
         # Initialize normalizer
         disc_normalizer = Normalizer(shape=(disc_obs_dim,), clip=10.0, device=args.device)
-        print(f"✓ Normalizer initialized (clip=10.0)")
-        
+        print(f"Normalizer initialized (clip=10.0)")
+
         # Initialize replay buffer
         replay_buffer = ReplayBuffer(
             capacity=args.disc_replay_buffer_size,
             obs_shape=(disc_obs_dim,),
             device=args.device
         )
-        print(f"✓ Replay buffer initialized (capacity={args.disc_replay_buffer_size:,})")
-        
+        print(f"Replay buffer initialized (capacity={args.disc_replay_buffer_size:,})")
+
         # Load pre-trained short discriminator if path is provided
         if args.discriminator_path is not None:
             if not os.path.exists(args.discriminator_path):
                 raise FileNotFoundError(f"Discriminator path {args.discriminator_path} does not exist.")
             print(f"Loading pre-trained discriminator from {args.discriminator_path}")
             discriminator.load_state_dict(torch.load(args.discriminator_path, map_location=args.device))
-            print("✓ Discriminator loaded successfully")
-        
+            print("Discriminator loaded successfully")
+
         # Load short AMP components (normalizer, replay buffer) if path is provided
         if args.amp_components_path is not None:
             if not os.path.exists(args.amp_components_path):
@@ -769,12 +914,57 @@ if __name__ == "__main__":
             amp_components = torch.load(args.amp_components_path, map_location=args.device)
             disc_normalizer.load_state_dict(amp_components['normalizer'])
             replay_buffer.load_state_dict(amp_components['replay_buffer'])
-            print(f"✓ Short AMP components loaded successfully (replay buffer size: {len(replay_buffer):,})")
+            print(f"Short AMP components loaded successfully (replay buffer size: {len(replay_buffer):,})")
+
+        # EIPO disc stationarity setup
+        if args.use_eipo:
+            if args.disc_stationarity_mode == "target":
+                disc_target = copy.deepcopy(discriminator)
+                disc_target.eval()
+                disc_target.requires_grad_(False)
+                # Load target disc if resuming
+                if args.disc_target_path is not None:
+                    if not os.path.exists(args.disc_target_path):
+                        raise FileNotFoundError(f"Disc target path {args.disc_target_path} does not exist.")
+                    disc_target.load_state_dict(torch.load(args.disc_target_path, map_location=args.device))
+                    print(f"Loaded target discriminator from {args.disc_target_path}")
+                else:
+                    print("Initialized target discriminator (EMA copy)")
+
+            elif args.disc_stationarity_mode == "snapshot":
+                disc_snapshot = copy.deepcopy(discriminator)
+                disc_snapshot.eval()
+                disc_snapshot.requires_grad_(False)
+                print("Initialized snapshot discriminator")
+
+            elif args.disc_stationarity_mode == "frozen":
+                discriminator.eval()
+                discriminator.requires_grad_(False)
+                print("Discriminator FROZEN — no further training will occur")
+
     else:
         print("  Short discriminator reward disabled (disc_reward_weight <= 0).")
 
     print("="*80 + "\n")
 
+    # =========================================================================
+    # EIPO state variables
+    # =========================================================================
+    if args.use_eipo:
+        alpha = args.eipo_alpha_init
+        max_stage = False
+        prev_objective = 0.0
+        task_return_pi_mixed = 0.0
+        task_return_pi_e = 0.0
+
+        # Load saved EIPO state if resuming
+        if args.eipo_state_path is not None:
+            if not os.path.exists(args.eipo_state_path):
+                raise FileNotFoundError(f"EIPO state path {args.eipo_state_path} does not exist.")
+            eipo_state = torch.load(args.eipo_state_path, map_location="cpu")
+            alpha = eipo_state["alpha"]
+            max_stage = eipo_state["max_stage"]
+            print(f"Resumed EIPO state: alpha={alpha:.4f}, max_stage={max_stage}")
 
     # main training loop
     obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(args.device)
@@ -784,7 +974,7 @@ if __name__ == "__main__":
     rewards = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     dones = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
     values = torch.zeros((args.num_steps, args.num_envs)).to(args.device)
-    
+
     # AMP: Storage for discriminator observations and position history
     disc_obs = torch.zeros((args.num_steps, args.num_envs, disc_obs_dim)).to(args.device) if use_short_discriminator_reward else None
     paddle_positions = torch.zeros((args.num_steps, args.num_envs, 2)).to(args.device)
@@ -810,6 +1000,9 @@ if __name__ == "__main__":
     velocity_magnitudes = []
     acceleration_magnitudes = []
     jerk_magnitudes = []
+    # EIPO: storage for policy divergence across rollout steps
+    if args.use_eipo:
+        policy_divergence_accum = []
 
     # Start
     global_step = 0
@@ -835,18 +1028,40 @@ if __name__ == "__main__":
     current_velocity_mag = torch.zeros(args.num_envs, dtype=torch.float32, device=args.device)
     current_acceleration_mag = torch.zeros(args.num_envs, dtype=torch.float32, device=args.device)
     current_jerk_mag = torch.zeros(args.num_envs, dtype=torch.float32, device=args.device)
-    
+
 
     for iteration in range(1, args.num_iterations + 1):
         # Reset episodic return tracking for this iteration
         episodic_returns = []
         success_rates = []
-        
+
+        # =====================================================================
+        # EIPO: Select rollout and update agents for this iteration
+        # =====================================================================
+        if args.use_eipo:
+            if max_stage:
+                rollout_agent = agent_task
+                update_agent = agent_mixed
+                update_optimizer = optimizer_mixed
+            else:
+                rollout_agent = agent_mixed
+                update_agent = agent_task
+                update_optimizer = optimizer_task
+            policy_divergence_accum = []
+        else:
+            rollout_agent = agent
+            update_agent = agent
+            update_optimizer = optimizer
+
         # Annealing the rate if instructed to do so.
         if args.anneal_lr:
             frac = 1.0 - (iteration - 1.0) / args.num_iterations
             lrnow = frac * args.learning_rate
-            optimizer.param_groups[0]["lr"] = lrnow
+            if args.use_eipo:
+                optimizer_mixed.param_groups[0]["lr"] = lrnow
+                optimizer_task.param_groups[0]["lr"] = lrnow
+            else:
+                update_optimizer.param_groups[0]["lr"] = lrnow
 
         if args.bc_kl_decay_iters > 0:
             bc_anneal_frac = max(0.0, 1.0 - (iteration - 1.0) / float(args.bc_kl_decay_iters))
@@ -864,10 +1079,16 @@ if __name__ == "__main__":
             policy_obs[step] = policy_next_obs
 
             with torch.no_grad():
-                action, logprob, _, value = agent.get_action_and_value(policy_next_obs)
+                action, logprob, _, value = rollout_agent.get_action_and_value(policy_next_obs)
                 values[step] = value.flatten()
             actions[step] = action
             logprobs[step] = logprob
+
+            # EIPO: compute policy divergence during rollout
+            if args.use_eipo:
+                with torch.no_grad():
+                    _, other_logprob, _, _ = update_agent.get_action_and_value(policy_next_obs, action)
+                    policy_divergence_accum.append((logprob - other_logprob).abs().mean().item())
 
             next_obs, reward, terminations, truncations, infos = envs.step(action.cpu().numpy())
 
@@ -889,18 +1110,18 @@ if __name__ == "__main__":
             velocity_mag_rollout[step] = current_velocity_mag
             acceleration_mag_rollout[step] = current_acceleration_mag
             jerk_mag_rollout[step] = current_jerk_mag
-            
+
             # AMP: Construct discriminator observations from trajectory history
             current_paddle_pos = extract_current_paddle_position(next_obs)
             current_puck_pos = extract_current_puck_position(next_obs) if use_puck_disc else None
             paddle_positions[step] = current_paddle_pos
-            
+
             # Optional action magnitude reward (raw value is independent of scale)
             action_magnitude = actions[step].abs().sum(dim=-1)
             action_mag_raw = (torch.maximum(-action_magnitude, torch.full_like(action_magnitude, -0.25)) + 0.125) * 8.0
             action_magnitude_reward_raw[step] = action_mag_raw
             action_magnitude_reward_scaled[step] = action_mag_raw * args.action_magnitude_reward_scale
-            
+
             if use_short_discriminator_reward:
                 # Update position history buffer (rolling buffer: shift left, add new position at end)
                 position_history = torch.roll(position_history, shifts=-1, dims=1)
@@ -913,14 +1134,14 @@ if __name__ == "__main__":
                 if use_puck_disc:
                     puck_position_history = torch.roll(puck_position_history, shifts=-1, dims=1)
                     puck_position_history[:, -1, :] = current_puck_pos
-                
+
                 # Increment position count (capped at history_len)
                 position_count = torch.clamp(position_count + 1, max=history_len)
                 if use_action_disc:
                     action_count = torch.clamp(action_count + 1, max=action_history_len)
                 if use_puck_disc:
                     puck_count = torch.clamp(puck_count + 1, max=history_len)
-                
+
                 # Valid transition only if we have history_len positions AND not just reset
                 has_enough_history = position_count >= history_len
                 valid_transition[step] = has_enough_history
@@ -930,14 +1151,14 @@ if __name__ == "__main__":
                 if use_puck_disc:
                     has_enough_puck = puck_count >= history_len
                     valid_transition[step] = valid_transition[step] & has_enough_puck
-                
+
                 # Invalidate for environments that just reset
                 valid_transition[step, just_reset] = False
-                
+
                 # Normalize the position history to get relative positions
-                # Result: [batch, 8] = 4 relative positions × 2 coords
+                # Result: [batch, 8] = 4 relative positions x 2 coords
                 normalized_positions = normalize_position_history_batch(position_history)
-                
+
                 # Store the discriminator observations
                 disc_feature_parts = [normalized_positions]
                 if use_action_disc:
@@ -1015,10 +1236,9 @@ if __name__ == "__main__":
                     if info and "episode_return" in info:
                         episodic_returns.append(info['episode_return'])
                         success_rates.append(1.0 if info['success'] else 0.0)
-                        # print(f"global_step={global_step}, episodic_return={info['episode_return']}")
                         writer.add_scalar("charts/episodic_return", info['episode_return'], global_step)
                         writer.add_scalar("charts/episodic_length", info['episode_length'], global_step)
-                        
+
                         # Extract motion data if available
                         if 'motion_data' in info:
                             velocity_magnitudes.extend(info['motion_data']['velocity_mags'])
@@ -1030,8 +1250,22 @@ if __name__ == "__main__":
             next_policy_obs = augment_policy_observation(
                 next_obs, last_action_for_policy, args.use_last_action_in_policy_state
             )
-            next_value = agent.get_value(next_policy_obs).reshape(1, -1)
-            
+            next_value = rollout_agent.get_value(next_policy_obs).reshape(1, -1)
+
+            # =================================================================
+            # EIPO: Re-evaluate update agent's value function on rollout states
+            # =================================================================
+            if args.use_eipo:
+                update_values = torch.zeros_like(values)
+                for step_idx in range(args.num_steps):
+                    update_values[step_idx] = update_agent.get_value(policy_obs[step_idx]).flatten()
+                next_update_value = update_agent.get_value(next_policy_obs).reshape(1, -1)
+                gae_values = update_values
+                gae_next_value = next_update_value
+            else:
+                gae_values = values
+                gae_next_value = next_value
+
             # Optional temporal alignment reward:
             # compare realized movement over horizon vs commanded action direction from horizon steps ago.
             temporal_alignment_reward_raw.zero_()
@@ -1053,15 +1287,18 @@ if __name__ == "__main__":
                     torch.full_like(cosine_sim, 0.75),  # hard-coded reward
                     cosine_sim,
                 )
-                
+
                 # Invalidate if episode reset happened between command and realized movement.
                 temporal_valid = torch.ones(args.num_envs, dtype=torch.bool, device=args.device)
                 for k in range(t - horizon + 1, t + 1):
                     temporal_valid = temporal_valid & (~dones[k].bool())
-                
+
                 temporal_alignment_reward_raw[t] = cosine_sim * temporal_valid.float()
             temporal_alignment_reward_scaled = temporal_alignment_reward_raw * args.temporal_alignment_reward_scale
-            
+
+            # =================================================================
+            # Discriminator reward computation
+            # =================================================================
             if use_short_discriminator_reward:
                 b_disc_obs = disc_obs.reshape(-1, disc_obs_dim)
                 if iteration <= args.disc_reward_warmup_iters:
@@ -1072,8 +1309,19 @@ if __name__ == "__main__":
                         device=args.device,
                     )
                 else:
+                    # Select which network computes rewards
+                    if args.use_eipo:
+                        if args.disc_stationarity_mode == "target":
+                            reward_disc = disc_target
+                        elif args.disc_stationarity_mode == "snapshot":
+                            reward_disc = disc_snapshot
+                        else:  # "live" or "frozen"
+                            reward_disc = discriminator
+                    else:
+                        reward_disc = discriminator
+
                     norm_disc_obs = disc_normalizer.normalize(b_disc_obs)
-                    disc_scores = discriminator(norm_disc_obs).squeeze(-1)
+                    disc_scores = reward_disc(norm_disc_obs).squeeze(-1)
                     disc_r_raw = torch.clamp(1 - 0.25 * (disc_scores - 1) ** 2, min=0)
                     b_valid = valid_transition.reshape(-1)
                     disc_r_raw = disc_r_raw * b_valid.float()
@@ -1082,10 +1330,10 @@ if __name__ == "__main__":
             else:
                 b_disc_obs = None
                 disc_r_raw = torch.zeros(args.num_steps * args.num_envs, device=args.device)
+                disc_r_raw_shaped = torch.zeros((args.num_steps, args.num_envs), device=args.device)
                 disc_r_scaled = torch.zeros((args.num_steps, args.num_envs), device=args.device)
 
             task_r_raw = rewards
-            task_r_scaled = args.task_reward_weight * task_r_raw
 
             motion_raw = torch.stack(
                 [velocity_mag_rollout, acceleration_mag_rollout, jerk_mag_rollout], dim=-1
@@ -1106,32 +1354,56 @@ if __name__ == "__main__":
             velocity_penalty_scaled = args.velocity_penalty_weight * velocity_penalty_raw
             acceleration_penalty_scaled = args.acceleration_penalty_weight * acceleration_penalty_raw
             jerk_penalty_scaled = args.jerk_penalty_weight * jerk_penalty_raw
-            
-            # Combine scaled reward streams only when building PPO targets.
-            combined_rewards = (
-                task_r_scaled
-                + disc_r_scaled
-                + temporal_alignment_reward_scaled
-                + action_magnitude_reward_scaled
-                + velocity_penalty_scaled
-                + acceleration_penalty_scaled
-                + jerk_penalty_scaled
-            )
-            
-            # Compute advantages with combined rewards
+
+            # =================================================================
+            # Reward combination
+            # =================================================================
+            if args.use_eipo:
+                # task_r_total includes task reward + all auxiliary shaping signals
+                task_r_total = (
+                    task_r_raw
+                    + temporal_alignment_reward_scaled
+                    + action_magnitude_reward_scaled
+                    + velocity_penalty_scaled
+                    + acceleration_penalty_scaled
+                    + jerk_penalty_scaled
+                )
+                if max_stage:
+                    # Max-stage: updating pi_{E+I}, sees (1+alpha)*task + disc
+                    combined_rewards = (1 + alpha) * task_r_total + disc_r_raw_shaped
+                else:
+                    # Min-stage: updating pi_E, sees alpha*task only
+                    combined_rewards = alpha * task_r_total
+
+                # For logging, compute task_r_scaled as the effective scaled task reward
+                task_r_scaled = (1 + alpha) * task_r_raw if max_stage else alpha * task_r_raw
+            else:
+                task_r_scaled = args.task_reward_weight * task_r_raw
+                # Combine scaled reward streams only when building PPO targets.
+                combined_rewards = (
+                    task_r_scaled
+                    + disc_r_scaled
+                    + temporal_alignment_reward_scaled
+                    + action_magnitude_reward_scaled
+                    + velocity_penalty_scaled
+                    + acceleration_penalty_scaled
+                    + jerk_penalty_scaled
+                )
+
+            # Compute advantages with combined rewards using appropriate value baseline
             advantages = torch.zeros_like(combined_rewards).to(args.device)
             lastgaelam = 0
             for t in reversed(range(args.num_steps)):
                 if t == args.num_steps - 1:
                     nextnonterminal = 1.0 - next_done
-                    nextvalues = next_value
+                    nextvalues = gae_next_value
                 else:
                     nextnonterminal = 1.0 - dones[t + 1]
-                    nextvalues = values[t + 1]
-                delta = combined_rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
+                    nextvalues = gae_values[t + 1]
+                delta = combined_rewards[t] + args.gamma * nextvalues * nextnonterminal - gae_values[t]
                 advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-            returns = advantages + values
-            
+            returns = advantages + gae_values
+
             log_reward_stream_stats(
                 writer=writer,
                 global_step=global_step,
@@ -1143,10 +1415,10 @@ if __name__ == "__main__":
                 action_magnitude_reward_scaled=action_magnitude_reward_scaled,
                 combined_rewards=combined_rewards,
                 advantages=advantages,
-                values=values,
+                values=gae_values,
                 use_short_discriminator_reward=use_short_discriminator_reward,
                 disc_r_raw=disc_r_raw,
-                disc_r_scaled=disc_r_scaled,
+                disc_r_scaled=disc_r_scaled if not args.use_eipo else disc_r_raw_shaped,
             )
             log_motion_penalty_stats(
                 writer=writer,
@@ -1170,9 +1442,9 @@ if __name__ == "__main__":
         b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
         b_advantages = advantages.reshape(-1)
         b_returns = returns.reshape(-1)
-        b_values = values.reshape(-1)
+        b_values = gae_values.reshape(-1)
         b_dones = dones.reshape(-1).bool()
-            
+
 
         # Optimizing the policy and value network
         b_inds = np.arange(args.batch_size)
@@ -1186,7 +1458,8 @@ if __name__ == "__main__":
                 end = start + args.minibatch_size
                 mb_inds = b_inds[start:end]
 
-                _, newlogprob, _, newvalue = agent.get_action_and_value(b_policy_obs[mb_inds], b_actions[mb_inds])
+                # Use update_agent for PPO (importance sampling: ratio = pi_update / pi_rollout)
+                _, newlogprob, _, newvalue = update_agent.get_action_and_value(b_policy_obs[mb_inds], b_actions[mb_inds])
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
@@ -1221,14 +1494,11 @@ if __name__ == "__main__":
                     v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
 
                 entropy_loss = (-newlogprob).mean() # unbiased estimate of entropy
-                # PPO + BC-KL objective:
-                # L_total(theta) = L_PPO(theta) + lambda_BC * E_s[ KL(pi_BC(.|s) || pi_theta(.|s)) ].
-                # Minibatch estimate uses sampled rollout states s_i:
-                # (1/M) * sum_i KL(pi_BC(.|s_i) || pi_theta(.|s_i)).
+                # PPO + BC-KL objective
                 if bc_policy is not None and current_bc_kl_weight > 0.0:
                     with torch.no_grad():
                         bc_mean, bc_logstd = bc_policy.get_action_mean_and_logstd(b_policy_obs[mb_inds])
-                    student_mean, student_logstd = agent.get_action_mean_and_logstd(b_policy_obs[mb_inds])
+                    student_mean, student_logstd = update_agent.get_action_mean_and_logstd(b_policy_obs[mb_inds])
                     bc_var = torch.exp(2.0 * bc_logstd)
                     student_var = torch.exp(2.0 * student_logstd)
                     bc_kl_loss = (
@@ -1240,20 +1510,23 @@ if __name__ == "__main__":
                     bc_kl_loss = torch.zeros((), device=args.device)
 
                 loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef + current_bc_kl_weight * bc_kl_loss
-    
-                optimizer.zero_grad()
+
+                update_optimizer.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
-                optimizer.step()
+                nn.utils.clip_grad_norm_(update_agent.parameters(), args.max_grad_norm)
+                update_optimizer.step()
 
             if args.target_kl is not None and approx_kl > args.target_kl:
                 break
-        
-        # AMP: Train short discriminator
-        if use_short_discriminator_reward:
+
+        # =================================================================
+        # AMP: Train discriminator
+        # =================================================================
+        disc_metrics = None
+        if use_short_discriminator_reward and (not args.use_eipo or args.disc_stationarity_mode != "frozen"):
             for i in range(args.num_discriminator_updates):
                 b_valid = valid_transition.reshape(-1)
-                disc_metrics = train_discriminator_step(
+                disc_metrics = train_lsgan_discriminator_step(
                     demo_loader=demo_loader,
                     disc_batch_size=args.disc_batch_size,
                     b_disc_obs=b_disc_obs,
@@ -1269,21 +1542,61 @@ if __name__ == "__main__":
                     device=args.device,
                 )
 
-            # Log short discriminator metrics
-            log_discriminator_metrics(
-                writer=writer,
-                prefix="amp",
-                metrics=disc_metrics,
-                replay_buffer_size=len(replay_buffer),
-                global_step=global_step,
-            )
+            # EIPO target mode: EMA update after disc training
+            if args.use_eipo and args.disc_stationarity_mode == "target" and disc_target is not None:
+                with torch.no_grad():
+                    for param, target_param in zip(discriminator.parameters(), disc_target.parameters()):
+                        target_param.data.copy_(
+                            args.disc_ema_tau * param.data + (1 - args.disc_ema_tau) * target_param.data
+                        )
+
+            # Log discriminator metrics
+            if disc_metrics is not None:
+                log_discriminator_metrics(
+                    writer=writer,
+                    prefix="amp",
+                    metrics=disc_metrics,
+                    replay_buffer_size=len(replay_buffer),
+                    global_step=global_step,
+                )
+
+        # =================================================================
+        # EIPO: Switching rule and alpha update
+        # =================================================================
+        if args.use_eipo:
+            current_objective = combined_rewards.mean().item()
+
+            if max_stage:
+                task_return_pi_e = task_r_raw.mean().item()
+            else:
+                task_return_pi_mixed = task_r_raw.mean().item()
+
+            stage_just_switched = False
+            if max_stage and (current_objective - prev_objective <= 0):
+                # Leaving max-stage -> update alpha
+                alpha_grad = task_return_pi_mixed - task_return_pi_e
+                alpha = max(args.eipo_alpha_min, min(args.eipo_alpha_max,
+                            alpha - args.eipo_alpha_lr * alpha_grad))
+                max_stage = False
+                stage_just_switched = True
+            elif not max_stage and (current_objective - prev_objective >= 0):
+                max_stage = True
+                stage_just_switched = True
+
+            prev_objective = current_objective
+
+            # Snapshot mode: re-snapshot disc on stage switch
+            if stage_just_switched and args.disc_stationarity_mode == "snapshot" and discriminator is not None:
+                disc_snapshot = copy.deepcopy(discriminator)
+                disc_snapshot.eval()
+                disc_snapshot.requires_grad_(False)
 
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
-        writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
+        writer.add_scalar("charts/learning_rate", update_optimizer.param_groups[0]["lr"], global_step)
         writer.add_scalar("losses/bc_kl_weight", current_bc_kl_weight, global_step)
         writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
         writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
@@ -1295,14 +1608,58 @@ if __name__ == "__main__":
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
-        
+
+        # =================================================================
+        # EIPO-specific logging
+        # =================================================================
+        if args.use_eipo:
+            writer.add_scalar("eipo/alpha", alpha, global_step)
+            writer.add_scalar("eipo/max_stage", float(max_stage), global_step)
+            writer.add_scalar("eipo/dual_objective", current_objective, global_step)
+            writer.add_scalar("eipo/task_return_mixed", task_return_pi_mixed, global_step)
+            writer.add_scalar("eipo/task_return_task_only", task_return_pi_e, global_step)
+            writer.add_scalar("eipo/task_gap", task_return_pi_mixed - task_return_pi_e, global_step)
+            writer.add_scalar("eipo/effective_task_weight", 1 + alpha, global_step)
+            writer.add_scalar("eipo/effective_disc_weight", 1.0, global_step)
+            writer.add_scalar("eipo/task_reward_contribution",
+                              ((1 + alpha) * task_r_raw).mean().item(), global_step)
+            writer.add_scalar("eipo/disc_reward_contribution",
+                              disc_r_raw_shaped.mean().item() if max_stage else 0.0, global_step)
+
+            # Policy divergence
+            if policy_divergence_accum:
+                avg_policy_divergence = np.mean(policy_divergence_accum)
+                writer.add_scalar("eipo/policy_divergence", avg_policy_divergence, global_step)
+
+            # Discriminator stationarity monitoring
+            if use_short_discriminator_reward and b_disc_obs is not None:
+                if args.disc_stationarity_mode == "target" and disc_target is not None:
+                    with torch.no_grad():
+                        norm_disc_obs_for_drift = disc_normalizer.normalize(b_disc_obs)
+                        live_scores = discriminator(norm_disc_obs_for_drift).squeeze(-1)
+                        target_scores = disc_target(norm_disc_obs_for_drift).squeeze(-1)
+                        disc_reward_drift = (live_scores - target_scores).abs().mean().item()
+                    writer.add_scalar("eipo/disc_reward_drift", disc_reward_drift, global_step)
+                    writer.add_scalar("eipo/disc_ema_tau", args.disc_ema_tau, global_step)
+
+                elif args.disc_stationarity_mode == "snapshot" and disc_snapshot is not None:
+                    with torch.no_grad():
+                        norm_disc_obs_for_drift = disc_normalizer.normalize(b_disc_obs)
+                        live_scores = discriminator(norm_disc_obs_for_drift).squeeze(-1)
+                        snapshot_scores = disc_snapshot(norm_disc_obs_for_drift).squeeze(-1)
+                        disc_reward_drift = (live_scores - snapshot_scores).abs().mean().item()
+                    writer.add_scalar("eipo/disc_reward_drift", disc_reward_drift, global_step)
+
         # Calculate and log episodic return statistics for this iteration
         if episodic_returns:
             avg_return = np.mean(episodic_returns)
             min_return = np.min(episodic_returns)
             max_return = np.max(episodic_returns)
-            
-            print(f"Iteration {iteration}: Avg Return: {avg_return:.2f}, Min Return: {min_return:.2f}, Max Return: {max_return:.2f}")
+
+            stage_str = ""
+            if args.use_eipo:
+                stage_str = f" [{'MAX' if max_stage else 'MIN'}-stage, alpha={alpha:.3f}]"
+            print(f"Iteration {iteration}{stage_str}: Avg Return: {avg_return:.2f}, Min Return: {min_return:.2f}, Max Return: {max_return:.2f}")
             print(f"Iteration {iteration}: Avg Success Rate: {np.mean(success_rates):.2f}, Max Success Rate: {np.max(success_rates):.2f}")
             writer.add_scalar("charts/avg_episodic_return", avg_return, iteration)
             writer.add_scalar("charts/min_episodic_return", min_return, iteration)
@@ -1316,19 +1673,19 @@ if __name__ == "__main__":
             max_return = 0.0
             avg_return = 0.0
             print(f"Iteration {iteration}: No episodes completed")
-        
+
         # Calculate and log motion statistics
         if velocity_magnitudes:
             avg_vel_mag = np.mean(velocity_magnitudes)
-            avg_acc_mag = np.mean(acceleration_magnitudes) 
+            avg_acc_mag = np.mean(acceleration_magnitudes)
             avg_jerk_mag = np.mean(jerk_magnitudes)
-            
+
             print(f"Iteration {iteration}: Avg Velocity Mag: {avg_vel_mag:.4f}, Avg Acceleration Mag: {avg_acc_mag:.4f}, Avg Jerk Mag: {avg_jerk_mag:.4f}")
-            
+
             writer.add_scalar("motion/avg_velocity_magnitude", avg_vel_mag, iteration)
             writer.add_scalar("motion/avg_acceleration_magnitude", avg_acc_mag, iteration)
             writer.add_scalar("motion/avg_jerk_magnitude", avg_jerk_mag, iteration)
-            
+
             # Clear lists for next iteration
             velocity_magnitudes.clear()
             acceleration_magnitudes.clear()
@@ -1336,52 +1693,140 @@ if __name__ == "__main__":
 
         if iteration % 10 == 0 or min_return >= 5000: # start cherry-picking good policies
             # save a checkpoint of the model
-            # create a subfolder for the checkpoint
             checkpoint_dir = os.path.join(log_parent_dir, f"checkpoint_{iteration}")
             os.makedirs(checkpoint_dir, exist_ok=True)
-            model_path = f"{checkpoint_dir}/model.pth"
-            torch.save(agent.state_dict(), model_path)
-            
-            # Save short AMP components in checkpoint when short discriminator reward is active
-            if use_short_discriminator_reward:
-                save_amp_components(checkpoint_dir, discriminator, disc_normalizer, replay_buffer)
 
-            # evaluate the model
-            evaluate_agent(
-                model_path, 
-                checkpoint_dir, 
-                config["air_hockey"], 
-                n_eps=4, 
-                n_gifs=1,
-                reference_states=reference_states,
-                ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None,
-                action_scale=action_scale,
-                agent_hidden_layer_size=args.agent_hidden_layer_size,
-                agent_num_hidden_layers=args.agent_num_hidden_layers,
-                use_last_action_in_policy_state=args.use_last_action_in_policy_state,
-            )
-            
+            if args.use_eipo:
+                save_eipo_checkpoint(
+                    checkpoint_dir=checkpoint_dir,
+                    agent_mixed=agent_mixed,
+                    agent_task=agent_task,
+                    discriminator=discriminator,
+                    disc_normalizer=disc_normalizer,
+                    replay_buffer=replay_buffer,
+                    alpha=alpha,
+                    max_stage=max_stage,
+                    iteration=iteration,
+                    disc_target=disc_target,
+                    disc_snapshot=disc_snapshot,
+                )
+
+                # Evaluate mixed policy (the one we deploy)
+                evaluate_agent(
+                    os.path.join(checkpoint_dir, "model_mixed.pth"),
+                    os.path.join(checkpoint_dir, "eval_mixed"),
+                    config["air_hockey"],
+                    n_eps=4,
+                    n_gifs=1,
+                    reference_states=reference_states,
+                    ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None,
+                    action_scale=action_scale,
+                    agent_hidden_layer_size=args.agent_hidden_layer_size,
+                    agent_num_hidden_layers=args.agent_num_hidden_layers,
+                    use_last_action_in_policy_state=args.use_last_action_in_policy_state,
+                )
+
+                # Evaluate task-only policy (to monitor the anchor)
+                evaluate_agent(
+                    os.path.join(checkpoint_dir, "model_task.pth"),
+                    os.path.join(checkpoint_dir, "eval_task"),
+                    config["air_hockey"],
+                    n_eps=4,
+                    n_gifs=1,
+                    reference_states=reference_states,
+                    ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None,
+                    action_scale=action_scale,
+                    agent_hidden_layer_size=args.agent_hidden_layer_size,
+                    agent_num_hidden_layers=args.agent_num_hidden_layers,
+                    use_last_action_in_policy_state=args.use_last_action_in_policy_state,
+                )
+            else:
+                model_path = f"{checkpoint_dir}/model.pth"
+                torch.save(agent.state_dict(), model_path)
+
+                # Save short AMP components in checkpoint when short discriminator reward is active
+                if use_short_discriminator_reward:
+                    save_amp_components(checkpoint_dir, discriminator, disc_normalizer, replay_buffer)
+
+                # evaluate the model
+                evaluate_agent(
+                    model_path,
+                    checkpoint_dir,
+                    config["air_hockey"],
+                    n_eps=4,
+                    n_gifs=1,
+                    reference_states=reference_states,
+                    ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None,
+                    action_scale=action_scale,
+                    agent_hidden_layer_size=args.agent_hidden_layer_size,
+                    agent_num_hidden_layers=args.agent_num_hidden_layers,
+                    use_last_action_in_policy_state=args.use_last_action_in_policy_state,
+                )
+
             print(f"Iteration {iteration} complete")
 
-    # save model
-    torch.save(agent.state_dict(), f"{log_parent_dir}/model.pth")
-    
-    # Save AMP components when discriminator reward is active
-    if use_short_discriminator_reward:
-        save_amp_components(log_parent_dir, discriminator, disc_normalizer, replay_buffer)
-        print(f"✓ Saved short discriminator and AMP components")
+    # =================================================================
+    # Final save
+    # =================================================================
+    if args.use_eipo:
+        save_eipo_checkpoint(
+            checkpoint_dir=log_parent_dir,
+            agent_mixed=agent_mixed,
+            agent_task=agent_task,
+            discriminator=discriminator,
+            disc_normalizer=disc_normalizer,
+            replay_buffer=replay_buffer,
+            alpha=alpha,
+            max_stage=max_stage,
+            iteration=args.num_iterations,
+            disc_target=disc_target,
+            disc_snapshot=disc_snapshot,
+        )
+        print(f"Saved EIPO final checkpoint (alpha={alpha:.4f})")
 
-    # evaluate the model and save results
-    evaluate_agent(
-        f"{log_parent_dir}/model.pth", 
-        log_parent_dir, 
-        config["air_hockey"],
-        reference_states=reference_states,
-        ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None,
-        action_scale=action_scale,
-        agent_hidden_layer_size=args.agent_hidden_layer_size,
-        agent_num_hidden_layers=args.agent_num_hidden_layers,
-        use_last_action_in_policy_state=args.use_last_action_in_policy_state,
-    )
-    
+        # Evaluate both policies
+        evaluate_agent(
+            f"{log_parent_dir}/model_mixed.pth",
+            os.path.join(log_parent_dir, "eval_mixed"),
+            config["air_hockey"],
+            reference_states=reference_states,
+            ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None,
+            action_scale=action_scale,
+            agent_hidden_layer_size=args.agent_hidden_layer_size,
+            agent_num_hidden_layers=args.agent_num_hidden_layers,
+            use_last_action_in_policy_state=args.use_last_action_in_policy_state,
+        )
+        evaluate_agent(
+            f"{log_parent_dir}/model_task.pth",
+            os.path.join(log_parent_dir, "eval_task"),
+            config["air_hockey"],
+            reference_states=reference_states,
+            ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None,
+            action_scale=action_scale,
+            agent_hidden_layer_size=args.agent_hidden_layer_size,
+            agent_num_hidden_layers=args.agent_num_hidden_layers,
+            use_last_action_in_policy_state=args.use_last_action_in_policy_state,
+        )
+    else:
+        # save model
+        torch.save(agent.state_dict(), f"{log_parent_dir}/model.pth")
+
+        # Save AMP components when discriminator reward is active
+        if use_short_discriminator_reward:
+            save_amp_components(log_parent_dir, discriminator, disc_normalizer, replay_buffer)
+            print(f"Saved short discriminator and AMP components")
+
+        # evaluate the model and save results
+        evaluate_agent(
+            f"{log_parent_dir}/model.pth",
+            log_parent_dir,
+            config["air_hockey"],
+            reference_states=reference_states,
+            ref_max_episode_steps=args.ref_max_episode_steps if args.use_reference_state_init else None,
+            action_scale=action_scale,
+            agent_hidden_layer_size=args.agent_hidden_layer_size,
+            agent_num_hidden_layers=args.agent_num_hidden_layers,
+            use_last_action_in_policy_state=args.use_last_action_in_policy_state,
+        )
+
     # end of training

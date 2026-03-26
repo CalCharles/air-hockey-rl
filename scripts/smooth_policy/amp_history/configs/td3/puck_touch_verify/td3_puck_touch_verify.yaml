@@ -5,7 +5,7 @@
 
 # Basic training parameters
 total_timesteps: 300000
-num_envs: 8
+num_envs: 1
 
 # TD3 core
 buffer_size: 500000

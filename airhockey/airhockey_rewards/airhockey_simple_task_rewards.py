@@ -205,8 +205,10 @@ class AirHockeyPuckJuggleNoBaseReward(AirHockeyPuckJuggleLinearTopReward):
 
 class AirHockeyPuckJuggleUpperHalfReward(AirHockeyPuckJuggleLinearTopReward):
     def get_base_reward(self, state_info):
-        _, success = super().get_base_reward(state_info)
+        inherited_reward, success = super().get_base_reward(state_info)
         reward = self.upper_half_reward(state_info)
+        if self.task_env.include_inherited_reward:
+            reward = reward + inherited_reward
         return reward, success
 
     def upper_half_reward(self, state_info):

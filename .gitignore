@@ -217,5 +217,11 @@ datasets/
 new_data/
 demo/
 *.out
+<<<<<<< Updated upstream
 shared/
 real_runs/
+=======
+.cursor/
+shared/
+.claude
+>>>>>>> Stashed changes
