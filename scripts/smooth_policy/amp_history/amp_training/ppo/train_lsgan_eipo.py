@@ -55,6 +55,7 @@ from scripts.smooth_policy.amp_history.amp_training.feature_processing import (
     normalize_action_history_batch,
     normalize_position_history_batch,
 )
+from scripts.smooth_policy.amp_history.amp_training.tracking import TrajectoryCollector, TrajectoryVisualizer
 
 # used for possible reference state initialization from demonstrations
 class ReferenceStateWrapper(gym.Wrapper):
@@ -577,6 +578,10 @@ class Args:
     task_model_path: str = None              # Path to task-only policy for resuming
     disc_target_path: str = None             # Path to target disc for resuming (target mode)
 
+    # Checkpointing
+    checkpoint_freq: int = 10                 # Save a checkpoint every N iterations
+    disc_tracking_image_freq: int = 500       # Log trajectory images every N iterations (0 = disabled)
+
 
 def make_env(env_id, reference_states=None, max_episode_steps=20):
     def _thunk():
@@ -687,6 +692,12 @@ if __name__ == "__main__":
         yaml.dump(config, f)
     with open(f"{log_parent_dir}/args.yaml", "w") as f:
         yaml.dump(vars(args), f)
+
+    trajectory_collector = TrajectoryCollector(max_episodes=200)
+    trajectory_visualizer = TrajectoryVisualizer() if args.disc_tracking_image_freq > 0 else None
+
+    # Pre-sample expert positions for visualization from demo_loader
+    _expert_trajs_for_vis = None
 
     if 'use_pid' in config["air_hockey"] and config["air_hockey"]["use_pid"]:
         action_scale = 1
@@ -946,6 +957,15 @@ if __name__ == "__main__":
         print("  Short discriminator reward disabled (disc_reward_weight <= 0).")
 
     print("="*80 + "\n")
+
+    # Pre-sample expert positions for visualization from demo_loader
+    if trajectory_visualizer is not None and demo_loader is not None and hasattr(demo_loader, 'position_history') and demo_loader.position_history is not None:
+        _n_expert = min(200, demo_loader.position_history.shape[0])
+        _idx = torch.randperm(demo_loader.position_history.shape[0], device='cpu')[:_n_expert]
+        _expert_trajs_for_vis = [
+            demo_loader.position_history[_idx[i]].cpu().numpy()  # (T, 2)
+            for i in range(_n_expert)
+        ]
 
     # =========================================================================
     # EIPO state variables
@@ -1244,6 +1264,13 @@ if __name__ == "__main__":
                             velocity_magnitudes.extend(info['motion_data']['velocity_mags'])
                             acceleration_magnitudes.extend(info['motion_data']['acceleration_mags'])
                             jerk_magnitudes.extend(info['motion_data']['jerk_mags'])
+
+        # Tracking: update trajectory collector with this rollout
+        if args.disc_tracking_image_freq > 0:
+            trajectory_collector.push_rollout(
+                paddle_positions.cpu().numpy(),
+                dones.cpu().numpy(),
+            )
 
         # bootstrap value if not done and compute advantages
         with torch.no_grad():
@@ -1559,6 +1586,8 @@ if __name__ == "__main__":
                     replay_buffer_size=len(replay_buffer),
                     global_step=global_step,
                 )
+                balanced_acc = 0.5 * (disc_metrics["disc_agent_acc"] + disc_metrics["disc_demo_acc"])
+                writer.add_scalar("amp/disc_balanced_acc", balanced_acc, global_step)
 
         # =================================================================
         # EIPO: Switching rule and alpha update
@@ -1674,6 +1703,17 @@ if __name__ == "__main__":
             avg_return = 0.0
             print(f"Iteration {iteration}: No episodes completed")
 
+        # Trajectory visualizations
+        if (trajectory_visualizer is not None
+                and args.disc_tracking_image_freq > 0
+                and iteration % args.disc_tracking_image_freq == 0):
+            policy_trajs = trajectory_collector.get_recent(50)
+            figs = trajectory_visualizer.render_all(policy_trajs, _expert_trajs_for_vis or [])
+            for tag, img in figs.items():
+                if img is not None:
+                    # TensorBoard expects (C, H, W), img is (H, W, 4) RGBA
+                    writer.add_image(tag, img.transpose(2, 0, 1), global_step)
+
         # Calculate and log motion statistics
         if velocity_magnitudes:
             avg_vel_mag = np.mean(velocity_magnitudes)
@@ -1691,7 +1731,7 @@ if __name__ == "__main__":
             acceleration_magnitudes.clear()
             jerk_magnitudes.clear()
 
-        if iteration % 10 == 0 or min_return >= 5000: # start cherry-picking good policies
+        if iteration % args.checkpoint_freq == 0 or min_return >= 5000: # start cherry-picking good policies
             # save a checkpoint of the model
             checkpoint_dir = os.path.join(log_parent_dir, f"checkpoint_{iteration}")
             os.makedirs(checkpoint_dir, exist_ok=True)
