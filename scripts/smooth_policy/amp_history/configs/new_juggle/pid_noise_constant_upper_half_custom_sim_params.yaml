@@ -15,6 +15,19 @@ air_hockey:
   obs_type: history
   return_goal_obs: false
   seed: 0
+
+  puck_spawn_near_paddle_prob: 0.15
+  puck_near_paddle_offset_min_m: 0.025
+  puck_near_paddle_offset_max_m: 0.05
+  puck_near_paddle_horizontal_std_m: 0.015
+  puck_near_paddle_speed_min_m_s: 0.0
+  puck_near_paddle_speed_max_m_s: 0.2
+
+  puck_linear_top_spawn_goal_cutoff_x: null
+  puck_linear_top_spawn_center_cutoff_x: 0.2
+  puck_linear_top_spawn_speed_min: 0.0
+  puck_linear_top_spawn_speed_max: 0.5
+
   simulator: box2d
   simulator_params:
     absorb_target: false
@@ -50,6 +63,9 @@ air_hockey:
     random_occlusion_bad_region_box_x: [-0.4, -0.35]
     random_occlusion_bad_region_box_y: [-0.3, 0.0]
     random_occlusion_bad_region_right_x: [0.35, 0.8]
+    random_occlusion_near_paddle_boost: true
+    random_occlusion_near_paddle_distance_m: 0.05
+    random_occlusion_near_paddle_rate_multiplier: 3.0
     enable_action_delay: false
     enable_observation_delay: true
     delay_seconds: 0.025
