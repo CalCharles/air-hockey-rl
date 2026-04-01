@@ -1,3 +1,8 @@
+"""Episode trajectory staging and success/failure replay routing.
+
+See notes/docs/training/replay-and-episodes.md for high-level design.
+"""
+
 from __future__ import annotations
 
 from collections import deque

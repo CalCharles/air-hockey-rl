@@ -1,4 +1,7 @@
-"""Stop / e-stop event classification for real robot collection."""
+"""Stop / e-stop event classification for real robot collection.
+
+See notes/docs/environments/real-world/episode-lifecycle.md for context.
+"""
 
 from __future__ import annotations
 

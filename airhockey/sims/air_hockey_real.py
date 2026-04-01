@@ -291,7 +291,7 @@ class AirHockeyReal:
             "async_render_frame_width": 960,
             "async_render_frame_height": 720,
             "async_z_force_enabled": True,
-            "async_z_force_target_hz": 100.0,
+            "async_z_force_target_hz": 150.0,   # EDIT(known-issue-2): increased from 100 Hz for smoother contact
             "async_z_force_wrench_z": 1.0,
             "async_z_force_debug": False,
         }
@@ -437,6 +437,7 @@ class AirHockeyReal:
             "i",
             1 if self.control_mode in ["observe"] else 0,
         )
+        self.above_table = False
         self._async_z_force_above_table_flag = multiprocessing.Value(
             "i",
             1 if self.above_table else 0,

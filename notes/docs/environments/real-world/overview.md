@@ -14,6 +14,10 @@ The real-hardware path mirrors the same environment abstractions as simulation, 
 
 **Async TD3 (real collection, replay `dones`, legacy checkpoints):** [`td3-async-replay.md`](td3-async-replay.md)
 
+**Episode lifecycle (collection, stop events, artifacts, warm start):** [`episode-lifecycle.md`](episode-lifecycle.md)
+
+**Reset FSM (puck reset between episodes):** [`reset-fsm.md`](reset-fsm.md)
+
 The high-level env/task layering is the same as for Box2D; see [`../README.md`](../README.md).
 
 ## Operating the robot

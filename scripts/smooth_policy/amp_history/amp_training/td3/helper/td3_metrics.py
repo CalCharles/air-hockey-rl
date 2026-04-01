@@ -1,3 +1,8 @@
+"""TensorBoard metric helpers for TD3 simulation training.
+
+See notes/docs/training/td3-algorithm.md for the training loop overview.
+"""
+
 from __future__ import annotations
 
 from typing import Dict

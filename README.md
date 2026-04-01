@@ -75,4 +75,54 @@ Legacy:
 - run desired script in scripts/real
     - ex: python scripts/real/teleoperate.py --cfg configs/baseline_configs/puck_vel_real.yaml
 - When prompted in the terminal, run the program using the play button in the bottom middle of the touchpad
-- follow prompts on the terminal. Hold 'q' to end trajectories 
+- follow prompts on the terminal. Hold 'q' to end trajectories
+
+### TD3 Real-World Commands
+
+All commands below use `async_td3_real`, which handles collection, resets, and (optionally) training.
+Settings in `--args-file` are respected; CLI flags override them.
+
+#### Eval only (run policy, no training)
+```bash
+python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
+  --config configs/real_configs/rollout_td3_config.yaml \
+  --model-path ex_model/new_td3_model/checkpoint_325000/training_state.pth \
+  --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml \
+  --collector-device cpu \
+  --learner-device cuda:0 \
+  --episode-artifact-dir real_runs/online_run/episode_hdf5 \
+  --episode-gif-dir real_runs/online_run/episode_gifs \
+  --reset-artifact-dir real_runs/online_run/reset_hdf5 \
+  --min-replay-size-before-learning 999999999 \
+  --no-enable-periodic-checkpointing \
+  --no-load-replay-from-checkpoint \
+  --warm-start-hdf5-dirs
+```
+
+#### Online training from a pretrained checkpoint
+```bash
+python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
+  --config configs/real_configs/rollout_td3_config.yaml \
+  --model-path ex_model/td3_model/checkpoint_1515000/training_state.pth \
+  --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml \
+  --collector-device cpu \
+  --learner-device cuda:0 \
+  --episode-artifact-dir real_runs/online_run/episode_hdf5 \
+  --episode-gif-dir real_runs/online_run/episode_gifs \
+  --reset-artifact-dir real_runs/online_run/reset_hdf5
+```
+
+#### Resume training from a previous online run
+```bash
+python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
+  --config configs/real_configs/rollout_td3_config.yaml \
+  --model-path real_runs/checkpoints/default/checkpoint_successeps_100_qupdates_1517000/training_state.pth \
+  --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml \
+  --collector-device cpu \
+  --learner-device cuda:0 \
+  --episode-artifact-dir real_runs/online_run/episode_hdf5 \
+  --episode-gif-dir real_runs/online_run/episode_gifs \
+  --reset-artifact-dir real_runs/online_run/reset_hdf5 \
+  --load-replay-from-checkpoint \
+  --include-non-vital-training-state-fields
+```

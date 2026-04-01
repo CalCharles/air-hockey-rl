@@ -1,4 +1,7 @@
-"""Rolling window (rolling50) metrics shared by episode-end and periodic collector logging."""
+"""Rolling window (rolling50) metrics shared by episode-end and periodic collector logging.
+
+See notes/docs/environments/real-world/episode-lifecycle.md for the metrics context.
+"""
 
 from __future__ import annotations
 

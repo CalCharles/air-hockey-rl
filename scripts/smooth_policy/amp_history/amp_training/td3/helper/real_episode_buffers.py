@@ -1,4 +1,7 @@
-"""Helpers for real-collector episode buffers (truncation, row shaping)."""
+"""Helpers for real-collector episode buffers (truncation, row shaping).
+
+See notes/docs/environments/real-world/episode-lifecycle.md for the truncation flow.
+"""
 
 from __future__ import annotations
 

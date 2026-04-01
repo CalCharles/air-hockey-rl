@@ -75,6 +75,15 @@ Evidence reference:
 
 - Contact-scenario implementation and metrics collection: [`scripts/box2d_paddle_puck_contact_scenario.py`](../../../../scripts/box2d_paddle_puck_contact_scenario.py) (see parsing of `paddle:puck` sweep pairs, per-run `paddle_density` / `puck_density` recording, and pre/post-contact speed logging).
 
+## Observation homography (sim-to-real)
+
+When `obs_position_homography` is enabled in the simulator config, observations are warped through a perspective homography matrix before reaching the policy. This simulates camera-like positional distortion for sim-to-real transfer training.
+
+- The homography matrix can be overridden via training args.
+- [`validate_obs_homography_gif.py`](../../../../scripts/smooth_policy/validate_obs_homography_gif.py) renders world-space frames with the homography warp applied, for visual verification.
+
+This is a separate feature from the real camera homography documented in [`../real-world/homography.md`](../real-world/homography.md).
+
 ## Paddle boundary visualization utility
 
 For Box2D boundary debugging and validation, use:
