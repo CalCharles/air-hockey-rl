@@ -463,6 +463,13 @@ class AirHockeyBox2D:
             'fixed_state_paddle_jerk': (0.0, 0.0),
             'fixed_state_puck_velocity': (0.0, 0.0),
             'mask_puck_velocity': True,
+            # Puck position delay interpolation: simulate timing jitter by
+            # interpolating between the previous and current puck position
+            # with a random factor uniformly drawn from [min, max].
+            # Factor 1.0 = exact current position; <1 = lagging; >1 = extrapolated.
+            'enable_puck_delay_interpolation': False,
+            'puck_delay_interpolation_min': 0.75,
+            'puck_delay_interpolation_max': 1.25,
         }
 
         kwargs = {**defaults, **kwargs}
@@ -585,6 +592,10 @@ class AirHockeyBox2D:
         self._jerk_estop_reason = None
         self.puck_noise = config.puck_noise
         self.puck_noise_std = float(config.puck_noise_std)
+        self.enable_puck_delay_interpolation = bool(config.enable_puck_delay_interpolation)
+        self.puck_delay_interpolation_min = float(config.puck_delay_interpolation_min)
+        self.puck_delay_interpolation_max = float(config.puck_delay_interpolation_max)
+        self._prev_puck_positions_box2d = {}
         # random occlusion simulation
         self.enable_random_occlusions = bool(config.enable_random_occlusions)
         self.random_occlusion_target_rate = float(config.random_occlusion_target_rate)
@@ -620,6 +631,7 @@ class AirHockeyBox2D:
         self._jerk_mag_history.clear()
         self._jerk_estop_latched = False
         self._jerk_estop_reason = None
+        self._prev_puck_positions_box2d = {}
 
         self.last_action = np.zeros(2) # keep the last action taken, used for action lag
         self.last_target_position = None  # base-frame target used for visualization/debugging
@@ -882,6 +894,9 @@ class AirHockeyBox2D:
             for puck_name in self.pucks:
                 puck_x_pos_true = self.pucks[puck_name].position[0]
                 puck_y_pos_true = self.pucks[puck_name].position[1]
+                puck_x_pos_true, puck_y_pos_true = self._apply_puck_delay_interpolation(
+                    puck_name, (puck_x_pos_true, puck_y_pos_true)
+                )
                 puck_x_pos_true, puck_y_pos_true = self._get_noisy_puck_position((puck_x_pos_true, puck_y_pos_true))
                 puck_base_xy_true = self._box2d_to_base_coords((puck_x_pos_true, puck_y_pos_true))
                 min_pd = self._min_puck_paddle_distance_base_m(puck_base_xy_true)
@@ -897,6 +912,19 @@ class AirHockeyBox2D:
 
         state_info = self.convert_from_box2d_coords(state_info)
         return self._apply_fixed_state_velocity_jerk(state_info)
+
+    def _apply_puck_delay_interpolation(self, puck_name, current_position):
+        current = np.array(current_position, dtype=float)
+        prev = self._prev_puck_positions_box2d.get(puck_name)
+        self._prev_puck_positions_box2d[puck_name] = current.copy()
+        if not self.enable_puck_delay_interpolation or prev is None:
+            return float(current[0]), float(current[1])
+        factor = self.rng.uniform(
+            self.puck_delay_interpolation_min,
+            self.puck_delay_interpolation_max,
+        )
+        interpolated = prev + factor * (current - prev)
+        return float(interpolated[0]), float(interpolated[1])
 
     def _get_noisy_puck_position(self, position):
         if not self.puck_noise:

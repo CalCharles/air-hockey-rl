@@ -558,6 +558,18 @@ class Args:
     # Policy state options
     use_last_action_in_policy_state: bool = False
 
+    # Optional physics overrides (applied to air_hockey config when not None)
+    puck_density: float | None = None
+    paddle_density: float | None = None
+    gravity: float | None = None
+    puck_damping: float | None = None
+    paddle_damping: float | None = None
+
+    # Puck delay interpolation (timing jitter simulation)
+    enable_puck_delay_interpolation: bool | None = None
+    puck_delay_interpolation_min: float | None = None
+    puck_delay_interpolation_max: float | None = None
+
 
 def make_env(env_id):
     def _thunk():
@@ -647,6 +659,21 @@ if __name__ == "__main__":
 
     with open(args.config, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
+
+    sim_params_overrides = {
+        "puck_density": args.puck_density,
+        "paddle_density": args.paddle_density,
+        "gravity": args.gravity,
+        "puck_damping": args.puck_damping,
+        "paddle_damping": args.paddle_damping,
+        "enable_puck_delay_interpolation": args.enable_puck_delay_interpolation,
+        "puck_delay_interpolation_min": args.puck_delay_interpolation_min,
+        "puck_delay_interpolation_max": args.puck_delay_interpolation_max,
+    }
+    for key, value in sim_params_overrides.items():
+        if value is not None:
+            config["air_hockey"].setdefault("simulator_params", {})[key] = value
+            print(f"Physics override: simulator_params.{key} = {value}")
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     task_name = config["air_hockey"].get("task")
