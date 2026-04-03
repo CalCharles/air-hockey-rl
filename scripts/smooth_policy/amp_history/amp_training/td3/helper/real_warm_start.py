@@ -1,4 +1,7 @@
-"""Warm-start replay ingestion from split real trajectory HDF5 files."""
+"""Warm-start replay ingestion from split real trajectory HDF5 files.
+
+See notes/docs/environments/real-world/episode-lifecycle.md for the warm-start flow.
+"""
 
 from __future__ import annotations
 

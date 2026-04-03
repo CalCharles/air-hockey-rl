@@ -59,4 +59,11 @@ Current code stores **only** `dones`, with the **critic** semantics above (same 
 
 **Loading old snapshots:** `SharedReplayPartition.load_state_dict` prefers `bootstrap_terminals` when that key exists, and otherwise uses `dones`. That keeps critic training consistent when resuming from checkpoints that still carry the legacy two-field layout. If you resume from an old buffer where only the legacy `dones` column was saved (without `bootstrap_terminals`), interpret buffer compatibility with care — prefer checkpoints that include `bootstrap_terminals` or re-collect after a schema change.
 
+## Staging scripts
+
+Two wrapper scripts under `td3/extras/` launch `async_td3_real.py` with scheduled hyperparameter changes:
+
+- [`run_td3_motion_weight_staged.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/run_td3_motion_weight_staged.py) -- schedules motion reward weight changes across training stages.
+- [`run_td3_env_transfer_staged.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/run_td3_env_transfer_staged.py) -- schedules environment parameter changes for sim-to-real transfer curriculum.
+
 Related reset-policy helper (single-process buffer, same `dones`-only convention): [`async_td3_real_reset_policy.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real_reset_policy.py).

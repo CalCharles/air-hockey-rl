@@ -1,4 +1,7 @@
-"""Motion reward state and component computation for real TD3 training."""
+"""Motion reward state and component computation for real TD3 training.
+
+See notes/docs/training/reward-shaping.md for the reward design overview.
+"""
 
 from __future__ import annotations
 

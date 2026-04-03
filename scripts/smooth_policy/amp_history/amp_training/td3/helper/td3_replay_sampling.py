@@ -1,3 +1,8 @@
+"""Critic and actor replay sampling with PER/uniform mixing and success/failure splits.
+
+See notes/docs/training/replay-and-episodes.md for high-level design.
+"""
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple

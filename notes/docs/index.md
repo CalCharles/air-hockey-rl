@@ -12,6 +12,6 @@ Formal documentation is grouped into four areas:
 **Quick links**
 
 - Repo: [`repo/repository-structure.md`](repo/repository-structure.md) · [`repo/project-goal-and-safety.md`](repo/project-goal-and-safety.md)
-- Environments: [`environments/README.md`](environments/README.md) · [`box2d/simulator-essentials.md`](environments/box2d/simulator-essentials.md) · [`real-world/overview.md`](environments/real-world/overview.md) · [`real-world/homography.md`](environments/real-world/homography.md) · [`real-world/td3-async-replay.md`](environments/real-world/td3-async-replay.md)
-- Training: [`training/architecture.md`](training/architecture.md)
+- Environments: [`environments/README.md`](environments/README.md) · [`box2d/simulator-essentials.md`](environments/box2d/simulator-essentials.md) · [`real-world/overview.md`](environments/real-world/overview.md) · [`real-world/homography.md`](environments/real-world/homography.md) · [`real-world/td3-async-replay.md`](environments/real-world/td3-async-replay.md) · [`real-world/episode-lifecycle.md`](environments/real-world/episode-lifecycle.md) · [`real-world/reset-fsm.md`](environments/real-world/reset-fsm.md)
+- Training: [`training/architecture.md`](training/architecture.md) · [`training/td3-algorithm.md`](training/td3-algorithm.md) · [`training/ppo-amp-discriminator.md`](training/ppo-amp-discriminator.md) · [`training/reward-shaping.md`](training/reward-shaping.md) · [`training/network-architecture.md`](training/network-architecture.md) · [`training/replay-and-episodes.md`](training/replay-and-episodes.md) · [`training/checkpointing.md`](training/checkpointing.md)
 - Exploration: [`exploration/td3-primitives.md`](exploration/td3-primitives.md)

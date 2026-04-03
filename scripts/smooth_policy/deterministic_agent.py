@@ -1,3 +1,8 @@
+"""Deterministic actor for TD3, weight-compatible with the stochastic Agent.
+
+See notes/docs/training/network-architecture.md for the architecture overview.
+"""
+
 import numpy as np
 import torch
 import torch.nn as nn

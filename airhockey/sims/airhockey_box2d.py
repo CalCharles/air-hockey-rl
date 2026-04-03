@@ -114,15 +114,21 @@ class CollisionForceListener(contactListener):
             float(puck_wall_min_rebound_speed_below_threshold), 0.0
         )
         self._pending_wall_restitution = {}
+        self._pending_paddle_puck = {}
     
     def reset(self):
         del self.collision_forces
         self.collision_forces = list()
         self._pending_wall_restitution = {}
+        self._pending_paddle_puck = {}
 
     @staticmethod
     def _is_puck(body):
         return body.userData is not None and "puck" in str(body.userData)
+
+    @staticmethod
+    def _is_paddle(body):
+        return body.userData is not None and "paddle" in str(body.userData)
 
     def _is_wall(self, body):
         return body.userData == self.wall_tag
@@ -138,6 +144,16 @@ class CollisionForceListener(contactListener):
         # Puck-wall contacts are still handled by custom impulse logic below.
         if wall_fixture is not None:
             contact.restitution = float(wall_fixture.restitution)
+
+        # --- Paddle-puck: bypass Box2D's b2_velocityThreshold by disabling
+        # built-in restitution and applying it manually in PostSolve. ---
+        is_paddle_puck = (
+            (self._is_paddle(bodyA) and self._is_puck(bodyB))
+            or (self._is_puck(bodyA) and self._is_paddle(bodyB))
+        )
+        if is_paddle_puck:
+            self._presolve_paddle_puck(contact, fixtureA, fixtureB, bodyA, bodyB)
+            return
 
         # Enforce a deterministic restitution threshold for puck-wall contacts.
         # This avoids relying on global Box2D velocityThreshold behavior.
@@ -180,6 +196,60 @@ class CollisionForceListener(contactListener):
 
         # Disable built-in restitution for puck-wall so we can enforce
         # a deterministic threshold ourselves in PostSolve.
+        contact.restitution = 0.0
+
+    def _presolve_paddle_puck(self, contact, fixtureA, fixtureB, bodyA, bodyB):
+        point_count = int(contact.manifold.pointCount)
+        if point_count <= 0:
+            return
+
+        paddle_body = bodyA if self._is_paddle(bodyA) else bodyB
+        puck_body = bodyA if self._is_puck(bodyA) else bodyB
+
+        world_manifold = contact.worldManifold
+        # Box2D normal points from fixtureA to fixtureB.
+        # Standardize to point from paddle toward puck.
+        raw_normal = np.array(
+            [world_manifold.normal.x, world_manifold.normal.y], dtype=float
+        )
+        if self._is_paddle(bodyA):
+            normal = raw_normal
+        else:
+            normal = -raw_normal
+        n_norm = float(np.linalg.norm(normal))
+        if n_norm <= 1e-8:
+            return
+        normal = normal / n_norm
+
+        v_paddle = np.array(
+            [paddle_body.linearVelocity[0], paddle_body.linearVelocity[1]], dtype=float
+        )
+        v_puck = np.array(
+            [puck_body.linearVelocity[0], puck_body.linearVelocity[1]], dtype=float
+        )
+        # Relative velocity of puck w.r.t. paddle along the normal.
+        # Negative means approaching (puck moving toward paddle).
+        v_rel_n = float(np.dot(v_puck - v_paddle, normal))
+        approach_speed = max(0.0, -v_rel_n)
+        if approach_speed <= 1e-8:
+            contact.restitution = 0.0
+            return
+
+        combined_e = max(
+            float(fixtureA.restitution), float(fixtureB.restitution)
+        )
+
+        contact_id = (str(paddle_body.userData), str(puck_body.userData))
+        prev = self._pending_paddle_puck.get(contact_id)
+        if prev is None or approach_speed > prev["approach_speed"]:
+            self._pending_paddle_puck[contact_id] = {
+                "approach_speed": approach_speed,
+                "normal": normal,
+                "restitution": combined_e,
+                "paddle_body": paddle_body,
+                "puck_body": puck_body,
+            }
+
         contact.restitution = 0.0
 
     def PostSolve(self, contact, impulse):
@@ -238,6 +308,50 @@ class CollisionForceListener(contactListener):
                                     puck_body.worldCenter,
                                     True,
                                 )
+
+                # Apply deterministic paddle-puck restitution model.
+                is_paddle_puck = (
+                    (self._is_paddle(bodyA) and self._is_puck(bodyB))
+                    or (self._is_puck(bodyA) and self._is_paddle(bodyB))
+                )
+                if is_paddle_puck:
+                    paddle_body = bodyA if self._is_paddle(bodyA) else bodyB
+                    puck_body = bodyA if self._is_puck(bodyA) else bodyB
+                    contact_id = (str(paddle_body.userData), str(puck_body.userData))
+                    pending = self._pending_paddle_puck.pop(contact_id, None)
+                    if pending is not None:
+                        approach_speed = float(pending["approach_speed"])
+                        if approach_speed <= 1e-8:
+                            continue
+                        normal_pp = pending["normal"]
+                        e = float(pending["restitution"])
+
+                        v_paddle_post = np.array(
+                            [paddle_body.linearVelocity[0], paddle_body.linearVelocity[1]],
+                            dtype=float,
+                        )
+                        v_puck_post = np.array(
+                            [puck_body.linearVelocity[0], puck_body.linearVelocity[1]],
+                            dtype=float,
+                        )
+                        v_rel_n_post = float(np.dot(v_puck_post - v_paddle_post, normal_pp))
+                        v_rel_n_desired = e * approach_speed
+                        delta = v_rel_n_desired - v_rel_n_post
+                        if abs(delta) > 1e-8:
+                            m_paddle = float(paddle_body.mass)
+                            m_puck = float(puck_body.mass)
+                            j = delta * m_paddle * m_puck / (m_paddle + m_puck)
+                            j_vec = normal_pp * j
+                            puck_body.ApplyLinearImpulse(
+                                b2Vec2(float(j_vec[0]), float(j_vec[1])),
+                                puck_body.worldCenter,
+                                True,
+                            )
+                            paddle_body.ApplyLinearImpulse(
+                                b2Vec2(float(-j_vec[0]), float(-j_vec[1])),
+                                paddle_body.worldCenter,
+                                True,
+                            )
 
 class AirHockeyBox2D:
     """Box2D backend.
@@ -349,6 +463,13 @@ class AirHockeyBox2D:
             'fixed_state_paddle_jerk': (0.0, 0.0),
             'fixed_state_puck_velocity': (0.0, 0.0),
             'mask_puck_velocity': True,
+            # Puck position delay interpolation: simulate timing jitter by
+            # interpolating between the previous and current puck position
+            # with a random factor uniformly drawn from [min, max].
+            # Factor 1.0 = exact current position; <1 = lagging; >1 = extrapolated.
+            'enable_puck_delay_interpolation': False,
+            'puck_delay_interpolation_min': 0.75,
+            'puck_delay_interpolation_max': 1.25,
         }
 
         kwargs = {**defaults, **kwargs}
@@ -471,6 +592,10 @@ class AirHockeyBox2D:
         self._jerk_estop_reason = None
         self.puck_noise = config.puck_noise
         self.puck_noise_std = float(config.puck_noise_std)
+        self.enable_puck_delay_interpolation = bool(config.enable_puck_delay_interpolation)
+        self.puck_delay_interpolation_min = float(config.puck_delay_interpolation_min)
+        self.puck_delay_interpolation_max = float(config.puck_delay_interpolation_max)
+        self._prev_puck_positions_box2d = {}
         # random occlusion simulation
         self.enable_random_occlusions = bool(config.enable_random_occlusions)
         self.random_occlusion_target_rate = float(config.random_occlusion_target_rate)
@@ -506,6 +631,7 @@ class AirHockeyBox2D:
         self._jerk_mag_history.clear()
         self._jerk_estop_latched = False
         self._jerk_estop_reason = None
+        self._prev_puck_positions_box2d = {}
 
         self.last_action = np.zeros(2) # keep the last action taken, used for action lag
         self.last_target_position = None  # base-frame target used for visualization/debugging
@@ -768,6 +894,9 @@ class AirHockeyBox2D:
             for puck_name in self.pucks:
                 puck_x_pos_true = self.pucks[puck_name].position[0]
                 puck_y_pos_true = self.pucks[puck_name].position[1]
+                puck_x_pos_true, puck_y_pos_true = self._apply_puck_delay_interpolation(
+                    puck_name, (puck_x_pos_true, puck_y_pos_true)
+                )
                 puck_x_pos_true, puck_y_pos_true = self._get_noisy_puck_position((puck_x_pos_true, puck_y_pos_true))
                 puck_base_xy_true = self._box2d_to_base_coords((puck_x_pos_true, puck_y_pos_true))
                 min_pd = self._min_puck_paddle_distance_base_m(puck_base_xy_true)
@@ -783,6 +912,19 @@ class AirHockeyBox2D:
 
         state_info = self.convert_from_box2d_coords(state_info)
         return self._apply_fixed_state_velocity_jerk(state_info)
+
+    def _apply_puck_delay_interpolation(self, puck_name, current_position):
+        current = np.array(current_position, dtype=float)
+        prev = self._prev_puck_positions_box2d.get(puck_name)
+        self._prev_puck_positions_box2d[puck_name] = current.copy()
+        if not self.enable_puck_delay_interpolation or prev is None:
+            return float(current[0]), float(current[1])
+        factor = self.rng.uniform(
+            self.puck_delay_interpolation_min,
+            self.puck_delay_interpolation_max,
+        )
+        interpolated = prev + factor * (current - prev)
+        return float(interpolated[0]), float(interpolated[1])
 
     def _get_noisy_puck_position(self, position):
         if not self.puck_noise:

@@ -1,3 +1,8 @@
+"""Checkpoint save/restore for TD3 training (RNG, optimizers, replay, episode state).
+
+See notes/docs/training/checkpointing.md for the schema and migration details.
+"""
+
 from __future__ import annotations
 
 import random

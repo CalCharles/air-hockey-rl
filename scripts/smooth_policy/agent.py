@@ -1,3 +1,8 @@
+"""Shared network building blocks: ResidualMLPTrunk, ResidualDenseNormSwishBlock, and Agent.
+
+See notes/docs/training/network-architecture.md for the architecture overview.
+"""
+
 import torch
 import torch.nn as nn
 import numpy as np

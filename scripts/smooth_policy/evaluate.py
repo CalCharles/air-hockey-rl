@@ -1,3 +1,8 @@
+"""Checkpoint evaluation: load a trained policy, run rollouts, and save GIFs.
+
+See notes/docs/training/architecture.md for training entrypoints.
+"""
+
 from scripts.utils import save_task_gif
 import torch
 import argparse

@@ -34,6 +34,17 @@ These remain in the tree for older experiments but are **not** the main workflow
 
 Prefer extending **TD3** or **PPO (`amp_training.py`)** unless a task explicitly revives one of these paths.
 
+## Detailed topics
+
+| Topic | Doc |
+|-------|-----|
+| TD3 algorithm (h-transform, dual-head critics, actor objective) | [`td3-algorithm.md`](td3-algorithm.md) |
+| PPO+AMP discriminator (modes, features, demo loader, auxiliary rewards) | [`ppo-amp-discriminator.md`](ppo-amp-discriminator.md) |
+| Reward shaping (task + motion reward composition) | [`reward-shaping.md`](reward-shaping.md) |
+| Network architecture (ResidualMLPTrunk, DualHeadQ, DeterministicAgent) | [`network-architecture.md`](network-architecture.md) |
+| Replay buffers and episode handling (PER, success/failure, staging) | [`replay-and-episodes.md`](replay-and-episodes.md) |
+| Checkpoint system (schema, resume vs fine-tune, migrations) | [`checkpointing.md`](checkpointing.md) |
+
 ## Guidance for edits
 
 - Keep **AMP-specific** logic (discriminator, demo loading, feature windows) coherent with `amp_training.py` and `amp_data/`.

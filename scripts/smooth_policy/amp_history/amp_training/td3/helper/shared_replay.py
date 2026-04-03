@@ -1,4 +1,7 @@
-"""Shared-memory replay service for async TD3 collector/learner processes."""
+"""Shared-memory replay service for async TD3 collector/learner processes.
+
+See notes/docs/training/replay-and-episodes.md for the replay design overview.
+"""
 
 from __future__ import annotations
 
