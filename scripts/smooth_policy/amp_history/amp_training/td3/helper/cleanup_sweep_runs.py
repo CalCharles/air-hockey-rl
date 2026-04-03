@@ -1,20 +1,39 @@
 """
-Remove TD3 sweep run directories with too few periodic checkpoints.
+TD3 sweep log cleanup under ``log_parent_dir``.
 
-A "run" is an immediate child of the sweep log directory that contains ``args.yaml``.
-Periodic checkpoints are subdirectories named ``checkpoint_<global_step>`` that contain
-``model.pth`` (same definition as ``collect_policy_data.discover_td3_policy_snapshots``).
+**Pruning policy (two reasons to remove a run folder)**
 
-Runs with fewer than ``--min-checkpoints`` such folders are candidates for deletion.
-By default only a dry-run report is printed; pass ``--apply`` to remove directories.
+1. **Too few periodic checkpoints** — Any immediate child run dir that contains
+   ``args.yaml`` and has fewer than ``min_checkpoints`` subdirs ``checkpoint_<step>/``
+   with ``model.pth`` is removed when ``cleanup_apply`` is true (not only the
+   eval-canonical path; e.g. a leftover ``tagr1/`` with a failed short run is removed too).
 
-Optional ``--aggregate-gifs`` copies one rollout GIF per *kept* run (those with enough
-checkpoints) into ``<sweep-dir>/<gifs-subdir>/``, named ``<run-folder>.gif``, and writes
-``missing_evaluation_gifs.txt`` there listing sweep tasks that have no run dir, too few
-checkpoints, or no ``eval_0.gif`` under ``rollout/``.
+2. **No ``args.yaml``** — Hollow dirs, stale ``tag/`` when ``tagrN/`` holds the run,
+   abandoned expected slots (with ``--sweep-file``), and bumped ``tagrN/`` dirs without
+   ``args.yaml`` are removed by the corresponding prune passes (see below).
 
-``generate_sweep.py`` can run this automatically when the sweep YAML sets
-``post_min_checkpoints`` (see that script's docstring).
+**Canonical dirs** (same ``<tag>`` vs ``<tag>r1`` resolution as eval) drive **GIF
+aggregation** only. Non-canonical dirs with ``args.yaml`` are still subject to the
+low-checkpoint rule above; use ``--remove-noncanonical-run-dirs`` with ``--apply`` to
+also delete non-canonical dirs that *do* have enough checkpoints.
+
+With ``prune_hollow_dirs``, immediate children with no ``args.yaml`` and **no files**
+anywhere under them are removed.
+
+With ``prune_stale_tag_dirs``, removes ``tag/`` with no ``args.yaml`` when ``tagrN/`` has
+the real run.
+
+With ``prune_abandoned_tag_dirs`` and ``--sweep-file``, removes expected ``tag/`` with no
+``args.yaml`` at ``tag/`` or any ``tagrN/``.
+
+With ``prune_r_suffix_without_args``, removes any ``tagrN/`` child with no ``args.yaml``.
+
+With ``promote_r_dirs``, renames ``tagrN/`` -> ``tag/`` when appropriate.
+
+Periodic checkpoints are ``checkpoint_<global_step>/model.pth`` (same as
+``collect_policy_data.discover_td3_policy_snapshots``).
+
+``generate_sweep.py`` can run this when the sweep YAML sets ``post_min_checkpoints``.
 
 Usage:
     uv run scripts/smooth_policy/amp_history/amp_training/td3/helper/cleanup_sweep_runs.py \\
@@ -38,6 +57,16 @@ from typing import Iterator
 import yaml
 
 _CHECKPOINT_SUBDIR_RE = re.compile(r"^checkpoint_(\d+)$")
+# TD3 uses <tag>r1, r2 with no separator before ``r``.
+_STEM_FROM_RUN_BASENAME_RE = re.compile(r"^(.*)r(\d+)$")
+
+
+def sweep_stem_from_run_basename(basename: str) -> str:
+    """``motion_gamma_0p7r3`` -> ``motion_gamma_0p7``; ``motion_gamma_0p7`` unchanged."""
+    m = _STEM_FROM_RUN_BASENAME_RE.match(basename)
+    if m:
+        return m.group(1)
+    return basename
 
 
 def resolve_run_dir(
@@ -81,6 +110,265 @@ def iter_run_dirs(sweep_dir: str) -> Iterator[tuple[str, str]]:
             continue
         if os.path.isfile(os.path.join(full, "args.yaml")):
             yield name, full
+
+
+def _is_dir_empty(path: str) -> bool:
+    try:
+        return os.path.isdir(path) and len(os.listdir(path)) == 0
+    except OSError:
+        return False
+
+
+def _dir_tree_contains_any_file(root: str) -> bool:
+    """True if any regular file exists anywhere under ``root``."""
+    try:
+        for _dirpath, _dirnames, filenames in os.walk(root):
+            if filenames:
+                return True
+    except OSError:
+        return True
+    return False
+
+
+def prune_hollow_sweep_subdirs(
+    sweep_dir: str,
+    *,
+    skip_basenames: set[str],
+) -> list[str]:
+    """
+    Remove immediate child directories that have no ``args.yaml`` and contain **no files**
+    anywhere beneath them (only empty or nested-empty folders).
+
+    Does not remove dirs that have any file (including under subfolders). Returns basenames
+    removed.
+    """
+    removed: list[str] = []
+    try:
+        names = sorted(os.listdir(sweep_dir))
+    except OSError:
+        return removed
+    for name in names:
+        if name in skip_basenames:
+            continue
+        full = os.path.join(sweep_dir, name)
+        if not os.path.isdir(full):
+            continue
+        if os.path.isfile(os.path.join(full, "args.yaml")):
+            continue
+        if _dir_tree_contains_any_file(full):
+            continue
+        try:
+            shutil.rmtree(full)
+            removed.append(name)
+            print(f"  pruned hollow dir (no args.yaml, no files): {name}/")
+        except OSError as e:
+            print(f"ERROR pruning {full}: {e}", file=sys.stderr)
+    return removed
+
+
+def prune_stale_tag_dirs_without_args(
+    sweep_dir: str,
+    *,
+    skip_basenames: set[str],
+) -> list[str]:
+    """
+    Remove immediate child dirs whose basename is **not** ``tagrN`` form, have no
+    ``args.yaml``, but ``tagr1``..``tagr50`` exists with ``args.yaml``.
+
+    This clears placeholder ``motion_reward_weight_0p5/`` trees (often with stray files)
+    when the real run lives in ``motion_reward_weight_0p5r1/``. Skips basenames matching
+    ``...r<number>`` (those are the real bumped dirs, not stale bases).
+    """
+    removed: list[str] = []
+    try:
+        names = sorted(os.listdir(sweep_dir))
+    except OSError:
+        return removed
+    for name in names:
+        if name in skip_basenames:
+            continue
+        full = os.path.join(sweep_dir, name)
+        if not os.path.isdir(full):
+            continue
+        if _STEM_FROM_RUN_BASENAME_RE.match(name):
+            continue
+        if os.path.isfile(os.path.join(full, "args.yaml")):
+            continue
+        if _lowest_r_suffix_run_dir(sweep_dir, name) is None:
+            continue
+        try:
+            shutil.rmtree(full)
+            removed.append(name)
+            print(f"  removed stale {name}/ (no args.yaml; training under {name}rN/)")
+        except OSError as e:
+            print(f"ERROR removing stale {full}: {e}", file=sys.stderr)
+    return removed
+
+
+def prune_abandoned_expected_tag_dirs(
+    sweep_dir: str,
+    expected_tags: list[str],
+    *,
+    skip_basenames: set[str],
+) -> list[str]:
+    """
+    For each tag in the sweep YAML list: if ``tag/`` exists, has no ``args.yaml``, and no
+    ``tagrN/args.yaml`` exists, remove ``tag/`` (failed launch, partial logs, never started).
+
+    Only runs when sweep tags are known (``--sweep-file``). Does not remove dirs whose
+    basename is ``tagrN`` form.
+    """
+    removed: list[str] = []
+    for tag in dict.fromkeys(expected_tags):
+        if tag in skip_basenames:
+            continue
+        if _STEM_FROM_RUN_BASENAME_RE.match(tag):
+            continue
+        base = os.path.join(sweep_dir, tag)
+        if not os.path.isdir(base):
+            continue
+        if os.path.isfile(os.path.join(base, "args.yaml")):
+            continue
+        if _lowest_r_suffix_run_dir(sweep_dir, tag) is not None:
+            continue
+        try:
+            shutil.rmtree(base)
+            removed.append(tag)
+            print(f"  removed abandoned {tag}/ (no args.yaml and no {tag}rN/ with args)")
+        except OSError as e:
+            print(f"ERROR removing abandoned {base}: {e}", file=sys.stderr)
+    return removed
+
+
+def prune_r_suffix_dirs_without_args(
+    sweep_dir: str,
+    *,
+    skip_basenames: set[str],
+) -> list[str]:
+    """
+    Remove immediate children whose basename matches ``...r<number>`` (TD3 bumped dir) but
+    contain no ``args.yaml`` (crash before config write).
+    """
+    removed: list[str] = []
+    try:
+        names = sorted(os.listdir(sweep_dir))
+    except OSError:
+        return removed
+    for name in names:
+        if name in skip_basenames:
+            continue
+        if not _STEM_FROM_RUN_BASENAME_RE.match(name):
+            continue
+        full = os.path.join(sweep_dir, name)
+        if not os.path.isdir(full):
+            continue
+        if os.path.isfile(os.path.join(full, "args.yaml")):
+            continue
+        try:
+            shutil.rmtree(full)
+            removed.append(name)
+            print(f"  removed {name}/ (bumped run dir, no args.yaml)")
+        except OSError as e:
+            print(f"ERROR removing {full}: {e}", file=sys.stderr)
+    return removed
+
+
+def _lowest_r_suffix_run_dir(sweep_dir: str, tag: str) -> tuple[int, str] | None:
+    """Smallest N>=1 such that ``<tag>rN/args.yaml`` exists. Returns (N, abs_path)."""
+    for i in range(1, 51):
+        r_path = os.path.join(sweep_dir, f"{tag}r{i}")
+        if os.path.isfile(os.path.join(r_path, "args.yaml")):
+            return i, os.path.abspath(r_path)
+    return None
+
+
+def promote_r_suffix_into_base_tag(sweep_dir: str, tag: str) -> bool:
+    """
+    If ``tag/args.yaml`` is missing and some ``tagrN`` has ``args.yaml``:
+    rename ``tagrN`` -> ``tag`` when ``tag`` is absent, or replace an empty ``tag`` dir.
+
+    If ``tag`` exists, is non-empty, and has no ``args.yaml``, logs a skip (no merge).
+
+    Returns True if a promotion was performed.
+    """
+    base = os.path.join(sweep_dir, tag)
+    if os.path.isfile(os.path.join(base, "args.yaml")):
+        return False
+    found = _lowest_r_suffix_run_dir(sweep_dir, tag)
+    if found is None:
+        return False
+    _n, r_abs = found
+    r_bn = os.path.basename(r_abs)
+    try:
+        if not os.path.exists(base):
+            shutil.move(r_abs, base)
+            print(f"  promoted: {r_bn}/ -> {tag}/ (renamed)")
+            return True
+        if _is_dir_empty(base):
+            os.rmdir(base)
+            shutil.move(r_abs, base)
+            print(f"  promoted: {r_bn}/ -> {tag}/ (replaced empty {tag}/)")
+            return True
+        print(
+            f"  skip promote {tag}: {tag}/ exists, is not empty, and has no args.yaml "
+            f"(would use {r_bn}/; empty or remove {tag}/ manually)",
+            file=sys.stderr,
+        )
+        return False
+    except OSError as e:
+        print(f"ERROR promote {tag} ({r_bn} -> {tag}/): {e}", file=sys.stderr)
+        return False
+
+
+def _tags_for_promotion(sweep_dir: str, expected_tags: list[str] | None) -> list[str]:
+    if expected_tags is not None:
+        return list(expected_tags)
+    stems: set[str] = set()
+    for name, _full in iter_run_dirs(sweep_dir):
+        stems.add(sweep_stem_from_run_basename(name))
+    return sorted(stems)
+
+
+def collect_canonical_run_paths(
+    sweep_dir: str,
+    *,
+    sweep_tags: list[str] | None,
+    eval_run_dir_suffix: str | None,
+    eval_resolve_run_dir: bool,
+) -> tuple[set[str], list[str]]:
+    """
+    Canonical abs paths for eval (``tag`` if ``args.yaml``, else ``tagr1``..``r50``),
+    or from inferred stems when ``sweep_tags`` is None.
+    """
+    if sweep_tags is not None:
+        ordered = list(sweep_tags)
+        paths: set[str] = set()
+        for tag in ordered:
+            p = resolve_run_dir(
+                sweep_dir,
+                tag,
+                eval_run_dir_suffix=eval_run_dir_suffix,
+                eval_resolve_run_dir=eval_resolve_run_dir,
+            )
+            if p is not None:
+                paths.add(os.path.abspath(p))
+        return paths, ordered
+
+    stems: set[str] = set()
+    for name, _full in iter_run_dirs(sweep_dir):
+        stems.add(sweep_stem_from_run_basename(name))
+    paths = set()
+    ordered_stems = sorted(stems)
+    for stem in ordered_stems:
+        p = resolve_run_dir(
+            sweep_dir,
+            stem,
+            eval_run_dir_suffix=eval_run_dir_suffix,
+            eval_resolve_run_dir=eval_resolve_run_dir,
+        )
+        if p is not None:
+            paths.add(os.path.abspath(p))
+    return paths, ordered_stems
 
 
 def count_periodic_checkpoints(run_dir: str) -> int:
@@ -190,15 +478,29 @@ def postprocess_reward_sweep(
     gifs_subdir: str = "full_evaluation_gifs",
     missing_report_name: str = "missing_evaluation_gifs.txt",
     cleanup_apply: bool = False,
+    remove_noncanonical_run_dirs: bool = False,
+    promote_r_dirs: bool = False,
+    prune_hollow_dirs: bool = False,
+    prune_stale_tag_dirs: bool = False,
+    prune_abandoned_tag_dirs: bool = False,
+    prune_r_suffix_without_args: bool = False,
     eval_run_dir_suffix: str | None = None,
     eval_resolve_run_dir: bool = True,
     verbose: bool = False,
 ) -> None:
     """
-    Classify runs by checkpoint count; optionally copy GIFs from kept runs then delete low runs.
+    **Order of operations**
+
+    1. **Prune** — Remove dirs with no ``args.yaml`` (hollow, stale base, abandoned expected
+       slots, ``tagrN/`` without args), per flags.
+    2. **Promote** — ``tagrN/`` -> ``tag/`` when needed.
+    3. **GIF aggregation** — Copy eval GIFs from kept canonical runs; write
+       ``missing_evaluation_gifs.txt`` recording sweep tasks that are missing a run dir,
+       below min checkpoints, or missing a GIF (only when ``aggregate_gifs``).
+    4. **Removal** — Delete low-checkpoint run dirs (and optional non-canonical) when
+       ``cleanup_apply``.
 
     If sweep_cfg is set, imports sweep_run_tags from generate_sweep for the missing report.
-    eval_* options must match the eval bash script resolution when locating each tag's run dir.
     """
     sweep_dir = os.path.abspath(sweep_dir)
     if not os.path.isdir(sweep_dir):
@@ -215,34 +517,100 @@ def postprocess_reward_sweep(
             suffix = sweep_cfg.get("eval_run_dir_suffix")
         resolve_flag = bool(sweep_cfg.get("eval_resolve_run_dir", True))
 
-    to_remove: list[tuple[str, str, int]] = []
-    kept: list[tuple[str, str, int]] = []
+    expected_tags: list[str] | None = None
+    if sweep_cfg is not None:
+        from scripts.smooth_policy.amp_history.amp_training.td3.helper.generate_sweep import sweep_run_tags
 
-    for name, full in iter_run_dirs(sweep_dir):
+        expected_tags = sweep_run_tags(sweep_cfg)
+
+    skip_prune = {os.path.basename(gifs_subdir.strip("/"))} if gifs_subdir else set()
+    skip_prune.discard("")
+    skip_prune.add("full_evaluation_gifs")
+
+    # ----- Phase 1: Prune (no args.yaml / invalid run shells) -----
+    _any_prune = (
+        prune_hollow_dirs
+        or prune_stale_tag_dirs
+        or prune_abandoned_tag_dirs
+        or prune_r_suffix_without_args
+    )
+    print("\n=== Phase 1: Prune (no args.yaml) ===")
+    if not _any_prune:
+        print("(all prune_* steps disabled)")
+    if prune_hollow_dirs:
+        print("— Hollow dirs (no args.yaml, no files under tree)")
+        prune_hollow_sweep_subdirs(sweep_dir, skip_basenames=skip_prune)
+    if prune_stale_tag_dirs:
+        if suffix is not None:
+            print("— Stale tag/: skipped (eval_run_dir_suffix is set)")
+        elif not resolve_flag:
+            print("— Stale tag/: skipped (eval_resolve_run_dir is false)")
+        else:
+            print("— Stale tag/ (no args; real run is tagrN/)")
+            prune_stale_tag_dirs_without_args(sweep_dir, skip_basenames=skip_prune)
+    if prune_abandoned_tag_dirs:
+        if expected_tags is None:
+            print("— Abandoned tag/: skipped (need --sweep-file)")
+        else:
+            print("— Abandoned expected tag/ (no args at tag/ or tagrN/)")
+            prune_abandoned_expected_tag_dirs(sweep_dir, expected_tags, skip_basenames=skip_prune)
+    if prune_r_suffix_without_args:
+        print("— Bumped tagrN/ with no args.yaml")
+        prune_r_suffix_dirs_without_args(sweep_dir, skip_basenames=skip_prune)
+
+    # ----- Phase 2: Promote tagrN -> tag -----
+    print("\n=== Phase 2: Promote (tagrN -> tag) ===")
+    if promote_r_dirs:
+        if suffix is not None:
+            print("skipped (eval_run_dir_suffix is set)")
+        elif not resolve_flag:
+            print("skipped (eval_resolve_run_dir is false)")
+        else:
+            for t in _tags_for_promotion(sweep_dir, expected_tags):
+                promote_r_suffix_into_base_tag(sweep_dir, t)
+    else:
+        print("(promote_r_dirs disabled)")
+
+    # After prune+promote: canonical layout and checkpoint classification
+    canonical_paths, _ordering_key = collect_canonical_run_paths(
+        sweep_dir,
+        sweep_tags=expected_tags,
+        eval_run_dir_suffix=suffix,
+        eval_resolve_run_dir=resolve_flag,
+    )
+
+    all_run_paths = {os.path.abspath(full) for _name, full in iter_run_dirs(sweep_dir)}
+    noncanonical_paths = sorted(all_run_paths - canonical_paths)
+
+    to_remove_low: list[tuple[str, str, int]] = []
+    for name, full in sorted(list(iter_run_dirs(sweep_dir)), key=lambda x: x[1]):
         n_ckpt = count_periodic_checkpoints(full)
         if n_ckpt < min_checkpoints:
-            to_remove.append((name, full, n_ckpt))
-        else:
+            to_remove_low.append((name, full, n_ckpt))
+
+    kept: list[tuple[str, str, int]] = []
+    for full in sorted(canonical_paths):
+        name = os.path.basename(full)
+        n_ckpt = count_periodic_checkpoints(full)
+        if n_ckpt >= min_checkpoints:
             kept.append((name, full, n_ckpt))
 
-    mode = "APPLY" if cleanup_apply else "DRY RUN"
-    print(f"{mode}: sweep_dir={sweep_dir}  min_checkpoints={min_checkpoints}")
-    print(f"Runs scanned: {len(to_remove) + len(kept)}  remove: {len(to_remove)}  keep: {len(kept)}")
-
     if verbose and kept:
-        print("\nKeeping (on-disk):")
+        print("\nCanonical runs with enough checkpoints (GIF sources):")
         for name, _full, n_ckpt in kept:
             print(f"  {name}  ({n_ckpt} checkpoints)")
 
+    # ----- Phase 3: Aggregate GIFs + missing report -----
     out_dir: str | None = None
     if aggregate_gifs:
+        print("\n=== Phase 3: Aggregate GIFs + missing report ===")
         out_dir = os.path.join(sweep_dir, gifs_subdir)
         os.makedirs(out_dir, exist_ok=True)
-        print(f"\nAggregate GIFs -> {out_dir}")
+        print(f"Output: {out_dir}")
         for name, full, n_ckpt in kept:
             gif_src = find_one_rollout_eval_gif(full)
             if not gif_src:
-                print(f"  skip (no eval_0.gif): {name}")
+                print(f"  skip (no eval_0.gif under rollout/): {name}")
                 continue
             dest = os.path.join(out_dir, f"{name}.gif")
             try:
@@ -250,12 +618,6 @@ def postprocess_reward_sweep(
                 print(f"  copied {name}.gif")
             except OSError as e:
                 print(f"  ERROR copy {name}: {e}", file=sys.stderr)
-
-    expected_tags: list[str] | None = None
-    if sweep_cfg is not None:
-        from scripts.smooth_policy.amp_history.amp_training.td3.helper.generate_sweep import sweep_run_tags
-
-        expected_tags = sweep_run_tags(sweep_cfg)
 
     if aggregate_gifs and out_dir is not None and expected_tags is not None:
         no_run_dir: list[str] = []
@@ -294,9 +656,8 @@ def postprocess_reward_sweep(
             no_gif=no_gif,
             copied_ok=copied_ok,
         )
-        print(f"Wrote {report_path}")
+        print(f"Recorded missing / status -> {report_path}")
     elif aggregate_gifs and out_dir is not None:
-        # No sweep YAML: report only on-disk kept runs missing GIFs
         missing_only = [name for name, full, _ in kept if not find_one_rollout_eval_gif(full)]
         report_path = os.path.join(out_dir, missing_report_name)
         _write_missing_report(
@@ -306,28 +667,67 @@ def postprocess_reward_sweep(
             no_gif=[(n, os.path.join(sweep_dir, n)) for n in missing_only],
             copied_ok=[name for name, _, _ in kept if name not in missing_only],
         )
-        print(f"Wrote {report_path}")
+        print(f"Recorded missing / status -> {report_path}")
+    elif not aggregate_gifs:
+        print("\n=== Phase 3: Aggregate GIFs (skipped) ===")
 
-    if not to_remove:
+    # ----- Phase 4: Remove low-checkpoint / non-canonical dirs -----
+    print("\n=== Phase 4: Low-checkpoint removal ===")
+    mode = "APPLY" if cleanup_apply else "DRY RUN"
+    print(f"{mode}: sweep_dir={sweep_dir}  min_checkpoints={min_checkpoints}")
+    print(
+        f"Canonical run dirs: {len(canonical_paths)}  eligible for GIFs: {len(kept)}  "
+        f"run dirs below min checkpoints: {len(to_remove_low)}"
+    )
+    if noncanonical_paths:
+        print(f"Non-canonical run dirs on disk: {len(noncanonical_paths)}")
+        if verbose:
+            for p in noncanonical_paths:
+                print(f"  {os.path.basename(p)}  -> {p}")
+
+    if not to_remove_low and not (remove_noncanonical_run_dirs and noncanonical_paths):
         print("\nNothing to remove (checkpoint cleanup).")
+        if noncanonical_paths and not remove_noncanonical_run_dirs:
+            print(
+                "Non-canonical dirs skipped for deletion (use --remove-noncanonical-run-dirs with --apply)."
+            )
         return
 
-    print("\nRemove (checkpoint count < min):")
-    for name, full, n_ckpt in to_remove:
+    print("\nRemove (low checkpoint — any run dir with args.yaml):")
+    for name, full, n_ckpt in to_remove_low:
         print(f"  {name}  ({n_ckpt} checkpoints) -> {full}")
+    removed_by_low_ckpt = {os.path.abspath(full) for _name, full, _ in to_remove_low}
+    if remove_noncanonical_run_dirs and noncanonical_paths:
+        extra_nc = [p for p in noncanonical_paths if os.path.abspath(p) not in removed_by_low_ckpt]
+        if extra_nc:
+            print("\nRemove (non-canonical, sufficient checkpoints):")
+            for p in extra_nc:
+                print(f"  {os.path.basename(p)}  -> {p}")
 
     if not cleanup_apply:
         print("\nNo directories deleted. Re-run with --apply to remove them.")
+        if noncanonical_paths and not remove_noncanonical_run_dirs:
+            print("Tip: --remove-noncanonical-run-dirs deletes extra tagrN sibling folders.")
         return
 
     errors = 0
-    for name, full, n_ckpt in to_remove:
+    for name, full, n_ckpt in to_remove_low:
         try:
             shutil.rmtree(full)
             print(f"Removed {name}")
         except OSError as e:
             print(f"ERROR removing {full}: {e}", file=sys.stderr)
             errors += 1
+    if remove_noncanonical_run_dirs:
+        for p in noncanonical_paths:
+            if os.path.abspath(p) in removed_by_low_ckpt:
+                continue
+            try:
+                shutil.rmtree(p)
+                print(f"Removed {os.path.basename(p)} (non-canonical)")
+            except OSError as e:
+                print(f"ERROR removing {p}: {e}", file=sys.stderr)
+                errors += 1
     if errors:
         sys.exit(1)
 
@@ -392,6 +792,38 @@ def main() -> None:
         action="store_true",
         help="Also print runs that are kept (with checkpoint counts).",
     )
+    parser.add_argument(
+        "--remove-noncanonical-run-dirs",
+        action="store_true",
+        help="With --apply, also delete args.yaml dirs that are not the eval-resolved path "
+        "(e.g. tagr1 when tag wins).",
+    )
+    parser.add_argument(
+        "--promote-r-dirs",
+        action="store_true",
+        help="Before cleanup, rename tagrN/ -> tag/ when tag has no args.yaml and tag is "
+        "missing or an empty directory (lowest N wins).",
+    )
+    parser.add_argument(
+        "--prune-hollow-dirs",
+        action="store_true",
+        help="Remove sweep subdirs with no args.yaml and no files anywhere beneath (before promote).",
+    )
+    parser.add_argument(
+        "--prune-stale-tag-dirs",
+        action="store_true",
+        help="Remove tag/ with no args.yaml when tagrN/ has args.yaml (before promote).",
+    )
+    parser.add_argument(
+        "--prune-abandoned-tag-dirs",
+        action="store_true",
+        help="With --sweep-file: remove expected tag/ with no args at tag/ or any tagrN/ (failed slots).",
+    )
+    parser.add_argument(
+        "--prune-r-suffix-without-args",
+        action="store_true",
+        help="Remove tagrN/ immediate children that have no args.yaml.",
+    )
     args = parser.parse_args()
 
     sweep_dir, sweep_cfg = _sweep_dir_and_cfg(args)
@@ -403,6 +835,12 @@ def main() -> None:
         gifs_subdir=args.gifs_subdir,
         missing_report_name=args.missing_report_name,
         cleanup_apply=args.apply,
+        remove_noncanonical_run_dirs=args.remove_noncanonical_run_dirs,
+        promote_r_dirs=args.promote_r_dirs,
+        prune_hollow_dirs=args.prune_hollow_dirs,
+        prune_stale_tag_dirs=args.prune_stale_tag_dirs,
+        prune_abandoned_tag_dirs=args.prune_abandoned_tag_dirs,
+        prune_r_suffix_without_args=args.prune_r_suffix_without_args,
         eval_run_dir_suffix=sweep_cfg.get("eval_run_dir_suffix") if sweep_cfg else None,
         eval_resolve_run_dir=bool(sweep_cfg.get("eval_resolve_run_dir", True)) if sweep_cfg else True,
         verbose=args.verbose,

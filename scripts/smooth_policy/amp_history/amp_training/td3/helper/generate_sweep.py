@@ -22,6 +22,12 @@ Sweep YAML format:
     post_cleanup_apply: false                 # if true, delete run dirs below post_min_checkpoints
     post_aggregate_gifs: true                 # copy one eval_0.gif per kept run into log_parent_dir/<post_gifs_subdir>/
     post_gifs_subdir: full_evaluation_gifs    # output folder name under log_parent_dir
+    post_remove_noncanonical_run_dirs: false # with post_cleanup_apply: also delete non-eval-resolved tagrN dirs
+    post_promote_r_dirs: false               # rename tagrN -> tag when tag has no args.yaml and tag missing or empty
+    post_prune_hollow_dirs: true             # rm tag/ trees with no args.yaml and no files (before promote)
+    post_prune_stale_tag_dirs: true         # rm tag/ with no args when tagrN/ has args (junk placeholders)
+    post_prune_abandoned_tag_dirs: true     # rm expected tag/ with no args at tag/ or any tagrN/ (failed runs)
+    post_prune_r_suffix_without_args: true  # rm tagrN/ dirs with no args.yaml
     extra_args:                                 # static overrides always added
       seed: 42
       total_timesteps: 500000
@@ -452,7 +458,13 @@ def main():
         print(
             f"post_min_checkpoints={post_min}: running cleanup_sweep_runs.postprocess "
             f"(aggregate_gifs={sweep.get('post_aggregate_gifs', True)}, "
-            f"cleanup_apply={bool(sweep.get('post_cleanup_apply', False))})"
+            f"cleanup_apply={bool(sweep.get('post_cleanup_apply', False))}, "
+            f"remove_noncanonical={bool(sweep.get('post_remove_noncanonical_run_dirs', False))}, "
+            f"promote_r_dirs={bool(sweep.get('post_promote_r_dirs', False))}, "
+            f"prune_hollow={bool(sweep.get('post_prune_hollow_dirs', True))}, "
+            f"prune_stale_tag={bool(sweep.get('post_prune_stale_tag_dirs', True))}, "
+            f"prune_abandoned={bool(sweep.get('post_prune_abandoned_tag_dirs', True))}, "
+            f"prune_r_suffix={bool(sweep.get('post_prune_r_suffix_without_args', True))})"
         )
         cleanup_sweep_runs.postprocess_reward_sweep(
             sweep_dir=sweep_dir,
@@ -461,6 +473,12 @@ def main():
             aggregate_gifs=bool(sweep.get("post_aggregate_gifs", True)),
             gifs_subdir=str(sweep.get("post_gifs_subdir", "full_evaluation_gifs")),
             cleanup_apply=bool(sweep.get("post_cleanup_apply", False)),
+            remove_noncanonical_run_dirs=bool(sweep.get("post_remove_noncanonical_run_dirs", False)),
+            promote_r_dirs=bool(sweep.get("post_promote_r_dirs", False)),
+            prune_hollow_dirs=bool(sweep.get("post_prune_hollow_dirs", True)),
+            prune_stale_tag_dirs=bool(sweep.get("post_prune_stale_tag_dirs", True)),
+            prune_abandoned_tag_dirs=bool(sweep.get("post_prune_abandoned_tag_dirs", True)),
+            prune_r_suffix_without_args=bool(sweep.get("post_prune_r_suffix_without_args", True)),
             eval_run_dir_suffix=sweep.get("eval_run_dir_suffix"),
             eval_resolve_run_dir=bool(sweep.get("eval_resolve_run_dir", True)),
         )
