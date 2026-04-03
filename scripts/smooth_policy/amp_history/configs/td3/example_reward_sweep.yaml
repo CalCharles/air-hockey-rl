@@ -1,7 +1,7 @@
 # Example reward parameter sweep config for generate_sweep.py
 #
 # Usage:
-#   uv run scripts/smooth_policy/amp_history/amp_training/td3/generate_sweep.py \
+#   uv run scripts/smooth_policy/amp_history/amp_training/td3/helper/generate_sweep.py \
 #     --sweep-file scripts/smooth_policy/amp_history/configs/td3/example_reward_sweep.yaml \
 #     --output-file run_reward_sweep.sh
 #   bash run_reward_sweep.sh          # launch all runs
@@ -13,6 +13,16 @@ run_name_prefix: td3_reward
 
 gpus: [0, 1, 2, 3]
 max_parallel: 16  # max runs in flight at once; 0 = launch all immediately
+
+# Eval script generation (--eval-output-file): find TD3 dirs when training used <tag>r1 because an
+# empty <tag> existed (legacy) or the dir was reused. Set false to force LOG_BASE/<tag> only.
+# eval_resolve_run_dir: true
+# Or pin suffix explicitly: eval_run_dir_suffix: r1
+
+# Optional: add these to enable wandb logging for every run in the bash sweep,
+# or to use run_wandb_sweep.py for agent-based sweeps.
+# wandb_project: my-project-name
+# wandb_entity: my-team
 
 # "grid"       -> cartesian product of all param value lists
 # "random"     -> random sample of num_samples combos from the product

@@ -2,7 +2,7 @@
 Generate a bash script that launches a sweep of TD3 training runs across GPUs.
 
 Usage:
-    uv run scripts/smooth_policy/amp_history/amp_training/td3/generate_sweep.py \\
+    uv run scripts/smooth_policy/amp_history/amp_training/td3/helper/generate_sweep.py \\
         --sweep-file scripts/smooth_policy/amp_history/configs/td3/example_reward_sweep.yaml \\
         --output-file run_reward_sweep.sh
 
@@ -13,6 +13,10 @@ Sweep YAML format:
     gpus: [0, 1, 2, 3]                         # GPU indices, round-robin
     mode: grid                                  # "grid" (cartesian product), "random", or "individual"
     num_samples: 20                             # only used for mode=random
+    wandb_project: my-project-name             # optional: enables wandb logging for every run
+    wandb_entity: my-team                       # optional: wandb entity/team
+    eval_resolve_run_dir: true                 # optional: eval script picks <tag> or <tag>r1.. if td3 bumped dir
+    eval_run_dir_suffix: r1                    # optional: if set, eval uses <tag><suffix> and skips resolve
     extra_args:                                 # static overrides always added
       seed: 42
       total_timesteps: 500000
@@ -139,9 +143,11 @@ def _generate_bash(sweep: dict, runs: list[dict], output_path: str) -> None:
     gpus: list = sweep.get("gpus", [0])
     extra_args: dict = sweep.get("extra_args", {}) or {}
     max_parallel: int = int(sweep.get("max_parallel", 0))  # 0 = unlimited
+    wandb_project: str | None = sweep.get("wandb_project")
+    wandb_entity: str | None = sweep.get("wandb_entity")
 
     script_path = (
-        "scripts/smooth_policy/amp_history/amp_training/td3/amp_training_td3.py"
+        "scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py"
     )
 
     lines = [
@@ -149,6 +155,10 @@ def _generate_bash(sweep: dict, runs: list[dict], output_path: str) -> None:
         "set -euo pipefail",
         "",
         f'LOG_BASE="{log_parent_dir}"',
+        # Ensure sweep root exists for per-run nohup logs. Do NOT mkdir per-run log dirs here:
+        # td3_training.py bumps to <tag>r1, r2, ... if the path already exists; pre-creating <tag>
+        # only for nohup would leave empty <tag> dirs and break eval paths.
+        'mkdir -p "$LOG_BASE"',
         "",
     ]
 
@@ -193,10 +203,15 @@ def _generate_bash(sweep: dict, runs: list[dict], output_path: str) -> None:
                 f"  if (( _job_count >= MAX_PARALLEL )); then _wait_one; fi",
             ]
 
+        wandb_flags = ""
+        if wandb_project:
+            wandb_flags += f"\n    --wandb-project {wandb_project} \\"
+        if wandb_entity:
+            wandb_flags += f"\n    --wandb-entity {wandb_entity} \\"
+
         lines += [
             "",
             f"# run {idx}: {tag}",
-            f"mkdir -p {run_dir}",
             f"if [[ ${{DRY_RUN:-0}} == 1 ]]; then",
             f'  echo "DRY_RUN [{idx}]: {run_name} on cuda:{gpu}"',
             f"else",
@@ -205,9 +220,10 @@ def _generate_bash(sweep: dict, runs: list[dict], output_path: str) -> None:
             f"    --args-file {base_args_file} \\",
             f"    --device cuda:{gpu} \\",
             f"    --log-parent-dir {run_dir} \\",
-            f"    --run-name {run_name} \\",
+            f"    --run-name {run_name} \\{wandb_flags}",
             param_block,
-            f"    > {run_dir}/nohup.out 2>&1 &",
+            # Log file under LOG_BASE so we never create <tag> before td3 starts (see mkdir note above).
+            f'    > "$LOG_BASE/nohup_{tag}.out" 2>&1 &',
             *(["  _job_count=$(( _job_count + 1 ))"] if max_parallel > 0 else []),
             f'  echo "Started [{idx}]: {run_name} on cuda:{gpu} -> {run_dir}"',
             f"fi",
@@ -221,7 +237,7 @@ def _generate_bash(sweep: dict, runs: list[dict], output_path: str) -> None:
         "else",
         *wait_remaining,
         f'  echo "All {len(runs)} run(s) launched."',
-        '  echo "Check status: ps -fu \\"$USER\\" | grep amp_training_td3.py"',
+        '  echo "Check status: ps -fu \\"$USER\\" | grep td3_training.py"',
         "fi",
         "",
     ]
@@ -238,6 +254,9 @@ def _generate_eval_bash(sweep: dict, runs: list[dict], output_path: str) -> None
     max_parallel: int = int(sweep.get("eval_max_parallel", sweep.get("max_parallel", 0)))
     eval_num_episodes: int = int(sweep.get("eval_num_episodes", 20))
     eval_n_gifs: int = int(sweep.get("eval_n_gifs", 3))
+    # If set (e.g. "r1"), use LOG_BASE/<tag><suffix> and skip auto-resolve.
+    eval_run_dir_suffix: str | None = sweep.get("eval_run_dir_suffix")
+    eval_resolve_run_dir: bool = bool(sweep.get("eval_resolve_run_dir", True))
 
     eval_script = "scripts/smooth_policy/collect_policy_data.py"
 
@@ -261,13 +280,41 @@ def _generate_eval_bash(sweep: dict, runs: list[dict], output_path: str) -> None
             "",
         ]
 
+    if eval_run_dir_suffix is None and eval_resolve_run_dir:
+        lines += [
+            "# Resolve TD3 log dir: training uses <tag> unless it already existed, then <tag>r1, r2, ...",
+            "_resolve_run_dir() {",
+            '  local _base="$1" _tag="$2" _d _i',
+            '  _d="${_base}/${_tag}"',
+            '  if [[ -f "${_d}/args.yaml" ]]; then',
+            '    printf "%s\\n" "${_d}"',
+            "    return",
+            "  fi",
+            "  _i=1",
+            "  while ((_i <= 50)); do",
+            '    if [[ -f "${_d}r${_i}/args.yaml" ]]; then',
+            '      printf "%s\\n" "${_d}r${_i}"',
+            "      return",
+            "    fi",
+            "    ((_i++)) || true",
+            "  done",
+            '  printf "%s\\n" "${_d}"',
+            "}",
+            "",
+        ]
+
     lines += ["# ---------- evaluate all runs ----------"]
 
     for idx, run in enumerate(runs):
         params = run["params"]
         tag_parts = [f"{k}_{_value_to_tag(v)}" for k, v in params.items()]
         tag = "__".join(tag_parts) if tag_parts else f"run{idx:03d}"
-        run_dir = f'"$LOG_BASE/{tag}"'
+        if eval_run_dir_suffix is not None:
+            run_dir_cmd = f'"$LOG_BASE/{tag}{eval_run_dir_suffix}"'
+        elif eval_resolve_run_dir:
+            run_dir_cmd = f'"$(_resolve_run_dir "$LOG_BASE" "{tag}")"'
+        else:
+            run_dir_cmd = f'"$LOG_BASE/{tag}"'
 
         throttle_lines = []
         if max_parallel > 0:
@@ -282,13 +329,14 @@ def _generate_eval_bash(sweep: dict, runs: list[dict], output_path: str) -> None
             f'  echo "DRY_RUN [{idx}]: eval {tag}"',
             f"else",
             *throttle_lines,
+            f"  _run_dir={run_dir_cmd}",
             f"  nohup uv run {eval_script} \\",
-            f"    --run-dir {run_dir} \\",
+            f'    --run-dir "$_run_dir" \\',
             f"    --num-episodes {eval_num_episodes} \\",
             f"    --n-gifs {eval_n_gifs} \\",
-            f"    > {run_dir}/eval_nohup.out 2>&1 &",
+            f'    > "$_run_dir/eval_nohup.out" 2>&1 &',
             *(["  _job_count=$(( _job_count + 1 ))"] if max_parallel > 0 else []),
-            f'  echo "Started eval [{idx}]: {tag} -> {run_dir}/eval"',
+            f'  echo "Started eval [{idx}]: {tag} -> $_run_dir/rollout"',
             "fi",
         ]
 
@@ -300,7 +348,7 @@ def _generate_eval_bash(sweep: dict, runs: list[dict], output_path: str) -> None
         "else",
         *wait_remaining,
         f'  echo "All {len(runs)} eval(s) launched."',
-        '  echo "Check status: ps -fu \\"$USER\\" | grep eval_td3.py"',
+        '  echo "Check status: ps -fu \\"$USER\\" | grep collect_policy_data.py"',
         "fi",
         "",
     ]
