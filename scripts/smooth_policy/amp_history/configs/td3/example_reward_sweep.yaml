@@ -19,6 +19,12 @@ max_parallel: 16  # max runs in flight at once; 0 = launch all immediately
 # eval_resolve_run_dir: true
 # Or pin suffix explicitly: eval_run_dir_suffix: r1
 
+# Optional: after generate_sweep writes scripts, run cleanup + aggregate eval GIFs (see cleanup_sweep_runs.py).
+post_min_checkpoints: 5
+post_cleanup_apply: trues
+post_aggregate_gifs: true
+post_gifs_subdir: full_evaluation_gifs
+
 # Optional: add these to enable wandb logging for every run in the bash sweep,
 # or to use run_wandb_sweep.py for agent-based sweeps.
 # wandb_project: my-project-name

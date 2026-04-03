@@ -11,6 +11,10 @@ Exports:
 - trajectory.npz: compact array-based trajectory tensors
 - metadata.yaml: run metadata and collection settings
 - model_used.pth / config_used.yaml: copied input artifacts
+
+With ``--run-dir`` and ``--last-n-policies N`` (N > 1), each snapshot is written under
+``<save-dir>/<checkpoint_STEP|final>/`` and a ``policy_snapshots_manifest.yaml`` is added
+under ``<save-dir>``.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import re
 import shutil
 import sys
 from dataclasses import dataclass
@@ -372,19 +377,65 @@ def collect_policy_data(
     return metadata
 
 
-def _args_from_run_dir(run_dir: str) -> tuple[str, str, dict]:
-    """Read model path, env config path, and policy kwargs from a TD3 run directory."""
+_CHECKPOINT_DIR_RE = re.compile(r"^checkpoint_(\d+)$")
+
+
+def discover_td3_policy_snapshots(run_dir: str) -> list[tuple[int, str, str]]:
+    """
+    List policy weight snapshots under a TD3 run directory, ordered by training progress.
+
+    Returns tuples (sort_step, model_path, save_label) ascending. Periodic checkpoints use
+    the step parsed from ``checkpoint_<step>/model.pth``. The run-root ``model.pth`` (final
+    actor save) is appended last with sort_step = max_checkpoint_step + 1 so it sorts after
+    any checkpoint at the same global step index.
+    """
+    run_dir = os.path.abspath(run_dir)
+    snapshots: list[tuple[int, str, str]] = []
+    if not os.path.isdir(run_dir):
+        return snapshots
+    try:
+        names = os.listdir(run_dir)
+    except OSError:
+        return snapshots
+    for name in names:
+        m = _CHECKPOINT_DIR_RE.match(name)
+        if not m:
+            continue
+        step = int(m.group(1))
+        p = os.path.join(run_dir, name, "model.pth")
+        if os.path.isfile(p):
+            snapshots.append((step, p, f"checkpoint_{step}"))
+    snapshots.sort(key=lambda x: x[0])
+    final_p = os.path.join(run_dir, "model.pth")
+    if os.path.isfile(final_p):
+        last_ck = snapshots[-1][0] if snapshots else -1
+        snapshots.append((last_ck + 1, final_p, "final"))
+    return snapshots
+
+
+def select_last_n_policy_snapshots(run_dir: str, n: int) -> list[tuple[int, str, str]]:
+    """Return the last n snapshots from discover_td3_policy_snapshots (most trained last)."""
+    if n <= 0:
+        raise ValueError(f"last_n must be >= 1, got {n}.")
+    all_snap = discover_td3_policy_snapshots(run_dir)
+    if not all_snap:
+        raise FileNotFoundError(f"No model.pth snapshots found under {run_dir}.")
+    if n > len(all_snap):
+        print(
+            f"WARNING: --last-n-policies={n} but only {len(all_snap)} snapshot(s) exist; using all.",
+            file=sys.stderr,
+        )
+    return all_snap[-n:]
+
+
+def _settings_from_run_dir(run_dir: str) -> tuple[str, dict]:
+    """Read env config path and policy kwargs from a TD3 run directory (args.yaml + config)."""
     args_yaml = os.path.join(run_dir, "args.yaml")
     if not os.path.isfile(args_yaml):
         print(f"ERROR: args.yaml not found in {run_dir}", file=sys.stderr)
         sys.exit(1)
     with open(args_yaml, "r") as f:
         run_args = yaml.safe_load(f)
-
-    model_path = os.path.join(run_dir, "model.pth")
-    if not os.path.isfile(model_path):
-        print(f"ERROR: model.pth not found in {run_dir}", file=sys.stderr)
-        sys.exit(1)
 
     # Env config: prefer path recorded in args.yaml, fall back to config.yaml in run dir
     config_path = run_args.get("config")
@@ -403,7 +454,7 @@ def _args_from_run_dir(run_dir: str) -> tuple[str, str, dict]:
         "use_last_action_in_policy_state": bool(run_args.get("use_last_action_in_policy_state", False)),
         "policy_type": "deterministic_agent",
     }
-    return model_path, config_path, policy_kwargs
+    return config_path, policy_kwargs
 
 
 def parse_args() -> argparse.Namespace:
@@ -422,9 +473,20 @@ def parse_args() -> argparse.Namespace:
     )
     # --- run-dir shortcut (TD3) ---
     parser.add_argument("--run-dir", type=str, default=None,
-                        help="TD3 training run directory. Auto-reads model.pth, args.yaml, config.yaml.")
+                        help="TD3 training run directory. Auto-reads args.yaml, config.yaml, and model snapshots.")
     parser.add_argument("--save-dir", type=str, default=None,
                         help="Output directory. Defaults to <run-dir>/rollout when --run-dir is used.")
+    parser.add_argument(
+        "--last-n-policies",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "With --run-dir: collect from the N most trained snapshots (checkpoint_*/model.pth "
+            "and final model.pth). N=1 uses a single rollout directory; N>1 writes under "
+            "<save-dir>/<checkpoint_STEP|final>/ per snapshot."
+        ),
+    )
 
     # --- explicit model/config (used when --run-dir is not given) ---
     parser.add_argument("--model", type=str, default=None, help="Path to policy model state dict (.pth).")
@@ -449,17 +511,30 @@ def parse_args() -> argparse.Namespace:
 if __name__ == "__main__":
     args = parse_args()
 
+    if args.last_n_policies < 1:
+        print("ERROR: --last-n-policies must be >= 1.", file=sys.stderr)
+        sys.exit(1)
+
     if args.run_dir is not None:
-        model_path, config_path, policy_kwargs = _args_from_run_dir(os.path.abspath(args.run_dir))
-        save_dir = args.save_dir or os.path.join(os.path.abspath(args.run_dir), "rollout")
+        run_dir_abs = os.path.abspath(args.run_dir)
+        config_path, policy_kwargs = _settings_from_run_dir(run_dir_abs)
+        base_rollout = args.save_dir or os.path.join(run_dir_abs, "rollout")
+        try:
+            snapshots = select_last_n_policy_snapshots(run_dir_abs, args.last_n_policies)
+        except FileNotFoundError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
     else:
+        if args.last_n_policies != 1:
+            print("ERROR: --last-n-policies > 1 requires --run-dir.", file=sys.stderr)
+            sys.exit(1)
         if not args.model or not args.config_path:
             print("ERROR: provide --run-dir or both --model and --config-path.", file=sys.stderr)
             sys.exit(1)
-        model_path = args.model
+        snapshots = None
         config_path = args.config_path
-        save_dir = args.save_dir
-        if not save_dir:
+        base_rollout = args.save_dir
+        if not base_rollout:
             print("ERROR: --save-dir is required when not using --run-dir.", file=sys.stderr)
             sys.exit(1)
         policy_kwargs = {
@@ -476,17 +551,77 @@ if __name__ == "__main__":
         print("ERROR: provide at least one stopping limit: --num-episodes and/or --total-timesteps.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Model:      {model_path}")
-    print(f"Config:     {config_path}")
-    print(f"Save dir:   {save_dir}")
-    print(f"Policy:     {policy_kwargs}")
+    limits = CollectionLimits(num_episodes=num_episodes, total_timesteps=total_timesteps)
 
-    metadata = collect_policy_data(
-        model_path=model_path,
-        config_path=config_path,
-        save_dir=save_dir,
-        limits=CollectionLimits(num_episodes=num_episodes, total_timesteps=total_timesteps),
-        n_gifs=args.n_gifs,
-        **policy_kwargs,
-    )
-    print(yaml.safe_dump(metadata, sort_keys=False))
+    if snapshots is not None:
+        print(f"Config:     {config_path}")
+        print(f"Policy:     {policy_kwargs}")
+        print(f"Snapshots:  {len(snapshots)}  (last-n-policies={args.last_n_policies})")
+        for sort_step, mp, label in snapshots:
+            print(f"  - {label}  sort_step={sort_step}  model={mp}")
+
+        if len(snapshots) == 1:
+            _, model_path, _ = snapshots[0]
+            print(f"Model:      {model_path}")
+            print(f"Save dir:   {base_rollout}")
+            metadata = collect_policy_data(
+                model_path=model_path,
+                config_path=config_path,
+                save_dir=base_rollout,
+                limits=limits,
+                n_gifs=args.n_gifs,
+                **policy_kwargs,
+            )
+            print(yaml.safe_dump(metadata, sort_keys=False))
+        else:
+            os.makedirs(base_rollout, exist_ok=True)
+            manifest_entries: list[dict[str, Any]] = []
+            last_meta: dict[str, Any] | None = None
+            for sort_step, model_path, label in snapshots:
+                sub_save = os.path.join(base_rollout, label)
+                print(f"\n--- collecting {label} -> {sub_save} ---")
+                print(f"Model:      {model_path}")
+                last_meta = collect_policy_data(
+                    model_path=model_path,
+                    config_path=config_path,
+                    save_dir=sub_save,
+                    limits=limits,
+                    n_gifs=args.n_gifs,
+                    **policy_kwargs,
+                )
+                manifest_entries.append(
+                    {
+                        "label": label,
+                        "sort_step": sort_step,
+                        "model_path": os.path.abspath(model_path),
+                        "save_dir": sub_save,
+                    }
+                )
+            manifest_path = os.path.join(base_rollout, "policy_snapshots_manifest.yaml")
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(
+                    {
+                        "run_dir": run_dir_abs,
+                        "last_n_policies_requested": args.last_n_policies,
+                        "snapshots": manifest_entries,
+                    },
+                    f,
+                    sort_keys=False,
+                )
+            print(f"\nWrote manifest: {manifest_path}")
+            if last_meta is not None:
+                print(yaml.safe_dump(last_meta, sort_keys=False))
+    else:
+        print(f"Model:      {args.model}")
+        print(f"Config:     {config_path}")
+        print(f"Save dir:   {base_rollout}")
+        print(f"Policy:     {policy_kwargs}")
+        metadata = collect_policy_data(
+            model_path=args.model,
+            config_path=config_path,
+            save_dir=base_rollout,
+            limits=limits,
+            n_gifs=args.n_gifs,
+            **policy_kwargs,
+        )
+        print(yaml.safe_dump(metadata, sort_keys=False))

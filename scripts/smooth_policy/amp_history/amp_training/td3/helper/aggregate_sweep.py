@@ -28,10 +28,13 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import re
 import sys
 from typing import Any
 
 import yaml
+
+_CHECKPOINT_SUBDIR_RE = re.compile(r"^checkpoint_(\d+)$")
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +70,39 @@ def _max(pairs: list[tuple[int, float]]) -> float | None:
 # Per-run aggregation
 # ---------------------------------------------------------------------------
 
+def _rollout_eval_subdir(run_dir: str) -> str | None:
+    """
+    Directory containing collect_policy_data eval artifacts for aggregate columns.
+
+    Prefers ``rollout/final`` (final actor) when present, then flat ``rollout/`` with
+    ``metadata.yaml``, then the ``checkpoint_*`` subdir with the highest step.
+    """
+    rollout_dir = os.path.join(run_dir, "rollout")
+    if not os.path.isdir(rollout_dir):
+        return None
+    final_meta = os.path.join(rollout_dir, "final", "metadata.yaml")
+    if os.path.isfile(final_meta):
+        return os.path.join(rollout_dir, "final")
+    root_meta = os.path.join(rollout_dir, "metadata.yaml")
+    if os.path.isfile(root_meta):
+        return rollout_dir
+    best_step = -1
+    best_sub: str | None = None
+    try:
+        for name in os.listdir(rollout_dir):
+            m = _CHECKPOINT_SUBDIR_RE.match(name)
+            if not m:
+                continue
+            step = int(m.group(1))
+            sub = os.path.join(rollout_dir, name)
+            if os.path.isfile(os.path.join(sub, "metadata.yaml")) and step > best_step:
+                best_step = step
+                best_sub = sub
+    except OSError:
+        return None
+    return best_sub
+
+
 def _aggregate_run(run_dir: str, param_keys: list[str] | None) -> dict[str, Any] | None:
     """
     Collect metrics for one run directory. Returns None if args.yaml is missing
@@ -99,16 +135,16 @@ def _aggregate_run(run_dir: str, param_keys: list[str] | None) -> dict[str, Any]
     row["tb_steps"] = rolling_pairs[-1][0] if rolling_pairs else None
 
     # --- Eval rollout (produced by collect_policy_data.py --run-dir <run_dir>) ---
-    rollout_dir = os.path.join(run_dir, "rollout")
-    eval_meta_path = os.path.join(rollout_dir, "metadata.yaml")
-    if os.path.isfile(eval_meta_path):
+    rollout_dir = _rollout_eval_subdir(run_dir)
+    eval_meta_path = os.path.join(rollout_dir, "metadata.yaml") if rollout_dir else ""
+    if rollout_dir and os.path.isfile(eval_meta_path):
         with open(eval_meta_path) as f:
             eval_meta: dict = yaml.safe_load(f) or {}
         coll = eval_meta.get("collection", {})
         row["eval_episodes_completed"] = coll.get("episodes_completed")
         row["eval_total_timesteps"] = coll.get("total_timesteps_collected")
 
-    per_step_csv = os.path.join(rollout_dir, "per_timestep.csv")
+    per_step_csv = os.path.join(rollout_dir, "per_timestep.csv") if rollout_dir else ""
     if os.path.isfile(per_step_csv):
         rewards: list[float] = []
         episode_returns: dict[int, float] = {}  # episode_index -> cumulative reward

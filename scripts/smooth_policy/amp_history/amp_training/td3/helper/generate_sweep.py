@@ -17,6 +17,11 @@ Sweep YAML format:
     wandb_entity: my-team                       # optional: wandb entity/team
     eval_resolve_run_dir: true                 # optional: eval script picks <tag> or <tag>r1.. if td3 bumped dir
     eval_run_dir_suffix: r1                    # optional: if set, eval uses <tag><suffix> and skips resolve
+    eval_last_n_policies: 3                   # optional: collect last N TD3 checkpoints + final (collect_policy_data)
+    post_min_checkpoints: 5                   # optional: after writing scripts, run cleanup_sweep_runs post-process
+    post_cleanup_apply: false                 # if true, delete run dirs below post_min_checkpoints
+    post_aggregate_gifs: true                 # copy one eval_0.gif per kept run into log_parent_dir/<post_gifs_subdir>/
+    post_gifs_subdir: full_evaluation_gifs    # output folder name under log_parent_dir
     extra_args:                                 # static overrides always added
       seed: 42
       total_timesteps: 500000
@@ -130,6 +135,18 @@ def _build_runs(sweep: dict) -> list[dict]:
         raise ValueError(f"Unknown sweep mode '{mode}'. Expected 'grid', 'random', or 'individual'.")
 
     return runs
+
+
+def sweep_run_tags(sweep: dict) -> list[str]:
+    """Directory tags (LOG_BASE/<tag> or <tag>r1, …) for each run in sweep order."""
+    runs = _build_runs(sweep)
+    tags: list[str] = []
+    for idx, run in enumerate(runs):
+        params = run["params"]
+        tag_parts = [f"{k}_{_value_to_tag(v)}" for k, v in params.items()]
+        tag = "__".join(tag_parts) if tag_parts else f"run{idx:03d}"
+        tags.append(tag)
+    return tags
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +271,7 @@ def _generate_eval_bash(sweep: dict, runs: list[dict], output_path: str) -> None
     max_parallel: int = int(sweep.get("eval_max_parallel", sweep.get("max_parallel", 0)))
     eval_num_episodes: int = int(sweep.get("eval_num_episodes", 20))
     eval_n_gifs: int = int(sweep.get("eval_n_gifs", 3))
+    eval_last_n_policies: int = int(sweep.get("eval_last_n_policies", 1))
     # If set (e.g. "r1"), use LOG_BASE/<tag><suffix> and skip auto-resolve.
     eval_run_dir_suffix: str | None = sweep.get("eval_run_dir_suffix")
     eval_resolve_run_dir: bool = bool(sweep.get("eval_resolve_run_dir", True))
@@ -334,9 +352,14 @@ def _generate_eval_bash(sweep: dict, runs: list[dict], output_path: str) -> None
             f'    --run-dir "$_run_dir" \\',
             f"    --num-episodes {eval_num_episodes} \\",
             f"    --n-gifs {eval_n_gifs} \\",
+            f"    --last-n-policies {eval_last_n_policies} \\",
             f'    > "$_run_dir/eval_nohup.out" 2>&1 &',
             *(["  _job_count=$(( _job_count + 1 ))"] if max_parallel > 0 else []),
-            f'  echo "Started eval [{idx}]: {tag} -> $_run_dir/rollout"',
+            (
+                f'  echo "Started eval [{idx}]: {tag} -> $_run_dir/rollout (last {eval_last_n_policies} policies)"'
+                if eval_last_n_policies > 1
+                else f'  echo "Started eval [{idx}]: {tag} -> $_run_dir/rollout"'
+            ),
             "fi",
         ]
 
@@ -420,6 +443,27 @@ def main():
         print(f"Wrote eval script: {args.eval_output_file}")
         print(f"Eval with:     bash {args.eval_output_file}")
         print(f"Eval dry-run:  DRY_RUN=1 bash {args.eval_output_file}")
+
+    post_min = sweep.get("post_min_checkpoints")
+    if post_min is not None:
+        from scripts.smooth_policy.amp_history.amp_training.td3.helper import cleanup_sweep_runs
+
+        sweep_dir = os.path.abspath(sweep["log_parent_dir"])
+        print(
+            f"post_min_checkpoints={post_min}: running cleanup_sweep_runs.postprocess "
+            f"(aggregate_gifs={sweep.get('post_aggregate_gifs', True)}, "
+            f"cleanup_apply={bool(sweep.get('post_cleanup_apply', False))})"
+        )
+        cleanup_sweep_runs.postprocess_reward_sweep(
+            sweep_dir=sweep_dir,
+            min_checkpoints=int(post_min),
+            sweep_cfg=sweep,
+            aggregate_gifs=bool(sweep.get("post_aggregate_gifs", True)),
+            gifs_subdir=str(sweep.get("post_gifs_subdir", "full_evaluation_gifs")),
+            cleanup_apply=bool(sweep.get("post_cleanup_apply", False)),
+            eval_run_dir_suffix=sweep.get("eval_run_dir_suffix"),
+            eval_resolve_run_dir=bool(sweep.get("eval_resolve_run_dir", True)),
+        )
 
 
 if __name__ == "__main__":
