@@ -75,6 +75,61 @@ Evidence reference:
 
 - Contact-scenario implementation and metrics collection: [`scripts/box2d_paddle_puck_contact_scenario.py`](../../../../scripts/box2d_paddle_puck_contact_scenario.py) (see parsing of `paddle:puck` sweep pairs, per-run `paddle_density` / `puck_density` recording, and pre/post-contact speed logging).
 
+## Collision physics
+
+All collision restitution is handled by a custom `CollisionForceListener` that **disables Box2D's built-in restitution** and re-applies it deterministically in `PostSolve`. This avoids jitter from Box2D's global `b2_velocityThreshold`.
+
+### Bodies and restitution values
+
+| Body | Shape | Restitution (fixture) |
+|---|---|---|
+| Puck | Circle (`puck_radius`) | `puck_restitution` (e.g. 1.09145) |
+| Paddle | Circle (`paddle_radius`) | `paddle_restitution` (default 1.0) |
+| Side walls (left/right) | `b2EdgeShape` | `side_wall_restitution` (e.g. 0.99) |
+| End walls (top/bottom) | `b2EdgeShape` | `end_wall_restitution` (e.g. 0.70) |
+
+Friction is 0.0 everywhere. Gravity is a downward `gravity` value (e.g. `-0.65 m/s²`) simulating table tilt.
+
+### Puck ↔ wall
+
+**PreSolve:** computes `incoming_speed` (puck's normal-component speed toward the wall), disables Box2D's restitution (`contact.restitution = 0.0`), and stores `{incoming_speed, normal_inward, restitution}` keyed by puck name.
+
+**PostSolve:** reads the stored entry and applies a corrective impulse:
+- If `incoming_speed >= puck_wall_restitution_threshold_speed` (default 0.25 m/s): `v_out = incoming_speed * restitution`
+- If `incoming_speed < threshold`: enforces a minimum rebound of `puck_wall_min_rebound_speed_below_threshold` (default 0.1 m/s)
+
+The impulse is `J = mass * (target_outgoing - current_outgoing)` applied along the inward normal.
+
+### Puck ↔ paddle
+
+**PreSolve:** computes relative approach speed of puck w.r.t. paddle along the contact normal. Uses `combined_e = max(puck_restitution, paddle_restitution)`. Disables Box2D restitution and stores state in `_pending_paddle_puck`.
+
+**PostSolve:** enforces `v_rel_desired = e * approach_speed` via a momentum-conserving reduced-mass impulse:
+
+```
+j = (v_rel_desired - v_rel_post) * m_paddle * m_puck / (m_paddle + m_puck)
+```
+
+Applied as `+j` to puck and `-j` to paddle along the contact normal.
+
+A `puck_restitution > 1.0` (e.g. 1.09145) means the puck leaves slightly faster than it arrived — simulating a springy puck.
+
+### Paddle force model
+
+The paddle is a **dynamic body** driven by a PID controller (`pid_kp`, `pid_kd`, `pid_ki`). Each step the policy outputs a target position; the PID computes a force that is applied to the paddle body. The paddle's velocity at contact time is the result of this accumulated force, so the collision outcome depends on PID tuning and the step timing. `paddle_damping` provides heavy deceleration between steps.
+
+### Quick-reference with `pid_noise_constant_upper_half_custom_sim_params.yaml`
+
+```
+Puck-side wall:   e = 0.99,   threshold = 0.25 m/s,  min rebound = 0.1 m/s
+Puck-end wall:    e = 0.70,   same threshold logic
+Puck-paddle:      e = 1.09145  (superelastic — puck gains energy from springiness)
+Puck damping:     0.25
+Paddle damping:   17
+Gravity:         -0.65 m/s²
+PID gains:        Kp=5000, Kd=200, Ki=0
+```
+
 ## Observation homography (sim-to-real)
 
 When `obs_position_homography` is enabled in the simulator config, observations are warped through a perspective homography matrix before reaching the policy. This simulates camera-like positional distortion for sim-to-real transfer training.

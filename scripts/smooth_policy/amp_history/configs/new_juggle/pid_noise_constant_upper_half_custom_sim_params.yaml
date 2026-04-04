@@ -71,7 +71,11 @@ air_hockey:
     delay_seconds: 0.025
     randomize_delay: true
     delay_relative_range: 0.25
-    
+    enable_action_force_attenuation: true
+    action_force_attenuation_prob: 0.30
+    action_force_attenuation_min: 0.25
+    action_force_attenuation_max: 0.75
+
   stand_still_rew: 0.0
   task: puck_juggle_upper_half_reward 
   terminate_on_enemy_goal: true

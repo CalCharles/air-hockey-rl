@@ -7,6 +7,8 @@ alwaysApply: true
 
 This file consolidates cross-cutting rules and guardrails. Domain-specific rules remain in sibling `.mdc` files under `.cursor/rules/` (training, environment, Box2D, project goal, etc.).
 
+**Shared agent context** (active code paths, observation/action spaces, legacy inventory): [CLAUDE.md](mdc:CLAUDE.md) — read this first for project orientation.
+
 **Doc mirror:** [notes/docs/index.md](mdc:notes/docs/index.md) (see `notes/docs/repo/`, `notes/docs/environments/`, `notes/docs/training/`)
 
 ---

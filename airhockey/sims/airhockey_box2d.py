@@ -389,6 +389,10 @@ class AirHockeyBox2D:
             'enable_paddle_density_fluctuation': False,
             'paddle_density_fluctuation_relative_range': 0.25,
             'paddle_density_fluctuation_hold_steps': 5,
+            'enable_action_force_attenuation': False,
+            'action_force_attenuation_prob': 0.30,
+            'action_force_attenuation_min': 0.25,
+            'action_force_attenuation_max': 0.75,
             'puck_density': 250,
             'block_density': 1000,
             'max_paddle_vel': 2,
@@ -543,6 +547,10 @@ class AirHockeyBox2D:
         )
         self._paddle_density_hold_remaining = 0
         self._current_paddle_density_multiplier = 1.0
+        self.enable_action_force_attenuation = bool(config.enable_action_force_attenuation)
+        self.action_force_attenuation_prob = float(config.action_force_attenuation_prob)
+        self.action_force_attenuation_min = float(config.action_force_attenuation_min)
+        self.action_force_attenuation_max = float(config.action_force_attenuation_max)
         self.puck_density = config.puck_density
         self.block_density = config.block_density
         self.action_x_scaling = config.action_x_scaling
@@ -1388,6 +1396,15 @@ class AirHockeyBox2D:
             if force_mag > self.max_force_timestep:
                 force = force / force_mag * self.max_force_timestep
             
+            # Stochastic force attenuation
+            if self.enable_action_force_attenuation:
+                if self.rng.uniform(0.0, 1.0) < self.action_force_attenuation_prob:
+                    scale = self.rng.uniform(
+                        self.action_force_attenuation_min,
+                        self.action_force_attenuation_max
+                    )
+                    force = force * scale
+
             # Apply force to paddle
             if 'paddle_ego' in self.paddles:
                 self.paddles['paddle_ego'].ApplyForceToCenter(force.astype(float), True)

@@ -570,6 +570,12 @@ class Args:
     puck_delay_interpolation_min: float | None = None
     puck_delay_interpolation_max: float | None = None
 
+    # Stochastic force attenuation
+    enable_action_force_attenuation: bool | None = None
+    action_force_attenuation_prob: float | None = None
+    action_force_attenuation_min: float | None = None
+    action_force_attenuation_max: float | None = None
+
 
 def make_env(env_id):
     def _thunk():
@@ -669,6 +675,10 @@ if __name__ == "__main__":
         "enable_puck_delay_interpolation": args.enable_puck_delay_interpolation,
         "puck_delay_interpolation_min": args.puck_delay_interpolation_min,
         "puck_delay_interpolation_max": args.puck_delay_interpolation_max,
+        "enable_action_force_attenuation": args.enable_action_force_attenuation,
+        "action_force_attenuation_prob": args.action_force_attenuation_prob,
+        "action_force_attenuation_min": args.action_force_attenuation_min,
+        "action_force_attenuation_max": args.action_force_attenuation_max,
     }
     for key, value in sim_params_overrides.items():
         if value is not None:
