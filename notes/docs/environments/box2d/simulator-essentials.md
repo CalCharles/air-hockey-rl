@@ -130,6 +130,176 @@ Gravity:         -0.65 m/s²
 PID gains:        Kp=5000, Kd=200, Ki=0
 ```
 
+## Per-tier collision scaling and external parameter interface
+
+The simulator supports per-speed-tier restitution multipliers that an external optimizer (or another RL agent) can update during training without restarting.
+
+### Speed tiers
+
+| Tier | Incoming speed range |
+|---|---|
+| `low` | < 0.25 m/s |
+| `mid` | 0.25 – 0.75 m/s |
+| `high` | ≥ 0.75 m/s |
+
+Breakpoints are configurable. The effective restitution for each collision is `base_restitution * scale[tier]`.
+
+### Simulator API
+
+```python
+# Push new scales at an episode boundary.
+sim.set_collision_scales(
+    wall_scales=[1.0, 1.0, 1.0],    # [low, mid, high]
+    paddle_scales=[1.0, 1.0, 1.0],
+    speed_breakpoints=(0.25, 0.75), # optional, m/s
+)
+
+# Read per-tier stats accumulated during the episode (resets counters).
+stats = sim.get_episode_collision_stats()
+# stats = {
+#   "wall":   {"low": {"count", "mean_speed_in", "mean_speed_out"}, ...},
+#   "paddle": {"low": ..., "mid": ..., "high": ...},
+# }
+```
+
+### `CollisionParamManager`
+
+[`airhockey/sims/collision_param_manager.py`](../../../../airhockey/sims/collision_param_manager.py) bridges the training loop and an external optimizer.
+
+**Training loop integration:**
+
+```python
+from airhockey.sims.collision_param_manager import CollisionParamManager
+
+manager = CollisionParamManager(
+    status_path="runs/collision_status.json",
+    params_path="runs/collision_params.json",
+)
+manager.attach_sim(sim)   # pushes current params to sim immediately
+
+# --- end of each episode ---
+stats = sim.get_episode_collision_stats()
+manager.on_episode_end(
+    episode=episode_idx,
+    collision_stats=stats,
+    episode_outcome={"total_reward": rew, "juggle_count": juggles},
+)
+```
+
+**External optimizer (any process):**
+
+```python
+import json
+
+# Read: what happened last episode?
+status = json.load(open("runs/collision_status.json"))
+# status["collision_stats"], status["current_params"], status["episode_outcome"]
+
+# Write: push new params for the next episode.
+json.dump(
+    {"wall_scales": [0.95, 1.0, 1.05], "paddle_scales": [0.9, 1.0, 1.1]},
+    open("runs/collision_params.json", "w"),
+)
+```
+
+The manager polls `collision_params.json` on each `on_episode_end` call, consumes and deletes it, and calls `sim.set_collision_scales()` automatically. Writes to `collision_status.json` are atomic (temp-file + rename), so the external process never reads a partial file.
+
+### Status file schema
+
+```json
+{
+  "episode": 1042,
+  "current_params": {
+    "wall_scales": [1.0, 1.0, 1.0],
+    "paddle_scales": [1.0, 1.0, 1.0],
+    "speed_breakpoints": [0.25, 0.75]
+  },
+  "collision_stats": {
+    "wall": {
+      "low":  {"count": 12, "mean_speed_in": 0.14, "mean_speed_out": 0.10},
+      "mid":  {"count": 34, "mean_speed_in": 0.48, "mean_speed_out": 0.47},
+      "high": {"count":  8, "mean_speed_in": 0.91, "mean_speed_out": 0.95}
+    },
+    "paddle": {
+      "low":  {"count":  3, "mean_speed_in": 0.11, "mean_speed_out": 0.12},
+      "mid":  {"count": 21, "mean_speed_in": 0.41, "mean_speed_out": 0.44},
+      "high": {"count":  9, "mean_speed_in": 0.88, "mean_speed_out": 0.98}
+    }
+  },
+  "episode_outcome": {
+    "total_reward": 12.4,
+    "juggle_count": 7,
+    "termination_reason": "puck_hit_bottom"
+  }
+}
+```
+
+## Sim-to-sim collision adaptation
+
+`scripts/collision_adaptation/` implements a two-phase algorithm that tunes the learner sim's per-tier paddle restitution scales to match an oracle sim's collision behaviour.  This is the sim-to-sim proxy for the eventual real-to-sim workflow where real-world collision statistics replace the oracle rollouts.
+
+### Concept
+
+```
+oracle sim  — fixed "ground truth" paddle scales (e.g. [0.7, 1.0, 1.2])
+learner sim — scales start at [1.0, 1.0, 1.0], updated each iteration
+
+for each iteration:
+    collect paddle-only collision stats from oracle + learner (n_episodes each)
+    for each tier t:
+        ratio_t  = oracle_mean_out_t / learner_mean_out_t
+        scale_t' = scale_t * (1 + lr * (ratio_t - 1))   # multiplicative
+    apply new_scales to learner sim
+```
+
+Wall bounces are intentionally ignored; only paddle-puck collisions are used.
+
+### Files
+
+| File | Purpose |
+|---|---|
+| `scenarios.py` | 5 crafted collision scenario configs (positions, velocities, actions) |
+| `render_scenarios.py` | Phase 1: render 10 GIFs (5 scenarios × oracle + learner) for visual inspection |
+| `rollout.py` | `rollout_episodes()` — runs n episodes and returns paddle tier stats |
+| `adapt.py` | `compute_scale_updates()` — scale update rule + convergence metric |
+| `run_adaptation.py` | Phase 2: full adaptation loop CLI |
+
+### Phase 1 — inspect before adapting
+
+```bash
+python scripts/collision_adaptation/render_scenarios.py \
+    --config scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_constant_upper_half_custom_sim_params_heavy.yaml \
+    --oracle-paddle-scales 0.7 1.0 1.2 \
+    --output-dir runs/collision_adaptation \
+    --fps 20
+```
+
+Outputs to `runs/collision_adaptation/inspect/`:
+- 10 GIFs: `{oracle,learner}_scenario_{name}.gif`
+- `scenarios.json` — pre/post puck speed for each scenario in both sims
+
+Noise, occlusions, and action/observation delays are disabled for clean deterministic scenarios.
+
+### Phase 2 — adaptation loop
+
+```bash
+python scripts/collision_adaptation/run_adaptation.py \
+    --config ... \
+    --model-path runs/td3_training/.../model.pth \
+    --oracle-paddle-scales 0.7 1.0 1.2 \
+    --n-iterations 20 \
+    --n-episodes 50 \
+    --lr 0.2 \
+    --output-dir runs/collision_adaptation
+```
+
+Outputs `runs/collision_adaptation/adaptation_history.json` with per-iteration scales, stats, and convergence metric `max(|ratio_t - 1|)`.
+
+### Convergence expectations
+
+- Oracle scales = `[1.0, 1.0, 1.0]` (same as learner): scales should stay near 1.0.
+- Oracle scales = `[0.7, 1.0, 1.2]`: learner scales should drift toward matching oracle speed ratios over ~10 iterations.  `adaptation_history.json` should show `convergence_max_ratio_minus_one` decreasing each iteration.
+
 ## Observation homography (sim-to-real)
 
 When `obs_position_homography` is enabled in the simulator config, observations are warped through a perspective homography matrix before reaching the policy. This simulates camera-like positional distortion for sim-to-real transfer training.

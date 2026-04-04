@@ -97,12 +97,21 @@ class PIDController:
         
         return force
 
+_COLLISION_TIERS = ("low", "mid", "high")
+
+def _make_empty_tier_stats():
+    return {t: {"count": 0, "speed_in_sum": 0.0, "speed_out_sum": 0.0} for t in _COLLISION_TIERS}
+
+
 class CollisionForceListener(contactListener):
     def __init__(
         self,
         wall_tag="table_wall",
         puck_wall_restitution_threshold_speed=0.25,
         puck_wall_min_rebound_speed_below_threshold=0.1,
+        speed_breakpoints=(0.25, 0.75),
+        wall_scales=(1.0, 1.0, 1.0),
+        paddle_scales=(1.0, 1.0, 1.0),
     ):
         contactListener.__init__(self)
         self.collision_forces = list()
@@ -115,12 +124,51 @@ class CollisionForceListener(contactListener):
         )
         self._pending_wall_restitution = {}
         self._pending_paddle_puck = {}
-    
+        self.speed_breakpoints = (float(speed_breakpoints[0]), float(speed_breakpoints[1]))
+        self.wall_scales = [float(s) for s in wall_scales]
+        self.paddle_scales = [float(s) for s in paddle_scales]
+        self._episode_stats = {"wall": _make_empty_tier_stats(), "paddle": _make_empty_tier_stats()}
+
+    def set_scales(self, wall_scales, paddle_scales, speed_breakpoints=None):
+        """Update per-tier restitution multipliers. Safe to call between episodes."""
+        self.wall_scales = [float(s) for s in wall_scales]
+        self.paddle_scales = [float(s) for s in paddle_scales]
+        if speed_breakpoints is not None:
+            self.speed_breakpoints = (float(speed_breakpoints[0]), float(speed_breakpoints[1]))
+
+    def _speed_tier(self, speed):
+        low_thresh, high_thresh = self.speed_breakpoints
+        if speed < low_thresh:
+            return "low"
+        if speed < high_thresh:
+            return "mid"
+        return "high"
+
+    def _tier_index(self, tier):
+        return _COLLISION_TIERS.index(tier)
+
+    def get_and_reset_episode_stats(self):
+        """Return accumulated collision stats for this episode and reset counters."""
+        stats = {}
+        for surface in ("wall", "paddle"):
+            stats[surface] = {}
+            for tier in _COLLISION_TIERS:
+                bucket = self._episode_stats[surface][tier]
+                count = bucket["count"]
+                stats[surface][tier] = {
+                    "count": count,
+                    "mean_speed_in": bucket["speed_in_sum"] / count if count > 0 else 0.0,
+                    "mean_speed_out": bucket["speed_out_sum"] / count if count > 0 else 0.0,
+                }
+        self._episode_stats = {"wall": _make_empty_tier_stats(), "paddle": _make_empty_tier_stats()}
+        return stats
+
     def reset(self):
         del self.collision_forces
         self.collision_forces = list()
         self._pending_wall_restitution = {}
         self._pending_paddle_puck = {}
+        self._episode_stats = {"wall": _make_empty_tier_stats(), "paddle": _make_empty_tier_stats()}
 
     @staticmethod
     def _is_puck(body):
@@ -287,12 +335,20 @@ class CollisionForceListener(contactListener):
                         if n_norm > 1e-8:
                             normal_unit = normal_unit / n_norm
                             restitution = max(float(pending.get("restitution", 0.0)), 0.0)
+                            tier = self._speed_tier(incoming_speed)
+                            scale = self.wall_scales[self._tier_index(tier)]
                             if incoming_speed >= self.puck_wall_restitution_threshold_speed:
-                                target_outgoing = incoming_speed * restitution
+                                target_outgoing = incoming_speed * restitution * scale
                             else:
                                 # For low-speed incoming wall impacts, enforce a deterministic
                                 # minimum rebound speed (applies to all wall orientations).
                                 target_outgoing = self.puck_wall_min_rebound_speed_below_threshold
+
+                            # Record stat
+                            bucket = self._episode_stats["wall"][tier]
+                            bucket["count"] += 1
+                            bucket["speed_in_sum"] += incoming_speed
+                            bucket["speed_out_sum"] += target_outgoing
 
                             post_vel = np.array(
                                 [puck_body.linearVelocity[0], puck_body.linearVelocity[1]],
@@ -326,6 +382,9 @@ class CollisionForceListener(contactListener):
                         normal_pp = pending["normal"]
                         e = float(pending["restitution"])
 
+                        tier = self._speed_tier(approach_speed)
+                        scale = self.paddle_scales[self._tier_index(tier)]
+
                         v_paddle_post = np.array(
                             [paddle_body.linearVelocity[0], paddle_body.linearVelocity[1]],
                             dtype=float,
@@ -335,7 +394,13 @@ class CollisionForceListener(contactListener):
                             dtype=float,
                         )
                         v_rel_n_post = float(np.dot(v_puck_post - v_paddle_post, normal_pp))
-                        v_rel_n_desired = e * approach_speed
+                        v_rel_n_desired = e * approach_speed * scale
+
+                        # Record stat
+                        bucket = self._episode_stats["paddle"][tier]
+                        bucket["count"] += 1
+                        bucket["speed_in_sum"] += approach_speed
+                        bucket["speed_out_sum"] += v_rel_n_desired
                         delta = v_rel_n_desired - v_rel_n_post
                         if abs(delta) > 1e-8:
                             m_paddle = float(paddle_body.mass)
@@ -731,6 +796,9 @@ class AirHockeyBox2D:
             wall_tag="table_wall",
             puck_wall_restitution_threshold_speed=self.puck_wall_restitution_threshold_speed,
             puck_wall_min_rebound_speed_below_threshold=self.puck_wall_min_rebound_speed_below_threshold,
+            speed_breakpoints=(0.25, 0.75),
+            wall_scales=(1.0, 1.0, 1.0),
+            paddle_scales=(1.0, 1.0, 1.0),
         )
         self.world.contactListener = self.collision_listener
         self.total_timesteps = 0
@@ -1723,3 +1791,27 @@ class AirHockeyBox2D:
     def get_collision_forces(self):
         # Extract forces from the collision listener
         return self.collision_listener.collision_forces
+
+    def set_collision_scales(self, wall_scales, paddle_scales, speed_breakpoints=None):
+        """Update per-tier restitution multipliers. Call at episode boundaries.
+
+        Args:
+            wall_scales: sequence of 3 floats [low, mid, high] multiplied onto
+                wall restitution for each speed tier.
+            paddle_scales: sequence of 3 floats [low, mid, high] multiplied onto
+                paddle restitution for each speed tier.
+            speed_breakpoints: optional (low_thresh, high_thresh) in m/s.
+                Defaults to (0.25, 0.75) if not provided.
+        """
+        self.collision_listener.set_scales(wall_scales, paddle_scales, speed_breakpoints)
+
+    def get_episode_collision_stats(self):
+        """Return per-tier collision stats accumulated since last call and reset counters.
+
+        Returns a dict:
+            {
+              "wall":   {"low": {"count", "mean_speed_in", "mean_speed_out"}, "mid": ..., "high": ...},
+              "paddle": {"low": ..., "mid": ..., "high": ...},
+            }
+        """
+        return self.collision_listener.get_and_reset_episode_stats()
