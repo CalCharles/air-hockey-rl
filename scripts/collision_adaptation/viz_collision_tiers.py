@@ -34,19 +34,11 @@ from airhockey import AirHockeyEnv
 from airhockey.renderers import AirHockeyRenderer
 from scripts.smooth_policy.deterministic_agent import DeterministicAgent
 from airhockey.sims.real.velocity_estimator import fit_velocity_from_positions
+from scripts.collision_adaptation.collision_detection import (
+    TIERS, PUCK_HISTORY_PAD, speed_tier, is_paddle_puck_collision,
+)
 
-_PUCK_HISTORY_PAD = 5
 _GRAVITY = (-0.65, 0.0)
-_TIERS = ("low", "mid", "high")
-
-
-def _speed_tier(s):
-    return "low" if s < 0.25 else ("mid" if s < 0.75 else "high")
-
-
-def _is_paddle_puck(cf):
-    a, b = str(cf.get("bodyA", "")), str(cf.get("bodyB", ""))
-    return ("paddle" in a or "paddle" in b) and ("puck" in a or "puck" in b)
 
 
 def _b2d_to_base(vb):
@@ -105,7 +97,7 @@ def collect_scenarios(oracle_env, actor, n_episodes, device, window_frames=10, m
             if done: last_a.zero_()
 
             forces = oracle_env.simulator.get_collision_forces()
-            new_pp = any(_is_paddle_puck(cf) for cf in forces[prev_fc:])
+            new_pp = any(is_paddle_puck_collision(cf) for cf in forces[prev_fc:])
             if new_pp and (not col_steps or col_steps[-1] != step_idx):
                 col_steps.append(step_idx)
                 vb = oracle_env.simulator.paddles["paddle_ego"].linearVelocity
@@ -114,8 +106,8 @@ def collect_scenarios(oracle_env, actor, n_episodes, device, window_frames=10, m
 
         oracle_env.simulator.get_episode_collision_stats()
 
-        puck_ep   = oracle_env.simulator.puck_history[_PUCK_HISTORY_PAD:]
-        paddle_ep = oracle_env.simulator.paddle_history[_PUCK_HISTORY_PAD:]
+        puck_ep   = oracle_env.simulator.puck_history[PUCK_HISTORY_PAD:]
+        paddle_ep = oracle_env.simulator.paddle_history[PUCK_HISTORY_PAD:]
         N = len(puck_ep)
         if N < 2 * window_frames:
             continue
@@ -170,7 +162,7 @@ def collect_scenarios(oracle_env, actor, n_episodes, device, window_frames=10, m
                 "paddle_vel":  list(paddle_vel),
                 "puck_speed_pre":   puck_spd,
                 "oracle_speed_out": oracle_out,
-                "tier":             _speed_tier(puck_spd),
+                "tier":             speed_tier(puck_spd),
                 "snr":              pre["snr"],
                 "approach_speed":   approach_spd,
             })
@@ -234,7 +226,7 @@ def replay_and_render(env, scenario, scale_label, n_pre_steps=5, n_post_steps=20
         env.step(zero_action)
 
         forces = sim.get_collision_forces()
-        if collision_step is None and any(_is_paddle_puck(cf) for cf in forces[prev_fc:]):
+        if collision_step is None and any(is_paddle_puck_collision(cf) for cf in forces[prev_fc:]):
             collision_step = step_i
         prev_fc = len(forces)
 
@@ -281,7 +273,7 @@ def main():
 
     scenarios = collect_scenarios(oracle_env, actor, args.n_collect_episodes, args.device)
 
-    for tier in _TIERS:
+    for tier in TIERS:
         count = sum(1 for s in scenarios if s["tier"] == tier)
         print(f"  {tier}: {count} scenarios collected")
 

@@ -38,25 +38,10 @@ import torch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from airhockey.sims.real.velocity_estimator import fit_velocity_from_positions
-
-_TIERS = ("low", "mid", "high")
-_SPEED_BREAKPOINTS = (0.25, 0.75)  # m/s — must match CollisionForceListener defaults
-_PUCK_HISTORY_PAD = 5             # spawn_puck() prepends this many padding entries
-
-
-def _speed_tier(speed: float) -> str:
-    lo, hi = _SPEED_BREAKPOINTS
-    if speed < lo:
-        return "low"
-    if speed < hi:
-        return "mid"
-    return "high"
-
-
-def _is_paddle_puck_collision(cf: dict) -> bool:
-    a = str(cf.get("bodyA", ""))
-    b = str(cf.get("bodyB", ""))
-    return ("paddle" in a or "paddle" in b) and ("puck" in a or "puck" in b)
+from scripts.collision_adaptation.collision_detection import (
+    TIERS, PUCK_HISTORY_PAD, speed_tier,
+    StepCollisionDetector,
+)
 
 
 def _b2d_to_base(vb) -> tuple[float, float]:
@@ -75,6 +60,11 @@ def _estimated_approach_speed(
 
     Mirrors _presolve_paddle_puck's approach_speed = max(0, -dot(v_puck - v_paddle, n))
     where n = normalize(paddle_pos - puck_pos).
+
+    NOTE: Box2D's _presolve_paddle_puck uses the contact normal from shape geometry,
+    while this function uses the center-to-center direction.  For circular bodies
+    (puck + paddle) these are identical.  If body shapes ever change to non-circular,
+    the two definitions will diverge and this function must be updated.
 
     Positive return value means the pair is closing — a collision is expected.
     """
@@ -147,7 +137,8 @@ def collect_oracle_scenarios(
         last_action = torch.zeros((1, act_dim), dtype=torch.float32, device=device)
         done = False
         step_idx = 0
-        prev_force_count = len(oracle_env.simulator.get_collision_forces())
+        detector = StepCollisionDetector(oracle_env.simulator)
+        detector.reset()
         collision_steps: list[int] = []
         collision_paddle_vels: dict[int, tuple[float, float]] = {}
 
@@ -165,15 +156,12 @@ def collect_oracle_scenarios(
             if done:
                 last_action.zero_()
 
-            forces = oracle_env.simulator.get_collision_forces()
-            new_pp = any(_is_paddle_puck_collision(cf) for cf in forces[prev_force_count:])
-            if new_pp:
+            if detector.step():
                 if not collision_steps or collision_steps[-1] != step_idx:
                     collision_steps.append(step_idx)
                     # Read privileged paddle velocity at this exact step
                     vb = oracle_env.simulator.paddles["paddle_ego"].linearVelocity
                     collision_paddle_vels[step_idx] = _b2d_to_base(vb)
-            prev_force_count = len(forces)
             step_idx += 1
 
         # Reset privileged stats counters (result discarded)
@@ -182,8 +170,8 @@ def collect_oracle_scenarios(
         # Build position arrays (skip 5 spawn-padding entries)
         raw_puck = oracle_env.simulator.puck_history
         raw_paddle = oracle_env.simulator.paddle_history
-        puck_ep = raw_puck[_PUCK_HISTORY_PAD:]
-        paddle_ep = raw_paddle[_PUCK_HISTORY_PAD:]
+        puck_ep = raw_puck[PUCK_HISTORY_PAD:]
+        paddle_ep = raw_paddle[PUCK_HISTORY_PAD:]
 
         if len(puck_ep) < 2 * window_frames:
             continue
@@ -255,7 +243,7 @@ def collect_oracle_scenarios(
                 "paddle_vel": list(paddle_vel_pre),
                 "puck_speed_pre": puck_speed_pre,
                 "oracle_speed_out": oracle_speed_out,
-                "tier": _speed_tier(puck_speed_pre),
+                "tier": speed_tier(puck_speed_pre),
                 "approach_speed_est": approach_speed_est,
             })
             last_col_idx = col_idx
@@ -298,8 +286,8 @@ def replay_scenarios(
     act_dim = int(np.prod(learner_env.action_space.shape))
     zero_action = np.zeros(act_dim, dtype=np.float32)
 
-    oracle_total = {"paddle": {t: {"count": 0, "speed_in_sum": 0.0, "speed_out_sum": 0.0} for t in _TIERS}}
-    learner_total = {"paddle": {t: {"count": 0, "speed_in_sum": 0.0, "speed_out_sum": 0.0} for t in _TIERS}}
+    oracle_total = {"paddle": {t: {"count": 0, "speed_in_sum": 0.0, "speed_out_sum": 0.0} for t in TIERS}}
+    learner_total = {"paddle": {t: {"count": 0, "speed_in_sum": 0.0, "speed_out_sum": 0.0} for t in TIERS}}
 
     for sc in scenarios:
         tier = sc["tier"]
@@ -313,12 +301,12 @@ def replay_scenarios(
         sim.paddles["paddle_ego"].position = sim.base_coord_to_box2d(sc["paddle_pos"])
         sim.paddles["paddle_ego"].linearVelocity = sim.base_coord_to_box2d(sc["paddle_vel"])
 
+        replay_detector = StepCollisionDetector(sim)
+        replay_detector.reset()
         learner_speed_out = None
         for _ in range(max_replay_steps):
-            prev = len(sim.get_collision_forces())
             learner_env.step(zero_action)
-            forces = sim.get_collision_forces()
-            if any(_is_paddle_puck_collision(cf) for cf in forces[prev:]):
+            if replay_detector.step():
                 vb = sim.pucks[puck_name].linearVelocity  # privileged
                 vx, vy = _b2d_to_base(vb)
                 learner_speed_out = math.sqrt(vx * vx + vy * vy)
@@ -336,7 +324,7 @@ def replay_scenarios(
     # Convert to mean stats
     def _to_means(total):
         result = {"paddle": {}}
-        for tier in _TIERS:
+        for tier in TIERS:
             count = total["paddle"][tier]["count"]
             result["paddle"][tier] = {
                 "count": count,

@@ -15,7 +15,7 @@ Tiers with fewer than min_count collisions in either sim are skipped.
 
 from __future__ import annotations
 
-_TIERS = ("low", "mid", "high")
+from scripts.collision_adaptation.collision_detection import TIERS
 
 
 def compute_scale_updates(
@@ -48,7 +48,7 @@ def compute_scale_updates(
     new_scales = list(current_scales)
     update_info: dict = {}
 
-    for i, tier in enumerate(_TIERS):
+    for i, tier in enumerate(TIERS):
         o_bucket = oracle_stats["paddle"][tier]
         l_bucket = learner_stats["paddle"][tier]
         o_count = int(o_bucket.get("count", 0))

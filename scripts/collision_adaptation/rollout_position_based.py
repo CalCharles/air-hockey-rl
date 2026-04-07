@@ -35,28 +35,10 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from airhockey.sims.real.velocity_estimator import fit_velocity_from_positions
-
-_TIERS = ("low", "mid", "high")
-_SPEED_BREAKPOINTS = (0.25, 0.75)  # m/s — must match CollisionForceListener defaults
-_PUCK_HISTORY_PAD = 5  # spawn_puck() prepends this many padding entries
-
-
-def _speed_tier(speed: float) -> str:
-    lo, hi = _SPEED_BREAKPOINTS
-    if speed < lo:
-        return "low"
-    if speed < hi:
-        return "mid"
-    return "high"
-
-
-def _is_paddle_puck_collision(cf: dict) -> bool:
-    """Return True if this collision_forces entry is a paddle ↔ puck contact."""
-    a = str(cf.get("bodyA", ""))
-    b = str(cf.get("bodyB", ""))
-    has_paddle = "paddle" in a or "paddle" in b
-    has_puck = "puck" in a or "puck" in b
-    return has_paddle and has_puck
+from scripts.collision_adaptation.collision_detection import (
+    TIERS, SPEED_BREAKPOINTS, PUCK_HISTORY_PAD, speed_tier,
+    StepCollisionDetector,
+)
 
 
 def _estimate_collision_speeds(
@@ -119,7 +101,11 @@ def _estimate_collision_speeds(
     if post_result is None or post_result["snr"] < min_snr:
         return None
 
-    speed_before = float(np.linalg.norm(pre_result["v_at_end"]))
+    # Extrapolate pre-collision velocity from times[col_idx-1] to the collision
+    # instant (≈ times[col_idx]).  Under constant gravity: v(t+dt) = v(t) + g*dt.
+    dt = times[col_idx] - times[col_idx - 1] if col_idx > 0 else 0.0
+    v_before = pre_result["v_at_end"] + np.array(gravity) * dt
+    speed_before = float(np.linalg.norm(v_before))
     # v_at_times[0] is the velocity at the first frame of the post window (col_idx)
     speed_after = float(np.linalg.norm(post_result["v_at_times"][0]))
 
@@ -171,7 +157,7 @@ def rollout_episodes_position_based(
     total: dict[str, dict[str, dict]] = {
         "paddle": {
             tier: {"count": 0, "speed_in_sum": 0.0, "speed_out_sum": 0.0}
-            for tier in _TIERS
+            for tier in TIERS
         }
     }
 
@@ -181,7 +167,8 @@ def rollout_episodes_position_based(
         last_action = torch.zeros((1, act_dim), dtype=torch.float32, device=device)
         done = False
         step_idx = 0
-        prev_force_count = len(env.simulator.get_collision_forces())
+        detector = StepCollisionDetector(env.simulator)
+        detector.reset()
         collision_steps: list[int] = []
 
         while not done:
@@ -202,15 +189,10 @@ def rollout_episodes_position_based(
                 last_action.zero_()
 
             # Detect paddle-puck collisions added during this step.
-            forces = env.simulator.get_collision_forces()
-            new_paddle_puck = any(
-                _is_paddle_puck_collision(cf) for cf in forces[prev_force_count:]
-            )
-            if new_paddle_puck:
+            if detector.step():
                 # Deduplicate: only one entry per step even if multiple sub-step contacts.
                 if not collision_steps or collision_steps[-1] != step_idx:
                     collision_steps.append(step_idx)
-            prev_force_count = len(forces)
             step_idx += 1
 
         # Reset privileged stats counters (result discarded — we use position-based estimates).
@@ -218,7 +200,7 @@ def rollout_episodes_position_based(
 
         # Build position arrays from puck_history (skip the 5 padding entries).
         raw_hist = env.simulator.puck_history
-        ep_hist = raw_hist[_PUCK_HISTORY_PAD:]  # list of [x, y, occluded]
+        ep_hist = raw_hist[PUCK_HISTORY_PAD:]  # list of [x, y, occluded]
         if len(ep_hist) < 2 * window_frames:
             continue
 
@@ -242,7 +224,7 @@ def rollout_episodes_position_based(
             if speed_in < 1e-6:
                 continue
 
-            tier = _speed_tier(speed_in)
+            tier = speed_tier(speed_in)
             total["paddle"][tier]["count"] += 1
             total["paddle"][tier]["speed_in_sum"] += speed_in
             total["paddle"][tier]["speed_out_sum"] += speed_out
@@ -250,7 +232,7 @@ def rollout_episodes_position_based(
 
     # Convert sums to means.
     result_stats: dict[str, dict[str, dict]] = {"paddle": {}}
-    for tier in _TIERS:
+    for tier in TIERS:
         count = total["paddle"][tier]["count"]
         result_stats["paddle"][tier] = {
             "count": count,
