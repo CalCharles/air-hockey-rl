@@ -78,6 +78,20 @@ class AirHockeyRenderer:
     def convert_to_render_coords_sys(self, pos):
         return np.array((pos[1], -pos[0]))  # coords -> box2d
 
+    def _base_to_prerotate_pixel(self, x, y):
+        """
+        Base-frame world (x, y) → pixel coords on ``self.frame`` **before**
+        ``cv2.rotate(..., ROTATE_90_COUNTERCLOCKWISE)``. Matches
+        ``draw_circle_with_image`` / ``draw_square_with_image`` (not
+        ``world_xy_to_output_pixel``, which is for the buffer **after** rotate).
+        """
+        render_xy = self.convert_to_render_coords_sys((float(x), float(y)))
+        center = np.asarray(render_xy, dtype=float) + np.array(
+            (self.width / 2, self.length / 2), dtype=float
+        )
+        pre_rot = np.array((center[1], center[0]), dtype=float) * float(self.ppm)
+        return float(pre_rot[0]), float(pre_rot[1])
+
     def world_xy_to_output_pixel(self, x, y):
         """
         Map world/base-frame (x, y) to pixel coordinates in get_frame() output.
@@ -120,30 +134,24 @@ class AirHockeyRenderer:
 
     def draw_target_marker(self, target_pos, color=(255, 165, 0)):
         """
-        Draw an explicit target position in base coordinates.
-        If the target goes outside the screen, it's clamped to the edge.
+        Draw an explicit target position in base coordinates on the **current** ``self.frame``.
+
+        Pixel mapping uses ``world_xy_to_output_pixel``, which matches the final layout after
+        ``cv2.rotate(..., ROTATE_90_COUNTERCLOCKWISE)`` when ``orientation == 'vertical'``.
+        Call this **after** that rotation in ``get_frame()`` so the overlay lines up with the
+        paddle (which uses the same mapping implicitly via pre-rotate drawing + rotate).
         """
         if target_pos is None or len(target_pos) < 2:
             return
-        
-        # Clamp target position to stay within bounds
-        # Base coordinates: x is vertical, y is horizontal
-        # Bounds: x in [-length/2, length/2], y in [-width/2, width/2]
+
         clamped_target = np.array(target_pos[:2], dtype=float)
         clamped_target[0] = np.clip(clamped_target[0], -self.length / 2, self.length / 2)
         clamped_target[1] = np.clip(clamped_target[1], -self.width / 2, self.width / 2)
-        
-        # Convert to render coordinates (same as paddle rendering)
-        target_render = self.convert_to_render_coords_sys(clamped_target)
-        
-        # Convert to pixel coordinates (same as draw_circle_with_image)
-        center = np.array(target_render) + np.array((self.width / 2, self.length / 2))
-        center = np.array((center[1], center[0])) * self.ppm
-        
-        # No special vertical orientation handling needed - the frame rotation
-        # at the end of get_frame() handles orientation for all elements uniformly
-        
-        center_int = tuple(center.astype(int))
+
+        cx, cy = self.world_xy_to_output_pixel(
+            float(clamped_target[0]), float(clamped_target[1])
+        )
+        center_int = (int(round(cx)), int(round(cy)))
         
         # Draw target marker as a cross with circle
         marker_size = 15
@@ -453,7 +461,13 @@ class AirHockeyRenderer:
         if self.airhockey_env.goal_conditioned:
             # get the goal position and radius and draw it
             green = (0, 255, 0)
-            self.draw_region(self.airhockey_env.goal_pos, self.airhockey_env.goal_radius, color=green)
+            goal_shape = getattr(self.airhockey_env, "goal_draw_shape", "circle")
+            self.draw_region(
+                self.airhockey_env.goal_pos,
+                self.airhockey_env.goal_radius,
+                color=green,
+                shape=goal_shape,
+            )
             if self.airhockey_env.multiagent:
                 blue = (255, 0, 0)
                 self.draw_region(self.airhockey_env.alt_goal_pos, self.airhockey_env.alt_goal_radius, color=blue)
@@ -483,6 +497,18 @@ class AirHockeyRenderer:
                 pos = self.convert_to_render_coords_sys(pos)
                 width = self.airhockey_env.block_width
                 self.draw_square_with_image(pos, width, square_type='block')
+        if 'obstacles' in state_info:
+            gray = (90, 90, 90)
+            for obs in state_info['obstacles']:
+                verts = obs.get('vertices') or []
+                if len(verts) < 3:
+                    continue
+                pts = []
+                for vx, vy in verts:
+                    px, py = self._base_to_prerotate_pixel(float(vx), float(vy))
+                    pts.append([int(round(px)), int(round(py))])
+                cv2.fillPoly(self.frame, [np.array(pts, dtype=np.int32)], color=gray)
+        pending_target_positions = []
         if 'paddles' in state_info:
             for paddle_name in state_info['paddles']:
                 pos = state_info['paddles'][paddle_name]['position']
@@ -507,20 +533,24 @@ class AirHockeyRenderer:
                 if self.show_acceleration_arrow:
                     self.draw_acceleration_arrow(pos_render, acceleration)
                 
-                # Draw target position if enabled:
-                # prefer explicit simulator target, fallback to action-based approximation.
+                # Defer target marker: must use world_xy_to_output_pixel on the final frame
+                # (after vertical rotate), otherwise it misaligns with the paddle in vertical mode.
                 if self.show_target_position:
                     sim_target = None
                     if hasattr(self.airhockey_env, "simulator"):
                         sim_target = getattr(self.airhockey_env.simulator, "last_target_position", None)
                     if sim_target is not None:
-                        self.draw_target_marker(sim_target)
+                        pending_target_positions.append(np.array(sim_target, dtype=float))
                     elif hasattr(self.airhockey_env, "last_action"):
-                        self.draw_target_position(pos, self.airhockey_env.last_action)
+                        pending_target_positions.append(
+                            np.array(pos, dtype=float) + np.array(self.airhockey_env.last_action[:2], dtype=float)
+                        )
             
         # if self.airhockey_env.paddle[1] is not None: self.draw_circle_with_image(self.airhockey_env.paddle[1], circle_type='paddle')
         if self.orientation == 'vertical':
             self.frame = cv2.rotate(self.frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        for tp in pending_target_positions:
+            self.draw_target_marker(tp)
         if len(self.robosuite_view) > 0: self.frame = self.merge_robosuite_frame(self.frame)
         return self.frame
 

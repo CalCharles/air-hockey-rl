@@ -3,7 +3,7 @@ import math
 import numpy as np
 from gymnasium.spaces import Box
 from .airhockey_base import AirHockeyBaseEnv
-from .airhockey_rewards import AirHockeyPuckCatchReward, AirHockeyPuckVelReward, AirHockeyPuckTouchReward, AirHockeyPuckHeightReward, AirHockeyPuckJuggleReward, AirHockeyPuckJuggleLinearTopReward, AirHockeyPuckJuggleNoBaseReward, AirHockeyPuckJuggleUpperHalfReward, AirHockeyPuckJuggleUpperHalfMidBandReward, AirHockeyPuckStrikeReward, AirHockeyStrikeCrowdReward, AirHockeyPaddleFreeMovementReward
+from .airhockey_rewards import AirHockeyPuckCatchReward, AirHockeyPuckVelReward, AirHockeyPuckTouchReward, AirHockeyPuckHeightReward, AirHockeyPuckJuggleReward, AirHockeyPuckJuggleLinearTopReward, AirHockeyPuckJuggleNoBaseReward, AirHockeyPuckJuggleUpperHalfReward, AirHockeyPuckJuggleUpperHalfMidBandReward, AirHockeyPuckStrikeReward, AirHockeyStrikeCrowdReward, AirHockeyPaddleFreeMovementReward, AirHockeyPinballTriangleSideReward, AirHockeyTopEdgeSlotGoalReward
 
 class AirHockeyPuckVelEnv(AirHockeyBaseEnv):
     def initialize_spaces(self, obs_type):
@@ -173,11 +173,91 @@ class AirHockeyPuckJuggleEnv(AirHockeyBaseEnv):
         name = 'paddle_ego'
         pos, vel = self.get_paddle_configuration(name)
         self.simulator.spawn_paddle(pos, vel, name)
+        self._spawn_triangle_obstacles()
+
+    def _spawn_triangle_obstacles(self):
+        """Static triangle bodies in Box2D only (fixture restitution; no custom contact impulses)."""
+        if self.num_obstacles <= 0:
+            return
+        if self.simulator_name != "box2d":
+            raise NotImplementedError("Triangle obstacles are only implemented for the box2d simulator.")
+        shape = str(getattr(self.simulator, "obstacle_shape", "triangle")).lower()
+        if shape != "triangle":
+            raise ValueError(f"Unsupported obstacle_shape={shape!r}; expected 'triangle'.")
+
+        tri_size = float(getattr(self.simulator, "triangle_obstacle_size", 0.08))
+        # Must match airhockey_box2d.spawn_obstacle: half_base = 0.75 * tri_size (base along y).
+        half_base_y = 0.75 * tri_size
+        h_tri = (np.sqrt(3.0) / 2.0) * tri_size
+        margin = max(half_base_y, 2.0 * h_tri / 3.0) + float(self.puck_radius) + 0.01
+        length = float(self.length)
+        # Along x: "top" = goal end (table_x_top). Sample from 10% of table length below that edge
+        # down to 40% of table length from the top (farther toward center than the old top-third cap).
+        x_lo = self.table_x_top + 0.10 * length + margin
+        x_hi = self.table_x_top + 0.40 * length - margin
+        y_lo = self.table_y_left + margin
+        y_hi = self.table_y_right - margin
+        if x_lo >= x_hi or y_lo >= y_hi:
+            raise ValueError("Table geometry too tight for triangle obstacles with current margins.")
+
+        y_gap = max(0.02, float(self.puck_radius) * 0.25)
+        min_center_sep_y = 2.0 * half_base_y + y_gap
+        n = self.num_obstacles
+        if n > 1:
+            min_y_span = 2.0 * half_base_y + (n - 1) * min_center_sep_y
+            if (y_hi - y_lo) + 1e-9 < min_y_span:
+                raise ValueError(
+                    f"Table y-range too small for {n} triangles with separated y "
+                    f"(need >= {min_y_span:.4f} m, have {y_hi - y_lo:.4f} m)."
+                )
+
+        def _y_separated(y, ys):
+            return all(abs(float(y) - float(py)) >= min_center_sep_y for py in ys)
+
+        positions = [None] * n
+        placed_y = []
+
+        for i in range(n):
+            if i < len(self.obstacle_positions):
+                raw = self.obstacle_positions[i]
+                x = float(np.clip(raw[0], x_lo, x_hi))
+                y = float(np.clip(raw[1], y_lo, y_hi))
+                if not _y_separated(y, placed_y):
+                    raise ValueError(
+                        f"obstacle_positions[{i}] y={y:.4f} overlaps another obstacle in y "
+                        f"(need |Δy| >= {min_center_sep_y:.4f} m between triangle centers)."
+                    )
+                placed_y.append(y)
+                positions[i] = (x, y)
+
+        for i in range(n):
+            if positions[i] is not None:
+                continue
+            for _ in range(8000):
+                x = float(self.rng.uniform(x_lo, x_hi))
+                y = float(self.rng.uniform(y_lo, y_hi))
+                if _y_separated(y, placed_y):
+                    placed_y.append(y)
+                    positions[i] = (x, y)
+                    break
+            else:
+                raise ValueError(
+                    f"Could not sample a non-overlapping y for triangle {i} "
+                    f"(try fewer obstacles, smaller triangle_obstacle_size, or set obstacle_positions)."
+                )
+
+        for i in range(n):
+            x, y = positions[i]
+            self.simulator.spawn_obstacle((x, y), f"triangle_obstacle_{i}")
     
     def validate_configuration(self):
         assert self.num_pucks > 0
         assert self.num_blocks == 0
-        assert self.num_obstacles == 0
+        assert self.num_obstacles >= 0
+        if self.num_obstacles > 0:
+            assert self.simulator_name == "box2d"
+            if len(self.obstacle_positions) > self.num_obstacles:
+                raise ValueError("obstacle_positions has more entries than num_obstacles.")
         assert self.num_targets == 0
         assert self.num_paddles == 1
 
@@ -239,6 +319,11 @@ class AirHockeyPuckJuggleLinearTopEnv(AirHockeyPuckJuggleEnv):
                 "puck_near_paddle_speed_max_m_s must be >= puck_near_paddle_speed_min_m_s"
             )
 
+        frac = kwargs.get("puck_spawn_fixed_x_from_goal_frac", None)
+        self.puck_spawn_fixed_x_from_goal_frac = (
+            None if frac is None else float(np.clip(float(frac), 0.0, 1.0))
+        )
+
         super().__init__(**kwargs)
 
     def initialize_spaces(self, obs_type):
@@ -274,13 +359,15 @@ class AirHockeyPuckJuggleLinearTopEnv(AirHockeyPuckJuggleEnv):
 
     def create_world_objects(self):
         if self.num_pucks != 1 or self.puck_spawn_near_paddle_prob <= 0.0:
-            return super().create_world_objects()
+            super().create_world_objects()
+            return
 
         spawn_near_paddle = (
             self.rng.uniform(low=0.0, high=1.0) < self.puck_spawn_near_paddle_prob
         )
         if not spawn_near_paddle:
-            return super().create_world_objects()
+            super().create_world_objects()
+            return
 
         paddle_name = "paddle_ego"
         paddle_pos, paddle_vel = self.get_paddle_configuration(paddle_name)
@@ -291,6 +378,7 @@ class AirHockeyPuckJuggleLinearTopEnv(AirHockeyPuckJuggleEnv):
         )
         self.simulator.spawn_puck(puck_pos, puck_vel, puck_name)
         self.simulator.spawn_paddle(paddle_pos, paddle_vel, paddle_name)
+        self._spawn_triangle_obstacles()
 
     def _sample_puck_speed_velocity(self, min_speed, max_speed):
         speed = self.rng.uniform(low=min_speed, high=max_speed)
@@ -365,12 +453,30 @@ class AirHockeyPuckJuggleLinearTopEnv(AirHockeyPuckJuggleEnv):
         )
         return (x_pos, y_pos), vel
 
+    def _sample_puck_fixed_x_from_goal_frac_zero_vel(self):
+        """x at ``table_x_top + frac * length`` (e.g. 0.5 = centerline); random y; rest speed 0."""
+        frac = float(self.puck_spawn_fixed_x_from_goal_frac)
+        x_pos = self.table_x_top + frac * float(self.length)
+        x_pos = float(
+            np.clip(
+                x_pos,
+                self.table_x_top + self.puck_radius,
+                self.table_x_bot - self.puck_radius,
+            )
+        )
+        y_low = self.table_y_left + self.puck_radius
+        y_high = self.table_y_right - self.puck_radius
+        y_pos = float(self.rng.uniform(low=y_low, high=y_high))
+        return (x_pos, y_pos), (0.0, 0.0)
+
     def get_puck_configuration(
         self,
         bad_regions=None,
         paddle_pos=None,
         spawn_near_paddle=False,
     ):
+        if self.puck_spawn_fixed_x_from_goal_frac is not None:
+            return self._sample_puck_fixed_x_from_goal_frac_zero_vel()
         if spawn_near_paddle and paddle_pos is not None:
             return self._sample_puck_near_paddle(paddle_pos=paddle_pos)
         return self._sample_puck_upper_half_linear_top(bad_regions=bad_regions)
@@ -402,6 +508,99 @@ class AirHockeyPuckJuggleUpperHalfRewardEnv(AirHockeyPuckJuggleLinearTopEnv):
     @staticmethod
     def from_dict(state_dict):
         return AirHockeyPuckJuggleUpperHalfRewardEnv(**state_dict)
+
+
+class AirHockeyPuckJugglePinballTriangleSidesEnv(AirHockeyPuckJuggleLinearTopEnv):
+    """Pinball: reward only for puck contacts on triangle sloped edges (not the flat base)."""
+
+    def initialize_spaces(self, obs_type):
+        low, high = self.init_observation(obs_type)
+        self.action_space = self.single_action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32)
+        self.reward_range = Box(low=-1, high=1)
+        self.count_hit = False
+        self.hits = 0
+        self.reward = AirHockeyPinballTriangleSideReward(self)
+
+    @staticmethod
+    def from_dict(state_dict):
+        return AirHockeyPuckJugglePinballTriangleSidesEnv(**state_dict)
+
+
+class AirHockeyPuckTopEdgeGoalTrianglesEnv(AirHockeyPuckJuggleEnv):
+    """
+    Score in the center 1/5 of the goal-side (top) edge; episode terminates on success.
+    Two static triangle obstacles (same Box2D path as pinball / juggle).
+    """
+
+    def __init__(self, **kwargs):
+        self.top_edge_goal_line_tolerance_m = float(kwargs.get("top_edge_goal_line_tolerance_m", 0.025))
+        self.top_edge_goal_reward_bonus = float(kwargs.get("top_edge_goal_reward_bonus", 100.0))
+        self.top_edge_goal_visual_offset_m = float(kwargs.get("top_edge_goal_visual_offset_m", 0.012))
+        self.top_edge_goal_visual_half_depth_m = float(
+            kwargs.get("top_edge_goal_visual_half_depth_m", 0.018)
+        )
+        super().__init__(**kwargs)
+
+    def initialize_spaces(self, obs_type):
+        low, high = self.init_observation(obs_type)
+        self.action_space = self.single_action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32)
+        self.reward_range = Box(low=-1, high=1)
+        self.count_hit = False
+        self.hits = 0
+        self.reward = AirHockeyTopEdgeSlotGoalReward(self)
+        gx = float(self.table_x_top) + self.top_edge_goal_visual_offset_m
+        self.goal_pos = (gx, 0.0)
+        self.goal_radius = (self.top_edge_goal_visual_half_depth_m, float(self.width) / 10.0)
+        self.goal_draw_shape = "rect"
+
+    @staticmethod
+    def from_dict(state_dict):
+        return AirHockeyPuckTopEdgeGoalTrianglesEnv(**state_dict)
+
+    def validate_configuration(self):
+        assert self.num_pucks == 1
+        assert self.num_blocks == 0
+        assert self.num_obstacles == 2
+        assert self.num_targets == 0
+        assert self.num_paddles == 1
+        assert self.simulator_name == "box2d"
+        if len(self.obstacle_positions) > self.num_obstacles:
+            raise ValueError("obstacle_positions has more entries than num_obstacles.")
+
+    def get_puck_configuration(self, bad_regions=None):
+        """Spawn on the paddle side with low speed toward the top / obstacles."""
+        x_lo = self.table_x_top + 0.28 * float(self.length)
+        x_hi = self.table_x_bot * 0.82
+        x_pos = float(self.rng.uniform(x_lo, x_hi))
+        y_pos = float(self.rng.uniform(-self.width / 3.0, self.width / 3.0))
+        speed = float(self.rng.uniform(0.0, 0.35))
+        angle = float(self.rng.uniform(-math.pi, math.pi))
+        vx = speed * math.cos(angle)
+        vy = speed * math.sin(angle)
+        return (x_pos, y_pos), (vx, vy)
+
+    def puck_scored_top_edge_goal(self, state_info):
+        if "pucks" not in state_info or len(state_info["pucks"]) == 0:
+            return False
+        px, py = state_info["pucks"][0]["position"]
+        vx = state_info["pucks"][0]["velocity"][0]
+        if vx >= 0.0:
+            return False
+        if px > self.table_x_top + self.puck_radius + self.top_edge_goal_line_tolerance_m:
+            return False
+        half_slot_y = float(self.width) / 10.0
+        if abs(float(py)) > half_slot_y + 1e-9:
+            return False
+        return True
+
+    def has_finished(self, state_info, multiagent=False):
+        terminated, truncated, a, b, c, d = super().has_finished(state_info, multiagent)
+        if self.puck_scored_top_edge_goal(state_info):
+            terminated = True
+            self._last_done_reasons["terminated"] = list(
+                dict.fromkeys(self._last_done_reasons.get("terminated", []) + ["top_edge_goal"])
+            )
+        return terminated, truncated, a, b, c, d
 
 
 class AirHockeyPuckJuggleUpperHalfMidBandRewardEnv(AirHockeyPuckJuggleLinearTopEnv):
