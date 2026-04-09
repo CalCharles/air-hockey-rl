@@ -6,35 +6,6 @@ import shutil
 ROBOSUITE_AVAILABLE = False
 robosuite_xml_path_completion = None
 assets_root = None
-<<<<<<< HEAD
-try:
-    from robosuite.utils.mjcf_utils import xml_path_completion as robosuite_xml_path_completion
-    from robosuite.models import assets_root
-    ROBOSUITE_AVAILABLE = True
-except Exception:
-    print("Robosuite not loaded. Robosuite-only components are unavailable.")
-# import airhockey.sims # this registers the air hockey robosuite env
-# Register optional robosuite extras independently so a failure in one (e.g.
-# `controllers`/`robots` use the old robosuite 1.4 API and break on 1.5+)
-# doesn't prevent the others (notably `grippers`, which contains the round
-# paddle) from registering.
-if ROBOSUITE_AVAILABLE:
-    for _module in (
-        "airhockey.sims.controllers",
-        "airhockey.sims.robots",
-        "airhockey.sims.grippers",
-        "airhockey.sims.utils.RobosuiteTransforms",
-    ):
-        try:
-            __import__(_module)
-        except Exception as _e:
-            print(f"airhockey: optional component {_module} not loaded ({type(_e).__name__}: {_e})")
-from airhockey.airhockey_simple_tasks import AirHockeyPuckVelEnv, AirHockeyPuckHeightEnv, AirHockeyPuckCatchEnv
-from airhockey.airhockey_simple_tasks import AirHockeyPuckJuggleEnv, AirHockeyPuckJuggleLinearTopEnv, AirHockeyPuckJuggleNoBaseRewardEnv, AirHockeyPuckJuggleUpperHalfRewardEnv, AirHockeyPuckJuggleUpperHalfMidBandRewardEnv, AirHockeyPuckStrikeEnv, AirHockeyPuckTouchEnv, AirHockeyPaddleFreeMovementEnv
-from airhockey.airhockey_hierarchical_tasks  import AirHockeyMoveBlockEnv, AirHockeyStrikeCrowdEnv
-# from airhockey.airhockey_goal_tasks import AirHockeyPuckGoalPositionEnv, AirHockeyPuckGoalPositionVelocityEnv, AirHockeyPuckReachPositionDynamicNegRegionsEnv
-# from airhockey.airhockey_goal_tasks import AirHockeyPaddleReachPositionEnv, AirHockeyPaddleReachPositionVelocityEnv, AirHockeyPaddleReachPositionNegRegionsEnv
-=======
 
 try:
     from robosuite.utils.mjcf_utils import xml_path_completion as robosuite_xml_path_completion
@@ -58,13 +29,13 @@ from airhockey.airhockey_simple_tasks import (
     AirHockeyPuckJuggleNoBaseRewardEnv,
     AirHockeyPuckJuggleUpperHalfRewardEnv,
     AirHockeyPuckJugglePinballTriangleSidesEnv,
+    AirHockeyPuckTopEdgeGoalTrianglesEnv,
     AirHockeyPuckJuggleUpperHalfMidBandRewardEnv,
     AirHockeyPuckStrikeEnv,
     AirHockeyPuckTouchEnv,
     AirHockeyPaddleFreeMovementEnv,
 )
 from airhockey.airhockey_hierarchical_tasks import AirHockeyMoveBlockEnv, AirHockeyStrikeCrowdEnv
->>>>>>> 5288292 (adding pinball)
 from airhockey.airhockey_tasks.paddle_reach_position import AirHockeyPaddleReachPositionEnv
 from airhockey.airhockey_tasks.puck_goal_position import AirHockeyPuckGoalPositionEnv
 from airhockey.airhockey_tasks.paddle_reach_position_velocity import (
@@ -132,10 +103,15 @@ def AirHockeyEnv(cfg):
     elif task == "puck_juggle_pinball_triangle_sides" or task == "multipuck_juggle_pinball_triangle_sides":
         task_env = AirHockeyPuckJugglePinballTriangleSidesEnv
 <<<<<<< HEAD
+<<<<<<< HEAD
     elif task == "puck_goal_top_edge_slot_triangles" or task == "multipuck_goal_top_edge_slot_triangles":
         task_env = AirHockeyPuckTopEdgeGoalTrianglesEnv
 =======
 >>>>>>> 5288292 (adding pinball)
+=======
+    elif task == "puck_goal_top_edge_slot_triangles" or task == "multipuck_goal_top_edge_slot_triangles":
+        task_env = AirHockeyPuckTopEdgeGoalTrianglesEnv
+>>>>>>> 1c32133 (added new tasks for air hockey)
     elif task == "puck_juggle_upper_half_mid_band_reward" or task == "multipuck_juggle_upper_half_mid_band_reward":
         task_env = AirHockeyPuckJuggleUpperHalfMidBandRewardEnv
     elif task == "puck_strike":
