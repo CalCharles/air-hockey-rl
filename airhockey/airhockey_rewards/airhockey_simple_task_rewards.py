@@ -249,6 +249,7 @@ class AirHockeyPuckJuggleUpperHalfMidBandReward(AirHockeyPuckJuggleLinearTopRewa
 
         return bonus_reward
 
+
 class AirHockeyPuckStrikeReward(AirHockeyRewardBase):
     def __init__(self, task_env):
         super().__init__(task_env)

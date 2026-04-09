@@ -25,6 +25,16 @@ def get_real_simulator_fn():
 
 
 class AirHockeyBaseEnv(ABC, Env):
+    @staticmethod
+    def _coerce_obstacle_positions(raw):
+        if raw is None:
+            return []
+        out = []
+        for item in raw:
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                out.append((float(item[0]), float(item[1])))
+        return out
+
     def __init__(self, **kwargs):
         
         self.defaults = {
@@ -82,6 +92,11 @@ class AirHockeyBaseEnv(ABC, Env):
             'velocity_penalty_coeff': 0.0,
             'enable_survival_bonus': False,
             'survival_bonus_per_step': 0.25,
+            # Optional list of [x, y] centers (base frame) for triangle obstacles.
+            # If shorter than num_obstacles, remaining positions are sampled per reset.
+            'obstacle_positions': [],
+            # If set (e.g. 0.5), puck spawns at x = table_x_top + frac * length, random y, zero vel.
+            'puck_spawn_fixed_x_from_goal_frac': None,
         }
         
         # handle defaults, keeps values for duplicate keys from right side!
@@ -234,7 +249,10 @@ class AirHockeyBaseEnv(ABC, Env):
         self.num_obstacles = config.num_obstacles
         self.num_targets = config.num_targets
         self.num_paddles = config.num_paddles
-        
+        self.obstacle_positions = AirHockeyBaseEnv._coerce_obstacle_positions(
+            getattr(config, "obstacle_positions", [])
+        )
+
         self.validate_configuration()
 
         self.goal_selector = config.goal_selector

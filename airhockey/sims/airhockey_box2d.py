@@ -403,6 +403,8 @@ class AirHockeyBox2D:
             'paddle_bounds': [],
             'paddle_edge_bounds': [],
             'center_offset_constant': 1.2,
+            # When True, paddle targets that overshoot are damped toward the table (see step logic).
+            'absorb_target': False,
             'puck_restitution': 1.0,
             'paddle_restitution': 1.0,
             # Wall restitution defaults: side rails (x-min/x-max) are livelier
@@ -474,6 +476,11 @@ class AirHockeyBox2D:
             'enable_puck_delay_interpolation': False,
             'puck_delay_interpolation_min': 0.75,
             'puck_delay_interpolation_max': 1.25,
+            # Triangle obstacles: isosceles, point-up; base length = 1.5 * this scale.
+            'triangle_obstacle_size': 0.08,
+            # High vs puck so b2MixRestitution favors bounce on triangle edges (no listener changes).
+            'triangle_obstacle_restitution': 1.15,
+            'obstacle_shape': 'triangle',
         }
 
         kwargs = {**defaults, **kwargs}
@@ -604,6 +611,9 @@ class AirHockeyBox2D:
         self.puck_delay_interpolation_min = float(config.puck_delay_interpolation_min)
         self.puck_delay_interpolation_max = float(config.puck_delay_interpolation_max)
         self._prev_puck_positions_box2d = {}
+        self.triangle_obstacle_size = float(config.triangle_obstacle_size)
+        self.triangle_obstacle_restitution = float(config.triangle_obstacle_restitution)
+        self.obstacle_shape = str(config.obstacle_shape).lower()
         # random occlusion simulation
         self.enable_random_occlusions = bool(config.enable_random_occlusions)
         self.random_occlusion_target_rate = float(config.random_occlusion_target_rate)
@@ -803,10 +813,12 @@ class AirHockeyBox2D:
         
         self.puck_names = list(self.pucks.keys())
         self.block_names = list(self.blocks.keys())
+        self.obstacle_names = list(self.obstacles.keys())
 
         self.paddle_names.sort()
         self.puck_names.sort()
         self.block_names.sort()
+        self.obstacle_names.sort()
 
         
         # TODO: obstacles and targets not implemented
@@ -822,6 +834,12 @@ class AirHockeyBox2D:
                     for key2, value2 in value[i].items():
                         if type(value2) == tuple:
                             state_info[key][i][key2] = (-value2[1], value2[0])
+                        elif (
+                            isinstance(value2, list)
+                            and len(value2) > 0
+                            and all(isinstance(v, tuple) and len(v) == 2 for v in value2)
+                        ):
+                            state_info[key][i][key2] = [(-v[1], v[0]) for v in value2]
             else:
                 for key2, value2 in value.items():
                     for key3, value3 in value2.items():
@@ -896,6 +914,27 @@ class AirHockeyBox2D:
 
                 state_info['blocks'].append({'current_position': (block_x_pos, block_y_pos),
                                         'initial_position': (initial_x_pos, initial_y_pos)})
+
+        if len(self.obstacles) > 0:
+            state_info["obstacles"] = []
+            for obstacle_name, obstacle_data in self.obstacles.items():
+                body = obstacle_data["body"]
+                center_box2d = (float(body.position[0]), float(body.position[1]))
+                # Rotate local Box2D vertices into world, then convert to base frame.
+                world_vertices = []
+                for fixture in body.fixtures:
+                    shape = fixture.shape
+                    for local_v in shape.vertices:
+                        world_v = body.GetWorldPoint(local_v)
+                        world_vertices.append((float(world_v[0]), float(world_v[1])))
+                state_info["obstacles"].append(
+                    {
+                        "name": obstacle_name,
+                        "position": center_box2d,
+                        "vertices": world_vertices,
+                        "size": float(obstacle_data.get("size", self.triangle_obstacle_size)),
+                    }
+                )
 
         if len(self.pucks) > 0:
             state_info['pucks'] = []
@@ -1119,22 +1158,84 @@ class AirHockeyBox2D:
         pos = self.base_coord_to_box2d(pos)
         vel = self.base_coord_to_box2d(vel)
         vertices = [([-self.block_width / 2, -self.block_width / 2]), ([self.block_width / 2, -self.block_width / 2]), ([self.block_width / 2, self.block_width / 2]), ([-self.block_width / 2, self.block_width / 2])]
-        block = self.world.CreateDynamicBody(
-            fixtures=b2FixtureDef(
-                shape=b2PolygonShape(vertices=vertices),
-                density=self.block_density,
-                restitution=1.0,
-                filter=b2Filter(maskBits=1, categoryBits=1)),
-            bullet=True,
+        body_type = b2_dynamicBody if movable else b2_staticBody
+        block = self.world.CreateBody(
+            type=body_type,
             position=pos,
-            linearVelocity=vel,
-            linearDamping=self.puck_damping
+            linearVelocity=vel if movable else (0, 0),
+            linearDamping=self.puck_damping if movable else 0.0,
+            bullet=bool(movable),
+            userData=name,
+        )
+        block.CreateFixture(
+            b2FixtureDef(
+                shape=b2PolygonShape(vertices=vertices),
+                density=self.block_density if movable else 0.0,
+                restitution=1.0,
+                filter=b2Filter(maskBits=1, categoryBits=1),
+                friction=0.0,
+            )
         )
         if not affected_by_gravity:
             block.gravityScale = 0
         self.blocks[name] = block
         self.block_initial_positions[name] = pos
         self.object_dict[name] = block
+
+    def spawn_obstacle(self, pos, name, size=None, affected_by_gravity=False, movable=False):
+        """Spawn an isosceles triangle obstacle (wide base, single apex).
+
+        ``size`` scales the shape: bottom edge length is ``1.5 * size`` (``0.75 * 2 *
+        size``). Apex uses the same height ``h`` as an equilateral triangle of side
+        ``size``.
+
+        Vertices are laid out in **base frame** so the base spans **base-y** (horizontal
+        on screen after ``render_x = base_y``) and the apex lies toward **negative base-x**
+        (goal / ``table_x_top``). The opposite sign (+apex) reads as pointing down after
+        the table bitmap’s rotation in ``get_frame()``; keep apex at ``-2h/3``.
+        """
+        if size is None:
+            size = self.triangle_obstacle_size
+        size = float(size)
+        h = (np.sqrt(3.0) / 2.0) * size
+        half_base = 0.75 * size  # full base length = 1.5 * size (along base-y on screen)
+
+        # Centroid at origin; apex toward goal (-x); flat base toward center (+x).
+        local_base = [
+            np.array([-2.0 * h / 3.0, 0.0], dtype=float),
+            np.array([h / 3.0, -half_base], dtype=float),
+            np.array([h / 3.0, half_base], dtype=float),
+        ]
+        vertices_local_box2d = [tuple(self.base_coord_to_box2d(v)) for v in local_base]
+        pos_box2d = self.base_coord_to_box2d(pos)
+
+        body_type = b2_dynamicBody if movable else b2_staticBody
+        triangle_body = self.world.CreateBody(
+            type=body_type,
+            position=pos_box2d,
+            userData=name,
+        )
+        triangle_body.CreateFixture(
+            b2FixtureDef(
+                shape=b2PolygonShape(vertices=vertices_local_box2d),
+                density=self.block_density if movable else 0.0,
+                restitution=self.triangle_obstacle_restitution,
+                filter=b2Filter(maskBits=1, categoryBits=1),
+                friction=0.0,
+            )
+        )
+        if not affected_by_gravity:
+            triangle_body.gravityScale = 0
+
+        center_base = np.asarray(pos, dtype=float)
+        vertices_base = [tuple((center_base + v).tolist()) for v in local_base]
+        self.obstacles[name] = {
+            "body": triangle_body,
+            "center_base": tuple(center_base.tolist()),
+            "vertices_base": vertices_base,
+            "size": size,
+        }
+        self.object_dict[name] = triangle_body
 
     def convert_to_box2d_coords(self, action):
         action = np.array((action[1], -action[0]))
@@ -1145,6 +1246,61 @@ class AirHockeyBox2D:
 
     def _base_to_box2d_coords(self, coord):
         return np.array((coord[1], -coord[0]), dtype=float)
+
+    @staticmethod
+    def _point_segment_distance(point, seg_a, seg_b):
+        point = np.asarray(point, dtype=float)
+        seg_a = np.asarray(seg_a, dtype=float)
+        seg_b = np.asarray(seg_b, dtype=float)
+        ab = seg_b - seg_a
+        denom = float(np.dot(ab, ab))
+        if denom <= 1e-12:
+            return float(np.linalg.norm(point - seg_a))
+        t = float(np.dot(point - seg_a, ab) / denom)
+        t = float(np.clip(t, 0.0, 1.0))
+        proj = seg_a + t * ab
+        return float(np.linalg.norm(point - proj))
+
+    def _triangle_side_from_contact(self, obstacle_name, contact_point_box2d):
+        obstacle = self.obstacles.get(obstacle_name)
+        if obstacle is None:
+            return None
+        verts = obstacle.get("vertices_base", [])
+        if len(verts) != 3:
+            return None
+        contact_base = self._box2d_to_base_coords(contact_point_box2d)
+        top, left, right = [np.asarray(v, dtype=float) for v in verts]
+        d_left = self._point_segment_distance(contact_base, top, left)
+        d_right = self._point_segment_distance(contact_base, top, right)
+        d_base = self._point_segment_distance(contact_base, left, right)
+        dists = {"left": d_left, "right": d_right, "base": d_base}
+        return min(dists, key=dists.get)
+
+    def _compute_triangle_side_hits(self, step_collisions):
+        side_counts = {"left": 0, "right": 0, "base": 0}
+        details = []
+        for collision in step_collisions:
+            body_a = str(collision.get("bodyA", ""))
+            body_b = str(collision.get("bodyB", ""))
+            contact_point = collision.get("contact_point", None)
+            if contact_point is None:
+                continue
+            obstacle_name = None
+            hit_body = None
+            if body_a.startswith("triangle_obstacle_"):
+                obstacle_name = body_a
+                hit_body = body_b
+            elif body_b.startswith("triangle_obstacle_"):
+                obstacle_name = body_b
+                hit_body = body_a
+            if obstacle_name is None:
+                continue
+            side = self._triangle_side_from_contact(obstacle_name, contact_point)
+            if side is None:
+                continue
+            side_counts[side] += 1
+            details.append({"obstacle": obstacle_name, "side": side, "hit_body": hit_body})
+        return side_counts, details
 
     def _get_edge(self, x, y, w, h):
         # Mirror the real environment's rectangular projection with numerical guards.
@@ -1354,7 +1510,10 @@ class AirHockeyBox2D:
                 force = self.pid_controller.compute(target_pos, pos, current_vel)
                 
             else:
-                self.last_target_position = None
+                # Keep overlay target consistent with commanded move geometry even
+                # when using the legacy force controller (non-PID).
+                target_pos = self._compute_pid_target_pos(pos, act)
+                self.last_target_position = self._box2d_to_base_coords(target_pos)
                 # Legacy controller: action is delta position
                 # let's use simple time-optimal control to figure out the force to apply
                 delta_pos = np.array([act[0], act[1]])
@@ -1438,7 +1597,9 @@ class AirHockeyBox2D:
                     pos[1] = 0
                 if pos[1] > self.table_y_max:
                     pos[1] = self.table_y_max
-            self.paddles['paddle_ego'].position = (pos[0], pos[1])
+            paddle_body = self.paddles["paddle_ego"]
+            # pybox2d: assigning ``position`` routes through the internal SetTransform.
+            paddle_body.position = (float(pos[0]), float(pos[1]))
             
             state_info = self.get_current_state()
             if 'pucks' in state_info:
@@ -1498,7 +1659,8 @@ class AirHockeyBox2D:
         # PostSolve can emit multiple entries for the same physical collision
         # (multiple manifold points / sub-steps), which overestimates counts.
         step_contacted_pucks = set()
-        for collision in self.collision_listener.collision_forces[collision_start_idx:]:
+        step_collisions = self.collision_listener.collision_forces[collision_start_idx:]
+        for collision in step_collisions:
             body_a = str(collision.get("bodyA", ""))
             body_b = str(collision.get("bodyB", ""))
             if body_a == "paddle_ego" and body_b.startswith("puck"):
@@ -1506,6 +1668,9 @@ class AirHockeyBox2D:
             elif body_b == "paddle_ego" and body_a.startswith("puck"):
                 step_contacted_pucks.add(body_a)
         state_info["paddle_puck_collision_count"] = int(len(step_contacted_pucks))
+        triangle_side_hits, triangle_hit_details = self._compute_triangle_side_hits(step_collisions)
+        state_info["triangle_side_hits"] = triangle_side_hits
+        state_info["triangle_hit_details"] = triangle_hit_details
         
         # Debug: Print acceleration values occasionally (remove this after testing)
         # if self.timestep % 100 == 0 and np.linalg.norm(current_acceleration) > 0:
@@ -1525,9 +1690,11 @@ class AirHockeyBox2D:
     def get_contacts(self):
         contacts = list()
         shape_pointers = ([self.paddles[bn] for bn in self.paddles.keys()]  + \
-                         [self.pucks[bn] for bn in self.pucks.keys()] + [self.blocks[pn] for pn in self.blocks.keys()])
+                         [self.pucks[bn] for bn in self.pucks.keys()] + \
+                         [self.blocks[pn] for pn in self.blocks.keys()] + \
+                         [self.obstacles[on]["body"] for on in self.obstacles.keys()])
                         #  [self.obstacles[pn][0] for pn in self.obstacles.keys()] + [self.targets[pn][0] for pn in self.targets.keys()])
-        names = self.paddle_names + self.puck_names + self.block_names# + self.obstacle_names + self.target_names
+        names = self.paddle_names + self.puck_names + self.block_names + self.obstacle_names
         contact_names = {n: list() for n in names}
         for bn in names:
             all_contacts = np.zeros(len(shape_pointers)).astype(bool)
