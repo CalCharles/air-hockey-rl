@@ -75,3 +75,16 @@ class AirHockeyPinballTriangleSideReward(AirHockeyPuckJuggleLinearTopReward):
             if side in ("left", "right"):
                 reward += self._edge_hit_reward
         return reward, success
+
+
+class AirHockeyTopEdgeSlotGoalReward(AirHockeyRewardBase):
+    """Sparse success reward when the puck enters the fixed top-edge goal slot (see task env)."""
+
+    def __init__(self, task_env):
+        super().__init__(task_env)
+        self._bonus = float(getattr(task_env, "top_edge_goal_reward_bonus", 100.0))
+
+    def get_base_reward(self, state_info):
+        if self.task_env.puck_scored_top_edge_goal(state_info):
+            return self._bonus, True
+        return 0.0, False

@@ -3,7 +3,7 @@ import math
 import numpy as np
 from gymnasium.spaces import Box
 from .airhockey_base import AirHockeyBaseEnv
-from .airhockey_rewards import AirHockeyPuckCatchReward, AirHockeyPuckVelReward, AirHockeyPuckTouchReward, AirHockeyPuckHeightReward, AirHockeyPuckJuggleReward, AirHockeyPuckJuggleLinearTopReward, AirHockeyPuckJuggleNoBaseReward, AirHockeyPuckJuggleUpperHalfReward, AirHockeyPuckJuggleUpperHalfMidBandReward, AirHockeyPuckStrikeReward, AirHockeyStrikeCrowdReward, AirHockeyPaddleFreeMovementReward, AirHockeyPinballTriangleSideReward
+from .airhockey_rewards import AirHockeyPuckCatchReward, AirHockeyPuckVelReward, AirHockeyPuckTouchReward, AirHockeyPuckHeightReward, AirHockeyPuckJuggleReward, AirHockeyPuckJuggleLinearTopReward, AirHockeyPuckJuggleNoBaseReward, AirHockeyPuckJuggleUpperHalfReward, AirHockeyPuckJuggleUpperHalfMidBandReward, AirHockeyPuckStrikeReward, AirHockeyStrikeCrowdReward, AirHockeyPaddleFreeMovementReward, AirHockeyPinballTriangleSideReward, AirHockeyTopEdgeSlotGoalReward
 
 class AirHockeyPuckVelEnv(AirHockeyBaseEnv):
     def initialize_spaces(self, obs_type):
@@ -524,6 +524,83 @@ class AirHockeyPuckJugglePinballTriangleSidesEnv(AirHockeyPuckJuggleLinearTopEnv
     @staticmethod
     def from_dict(state_dict):
         return AirHockeyPuckJugglePinballTriangleSidesEnv(**state_dict)
+
+
+class AirHockeyPuckTopEdgeGoalTrianglesEnv(AirHockeyPuckJuggleEnv):
+    """
+    Score in the center 1/5 of the goal-side (top) edge; episode terminates on success.
+    Two static triangle obstacles (same Box2D path as pinball / juggle).
+    """
+
+    def __init__(self, **kwargs):
+        self.top_edge_goal_line_tolerance_m = float(kwargs.get("top_edge_goal_line_tolerance_m", 0.025))
+        self.top_edge_goal_reward_bonus = float(kwargs.get("top_edge_goal_reward_bonus", 100.0))
+        self.top_edge_goal_visual_offset_m = float(kwargs.get("top_edge_goal_visual_offset_m", 0.012))
+        self.top_edge_goal_visual_half_depth_m = float(
+            kwargs.get("top_edge_goal_visual_half_depth_m", 0.018)
+        )
+        super().__init__(**kwargs)
+
+    def initialize_spaces(self, obs_type):
+        low, high = self.init_observation(obs_type)
+        self.action_space = self.single_action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32)
+        self.reward_range = Box(low=-1, high=1)
+        self.count_hit = False
+        self.hits = 0
+        self.reward = AirHockeyTopEdgeSlotGoalReward(self)
+        gx = float(self.table_x_top) + self.top_edge_goal_visual_offset_m
+        self.goal_pos = (gx, 0.0)
+        self.goal_radius = (self.top_edge_goal_visual_half_depth_m, float(self.width) / 10.0)
+        self.goal_draw_shape = "rect"
+
+    @staticmethod
+    def from_dict(state_dict):
+        return AirHockeyPuckTopEdgeGoalTrianglesEnv(**state_dict)
+
+    def validate_configuration(self):
+        assert self.num_pucks == 1
+        assert self.num_blocks == 0
+        assert self.num_obstacles == 2
+        assert self.num_targets == 0
+        assert self.num_paddles == 1
+        assert self.simulator_name == "box2d"
+        if len(self.obstacle_positions) > self.num_obstacles:
+            raise ValueError("obstacle_positions has more entries than num_obstacles.")
+
+    def get_puck_configuration(self, bad_regions=None):
+        """Spawn on the paddle side with low speed toward the top / obstacles."""
+        x_lo = self.table_x_top + 0.28 * float(self.length)
+        x_hi = self.table_x_bot * 0.82
+        x_pos = float(self.rng.uniform(x_lo, x_hi))
+        y_pos = float(self.rng.uniform(-self.width / 3.0, self.width / 3.0))
+        speed = float(self.rng.uniform(0.0, 0.35))
+        angle = float(self.rng.uniform(-math.pi, math.pi))
+        vx = speed * math.cos(angle)
+        vy = speed * math.sin(angle)
+        return (x_pos, y_pos), (vx, vy)
+
+    def puck_scored_top_edge_goal(self, state_info):
+        if "pucks" not in state_info or len(state_info["pucks"]) == 0:
+            return False
+        px, py = state_info["pucks"][0]["position"]
+        vx = state_info["pucks"][0]["velocity"][0]
+        if vx >= 0.0:
+            return False
+        if px > self.table_x_top + self.puck_radius + self.top_edge_goal_line_tolerance_m:
+            return False
+        half_slot_y = float(self.width) / 10.0
+        if abs(float(py)) > half_slot_y + 1e-9:
+            return False
+        return True
+
+    def has_finished(self, state_info, multiagent=False):
+        terminated, truncated, a, b, c, d = super().has_finished(state_info, multiagent)
+        if self.puck_scored_top_edge_goal(state_info):
+            terminated = True
+            self._last_done_reasons["terminated"] = list(
+                dict.fromkeys(self._last_done_reasons.get("terminated", []) + ["top_edge_goal"])
+            )
+        return terminated, truncated, a, b, c, d
 
 
 class AirHockeyPuckJuggleUpperHalfMidBandRewardEnv(AirHockeyPuckJuggleLinearTopEnv):

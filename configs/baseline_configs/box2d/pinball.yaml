@@ -40,7 +40,7 @@ air_hockey:
   simulator: box2d
   simulator_params:
     # Larger triangles; spawn band is set in AirHockeyPuckJuggleEnv._spawn_triangle_obstacles.
-    triangle_obstacle_size: 0.14
+    triangle_obstacle_size: 0.12
     # Above puck_restitution so Box2D uses a livelier coefficient on puck–triangle contacts.
     triangle_obstacle_restitution: 1.26
     absorb_target: false
@@ -52,7 +52,7 @@ air_hockey:
     force_scaling: 0.99
     paddle_damping: 17
     paddle_density: 3000
-    gravity: -0.65
+    gravity: -0.55
     puck_damping: 0.25
     puck_density: 1250
     puck_restitution: 1.09145

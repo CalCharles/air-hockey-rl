@@ -29,6 +29,7 @@ from airhockey.airhockey_simple_tasks import (
     AirHockeyPuckJuggleNoBaseRewardEnv,
     AirHockeyPuckJuggleUpperHalfRewardEnv,
     AirHockeyPuckJugglePinballTriangleSidesEnv,
+    AirHockeyPuckTopEdgeGoalTrianglesEnv,
     AirHockeyPuckJuggleUpperHalfMidBandRewardEnv,
     AirHockeyPuckStrikeEnv,
     AirHockeyPuckTouchEnv,
@@ -101,6 +102,8 @@ def AirHockeyEnv(cfg):
         task_env = AirHockeyPuckJuggleUpperHalfRewardEnv
     elif task == "puck_juggle_pinball_triangle_sides" or task == "multipuck_juggle_pinball_triangle_sides":
         task_env = AirHockeyPuckJugglePinballTriangleSidesEnv
+    elif task == "puck_goal_top_edge_slot_triangles" or task == "multipuck_goal_top_edge_slot_triangles":
+        task_env = AirHockeyPuckTopEdgeGoalTrianglesEnv
     elif task == "puck_juggle_upper_half_mid_band_reward" or task == "multipuck_juggle_upper_half_mid_band_reward":
         task_env = AirHockeyPuckJuggleUpperHalfMidBandRewardEnv
     elif task == "puck_strike":

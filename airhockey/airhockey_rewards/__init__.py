@@ -2,6 +2,7 @@ from .airhockey_hierarchical_task_rewards import (
     AirHockeyMoveBlockReward,
     AirHockeyStrikeCrowdReward,
     AirHockeyPinballTriangleSideReward,
+    AirHockeyTopEdgeSlotGoalReward,
 )
 from .airhockey_simple_task_rewards import AirHockeyPuckCatchReward, AirHockeyPuckVelReward, AirHockeyPuckTouchReward, AirHockeyPuckHeightReward, AirHockeyPuckJuggleReward, AirHockeyPuckJuggleLinearTopReward, AirHockeyPuckJuggleNoBaseReward, AirHockeyPuckJuggleUpperHalfReward, AirHockeyPuckJuggleUpperHalfMidBandReward, AirHockeyPuckStrikeReward, AirHockeyPaddleFreeMovementReward
 from .airhockey_reward_base import AirHockeyRewardBase

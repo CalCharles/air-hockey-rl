@@ -461,7 +461,13 @@ class AirHockeyRenderer:
         if self.airhockey_env.goal_conditioned:
             # get the goal position and radius and draw it
             green = (0, 255, 0)
-            self.draw_region(self.airhockey_env.goal_pos, self.airhockey_env.goal_radius, color=green)
+            goal_shape = getattr(self.airhockey_env, "goal_draw_shape", "circle")
+            self.draw_region(
+                self.airhockey_env.goal_pos,
+                self.airhockey_env.goal_radius,
+                color=green,
+                shape=goal_shape,
+            )
             if self.airhockey_env.multiagent:
                 blue = (255, 0, 0)
                 self.draw_region(self.airhockey_env.alt_goal_pos, self.airhockey_env.alt_goal_radius, color=blue)
