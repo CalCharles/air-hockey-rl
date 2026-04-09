@@ -72,7 +72,7 @@ class ResetPolicyFSM:
         max_stage2_cycles: int = 5,
         capture_second_hit_frame: bool = True,
         async_second_hit_write: bool = False,
-        show_second_hit_window: bool = True,
+        show_second_hit_window: bool = False,
     ):
         self.env = env
         self.rng = rng

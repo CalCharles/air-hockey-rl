@@ -1,5 +1,6 @@
 import time
 from collections import deque
+from pathlib import Path
 import numpy as np
 from multiprocessing import shared_memory
 from .real.multiprocessing import ProtectedArray, NonBlockingConsole
@@ -55,12 +56,34 @@ def _async_render_worker(
     visual_downscale_constant,
     poll_sleep_s,
     debug,
+    sim_view_enabled=False,
+    sim_view_window_name="sim_view",
+    sim_view_size=360,
+    sim_view_orientation="vertical",
+    assets_dir=None,
+    table_length=1.9304,
+    table_width=0.8636,
 ):
     frame_shm = None
+    sim_renderer = None
     try:
         frame_shm = shared_memory.SharedMemory(name=frame_shm_name)
         shared_frame = np.ndarray(tuple(frame_shape), dtype=np.uint8, buffer=frame_shm.buf)
         poll_sleep_s = max(0.0005, float(poll_sleep_s))
+        if sim_view_enabled:
+            from scripts.smooth_policy.visualize_demo.visualize_real_trajectory import RealTrajectoryRenderer
+            sim_renderer = RealTrajectoryRenderer(
+                table_length=table_length,
+                table_width=table_width,
+                paddle_radius=paddle_radius,
+                puck_radius=puck_radius,
+                render_size=sim_view_size,
+                robot_x_offset=center_offset_constant,
+                orientation=sim_view_orientation,
+                paddle_input_frame='robot',
+                assets_dir=assets_dir,
+                quiet=True,
+            )
         last_seq = -1
         last_epoch = int(frame_epoch.value)
         while not stop_event.is_set():
@@ -106,6 +129,17 @@ def _async_render_worker(
                 color=(255, 0, 0),
             )
             cv2.imshow(window_name, frame)
+            if sim_renderer is not None:
+                sim_frame = sim_renderer.render_frame(
+                    pos_x=float(data[5]),
+                    pos_y=float(data[6]),
+                    puck_x=float(data[2]),
+                    puck_y=float(data[3]),
+                    puck_occluded=bool(data[4] > 0.5),
+                    target_x=float(data[0]) + center_offset_constant,
+                    target_y=float(data[1]),
+                )
+                cv2.imshow(sim_view_window_name, sim_frame)
             cv2.waitKey(1)
             last_seq = current_seq
     except Exception as exc:
@@ -116,6 +150,11 @@ def _async_render_worker(
             cv2.destroyWindow(window_name)
         except Exception:
             pass
+        if sim_renderer is not None:
+            try:
+                cv2.destroyWindow(sim_view_window_name)
+            except Exception:
+                pass
         if frame_shm is not None:
             frame_shm.close()
 
@@ -290,6 +329,10 @@ class AirHockeyReal:
             "async_render_window_name": "showdst",
             "async_render_frame_width": 960,
             "async_render_frame_height": 720,
+            "async_render_sim_view_enabled": False,
+            "async_render_sim_view_window_name": "sim_view",
+            "async_render_sim_view_size": 360,
+            "async_render_sim_view_orientation": "vertical",
             "async_z_force_enabled": True,
             "async_z_force_target_hz": 150.0,   # EDIT(known-issue-2): increased from 100 Hz for smoother contact
             "async_z_force_wrench_z": 1.0,
@@ -412,6 +455,11 @@ class AirHockeyReal:
         self.async_render_poll_sleep_s = max(0.0005, float(config.async_render_poll_sleep_s))
         self.async_render_window_name = str(config.async_render_window_name)
         self._async_render_runtime_enabled = bool(self.async_render_enabled)
+        self.async_render_sim_view_enabled = bool(config.async_render_sim_view_enabled)
+        self.async_render_sim_view_window_name = str(config.async_render_sim_view_window_name)
+        self.async_render_sim_view_size = int(config.async_render_sim_view_size)
+        self.async_render_sim_view_orientation = str(config.async_render_sim_view_orientation)
+        self._assets_dir = str(Path(__file__).resolve().parent.parent.parent / 'assets')
         self._async_render_default_frame_shape = (
             int(config.async_render_frame_height),
             int(config.async_render_frame_width),
@@ -982,7 +1030,41 @@ class AirHockeyReal:
             color=(255, 0, 0),
         )
         cv2.imshow(self.async_render_window_name, image)
+        if self.async_render_sim_view_enabled:
+            sim_renderer = self._get_inline_sim_renderer()
+            if sim_renderer is not None:
+                sim_frame = sim_renderer.render_frame(
+                    pos_x=float(paddle_xy[0]),
+                    pos_y=float(paddle_xy[1]),
+                    puck_x=float(puck_state[0]),
+                    puck_y=float(puck_state[1]),
+                    puck_occluded=bool(puck_state[2] > 0.5) if len(puck_state) > 2 else None,
+                    target_x=float(target_xy[0]) + self.center_offset_constant,
+                    target_y=float(target_xy[1]),
+                )
+                cv2.imshow(self.async_render_sim_view_window_name, sim_frame)
         cv2.waitKey(1)
+
+    def _get_inline_sim_renderer(self):
+        if hasattr(self, '_inline_sim_renderer'):
+            return self._inline_sim_renderer
+        try:
+            from scripts.smooth_policy.visualize_demo.visualize_real_trajectory import RealTrajectoryRenderer
+            self._inline_sim_renderer = RealTrajectoryRenderer(
+                table_length=self.length,
+                table_width=self.width,
+                paddle_radius=self.paddle_radius,
+                puck_radius=self.puck_radius,
+                render_size=self.async_render_sim_view_size,
+                robot_x_offset=self.center_offset_constant,
+                orientation=self.async_render_sim_view_orientation,
+                paddle_input_frame='robot',
+                assets_dir=self._assets_dir,
+                quiet=True,
+            )
+        except Exception:
+            self._inline_sim_renderer = None
+        return self._inline_sim_renderer
 
     def _stop_async_renderer(self):
         if self._render_stop_event is not None:
@@ -1056,6 +1138,13 @@ class AirHockeyReal:
                     self.visual_downscale_constant,
                     self.async_render_poll_sleep_s,
                     self.async_render_debug,
+                    self.async_render_sim_view_enabled,
+                    self.async_render_sim_view_window_name,
+                    self.async_render_sim_view_size,
+                    self.async_render_sim_view_orientation,
+                    self._assets_dir,
+                    self.length,
+                    self.width,
                 ),
                 daemon=True,
             )
@@ -1852,6 +1941,11 @@ class AirHockeyReal:
             cv2.destroyWindow(self.async_render_window_name)
         except Exception:
             pass
+        if self.async_render_sim_view_enabled:
+            try:
+                cv2.destroyWindow(self.async_render_sim_view_window_name)
+            except Exception:
+                pass
 
     def __del__(self):
         try:

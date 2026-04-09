@@ -2797,6 +2797,53 @@ def _run_sync_learner_iteration(
     return actor_updated
 
 
+def _prompt_optional_run_note() -> str:
+    """Prompt the user for an optional note describing this run.
+
+    Returns the entered note (stripped). Returns empty string if the user
+    skips it or the prompt is run in a non-interactive context.
+    """
+    try:
+        note = input("Optional run note (press Enter to skip): ").strip()
+    except EOFError:
+        note = ""
+    return note
+
+
+def _setup_run_data_dir(args: Args, run_note: str) -> Path:
+    """Create a new timestamped folder under the log parent dir for collected
+    data, redirect all data output paths into it, and write the run note.
+
+    Returns the path of the created folder.
+    """
+    if args.log_parent_dir is not None and str(args.log_parent_dir).strip():
+        log_parent_base = Path(args.log_parent_dir).expanduser().resolve()
+    elif args.checkpoint_root_dir is not None and str(args.checkpoint_root_dir).strip():
+        log_parent_base = Path(args.checkpoint_root_dir).expanduser().resolve()
+    else:
+        log_parent_base = Path(args.episode_artifact_dir).expanduser().resolve().parent
+
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_data_dir = log_parent_base / f"data_{timestamp}"
+    run_data_dir.mkdir(parents=True, exist_ok=True)
+
+    args.episode_artifact_dir = str(run_data_dir / "episode_hdf5")
+    args.reset_artifact_dir = str(run_data_dir / "reset_hdf5")
+    args.episode_gif_dir = str(run_data_dir / "episode_gifs")
+    if args.episode_camera_video_dir is not None:
+        args.episode_camera_video_dir = str(run_data_dir / "episode_camera_videos")
+
+    note_path = run_data_dir / "run_note.txt"
+    if run_note:
+        note_path.write_text(run_note + "\n", encoding="utf-8")
+
+    print(f"[run_data] collected data dir: {run_data_dir}")
+    if run_note:
+        print(f"[run_data] note: {run_note}")
+
+    return run_data_dir
+
+
 def _finalize_sync_learner_state(
     args: Args,
     replay: SharedTD3Replay,
@@ -3018,4 +3065,6 @@ if __name__ == "__main__":
             print("[args_file] applied keys: none")
         if ignored_keys:
             print("[args_file] ignored unsupported keys:", ", ".join(ignored_keys))
+    run_note = _prompt_optional_run_note()
+    _setup_run_data_dir(args, run_note)
     main(args)

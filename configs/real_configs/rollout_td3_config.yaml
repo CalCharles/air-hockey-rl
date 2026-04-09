@@ -43,7 +43,8 @@ air_hockey:
     transition_hold_steps_on_estop_clear: 8
     transition_hold_steps_on_safety_rearm: 3
     transition_hold_debug: false
-    async_render_enabled: false
+    async_render_enabled: true
+    async_render_sim_view_enabled: true
   stand_still_rew: 0.01
   task: puck_juggle_upper_half_reward
   terminate_on_enemy_goal: true

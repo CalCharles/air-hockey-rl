@@ -123,7 +123,7 @@ class RealTrajectoryRenderer:
     uses the same rendering logic as the Box2D AirHockeyRenderer.
     """
     
-    def __init__(self, 
+    def __init__(self,
                  table_length=1.9304,
                  table_width=0.8636,
                  paddle_radius=0.0508,
@@ -131,10 +131,12 @@ class RealTrajectoryRenderer:
                  render_size=360,
                  robot_x_offset=1.2,
                  orientation='vertical',
-                 paddle_input_frame='robot'):
+                 paddle_input_frame='robot',
+                 assets_dir=None,
+                 quiet=False):
         """
         Initialize renderer with simulation-matching parameters.
-        
+
         Args:
             table_length: Length of air hockey table in meters (simulation default: 1.9304m)
             table_width: Width of air hockey table in meters (simulation default: 0.8636m)
@@ -146,6 +148,9 @@ class RealTrajectoryRenderer:
             paddle_input_frame: Coordinate frame for paddle x/y inputs.
                 - 'robot': inputs are robot-frame and require robot_x_offset transform.
                 - 'table': inputs are already in table/observation-centered frame.
+            assets_dir: Optional explicit path to assets folder. If None, computed
+                relative to this script file.
+            quiet: If True, suppress print output during initialization.
         """
         if paddle_input_frame not in ('robot', 'table'):
             raise ValueError(
@@ -159,36 +164,43 @@ class RealTrajectoryRenderer:
         self.robot_x_offset = robot_x_offset
         self.orientation = orientation
         self.paddle_input_frame = paddle_input_frame
-        
+        self.quiet = quiet
+        self._assets_dir = assets_dir
+
         # Calculate pixels per meter and render dimensions (matching render.py logic)
         self.ppm = render_size / self.width
         self.render_width = int(render_size)
         self.render_length = int(self.ppm * self.length)
-        
-        print(f"Renderer initialized:")
-        print(f"  Table dimensions: {self.length}m x {self.width}m")
-        print(f"  Render size: {self.render_length}px x {self.render_width}px")
-        print(f"  Pixels per meter: {self.ppm:.1f}")
-        print(f"  Paddle radius: {self.paddle_radius}m ({int(self.paddle_radius * self.ppm)}px)")
-        print(f"  Puck radius: {self.puck_radius}m ({int(self.puck_radius * self.ppm)}px)")
-        print(f"  Robot X offset: {self.robot_x_offset}m")
-        print(f"  Orientation: {self.orientation}")
-        print(f"  Paddle input frame: {self.paddle_input_frame}")
-        
+
+        if not self.quiet:
+            print(f"Renderer initialized:")
+            print(f"  Table dimensions: {self.length}m x {self.width}m")
+            print(f"  Render size: {self.render_length}px x {self.render_width}px")
+            print(f"  Pixels per meter: {self.ppm:.1f}")
+            print(f"  Paddle radius: {self.paddle_radius}m ({int(self.paddle_radius * self.ppm)}px)")
+            print(f"  Puck radius: {self.puck_radius}m ({int(self.puck_radius * self.ppm)}px)")
+            print(f"  Robot X offset: {self.robot_x_offset}m")
+            print(f"  Orientation: {self.orientation}")
+            print(f"  Paddle input frame: {self.paddle_input_frame}")
+
         # Load assets (matching render.py)
         self._load_assets()
         
     def _load_assets(self):
         """Load table and paddle images from assets folder."""
-        # Find assets folder relative to this script
-        script_dir = Path(__file__).parent
-        assets_folder = script_dir / '../../../assets'
-        assets_folder = assets_folder.resolve()
-        
+        if self._assets_dir is not None:
+            assets_folder = Path(self._assets_dir)
+        else:
+            # Find assets folder relative to this script
+            script_dir = Path(__file__).parent
+            assets_folder = script_dir / '../../../assets'
+            assets_folder = assets_folder.resolve()
+
         if not assets_folder.exists():
             raise FileNotFoundError(f"Assets folder not found at {assets_folder}")
-        
-        print(f"  Loading assets from: {assets_folder}")
+
+        if not self.quiet:
+            print(f"  Loading assets from: {assets_folder}")
         
         # Load table image
         table_path = assets_folder / 'air_hockey_table.png'
