@@ -564,6 +564,8 @@ class Args:
     gravity: float | None = None
     puck_damping: float | None = None
     paddle_damping: float | None = None
+    puck_restitution: float | None = None
+    paddle_restitution: float | None = None
 
     # Puck delay interpolation (timing jitter simulation)
     enable_puck_delay_interpolation: bool = False
@@ -576,6 +578,12 @@ class Args:
     action_force_attenuation_min: float | None = None
     action_force_attenuation_max: float | None = None
 
+    # Live episode GIF recording
+    watch_ring_size: int = 10
+    watch_episode_interval: int = 50
+    sample_gif_interval: int = 10000
+    sample_gif_max_storage_mb: float = 50.0
+
 
 def make_env(env_id):
     def _thunk():
@@ -585,6 +593,19 @@ def make_env(env_id):
         return env
 
     return _thunk
+
+
+def enforce_sample_storage_cap(samples_dir: str, max_mb: float) -> None:
+    files = sorted(
+        [os.path.join(samples_dir, f) for f in os.listdir(samples_dir) if f.endswith(".gif")],
+        key=os.path.getmtime,
+    )
+    total = sum(os.path.getsize(f) for f in files)
+    max_bytes = max_mb * 1024 * 1024
+    while total > max_bytes and files:
+        oldest = files.pop(0)
+        total -= os.path.getsize(oldest)
+        os.remove(oldest)
 
 
 if __name__ == "__main__":
@@ -672,6 +693,8 @@ if __name__ == "__main__":
         "gravity": args.gravity,
         "puck_damping": args.puck_damping,
         "paddle_damping": args.paddle_damping,
+        "puck_restitution": args.puck_restitution,
+        "paddle_restitution": args.paddle_restitution,
         "enable_puck_delay_interpolation": True if args.enable_puck_delay_interpolation else None,
         "puck_delay_interpolation_min": args.puck_delay_interpolation_min,
         "puck_delay_interpolation_max": args.puck_delay_interpolation_max,
@@ -907,6 +930,22 @@ if __name__ == "__main__":
     current_velocity_mag = torch.zeros(args.num_envs, dtype=torch.float32, device=args.device)
     current_acceleration_mag = torch.zeros(args.num_envs, dtype=torch.float32, device=args.device)
     current_jerk_mag = torch.zeros(args.num_envs, dtype=torch.float32, device=args.device)
+
+    # --- Live episode GIF recording ---
+    watch_dir = os.path.join(log_parent_dir, "watch")
+    samples_dir = os.path.join(log_parent_dir, "samples")
+    os.makedirs(watch_dir, exist_ok=True)
+    os.makedirs(samples_dir, exist_ok=True)
+    train_renderer = AirHockeyRenderer(
+        envs.envs[0], show_target_position=True, show_acceleration_arrow=False
+    )
+    recording_frames: list = []
+    recording_episode = False
+    recording_cum_rew = 0.0
+    recording_last_rew = 0.0
+    completed_episode_count = 0
+    watch_ring_idx = 0
+    last_sample_gif_step = 0
 
     start_time = time.time()
     global_step = 0
@@ -1174,6 +1213,25 @@ if __name__ == "__main__":
             }
         actions = action_tensor.cpu().numpy()
 
+        if recording_episode:
+            frame = train_renderer.get_frame()
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            aspect_ratio = frame.shape[1] / frame.shape[0]
+            frame = cv2.resize(frame, (160, int(160 / aspect_ratio)))
+            cv2.putText(
+                frame, f"R: {recording_last_rew:.2f}",
+                (frame.shape[1] - 150, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2,
+            )
+            cv2.putText(
+                frame, f"G: {recording_cum_rew:.2f}",
+                (frame.shape[1] - 150, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2,
+            )
+            cv2.putText(
+                frame, f"Step: {global_step}",
+                (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (80, 80, 80), 1,
+            )
+            recording_frames.append(frame)
+
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
         dones = np.logical_or(terminations, truncations)
         step_puck_hits = sum_info_metric(infos, "paddle_puck_collision_count")
@@ -1285,6 +1343,10 @@ if __name__ == "__main__":
             estop_event_mask_tensor = torch.as_tensor(estop_event_mask, dtype=torch.float32, device=args.device)
             motion_rewards = motion_rewards + args.estop_motion_reward_penalty * estop_event_mask_tensor
 
+        if recording_episode:
+            recording_last_rew = float(task_rewards[0].item())
+            recording_cum_rew += recording_last_rew
+
         if should_update_train_metrics:
             motion_reward_mean_metrics = tensor_mean_items(
                 {
@@ -1373,6 +1435,27 @@ if __name__ == "__main__":
                 failure_rb=failure_rb,
             )
         episode_finished = bool(dones[0])
+
+        if recording_episode and episode_finished and len(recording_frames) > 0:
+            watch_path = os.path.join(watch_dir, f"ep_{watch_ring_idx}.gif")
+            imageio.mimsave(watch_path, recording_frames, format="GIF", loop=0, duration=50)
+            watch_ring_idx = (watch_ring_idx + 1) % args.watch_ring_size
+
+            if global_step - last_sample_gif_step >= args.sample_gif_interval:
+                sample_path = os.path.join(samples_dir, f"step_{global_step}.gif")
+                imageio.mimsave(sample_path, recording_frames, format="GIF", loop=0, duration=50)
+                last_sample_gif_step = global_step
+                enforce_sample_storage_cap(samples_dir, args.sample_gif_max_storage_mb)
+
+            recording_frames.clear()
+            recording_episode = False
+            recording_cum_rew = 0.0
+            recording_last_rew = 0.0
+
+        if episode_finished:
+            completed_episode_count += 1
+            if completed_episode_count % args.watch_episode_interval == 0:
+                recording_episode = True
 
         obs = next_obs
 
