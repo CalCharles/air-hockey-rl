@@ -337,6 +337,7 @@ class AirHockeyReal:
             "async_z_force_target_hz": 150.0,   # EDIT(known-issue-2): increased from 100 Hz for smoother contact
             "async_z_force_wrench_z": 1.0,
             "async_z_force_debug": False,
+            "mouse_action_scale": None,
         }
         kwargs = {**defaults, **kwargs}
         config = dict_to_namespace(kwargs)
@@ -622,6 +623,8 @@ class AirHockeyReal:
         self.control_off = self.control_mode in ["observe"]
         self.lims = (self.x_min_lim, self.x_max_lim, self.y_min, self.y_max)
         self.move_lims = (self.rmax_x, self.rmax_y)
+        self.mouse_action_scale = getattr(config, "mouse_action_scale", None)
+        self._last_teleop_policy_action = np.zeros(2)
 
         # smooth_history
         self.hist_len = config.hist_len
@@ -1594,6 +1597,13 @@ class AirHockeyReal:
                 noise = np.random.normal(0.0, self.teleoperation_noise, 2)
                 x = x + noise[0] * self.rmax_x
                 y = y + noise[1] * self.rmax_y
+            if self.mouse_action_scale is not None and self.mouse_action_scale > 0:
+                delta = np.array([x - tcp_target_pose[0], y - tcp_target_pose[1]])
+                raw_action = delta / np.array(self.move_lims)
+                clipped = np.clip(raw_action, -self.mouse_action_scale, self.mouse_action_scale)
+                x = tcp_target_pose[0] + clipped[0] * self.move_lims[0]
+                y = tcp_target_pose[1] + clipped[1] * self.move_lims[1]
+                self._last_teleop_policy_action = clipped.copy()
             puck = np.zeros(3)
             puck[0] = self.protected_puck_pos[0] + self.center_offset_constant
             puck[1] = self.protected_puck_pos[1]

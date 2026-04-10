@@ -548,7 +548,8 @@ class RealTrajectoryRenderer:
 
 
 def create_trajectory_gif(paddle_data, renderer, output_path, 
-                         max_frames=None, subsample=1, fps=20):
+                         max_frames=None, subsample=1, fps=20,
+                         output_width=160):
     """
     Create GIF from trajectory data.
     
@@ -620,9 +621,8 @@ def create_trajectory_gif(paddle_data, renderer, output_path,
         # Convert BGR to RGB for imageio
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         
-        # Resize to match Box2D simulator output (160px width, maintaining aspect ratio)
         aspect_ratio = frame_rgb.shape[1] / frame_rgb.shape[0]
-        target_width = 160
+        target_width = output_width
         target_height = int(target_width / aspect_ratio)
         frame_rgb = cv2.resize(frame_rgb, (target_width, target_height))
         

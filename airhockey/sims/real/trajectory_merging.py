@@ -1,4 +1,5 @@
 import os, imageio, h5py, shutil
+from datetime import datetime
 import numpy as np
 import cv2
 
@@ -81,7 +82,8 @@ def write_trajectory(pth, tidx, imgs, vals, filename=""):
                             compression="gzip",
                             compression_opts=9,
                             data = vals)
-            # print(tidx, hf)
+        ts = datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')
+        print(f"[trajectory] {ts}  Wrote {os.path.abspath(filename)}")
 
 def get_trajectory_idx(save_path):
     if len(save_path) > 0:
