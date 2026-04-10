@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import json
 import os
 import sys
 from pathlib import Path
@@ -47,6 +48,7 @@ except ModuleNotFoundError:
 
 from airhockey import AirHockeyEnv
 from airhockey.renderers.render import AirHockeyRenderer
+from airhockey.sims.real.velocity_estimator import fit_velocity_from_positions
 
 
 # Canonical field indices in the 35-field train_vals layout built by
@@ -150,27 +152,103 @@ def build_sim_env(sim_cfg: dict):
     return env, renderer
 
 
-def initial_state_vector(episode: dict) -> np.ndarray:
+def estimate_puck_velocity_fit(
+    episode: dict,
+    start_frame: int,
+    half_window: int,
+    gravity: tuple[float, float] = (0.0, 0.0),
+) -> np.ndarray:
+    """Estimate puck velocity at `start_frame` via the gravity-linear LSQ fit.
+
+    Slices a window `[start_frame - half_window, start_frame + half_window]` (clamped
+    to episode bounds) and fits the kinematic model `pos(t) = pos0 + v0*t - 0.5*g*t^2`
+    using `airhockey.sims.real.velocity_estimator.fit_velocity_from_positions`. We then
+    take `v_at_times[k]` where `k` is the offset of `start_frame` inside the window —
+    i.e. the velocity exactly at the replay's first frame.
+
+    Default gravity=(0,0) suits flat real-table data; pass a non-zero vector to model
+    a constant in-plane deceleration if needed.
+    """
+    puck_xy = episode["puck_xy"]
+    cur_time = episode["cur_time"]
+    n_total = puck_xy.shape[0]
+    lo = max(0, start_frame - half_window)
+    hi = min(n_total, start_frame + half_window + 1)
+    if hi - lo < 2:
+        raise ValueError(
+            f"Velocity-fit window [{lo}, {hi}) is too small (need >= 2 samples)."
+        )
+    result = fit_velocity_from_positions(
+        positions=puck_xy[lo:hi],
+        times=cur_time[lo:hi],
+        valid_mask=None,
+        gravity=gravity,
+    )
+    if result is None:
+        raise RuntimeError(
+            f"fit_velocity_from_positions returned None for window [{lo}, {hi})."
+        )
+    k = start_frame - lo
+    v = np.asarray(result["v_at_times"][k], dtype=np.float64)
+    print(
+        f"Puck velocity (fit, window [{lo}, {hi}), k={k}): "
+        f"v=({v[0]:.4f}, {v[1]:.4f}) m/s, snr={result['snr']:.2f}, n_valid={result['n_valid']}"
+    )
+    return v
+
+
+def initial_state_vector(
+    episode: dict,
+    start_frame: int = 0,
+    puck_vel_fit: bool = False,
+    puck_vel_half_window: int = 5,
+    puck_vel_gravity: tuple[float, float] = (0.0, 0.0),
+) -> np.ndarray:
     """Build the 8-vector [paddle_pos, paddle_vel, puck_pos, puck_vel] for reset_from_state.
 
     Order matches the definition that AirHockeyPuckJuggleUpperHalfRewardEnv actually
     inherits: airhockey/airhockey_base.py:906 (AirHockeyBaseEnv.create_world_objects_from_state).
     Note there's ANOTHER definition in airhockey_simple_tasks.py:537 with the OPPOSITE
     ordering — don't be misled; only the base-env one is active for this task.
+
+    Puck velocity is either:
+      - the simple two-point finite difference at `start_frame` (default), or
+      - the gravity-linear LSQ fit over a ±half_window neighborhood (if `puck_vel_fit`).
     """
     pose_xy = episode["pose_xy"]
     speed_xy = episode["speed_xy"]
     puck_xy = episode["puck_xy"]
     cur_time = episode["cur_time"]
+    n_total = pose_xy.shape[0]
 
-    paddle_pos = pose_xy[0]
-    paddle_vel = speed_xy[0]
-    puck_pos = puck_xy[0]
+    if not 0 <= start_frame < n_total:
+        raise IndexError(
+            f"start_frame={start_frame} out of range for episode with {n_total} steps."
+        )
 
-    dt0 = float(cur_time[1] - cur_time[0])
-    if not np.isfinite(dt0) or dt0 <= 1e-6:
-        dt0 = 0.05  # fall back to ~20 Hz nominal
-    puck_vel = (puck_xy[1] - puck_xy[0]) / dt0
+    paddle_pos = pose_xy[start_frame]
+    paddle_vel = speed_xy[start_frame]
+    puck_pos = puck_xy[start_frame]
+
+    if puck_vel_fit:
+        puck_vel = estimate_puck_velocity_fit(
+            episode,
+            start_frame=start_frame,
+            half_window=puck_vel_half_window,
+            gravity=puck_vel_gravity,
+        )
+    else:
+        # Simple two-point finite difference centered on start_frame's local
+        # neighborhood. Prefer the (start, start+1) pair; fall back to (start-1, start)
+        # if start_frame is the last frame.
+        if start_frame + 1 < n_total:
+            i0, i1 = start_frame, start_frame + 1
+        else:
+            i0, i1 = start_frame - 1, start_frame
+        dt0 = float(cur_time[i1] - cur_time[i0])
+        if not np.isfinite(dt0) or dt0 <= 1e-6:
+            dt0 = 0.05  # fall back to ~20 Hz nominal
+        puck_vel = (puck_xy[i1] - puck_xy[i0]) / dt0
 
     return np.concatenate([paddle_pos, paddle_vel, puck_pos, puck_vel]).astype(np.float64)
 
@@ -213,6 +291,51 @@ def _target_pixel_coords(
     post_x = pre_rot_y
     post_y = float(render_length) - 1.0 - pre_rot_x
     return post_x, post_y
+
+
+def _draw_sim_ghost_overlay(
+    real_frame_bgr: np.ndarray,
+    sim_paddle_xy: np.ndarray,
+    sim_puck_xy: np.ndarray,
+    width_m: float,
+    length_m: float,
+    ppm: float,
+    render_length: int,
+    paddle_radius_m: float,
+    puck_radius_m: float,
+    alpha: float = 0.35,
+) -> None:
+    """Draw light semi-transparent ghost circles at the sim's paddle+puck positions.
+
+    Renders on top of the post-rotation real-side BGR frame (in place). Used to
+    visualize how far the sim has drifted from the real trajectory at each step.
+    Uses alpha blending for the "light" look the user asked for, with a thin
+    outline so the ghosts stay legible when they land on busy background.
+    """
+    px_paddle = _target_pixel_coords(
+        float(sim_paddle_xy[0]), float(sim_paddle_xy[1]),
+        width_m, length_m, ppm, render_length,
+    )
+    px_puck = _target_pixel_coords(
+        float(sim_puck_xy[0]), float(sim_puck_xy[1]),
+        width_m, length_m, ppm, render_length,
+    )
+    paddle_r = max(1, int(round(paddle_radius_m * ppm)))
+    puck_r = max(1, int(round(puck_radius_m * ppm)))
+    paddle_center = (int(round(px_paddle[0])), int(round(px_paddle[1])))
+    puck_center = (int(round(px_puck[0])), int(round(px_puck[1])))
+
+    # Semi-transparent filled circles via addWeighted on a scratch overlay.
+    overlay = real_frame_bgr.copy()
+    # Paddle ghost: neutral gray (distinguishable from red/blue table markings).
+    cv2.circle(overlay, paddle_center, paddle_r, (180, 180, 180), thickness=-1)
+    # Puck ghost: same neutral gray for visual coherence.
+    cv2.circle(overlay, puck_center, puck_r, (180, 180, 180), thickness=-1)
+    cv2.addWeighted(overlay, alpha, real_frame_bgr, 1.0 - alpha, 0, dst=real_frame_bgr)
+
+    # Thin dark outline for legibility on any background.
+    cv2.circle(real_frame_bgr, paddle_center, paddle_r, (40, 40, 40), thickness=1, lineType=cv2.LINE_AA)
+    cv2.circle(real_frame_bgr, puck_center, puck_r, (40, 40, 40), thickness=1, lineType=cv2.LINE_AA)
 
 
 def _draw_consistent_target(
@@ -307,14 +430,26 @@ def replay_episode(
     max_steps: int | None,
     fps: int,
     frame_width: int,
-) -> None:
+    start_frame: int = 0,
+    puck_vel_fit: bool = False,
+    puck_vel_half_window: int = 5,
+) -> dict:
     # --- load real data --------------------------------------------------------
     episode = load_real_episode(episode_path)
-    n = episode["num_steps"]
+    total = episode["num_steps"]
+    if not 0 <= start_frame < total:
+        raise IndexError(
+            f"--start-frame={start_frame} out of range for episode with {total} steps."
+        )
+    end = total
     if max_steps is not None:
-        n = min(n, int(max_steps))
-    print(f"Loaded real episode '{episode_path}' with {episode['num_steps']} steps")
-    print(f"Using {n} steps for replay.")
+        end = min(total, start_frame + int(max_steps))
+    n_replay = end - start_frame
+    print(f"Loaded real episode '{episode_path}' with {total} steps")
+    print(
+        f"Replaying frames [{start_frame}, {end}) → {n_replay} frames "
+        f"(start_frame={start_frame})."
+    )
 
     # --- build sim env ---------------------------------------------------------
     sim_cfg = load_sim_config(config_path, enable_noise=enable_noise)
@@ -337,13 +472,19 @@ def replay_episode(
         f"y[{actions[:, 1].min():.3f}, {actions[:, 1].max():.3f}]"
     )
 
-    # --- initialize sim to the real episode's step 0 --------------------------
-    state0 = initial_state_vector(episode)
+    # --- initialize sim to the real episode's start frame --------------------
+    state0 = initial_state_vector(
+        episode,
+        start_frame=start_frame,
+        puck_vel_fit=puck_vel_fit,
+        puck_vel_half_window=puck_vel_half_window,
+    )
     env.reset_from_state(state0)
     print(
-        "Initialized sim state: "
+        f"Initialized sim state @ frame {start_frame}: "
         f"paddle_pos={state0[0:2]}, paddle_vel={state0[2:4]}, "
-        f"puck_pos={state0[4:6]}, puck_vel={state0[6:8]}"
+        f"puck_pos={state0[4:6]}, puck_vel={state0[6:8]} "
+        f"(puck_vel_fit={'on' if puck_vel_fit else 'off'})"
     )
 
     # --- real-side renderer (matches sim render_size for pixel alignment) ----
@@ -378,17 +519,45 @@ def replay_episode(
     frames = []
     sim_terminated_early = False
     terminate_reason = ""
-    for i in range(n):
+    paddle_radius_m = float(sim_params.get("paddle_radius", 0.0508))
+    puck_radius_m = float(sim_params.get("puck_radius", 0.03175))
+    paddle_errors: list[float] = []
+    puck_errors: list[float] = []
+    for offset in range(n_replay):
+        i = start_frame + offset
         # At this point the sim is at its current step-i state. Render both panels.
         sim_paddle_pos = np.asarray(
             env.current_state["paddles"]["paddle_ego"]["position"][:2], dtype=np.float64
         )
+        sim_puck_pos = np.asarray(
+            env.current_state["pucks"][0]["position"][:2], dtype=np.float64
+        )
+
+        real_paddle_pos = episode["pose_xy"][i]
+        real_puck_pos = episode["puck_xy"][i]
+        paddle_errors.append(float(np.linalg.norm(sim_paddle_pos - real_paddle_pos)))
+        puck_errors.append(float(np.linalg.norm(sim_puck_pos - real_puck_pos)))
         action_i = actions[i]  # last action the real policy applied at frame i
         sim_target = sim_paddle_pos + action_i * move_lims_arr
         real_target = episode["desired_xy"][i]  # == pose[i] + action_i * move_lims
 
         sim_bgr = sim_renderer.get_frame()
         real_bgr = render_real_frame(real_renderer, episode, i)
+
+        # Ghost overlay on the real frame showing where the sim currently thinks
+        # the paddle and puck are — drift from the real trajectory is immediately
+        # visible as an offset between the real rendering and the gray ghosts.
+        _draw_sim_ghost_overlay(
+            real_bgr,
+            sim_paddle_pos,
+            sim_puck_pos,
+            width_m,
+            length_m,
+            sim_ppm,
+            sim_render_length,
+            paddle_radius_m,
+            puck_radius_m,
+        )
 
         # Draw the consistent target marker on the pre-resize frames so the marker
         # scales naturally with the downstream resize.
@@ -411,7 +580,7 @@ def replay_episode(
         frames.append(_side_by_side(real_rgb, sim_rgb))
 
         # Advance sim to match state at iteration i+1 (if any).
-        if i < n - 1:
+        if offset < n_replay - 1:
             _, _, terminated, truncated, _ = env.step(actions[i + 1])
             if terminated or truncated:
                 sim_terminated_early = True
@@ -439,6 +608,45 @@ def replay_episode(
             f"Note: sim reported {terminate_reason} during replay "
             "but replay continued because termination flags were disabled."
         )
+
+    # --- position error metrics ------------------------------------------------
+    paddle_err = np.asarray(paddle_errors)
+    puck_err = np.asarray(puck_errors)
+    cum_paddle = float(np.sum(paddle_err))
+    cum_puck = float(np.sum(puck_err))
+    metrics = {
+        "episode": str(episode_path),
+        "num_frames": len(paddle_errors),
+        "paddle": {
+            "cumulative_error_m": round(cum_paddle, 6),
+            "mean_error_m": round(float(np.mean(paddle_err)), 6),
+            "max_error_m": round(float(np.max(paddle_err)), 6),
+            "final_error_m": round(paddle_errors[-1], 6),
+            "per_step_errors_m": [round(e, 6) for e in paddle_errors],
+        },
+        "puck": {
+            "cumulative_error_m": round(cum_puck, 6),
+            "mean_error_m": round(float(np.mean(puck_err)), 6),
+            "max_error_m": round(float(np.max(puck_err)), 6),
+            "final_error_m": round(puck_errors[-1], 6),
+            "per_step_errors_m": [round(e, 6) for e in puck_errors],
+        },
+    }
+    metrics_path = out_path.with_suffix(".json")
+    with open(metrics_path, "w") as f:
+        json.dump(metrics, f, indent=2)
+
+    print(f"\nPosition error summary ({len(paddle_errors)} frames):")
+    print(f"  Paddle — cumulative: {cum_paddle:.4f} m, "
+          f"mean: {np.mean(paddle_err):.4f} m, "
+          f"max: {np.max(paddle_err):.4f} m, "
+          f"final: {paddle_errors[-1]:.4f} m")
+    print(f"  Puck   — cumulative: {cum_puck:.4f} m, "
+          f"mean: {np.mean(puck_err):.4f} m, "
+          f"max: {np.max(puck_err):.4f} m, "
+          f"final: {puck_errors[-1]:.4f} m")
+    print(f"  Metrics saved to: {metrics_path}")
+    return metrics
 
 
 def parse_args() -> argparse.Namespace:
@@ -490,6 +698,33 @@ def parse_args() -> argparse.Namespace:
         default=160,
         help="Width (px) each panel is resized to before side-by-side concat.",
     )
+    parser.add_argument(
+        "--start-frame",
+        type=int,
+        default=0,
+        help=(
+            "Frame index in the real episode at which to begin the comparison. "
+            "Sim is reset to this frame's paddle/puck state and the replay starts here."
+        ),
+    )
+    parser.add_argument(
+        "--puck-vel-fit",
+        action="store_true",
+        help=(
+            "Estimate initial puck velocity by fitting a gravity-linear model to a "
+            "small window around --start-frame, instead of a two-point finite "
+            "difference. Uses airhockey.sims.real.velocity_estimator."
+        ),
+    )
+    parser.add_argument(
+        "--puck-vel-half-window",
+        type=int,
+        default=5,
+        help=(
+            "Half-window (in frames) for --puck-vel-fit. Window is "
+            "[start_frame - h, start_frame + h] inclusive (so 11 frames for the default)."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -515,6 +750,9 @@ def main() -> None:
         max_steps=args.max_steps,
         fps=args.fps,
         frame_width=args.frame_width,
+        start_frame=args.start_frame,
+        puck_vel_fit=args.puck_vel_fit,
+        puck_vel_half_window=args.puck_vel_half_window,
     )
 
 

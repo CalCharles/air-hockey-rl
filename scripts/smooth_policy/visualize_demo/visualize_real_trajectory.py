@@ -400,18 +400,55 @@ class RealTrajectoryRenderer:
 
     def draw_target(self, frame, target_x, target_y):
         """
-        Draw target position as a blue circle (puck-sized) at table-frame coordinates.
+        Draw the target paddle position as a cross + circle marker.
+
+        Mirrors ``AirHockeyRenderer.draw_target_marker`` (orange BGR (255,165,0)
+        cross+circle with a black outline) so real-trajectory GIFs follow the
+        same visual convention as the Box2D training renderer used by
+        ``td3_training.py``.
 
         Args:
             frame: Image to draw on (will be modified in place)
-            target_x: Target X position in table frame (meters)
-            target_y: Target Y position in table frame (meters)
+            target_x: Target X position in the configured ``paddle_input_frame``
+            target_y: Target Y position in the configured ``paddle_input_frame``
         """
-        center = self.table_position_to_pixel_coords(target_x, target_y)
-        radius = max(2, int(self.puck_radius * self.ppm))
-        color = (220, 120, 30)  # Blue in BGR
-        cv2.circle(frame, tuple(center), radius, color, -1)
-        cv2.circle(frame, tuple(center), radius, (20, 20, 20), 1)
+        center = self.position_to_pixel_coords(target_x, target_y)
+        center_int = (int(center[0]), int(center[1]))
+
+        marker_size = 15
+        thickness = 3
+        color = (255, 165, 0)  # Matches AirHockeyRenderer.draw_target_marker
+        outline = (0, 0, 0)
+
+        # Outer circle (black outline + colored inner)
+        cv2.circle(frame, center_int, marker_size, outline, thickness + 2)
+        cv2.circle(frame, center_int, marker_size, color, thickness)
+
+        # Cross lines (black outline + colored)
+        cv2.line(
+            frame,
+            (center_int[0] - marker_size, center_int[1]),
+            (center_int[0] + marker_size, center_int[1]),
+            outline, thickness + 2,
+        )
+        cv2.line(
+            frame,
+            (center_int[0], center_int[1] - marker_size),
+            (center_int[0], center_int[1] + marker_size),
+            outline, thickness + 2,
+        )
+        cv2.line(
+            frame,
+            (center_int[0] - marker_size, center_int[1]),
+            (center_int[0] + marker_size, center_int[1]),
+            color, thickness,
+        )
+        cv2.line(
+            frame,
+            (center_int[0], center_int[1] - marker_size),
+            (center_int[0], center_int[1] + marker_size),
+            color, thickness,
+        )
 
     def draw_puck(self, frame, puck_x, puck_y, puck_occluded=None):
         """
@@ -538,7 +575,7 @@ class RealTrajectoryRenderer:
 
         if target_x is not None and target_y is not None:
             text = f"Target: ({target_x:.3f}, {target_y:.3f})m"
-            cv2.putText(frame, text, (10, y_offset), font, font_scale, (220, 120, 30), line_type)
+            cv2.putText(frame, text, (10, y_offset), font, font_scale, (255, 165, 0), line_type)
         
         # Apply orientation rotation if vertical (matching render.py line 487)
         if self.orientation == 'vertical':

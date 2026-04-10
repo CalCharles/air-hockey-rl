@@ -93,10 +93,11 @@ def get_trajectory_idx(save_path):
         except OSError as error:
             print(error)
             pass
-        list_of_files = filter( lambda x: os.path.isfile 
-                (os.path.join(save_path, x)), 
-                    os.listdir(save_path) )
-        list_of_files = list(list_of_files)
+        list_of_files = [
+            x for x in os.listdir(save_path)
+            if os.path.isfile(os.path.join(save_path, x))
+            and x.startswith("trajectory_data") and x.endswith(".hdf5")
+        ]
         list_of_files.sort(key = lambda x: int(x[len("trajectory_data"):-5]))
         if len(list_of_files) == 0:
             tstart = 0

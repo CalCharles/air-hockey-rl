@@ -22,6 +22,16 @@ from airhockey.sims.real.multiprocessing import NonBlockingConsole
 from scripts.smooth_policy.amp_history.amp_training.td3.helper.episode_artifacts import (
     save_split_episode_hdf5,
 )
+from scripts.smooth_policy.visualize_demo.render_teleop_segments import (
+    render_segment_gif,
+    slice_hdf5,
+)
+from scripts.smooth_policy.visualize_demo.visualize_real_trajectory import (
+    RealTrajectoryRenderer,
+)
+from scripts.smooth_policy.visualize_demo.visualize_real_trajectory_split import (
+    load_split_trajectory_data,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -102,10 +112,78 @@ def _next_episode_id(output_dir: str | Path) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Optional segment-GIF rendering (mirrors render_teleop_segments.main)
+# ---------------------------------------------------------------------------
+
+def _render_trajectory_segments(
+    trajectory_path: Path,
+    interval: int,
+    renderer: RealTrajectoryRenderer,
+) -> None:
+    """Slice a saved trajectory_dataN.hdf5 into N-frame segments and render a GIF
+    for each one. Output layout matches sysid/teleop/trajectory_dataN_segments/:
+
+        <traj-stem>_segments/
+            frames_0_100/
+                segment_0_100.hdf5
+                trajectory_visualization.gif
+            frames_100_200/
+                ...
+    """
+    import h5py  # local import to keep top-level imports tidy
+
+    out_root = trajectory_path.parent / f"{trajectory_path.stem}_segments"
+    with h5py.File(trajectory_path, "r") as f:
+        n_total = int(f["cur_time"].shape[0])
+
+    print(
+        f"[teleoperate] Rendering segment GIFs for {trajectory_path.name} "
+        f"({n_total} frames, interval={interval}) -> {out_root}"
+    )
+
+    start = 0
+    while start < n_total:
+        end = min(start + int(interval), n_total)
+        seg_dir = out_root / f"frames_{start}_{end}"
+        hdf5_out = seg_dir / f"segment_{start}_{end}.hdf5"
+        gif_out = seg_dir / "trajectory_visualization.gif"
+        slice_hdf5(trajectory_path, start, end, hdf5_out)
+        train_vals = load_split_trajectory_data(hdf5_out)
+        render_segment_gif(train_vals, renderer, gif_out, frame_offset=start)
+        print(f"[teleoperate]   frames {start}-{end} -> {gif_out}")
+        start = end
+
+
+def _build_segment_renderer() -> RealTrajectoryRenderer:
+    """Build the canonical RealTrajectoryRenderer used for teleop segment GIFs.
+
+    Parameters mirror render_teleop_segments.py so the on-screen visuals (target
+    marker, paddle, puck, etc.) match the rest of the sysid/teleop pipeline.
+    """
+    return RealTrajectoryRenderer(
+        table_length=1.9304,
+        table_width=0.8636,
+        paddle_radius=0.0508,
+        puck_radius=0.03175,
+        render_size=360,
+        robot_x_offset=1.2,
+        orientation="vertical",
+        paddle_input_frame="table",
+        quiet=True,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Main teleop loop
 # ---------------------------------------------------------------------------
 
-def run_teleop(air_hockey_cfg, use_split_schema: bool = True, policy_limits: bool = False):
+def run_teleop(
+    air_hockey_cfg,
+    use_split_schema: bool = True,
+    policy_limits: bool = False,
+    render_gifs: bool = False,
+    gif_interval: int = 100,
+):
     air_hockey_params = air_hockey_cfg['air_hockey']
     air_hockey_params['n_training_steps'] = air_hockey_cfg['n_training_steps']
 
@@ -132,6 +210,21 @@ def run_teleop(air_hockey_cfg, use_split_schema: bool = True, policy_limits: boo
         print(f"[teleoperate] Policy-limits mode: action_scale={scale}")
     print("[teleoperate] On each 'y', the previous rollout is written as trajectory_data<N>.hdf5 in that directory.")
 
+    segment_renderer: RealTrajectoryRenderer | None = None
+    if render_gifs:
+        if not (use_split_schema and sp):
+            print(
+                "[teleoperate] WARNING: --render-gifs requires split-schema recording "
+                "and a non-empty save_path; segment GIFs will be skipped."
+            )
+            render_gifs = False
+        else:
+            segment_renderer = _build_segment_renderer()
+            print(
+                f"[teleoperate] Auto-rendering segment GIFs after each save "
+                f"(interval={gif_interval} frames)"
+            )
+
     episode_rows: List[Dict[str, np.ndarray]] = []
     episode_id = 0
     step_idx = 0
@@ -147,10 +240,7 @@ def run_teleop(air_hockey_cfg, use_split_schema: bool = True, policy_limits: boo
             eval_env.step(action)
 
             if use_split_schema:
-                if policy_limits:
-                    recorded_action = getattr(eval_env.simulator, '_last_teleop_policy_action', action)
-                else:
-                    recorded_action = action
+                recorded_action = getattr(eval_env.simulator, '_last_teleop_policy_action', action)
                 row = _build_teleop_row(eval_env, recorded_action, episode_id, step_idx)
                 episode_rows.append(row)
                 step_idx += 1
@@ -167,6 +257,18 @@ def run_teleop(air_hockey_cfg, use_split_schema: bool = True, policy_limits: boo
                             episode_rows=episode_rows,
                         )
                         print(f"[teleoperate] Wrote {len(episode_rows)} steps -> {artifact_path}")
+                        if render_gifs and segment_renderer is not None:
+                            try:
+                                _render_trajectory_segments(
+                                    artifact_path,
+                                    interval=gif_interval,
+                                    renderer=segment_renderer,
+                                )
+                            except Exception as exc:
+                                print(
+                                    f"[teleoperate] WARNING: segment GIF rendering "
+                                    f"failed for {artifact_path.name}: {exc}"
+                                )
                         episode_id += 1
                         episode_rows = []
                         step_idx = 0
@@ -207,6 +309,16 @@ if __name__ == "__main__":
         help='Action scale used to clamp the per-step displacement '
              '(default 1.0, matching td3_online.yaml). Only effective with --policy-limits.',
     )
+    parser.add_argument(
+        '--render-gifs', action='store_true',
+        help='After saving each trajectory, slice it into fixed-length segments '
+             'and render a GIF per segment using the same pipeline as '
+             'render_teleop_segments.py (output: <save_path>/trajectory_data<N>_segments/).',
+    )
+    parser.add_argument(
+        '--gif-interval', type=int, default=100,
+        help='Number of frames per segment GIF when --render-gifs is set.',
+    )
     args = parser.parse_args()
 
     if args.cfg is None:
@@ -235,4 +347,6 @@ if __name__ == "__main__":
         air_hockey_cfg,
         use_split_schema=not args.legacy_schema,
         policy_limits=args.policy_limits,
+        render_gifs=args.render_gifs,
+        gif_interval=args.gif_interval,
     )
