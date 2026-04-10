@@ -65,7 +65,7 @@ DEFAULT_EPISODE = (
 )
 DEFAULT_CONFIG = (
     "scripts/smooth_policy/amp_history/configs/new_juggle/"
-    "pid_noise_constant_upper_half_custom_sim_params.yaml"
+    "pid_noise_constant_upper_half_custom_sim_params_heavy.yaml"
 )
 
 # Keys to disable under air_hockey.simulator_params when --enable-noise is off.
@@ -433,6 +433,8 @@ def replay_episode(
     start_frame: int = 0,
     puck_vel_fit: bool = False,
     puck_vel_half_window: int = 5,
+    sim_cfg_overrides: dict | None = None,
+    park_puck: bool = False,
 ) -> dict:
     # --- load real data --------------------------------------------------------
     episode = load_real_episode(episode_path)
@@ -453,6 +455,9 @@ def replay_episode(
 
     # --- build sim env ---------------------------------------------------------
     sim_cfg = load_sim_config(config_path, enable_noise=enable_noise)
+    if sim_cfg_overrides:
+        for k, v in sim_cfg_overrides.items():
+            sim_cfg["simulator_params"][k] = v
     if not enable_noise:
         print(
             "Sim noise/delay/occlusion/termination disabled "
@@ -476,15 +481,20 @@ def replay_episode(
     state0 = initial_state_vector(
         episode,
         start_frame=start_frame,
-        puck_vel_fit=puck_vel_fit,
+        puck_vel_fit=puck_vel_fit if not park_puck else False,
         puck_vel_half_window=puck_vel_half_window,
     )
+    half_length = float(sim_cfg.get("simulator_params", {}).get("length", 1.9304)) / 2.0
+    park_puck_pos = [-(half_length - 0.01), 0.0]
+    if park_puck:
+        state0[4:6] = park_puck_pos
+        state0[6:8] = [0.0, 0.0]
     env.reset_from_state(state0)
     print(
         f"Initialized sim state @ frame {start_frame}: "
         f"paddle_pos={state0[0:2]}, paddle_vel={state0[2:4]}, "
         f"puck_pos={state0[4:6]}, puck_vel={state0[6:8]} "
-        f"(puck_vel_fit={'on' if puck_vel_fit else 'off'})"
+        f"(park_puck={'on' if park_puck else 'off'})"
     )
 
     # --- real-side renderer (matches sim render_size for pixel alignment) ----
@@ -515,6 +525,15 @@ def replay_episode(
     length_m = float(sim_params.get("length", 1.9304))
     sim_ppm = float(env.ppm)
     sim_render_length = int(env.render_length)
+
+    def _freeze_puck():
+        """Force every puck body to a fixed position with zero velocity."""
+        sim = env.simulator
+        park_box2d = sim.base_coord_to_box2d(park_puck_pos)
+        for puck_body in sim.pucks.values():
+            puck_body.position = park_box2d
+            puck_body.linearVelocity = (0.0, 0.0)
+            puck_body.angularVelocity = 0.0
 
     frames = []
     sim_terminated_early = False
@@ -582,6 +601,8 @@ def replay_episode(
         # Advance sim to match state at iteration i+1 (if any).
         if offset < n_replay - 1:
             _, _, terminated, truncated, _ = env.step(actions[i + 1])
+            if park_puck:
+                _freeze_puck()
             if terminated or truncated:
                 sim_terminated_early = True
                 terminate_reason = "terminated" if terminated else "truncated"
@@ -647,6 +668,87 @@ def replay_episode(
           f"final: {puck_errors[-1]:.4f} m")
     print(f"  Metrics saved to: {metrics_path}")
     return metrics
+
+
+def replay_errors_windowed(
+    episode_path: str,
+    sim_cfg: dict,
+    reset_interval: int = 20,
+    park_puck: bool = True,
+) -> dict[str, float]:
+    """Windowed replay: reset sim every `reset_interval` frames to real state.
+
+    After each reset, seeds PID controller state to avoid transient spikes:
+      - simulator.last_action = box2d(actions[w_start])
+      - pid_controller.previous_error = box2d(desired_xy - pose_xy) at reset frame
+      - pid_controller.integral_error = 0
+
+    Returns mean paddle error averaged over all per-step errors (including reset
+    frames where error is ~0 by construction).
+    """
+    episode = load_real_episode(episode_path)
+    n_total = episode["num_steps"]
+
+    env = AirHockeyEnv(copy.deepcopy(sim_cfg))
+    move_lims = np.asarray(
+        getattr(env.simulator, "move_lims", (0.26, 0.12)), dtype=np.float64
+    ).reshape(-1)[:2]
+    actions = reconstruct_actions(
+        episode["pose_xy"], episode["desired_xy"], move_lims
+    )
+
+    half_length = float(sim_cfg.get("simulator_params", {}).get("length", 1.9304)) / 2.0
+    puck_park_pos = [-(half_length - 0.01), 0.0]
+
+    def _freeze_puck():
+        park_box2d = env.simulator.base_coord_to_box2d(puck_park_pos)
+        for puck_body in env.simulator.pucks.values():
+            puck_body.position = park_box2d
+            puck_body.linearVelocity = (0.0, 0.0)
+            puck_body.angularVelocity = 0.0
+
+    paddle_errors: list[float] = []
+
+    for w_start in range(0, n_total, reset_interval):
+        w_end = min(w_start + reset_interval, n_total)
+
+        state0 = initial_state_vector(episode, start_frame=w_start)
+        if park_puck:
+            state0[4:6] = puck_park_pos
+            state0[6:8] = [0.0, 0.0]
+        env.reset_from_state(state0)
+
+        # Seed PID controller to avoid transient spikes after reset.
+        action_box2d = env.simulator.convert_to_box2d_coords(actions[w_start])
+        env.simulator.last_action = np.copy(action_box2d)
+
+        error_base = episode["desired_xy"][w_start] - episode["pose_xy"][w_start]
+        env.simulator.pid_controller.previous_error = np.asarray(
+            env.simulator.convert_to_box2d_coords(error_base), dtype=np.float64
+        )
+        env.simulator.pid_controller.integral_error = np.zeros(2)
+
+        for frame in range(w_start, w_end):
+            sim_paddle = np.asarray(
+                env.current_state["paddles"]["paddle_ego"]["position"][:2],
+                dtype=np.float64,
+            )
+            paddle_errors.append(
+                float(np.linalg.norm(sim_paddle - episode["pose_xy"][frame]))
+            )
+            if frame + 1 < w_end and frame + 1 < n_total:
+                _, _, terminated, truncated, _ = env.step(actions[frame + 1])
+                if park_puck:
+                    _freeze_puck()
+                if terminated or truncated:
+                    break
+
+    return {
+        "mean_paddle_err": (
+            float(np.mean(paddle_errors)) if paddle_errors else float("inf")
+        ),
+        "num_steps": len(paddle_errors),
+    }
 
 
 def parse_args() -> argparse.Namespace:
