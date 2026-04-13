@@ -152,44 +152,117 @@ system_id3/
 │   └── ...
 ```
 
-## PID controller tuning (system identification)
+## Paddle system identification
 
 The Box2D simulator uses a PID controller for paddle motion when
-`use_pid: true` is set in the sim config. PID gains directly affect how
-closely the sim paddle tracks action commands, and thus how well the sim
-matches real-world paddle dynamics.
+`use_pid: true` is set in the sim config. PID gains and paddle density directly
+affect how closely the sim paddle tracks action commands, and thus how well the
+sim matches real-world paddle dynamics.
 
-### Current PID parameters (in canonical configs)
+All grid searches used the same 8 representative 100-frame trajectory segments
+from data3 categories: `circle_fast`, `circle_slow`, `side_to_side_dynamic`,
+`side_to_side_slow`, `up_and_down_dynamic`, `up_and_down_slow`, `diagonal_fast`,
+`random`.
 
-| Parameter | Standard config | Heavy config |
-|-----------|----------------|--------------|
-| `pid_kp` | 5000 | 5000 |
-| `pid_kd` | 200 | 200 |
-| `pid_ki` | 0.0 | 0.0 |
+### Grid search progression
 
-Configs: `scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_constant_upper_half_custom_sim_params.yaml`
-(and `…_heavy.yaml` for heavier paddle/puck densities).
+Multiple rounds of grid search were run, each expanding or refining the
+parameter space. All results live under `sysid/teleop/system_id3/`.
 
-### Grid search
+#### 1. 2D PID grid (initial)
 
-A grid search over `pid_kp` (2000–6000) and `pid_kd` (200–1000) was run using
-8 representative 100-frame trajectory segments from data3 categories:
+Grid: `pid_kp` 2000–6000 (step 500), `pid_kd` 200–1000 (step 200). Fixed density.
 
-- `circle_fast`, `circle_slow`, `side_to_side_dynamic`, `side_to_side_slow`,
-  `up_and_down_dynamic`, `up_and_down_slow`, `diagonal_fast`, `random`
+Results: `grid_search_results/grid_search_results.json`
+Best: **Kp=6000, Kd=200**.
 
-Results: `sysid/teleop/system_id3/grid_search_results/`
-- `grid_search_results.json` — full results (45 Kp/Kd combos)
-- `paddle_error_heatmap.png` — paddle tracking error heatmap
-- `puck_error_heatmap.png` — puck tracking error heatmap
+#### 2. 3D coarse: PID + paddle_density
 
-Best found: **Kp=6000, Kd=200** (lowest mean paddle error).
+Grid: `pid_kp` 2000–8000 (step 1000), `pid_kd` {200, 600, 1000}, `paddle_density` 1000–3000 (step 500). Puck active.
+
+Results: `grid_search_results_3d/grid_search_3d_results.json`
+Best: **Kp=8000, Kd=200, density=3000** (paddle err 0.069).
+
+#### 3. 3D fine: PID + density (puck active)
+
+Grid: `pid_kp` {5500, 6500, 7500, 8500, 9000}, `pid_kd` {100, 300, 400}, `paddle_density` {1750, 2250, 2750, 3250}. Puck active.
+
+Results: `grid_search_results_3d_fine/grid_search_3d_fine_results.json`
+Best: **Kp=7500, Kd=100, density=2750** (paddle err 0.069).
+
+#### 4. 3D fine: puck parked
+
+Same grid as (3); puck parked at (-0.9, 0.0) to isolate paddle tracking.
+
+Results: `grid_search_results_3d_fine_no_puck/grid_search_3d_fine_no_puck_results.json`
+Best: **Kp=9000, Kd=100, density=3250** (paddle err 0.069).
+
+#### 5. Windowed replay (reset every 20 frames, puck parked)
+
+Sim resets to real state every 20 frames, reducing compounding drift.
+
+Results: `grid_search_results_3d_fine_windowed/grid_search_3d_fine_windowed_results.json`
+Best: **Kp=8500, Kd=100, density=2750** (paddle err 0.042).
+
+#### 6. Windowed replay (reset every 10 frames, puck parked)
+
+Results: `grid_search_results_3d_fine_windowed_10/grid_search_3d_fine_windowed_results.json`
+Best: **Kp=8500, Kd=100, density=2750** (paddle err 0.024).
+
+#### 7. Finer grid, windowed-10, puck parked
+
+Grid: `pid_kp` 7000–10000 (incl. 9500, 10000), `pid_kd` {50, 75, 100, 125, 150}, `paddle_density` {2250, 2500, 2750, 3000, 3250}.
+
+Results: `grid_search_results_3d_finer_windowed_10/grid_search_3d_fine_windowed_results.json`
+Best: **Kp=10000, Kd=50, density=3250** (paddle err 0.024).
+
+#### 8. Ki sweep (full segment, puck active)
+
+Fixed Kp=7500, Kd=100, density=2750. Ki ∈ {0, 10, 25, 50, 100, 150, 200, 300, 500}.
+
+Results: `grid_search_results_ki/ki_sweep_results.json`
+Best: **Ki=0** (for full-segment replay with puck).
+
+#### 9. Ki sweep (windowed-10, puck parked)
+
+Fixed Kp=9000, Kd=50, density=3000. Same Ki values.
+
+Results: `grid_search_results_ki_windowed_10/ki_sweep_results.json`
+Best: **Ki=500** (paddle err 0.023), but improvement over Ki=0 is marginal.
+
+### Summary of best parameters
+
+| Protocol | Kp | Kd | Ki | Density | Paddle err |
+|----------|-----|-----|-----|---------|------------|
+| 2D PID only | 6000 | 200 | 0 | (fixed) | — |
+| 3D fine, puck active | 7500 | 100 | 0 | 2750 | 0.069 |
+| 3D fine, puck parked | 9000 | 100 | 0 | 3250 | 0.069 |
+| Windowed-10, puck parked | 8500 | 100 | 0 | 2750 | 0.024 |
+| Finer windowed-10 | 10000 | 50 | 0 | 3250 | 0.024 |
+| **Chosen practical best** | **9000** | **50** | **0** | **3000** | — |
+
+The **chosen practical best** (Kp=9000, Kd=50, Ki=0, density=3000) is used by
+`render_best_config_all.py` for visualization and is captured in the sysid
+config: `scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params.yaml`.
+
+### Key findings
+
+1. **Higher Kp is better**: all searches push toward the upper end of the grid. The canonical config's Kp=5000 significantly under-tracks.
+2. **Lower Kd is better**: Kd=50–100 consistently beats Kd=200+. Less derivative damping allows the paddle to respond more aggressively to position error.
+3. **Density ≈ 3000 matches reality**: real paddle inertia is much closer to the heavy config's density=3000 than the standard config's density=1000.
+4. **Ki ≈ 0**: integral gain provides negligible benefit and can cause oscillation in some segments.
 
 ### PID test script
 
 `scripts/test_pid_controller.py` — standalone test comparing legacy force-based
 controller vs PID controller on a step-input scenario. Plots position, velocity,
 acceleration, and jerk.
+
+### Visualization of best config
+
+`sysid/teleop/system_id3/render_best_config_all.py` renders side-by-side
+sim-vs-real GIFs for all segments using the chosen best config. Output:
+`sysid/teleop/system_id3/visualizations_best_config/`.
 
 ## Related scripts
 

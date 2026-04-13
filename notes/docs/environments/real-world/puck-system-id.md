@@ -110,7 +110,62 @@ See `sysid/puck_segments/grid_search/summary.txt` for full per-segment mean and 
 
 Worst segments (td476_puck_215_245, td478_puck_15_40, td476_puck_75_150) all have paddle-puck contacts in the buffer frames, creating velocity discontinuities that the single-trajectory model can't fully accommodate.
 
+## Box2D replay evaluation
+
+The kinematic grid search fits an analytical model to data. This section tests the **full Box2D physics engine** with the same parameters — including numerical integration, wall collisions, and the `linearDamping` implementation — to verify that the sim actually produces trajectories matching reality.
+
+Script: `sysid/evaluate_puck_box2d.py`
+Output: `sysid/puck_segments/box2d_eval/`
+
+### Method
+
+For each segment and each (gx, γ) config:
+
+1. Fit initial (pos0, v0) using the damped kinematic model (same LSQ as grid search, all frames).
+2. Compute the model-predicted velocity at the **core start frame** (frame 10).
+3. Initialize Box2D with the puck at the **real position** at core start and the **model-predicted velocity**. Paddle is parked far away with collisions disabled.
+4. Step the Box2D env at 20 Hz (fixed 0.05s timestep) through all core frames.
+5. Compare sim puck positions to real data on core frames.
+
+Starting at core start with the real position (rather than the fitted pos0 at frame 0) avoids issues where the kinematic fit's extrapolated pos0 falls outside the table bounds — the analytical model has no walls, but Box2D does.
+
+### Results
+
+| Config | gx | γ | Box2D mean err | Kinematic mean err |
+|--------|-----|-----|----------------|-------------------|
+| Gravity-only | -0.650 | 0.000 | 4.71 cm | 3.16 cm |
+| **Sim params** | **-0.650** | **0.250** | **3.65 cm** | **3.00 cm** |
+| Grid best | -0.661 | 0.178 | 4.64 cm | 2.86 cm |
+
+**Excluding td476_puck_75_150** (75-frame segment with wall bounces in the no-damping configs):
+
+| Config | Box2D mean err (excl. outlier) |
+|--------|-------------------------------|
+| Gravity-only | 2.90 cm |
+| **Sim params** | **3.33 cm** |
+| Grid best | 2.98 cm |
+
+### Key findings
+
+1. **Sim params (γ=0.25) is the most robust config in Box2D.** While the kinematic grid search favored lower damping, the Box2D engine produces the most consistent results with γ=0.25 — particularly on long segments where wall interactions matter.
+
+2. **No-damping configs diverge on long segments.** Without damping, the puck retains velocity longer, leading to wall bounces that the analytical model doesn't predict. The worst case is td476_puck_75_150 (75 core frames, ~3.75s): gravity-only gives 21 cm mean error due to end-wall bounces, while sim params gives 6.5 cm.
+
+3. **Box2D errors are ~0.5–1.5 cm higher than kinematic model errors** on most segments. Sources of difference: Box2D uses semi-implicit Euler integration (vs analytical solution), fixed 0.05s timesteps (vs real ~0.049s variable dt), and wall collision handling.
+
+4. **Typical segment accuracy is 1–5 cm** for short-to-medium segments (10–40 core frames). Errors grow with segment length as integration differences accumulate.
+
+### Per-segment results
+
+See `sysid/puck_segments/box2d_eval/summary.txt` for full per-segment mean and max error tables.
+
+Notable outliers:
+- **td476_puck_75_150**: 75 core frames, puck traverses nearly the full table length. Gravity-only and grid-best diverge badly (21cm, 19cm) due to wall bounces; sim params handles it well (6.5cm) because damping prevents the puck from reaching the wall.
+- **td478_puck_15_40**: ~5–7 cm across all configs. Contains paddle-puck contacts in buffer frames that corrupt the velocity fit.
+
 ## Output files
+
+### Kinematic model (grid search)
 
 | File | Description |
 |------|-------------|
@@ -121,23 +176,67 @@ Worst segments (td476_puck_215_245, td478_puck_15_40, td476_puck_75_150) all hav
 | `sysid/puck_segments/fit_plots/g-0.65_0.0/all_segments.png` | Per-segment fits: gravity-only vs per-segment-optimized damping |
 | `sysid/puck_segments/fit_plots/g-0.65_0.0/error_comparison.png` | Bar chart comparing gravity-only vs per-segment damping |
 
+### Box2D replay
+
+| File | Description |
+|------|-------------|
+| `sysid/puck_segments/box2d_eval/summary.txt` | Full numerical results table (3 configs × 10 segments) |
+| `sysid/puck_segments/box2d_eval/all_segments_box2d.png` | Per-segment x(t)/y(t) trajectory comparison (real vs Box2D, 3 configs overlaid) |
+| `sysid/puck_segments/box2d_eval/td*.gif` | Side-by-side GIFs per segment: REAL \| gravity-only \| sim-params \| grid-best |
+
 ## Scripts
 
 | Script | Purpose |
 |--------|---------|
 | `sysid/visualize_puck_fit.py` | Per-segment comparison of gravity-only vs damped (per-segment γ via nonlinear opt). Generates overlay plots and prints a comparison table. |
 | `sysid/puck_grid_search.py` | 2D grid search over shared (gx, γ). Uses linear LSQ per segment for each grid point. Generates heatmap, slices, trajectory plots, and summary.txt. |
+| `sysid/evaluate_puck_box2d.py` | Box2D replay evaluation. Fits initial velocity via kinematic model, replays in Box2D, generates side-by-side GIFs and error tables. |
 
 ## Plotting conventions
 
 - X-position plots have **inverted y-axis** (negative x = top of table = top of plot)
 - Time axis uses **timestep index at 20 Hz** (buffer frames shown as negative indices)
 - Buffer data points: gray. Core real data: blue (x) / orange (y). Model predictions: colored lines.
+- Box2D GIFs: 4-panel layout (REAL | gravity-only | sim-params | grid-best), 10 fps, 120px panel width.
+
+## Open problems
+
+### Box2D vs kinematic model gap
+
+Box2D errors are systematically ~0.5–1.5 cm higher than the kinematic model on the same data. Known sources:
+
+- **Timestep mismatch**: Box2D uses a fixed 0.05s step; real data averages ~0.049s with ±4ms jitter. Over a 75-frame segment this accumulates ~0.1s of timing drift. Could be closed by stepping the raw `world.Step(dt)` with per-frame real dt values instead of going through `env.step()`.
+- **Integration method**: Box2D uses semi-implicit Euler; the kinematic fit uses the exact analytical solution. For small γ·dt this is negligible, but compounds over long horizons.
+- **`linearDamping` implementation**: Box2D applies damping as `v *= 1/(1 + dt·damping)` per step, which is a first-order approximation of the continuous `v(t) = v0·exp(-γ·t)`. Over many steps the discrete and continuous trajectories diverge slightly.
+
+### Wall bounce divergence on long segments
+
+td476_puck_75_150 (75 core frames, ~3.75s) causes 20+ cm errors for gravity-only and grid-best because the sim puck reaches a wall that the real puck doesn't (or vice versa). This highlights that:
+
+- The kinematic model has no concept of walls and fits a single ballistic arc. If the real trajectory involves a wall-proximity pass, the fitted velocity can be slightly off, and Box2D's wall collision amplifies this into a large divergence.
+- Damping (γ=0.25) mitigates this by slowing the puck enough to avoid the wall, but this is a coincidence of the current data — different segments could fail differently.
+- A more robust approach might re-fit the velocity using only the first N frames after core start rather than the full-segment LSQ, reducing sensitivity to late-trajectory behavior.
+
+### Velocity fit sensitivity to buffer contacts
+
+Several segments (td478_puck_15_40, td476_puck_215_245) have paddle-puck contacts in the buffer frames. The LSQ fit includes buffer frames for stability, but contacts create velocity discontinuities that the single-trajectory model can't accommodate. The fitted v0 is then a compromise that doesn't accurately represent the post-contact velocity.
+
+Possible mitigations:
+- Detect contact frames (sudden velocity change) and exclude them from the fit.
+- Use only post-contact frames for the velocity fit when a contact is detected in the buffer.
+- Fit only on core frames (sacrificing the buffer's stabilizing effect on the fit).
+
+### Residual ~3 cm error floor
+
+Even the best analytical fits plateau at ~3 cm mean error. Candidate causes not yet investigated:
+
+- **Puck spin**: the real puck can spin, affecting friction and trajectory curvature. The model assumes pure translational motion.
+- **Friction anisotropy**: the air cushion may not be uniform across the table surface, creating position-dependent deceleration.
+- **Measurement noise**: puck tracker positions show ~2mm quantization steps, creating aliased velocity estimates that the LSQ fit averages over but can't fully correct.
 
 ## Next steps
 
-This work validates that the sim's puck physics parameters are close to reality. Possible follow-ups:
-
-- Replay puck trajectories in the full Box2D simulator (like `replay_real_in_sim.py` does for paddle), comparing sim puck positions against real — this tests the full physics engine including damping implementation, wall bounces, and integration method, not just the kinematic model.
-- Investigate whether the ~3 cm error floor can be reduced by modeling puck spin, friction anisotropy, or air-cushion non-uniformity.
-- Use the validated puck parameters to improve puck prediction in the online TD3 policy.
+1. **Variable-dt Box2D stepping**: use `world.Step(real_dt)` per frame instead of the env's fixed 0.05s step to eliminate the timestep mismatch and isolate the remaining Box2D integration error.
+2. **Wall-aware fitting**: for segments where the Box2D puck hits a wall, re-fit the velocity on only the pre-bounce portion, or add wall-bounce events to the kinematic model.
+3. **Contact detection in buffers**: automatically flag buffer frames with paddle-puck contacts (velocity discontinuities) and exclude them from the LSQ fit.
+4. **Use validated parameters in training**: the current sim config (gx=-0.65, γ=0.25) is confirmed near-optimal. No parameter change needed, but the ~3–5 cm puck prediction error should be kept in mind when designing reward functions or puck-prediction-dependent policies.

@@ -19,6 +19,7 @@ See [`notes/docs/repo/project-goal-and-safety.md`](notes/docs/repo/project-goal-
 | **Training entrypoint** | `scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py` |
 | **Canonical sim config** | `scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_constant_upper_half_custom_sim_params.yaml` |
 | **Heavy variant config** | `…/pid_noise_constant_upper_half_custom_sim_params_heavy.yaml` |
+| **Sysid best-fit config** | `…/sysid_best_params.yaml` (real-world-tuned physics; see below) |
 | **TD3 training configs** | `scripts/smooth_policy/amp_history/configs/td3/` |
 | **Env entrypoint** | `airhockey/` (`AirHockeyEnv`) |
 | **Real-world rollout** | `scripts/real/` + `scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real/` |
@@ -47,6 +48,23 @@ Full details: [`notes/docs/environments/observation-action-spaces.md`](notes/doc
 
 ---
 
+## System-ID best-fit parameters
+
+Real-world system identification found these optimal sim parameters (captured in `sysid_best_params.yaml`):
+
+| Parameter | Standard config | Sysid best | Source |
+|-----------|----------------|------------|--------|
+| `gravity` | -0.650 | **-0.661** | Puck grid search (10 trajectory segments) |
+| `puck_damping` | 0.250 | **0.178** | Puck grid search |
+| `paddle_density` | 1000 | **3000** | Paddle 3D PID+density grid search (8 teleop categories) |
+| `pid_kp` | 5000 | **9000** | Paddle grid search |
+| `pid_kd` | 200 | **50** | Paddle grid search |
+| `pid_ki` | 0.0 | 0.0 | Ki sweep (no benefit) |
+
+Full details: [`environments/real-world/puck-system-id.md`](notes/docs/environments/real-world/puck-system-id.md) · [`environments/real-world/teleop-system-id.md`](notes/docs/environments/real-world/teleop-system-id.md)
+
+---
+
 ## Documentation
 
 Formal docs live in `notes/docs/`. Start at [`notes/docs/index.md`](notes/docs/index.md).
@@ -59,6 +77,7 @@ Key docs:
 - Replay / episodes: [`training/replay-and-episodes.md`](notes/docs/training/replay-and-episodes.md)
 - Box2D env: [`environments/box2d/simulator-essentials.md`](notes/docs/environments/box2d/simulator-essentials.md)
 - Real-world stack: [`environments/real-world/overview.md`](notes/docs/environments/real-world/overview.md)
+- System ID: [`environments/real-world/puck-system-id.md`](notes/docs/environments/real-world/puck-system-id.md) · [`environments/real-world/teleop-system-id.md`](notes/docs/environments/real-world/teleop-system-id.md)
 - Exploration primitives: [`exploration/td3-primitives.md`](notes/docs/exploration/td3-primitives.md)
 
 ---
