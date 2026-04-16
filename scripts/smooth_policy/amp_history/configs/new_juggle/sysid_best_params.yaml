@@ -54,7 +54,7 @@ air_hockey:
     paddle_density: 3000
     gravity: -0.661
     puck_damping: 0.178
-    puck_density: 250
+    puck_density: 3000
     puck_restitution: 1.09145
     side_wall_restitution: 0.99
     end_wall_restitution: 0.7

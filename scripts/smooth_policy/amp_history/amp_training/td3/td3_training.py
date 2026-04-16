@@ -936,8 +936,9 @@ if __name__ == "__main__":
     samples_dir = os.path.join(log_parent_dir, "samples")
     os.makedirs(watch_dir, exist_ok=True)
     os.makedirs(samples_dir, exist_ok=True)
+    renderer_env = AirHockeyEnv(config["air_hockey"])
     train_renderer = AirHockeyRenderer(
-        envs.envs[0], show_target_position=True, show_acceleration_arrow=False
+        renderer_env, show_target_position=True, show_acceleration_arrow=False
     )
     recording_frames: list = []
     recording_episode = False
