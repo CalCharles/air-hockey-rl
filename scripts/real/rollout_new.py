@@ -938,28 +938,20 @@ if __name__ == '__main__':
                         specific_reasons = info.get("truncation_reasons", [])
                 reason_str = ", ".join([str(r) for r in specific_reasons]) if len(specific_reasons) > 0 else "unspecified"
                 if episode_timestep < MIN_EPISODE_TIMESTEPS:
-                    # Auto-discard short episodes; do not block on user input.
+                    # Short episodes are auto-discarded (the trajectory will not be
+                    # saved on the next reset, regardless of which key is pressed —
+                    # do_reset_and_refresh enforces this internally). Still surface
+                    # the reset-position prompt so the user picks where to reset to.
                     print(
                         f"Episode ended due to: {end_type} ({reason_str}). "
                         f"Episode timesteps: {episode_timestep} (< {MIN_EPISODE_TIMESTEPS}); "
-                        f"auto-discarding and resetting to '{current_reset_position}'."
+                        f"auto-discarding (no save). "
+                        f"Current reset position: '{current_reset_position}'. "
+                        "Press 'c' (or 'y') to reset to current position, "
+                        "'q' to reset to current position (no save either way), "
+                        "1-5 to reset to a different position "
+                        "(1=extreme_left, 2=left, 3=middle, 4=right, 5=extreme_right), or 'x' to end."
                     )
-                    (
-                        state_dict,
-                        obs,
-                        delay_counter,
-                        episode_halted,
-                        episode_timestep,
-                        puck_absent_consecutive,
-                        policy_gated_by_puck_absence,
-                        waiting_for_first_detection,
-                        consecutive_puck_detections,
-                    ) = do_reset_and_refresh(write_traj=False)
-                    if policy_gated_by_puck_absence or waiting_for_first_detection:
-                        print(
-                            f"[puck-gate] waiting for {STARTUP_REQUIRED_CONSECUTIVE_DETECTIONS} "
-                            f"consecutive puck detections before starting policy..."
-                        )
                 else:
                     print(
                         f"Episode ended due to: {end_type} ({reason_str}). "

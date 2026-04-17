@@ -1443,8 +1443,9 @@ class AirHockeyReal:
                     reset_success = False
                     print(f"[control_gate] reset:main_stage moveL skipped: {exc}")
                 # Keep force mode engaged so the tool remains biased toward table contact.
+                # Skip when async worker is configured to own the z-force loop.
                 readiness = self.robot_command_readiness()
-                if bool(readiness["command_ready"]):
+                if not self.async_z_force_enabled and bool(readiness["command_ready"]):
                     try:
                         apply_negative_z_force(self.ctrl, self.rcv)
                     except Exception as exc:
@@ -1478,7 +1479,12 @@ class AirHockeyReal:
                 print(f"[control_gate] reset:final_stage moveL skipped: {exc}")
             print("reset to initial pose:", reset_success)
         time.sleep(0.2)
-        if self.high_reset and not self.above_table and not self.control_off:
+        if (
+            self.high_reset
+            and not self.above_table
+            and not self.control_off
+            and not self.async_z_force_enabled
+        ):
             readiness = self.robot_command_readiness()
             if bool(readiness["command_ready"]):
                 try:
@@ -1578,8 +1584,14 @@ class AirHockeyReal:
         control_program_running = bool(readiness.get("control_program_running", True))
         protective_stop = bool(readiness["protective_stop"])
 
-        # force control, need it to keep it on the table
-        if not self.above_table and not self.control_off and bool(readiness["command_ready"]):
+        # force control, need it to keep it on the table.
+        # Skipped when async worker is configured to own the z-force loop (mutually exclusive).
+        if (
+            not self.above_table
+            and not self.control_off
+            and not self.async_z_force_enabled
+            and bool(readiness["command_ready"])
+        ):
             try:
                 apply_negative_z_force(self.ctrl, self.rcv)
             except Exception as exc:
