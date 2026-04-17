@@ -11,7 +11,7 @@ behaviour should be directionally identical to the privileged baseline.
 
 Usage:
     python scripts/collision_adaptation/run_adaptation_position_based.py \
-        --config scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_constant_upper_half_custom_sim_params_heavy.yaml \
+        --config scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params.yaml \
         --model-path runs/td3_training/some_run/model.pth \
         --oracle-paddle-scales 0.7 1.0 1.2 \
         --n-iterations 20 \

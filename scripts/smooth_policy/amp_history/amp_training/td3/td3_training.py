@@ -1954,6 +1954,10 @@ if __name__ == "__main__":
         if global_step > 0 and global_step % args.checkpoint_interval == 0:
             checkpoint_dir = os.path.join(log_parent_dir, f"checkpoint_{global_step}")
             os.makedirs(checkpoint_dir, exist_ok=True)
+            with open(f"{checkpoint_dir}/config.yaml", "w") as f:
+                yaml.dump(config, f)
+            with open(f"{checkpoint_dir}/args.yaml", "w") as f:
+                yaml.dump(vars(args), f)
             model_path = f"{checkpoint_dir}/model.pth"
             torch.save(actor.state_dict(), model_path)
             torch.save(actor_target.state_dict(), f"{checkpoint_dir}/actor_target.pth")

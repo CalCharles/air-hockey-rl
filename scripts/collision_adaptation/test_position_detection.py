@@ -10,7 +10,7 @@ runs can reload trajectories without re-rolling episodes.
 
 Usage:
     python scripts/collision_adaptation/test_position_detection.py \
-        --config scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_constant_upper_half_custom_sim_params_heavy.yaml \
+        --config scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params.yaml \
         --model-path ex_model/heavy_td3_model/checkpoint_100000/model.pth \
         --n-episodes 50 \
         --output-dir runs/position_detection_validation
@@ -326,7 +326,7 @@ def _parse_args():
     )
     p.add_argument("--config",
         default="scripts/smooth_policy/amp_history/configs/new_juggle/"
-                "pid_noise_constant_upper_half_custom_sim_params_heavy.yaml")
+                "sysid_best_params.yaml")
     p.add_argument("--model-path",
         default="ex_model/heavy_td3_model/checkpoint_100000/model.pth")
     p.add_argument("--n-episodes", type=int, default=50)

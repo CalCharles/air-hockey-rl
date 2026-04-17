@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ARGS_FILE="scripts/smooth_policy/amp_history/configs/td3/td3_no_alignment_heavy.yaml"
+ARGS_FILE="scripts/smooth_policy/amp_history/configs/td3/td3_no_alignment.yaml"
 MOTION_WEIGHT=0.01
 BASE_LOG_DIR="runs/td3/updated_training/density_sweep"
 
-# Base density = 3000 (current heavy config paddle_density).
+# Base density = 3000 (sysid canonical paddle_density).
 # 1:1 ratio: puck_density == paddle_density for all runs.
 # Multipliers: 0.75x, 1x, 1.25x, 1.5x, 2x
 declare -a MULTIPLIERS=(0.75 1.0 1.25 1.5 2.0)

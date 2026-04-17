@@ -24,8 +24,10 @@ import imageio
 import numpy as np
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+_REPO_ROOT_STR = str(_REPO_ROOT)
+while _REPO_ROOT_STR in sys.path:
+    sys.path.remove(_REPO_ROOT_STR)
+sys.path.insert(0, _REPO_ROOT_STR)
 # ROS puts a `scripts` package on PYTHONPATH that shadows ours; evict it.
 if "scripts" in sys.modules:
     del sys.modules["scripts"]

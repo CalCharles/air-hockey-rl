@@ -19,8 +19,10 @@ import numpy as np
 
 # Ensure local repo modules shadow external "scripts" packages (e.g., ROS).
 REPO_ROOT = Path(__file__).resolve().parents[6]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+_REPO_ROOT_STR = str(REPO_ROOT)
+while _REPO_ROOT_STR in sys.path:
+    sys.path.remove(_REPO_ROOT_STR)
+sys.path.insert(0, _REPO_ROOT_STR)
 
 from scripts.smooth_policy.amp_history.amp_training.td3.helper.episode_artifacts import (
     generate_episode_gif,

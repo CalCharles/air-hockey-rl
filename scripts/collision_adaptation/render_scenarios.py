@@ -7,7 +7,7 @@ the adaptation algorithm.
 
 Usage:
     python scripts/collision_adaptation/render_scenarios.py \
-        --config scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_constant_upper_half_custom_sim_params_heavy.yaml \
+        --config scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params.yaml \
         --oracle-paddle-scales 0.7 1.0 1.2 \
         --output-dir runs/collision_adaptation \
         --fps 20

@@ -249,7 +249,7 @@ config: `scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params.
 
 1. **Higher Kp is better**: all searches push toward the upper end of the grid. The canonical config's Kp=5000 significantly under-tracks.
 2. **Lower Kd is better**: Kd=50–100 consistently beats Kd=200+. Less derivative damping allows the paddle to respond more aggressively to position error.
-3. **Density ≈ 3000 matches reality**: real paddle inertia is much closer to the heavy config's density=3000 than the standard config's density=1000.
+3. **Density ≈ 3000 matches reality**: real paddle inertia is much closer to `density=3000` (as used in the sysid canonical config) than the legacy `density=1000`.
 4. **Ki ≈ 0**: integral gain provides negligible benefit and can cause oscillation in some segments.
 
 ### PID test script

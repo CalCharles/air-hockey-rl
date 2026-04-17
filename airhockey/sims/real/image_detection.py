@@ -115,6 +115,55 @@ def _fallback_puck(puck_history):
     return -2, 0, 1
 
 
+def _validated_detection(
+    robot_x,
+    robot_y,
+    puck_history,
+    *,
+    validate_field_containment=True,
+    # Field bounds in policy frame (post center-offset shift). Defaults match
+    # the standard table (length=1.9304 m, width=0.8636 m): puck x ∈ ±length/2,
+    # puck y ∈ ±width/2. Pass explicit values from the env to stay in sync
+    # with the sim config.
+    field_x_min=-0.9652,
+    field_x_max=0.9652,
+    field_y_min=-0.4318,
+    field_y_max=0.4318,
+    center_offset_constant=0.0,
+    validator_puck_radius=0.03175,
+    # Small slack past the geometric bound absorbs calibration noise so a
+    # legitimate wall-hugging puck is not rejected.
+    containment_slack_m=0.005,
+    validator_debug=False,
+    **_ignored_kwargs,
+):
+    # Converts the detector output (pre-shift robot frame) into a post-shift
+    # policy-frame coordinate and checks that the puck is fully contained on
+    # the field. If not, returns the standard occlusion fallback so every
+    # downstream consumer (obs valid-flag, puck-absence gate, reward code)
+    # treats the frame as "puck not detected".
+    if validate_field_containment:
+        policy_x = float(robot_x) + float(center_offset_constant)
+        policy_y = float(robot_y)
+        r = float(validator_puck_radius)
+        s = float(containment_slack_m)
+        inside = (
+            field_x_min + r - s <= policy_x <= field_x_max - r + s
+            and field_y_min + r - s <= policy_y <= field_y_max - r + s
+        )
+        if not inside:
+            if validator_debug:
+                print(
+                    f"[puck_validator] rejected (out-of-field): "
+                    f"policy=({policy_x:.3f}, {policy_y:.3f}) "
+                    f"bounds x=[{field_x_min:.3f},{field_x_max:.3f}] "
+                    f"y=[{field_y_min:.3f},{field_y_max:.3f}] "
+                    f"r={r:.4f} slack={s:.4f}"
+                )
+            return _fallback_puck(puck_history)
+    return robot_x, robot_y, 0
+
+
 def _preprocess_puck_image(image, rotate):
     if rotate:
         image = cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
@@ -394,7 +443,11 @@ def find_red_hockey_puck(
 
     x, y = center
     robot_x, robot_y = _pixel_to_robot_xy(x, y)
-    return robot_x, robot_y, 0
+    return _validated_detection(
+        robot_x, robot_y, puck_history,
+        center_offset_constant=center_offset_constant,
+        **_ignored_kwargs,
+    )
 
 
 def find_red_hockey_puck_antiglare(
@@ -459,4 +512,8 @@ def find_red_hockey_puck_antiglare(
 
     x, y = center
     robot_x, robot_y = _pixel_to_robot_xy(x, y)
-    return robot_x, robot_y, 0
+    return _validated_detection(
+        robot_x, robot_y, puck_history,
+        center_offset_constant=center_offset_constant,
+        **_ignored_kwargs,
+    )

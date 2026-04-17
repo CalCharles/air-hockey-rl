@@ -35,7 +35,7 @@ os.makedirs(OUT_DIR, exist_ok=True)
 
 CONFIG_PATH = (
     "scripts/smooth_policy/amp_history/configs/new_juggle/"
-    "pid_noise_constant_upper_half_custom_sim_params_heavy.yaml"
+    "sysid_best_params.yaml"
 )
 
 # Gravity in config is -0.65; the estimator expects the magnitude acting downward

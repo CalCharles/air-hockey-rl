@@ -1,5 +1,33 @@
 ### Trajectory Saving for Real Rollouts
 
+### Sourced ROS env: avoiding the `scripts` package collision
+
+Real-world entry points (`rollout_new.py`, `teleoperate.py`, `run_primitive_exploration_real.py`, etc.) often run in a shell where `/opt/ros/iron/setup.bash` has been sourced. ROS prepends `/opt/ros/iron/lib/python3.10/site-packages` to `PYTHONPATH`, and that directory contains its own `scripts/` package. When you launch a script directly (`python scripts/real/foo.py`), Python's `sys.path` becomes:
+
+1. `…/scripts/real` (the script's own directory)
+2. ROS `PYTHONPATH` entries (including the conflicting `scripts/`)
+3. The repo root, *but only because* `easy-install.pth` added it from `pip install -e .` (so it lands later, behind ROS)
+
+A naive guard like `if str(REPO_ROOT) not in sys.path: sys.path.insert(0, ...)` is a no-op here — `REPO_ROOT` is already on `sys.path`, just in the wrong position — and `import scripts.smooth_policy.agent` resolves to the ROS package, which fails with `ModuleNotFoundError: No module named 'catkin_pkg'`.
+
+Two ways to avoid this:
+
+- Run with `python -m scripts.real.foo` from the repo root (matches how `async_td3_real` is invoked); `-m` puts the cwd at `sys.path[0]`, so the local `scripts` package wins.
+- Or, at the very top of the script — **before any other imports** — force the repo root to position 0 unconditionally:
+
+  ```python
+  import sys
+  from pathlib import Path
+
+  REPO_ROOT = Path(__file__).resolve().parents[2]
+  _REPO_ROOT_STR = str(REPO_ROOT)
+  while _REPO_ROOT_STR in sys.path:
+      sys.path.remove(_REPO_ROOT_STR)
+  sys.path.insert(0, _REPO_ROOT_STR)
+  ```
+
+This is the pattern used by `rollout_new.py`, `teleoperate.py`, and `run_primitive_exploration_real.py`. Use it for any new entry point that imports `scripts.*`.
+
 ### Transition Hold Notes
 
 There are two different "slowdown/smoothing" mechanisms in the real stack:

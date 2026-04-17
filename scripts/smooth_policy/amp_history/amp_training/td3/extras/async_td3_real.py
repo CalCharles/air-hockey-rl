@@ -317,6 +317,18 @@ def _save_async_checkpoint(
 ) -> Path:
     checkpoint_dir = checkpoint_root / f"checkpoint_{checkpoint_tag}"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(args.config, "r") as f:
+            checkpoint_config = yaml.load(f, Loader=yaml.FullLoader)
+        with open(checkpoint_dir / "config.yaml", "w") as f:
+            yaml.dump(checkpoint_config, f)
+    except Exception as exc:
+        print(f"[learner_checkpoint] failed to save config.yaml: {exc}")
+    try:
+        with open(checkpoint_dir / "args.yaml", "w") as f:
+            yaml.dump(asdict(args), f)
+    except Exception as exc:
+        print(f"[learner_checkpoint] failed to save args.yaml: {exc}")
     torch.save(actor.state_dict(), checkpoint_dir / "model.pth")
     torch.save(actor_target.state_dict(), checkpoint_dir / "actor_target.pth")
     torch.save(qf1.state_dict(), checkpoint_dir / "qf1.pth")

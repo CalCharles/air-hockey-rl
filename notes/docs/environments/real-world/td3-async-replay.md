@@ -59,6 +59,64 @@ Current code stores **only** `dones`, with the **critic** semantics above (same 
 
 **Loading old snapshots:** `SharedReplayPartition.load_state_dict` prefers `bootstrap_terminals` when that key exists, and otherwise uses `dones`. That keeps critic training consistent when resuming from checkpoints that still carry the legacy two-field layout. If you resume from an old buffer where only the legacy `dones` column was saved (without `bootstrap_terminals`), interpret buffer compatibility with care — prefer checkpoints that include `bootstrap_terminals` or re-collect after a schema change.
 
+## Launch commands
+
+All three variants invoke the same entrypoint and respect `--args-file` (typically [`td3_online.yaml`](../../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml)); CLI flags override. Mirrored in the top-level [README](../../../../README.md) under "TD3 Real-World Commands".
+
+### Eval only (run policy, no training, no checkpointing)
+
+```bash
+python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
+  --config configs/real_configs/rollout_td3_config.yaml \
+  --model-path ex_model/new_td3_model/checkpoint_325000/training_state.pth \
+  --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml \
+  --collector-device cpu \
+  --learner-device cuda:0 \
+  --episode-artifact-dir real_runs/online_run/episode_hdf5 \
+  --episode-gif-dir real_runs/online_run/episode_gifs \
+  --reset-artifact-dir real_runs/online_run/reset_hdf5 \
+  --min-replay-size-before-learning 999999999 \
+  --no-enable-periodic-checkpointing \
+  --no-load-replay-from-checkpoint \
+  --warm-start-hdf5-dirs
+```
+
+`--min-replay-size-before-learning 999999999` gates out learner updates (see the check at `async_td3_real.py:2626`). `--warm-start-hdf5-dirs` with no value disables replay warm-start from HDF5.
+
+### Online training from a pretrained checkpoint (collect + train)
+
+```bash
+python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
+  --config configs/real_configs/rollout_td3_config.yaml \
+  --model-path ex_model/td3_model/checkpoint_1515000/training_state.pth \
+  --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml \
+  --collector-device cpu \
+  --learner-device cuda:0 \
+  --episode-artifact-dir real_runs/online_run/episode_hdf5 \
+  --episode-gif-dir real_runs/online_run/episode_gifs \
+  --reset-artifact-dir real_runs/online_run/reset_hdf5
+```
+
+Learning behaviour comes from `td3_online.yaml`: `learning_starts: 0`, `q_updates: 20`, low LRs (`policy_lr: 5e-5`, `q_lr: 1e-4`), warm-start replay from `real_runs/warm_start_trajectories`, periodic checkpointing every 20 successful episodes. See [td3-real-world-configs](../../training/td3-real-world-configs.md).
+
+### Resume training from a previous online run
+
+```bash
+python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
+  --config configs/real_configs/rollout_td3_config.yaml \
+  --model-path real_runs/checkpoints/default/checkpoint_successeps_100_qupdates_1517000/training_state.pth \
+  --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml \
+  --collector-device cpu \
+  --learner-device cuda:0 \
+  --episode-artifact-dir real_runs/online_run/episode_hdf5 \
+  --episode-gif-dir real_runs/online_run/episode_gifs \
+  --reset-artifact-dir real_runs/online_run/reset_hdf5 \
+  --load-replay-from-checkpoint \
+  --include-non-vital-training-state-fields
+```
+
+`--load-replay-from-checkpoint` restores the shared replay from the checkpoint (instead of re-warm-starting from HDF5); `--include-non-vital-training-state-fields` also restores optimizer/rng state for a true resume.
+
 ## Staging scripts
 
 Two wrapper scripts under `td3/extras/` launch `async_td3_real.py` with scheduled hyperparameter changes:

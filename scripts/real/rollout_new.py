@@ -1,9 +1,21 @@
-import torch
-import argparse
-import yaml
 import os
 import sys
 from pathlib import Path
+
+# Force the repo root to the front of sys.path BEFORE importing anything else
+# so the local `scripts/` package wins over /opt/ros/iron/.../scripts when the
+# ROS environment is sourced. The repo root may already be on sys.path (via
+# easy-install.pth from `pip install -e .`), but it sits after the script's
+# directory and the ROS PYTHONPATH entries, so we have to move it to index 0.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT_STR = str(REPO_ROOT)
+while _REPO_ROOT_STR in sys.path:
+    sys.path.remove(_REPO_ROOT_STR)
+sys.path.insert(0, _REPO_ROOT_STR)
+
+import torch
+import argparse
+import yaml
 from types import SimpleNamespace
 from abc import ABC, abstractmethod
 import gymnasium as gym
@@ -11,11 +23,6 @@ from airhockey import AirHockeyEnv
 import numpy as np
 from airhockey.airhockey_base import get_observation_by_type
 from airhockey.sims.real.multiprocessing import NonBlockingConsole
-
-# Prefer local repository modules over system "scripts" packages (e.g. ROS).
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.smooth_policy.agent import Agent as ResidualAgent
 from scripts.smooth_policy.deterministic_agent import DeterministicAgent
@@ -373,27 +380,59 @@ def maybe_generate_gifs_for_saved_trajectory(
         return
 
     output_dir = hdf5_path.parent / f"{hdf5_path.stem}_gifs"
-    try:
-        from visualize_saved_trajectory import generate_gifs_from_hdf5
-    except ModuleNotFoundError as exc:
-        print(f"Skipping GIF generation; dependency missing: {exc}")
-        return
+    output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Box2D-style projection GIF (paddle + puck on simulator-style table view).
+    # Uses the same renderer/parameters as async_td3_real's generate_episode_gif,
+    # but reads from the legacy train_vals schema rollout_new.py writes.
     try:
-        outputs = generate_gifs_from_hdf5(
-            input_hdf5=hdf5_path,
-            output_dir=output_dir,
-            fps=gif_fps,
-            max_frames_per_gif=gif_max_frames_per_file,
+        from scripts.smooth_policy.visualize_demo.visualize_real_trajectory import (
+            RealTrajectoryRenderer,
+            create_trajectory_gif,
+            extract_paddle_data,
+            load_trajectory_data,
         )
+        train_vals = load_trajectory_data(hdf5_path)
+        paddle_data = extract_paddle_data(train_vals, require_puck=False)
+        renderer = RealTrajectoryRenderer(
+            table_length=1.9304,
+            table_width=0.8636,
+            paddle_radius=0.0508,
+            puck_radius=0.03175,
+            render_size=360,
+            robot_x_offset=1.2,
+            orientation="vertical",
+            paddle_input_frame="table",
+        )
+        projection_gif_path = output_dir / "trajectory_visualization.gif"
+        create_trajectory_gif(
+            paddle_data,
+            renderer,
+            projection_gif_path,
+            max_frames=gif_max_frames_per_file if gif_max_frames_per_file > 0 else None,
+            subsample=1,
+            fps=gif_fps,
+        )
+        print(f"Generated Box2D-projection GIF: {projection_gif_path}")
     except Exception as exc:
-        print(f"GIF generation failed for {hdf5_path}: {exc}")
-        return
+        print(f"Box2D-projection GIF generation failed for {hdf5_path}: {exc}")
 
-    if outputs:
-        print(f"Generated {len(outputs)} GIF(s) in {output_dir}")
-    else:
-        print(f"No GIF frames produced for {hdf5_path}")
+    # Ground-truth camera video (MP4) from train_img frames in the same HDF5.
+    try:
+        from scripts.smooth_policy.amp_history.amp_training.td3.helper.episode_artifacts import (
+            generate_episode_camera_video,
+        )
+        camera_video_path = generate_episode_camera_video(
+            episode_hdf5_path=hdf5_path,
+            video_root=output_dir.parent,
+            fps=gif_fps,
+            max_frames=gif_max_frames_per_file if gif_max_frames_per_file > 0 else None,
+            subsample=1,
+            codec="mp4v",
+        )
+        print(f"Generated ground-truth camera video: {camera_video_path}")
+    except Exception as exc:
+        print(f"Camera video generation failed for {hdf5_path}: {exc}")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Rollout')
@@ -412,6 +451,14 @@ if __name__ == '__main__':
     parser.add_argument('--auto-gif', action='store_true', help='Generate GIF visualization(s) after each saved trajectory.')
     parser.add_argument('--gif-fps', type=int, default=20, help='GIF playback FPS used when --auto-gif is enabled.')
     parser.add_argument('--gif-max-frames-per-file', type=int, default=250, help='Maximum rendered frames per GIF when --auto-gif is enabled.')
+    parser.add_argument('--puck-absence-halt-steps', type=int, default=15,
+                        help='Halt policy (send zero action) after this many consecutive frames with the puck undetected. '
+                             'The policy resumes the instant the puck is detected again. Set <=0 to disable.')
+    parser.add_argument('--reset-position', type=str,
+                        choices=['extreme_left', 'left', 'middle', 'right', 'extreme_right'],
+                        default='middle',
+                        help='Initial paddle reset y-position. middle keeps current behavior; left/right are halfway to the workspace edge; extreme_* are at the workspace bounds. '
+                             'Can be changed at runtime via number keys 1-5 (extreme_left=1, left=2, middle=3, right=4, extreme_right=5).')
 
     args = parser.parse_args()
     
@@ -430,7 +477,7 @@ if __name__ == '__main__':
         air_hockey_cfg['air_hockey']['return_goal_obs'] = False
     air_hockey_params_cp = air_hockey_params.copy()
     air_hockey_params_cp['seed'] = 42
-    air_hockey_params_cp['max_timesteps'] = 300 # override behavior
+    air_hockey_params_cp['max_timesteps'] = 500 # override behavior (effectively "no cap"; user drives episode boundaries)
 
     if args.save_path is not None:
         air_hockey_params_cp['simulator_params']['save_path'] = args.save_path
@@ -444,6 +491,38 @@ if __name__ == '__main__':
         return env
     
     eval_env = make_eval_env()
+
+    sim = eval_env.simulator
+    y_min = float(getattr(sim, 'y_min'))
+    y_max = float(getattr(sim, 'y_max'))
+    RESET_POSITION_KEYS = {
+        '1': 'extreme_left',
+        '2': 'left',
+        '3': 'middle',
+        '4': 'right',
+        '5': 'extreme_right',
+    }
+    reset_y_map = {
+        'extreme_left':  y_min,
+        'left':          y_min / 2.0,
+        'middle':        0.0,
+        'right':         y_max / 2.0,
+        'extreme_right': y_max,
+    }
+
+    def apply_reset_position(name, *, verbose=True):
+        new_y = reset_y_map[name]
+        sim.reset_pose[0][1] = new_y
+        if verbose:
+            print(
+                f"Reset position '{name}': paddle reset y set to {new_y:.4f} "
+                f"(workspace y in [{y_min:.4f}, {y_max:.4f}], x kept at {sim.reset_pose[0][0]:.4f})."
+            )
+        return new_y
+
+    current_reset_position = args.reset_position
+    apply_reset_position(current_reset_position)
+
     device = torch.device(args.device)
     loaded_obj = torch.load(args.model, map_location=device)
     policy_state_dict = unwrap_eval_state_dict(loaded_obj)
@@ -594,7 +673,7 @@ if __name__ == '__main__':
     
     obs = get_observation_by_type(state_dict, obs_type=obs_type, puck_history=state_dict["pucks"][0]["history"], paddle_history=state_dict['paddles']['paddle_ego']['history'])
 
-    def refresh_post_reset_state(last_action_tensor):
+    def refresh_post_reset_state(last_action_tensor, gate_policy_until_puck=True):
         current_state_dict = eval_env.simulator.get_current_state()
         current_obs = get_observation_by_type(
             current_state_dict,
@@ -607,52 +686,129 @@ if __name__ == '__main__':
         episode_timestep_val = 0
         if use_last_action:
             last_action_tensor.zero_()
+        # Engage puck-wait gate so the next episode's policy does not start
+        # until a puck is visible. The gate auto-clears on the first detected frame.
+        puck_absent_val = int(args.puck_absence_halt_steps) if gate_policy_until_puck and int(args.puck_absence_halt_steps) > 0 else 0
+        policy_gated_val = gate_policy_until_puck and int(args.puck_absence_halt_steps) > 0
         return (
             current_state_dict,
             current_obs,
             delay_counter_val,
             episode_halted_val,
             episode_timestep_val,
+            puck_absent_val,
+            policy_gated_val,
         )
+
+    def puck_occluded_from_state(cur_state_dict):
+        # puck_history entries are (x, y, occluded_flag); state_dict carries the newest
+        # flag as a shape-(1,) array under "occluded". 1 => not detected, 0 => detected.
+        try:
+            flag_arr = np.asarray(cur_state_dict["pucks"][0]["occluded"], dtype=float).ravel()
+        except (KeyError, IndexError, TypeError):
+            return False
+        if flag_arr.size == 0:
+            return False
+        return bool(flag_arr[-1] >= 0.5)
+
+    MIN_EPISODE_TIMESTEPS = 50
+
+    def startup_prompt():
+        print(
+            f"Initial reset: current position is '{current_reset_position}'. "
+            "Press 'c' (or 'y') to reset to current position, "
+            "1-5 to reset to a different position "
+            "(1=extreme_left, 2=left, 3=middle, 4=right, 5=extreme_right), or 'x' to exit."
+        )
+
     obs_list = list()
     with NonBlockingConsole() as nbc:
         delay_counter = 0
-        episode_halted = False
+        # Start in halted state so the user must explicitly choose where to
+        # reset before the first episode (same prompt/flow as after an episode end).
+        episode_halted = True
         total_timestep = 0
         episode_timestep = 0
-        while True:
-            key = nbc.get_data()
-            if key == 'y':
-                print("Saving trajectory and resetting...")
-                eval_env.reset(seed=None, write_traj = True)
+        puck_absence_threshold = int(args.puck_absence_halt_steps)
+        if puck_absence_threshold > 0:
+            print(f"Puck-absence gate enabled: policy starts only when the puck is detected (threshold {puck_absence_threshold} frames for mid-episode halts).")
+            puck_absent_consecutive = puck_absence_threshold
+            policy_gated_by_puck_absence = True
+        else:
+            print("Puck-absence gate disabled (--puck-absence-halt-steps <= 0).")
+            puck_absent_consecutive = 0
+            policy_gated_by_puck_absence = False
+        startup_prompt()
+        def do_reset_and_refresh(write_traj):
+            actual_write = write_traj
+            if write_traj and episode_timestep < MIN_EPISODE_TIMESTEPS:
+                print(
+                    f"[short-episode-skip] only {episode_timestep} timesteps elapsed "
+                    f"(need >= {MIN_EPISODE_TIMESTEPS}); discarding instead of saving."
+                )
+                actual_write = False
+            if actual_write:
+                label = "Episode ended — saving trajectory and starting next episode..." if episode_halted else "Saving trajectory and resetting..."
+            else:
+                label = "Resetting without saving..."
+            print(label)
+            eval_env.reset(seed=None, write_traj=actual_write)
+            if actual_write:
                 maybe_generate_gifs_for_saved_trajectory(
                     simulator=eval_env.simulator,
                     auto_gif=args.auto_gif,
                     gif_fps=args.gif_fps,
                     gif_max_frames_per_file=args.gif_max_frames_per_file,
                 )
+            return refresh_post_reset_state(last_action_for_policy)
+
+        while True:
+            key = nbc.get_data()
+            if key in RESET_POSITION_KEYS:
+                # Number keys (1-5): update reset position and immediately save+reset.
+                requested_position = RESET_POSITION_KEYS[key]
+                if requested_position != current_reset_position:
+                    current_reset_position = requested_position
+                apply_reset_position(current_reset_position)
                 (
                     state_dict,
                     obs,
                     delay_counter,
                     episode_halted,
                     episode_timestep,
-                ) = refresh_post_reset_state(
-                    last_action_for_policy,
-                )
+                    puck_absent_consecutive,
+                    policy_gated_by_puck_absence,
+                ) = do_reset_and_refresh(write_traj=True)
+                if policy_gated_by_puck_absence:
+                    print("[puck-gate] waiting for puck to be detected before starting policy...")
                 continue
-            elif key == 'q' or (key == 'c' and episode_halted):
-                print("Resetting without saving...")
-                eval_env.reset(seed=None, write_traj = False)
+            if key == 'y' or (key == 'c' and episode_halted):
+                # Save the just-ended (or in-progress) episode trajectory and start the next episode at the current reset position.
                 (
                     state_dict,
                     obs,
                     delay_counter,
                     episode_halted,
                     episode_timestep,
-                ) = refresh_post_reset_state(
-                    last_action_for_policy,
-                )
+                    puck_absent_consecutive,
+                    policy_gated_by_puck_absence,
+                ) = do_reset_and_refresh(write_traj=True)
+                if policy_gated_by_puck_absence:
+                    print("[puck-gate] waiting for puck to be detected before starting policy...")
+                continue
+            elif key == 'q':
+                # Discard current/just-ended episode (no save) and reset to current position.
+                (
+                    state_dict,
+                    obs,
+                    delay_counter,
+                    episode_halted,
+                    episode_timestep,
+                    puck_absent_consecutive,
+                    policy_gated_by_puck_absence,
+                ) = do_reset_and_refresh(write_traj=False)
+                if policy_gated_by_puck_absence:
+                    print("[puck-gate] waiting for puck to be detected before starting policy...")
                 continue
             elif key == 'x':
                 print("Exiting...")
@@ -661,29 +817,42 @@ if __name__ == '__main__':
             if episode_halted:
                 continue
 
-            obs_t = torch.tensor(obs).unsqueeze(0).to(device=device).float()
-            policy_obs = obs_t
-            if use_last_action:
-                policy_obs = torch.cat([policy_obs, last_action_for_policy], dim=-1)
-            with torch.no_grad():
-                action_tensor = policy_runner.act(policy_obs)
-                env_action_tensor = policy_runner.normalize_for_env(action_tensor)
-            if delay_counter < 10 and delay_counter >= 0:
-                # action = model.policy(obs)
-                # action = action.mean
-                env_action_tensor = env_action_tensor * 0.0
+            if puck_absence_threshold > 0:
+                puck_currently_occluded = puck_occluded_from_state(state_dict)
+                if puck_currently_occluded:
+                    puck_absent_consecutive += 1
+                    if (not policy_gated_by_puck_absence
+                            and puck_absent_consecutive >= puck_absence_threshold):
+                        policy_gated_by_puck_absence = True
+                        print(
+                            f"[puck-gate] puck undetected for {puck_absent_consecutive} "
+                            f"consecutive frames; halting policy (zero action)."
+                        )
+                else:
+                    if policy_gated_by_puck_absence:
+                        print("[puck-gate] puck re-detected; resuming policy.")
+                    puck_absent_consecutive = 0
+                    policy_gated_by_puck_absence = False
+
+            if policy_gated_by_puck_absence:
+                action = np.zeros(model_action_dim, dtype=np.float32)
+                if use_last_action:
+                    last_action_for_policy.zero_()
             else:
-                # action is already normalized to [-1, 1] by the policy runner.
-                pass
-                # action[0,0] = action[0,0] * 0.5
-            action = env_action_tensor.detach().cpu().numpy().squeeze()
-            if use_last_action:
-                last_action_for_policy = env_action_tensor.detach().clone()
-            delay_counter += 1
-            print("action", action, obs)
-            # action = action * 0.0
-            # action[0,0] = 0
-            # action[0,1] = 0
+                obs_t = torch.tensor(obs).unsqueeze(0).to(device=device).float()
+                policy_obs = obs_t
+                if use_last_action:
+                    policy_obs = torch.cat([policy_obs, last_action_for_policy], dim=-1)
+                with torch.no_grad():
+                    action_tensor = policy_runner.act(policy_obs)
+                    env_action_tensor = policy_runner.normalize_for_env(action_tensor)
+                if delay_counter < 10 and delay_counter >= 0:
+                    env_action_tensor = env_action_tensor * 0.0
+                action = env_action_tensor.detach().cpu().numpy().squeeze()
+                if use_last_action:
+                    last_action_for_policy = env_action_tensor.detach().clone()
+                delay_counter += 1
+                print("action", action, obs)
 
             obs, reward, is_finished, truncated, info = eval_env.step(action)
             total_timestep += 1
@@ -707,11 +876,34 @@ if __name__ == '__main__':
                     elif end_type == "truncation":
                         specific_reasons = info.get("truncation_reasons", [])
                 reason_str = ", ".join([str(r) for r in specific_reasons]) if len(specific_reasons) > 0 else "unspecified"
-                print(
-                    f"Episode ended due to: {end_type} ({reason_str}). "
-                    f"Episode timesteps: {episode_timestep}, total timesteps: {total_timestep}. "
-                    "Press 'c' to continue (reset), 'y' to save+continue, or 'x' to end."
-                )
+                if episode_timestep < MIN_EPISODE_TIMESTEPS:
+                    # Auto-discard short episodes; do not block on user input.
+                    print(
+                        f"Episode ended due to: {end_type} ({reason_str}). "
+                        f"Episode timesteps: {episode_timestep} (< {MIN_EPISODE_TIMESTEPS}); "
+                        f"auto-discarding and resetting to '{current_reset_position}'."
+                    )
+                    (
+                        state_dict,
+                        obs,
+                        delay_counter,
+                        episode_halted,
+                        episode_timestep,
+                        puck_absent_consecutive,
+                        policy_gated_by_puck_absence,
+                    ) = do_reset_and_refresh(write_traj=False)
+                    if policy_gated_by_puck_absence:
+                        print("[puck-gate] waiting for puck to be detected before starting policy...")
+                else:
+                    print(
+                        f"Episode ended due to: {end_type} ({reason_str}). "
+                        f"Episode timesteps: {episode_timestep}, total timesteps: {total_timestep}. "
+                        f"Current reset position: '{current_reset_position}'. "
+                        "Press 'c' (or 'y') to save trajectory and start next episode "
+                        "(policy will wait for the puck to appear), 'q' to discard this episode and reset, "
+                        "1-5 to save and reset to a different position "
+                        "(1=extreme_left, 2=left, 3=middle, 4=right, 5=extreme_right), or 'x' to end."
+                    )
 
 
 

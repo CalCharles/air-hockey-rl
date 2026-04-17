@@ -1,5 +1,7 @@
 # PPO + AMP discriminator
 
+> **Legacy.** TD3 is the active training path (see [`architecture.md`](architecture.md) and [`td3-algorithm.md`](td3-algorithm.md)). This doc describes the PPO+AMP stack that remains in the tree for reference.
+
 Adversarial Motion Prior (AMP) discriminator used by PPO training to encourage expert-like motion style.
 
 Entrypoint: [`amp_training.py`](../../../scripts/smooth_policy/amp_history/amp_training/amp_training.py).

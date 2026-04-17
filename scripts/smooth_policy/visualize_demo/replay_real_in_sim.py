@@ -31,8 +31,10 @@ import yaml
 
 # Ensure repo root is importable when running as a script.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+_REPO_ROOT_STR = str(_REPO_ROOT)
+while _REPO_ROOT_STR in sys.path:
+    sys.path.remove(_REPO_ROOT_STR)
+sys.path.insert(0, _REPO_ROOT_STR)
 
 # Local imports from the existing visualization utilities.
 try:
@@ -65,7 +67,7 @@ DEFAULT_EPISODE = (
 )
 DEFAULT_CONFIG = (
     "scripts/smooth_policy/amp_history/configs/new_juggle/"
-    "pid_noise_constant_upper_half_custom_sim_params_heavy.yaml"
+    "sysid_best_params.yaml"
 )
 
 # Keys to disable under air_hockey.simulator_params when --enable-noise is off.

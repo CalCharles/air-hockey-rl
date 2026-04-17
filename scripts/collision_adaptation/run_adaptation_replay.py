@@ -11,7 +11,7 @@ oracle scales no longer contaminate tier statistics.
 
 Usage:
     python scripts/collision_adaptation/run_adaptation_replay.py \
-        --config scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_constant_upper_half_custom_sim_params_heavy.yaml \
+        --config scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params.yaml \
         --model-path runs/td3/final/task_only/checkpoint_350000/model.pth \
         --oracle-paddle-scales 0.7 1.0 1.2 \
         --n-iterations 30 \

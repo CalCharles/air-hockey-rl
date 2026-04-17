@@ -7,7 +7,7 @@ high tiers, replays each in both sims, and saves one GIF per scenario.
 
 Usage:
     python scripts/collision_adaptation/viz_collision_tiers.py \
-        --config scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_constant_upper_half_custom_sim_params_heavy.yaml \
+        --config scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params.yaml \
         --model-path runs/td3/final/task_only/checkpoint_350000/model.pth \
         --oracle-paddle-scales 0.7 1.0 1.2 \
         --n-collect-episodes 30 \

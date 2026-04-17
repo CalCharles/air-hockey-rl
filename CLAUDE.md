@@ -17,14 +17,13 @@ See [`notes/docs/repo/project-goal-and-safety.md`](notes/docs/repo/project-goal-
 | What | Where |
 |------|-------|
 | **Training entrypoint** | `scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py` |
-| **Canonical sim config** | `scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_constant_upper_half_custom_sim_params.yaml` |
-| **Heavy variant config** | `…/pid_noise_constant_upper_half_custom_sim_params_heavy.yaml` |
-| **Sysid best-fit config** | `…/sysid_best_params.yaml` (real-world-tuned physics; see below) |
+| **Canonical sim config (sysid ground truth)** | `scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params.yaml` |
+| **Legacy sim config** | `…/pid_noise_constant_upper_half_custom_sim_params.yaml` (pre-sysid; still used by some TD3 args YAMLs) |
 | **TD3 training configs** | `scripts/smooth_policy/amp_history/configs/td3/` |
 | **Env entrypoint** | `airhockey/` (`AirHockeyEnv`) |
 | **Real-world rollout** | `scripts/real/` + `scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real/` |
 
-The config file passed to `td3_training.py` (e.g., `td3_no_alignment_heavy.yaml`) has a `config:` key pointing to the sim config and a `model_path:` key for resuming.
+The config file passed to `td3_training.py` (e.g., `td3_no_alignment.yaml`) has a `config:` key pointing to the sim config and a `model_path:` key for resuming.
 
 ---
 
