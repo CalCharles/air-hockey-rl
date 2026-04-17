@@ -20,6 +20,7 @@ See [`notes/docs/repo/project-goal-and-safety.md`](notes/docs/repo/project-goal-
 | **Canonical sim config (sysid ground truth)** | `scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params.yaml` |
 | **Legacy sim config** | `…/pid_noise_constant_upper_half_custom_sim_params.yaml` (pre-sysid; still used by some TD3 args YAMLs) |
 | **TD3 training configs** | `scripts/smooth_policy/amp_history/configs/td3/` |
+| **Recommended TD3 default** | `…/td3/td3_recommended.yaml` (2-layer, q=25/a=6, sysid_best_params sim — see [ablations doc](notes/docs/training/td3-ablations-updates-and-depth.md)) |
 | **Env entrypoint** | `airhockey/` (`AirHockeyEnv`) |
 | **Real-world rollout** | `scripts/real/` + `scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real/` |
 
