@@ -1241,12 +1241,61 @@ class AirHockeyReal:
         state_info['paddles']['paddle_ego']['velocity'] = copy.deepcopy(self.speed[:2])
         state_info['paddles']['paddle_ego']['history'] = self.paddle_history[- self.paddle_history_len :]
         state_info["pucks"] = list()
-        state_info["pucks"].append({"history": self.puck_history[- self.puck_history_len:], 
-                                    "position": copy.deepcopy(self.puck), 
-                                    "velocity": np.array(self.puck_history[-1])[:2] - np.array(self.puck_history[-2])[:2], 
+        state_info["pucks"].append({"history": self.puck_history[- self.puck_history_len:],
+                                    "position": copy.deepcopy(self.puck),
+                                    "velocity": np.array(self.puck_history[-1])[:2] - np.array(self.puck_history[-2])[:2],
                                     "occluded": np.array(self.puck_history[-1])[-1:]})
         # print("state_info", state_info)
         return state_info
+
+
+    def poll_puck_detection(self):
+        # Detection-only tick used by the rollout startup gate. Refreshes
+        # both paddle_history (from current TCP telemetry) and puck_history
+        # (from a fresh camera frame run through the detector) so when the
+        # caller eventually un-gates and invokes step(), the policy's
+        # 5-entry history reflects reality instead of reset sentinels.
+        # Does NOT advance the env timestep, run termination checks, or
+        # command the robot — the env remains stationary.
+        if self.cap is None or self.puck_detector is None:
+            return False
+
+        # Refresh paddle telemetry → self.pose/self.speed → paddle_history.
+        tcp_target_pose, tcp_target_speed = self._safe_target_pose_speed()
+        state_pose, state_speed, _ = self._resolve_state_pose_speed(
+            tcp_target_pose, tcp_target_speed
+        )
+        self.pose = np.array(state_pose, dtype=float)
+        self.speed = np.array(state_speed, dtype=float)
+        paddle_xy = self._paddle_observation_xy_from_pose(self.pose[:2])
+        self.paddle_history.append(
+            [float(paddle_xy[0]), float(paddle_xy[1]), 0]
+        )
+
+        # Capture frame, run detector, append to puck_history.
+        image, save_img, _ = save_collect(
+            self.cap,
+            None,
+            None,
+            None,
+            show=False,
+            lims=None,
+            edge_lims=None,
+            region_x_offset=self.x_offset,
+        )
+        self.images.append(save_img)
+        puck = self.puck_detector(
+            image,
+            self.puck_history,
+            rotate=False,
+            **self.puck_detector_kwargs,
+        )
+        puck = np.array(puck)
+        if int(puck[2]) == 0:
+            puck[0] += self.center_offset_constant
+        self.puck_history.append(puck)
+        self.puck = puck[:2]
+        return int(puck[2]) == 0
 
 
     def take_action(self, action, pose, speed, force, acc, estop, image, images, puck_history, lims, move_lims):

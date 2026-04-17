@@ -686,8 +686,15 @@ if __name__ == '__main__':
         episode_timestep_val = 0
         if use_last_action:
             last_action_tensor.zero_()
-        # Engage puck-wait gate so the next episode's policy does not start
-        # until a puck is visible. The gate auto-clears on the first detected frame.
+        # Startup gate: always wait until the puck has been detected on
+        # STARTUP_REQUIRED_CONSECUTIVE_DETECTIONS consecutive poll frames
+        # before the policy starts, regardless of --puck-absence-halt-steps.
+        # The consecutive-frames requirement debounces single-frame false
+        # positives (e.g. a stray red pixel cluster that happens to be
+        # inside the field bounds).
+        waiting_for_first_detection_val = bool(gate_policy_until_puck)
+        consecutive_puck_detections_val = 0
+        # Mid-episode absence gate: only engages if --puck-absence-halt-steps > 0.
         puck_absent_val = int(args.puck_absence_halt_steps) if gate_policy_until_puck and int(args.puck_absence_halt_steps) > 0 else 0
         policy_gated_val = gate_policy_until_puck and int(args.puck_absence_halt_steps) > 0
         return (
@@ -698,6 +705,8 @@ if __name__ == '__main__':
             episode_timestep_val,
             puck_absent_val,
             policy_gated_val,
+            waiting_for_first_detection_val,
+            consecutive_puck_detections_val,
         )
 
     def puck_occluded_from_state(cur_state_dict):
@@ -738,6 +747,12 @@ if __name__ == '__main__':
             print("Puck-absence gate disabled (--puck-absence-halt-steps <= 0).")
             puck_absent_consecutive = 0
             policy_gated_by_puck_absence = False
+        # Startup gate: block the policy until the puck has been detected on
+        # STARTUP_REQUIRED_CONSECUTIVE_DETECTIONS consecutive poll frames,
+        # regardless of --puck-absence-halt-steps. Re-armed on every reset.
+        STARTUP_REQUIRED_CONSECUTIVE_DETECTIONS = 5
+        waiting_for_first_detection = True
+        consecutive_puck_detections = 0
         startup_prompt()
         def do_reset_and_refresh(write_traj):
             actual_write = write_traj
@@ -778,9 +793,14 @@ if __name__ == '__main__':
                     episode_timestep,
                     puck_absent_consecutive,
                     policy_gated_by_puck_absence,
+                    waiting_for_first_detection,
+                    consecutive_puck_detections,
                 ) = do_reset_and_refresh(write_traj=True)
-                if policy_gated_by_puck_absence:
-                    print("[puck-gate] waiting for puck to be detected before starting policy...")
+                if policy_gated_by_puck_absence or waiting_for_first_detection:
+                    print(
+                        f"[puck-gate] waiting for {STARTUP_REQUIRED_CONSECUTIVE_DETECTIONS} "
+                        f"consecutive puck detections before starting policy..."
+                    )
                 continue
             if key == 'y' or (key == 'c' and episode_halted):
                 # Save the just-ended (or in-progress) episode trajectory and start the next episode at the current reset position.
@@ -792,9 +812,14 @@ if __name__ == '__main__':
                     episode_timestep,
                     puck_absent_consecutive,
                     policy_gated_by_puck_absence,
+                    waiting_for_first_detection,
+                    consecutive_puck_detections,
                 ) = do_reset_and_refresh(write_traj=True)
-                if policy_gated_by_puck_absence:
-                    print("[puck-gate] waiting for puck to be detected before starting policy...")
+                if policy_gated_by_puck_absence or waiting_for_first_detection:
+                    print(
+                        f"[puck-gate] waiting for {STARTUP_REQUIRED_CONSECUTIVE_DETECTIONS} "
+                        f"consecutive puck detections before starting policy..."
+                    )
                 continue
             elif key == 'q':
                 # Discard current/just-ended episode (no save) and reset to current position.
@@ -806,9 +831,14 @@ if __name__ == '__main__':
                     episode_timestep,
                     puck_absent_consecutive,
                     policy_gated_by_puck_absence,
+                    waiting_for_first_detection,
+                    consecutive_puck_detections,
                 ) = do_reset_and_refresh(write_traj=False)
-                if policy_gated_by_puck_absence:
-                    print("[puck-gate] waiting for puck to be detected before starting policy...")
+                if policy_gated_by_puck_absence or waiting_for_first_detection:
+                    print(
+                        f"[puck-gate] waiting for {STARTUP_REQUIRED_CONSECUTIVE_DETECTIONS} "
+                        f"consecutive puck detections before starting policy..."
+                    )
                 continue
             elif key == 'x':
                 print("Exiting...")
@@ -817,8 +847,39 @@ if __name__ == '__main__':
             if episode_halted:
                 continue
 
+            # Startup gate: do NOT advance the env at all until we see
+            # STARTUP_REQUIRED_CONSECUTIVE_DETECTIONS unoccluded frames in a
+            # row. Calling eval_env.step() with zero action would still tick
+            # the env's current_timestep and run termination checks (e.g.
+            # puck_low_motion_window_20), which would end the episode before
+            # the puck is even placed. Instead, run a detection-only poll
+            # that also refreshes paddle telemetry so puck_history AND
+            # paddle_history are both fresh when the gate releases.
+            if waiting_for_first_detection:
+                eval_env.simulator.poll_puck_detection()
+                state_dict = eval_env.simulator.get_current_state()
+                obs = get_observation_by_type(
+                    state_dict,
+                    obs_type=obs_type,
+                    puck_history=state_dict["pucks"][0]["history"],
+                    paddle_history=state_dict["paddles"]["paddle_ego"]["history"],
+                )
+                if puck_occluded_from_state(state_dict):
+                    consecutive_puck_detections = 0
+                else:
+                    consecutive_puck_detections += 1
+                    if consecutive_puck_detections >= STARTUP_REQUIRED_CONSECUTIVE_DETECTIONS:
+                        waiting_for_first_detection = False
+                        print(
+                            f"[puck-gate] puck detected on "
+                            f"{consecutive_puck_detections} consecutive frames; "
+                            f"starting policy."
+                        )
+                continue
+
+            puck_currently_occluded = puck_occluded_from_state(state_dict)
+
             if puck_absence_threshold > 0:
-                puck_currently_occluded = puck_occluded_from_state(state_dict)
                 if puck_currently_occluded:
                     puck_absent_consecutive += 1
                     if (not policy_gated_by_puck_absence
@@ -891,9 +952,14 @@ if __name__ == '__main__':
                         episode_timestep,
                         puck_absent_consecutive,
                         policy_gated_by_puck_absence,
+                        waiting_for_first_detection,
+                        consecutive_puck_detections,
                     ) = do_reset_and_refresh(write_traj=False)
-                    if policy_gated_by_puck_absence:
-                        print("[puck-gate] waiting for puck to be detected before starting policy...")
+                    if policy_gated_by_puck_absence or waiting_for_first_detection:
+                        print(
+                            f"[puck-gate] waiting for {STARTUP_REQUIRED_CONSECUTIVE_DETECTIONS} "
+                            f"consecutive puck detections before starting policy..."
+                        )
                 else:
                     print(
                         f"Episode ended due to: {end_type} ({reason_str}). "
