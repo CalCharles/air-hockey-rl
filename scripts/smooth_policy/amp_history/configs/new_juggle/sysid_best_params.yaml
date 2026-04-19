@@ -10,6 +10,11 @@
 #         Chosen practical best: Kp=9000, Kd=50, density=3000 (render_best_config_all.py).
 #         Ki sweep: Ki=0 best for full-segment replay.
 #         See sysid/teleop/system_id3/grid_search_results_*/
+#
+# Walls:  side_wall_restitution set to 0.925 as an eye-balled system ID, closing
+#         part of the speed-ratio gap to the real table (~0.65) without
+#         meaningfully regressing the 5-frame post-collision position metric.
+#         See notes/docs/environments/real-world/wall-collision-system-id.md
 
 air_hockey:
   diagonal_motion_rew: 0.0
@@ -56,7 +61,7 @@ air_hockey:
     puck_damping: 0.178
     puck_density: 3000
     puck_restitution: 1.09145
-    side_wall_restitution: 0.99
+    side_wall_restitution: 0.925
     end_wall_restitution: 0.7
     puck_radius: 0.03175
     render_size: 360

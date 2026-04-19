@@ -47,7 +47,7 @@ air_hockey:
     puck_damping: 0.178
     puck_density: 3000
     puck_restitution: 1.09145
-    side_wall_restitution: 0.99
+    side_wall_restitution: 0.925
     end_wall_restitution: 0.7
     puck_radius: 0.03175
     render_size: 360

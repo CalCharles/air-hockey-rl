@@ -5,7 +5,7 @@ All are used with `scripts/smooth_policy/amp_history/amp_training/td3/td3_traini
 
 ## Recommended default — `td3_recommended.yaml`
 
-**New training runs should start from this config.** Distilled from the update-count, network-depth, and actor:Q-ratio ablations in [`td3-ablations-updates-and-depth.md`](td3-ablations-updates-and-depth.md).
+**New training runs should start from this config.** Distilled from the update-count, network-depth, and actor:Q-ratio ablations in [`td3-ablations-updates-and-depth.md`](td3-ablations-updates-and-depth.md) and the exploration sweep in [`td3-exploration-ablations.md`](td3-exploration-ablations.md).
 
 Key choices and why:
 
@@ -16,11 +16,15 @@ Key choices and why:
 | `q_updates` | **25** | Halving updates from (50, 12) to (25, 6) preserves the peak (max ≈ 157) with +13% throughput. Below 15 total updates/episode, learning starves. |
 | `actor_updates_per_iteration` | **6** | Holds actor:Q ratio ≈ 0.24, which clearly beats 0.07 / 0.48 / 2.10 on peak return (156 vs 129–141). |
 | `total_timesteps` | **1_000_000** | 1M converges well; peaks typically land between 500k–700k. |
-| `config` | `sysid_best_params.yaml` | Real-world-tuned physics. See [`environments/real-world/puck-system-id.md`](../environments/real-world/puck-system-id.md) and [`teleop-system-id.md`](../environments/real-world/teleop-system-id.md). |
+| `config` | **`sysid_best_params_hist4.yaml`** | Real-world-tuned physics **with `hist_len=4`** 4-timestep low-pass filter on the PID target (see `_filter_update` in `airhockey/sims/airhockey_box2d.py`). Base sysid values documented in [`puck-system-id.md`](../environments/real-world/puck-system-id.md) and [`teleop-system-id.md`](../environments/real-world/teleop-system-id.md). |
 | `enable_puck_delay_interpolation` | `true` | Matches the real-world puck-delay behavior our sysid was done against. |
+| `exploration_primitive_chance_pre_learning_starts` | **`null`** | E4 ablation: bootstrap forcing (`=1.0`) was actively harmful. Leaving it `null` falls back to the annealing schedule (`chance_start=0.15`) during pre-learning, gaining +15 pts ret@500k. |
+| `exploration_primitive_weight_policy_takeover` | **`0.0`** | E2 ablation: no external warmstart policy. Removes dependence on a demo checkpoint; marginal steady-state improvement at the cost of some early-learning speed. |
+| `exploration_primitive_weight_anneal_policy_takeover` | **`0.0`** | Same as above during the annealing phase. |
+| `exploration_policy_takeover_enabled` | **`false`** | No demo model loaded. |
 | `target_network_frequency` | 10 | Inherited from `td3_no_alignment.yaml`; not independently re-ablated. |
 
-All other fields (reward weights, PER, exploration primitives) are inherited from `td3_no_alignment.yaml` unchanged — the alignment reward terms are zero, motion terms use the standard values.
+All other fields (reward weights, PER, non-warmstart exploration primitives) are inherited from `td3_no_alignment.yaml` unchanged — the alignment reward terms are zero, motion terms use the standard values.
 
 Launch:
 
