@@ -103,6 +103,8 @@ def load_arch_settings_from_args_file(args_file_path):
         "agent_num_hidden_layers": None,
         "action_scale": None,
         "use_pid": None,
+        "hist_len": None,
+        "hist_len_source": None,
         "source": None,
     }
     if args_file_path is None:
@@ -128,6 +130,38 @@ def load_arch_settings_from_args_file(args_file_path):
         settings["action_scale"] = float(cfg["action_scale"])
     if isinstance(cfg.get("air_hockey"), dict) and "use_pid" in cfg["air_hockey"]:
         settings["use_pid"] = _coerce_bool(cfg["air_hockey"]["use_pid"])
+
+    # hist_len: the sim-side PID-target smoothing length. Preferred source is the
+    # frozen config.yaml next to args.yaml (authoritative snapshot of the sim
+    # config the policy was trained against). Fall back to the path referenced
+    # by args.yaml's `config:` key, which may have been edited after training.
+    def _extract_hist_len(yaml_path):
+        try:
+            with open(yaml_path, "r") as f:
+                doc = yaml.load(f, Loader=yaml.FullLoader)
+        except (OSError, yaml.YAMLError):
+            return None
+        if not isinstance(doc, dict):
+            return None
+        ah = doc.get("air_hockey") if isinstance(doc.get("air_hockey"), dict) else doc
+        if not isinstance(ah, dict):
+            return None
+        sp = ah.get("simulator_params")
+        if isinstance(sp, dict) and "hist_len" in sp:
+            return int(sp["hist_len"])
+        return None
+
+    frozen_cfg = os.path.join(os.path.dirname(args_file_path), "config.yaml")
+    if os.path.exists(frozen_cfg):
+        val = _extract_hist_len(frozen_cfg)
+        if val is not None:
+            settings["hist_len"] = val
+            settings["hist_len_source"] = frozen_cfg
+    if settings["hist_len"] is None and isinstance(cfg.get("config"), str):
+        val = _extract_hist_len(cfg["config"])
+        if val is not None:
+            settings["hist_len"] = val
+            settings["hist_len_source"] = cfg["config"]
     return settings
 
 
@@ -461,10 +495,12 @@ if __name__ == '__main__':
                              'Can be changed at runtime via number keys 1-5 (extreme_left=1, left=2, middle=3, right=4, extreme_right=5).')
 
     args = parser.parse_args()
-    
+
+    args_file_cfg = load_arch_settings_from_args_file(args.args_file)
+
     air_hockey_cfg = yaml.load(open(args.config_path, 'r'), Loader=yaml.FullLoader)
     air_hockey_params = air_hockey_cfg['air_hockey']
-    
+
     # processing to avoid bugs
     air_hockey_params['n_training_steps'] = air_hockey_cfg['n_training_steps']
 
@@ -481,7 +517,22 @@ if __name__ == '__main__':
 
     if args.save_path is not None:
         air_hockey_params_cp['simulator_params']['save_path'] = args.save_path
-    
+
+    sim_params = air_hockey_params_cp.setdefault('simulator_params', {})
+    if args_file_cfg["hist_len"] is not None:
+        if "hist_len" in sim_params:
+            print(
+                f"hist_len already set in rollout config ({sim_params['hist_len']}); "
+                f"ignoring training-config value {args_file_cfg['hist_len']} "
+                f"(source: {args_file_cfg['hist_len_source']})"
+            )
+        else:
+            sim_params["hist_len"] = int(args_file_cfg["hist_len"])
+            print(
+                f"Using hist_len={sim_params['hist_len']} from training config "
+                f"(source: {args_file_cfg['hist_len_source']})"
+            )
+
     eval_air_hockey_params = air_hockey_params_cp.copy()
     print("trajectory save path:", eval_air_hockey_params['simulator_params']['save_path'])
     
@@ -527,7 +578,6 @@ if __name__ == '__main__':
     loaded_obj = torch.load(args.model, map_location=device)
     policy_state_dict = unwrap_eval_state_dict(loaded_obj)
     model_cfg = load_model_settings_from_model_folder(args.model)
-    args_file_cfg = load_arch_settings_from_args_file(args.args_file)
     model_obs_dim, model_action_dim = infer_policy_dims_from_state_dict(policy_state_dict)
     checkpoint_hidden_size = int(policy_state_dict["actor_mean_head.weight"].shape[1])
     inferred_actor_blocks = infer_num_actor_blocks_from_state_dict(policy_state_dict)

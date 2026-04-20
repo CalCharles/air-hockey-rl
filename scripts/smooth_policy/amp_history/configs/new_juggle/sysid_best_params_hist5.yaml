@@ -46,7 +46,8 @@ air_hockey:
     gravity: -0.661
     puck_damping: 0.178
     puck_density: 3000
-    puck_restitution: 1.09145
+    puck_restitution: 0.87316
+    paddle_restitution: 0.8
     side_wall_restitution: 0.925
     end_wall_restitution: 0.7
     puck_radius: 0.03175
@@ -81,6 +82,16 @@ air_hockey:
     action_force_attenuation_prob: 0.30
     action_force_attenuation_min: 0.25
     action_force_attenuation_max: 0.75
+
+    # Per-collision randomization enabled for the hist×motion sweep.
+    # Paddle-puck: strength (magnitude multiplier) + direction (impulse rotation).
+    enable_paddle_puck_strength_randomization: true
+    paddle_puck_strength_range: [0.5, 1.0]
+    enable_paddle_puck_direction_randomization: true
+    paddle_puck_direction_cone_deg: 10.0
+    # Puck-wall: direction only (no wall strength knob by design).
+    enable_wall_direction_randomization: true
+    wall_direction_cone_deg: 10.0
 
   stand_still_rew: 0.0
   task: puck_juggle_upper_half_reward
