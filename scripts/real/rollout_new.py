@@ -17,152 +17,49 @@ import torch
 import argparse
 import yaml
 from types import SimpleNamespace
-from abc import ABC, abstractmethod
 import gymnasium as gym
 from airhockey import AirHockeyEnv
 import numpy as np
 from airhockey.airhockey_base import get_observation_by_type
 from airhockey.sims.real.multiprocessing import NonBlockingConsole
 
-from scripts.smooth_policy.agent import Agent as ResidualAgent
 from scripts.smooth_policy.deterministic_agent import DeterministicAgent
-from scripts.real.agent import Agent as LegacyMLPAgent
-
-def _coerce_bool(value):
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, np.integer)):
-        return bool(value)
-    if isinstance(value, str):
-        val = value.strip().lower()
-        if val in {"1", "true", "t", "yes", "y", "on"}:
-            return True
-        if val in {"0", "false", "f", "no", "n", "off"}:
-            return False
-    raise ValueError(f"Cannot coerce value '{value}' to bool.")
 
 
-def load_model_settings_from_model_folder(model_path):
+# Architecture fields sourced from the training args.yaml (td3_training.py convention).
+# These are the only fields this script consumes from the train-args file.
+TRAIN_ARGS_ARCHITECTURE_FIELDS = (
+    "agent_hidden_layer_size",
+    "agent_num_hidden_layers",
+    "action_scale",
+    "use_last_action_in_policy_state",
+)
+
+
+def load_train_args(train_args_path):
+    """Load architecture spec from a td3_training.py-style args.yaml.
+
+    Required keys: the fields in TRAIN_ARGS_ARCHITECTURE_FIELDS. Every other
+    field in the YAML is ignored.
     """
-    Read rollout-relevant settings from config files next to model checkpoint.
-    Priority:
-    1) args.yaml
-    2) config.yaml
-    """
-    model_dir = Path(model_path).resolve().parent
-    candidates = [model_dir / "args.yaml", model_dir / "config.yaml"]
-
-    settings = {
-        "use_last_action_in_policy_state": None,
-        "agent_hidden_layer_size": None,
-        "agent_num_hidden_layers": None,
-        "action_scale": None,
-        "use_pid": None,
-        "sources": {},
+    if not os.path.exists(train_args_path):
+        raise FileNotFoundError(f"--train-args file does not exist: {train_args_path}")
+    with open(train_args_path, "r") as f:
+        loaded = yaml.load(f, Loader=yaml.FullLoader)
+    if not isinstance(loaded, dict):
+        raise ValueError(f"Expected --train-args to contain a YAML mapping, got: {type(loaded)}")
+    missing = [k for k in TRAIN_ARGS_ARCHITECTURE_FIELDS if k not in loaded]
+    if missing:
+        raise KeyError(
+            f"--train-args file {train_args_path} is missing required fields: {missing}. "
+            f"Expected the canonical td3_training.py args.yaml field names."
+        )
+    return {
+        "agent_hidden_layer_size": int(loaded["agent_hidden_layer_size"]),
+        "agent_num_hidden_layers": int(loaded["agent_num_hidden_layers"]),
+        "action_scale": float(loaded["action_scale"]),
+        "use_last_action_in_policy_state": bool(loaded["use_last_action_in_policy_state"]),
     }
-
-    for p in candidates:
-        if not p.exists():
-            continue
-        with open(p, "r") as f:
-            cfg = yaml.load(f, Loader=yaml.FullLoader)
-        if not isinstance(cfg, dict):
-            continue
-
-        if settings["use_last_action_in_policy_state"] is None and "use_last_action_in_policy_state" in cfg:
-            settings["use_last_action_in_policy_state"] = _coerce_bool(cfg["use_last_action_in_policy_state"])
-            settings["sources"]["use_last_action_in_policy_state"] = str(p)
-
-        if settings["agent_hidden_layer_size"] is None:
-            if "agent_hidden_layer_size" in cfg:
-                settings["agent_hidden_layer_size"] = int(cfg["agent_hidden_layer_size"])
-                settings["sources"]["agent_hidden_layer_size"] = str(p)
-            elif "agent_hidden_size" in cfg:
-                settings["agent_hidden_layer_size"] = int(cfg["agent_hidden_size"])
-                settings["sources"]["agent_hidden_layer_size"] = str(p)
-
-        if settings["agent_num_hidden_layers"] is None and "agent_num_hidden_layers" in cfg:
-            settings["agent_num_hidden_layers"] = int(cfg["agent_num_hidden_layers"])
-            settings["sources"]["agent_num_hidden_layers"] = str(p)
-
-        if settings["action_scale"] is None and "action_scale" in cfg:
-            settings["action_scale"] = float(cfg["action_scale"])
-            settings["sources"]["action_scale"] = str(p)
-
-        if settings["use_pid"] is None and isinstance(cfg.get("air_hockey"), dict) and "use_pid" in cfg["air_hockey"]:
-            settings["use_pid"] = _coerce_bool(cfg["air_hockey"]["use_pid"])
-            settings["sources"]["use_pid"] = str(p)
-
-    return settings
-
-
-def load_arch_settings_from_args_file(args_file_path):
-    settings = {
-        "use_last_action_in_policy_state": None,
-        "agent_hidden_layer_size": None,
-        "agent_num_hidden_layers": None,
-        "action_scale": None,
-        "use_pid": None,
-        "hist_len": None,
-        "hist_len_source": None,
-        "source": None,
-    }
-    if args_file_path is None:
-        return settings
-    if not os.path.exists(args_file_path):
-        raise FileNotFoundError(f"Requested --args-file does not exist: {args_file_path}")
-
-    with open(args_file_path, "r") as f:
-        cfg = yaml.load(f, Loader=yaml.FullLoader)
-    if not isinstance(cfg, dict):
-        raise ValueError(f"Expected --args-file to contain a YAML mapping, got: {type(cfg)}")
-
-    settings["source"] = args_file_path
-    if "use_last_action_in_policy_state" in cfg:
-        settings["use_last_action_in_policy_state"] = _coerce_bool(cfg["use_last_action_in_policy_state"])
-    if "agent_hidden_layer_size" in cfg:
-        settings["agent_hidden_layer_size"] = int(cfg["agent_hidden_layer_size"])
-    elif "agent_hidden_size" in cfg:
-        settings["agent_hidden_layer_size"] = int(cfg["agent_hidden_size"])
-    if "agent_num_hidden_layers" in cfg:
-        settings["agent_num_hidden_layers"] = int(cfg["agent_num_hidden_layers"])
-    if "action_scale" in cfg:
-        settings["action_scale"] = float(cfg["action_scale"])
-    if isinstance(cfg.get("air_hockey"), dict) and "use_pid" in cfg["air_hockey"]:
-        settings["use_pid"] = _coerce_bool(cfg["air_hockey"]["use_pid"])
-
-    # hist_len: the sim-side PID-target smoothing length. Preferred source is the
-    # frozen config.yaml next to args.yaml (authoritative snapshot of the sim
-    # config the policy was trained against). Fall back to the path referenced
-    # by args.yaml's `config:` key, which may have been edited after training.
-    def _extract_hist_len(yaml_path):
-        try:
-            with open(yaml_path, "r") as f:
-                doc = yaml.load(f, Loader=yaml.FullLoader)
-        except (OSError, yaml.YAMLError):
-            return None
-        if not isinstance(doc, dict):
-            return None
-        ah = doc.get("air_hockey") if isinstance(doc.get("air_hockey"), dict) else doc
-        if not isinstance(ah, dict):
-            return None
-        sp = ah.get("simulator_params")
-        if isinstance(sp, dict) and "hist_len" in sp:
-            return int(sp["hist_len"])
-        return None
-
-    frozen_cfg = os.path.join(os.path.dirname(args_file_path), "config.yaml")
-    if os.path.exists(frozen_cfg):
-        val = _extract_hist_len(frozen_cfg)
-        if val is not None:
-            settings["hist_len"] = val
-            settings["hist_len_source"] = frozen_cfg
-    if settings["hist_len"] is None and isinstance(cfg.get("config"), str):
-        val = _extract_hist_len(cfg["config"])
-        if val is not None:
-            settings["hist_len"] = val
-            settings["hist_len_source"] = cfg["config"]
-    return settings
 
 
 def build_policy_env_view(policy_obs_dim, action_dim):
@@ -182,36 +79,6 @@ def build_policy_env_view(policy_obs_dim, action_dim):
     )
 
 
-def infer_policy_dims_from_state_dict(state_dict):
-    actor_input_dim = None
-    preferred_keys = (
-        "actor.0.weight",
-        "actor.blocks.0.units.0.0.weight",
-        "actor.blocks.0.skip_projection.weight",
-    )
-    for key in preferred_keys:
-        tensor = state_dict.get(key)
-        if torch.is_tensor(tensor) and tensor.ndim == 2:
-            actor_input_dim = int(tensor.shape[1])
-            break
-
-    if actor_input_dim is None:
-        actor_weight_shapes = []
-        for key, value in state_dict.items():
-            if key.startswith("actor.") and key.endswith(".weight") and torch.is_tensor(value) and value.ndim == 2:
-                actor_weight_shapes.append((int(value.shape[0]), int(value.shape[1])))
-        if not actor_weight_shapes:
-            raise ValueError("Unable to infer policy observation dimension from checkpoint actor weights.")
-        non_square_inputs = [in_dim for out_dim, in_dim in actor_weight_shapes if out_dim != in_dim]
-        if non_square_inputs:
-            actor_input_dim = max(non_square_inputs)
-        else:
-            actor_input_dim = min(in_dim for _, in_dim in actor_weight_shapes)
-
-    action_dim = int(state_dict["actor_mean_head.weight"].shape[0])
-    return actor_input_dim, action_dim
-
-
 def unwrap_eval_state_dict(loaded_obj):
     if not isinstance(loaded_obj, dict):
         raise TypeError(f"Expected checkpoint/state_dict to be a dict, got {type(loaded_obj)}")
@@ -229,169 +96,16 @@ def unwrap_eval_state_dict(loaded_obj):
     return candidate
 
 
-def infer_policy_class_from_state_dict(state_dict):
-    keys = set(state_dict.keys())
-    has_agent_only_keys = (
-        "actor_logstd" in keys
-        or "LOG_STD_MIN" in keys
-        or "LOG_STD_MAX" in keys
-        or "EPS" in keys
-        or any(key.startswith("critic.") for key in keys)
-        or "critic_head.weight" in keys
-    )
-    if has_agent_only_keys:
-        return "agent"
-
-    has_actor_keys = any(
-        key.startswith("actor.") or key.startswith("actor_mean_head.") for key in keys
-    )
-    if has_actor_keys:
-        return "deterministic_agent"
-
-    preview_keys = sorted(list(keys))[:10]
-    raise ValueError(
-        f"Unable to infer policy type from checkpoint keys. Example keys: {preview_keys}"
-    )
-
-
-def infer_agent_arch_variant_from_state_dict(state_dict):
-    keys = set(state_dict.keys())
-    if "actor.0.weight" in keys or "actor.2.weight" in keys:
-        return "legacy_mlp"
-    if any(key.startswith("actor.blocks.") for key in keys):
-        return "residual"
-    return "unknown"
-
-
-def infer_num_actor_blocks_from_state_dict(state_dict):
-    block_ids = set()
-    for key in state_dict.keys():
-        if not key.startswith("actor.blocks."):
-            continue
-        parts = key.split(".")
-        if len(parts) < 3:
-            continue
-        try:
-            block_ids.add(int(parts[2]))
-        except ValueError:
-            continue
-    return (max(block_ids) + 1) if block_ids else None
-
-
-def build_policy(
-    policy_type,
-    policy_env_view,
-    action_scale,
-    agent_hidden_layer_size,
-    agent_num_hidden_layers,
-    agent_arch_variant="residual",
-):
-    policy_builders = {
-        "agent": lambda: (
-            LegacyMLPAgent(
-                policy_env_view,
-                action_scale=action_scale,
-                action_bias=0.0,
-                hidden_size=agent_hidden_layer_size,
-            )
-            if agent_arch_variant == "legacy_mlp"
-            else ResidualAgent(
-                policy_env_view,
-                action_scale=action_scale,
-                action_bias=0.0,
-                hidden_layer_size=agent_hidden_layer_size,
-                num_hidden_layers=agent_num_hidden_layers,
-            )
-        ),
-        "deterministic_agent": lambda: DeterministicAgent(
-            policy_env_view,
-            action_scale=action_scale,
-            action_bias=0.0,
-            hidden_layer_size=agent_hidden_layer_size,
-            num_hidden_layers=agent_num_hidden_layers,
-        ),
-    }
-    if policy_type in policy_builders:
-        return policy_builders[policy_type]()
-    raise ValueError(f"Unsupported policy_type '{policy_type}'.")
-
-
-def deterministic_actor_action(actor, policy_obs):
-    if hasattr(actor, "get_action"):
-        return actor.get_action(policy_obs)
-    if callable(actor):
-        return actor(policy_obs)
-    raise TypeError(f"Unsupported actor type for action inference: {type(actor)}")
-
-
-class PolicyRunner(ABC):
-    def __init__(self, model):
-        self.model = model
-
-    @abstractmethod
-    def act(self, policy_obs):
-        raise NotImplementedError
-
-    def get_action_scale_tensor(self, reference_tensor):
-        scale = getattr(self.model, "action_scale", 1.0)
-        if not torch.is_tensor(scale):
-            scale = torch.tensor(scale, dtype=reference_tensor.dtype, device=reference_tensor.device)
-        else:
-            scale = scale.to(dtype=reference_tensor.dtype, device=reference_tensor.device)
-        if scale.ndim == 0:
-            scale = scale.reshape(1)
-        return scale
-
-    def normalize_for_env(self, action_tensor):
-        scale = self.get_action_scale_tensor(action_tensor)
-        scale = torch.where(scale == 0, torch.ones_like(scale), scale)
-        return action_tensor / scale
-
-    def action_scale_for_logging(self):
-        if hasattr(self.model, "action_scale"):
-            scale = self.model.action_scale
-            if torch.is_tensor(scale):
-                return float(scale.detach().cpu().item())
-            return float(scale)
-        return 1.0
-
-
-class StochasticAgentRunner(PolicyRunner):
-    def __init__(self, model, action_mode):
-        super().__init__(model)
-        self.action_mode = action_mode
-
-    def act(self, policy_obs):
-        if self.action_mode == "sample":
-            return self.model(policy_obs)
-        if self.action_mode == "deterministic":
-            return deterministic_actor_action(self.model, policy_obs)
-        if self.action_mode == "auto":
-            return self.model(policy_obs)
-        raise ValueError(f"Unsupported action_mode '{self.action_mode}'.")
-
-
-class DeterministicAgentRunner(PolicyRunner):
-    def __init__(self, model, action_mode):
-        super().__init__(model)
-        self.action_mode = action_mode
-
-    def act(self, policy_obs):
-        if self.action_mode == "sample":
-            raise ValueError("--action-mode sample is only valid for policy type 'agent'.")
-        if self.action_mode in {"deterministic", "auto"}:
-            return deterministic_actor_action(self.model, policy_obs)
-        raise ValueError(f"Unsupported action_mode '{self.action_mode}'.")
-
-
-def build_policy_runner(model, policy_type, action_mode):
-    runner_builders = {
-        "agent": lambda: StochasticAgentRunner(model=model, action_mode=action_mode),
-        "deterministic_agent": lambda: DeterministicAgentRunner(model=model, action_mode=action_mode),
-    }
-    if policy_type in runner_builders:
-        return runner_builders[policy_type]()
-    raise ValueError(f"Unsupported policy_type '{policy_type}'.")
+def normalize_action_for_env(action_tensor, action_scale):
+    """Rescale the actor's tanh*action_scale output back to the env's [-1, 1] space."""
+    if not torch.is_tensor(action_scale):
+        scale = torch.tensor(action_scale, dtype=action_tensor.dtype, device=action_tensor.device)
+    else:
+        scale = action_scale.to(dtype=action_tensor.dtype, device=action_tensor.device)
+    if scale.ndim == 0:
+        scale = scale.reshape(1)
+    scale = torch.where(scale == 0, torch.ones_like(scale), scale)
+    return action_tensor / scale
 
 
 def maybe_generate_gifs_for_saved_trajectory(
@@ -471,16 +185,10 @@ def maybe_generate_gifs_for_saved_trajectory(
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Rollout')
 
-    # optional arguments if use-parent-log-dir is False
-    parser.add_argument('--model', type=str, default="ex_model/model.pth", help='Path to the model to evaluate.')
-    parser.add_argument('--args-file', type=str, default=None, help='Optional args YAML (e.g. TD3/PPO args.yaml) to resolve architecture-related rollout settings.')
-    parser.add_argument('--config-path', type=str, default="configs/real_configs/rollout_config.yaml", help='Path to the config file.')
+    parser.add_argument('--model', type=str, required=True, help='Path to the model checkpoint (actor state_dict).')
+    parser.add_argument('--train-args', type=str, required=True, help='Training args YAML (td3_training.py args.yaml) describing the model architecture.')
+    parser.add_argument('--config-path', type=str, default="configs/real_configs/rollout_config.yaml", help='Path to the rollout (online) config file.')
     parser.add_argument('--save-path', type=str, default=None, help='Override trajectory save path (defaults to config value).')
-    parser.add_argument('--policy-type', type=str, choices=['auto', 'agent', 'deterministic_agent'], default='auto', help='Policy class to use. auto infers from checkpoint keys.')
-    parser.add_argument('--action-mode', type=str, choices=['auto', 'sample', 'deterministic'], default='auto', help='Action selection mode. auto=sample for Agent, deterministic for DeterministicAgent.')
-    parser.add_argument('--action-scale', type=float, default=None, help='Override action scale. If omitted, resolves from model config then defaults to 0.2.')
-    parser.add_argument('--agent-hidden-size', type=int, default=None, help='Override hidden layer size for policy network.')
-    parser.add_argument('--agent-num-hidden-layers', type=int, default=None, help='Override number of hidden residual blocks.')
     parser.add_argument('--device', type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help='torch device')
     parser.add_argument('--auto-gif', action='store_true', help='Generate GIF visualization(s) after each saved trajectory.')
     parser.add_argument('--gif-fps', type=int, default=20, help='GIF playback FPS used when --auto-gif is enabled.')
@@ -496,7 +204,18 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    args_file_cfg = load_arch_settings_from_args_file(args.args_file)
+    train_args = load_train_args(args.train_args)
+    agent_hidden_layer_size = train_args["agent_hidden_layer_size"]
+    agent_num_hidden_layers = train_args["agent_num_hidden_layers"]
+    action_scale = train_args["action_scale"]
+    use_last_action = train_args["use_last_action_in_policy_state"]
+    print(
+        f"[train-args] source={args.train_args} "
+        f"agent_hidden_layer_size={agent_hidden_layer_size} "
+        f"agent_num_hidden_layers={agent_num_hidden_layers} "
+        f"action_scale={action_scale} "
+        f"use_last_action_in_policy_state={use_last_action}"
+    )
 
     air_hockey_cfg = yaml.load(open(args.config_path, 'r'), Loader=yaml.FullLoader)
     air_hockey_params = air_hockey_cfg['air_hockey']
@@ -518,29 +237,14 @@ if __name__ == '__main__':
     if args.save_path is not None:
         air_hockey_params_cp['simulator_params']['save_path'] = args.save_path
 
-    sim_params = air_hockey_params_cp.setdefault('simulator_params', {})
-    if args_file_cfg["hist_len"] is not None:
-        if "hist_len" in sim_params:
-            print(
-                f"hist_len already set in rollout config ({sim_params['hist_len']}); "
-                f"ignoring training-config value {args_file_cfg['hist_len']} "
-                f"(source: {args_file_cfg['hist_len_source']})"
-            )
-        else:
-            sim_params["hist_len"] = int(args_file_cfg["hist_len"])
-            print(
-                f"Using hist_len={sim_params['hist_len']} from training config "
-                f"(source: {args_file_cfg['hist_len_source']})"
-            )
-
     eval_air_hockey_params = air_hockey_params_cp.copy()
     print("trajectory save path:", eval_air_hockey_params['simulator_params']['save_path'])
-    
+
     # Create environment factory function
     def make_eval_env():
         env = AirHockeyEnv(eval_air_hockey_params)
         return env
-    
+
     eval_env = make_eval_env()
 
     sim = eval_env.simulator
@@ -577,150 +281,29 @@ if __name__ == '__main__':
     device = torch.device(args.device)
     loaded_obj = torch.load(args.model, map_location=device)
     policy_state_dict = unwrap_eval_state_dict(loaded_obj)
-    model_cfg = load_model_settings_from_model_folder(args.model)
-    model_obs_dim, model_action_dim = infer_policy_dims_from_state_dict(policy_state_dict)
-    checkpoint_hidden_size = int(policy_state_dict["actor_mean_head.weight"].shape[1])
-    inferred_actor_blocks = infer_num_actor_blocks_from_state_dict(policy_state_dict)
 
-    if args.policy_type == "auto":
-        resolved_policy_type = infer_policy_class_from_state_dict(policy_state_dict)
-        print(f"Using inferred policy type: {resolved_policy_type}")
-    else:
-        resolved_policy_type = args.policy_type
-        print(f"Using policy type from CLI: {resolved_policy_type}")
-
-    agent_arch_variant = infer_agent_arch_variant_from_state_dict(policy_state_dict)
-    if resolved_policy_type == "agent":
-        print(f"Inferred agent architecture variant from checkpoint: {agent_arch_variant}")
-
-    if args.agent_hidden_size is not None:
-        agent_hidden_layer_size = int(args.agent_hidden_size)
-        print("Using agent_hidden_size from CLI:", agent_hidden_layer_size)
-    elif args_file_cfg["agent_hidden_layer_size"] is not None:
-        agent_hidden_layer_size = int(args_file_cfg["agent_hidden_layer_size"])
-        print(
-            "Using agent_hidden_layer_size from args file:",
-            agent_hidden_layer_size,
-            f"(source: {args_file_cfg['source']})",
-        )
-    elif model_cfg["agent_hidden_layer_size"] is not None:
-        agent_hidden_layer_size = int(model_cfg["agent_hidden_layer_size"])
-        print(
-            "Using agent_hidden_layer_size from model config:",
-            agent_hidden_layer_size,
-            f"(source: {model_cfg['sources'].get('agent_hidden_layer_size', 'unknown')})",
-        )
-    else:
-        agent_hidden_layer_size = 128
-        print("No agent_hidden_layer_size found; using default:", agent_hidden_layer_size)
-    if agent_hidden_layer_size != checkpoint_hidden_size:
-        print(
-            "Overriding hidden size to match checkpoint:",
-            checkpoint_hidden_size,
-            f"(requested {agent_hidden_layer_size})",
-        )
-        agent_hidden_layer_size = checkpoint_hidden_size
-
-    if args.agent_num_hidden_layers is not None:
-        agent_num_hidden_layers = int(args.agent_num_hidden_layers)
-        print("Using agent_num_hidden_layers from CLI:", agent_num_hidden_layers)
-    elif args_file_cfg["agent_num_hidden_layers"] is not None:
-        agent_num_hidden_layers = int(args_file_cfg["agent_num_hidden_layers"])
-        print(
-            "Using agent_num_hidden_layers from args file:",
-            agent_num_hidden_layers,
-            f"(source: {args_file_cfg['source']})",
-        )
-    elif model_cfg["agent_num_hidden_layers"] is not None:
-        agent_num_hidden_layers = int(model_cfg["agent_num_hidden_layers"])
-        print(
-            "Using agent_num_hidden_layers from model config:",
-            agent_num_hidden_layers,
-            f"(source: {model_cfg['sources'].get('agent_num_hidden_layers', 'unknown')})",
-        )
-    else:
-        agent_num_hidden_layers = 2
-        print("No agent_num_hidden_layers found; using default:", agent_num_hidden_layers)
-
-    if resolved_policy_type != "agent" or agent_arch_variant != "legacy_mlp":
-        if inferred_actor_blocks is not None and agent_num_hidden_layers != inferred_actor_blocks:
-            print(
-                "Overriding agent_num_hidden_layers to match checkpoint:",
-                inferred_actor_blocks,
-                f"(requested {agent_num_hidden_layers})",
-            )
-            agent_num_hidden_layers = inferred_actor_blocks
-
-    if args.action_scale is not None:
-        resolved_action_scale = float(args.action_scale)
-        print("Using action_scale from CLI:", resolved_action_scale)
-    elif args_file_cfg["use_pid"] is True:
-        resolved_action_scale = 1.0
-        print(
-            "Using PID-derived action_scale=1.0 from args file",
-            f"(source: {args_file_cfg['source']})",
-        )
-    elif args_file_cfg["action_scale"] is not None:
-        resolved_action_scale = float(args_file_cfg["action_scale"])
-        print(
-            "Using action_scale from args file:",
-            resolved_action_scale,
-            f"(source: {args_file_cfg['source']})",
-        )
-    elif model_cfg["use_pid"] is True:
-        resolved_action_scale = 1.0
-        print(
-            "Using PID-derived action_scale=1.0 from model config",
-            f"(source: {model_cfg['sources'].get('use_pid', 'unknown')})",
-        )
-    elif model_cfg["action_scale"] is not None:
-        resolved_action_scale = float(model_cfg["action_scale"])
-        print(
-            "Using action_scale from model config:",
-            resolved_action_scale,
-            f"(source: {model_cfg['sources'].get('action_scale', 'unknown')})",
-        )
-    else:
-        resolved_action_scale = 0.2
-        print("No action_scale found; using default:", resolved_action_scale)
-
-    policy_env_view = build_policy_env_view(policy_obs_dim=model_obs_dim, action_dim=model_action_dim)
-    policy_model = build_policy(
-        policy_type=resolved_policy_type,
-        policy_env_view=policy_env_view,
-        action_scale=resolved_action_scale,
-        agent_hidden_layer_size=agent_hidden_layer_size,
-        agent_num_hidden_layers=agent_num_hidden_layers,
-        agent_arch_variant=agent_arch_variant,
+    raw_obs_dim = int(np.prod(eval_env.single_observation_space.shape))
+    act_dim = int(np.prod(eval_env.single_action_space.shape))
+    policy_obs_dim = raw_obs_dim + act_dim if use_last_action else raw_obs_dim
+    policy_env_view = build_policy_env_view(policy_obs_dim=policy_obs_dim, action_dim=act_dim)
+    policy_model = DeterministicAgent(
+        policy_env_view,
+        action_scale=action_scale,
+        action_bias=0.0,
+        hidden_layer_size=agent_hidden_layer_size,
+        num_hidden_layers=agent_num_hidden_layers,
     )
-    policy_runner = build_policy_runner(
-        model=policy_model,
-        policy_type=resolved_policy_type,
-        action_mode=args.action_mode,
-    )
-    print(f"Using policy runner: {type(policy_runner).__name__}")
-    use_last_action = model_obs_dim > eval_env.single_observation_space.shape[0]
-    if args_file_cfg["use_last_action_in_policy_state"] is not None:
-        use_last_action = bool(args_file_cfg["use_last_action_in_policy_state"])
-        print(
-            "Using use_last_action_in_policy_state from args file:",
-            use_last_action,
-            f"(source: {args_file_cfg['source']})",
-        )
-    elif model_cfg["use_last_action_in_policy_state"] is not None:
-        use_last_action = bool(model_cfg["use_last_action_in_policy_state"])
-    last_action_for_policy = torch.zeros((1, model_action_dim), dtype=torch.float32, device=device)
-
     policy_model.load_state_dict(policy_state_dict)
     policy_model = policy_model.to(device=device)
     policy_model.eval()
+    last_action_for_policy = torch.zeros((1, act_dim), dtype=torch.float32, device=device)
 
-    print("model action scale: ", policy_runner.action_scale_for_logging())
-    # model.action_scale = torch.tensor(0.2) # manually scaling just for testing a model
-    
+    loaded_action_scale = float(policy_model.action_scale.detach().cpu().item())
+    print("model action scale: ", loaded_action_scale)
+
     state_dict = eval_env.simulator.get_current_state()
     obs_type = "history"
-    
+
     obs = get_observation_by_type(state_dict, obs_type=obs_type, puck_history=state_dict["pucks"][0]["history"], paddle_history=state_dict['paddles']['paddle_ego']['history'])
 
     def refresh_post_reset_state(last_action_tensor, gate_policy_until_puck=True):
@@ -946,7 +529,7 @@ if __name__ == '__main__':
                     policy_gated_by_puck_absence = False
 
             if policy_gated_by_puck_absence:
-                action = np.zeros(model_action_dim, dtype=np.float32)
+                action = np.zeros(act_dim, dtype=np.float32)
                 if use_last_action:
                     last_action_for_policy.zero_()
             else:
@@ -955,8 +538,8 @@ if __name__ == '__main__':
                 if use_last_action:
                     policy_obs = torch.cat([policy_obs, last_action_for_policy], dim=-1)
                 with torch.no_grad():
-                    action_tensor = policy_runner.act(policy_obs)
-                    env_action_tensor = policy_runner.normalize_for_env(action_tensor)
+                    action_tensor = policy_model.get_action(policy_obs)
+                    env_action_tensor = normalize_action_for_env(action_tensor, policy_model.action_scale)
                 if delay_counter < 10 and delay_counter >= 0:
                     env_action_tensor = env_action_tensor * 0.0
                 action = env_action_tensor.detach().cpu().numpy().squeeze()
@@ -1012,7 +595,3 @@ if __name__ == '__main__':
                         "1-5 to save and reset to a different position "
                         "(1=extreme_left, 2=left, 3=middle, 4=right, 5=extreme_right), or 'x' to end."
                     )
-
-
-
-

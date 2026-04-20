@@ -239,6 +239,7 @@ def _coerce_float_list(values: object, *, max_items: int | None = None) -> list[
 def _build_async_training_state(
     *,
     args: Args,
+    train_args: TrainArgs,
     replay: SharedTD3Replay,
     actor,
     actor_target,
@@ -290,7 +291,7 @@ def _build_async_training_state(
                 "rolling50_episode_length_values": list(rolling50_episode_length_values),
                 "rolling50_estop_episode_flags": list(rolling50_estop_episode_flags),
                 # Metadata only; runtime args always come from external CLI/args_file.
-                "args": asdict(args),
+                "args": {**asdict(args), **asdict(train_args)},
             }
         )
     return payload
@@ -301,6 +302,7 @@ def _save_async_checkpoint(
     checkpoint_root: Path,
     checkpoint_tag: str,
     args: Args,
+    train_args: TrainArgs,
     replay: SharedTD3Replay,
     actor,
     actor_target,
@@ -325,8 +327,10 @@ def _save_async_checkpoint(
     except Exception as exc:
         print(f"[learner_checkpoint] failed to save config.yaml: {exc}")
     try:
+        # Merge TrainArgs into args.yaml so the saved file is itself a valid
+        # --train-args source for downstream rollouts.
         with open(checkpoint_dir / "args.yaml", "w") as f:
-            yaml.dump(asdict(args), f)
+            yaml.dump({**asdict(args), **asdict(train_args)}, f)
     except Exception as exc:
         print(f"[learner_checkpoint] failed to save args.yaml: {exc}")
     torch.save(actor.state_dict(), checkpoint_dir / "model.pth")
@@ -337,6 +341,7 @@ def _save_async_checkpoint(
     torch.save(qf2_target.state_dict(), checkpoint_dir / "qf2_target.pth")
     training_state = _build_async_training_state(
         args=args,
+        train_args=train_args,
         replay=replay,
         actor=actor,
         actor_target=actor_target,
@@ -380,11 +385,13 @@ def _save_checkpoint_from_learner_state(
     stats: Dict[str, object],
     checkpoint_tag: str,
     args: Args,
+    train_args: TrainArgs,
 ) -> Path:
     return _save_async_checkpoint(
         checkpoint_root=state.checkpoint_root,
         checkpoint_tag=checkpoint_tag,
         args=args,
+        train_args=train_args,
         replay=replay,
         actor=state.actor,
         actor_target=state.actor_target,
@@ -402,7 +409,62 @@ def _save_checkpoint_from_learner_state(
 
 
 @dataclass
+class TrainArgs:
+    """Architecture spec sourced from a td3_training.py-style args.yaml.
+
+    These six fields describe the actor/critic network shape and policy-state
+    contract used during training. They must be read from the training run's
+    args.yaml — NOT from the online `--args-file` or CLI — so the rebuilt
+    actor/critic layers match the saved checkpoint exactly.
+    """
+
+    action_scale: float
+    agent_hidden_layer_size: int
+    agent_num_hidden_layers: int
+    q_hidden_layer_size: int
+    q_num_hidden_layers: int
+    use_last_action_in_policy_state: bool
+
+
+TRAIN_ARGS_FIELD_NAMES: Tuple[str, ...] = tuple(f.name for f in fields(TrainArgs))
+
+
+def _load_train_args(train_args_path: str) -> TrainArgs:
+    """Load architecture fields from a td3_training.py-style args.yaml.
+
+    Only canonical field names are accepted; deprecated aliases
+    (`agent_hidden_size`, `q_hidden_size`, ...) are not remapped.
+    Extra keys in the file are ignored.
+    """
+    if not os.path.exists(train_args_path):
+        raise FileNotFoundError(f"--train-args file does not exist: {train_args_path}")
+    with open(train_args_path, "r") as f:
+        loaded = yaml.load(f, Loader=yaml.FullLoader)
+    if not isinstance(loaded, dict):
+        raise ValueError(
+            f"Expected --train-args to contain a YAML mapping, got: {type(loaded)}"
+        )
+    missing = [name for name in TRAIN_ARGS_FIELD_NAMES if name not in loaded]
+    if missing:
+        raise KeyError(
+            f"--train-args file {train_args_path} is missing required fields: {missing}. "
+            f"Expected canonical td3_training.py args.yaml field names."
+        )
+    return TrainArgs(
+        action_scale=float(loaded["action_scale"]),
+        agent_hidden_layer_size=int(loaded["agent_hidden_layer_size"]),
+        agent_num_hidden_layers=int(loaded["agent_num_hidden_layers"]),
+        q_hidden_layer_size=int(loaded["q_hidden_layer_size"]),
+        q_num_hidden_layers=int(loaded["q_num_hidden_layers"]),
+        use_last_action_in_policy_state=bool(loaded["use_last_action_in_policy_state"]),
+    )
+
+
+@dataclass
 class Args:
+    # Required: training args.yaml (architecture source; see TrainArgs).
+    train_args: str | None = None
+    # Optional: online-behavior defaults YAML (e.g. td3_online.yaml).
     args_file: str | None = None
     config: str = "configs/real_configs/rollout_config.yaml"
     model_path: str | None = None
@@ -448,14 +510,6 @@ class Args:
     jerk_at_zero: float = 23.0
     critic_success_sample_fraction: float = 0.3
     critic_failure_sample_fraction: float = 0.7
-
-    # Actor/critic architecture
-    action_scale: float = 0.02
-    agent_hidden_layer_size: int = 64
-    agent_num_hidden_layers: int = 2
-    q_hidden_layer_size: int = 128
-    q_num_hidden_layers: int = 2
-    use_last_action_in_policy_state: bool = False
 
     # Collector behavior
     exploration_noise: float = 0.1
@@ -537,6 +591,13 @@ class Args:
 def _build_args_file_defaults(
     args_file_path: str,
 ) -> tuple[dict, list[str], list[str]]:
+    """Load defaults from a td3_training.py-style args.yaml.
+
+    Only canonical Args field names are accepted; any other keys in the YAML
+    are returned as `ignored_source_keys` and not applied. Deprecated legacy
+    aliases (e.g. `agent_hidden_size`, `q_hidden_size`, `learning_starts`,
+    `device`) are intentionally NOT remapped — use the canonical names.
+    """
     with open(args_file_path, "r") as f:
         loaded_yaml = yaml.load(f, Loader=yaml.FullLoader)
     if loaded_yaml is None:
@@ -545,35 +606,16 @@ def _build_args_file_defaults(
         raise ValueError(f"Expected args_file YAML to be a mapping, got {type(loaded_yaml)}")
 
     valid_async_keys = {field.name for field in fields(Args)}
-    legacy_alias_key_map = {
-        "learning_starts": "min_replay_size_before_learning",
-        "device": "learner_device",
-        "agent_hidden_size": "agent_hidden_layer_size",
-        "q_hidden_size": "q_hidden_layer_size",
-    }
     mapped_defaults: dict = {}
     applied_source_keys: list[str] = []
     ignored_source_keys: list[str] = []
 
-    # First pass: apply all canonical async Args keys directly.
     for source_key, source_value in loaded_yaml.items():
         if source_key in valid_async_keys:
             mapped_defaults[source_key] = source_value
             applied_source_keys.append(source_key)
-        elif source_key not in legacy_alias_key_map:
+        else:
             ignored_source_keys.append(source_key)
-
-    # Second pass: apply legacy aliases only when canonical key is absent.
-    for source_key, target_key in legacy_alias_key_map.items():
-        if source_key not in loaded_yaml:
-            continue
-        if target_key in loaded_yaml:
-            continue
-        source_value = loaded_yaml[source_key]
-        if source_value is None:
-            continue
-        mapped_defaults[target_key] = source_value
-        applied_source_keys.append(source_key)
 
     return mapped_defaults, sorted(applied_source_keys), sorted(ignored_source_keys)
 
@@ -1252,6 +1294,7 @@ def _simulator_step_readiness(env: AirHockeyEnv) -> tuple[bool, str]:
 
 def collector_process(
     args: Args,
+    train_args: TrainArgs,
     replay: SharedTD3Replay,
     stats: Dict[str, object],
     learner_state: LearnerRuntimeState,
@@ -1288,14 +1331,14 @@ def collector_process(
             latency_output_dir = Path(tb_log_dir).resolve().parent / "latency_profiles"
         latency_output_dir.mkdir(parents=True, exist_ok=True)
 
-    policy_obs_dim = obs_dim + act_dim if args.use_last_action_in_policy_state else obs_dim
+    policy_obs_dim = obs_dim + act_dim if train_args.use_last_action_in_policy_state else obs_dim
     policy_env_view = build_policy_env_view(policy_obs_dim, act_dim)
     actor = DeterministicAgent(
         policy_env_view,
-        action_scale=args.action_scale,
+        action_scale=train_args.action_scale,
         action_bias=0.0,
-        hidden_layer_size=args.agent_hidden_layer_size,
-        num_hidden_layers=args.agent_num_hidden_layers,
+        hidden_layer_size=train_args.agent_hidden_layer_size,
+        num_hidden_layers=train_args.agent_num_hidden_layers,
     ).to(device)
     actor.eval()
 
@@ -1377,7 +1420,7 @@ def collector_process(
         transition_hold_steps_remaining = max(int(transition_hold_steps_remaining), hold_steps)
         _reset_primitive_rollout_state(primitive_selector)
         _, previous_puck_position_for_primitive, _ = _extract_primitive_state_tensors(env, device=device)
-        if args.use_last_action_in_policy_state:
+        if train_args.use_last_action_in_policy_state:
             if transition_last_action_mode == "zero":
                 last_action_for_policy.zero_()
             elif transition_last_action_mode == "executed":
@@ -1567,7 +1610,7 @@ def collector_process(
         policy_obs = augment_policy_observation(
             obs_tensor,
             last_action_for_policy,
-            args.use_last_action_in_policy_state,
+            train_args.use_last_action_in_policy_state,
         )
         model_inference_ms = 0.0
         primitive_step_stats = {
@@ -1718,7 +1761,7 @@ def collector_process(
         previous_puck_position_for_primitive = _extract_primitive_state_tensors(env, device=device)[1]
         primitive_selector.reset(torch.tensor([dones], dtype=torch.bool, device=device))
 
-        if args.use_last_action_in_policy_state:
+        if train_args.use_last_action_in_policy_state:
             if not (transition_hold_active and transition_last_action_mode == "keep"):
                 last_action_for_policy = last_executed_action.clone()
         obs = next_obs
@@ -1830,6 +1873,7 @@ def collector_process(
             )
             actor_updated = _run_sync_learner_iteration(
                 args=args,
+                train_args=train_args,
                 replay=replay,
                 stats=stats,
                 state=learner_state,
@@ -2476,6 +2520,7 @@ def _make_qf(
 
 def _init_sync_learner_state(
     args: Args,
+    train_args: TrainArgs,
     replay: SharedTD3Replay,
     stats: Dict[str, object],
     obs_dim: int,
@@ -2489,49 +2534,49 @@ def _init_sync_learner_state(
     device = torch.device(args.learner_device)
     writer = SummaryWriter(tb_log_dir)
 
-    policy_obs_dim = obs_dim + act_dim if args.use_last_action_in_policy_state else obs_dim
+    policy_obs_dim = obs_dim + act_dim if train_args.use_last_action_in_policy_state else obs_dim
     policy_env_view = build_policy_env_view(policy_obs_dim, act_dim)
     actor = DeterministicAgent(
         policy_env_view,
-        action_scale=args.action_scale,
+        action_scale=train_args.action_scale,
         action_bias=0.0,
-        hidden_layer_size=args.agent_hidden_layer_size,
-        num_hidden_layers=args.agent_num_hidden_layers,
+        hidden_layer_size=train_args.agent_hidden_layer_size,
+        num_hidden_layers=train_args.agent_num_hidden_layers,
     ).to(device)
     actor_target = DeterministicAgent(
         policy_env_view,
-        action_scale=args.action_scale,
+        action_scale=train_args.action_scale,
         action_bias=0.0,
-        hidden_layer_size=args.agent_hidden_layer_size,
-        num_hidden_layers=args.agent_num_hidden_layers,
+        hidden_layer_size=train_args.agent_hidden_layer_size,
+        num_hidden_layers=train_args.agent_num_hidden_layers,
     ).to(device)
     actor_target.load_state_dict(actor.state_dict())
     qf1 = _make_qf(
         obs_dim,
         act_dim,
-        args.q_hidden_layer_size,
-        args.q_num_hidden_layers,
+        train_args.q_hidden_layer_size,
+        train_args.q_num_hidden_layers,
         device,
     )
     qf2 = _make_qf(
         obs_dim,
         act_dim,
-        args.q_hidden_layer_size,
-        args.q_num_hidden_layers,
+        train_args.q_hidden_layer_size,
+        train_args.q_num_hidden_layers,
         device,
     )
     qf1_target = _make_qf(
         obs_dim,
         act_dim,
-        args.q_hidden_layer_size,
-        args.q_num_hidden_layers,
+        train_args.q_hidden_layer_size,
+        train_args.q_num_hidden_layers,
         device,
     )
     qf2_target = _make_qf(
         obs_dim,
         act_dim,
-        args.q_hidden_layer_size,
-        args.q_num_hidden_layers,
+        train_args.q_hidden_layer_size,
+        train_args.q_num_hidden_layers,
         device,
     )
     qf1_target.load_state_dict(qf1.state_dict())
@@ -2602,6 +2647,7 @@ def _init_sync_learner_state(
 
 def _run_sync_learner_iteration(
     args: Args,
+    train_args: TrainArgs,
     replay: SharedTD3Replay,
     stats: Dict[str, object],
     state: LearnerRuntimeState,
@@ -2620,6 +2666,7 @@ def _run_sync_learner_iteration(
                 stats=stats,
                 checkpoint_tag=checkpoint_tag,
                 args=args,
+                train_args=train_args,
             )
             stats["last_checkpoint_dir"] = str(checkpoint_dir)
             stats["last_checkpoint_success_episode_count"] = float(successful_kept)
@@ -2658,7 +2705,7 @@ def _run_sync_learner_iteration(
         sampled_next_policy_observations = augment_policy_observation(
             sampled_next_observations,
             sampled_next_prev_actions,
-            args.use_last_action_in_policy_state,
+            train_args.use_last_action_in_policy_state,
         )
         with torch.no_grad():
             target_next_action = deterministic_actor_action(state.actor_target, sampled_next_policy_observations)
@@ -2764,7 +2811,7 @@ def _run_sync_learner_iteration(
         actor_policy_obs = augment_policy_observation(
             actor_obs,
             actor_prev_actions,
-            args.use_last_action_in_policy_state,
+            train_args.use_last_action_in_policy_state,
         )
         policy_actions = deterministic_actor_action(state.actor, actor_policy_obs)
         q1_task_h, q1_motion_h = state.qf1(actor_obs, policy_actions)
@@ -2858,6 +2905,7 @@ def _setup_run_data_dir(args: Args, run_note: str) -> Path:
 
 def _finalize_sync_learner_state(
     args: Args,
+    train_args: TrainArgs,
     replay: SharedTD3Replay,
     stats: Dict[str, object],
     state: LearnerRuntimeState,
@@ -2871,6 +2919,7 @@ def _finalize_sync_learner_state(
                 stats=stats,
                 checkpoint_tag=final_tag,
                 args=args,
+                train_args=train_args,
             )
             stats["last_checkpoint_dir"] = str(final_checkpoint_dir)
             stats["last_checkpoint_q_updates"] = float(state.total_updates)
@@ -2878,7 +2927,7 @@ def _finalize_sync_learner_state(
         except Exception:
             print(f"[learner_checkpoint] final save FAILED:\n{traceback.format_exc()}")
     state.writer.close()
-def main(args: Args) -> None:
+def main(args: Args, train_args: TrainArgs) -> None:
     if not (0.0 < args.success_top_fraction < 1.0):
         raise ValueError("success_top_fraction must be in (0, 1).")
     if args.q_updates <= 0:
@@ -3027,6 +3076,7 @@ def main(args: Args) -> None:
 
     learner_state = _init_sync_learner_state(
         args=args,
+        train_args=train_args,
         replay=replay,
         stats=stats,
         obs_dim=obs_dim,
@@ -3038,6 +3088,7 @@ def main(args: Args) -> None:
     try:
         collector_process(
             args,
+            train_args,
             replay,
             stats,
             learner_state,
@@ -3052,6 +3103,7 @@ def main(args: Args) -> None:
     finally:
         _finalize_sync_learner_state(
             args=args,
+            train_args=train_args,
             replay=replay,
             stats=stats,
             state=learner_state,
@@ -3061,22 +3113,44 @@ def main(args: Args) -> None:
 
 if __name__ == "__main__":
     temp_args = tyro.cli(Args)
-    if temp_args.args_file is not None:
-        mapped_defaults, applied_keys, ignored_keys = _build_args_file_defaults(temp_args.args_file)
-        default_args = Args(**mapped_defaults)
-    else:
-        mapped_defaults, applied_keys, ignored_keys = {}, [], []
-        default_args = Args()
+    if temp_args.train_args is None:
+        raise SystemExit(
+            "async_td3_real.py requires --train-args pointing to the training run's "
+            "args.yaml (produced by td3_training.py). It supplies the actor/critic "
+            "architecture and use_last_action_in_policy_state flag that must match "
+            "the saved checkpoint."
+        )
+    if temp_args.args_file is None:
+        raise SystemExit(
+            "async_td3_real.py requires --args-file pointing to an online-behavior "
+            "YAML (e.g. td3_online.yaml). Architecture comes from --train-args; this "
+            "file supplies online training/collection defaults only."
+        )
+    train_args = _load_train_args(temp_args.train_args)
+    mapped_defaults, applied_keys, ignored_keys = _build_args_file_defaults(temp_args.args_file)
+    # Carry the CLI-provided paths through so the final Args records which files were used.
+    mapped_defaults["args_file"] = temp_args.args_file
+    mapped_defaults["train_args"] = temp_args.train_args
+    default_args = Args(**mapped_defaults)
 
     args = tyro.cli(Args, default=default_args)
-    if args.args_file is not None:
-        print(f"[args_file] loaded defaults from: {args.args_file}")
-        if applied_keys:
-            print("[args_file] applied keys:", ", ".join(applied_keys))
-        else:
-            print("[args_file] applied keys: none")
-        if ignored_keys:
-            print("[args_file] ignored unsupported keys:", ", ".join(ignored_keys))
+    print(f"[train_args] loaded architecture from: {args.train_args}")
+    print(
+        f"[train_args] "
+        f"action_scale={train_args.action_scale} "
+        f"agent_hidden_layer_size={train_args.agent_hidden_layer_size} "
+        f"agent_num_hidden_layers={train_args.agent_num_hidden_layers} "
+        f"q_hidden_layer_size={train_args.q_hidden_layer_size} "
+        f"q_num_hidden_layers={train_args.q_num_hidden_layers} "
+        f"use_last_action_in_policy_state={train_args.use_last_action_in_policy_state}"
+    )
+    print(f"[args_file] loaded defaults from: {args.args_file}")
+    if applied_keys:
+        print("[args_file] applied keys:", ", ".join(applied_keys))
+    else:
+        print("[args_file] applied keys: none")
+    if ignored_keys:
+        print("[args_file] ignored unsupported keys:", ", ".join(ignored_keys))
     run_note = _prompt_optional_run_note()
     _setup_run_data_dir(args, run_note)
-    main(args)
+    main(args, train_args)

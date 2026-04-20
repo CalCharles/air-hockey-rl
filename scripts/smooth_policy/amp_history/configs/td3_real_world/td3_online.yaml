@@ -7,7 +7,7 @@ task_gamma: 0.985
 motion_gamma: 0.85
 tau: 0.005
 batch_size: 512
-learning_starts: 0
+min_replay_size_before_learning: 0
 policy_lr: 0.00005 # lower learning rate for online training
 q_lr: 0.0001
 q_weight_decay: 0.0001
@@ -105,7 +105,7 @@ log_parent_dir: "runs/td3_training/pid/standard"
 run_name: "td3_standard"
 
 # Runtime
-device: "cuda:0"
+learner_device: "cuda:0"
 seed: 0
 action_scale: 1.0
 h_transform_eps: 0.001

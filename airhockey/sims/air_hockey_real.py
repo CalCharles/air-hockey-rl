@@ -429,18 +429,6 @@ class AirHockeyReal:
             "antiglare_min_y_px": config.antiglare_min_y_px,
             "antiglare_max_y_px": config.antiglare_max_y_px,
             "center_offset_constant": self.center_offset_constant,
-            # Field-containment validator (see image_detection._validated_detection).
-            # Bounds are in policy frame (post center-offset shift): puck x ∈ ±length/2,
-            # puck y ∈ ±width/2. Rejections surface as occluded=1 → picked up by the
-            # puck-absence gate in rollout_new.py.
-            "validate_field_containment": True,
-            "field_x_min": -self.length / 2.0,
-            "field_x_max":  self.length / 2.0,
-            "field_y_min": -self.width / 2.0,
-            "field_y_max":  self.width / 2.0,
-            "validator_puck_radius": self.puck_radius,
-            "containment_slack_m": 0.005,
-            "validator_debug": False,
         }
         self.image_path = config.image_path
         self.save_path = config.save_path

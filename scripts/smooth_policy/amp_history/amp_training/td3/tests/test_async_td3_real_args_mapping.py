@@ -100,42 +100,80 @@ class AsyncTd3ArgsFileMappingTests(unittest.TestCase):
         self.assertIn("exploration_primitive_chance_start", applied)
         self.assertEqual(ignored, [])
 
-    def test_legacy_alias_applies_when_canonical_absent(self) -> None:
+    def test_deprecated_aliases_are_ignored_not_remapped(self) -> None:
+        # Legacy alias fields from older async_td3_real versions (and td3_training.py's
+        # deprecated `*_hidden_size` / `learning_starts` / `device` names) must NOT be
+        # auto-remapped to their canonical equivalents. They land in `ignored` and the
+        # user is expected to rename them in their args.yaml.
         path = self._write_yaml(
             """
             learning_starts: 1234
+            device: "cuda:0"
+            agent_hidden_size: 128
+            q_hidden_size: 256
             """
         )
 
         mapped, applied, ignored = _build_args_file_defaults(path)
 
+        self.assertNotIn("min_replay_size_before_learning", mapped)
+        self.assertNotIn("learner_device", mapped)
+        self.assertNotIn("agent_hidden_layer_size", mapped)
+        self.assertNotIn("q_hidden_layer_size", mapped)
+        self.assertEqual(applied, [])
+        self.assertIn("learning_starts", ignored)
+        self.assertIn("device", ignored)
+        self.assertIn("agent_hidden_size", ignored)
+        self.assertIn("q_hidden_size", ignored)
+
+    def test_canonical_online_keys_are_applied(self) -> None:
+        # Online behavior fields still live on Args, so they flow from --args-file.
+        path = self._write_yaml(
+            """
+            learner_device: "cuda:0"
+            min_replay_size_before_learning: 1234
+            """
+        )
+
+        mapped, applied, ignored = _build_args_file_defaults(path)
+
+        self.assertEqual(mapped["learner_device"], "cuda:0")
         self.assertEqual(mapped["min_replay_size_before_learning"], 1234)
-        self.assertIn("learning_starts", applied)
         self.assertEqual(ignored, [])
 
-    def test_canonical_value_wins_and_null_alias_is_ignored(self) -> None:
+    def test_architecture_keys_in_args_file_are_ignored(self) -> None:
+        # Architecture fields now live on TrainArgs (sourced from --train-args);
+        # if they appear in the --args-file YAML they must be ignored so they
+        # cannot accidentally override the TrainArgs values.
         path = self._write_yaml(
             """
             agent_hidden_layer_size: 128
-            agent_hidden_size: null
+            agent_num_hidden_layers: 3
             q_hidden_layer_size: 256
-            q_hidden_size: 64
+            q_num_hidden_layers: 3
+            action_scale: 0.5
+            use_last_action_in_policy_state: true
             """
         )
 
         mapped, applied, ignored = _build_args_file_defaults(path)
 
-        self.assertEqual(mapped["agent_hidden_layer_size"], 128)
-        self.assertEqual(mapped["q_hidden_layer_size"], 256)
-        self.assertNotIn("agent_hidden_size", applied)
-        self.assertNotIn("q_hidden_size", applied)
-        self.assertEqual(ignored, [])
+        self.assertEqual(mapped, {})
+        self.assertEqual(applied, [])
+        for field_name in (
+            "agent_hidden_layer_size",
+            "agent_num_hidden_layers",
+            "q_hidden_layer_size",
+            "q_num_hidden_layers",
+            "action_scale",
+            "use_last_action_in_policy_state",
+        ):
+            self.assertIn(field_name, ignored)
 
     def test_unsupported_keys_are_reported(self) -> None:
         path = self._write_yaml(
             """
             totally_unknown_key: 42
-            device: "cuda:0"
             exploration_primitive_chance_pre_learning_starts: 0.5
             exploration_primitive_weight_anneal_same_direction: 1.0
             exploration_policy_takeover_enabled: true
@@ -145,8 +183,6 @@ class AsyncTd3ArgsFileMappingTests(unittest.TestCase):
 
         mapped, applied, ignored = _build_args_file_defaults(path)
 
-        self.assertEqual(mapped["learner_device"], "cuda:0")
-        self.assertIn("device", applied)
         self.assertIn("totally_unknown_key", ignored)
         self.assertIn("exploration_primitive_chance_pre_learning_starts", ignored)
         self.assertIn("exploration_primitive_weight_anneal_same_direction", ignored)

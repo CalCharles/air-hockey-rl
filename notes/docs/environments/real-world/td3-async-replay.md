@@ -61,7 +61,12 @@ Current code stores **only** `dones`, with the **critic** semantics above (same 
 
 ## Launch commands
 
-All three variants invoke the same entrypoint and respect `--args-file` (typically [`td3_online.yaml`](../../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml)); CLI flags override. Mirrored in the top-level [README](../../../../README.md) under "TD3 Real-World Commands".
+All three variants invoke the same entrypoint and require two YAML files:
+
+- `--train-args <train_run>/args.yaml` — training-run args.yaml. Supplies architecture only (`agent_hidden_layer_size`, `agent_num_hidden_layers`, `q_hidden_layer_size`, `q_num_hidden_layers`, `action_scale`, `use_last_action_in_policy_state`). Not CLI-overridable.
+- `--args-file` — online-behavior defaults (typically [`td3_online.yaml`](../../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml)). CLI flags override. Only canonical field names are accepted (legacy aliases `agent_hidden_size`, `q_hidden_size`, `learning_starts`, `device` are no longer remapped). Architecture fields in this file are ignored.
+
+Mirrored in the top-level [README](../../../../README.md) under "TD3 Real-World Commands".
 
 ### Eval only (run policy, no training, no checkpointing)
 
@@ -69,6 +74,7 @@ All three variants invoke the same entrypoint and respect `--args-file` (typical
 python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
   --config configs/real_configs/rollout_td3_config.yaml \
   --model-path ex_model/new_td3_model/checkpoint_325000/training_state.pth \
+  --train-args ex_model/new_td3_model/checkpoint_325000/args.yaml \
   --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml \
   --collector-device cpu \
   --learner-device cuda:0 \
@@ -89,6 +95,7 @@ python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_re
 python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
   --config configs/real_configs/rollout_td3_config.yaml \
   --model-path ex_model/td3_model/checkpoint_1515000/training_state.pth \
+  --train-args ex_model/td3_model/checkpoint_1515000/args.yaml \
   --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml \
   --collector-device cpu \
   --learner-device cuda:0 \
@@ -105,6 +112,7 @@ Learning behaviour comes from `td3_online.yaml`: `learning_starts: 0`, `q_update
 python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
   --config configs/real_configs/rollout_td3_config.yaml \
   --model-path real_runs/checkpoints/default/checkpoint_successeps_100_qupdates_1517000/training_state.pth \
+  --train-args real_runs/checkpoints/default/checkpoint_successeps_100_qupdates_1517000/args.yaml \
   --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml \
   --collector-device cpu \
   --learner-device cuda:0 \

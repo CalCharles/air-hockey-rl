@@ -85,7 +85,7 @@ Running
 python scripts/real/rollout_new.py \
     --config-path configs/real_configs/rollout_td3_config.yaml \
     --model <ckpt>/training_state.pth \
-    --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml \
+    --train-args <train_run_dir>/args.yaml \
     ...
 ```
 
