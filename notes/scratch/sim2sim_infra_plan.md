@@ -24,9 +24,16 @@ infrastructure" (or similar), start here.
   `load_mode: residual` branch land (see `residual_rl_plan.md`).
 
 **Still TODO (left for next sessions):**
-- Run an FT campaign (`full_ft` + `from_scratch` ≥2 seeds each) on the
-  `hist2_motion0_to_combined` target so the comparison aggregator can be
-  exercised end-to-end. `residual` is still blocked on `residual_rl_plan.md`.
+- **Best-of-eval-checkpoint tracker** in `td3_training.py`. The
+  `hist2_motion0_to_combined` FT campaign (2026-04-25) showed that both
+  residual and full_ft drift past their peak — final-step `model.pth` is
+  unsafe to use as the campaign result. Currently we eval each
+  `checkpoint_<N>/model.pth` by hand via `sim2sim_eval.py`. Better: have the
+  trainer hold out a small deterministic eval and write `best_model.pth`
+  whenever a new high is hit.
+- **Multi-seed verification** at the chosen peak step (50k residual, 100k
+  full_ft) — single-seed numbers in the formal doc are indicative, not tight.
+- **`from_scratch` baseline run** to put a floor on the comparison.
 
 **Done since 2026-04-20:**
 - Authored `configs/new_juggle/sim2sim_combined.yaml` (combined kp/delay/
@@ -39,6 +46,15 @@ infrastructure" (or similar), start here.
 - Promoted stable sections to formal doc:
   [`notes/docs/training/sim2sim.md`](../docs/training/sim2sim.md). Pointer
   added to `notes/docs/index.md` and `CLAUDE.md`.
+- **End-to-end residual + full_ft campaign on `hist2_motion0_to_combined`** —
+  2026-04-25. Both methods beat zero-shot at peak (residual best step 50k
+  mean 106.84 / tail10 127.2; full_ft best step 100k mean 108.64 / tail10
+  117.4; zero-shot 95.78 / 87.8). Tested defaults baked into the campaign
+  yamls. Two gotchas surfaced and documented:
+  (a) final-step eval is unsafe — both methods drift past peak;
+  (b) `load_fine_tune_optimizer_state` silently restored source lrs over
+  config knobs — fixed with explicit `pg["lr"] = …` after the load.
+  Full variant table + writeup: sim2sim.md "Fine-tune campaign" section.
 
 ## Scope
 

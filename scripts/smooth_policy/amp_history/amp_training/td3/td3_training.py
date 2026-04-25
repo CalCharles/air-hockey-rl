@@ -911,13 +911,22 @@ if __name__ == "__main__":
             q_optimizer=q_optimizer,
             actor_optimizer=actor_optimizer,
         )
+        # Optimizer state restore overwrites param-group lr from the source's value.
+        # Re-apply current args lrs so config knobs take effect during FT.
+        for pg in actor_optimizer.param_groups:
+            pg["lr"] = float(args.policy_lr)
+        for pg in q_optimizer.param_groups:
+            pg["lr"] = float(args.q_lr)
         if args.fine_tune_replay_keep:
             pending_fine_tune_source_replay = {
                 "success": resume_checkpoint.get("success_replay_buffer"),
                 "failure": resume_checkpoint.get("failure_replay_buffer"),
             }
         resume_checkpoint = None
-        print("Fine-tune load enabled: restored optimizer state, skipping replay/runtime resume.")
+        print(
+            f"Fine-tune load enabled: restored optimizer state, lrs reset to "
+            f"policy_lr={args.policy_lr}, q_lr={args.q_lr}; skipping replay/runtime resume."
+        )
 
     if args.per_enabled:
         success_rb = TD3PrioritizedReplayBuffer(

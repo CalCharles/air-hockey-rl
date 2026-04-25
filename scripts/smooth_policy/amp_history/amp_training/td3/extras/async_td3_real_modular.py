@@ -1,0 +1,1285 @@
+"""Modular real-world TD3 entrypoint — same CLI/behavior as async_td3_real.py.
+
+Refactored orchestrator that drives ``PolicyRunner`` (one episode at a time)
+and ``ResetRunner`` (one reset at a time, including the four-way kind
+table) instead of inlining a 1200-line ``collector_process`` function.
+
+This file is meant to live next to ``async_td3_real.py`` so both
+entrypoints can be invoked from the same directory; init / teardown /
+learner / args parsing are imported from ``async_td3_real`` directly so
+nothing is duplicated.
+
+See ``notes/scratch/async_td3_real_modularization_plan.md`` for the
+contracts.
+"""
+from __future__ import annotations
+
+import os
+import time
+import traceback
+from collections import deque
+from datetime import datetime
+from pathlib import Path
+from typing import Dict
+
+import numpy as np
+import torch
+import tyro
+import yaml
+from torch.utils.tensorboard import SummaryWriter
+
+from airhockey import AirHockeyEnv
+from scripts.smooth_policy.amp_history.amp_training.td3.helper.episode_artifacts import (
+    clean_episode_hdf5,
+    generate_episode_camera_video,
+    generate_episode_gif,
+    save_split_episode_hdf5,
+)
+from scripts.smooth_policy.amp_history.amp_training.td3.helper.shared_replay import SharedTD3Replay
+from scripts.smooth_policy.amp_history.amp_training.td3.helper.real_collector_factories import (
+    build_primitive_exploration_selector_for_real_collector,
+)
+from scripts.smooth_policy.amp_history.amp_training.td3.helper.real_collector_metrics import (
+    compute_rolling50_metrics,
+    rolling_mean,
+    update_stats_dict_rolling50,
+    write_rolling50_tensorboard_scalars,
+)
+from scripts.smooth_policy.amp_history.amp_training.td3.helper.real_motion_rewards import (
+    _init_motion_reward_state,
+)
+from scripts.smooth_policy.amp_history.amp_training.td3.helper.real_warm_start import (
+    _warm_start_replay_from_hdf5,
+)
+from scripts.smooth_policy.amp_history.amp_training.td3.helper.real_policy_runner import (
+    MOTION_METRIC_NAMES,
+    PolicyRunner,
+)
+from scripts.smooth_policy.amp_history.amp_training.td3.helper.real_reset_runner import (
+    ResetKind,
+    ResetRunner,
+    StopFlags,
+    pick_reset_kind,
+)
+from scripts.smooth_policy.amp_history.amp_training.td3.helper.real_transition_hold import (
+    RolloutContext,
+    TransitionHoldState,
+    normalize_transition_last_action_mode,
+)
+from scripts.real.rollout_reset_policy_real import ResetPolicyFSM
+
+# Shared init / teardown / learner / config helpers — imported, not
+# re-implemented. Anything here must remain identical to the current
+# `async_td3_real.py` behavior; this file is the orchestrator only.
+from scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real import (
+    Args,
+    LearnerRuntimeState,
+    ROLLING_PERF_WINDOW_EPISODES,
+    TrainArgs,
+    _add_episode_to_shared_replay,
+    _bucketed_output_dir,
+    _build_args_file_defaults,
+    _coerce_float_list,
+    _copy_to_stop_dir,
+    _env_timing_info,
+    _extract_primitive_state_tensors,
+    _finalize_sync_learner_state,
+    _init_sync_learner_state,
+    _latest_camera_frame,
+    _load_replay_from_checkpoint_file,
+    _load_runtime_perf_from_checkpoint_file,
+    _load_train_args,
+    _next_available_episode_id,
+    _normalize_replay_source_priority,
+    _prepare_air_hockey_config,
+    _prompt_optional_run_note,
+    _reset_output_dir,
+    _reset_primitive_rollout_state,
+    _run_sync_learner_iteration,
+    _safe_nonnegative_ms,
+    _setup_run_data_dir,
+    _simulator_step_readiness,
+    _stop_output_dir,
+    _build_split_episode_row,
+    _write_latency_profile_episode,
+    augment_policy_observation,
+    build_policy_env_view,
+    deterministic_actor_action,
+    primitive_exploration_chance_for_step,
+)
+from scripts.smooth_policy.deterministic_agent import DeterministicAgent
+
+
+def _save_episode_artifacts_and_pending_reset(
+    *,
+    args: Args,
+    result,
+    next_episode_file_id: int,
+    pending_reset_artifact,
+    latency_output_dir: Path | None,
+    counters: dict,
+) -> int:
+    """HDF5 + GIF + camera video + pending reset flush — matches L1953–L2154.
+
+    Mutates ``counters`` (dict of named tally counters); returns the new
+    ``next_episode_file_id``. The pending-reset flush is included here
+    because it lives in the same artifact-save block in the source.
+    """
+    n_episode_steps = len(result.rows)
+    n_camera_frames = len(result.images)
+    has_camera_images = n_camera_frames > 0
+
+    if n_camera_frames == 0 and result.metrics.camera_null_frames > 0:
+        sim_images_len = -1
+        sim_cap = "N/A"
+        print(
+            f"[collector] WARNING: zero camera frames captured this episode. "
+            f"simulator.images len={sim_images_len} simulator.cap={sim_cap}"
+        )
+
+    if args.enable_latency_profiling and latency_output_dir is not None:
+        try:
+            latency_json_path, latency_plot_path, latency_summary = _write_latency_profile_episode(
+                output_dir=latency_output_dir,
+                episode_id=next_episode_file_id,
+                puck_detection_ms=result.metrics.puck_detection_latency_ms,
+                model_inference_ms=result.metrics.model_inference_latency_ms,
+                block_sleep_ms=result.metrics.block_sleep_latency_ms,
+                other_ms=result.metrics.other_latency_ms,
+                hist_bins=args.latency_profile_hist_bins,
+            )
+            bucket_summary = latency_summary["buckets"]
+            print(
+                "[latency] "
+                f"episode_id={next_episode_file_id} "
+                f"puck_p50={bucket_summary['puck_detection_ms']['median_ms']:.3f} "
+                f"model_p50={bucket_summary['model_inference_ms']['median_ms']:.3f} "
+                f"sleep_p50={bucket_summary['block_sleep_ms']['median_ms']:.3f} "
+                f"other_p50={bucket_summary['other_ms']['median_ms']:.3f} "
+                f"json={latency_json_path} plot={latency_plot_path}"
+            )
+        except Exception:
+            print(
+                f"[latency] episode_id={next_episode_file_id} "
+                f"latency output FAILED:\n{traceback.format_exc()}"
+            )
+
+    artifact_path = save_split_episode_hdf5(
+        output_dir=_bucketed_output_dir(args.episode_artifact_dir, n_episode_steps),
+        episode_id=next_episode_file_id,
+        episode_rows=result.rows,
+        episode_images=result.images if has_camera_images else None,
+    )
+    counters["episodes_saved"] += 1
+
+    clean_result = clean_episode_hdf5(artifact_path, min_timesteps=1)
+    episode_stop_artifact_label = result.terminal.stop_state_artifact_label
+    if not clean_result.kept:
+        print(
+            f"[collector] episode_id={next_episode_file_id} "
+            f"removed: reason={clean_result.reason} timesteps={clean_result.timesteps}"
+        )
+        if clean_result.reason == "short_episode":
+            counters["episodes_removed_short"] += 1
+        else:
+            counters["episodes_removed_invalid"] += 1
+    else:
+        counters["successful_online_episodes_kept"] += 1
+        counters["_clean_path"] = clean_result.path
+        if episode_stop_artifact_label is not None:
+            stop_copy_path = _copy_to_stop_dir(
+                clean_result.path,
+                _stop_output_dir(args.episode_artifact_dir, episode_stop_artifact_label),
+            )
+            print(
+                f"[collector] episode_id={next_episode_file_id} "
+                f"{episode_stop_artifact_label} HDF5 copied to {stop_copy_path}"
+            )
+        if args.enable_episode_gif:
+            try:
+                gif_path = generate_episode_gif(
+                    episode_hdf5_path=clean_result.path,
+                    gif_root=_bucketed_output_dir(args.episode_gif_dir, n_episode_steps),
+                    fps=args.episode_gif_fps,
+                    max_frames=(args.episode_gif_max_frames if args.episode_gif_max_frames > 0 else None),
+                    subsample=args.episode_gif_subsample,
+                    require_puck=args.episode_gif_require_puck,
+                )
+                counters["episodes_gif_generated"] += 1
+                if episode_stop_artifact_label is not None:
+                    stop_gif_path = _copy_to_stop_dir(
+                        gif_path,
+                        _stop_output_dir(args.episode_gif_dir, episode_stop_artifact_label),
+                    )
+                    print(
+                        f"[collector] episode_id={next_episode_file_id} "
+                        f"{episode_stop_artifact_label} GIF copied to {stop_gif_path}"
+                    )
+            except Exception:
+                counters["episodes_gif_failed"] += 1
+                print(
+                    f"[collector] episode_id={next_episode_file_id} "
+                    f"GIF generation FAILED:\n{traceback.format_exc()}"
+                )
+        if args.enable_episode_camera_video:
+            try:
+                camera_video_path = generate_episode_camera_video(
+                    episode_hdf5_path=clean_result.path,
+                    video_root=_bucketed_output_dir(
+                        args.episode_camera_video_dir or args.episode_gif_dir,
+                        n_episode_steps,
+                    ),
+                    fps=args.episode_camera_video_fps,
+                    max_frames=(
+                        args.episode_camera_video_max_frames
+                        if args.episode_camera_video_max_frames > 0
+                        else None
+                    ),
+                    subsample=args.episode_camera_video_subsample,
+                    codec=args.episode_camera_video_codec,
+                )
+                counters["episodes_camera_video_generated"] += 1
+                if episode_stop_artifact_label is not None:
+                    stop_camera_video_path = _copy_to_stop_dir(
+                        camera_video_path,
+                        _stop_output_dir(
+                            args.episode_camera_video_dir or args.episode_gif_dir,
+                            episode_stop_artifact_label,
+                        ),
+                    )
+                    print(
+                        f"[collector] episode_id={next_episode_file_id} "
+                        f"{episode_stop_artifact_label} camera video copied to "
+                        f"{stop_camera_video_path}"
+                    )
+                print(
+                    f"[collector] episode_id={next_episode_file_id} camera video OK"
+                )
+            except Exception:
+                counters["episodes_camera_video_failed"] += 1
+                print(
+                    f"[collector] episode_id={next_episode_file_id} "
+                    f"camera video FAILED:\n{traceback.format_exc()}"
+                )
+        else:
+            print(
+                f"[collector] episode_id={next_episode_file_id} "
+                f"camera video SKIPPED (enable_episode_camera_video=False)"
+            )
+
+    # Pending reset artifact flush — same block as L2106–2146.
+    if pending_reset_artifact is not None:
+        reset_camera_frames = len(pending_reset_artifact.images)
+        has_reset_images = reset_camera_frames > 0
+        print(
+            "[collector_reset_artifact] "
+            f"episode_id={pending_reset_artifact.episode_id} "
+            f"partition={pending_reset_artifact.partition} "
+            f"reason={pending_reset_artifact.done_reason} "
+            f"steps={pending_reset_artifact.step_count} "
+            f"camera_frames={reset_camera_frames} "
+            f"null_frames={pending_reset_artifact.camera_null_frames} "
+            f"flush_after_policy_episode={next_episode_file_id}"
+        )
+        reset_artifact_path = save_split_episode_hdf5(
+            output_dir=_reset_output_dir(
+                args.reset_artifact_dir,
+                pending_reset_artifact.partition,
+                pending_reset_artifact.step_count,
+            ),
+            episode_id=pending_reset_artifact.episode_id,
+            episode_rows=pending_reset_artifact.rows,
+            episode_images=pending_reset_artifact.images if has_reset_images else None,
+        )
+        reset_clean_result = clean_episode_hdf5(reset_artifact_path, min_timesteps=1)
+        if not reset_clean_result.kept:
+            print(
+                "[collector_reset_artifact] "
+                f"episode_id={pending_reset_artifact.episode_id} "
+                f"removed: reason={reset_clean_result.reason} "
+                f"timesteps={reset_clean_result.timesteps}"
+            )
+        else:
+            print(
+                "[collector_reset_artifact] "
+                f"episode_id={pending_reset_artifact.episode_id} "
+                f"saved to {reset_clean_result.path}"
+            )
+
+    return next_episode_file_id + 1
+
+
+def _periodic_log(
+    *,
+    args: Args,
+    writer: SummaryWriter,
+    replay: SharedTD3Replay,
+    stats: Dict[str, object],
+    learner_state: LearnerRuntimeState,
+    primitive_selector,
+    transition_hold: TransitionHoldState,
+    total_steps: int,
+    total_episodes: int,
+    counters: dict,
+    rolling_state: dict,
+    elapsed_offset_s: float,
+    collector_start_time: float,
+    episodic_returns: list,
+    episodic_lengths: list,
+    success_rates: list,
+    interval_state: dict,
+    last_log_time: float,
+    episode_return_success_threshold: float,
+) -> float:
+    """Periodic stats / TB log block (matches source L2294–L2478).
+
+    Returns the new ``last_log_time``.
+    """
+    now = time.time()
+    snapshot = replay.state_snapshot()
+    elapsed_s = max(0.0, elapsed_offset_s + (now - collector_start_time))
+    rolling50_m = compute_rolling50_metrics(
+        rolling_state["task"],
+        rolling_state["motion"],
+        rolling_state["length"],
+        rolling_state["estop"],
+    )
+    stats["collector_steps"] = float(total_steps)
+    stats["collector_total_steps"] = float(total_steps)
+    stats["collector_episodes"] = float(total_episodes)
+    stats["collector_actor_version"] = float(learner_state.total_actor_updates)
+    stats["transition_hold_events_total"] = float(transition_hold.events_total)
+    stats["transition_hold_active"] = float(1.0 if transition_hold.active() else 0.0)
+    stats["transition_hold_steps_remaining"] = float(transition_hold.steps_remaining)
+    stats["replay_success_size"] = float(snapshot["success"]["size"])
+    stats["replay_failure_size"] = float(snapshot["failure"]["size"])
+    stats["episodes_saved"] = float(counters["episodes_saved"])
+    stats["episodes_removed_short"] = float(counters["episodes_removed_short"])
+    stats["episodes_removed_invalid"] = float(counters["episodes_removed_invalid"])
+    stats["episodes_gif_generated"] = float(counters["episodes_gif_generated"])
+    stats["episodes_gif_failed"] = float(counters["episodes_gif_failed"])
+    stats["episodes_camera_video_generated"] = float(counters["episodes_camera_video_generated"])
+    stats["episodes_camera_video_failed"] = float(counters["episodes_camera_video_failed"])
+    stats["successful_online_episodes_kept"] = float(counters["successful_online_episodes_kept"])
+    stats["estop_steps"] = float(counters["protective_stop_steps"])
+    stats["estop_episodes"] = float(counters["protective_stop_episodes"])
+    stats["controller_disconnect_steps"] = float(counters["controller_disconnect_steps"])
+    stats["controller_disconnect_episodes"] = float(counters["controller_disconnect_episodes"])
+    stats["reset_fsm_steps"] = float(counters["reset_fsm_steps_total"])
+    stats["transition_hold_steps"] = float(transition_hold.steps_total)
+    stats["primitive_chance"] = float(primitive_selector.chance)
+    stats["interval_primitive_env_steps"] = float(interval_state["primitive"])
+    stats["interval_target_position_directional_env_steps"] = float(
+        interval_state["target_position_directional"]
+    )
+    stats["run_elapsed_total_s"] = float(elapsed_s)
+    update_stats_dict_rolling50(
+        stats,
+        rolling50_m,
+        window_size=ROLLING_PERF_WINDOW_EPISODES,
+        rolling50_task_reward_values=rolling_state["task"],
+        rolling50_motion_reward_values=rolling_state["motion"],
+        rolling50_episode_length_values=rolling_state["length"],
+        rolling50_estop_episode_flags=rolling_state["estop"],
+    )
+    writer.add_scalar("replay/success_buffer_size", float(snapshot["success"]["size"]), total_steps)
+    writer.add_scalar("replay/failure_buffer_size", float(snapshot["failure"]["size"]), total_steps)
+    writer.add_scalar("exploration/primitive_chance", float(primitive_selector.chance), total_steps)
+    writer.add_scalar("exploration/primitive_env_steps", float(interval_state["primitive"]), total_steps)
+    writer.add_scalar(
+        "exploration/primitive_horizontal_env_steps",
+        float(interval_state["primitive_horizontal"]),
+        total_steps,
+    )
+    writer.add_scalar(
+        "exploration/target_position_directional_env_steps",
+        float(interval_state["target_position_directional"]),
+        total_steps,
+    )
+    writer.add_scalar(
+        "replay/episode_return_success_threshold",
+        float(episode_return_success_threshold),
+        total_steps,
+    )
+    writer.add_scalar(
+        "replay/recent_episode_window_count",
+        float(rolling_state["recent_episode_window_count"]),
+        total_steps,
+    )
+    writer.add_scalar("artifacts/episodes_saved", float(counters["episodes_saved"]), total_steps)
+    writer.add_scalar(
+        "artifacts/episodes_removed_short", float(counters["episodes_removed_short"]), total_steps
+    )
+    writer.add_scalar(
+        "artifacts/episodes_removed_invalid", float(counters["episodes_removed_invalid"]), total_steps
+    )
+    writer.add_scalar(
+        "artifacts/episodes_gif_generated", float(counters["episodes_gif_generated"]), total_steps
+    )
+    writer.add_scalar("artifacts/episodes_gif_failed", float(counters["episodes_gif_failed"]), total_steps)
+    writer.add_scalar(
+        "artifacts/episodes_camera_video_generated",
+        float(counters["episodes_camera_video_generated"]),
+        total_steps,
+    )
+    writer.add_scalar(
+        "artifacts/episodes_camera_video_failed",
+        float(counters["episodes_camera_video_failed"]),
+        total_steps,
+    )
+    writer.add_scalar("safety/estop_steps", float(counters["protective_stop_steps"]), total_steps)
+    writer.add_scalar("safety/estop_episodes", float(counters["protective_stop_episodes"]), total_steps)
+    writer.add_scalar(
+        "safety/controller_disconnect_steps",
+        float(counters["controller_disconnect_steps"]),
+        total_steps,
+    )
+    writer.add_scalar(
+        "safety/controller_disconnect_episodes",
+        float(counters["controller_disconnect_episodes"]),
+        total_steps,
+    )
+    writer.add_scalar(
+        "transitions/hold_active", float(1.0 if transition_hold.active() else 0.0), total_steps
+    )
+    writer.add_scalar(
+        "transitions/hold_steps_remaining", float(transition_hold.steps_remaining), total_steps
+    )
+    writer.add_scalar(
+        "transitions/hold_events_total", float(transition_hold.events_total), total_steps
+    )
+    writer.add_scalar(
+        "charts/SPS",
+        float(total_steps) / max((now - collector_start_time), 1e-6),
+        total_steps,
+    )
+    writer.add_scalar("runtime/elapsed_total_s", float(elapsed_s), total_steps)
+    write_rolling50_tensorboard_scalars(writer, rolling50_m, total_steps)
+    if episodic_returns:
+        writer.add_scalar("charts/avg_episodic_return", float(np.mean(episodic_returns)), total_steps)
+        writer.add_scalar("charts/min_episodic_return", float(np.min(episodic_returns)), total_steps)
+        writer.add_scalar("charts/max_episodic_return", float(np.max(episodic_returns)), total_steps)
+        writer.add_scalar(
+            "charts/avg_success_rate",
+            float(np.mean(success_rates)) if success_rates else 0.0,
+            total_steps,
+        )
+        writer.add_scalar(
+            "charts/avg_episodic_length", float(np.mean(episodic_lengths)), total_steps
+        )
+        episodic_returns.clear()
+        episodic_lengths.clear()
+        success_rates.clear()
+
+    print(
+        "[collector] "
+        f"steps={total_steps} episodes={total_episodes} "
+        f"actor_version={learner_state.total_actor_updates} "
+        f"success_rb={snapshot['success']['size']} failure_rb={snapshot['failure']['size']} "
+        f"saved={counters['episodes_saved']} short_removed={counters['episodes_removed_short']} "
+        f"invalid_removed={counters['episodes_removed_invalid']} "
+        f"gif_ok={counters['episodes_gif_generated']} gif_fail={counters['episodes_gif_failed']} "
+        f"cam_video_ok={counters['episodes_camera_video_generated']} "
+        f"cam_video_fail={counters['episodes_camera_video_failed']} "
+        f"estop_steps={counters['protective_stop_steps']} "
+        f"estop_episodes={counters['protective_stop_episodes']} "
+        f"disconnect_steps={counters['controller_disconnect_steps']} "
+        f"disconnect_episodes={counters['controller_disconnect_episodes']} "
+        f"readiness_fail_steps={counters['readiness_fail_steps_total']} "
+        f"readiness_fail_estop_episodes={counters['readiness_fail_estop_episodes']} "
+        f"readiness_fail_dropped_steps={counters['readiness_fail_estop_dropped_steps_total']} "
+        f"reset_fsm_steps={counters['reset_fsm_steps_total']} "
+        f"transition_hold_steps={transition_hold.steps_total} "
+        f"primitive_chance={primitive_selector.chance:.4f} "
+        f"primitive_steps={interval_state['primitive']} "
+        f"target_position_steps={interval_state['target_position_directional']} "
+        f"transition_hold_active={int(transition_hold.active())} "
+        f"transition_hold_remaining={transition_hold.steps_remaining} "
+        f"transition_events_total={transition_hold.events_total} "
+        f"transition_reason={transition_hold.reason} "
+        f"elapsed_total_s={elapsed_s:.1f} "
+        f"rolling50_task_avg={rolling50_m.task_reward_avg:.4f} "
+        f"rolling50_motion_avg={rolling50_m.motion_reward_avg:.4f} "
+        f"rolling50_len_avg={rolling50_m.episode_length_avg:.2f} "
+        f"rolling50_estops={rolling50_m.estop_episode_count:.0f}"
+    )
+    if transition_hold.reason_counts:
+        print(
+            "[collector_transition] "
+            f"reason_counts={dict(sorted(transition_hold.reason_counts.items()))}"
+        )
+    interval_state["primitive"] = 0
+    interval_state["primitive_horizontal"] = 0
+    interval_state["target_position_directional"] = 0
+    return now
+
+
+def _write_per_episode_tb(
+    writer: SummaryWriter, *, result, total_steps: int, stats: Dict[str, object]
+) -> None:
+    """Per-episode TB scalars (matches L1860–1867)."""
+    writer.add_scalar("charts/episodic_return", result.metrics.episode_return, total_steps)
+    writer.add_scalar("charts/episodic_length", result.metrics.episode_length, total_steps)
+    writer.add_scalar(
+        "charts/episodic_success", float(1.0 if result.terminal.episode_success else 0.0), total_steps
+    )
+    if result.metrics.motion_metric_count > 0:
+        for metric_name in MOTION_METRIC_NAMES:
+            metric_mean = float(result.metrics.motion_metric_means[metric_name])
+            stats[f"rewards/{metric_name}_mean"] = metric_mean
+            writer.add_scalar(f"rewards/{metric_name}_mean", metric_mean, total_steps)
+
+
+def _print_episode_progress(
+    *,
+    result,
+    next_episode_file_id: int,
+    counters: dict,
+    total_steps: int,
+    total_episodes: int,
+    transition_hold: TransitionHoldState,
+    elapsed_offset_s: float,
+    collector_start_time: float,
+    rolling_state: dict,
+) -> None:
+    """Per-episode progress lines (matches L1921–1952)."""
+    n_episode_steps = len(result.rows)
+    n_camera_frames = len(result.images)
+    has_camera_images = n_camera_frames > 0
+    elapsed_s = max(0.0, elapsed_offset_s + (time.time() - collector_start_time))
+    elapsed_min = elapsed_s / 60.0
+    elapsed_hr = elapsed_s / 3600.0
+    rolling50_m = compute_rolling50_metrics(
+        rolling_state["task"],
+        rolling_state["motion"],
+        rolling_state["length"],
+        rolling_state["estop"],
+    )
+    stop_state_reason = (
+        result.terminal.stop_state_reason if result.terminal.stop_now else "none"
+    )
+    print(
+        f"[collector] episode_id={next_episode_file_id} "
+        f"steps={n_episode_steps} camera_frames={n_camera_frames} "
+        f"null_frames={result.metrics.camera_null_frames} "
+        f"has_images={'yes' if has_camera_images else 'NO'} "
+        f"end_type={result.terminal.episode_end_type} "
+        f"end_reason={result.terminal.episode_end_reason} "
+        f"stop_reason={stop_state_reason} "
+        f"protective_stop={int(result.terminal.protective_stop)} "
+        f"controller_disconnected={int(result.terminal.controller_disconnect)} "
+        f"readiness_fail_estop={int(result.terminal.readiness_fail_estop)} "
+        f"end_reasons={result.terminal.episode_end_reasons}"
+    )
+    print(
+        "[collector_progress] "
+        f"episode_policy_steps={n_episode_steps} "
+        f"policy_steps={total_steps} "
+        f"reset_fsm_steps={counters['reset_fsm_steps_total']} "
+        f"transition_hold_steps={transition_hold.steps_total} "
+        f"estop_steps={counters['protective_stop_steps']} "
+        f"disconnect_steps={counters['controller_disconnect_steps']} "
+        f"readiness_fail_steps={counters['readiness_fail_steps_total']} "
+        f"readiness_fail_estop_episodes={counters['readiness_fail_estop_episodes']} "
+        f"readiness_fail_dropped_steps={counters['readiness_fail_estop_dropped_steps_total']} "
+        f"episodes={total_episodes} "
+        f"elapsed_s={elapsed_s:.1f} "
+        f"elapsed_min={elapsed_min:.2f} "
+        f"elapsed_hr={elapsed_hr:.3f} "
+        f"rolling50_task_avg={rolling50_m.task_reward_avg:.4f} "
+        f"rolling50_motion_avg={rolling50_m.motion_reward_avg:.4f} "
+        f"rolling50_len_avg={rolling50_m.episode_length_avg:.2f} "
+        f"rolling50_estops={rolling50_m.estop_episode_count:.0f}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The orchestrator. ~250 lines including all state plumbing.
+# ---------------------------------------------------------------------------
+
+
+def collector_process_modular(
+    args: Args,
+    train_args: TrainArgs,
+    replay: SharedTD3Replay,
+    stats: Dict[str, object],
+    learner_state: LearnerRuntimeState,
+    obs_dim: int,
+    act_dim: int,
+    action_low_np: np.ndarray,
+    action_high_np: np.ndarray,
+    tb_log_dir: str,
+) -> None:
+    """Modular orchestrator. Drives PolicyRunner + ResetRunner around the
+    learner, replay push, and artifact saves. Same external behavior as
+    ``async_td3_real.collector_process``."""
+
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    device = torch.device(args.collector_device)
+
+    # ----------------------------- Env / writer / config -----------------
+    with open(args.config, "r") as f:
+        config = yaml.load(f, Loader=yaml.FullLoader)
+    collector_config = _prepare_air_hockey_config(config, seed=args.seed)
+    sim_params = collector_config.get("simulator_params", {})
+    if isinstance(sim_params, dict):
+        sim_params["wait_for_space_to_start"] = False
+        sim_params["transition_hold_steps_on_estop_enter"] = int(
+            args.transition_hold_steps_post_estop_enter
+        )
+        sim_params["transition_hold_steps_on_estop_clear"] = int(
+            args.transition_hold_steps_post_estop_clear
+        )
+        sim_params["transition_hold_steps_on_safety_rearm"] = int(
+            args.transition_hold_steps_post_safety_rearm
+        )
+    env = AirHockeyEnv(collector_config)
+    writer = SummaryWriter(tb_log_dir)
+    latency_output_dir: Path | None = None
+    if args.enable_latency_profiling:
+        if args.latency_profile_output_dir is not None:
+            latency_output_dir = Path(args.latency_profile_output_dir).expanduser().resolve()
+        else:
+            latency_output_dir = Path(tb_log_dir).resolve().parent / "latency_profiles"
+        latency_output_dir.mkdir(parents=True, exist_ok=True)
+
+    # ----------------------------- Actor / primitive selector -------------
+    policy_obs_dim = obs_dim + act_dim if train_args.use_last_action_in_policy_state else obs_dim
+    policy_env_view = build_policy_env_view(policy_obs_dim, act_dim)
+    actor = DeterministicAgent(
+        policy_env_view,
+        action_scale=train_args.action_scale,
+        action_bias=0.0,
+        hidden_layer_size=train_args.agent_hidden_layer_size,
+        num_hidden_layers=train_args.agent_num_hidden_layers,
+    ).to(device)
+    actor.eval()
+    action_low = torch.as_tensor(action_low_np, dtype=torch.float32, device=device).unsqueeze(0)
+    action_high = torch.as_tensor(action_high_np, dtype=torch.float32, device=device).unsqueeze(0)
+    primitive_selector = build_primitive_exploration_selector_for_real_collector(
+        args, device, initial_total_steps=0
+    )
+    primitive_selector.set_primitive_weights(
+        stand_still=float(args.exploration_primitive_weight_stand_still),
+        same_direction=float(args.exploration_primitive_weight_same_direction),
+        y_aligned=float(args.exploration_primitive_weight_y_aligned),
+        policy_takeover=0.0,
+        target_position_directional=float(args.exploration_primitive_weight_target_position_directional),
+        pre_contact_hit_variant=0.0,
+    )
+    actor.load_state_dict(
+        {key: value.detach().cpu() for key, value in learner_state.actor.state_dict().items()},
+        strict=False,
+    )
+
+    # ----------------------------- Shared dataclasses ---------------------
+    ctx = RolloutContext(
+        last_action_for_policy=torch.zeros((1, act_dim), dtype=torch.float32, device=device),
+        last_executed_action=torch.zeros((1, act_dim), dtype=torch.float32, device=device),
+        previous_puck_position_for_primitive=torch.zeros((1, 2), dtype=torch.float32, device=device),
+    )
+    transition_hold = TransitionHoldState(
+        last_action_mode=normalize_transition_last_action_mode(args.transition_last_action_mode),
+        log_every_step=bool(args.transition_hold_log_every_step),
+    )
+
+    # ----------------------------- Reset runner ---------------------------
+    next_reset_file_id = _next_available_episode_id(args.reset_artifact_dir)
+    if next_reset_file_id > 0:
+        print(
+            f"[collector] continuing reset artifact ids from {next_reset_file_id} "
+            f"(existing data found in {args.reset_artifact_dir})"
+        )
+    reset_rng = np.random.default_rng(args.seed)
+    reset_runner = ResetRunner(
+        env,
+        device=device,
+        reset_rng=reset_rng,
+        reset_policy_fsm_cls=ResetPolicyFSM,
+        build_split_episode_row=_build_split_episode_row,
+        latest_camera_frame=_latest_camera_frame,
+        extract_primitive_state_tensors=_extract_primitive_state_tensors,
+    )
+    pending_reset_artifact = None
+
+    # ----------------------------- Startup reset --------------------------
+    startup_result = reset_runner.run(
+        kind=ResetKind.STARTUP,
+        artifact_episode_id=next_reset_file_id,
+        episode_had_stop_flags=StopFlags(),
+        episode_end_wall_time=time.time(),  # unused for STARTUP
+        pending_reset_artifact=pending_reset_artifact,
+        next_reset_file_id=next_reset_file_id,
+    )
+    pending_reset_artifact = startup_result.pending_reset_artifact
+    next_reset_file_id = startup_result.next_reset_file_id
+    counters: dict = {
+        "reset_fsm_steps_total": int(startup_result.total_fsm_steps),
+        "protective_stop_episodes": 0,
+        "protective_stop_steps": 0,
+        "controller_disconnect_episodes": 0,
+        "controller_disconnect_steps": 0,
+        "readiness_fail_steps_total": 0,
+        "readiness_fail_estop_episodes": 0,
+        "readiness_fail_estop_dropped_steps_total": 0,
+        "episodes_saved": 0,
+        "episodes_removed_short": 0,
+        "episodes_removed_invalid": 0,
+        "episodes_gif_generated": 0,
+        "episodes_gif_failed": 0,
+        "episodes_camera_video_generated": 0,
+        "episodes_camera_video_failed": 0,
+        "successful_online_episodes_kept": int(stats.get("successful_online_episodes_kept", 0)),
+    }
+
+    # ----------------------------- Policy runner --------------------------
+    policy_runner = PolicyRunner(
+        env,
+        actor,
+        device=device,
+        args=args,
+        train_args=train_args,
+        action_low=action_low,
+        action_high=action_high,
+        primitive_selector=primitive_selector,
+        transition_hold=transition_hold,
+        ctx=ctx,
+        extract_primitive_state_tensors=_extract_primitive_state_tensors,
+        reset_primitive_rollout_state=_reset_primitive_rollout_state,
+        deterministic_actor_action=deterministic_actor_action,
+        augment_policy_observation=augment_policy_observation,
+        primitive_exploration_chance_for_step=primitive_exploration_chance_for_step,
+        latest_camera_frame=_latest_camera_frame,
+        env_timing_info=_env_timing_info,
+        safe_nonnegative_ms=_safe_nonnegative_ms,
+        build_split_episode_row=_build_split_episode_row,
+        init_motion_reward_state=_init_motion_reward_state,
+        readiness_fn=_simulator_step_readiness,
+    )
+    policy_runner.seed_initial(
+        startup_result.obs, motion_reward_horizon=int(args.temporal_alignment_horizon)
+    )
+    total_steps = int(stats.get("collector_total_steps", stats.get("collector_steps", 0.0)))
+    policy_runner.set_total_steps(total_steps)
+
+    # Startup transition hold (reset → policy). Source L1438.
+    transition_hold.begin(
+        reason=startup_result.transition_reason,
+        hold_steps=int(args.transition_hold_steps_post_reset),
+        sim_hold=True,
+        env=env,
+        ctx=ctx,
+        primitive_selector=primitive_selector,
+        extract_primitive_state_tensors=_extract_primitive_state_tensors,
+        reset_primitive_rollout_state=_reset_primitive_rollout_state,
+        use_last_action_in_policy_state=train_args.use_last_action_in_policy_state,
+        device=device,
+    )
+
+    # ----------------------------- Per-run state --------------------------
+    next_episode_file_id = _next_available_episode_id(args.episode_artifact_dir)
+    if next_episode_file_id > 0:
+        print(
+            f"[collector] continuing episode artifact ids from {next_episode_file_id} "
+            f"(existing data found in {args.episode_artifact_dir})"
+        )
+    total_episodes = 0
+    last_log_time = time.time()
+    recent_episode_returns: deque[float] = deque(maxlen=args.recent_episode_window_size)
+    episode_return_success_threshold = 0.0
+    rolling_state = {
+        "task": deque(
+            _coerce_float_list(
+                stats.get("rolling50_task_reward_values", []),
+                max_items=ROLLING_PERF_WINDOW_EPISODES,
+            ),
+            maxlen=ROLLING_PERF_WINDOW_EPISODES,
+        ),
+        "motion": deque(
+            _coerce_float_list(
+                stats.get("rolling50_motion_reward_values", []),
+                max_items=ROLLING_PERF_WINDOW_EPISODES,
+            ),
+            maxlen=ROLLING_PERF_WINDOW_EPISODES,
+        ),
+        "length": deque(
+            _coerce_float_list(
+                stats.get("rolling50_episode_length_values", []),
+                max_items=ROLLING_PERF_WINDOW_EPISODES,
+            ),
+            maxlen=ROLLING_PERF_WINDOW_EPISODES,
+        ),
+        "estop": deque(
+            _coerce_float_list(
+                stats.get("rolling50_estop_episode_flags", []),
+                max_items=ROLLING_PERF_WINDOW_EPISODES,
+            ),
+            maxlen=ROLLING_PERF_WINDOW_EPISODES,
+        ),
+        "recent_episode_window_count": 0,
+    }
+    interval_state = {
+        "primitive": 0,
+        "primitive_horizontal": 0,
+        "target_position_directional": 0,
+    }
+    episodic_returns: list = []
+    episodic_lengths: list = []
+    success_rates: list = []
+    elapsed_offset_s = float(stats.get("run_elapsed_total_s", 0.0))
+    collector_start_time = time.time()
+    checkpoint_save_request_id = int(stats.get("checkpoint_save_request_id", 0))
+
+    # ----------------------------- Main loop ------------------------------
+    while True:
+        if (
+            args.smoke_test_seconds > 0
+            and (time.time() - collector_start_time) >= float(args.smoke_test_seconds)
+        ):
+            print(
+                f"[collector] smoke-test duration reached ({args.smoke_test_seconds:.1f}s), "
+                "stopping."
+            )
+            break
+
+        # 1. Run one policy episode.
+        policy_runner.set_artifact_episode_id(next_episode_file_id)
+        result = policy_runner.run_episode()
+        episode_end_wall_time = time.time()
+        total_steps = policy_runner.total_steps
+        total_episodes += 1
+        # Accumulate orchestrator counters.
+        counters["protective_stop_steps"] += result.metrics.delta_protective_stop_steps
+        counters["controller_disconnect_steps"] += result.metrics.delta_controller_disconnect_steps
+        counters["readiness_fail_steps_total"] += result.metrics.delta_readiness_fail_steps
+        counters["readiness_fail_estop_dropped_steps_total"] += (
+            result.metrics.delta_readiness_fail_estop_dropped_steps
+        )
+        if result.metrics.had_protective_stop:
+            counters["protective_stop_episodes"] += 1
+        if result.metrics.had_controller_disconnect:
+            counters["controller_disconnect_episodes"] += 1
+        if result.terminal.readiness_fail_estop:
+            counters["readiness_fail_estop_episodes"] += 1
+        interval_state["primitive"] += result.metrics.delta_interval_primitive_env_steps
+        interval_state["primitive_horizontal"] += (
+            result.metrics.delta_interval_primitive_horizontal_env_steps
+        )
+        interval_state["target_position_directional"] += (
+            result.metrics.delta_interval_target_position_directional_env_steps
+        )
+        rolling_state["task"].append(result.metrics.episode_task_reward)
+        rolling_state["motion"].append(result.metrics.episode_motion_reward)
+        rolling_state["length"].append(result.metrics.episode_length)
+        rolling_state["estop"].append(result.metrics.episode_estop_flag)
+        episodic_returns.append(result.metrics.episode_return)
+        episodic_lengths.append(result.metrics.episode_length)
+        success_rates.append(1.0 if result.terminal.episode_success else 0.0)
+
+        # Per-episode TB scalars.
+        _write_per_episode_tb(writer, result=result, total_steps=total_steps, stats=stats)
+
+        # 2. Push to replay UNCONDITIONALLY (already trimmed) + run learner.
+        partition, ep_return, episode_return_success_threshold, _ = _add_episode_to_shared_replay(
+            replay=replay,
+            episode_trajectory=result.trajectory,
+            recent_episode_returns=recent_episode_returns,
+            success_top_fraction=args.success_top_fraction,
+        )
+        rolling_state["recent_episode_window_count"] = len(recent_episode_returns)
+        actor_updated = _run_sync_learner_iteration(
+            args=args,
+            train_args=train_args,
+            replay=replay,
+            stats=stats,
+            state=learner_state,
+        )
+        if actor_updated:
+            actor.load_state_dict(
+                {k: v.detach().cpu() for k, v in learner_state.actor.state_dict().items()},
+                strict=False,
+            )
+            transition_hold.begin(
+                reason="actor_sync_update",
+                hold_steps=int(args.transition_hold_steps_post_actor_sync),
+                sim_hold=False,
+                env=env,
+                ctx=ctx,
+                primitive_selector=primitive_selector,
+                extract_primitive_state_tensors=_extract_primitive_state_tensors,
+                reset_primitive_rollout_state=_reset_primitive_rollout_state,
+                use_last_action_in_policy_state=train_args.use_last_action_in_policy_state,
+                device=device,
+            )
+
+        # Per-episode progress lines.
+        _print_episode_progress(
+            result=result,
+            next_episode_file_id=next_episode_file_id,
+            counters=counters,
+            total_steps=total_steps,
+            total_episodes=total_episodes,
+            transition_hold=transition_hold,
+            elapsed_offset_s=elapsed_offset_s,
+            collector_start_time=collector_start_time,
+            rolling_state=rolling_state,
+        )
+        rolling50_m = compute_rolling50_metrics(
+            rolling_state["task"],
+            rolling_state["motion"],
+            rolling_state["length"],
+            rolling_state["estop"],
+        )
+        elapsed_s = max(0.0, elapsed_offset_s + (time.time() - collector_start_time))
+        stats["run_elapsed_total_s"] = float(elapsed_s)
+        stats["collector_steps"] = float(total_steps)
+        stats["collector_total_steps"] = float(total_steps)
+        update_stats_dict_rolling50(
+            stats,
+            rolling50_m,
+            window_size=ROLLING_PERF_WINDOW_EPISODES,
+            rolling50_task_reward_values=rolling_state["task"],
+            rolling50_motion_reward_values=rolling_state["motion"],
+            rolling50_episode_length_values=rolling_state["length"],
+            rolling50_estop_episode_flags=rolling_state["estop"],
+        )
+        write_rolling50_tensorboard_scalars(writer, rolling50_m, total_steps)
+
+        # 3. Save artifacts + flush pending reset.
+        next_episode_file_id = _save_episode_artifacts_and_pending_reset(
+            args=args,
+            result=result,
+            next_episode_file_id=next_episode_file_id,
+            pending_reset_artifact=pending_reset_artifact,
+            latency_output_dir=latency_output_dir,
+            counters=counters,
+        )
+        # Periodic-checkpoint trigger (matches L2011–2022).
+        if (
+            args.enable_periodic_checkpointing
+            and counters["successful_online_episodes_kept"] > int(
+                stats.get("successful_online_episodes_kept", 0)
+            )
+            and int(args.checkpoint_every_successful_online_episodes) > 0
+            and (
+                counters["successful_online_episodes_kept"]
+                % int(args.checkpoint_every_successful_online_episodes)
+                == 0
+            )
+        ):
+            checkpoint_save_request_id += 1
+            stats["checkpoint_save_request_id"] = float(checkpoint_save_request_id)
+            stats["checkpoint_reason"] = "periodic_successful_online_episode"
+            stats["checkpoint_trigger_episode_id"] = float(next_episode_file_id - 1)
+            stats["checkpoint_trigger_successful_online_episodes_kept"] = float(
+                counters["successful_online_episodes_kept"]
+            )
+        stats["successful_online_episodes_kept"] = float(
+            counters["successful_online_episodes_kept"]
+        )
+        pending_reset_artifact = None
+
+        # 4. Pick reset kind and run reset to completion.
+        kind = pick_reset_kind(
+            total_episodes,
+            StopFlags(
+                had_stop=result.terminal.stop_flags.had_stop,
+                had_protective_stop=result.terminal.stop_flags.had_protective_stop,
+                had_controller_disconnect=result.terminal.stop_flags.had_controller_disconnect,
+            ),
+        )
+        reset_result = reset_runner.run(
+            kind=kind,
+            artifact_episode_id=next_reset_file_id,
+            episode_had_stop_flags=StopFlags(
+                had_stop=result.terminal.stop_flags.had_stop,
+                had_protective_stop=result.terminal.stop_flags.had_protective_stop,
+                had_controller_disconnect=result.terminal.stop_flags.had_controller_disconnect,
+            ),
+            episode_end_wall_time=episode_end_wall_time,
+            pending_reset_artifact=pending_reset_artifact,
+            next_reset_file_id=next_reset_file_id,
+        )
+        counters["reset_fsm_steps_total"] += reset_result.total_fsm_steps
+        pending_reset_artifact = reset_result.pending_reset_artifact
+        next_reset_file_id = reset_result.next_reset_file_id
+
+        transition_hold.begin(
+            reason=reset_result.transition_reason,
+            hold_steps=int(args.transition_hold_steps_post_reset),
+            sim_hold=True,
+            env=env,
+            ctx=ctx,
+            primitive_selector=primitive_selector,
+            extract_primitive_state_tensors=_extract_primitive_state_tensors,
+            reset_primitive_rollout_state=_reset_primitive_rollout_state,
+            use_last_action_in_policy_state=train_args.use_last_action_in_policy_state,
+            device=device,
+        )
+        policy_runner.seed_after_reset(reset_result.obs)
+
+        # 5. Periodic logging (between episodes only — see plan §6.1).
+        now = time.time()
+        if now - last_log_time >= float(args.collector_log_interval_sec):
+            last_log_time = _periodic_log(
+                args=args,
+                writer=writer,
+                replay=replay,
+                stats=stats,
+                learner_state=learner_state,
+                primitive_selector=primitive_selector,
+                transition_hold=transition_hold,
+                total_steps=total_steps,
+                total_episodes=total_episodes,
+                counters=counters,
+                rolling_state=rolling_state,
+                elapsed_offset_s=elapsed_offset_s,
+                collector_start_time=collector_start_time,
+                episodic_returns=episodic_returns,
+                episodic_lengths=episodic_lengths,
+                success_rates=success_rates,
+                interval_state=interval_state,
+                last_log_time=last_log_time,
+                episode_return_success_threshold=episode_return_success_threshold,
+            )
+
+    env.close()
+    writer.close()
+
+
+# ---------------------------------------------------------------------------
+# main + __main__ — same shape as async_td3_real, just calls our orchestrator.
+# ---------------------------------------------------------------------------
+
+
+def main(args: Args, train_args: TrainArgs) -> None:
+    if not (0.0 < args.success_top_fraction < 1.0):
+        raise ValueError("success_top_fraction must be in (0, 1).")
+    if args.q_updates <= 0:
+        raise ValueError("q_updates must be > 0.")
+    if args.actor_updates_per_iteration <= 0:
+        raise ValueError("actor_updates_per_iteration must be > 0.")
+    if args.target_network_frequency <= 0:
+        raise ValueError("target_network_frequency must be > 0.")
+    if abs(float(args.critic_success_sample_fraction + args.critic_failure_sample_fraction) - 1.0) > 1e-6:
+        raise ValueError(
+            "critic_success_sample_fraction + critic_failure_sample_fraction must equal 1.0."
+        )
+    if (
+        args.enable_periodic_checkpointing
+        and int(args.checkpoint_every_successful_online_episodes) <= 0
+    ):
+        raise ValueError(
+            "checkpoint_every_successful_online_episodes must be > 0 when checkpointing is enabled."
+        )
+    normalized_replay_priority = _normalize_replay_source_priority(args.replay_source_priority)
+    if normalized_replay_priority != str(args.replay_source_priority).strip().lower():
+        print("[main] replay_source_priority normalized to 'warmstart_only' due to invalid input.")
+    if normalize_transition_last_action_mode(args.transition_last_action_mode) != str(
+        args.transition_last_action_mode
+    ).strip().lower():
+        print("[main] transition_last_action_mode normalized to 'zero' due to invalid input.")
+
+    with open(args.config, "r") as f:
+        config = yaml.load(f, Loader=yaml.FullLoader)
+    probe_config = _prepare_air_hockey_config(config, seed=args.seed, return_goal_obs=False)
+    probe_config["simulator"] = "box2d"
+    probe_sim_params = dict(probe_config.get("simulator_params", {}))
+    for key in ("control_mode", "wait_for_space_to_start", "save_path", "debug_control", "debug_control_every"):
+        probe_sim_params.pop(key, None)
+    probe_config["simulator_params"] = probe_sim_params
+    probe_env = AirHockeyEnv(probe_config)
+    obs_dim = int(np.prod(probe_env.observation_space.shape))
+    act_dim = int(np.prod(probe_env.action_space.shape))
+    action_low_np = np.asarray(probe_env.action_space.low, dtype=np.float32)
+    action_high_np = np.asarray(probe_env.action_space.high, dtype=np.float32)
+
+    replay = SharedTD3Replay(
+        success_capacity=args.success_buffer_size,
+        failure_capacity=args.failure_buffer_size,
+        obs_shape=(obs_dim,),
+        action_shape=(act_dim,),
+    )
+    stats: Dict[str, object] = {}
+    stats["successful_online_episodes_kept"] = float(0)
+    stats["checkpoint_save_request_id"] = float(0)
+    stats["checkpoint_trigger_successful_online_episodes_kept"] = float(0)
+    stats["collector_total_steps"] = float(0.0)
+    stats["run_elapsed_total_s"] = float(0.0)
+    stats["rolling50_window_size"] = float(ROLLING_PERF_WINDOW_EPISODES)
+    stats["rolling50_window_count"] = float(0.0)
+    stats["rolling50_task_reward_avg"] = float(0.0)
+    stats["rolling50_motion_reward_avg"] = float(0.0)
+    stats["rolling50_episode_length_avg"] = float(0.0)
+    stats["rolling50_estop_episode_count"] = float(0.0)
+    stats["rolling50_task_reward_values"] = []
+    stats["rolling50_motion_reward_values"] = []
+    stats["rolling50_episode_length_values"] = []
+    stats["rolling50_estop_episode_flags"] = []
+    if args.model_path is not None:
+        loaded_runtime_state = _load_runtime_perf_from_checkpoint_file(args.model_path)
+        stats["collector_total_steps"] = float(loaded_runtime_state.get("collector_total_steps", 0.0))
+        loaded_task_values = _coerce_float_list(
+            loaded_runtime_state.get("rolling50_task_reward_values", []),
+            max_items=ROLLING_PERF_WINDOW_EPISODES,
+        )
+        loaded_motion_values = _coerce_float_list(
+            loaded_runtime_state.get("rolling50_motion_reward_values", []),
+            max_items=ROLLING_PERF_WINDOW_EPISODES,
+        )
+        loaded_length_values = _coerce_float_list(
+            loaded_runtime_state.get("rolling50_episode_length_values", []),
+            max_items=ROLLING_PERF_WINDOW_EPISODES,
+        )
+        loaded_estop_flags = _coerce_float_list(
+            loaded_runtime_state.get("rolling50_estop_episode_flags", []),
+            max_items=ROLLING_PERF_WINDOW_EPISODES,
+        )
+        stats["run_elapsed_total_s"] = float(loaded_runtime_state.get("run_elapsed_total_s", 0.0))
+        stats["rolling50_task_reward_values"] = loaded_task_values
+        stats["rolling50_motion_reward_values"] = loaded_motion_values
+        stats["rolling50_episode_length_values"] = loaded_length_values
+        stats["rolling50_estop_episode_flags"] = loaded_estop_flags
+        stats["rolling50_window_count"] = float(
+            max(
+                len(loaded_task_values),
+                len(loaded_motion_values),
+                len(loaded_length_values),
+                len(loaded_estop_flags),
+            )
+        )
+        stats["rolling50_task_reward_avg"] = float(rolling_mean(loaded_task_values))
+        stats["rolling50_motion_reward_avg"] = float(rolling_mean(loaded_motion_values))
+        stats["rolling50_episode_length_avg"] = float(rolling_mean(loaded_length_values))
+        stats["rolling50_estop_episode_count"] = float(sum(loaded_estop_flags))
+
+    warm_start_requested = len(args.warm_start_hdf5_dirs) > 0
+    checkpoint_replay_loaded = False
+    if args.load_replay_from_checkpoint and args.model_path is not None:
+        should_load_checkpoint_replay = True
+        if warm_start_requested and normalized_replay_priority == "warmstart_only":
+            should_load_checkpoint_replay = False
+            print("[resume_replay] skipping checkpoint replay because warmstart_only is active.")
+        if should_load_checkpoint_replay:
+            checkpoint_replay_loaded = _load_replay_from_checkpoint_file(
+                model_path=args.model_path,
+                replay=replay,
+            )
+            if checkpoint_replay_loaded:
+                stats["resume_replay_loaded"] = float(1)
+    try:
+        if warm_start_requested:
+            if checkpoint_replay_loaded and normalized_replay_priority == "checkpoint_only":
+                print("[warm_start] skipped because replay_source_priority=checkpoint_only")
+            else:
+                if checkpoint_replay_loaded and normalized_replay_priority == "checkpoint_then_append":
+                    print("[warm_start] appending warm-start data on top of checkpoint replay.")
+                warm_start_summary = _warm_start_replay_from_hdf5(
+                    args=args,
+                    replay=replay,
+                    env=probe_env,
+                    add_episode_to_shared_replay=_add_episode_to_shared_replay,
+                )
+                for key, value in warm_start_summary.items():
+                    stats[f"warm_start/{key}"] = float(value)
+    finally:
+        probe_env.close()
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    if args.checkpoint_root_dir is not None and str(args.checkpoint_root_dir).strip():
+        base_log_dir = str(Path(args.checkpoint_root_dir).expanduser().resolve())
+        if args.log_parent_dir is not None and str(args.log_parent_dir).strip():
+            requested_log_dir = str(Path(args.log_parent_dir).expanduser().resolve())
+            if requested_log_dir != base_log_dir:
+                print(
+                    "[main] log_parent_dir differs from checkpoint_root_dir; "
+                    "using checkpoint_root_dir for TensorBoard logs."
+                )
+    else:
+        base_log_dir = args.log_parent_dir or f"runs/async_td3/{args.run_name}_{timestamp}"
+    collector_tb_dir = os.path.join(base_log_dir, "collector_tb")
+    learner_tb_dir = os.path.join(base_log_dir, "learner_tb")
+    os.makedirs(collector_tb_dir, exist_ok=True)
+    os.makedirs(learner_tb_dir, exist_ok=True)
+    print(f"TensorBoard logs: {base_log_dir}")
+
+    learner_state = _init_sync_learner_state(
+        args=args,
+        train_args=train_args,
+        replay=replay,
+        stats=stats,
+        obs_dim=obs_dim,
+        act_dim=act_dim,
+        action_low_np=action_low_np,
+        action_high_np=action_high_np,
+        tb_log_dir=learner_tb_dir,
+    )
+    try:
+        collector_process_modular(
+            args,
+            train_args,
+            replay,
+            stats,
+            learner_state,
+            obs_dim,
+            act_dim,
+            action_low_np,
+            action_high_np,
+            collector_tb_dir,
+        )
+    except KeyboardInterrupt:
+        print("[main] interrupted by user; shutting down.")
+    finally:
+        _finalize_sync_learner_state(
+            args=args,
+            train_args=train_args,
+            replay=replay,
+            stats=stats,
+            state=learner_state,
+        )
+        print("Final stats:", dict(stats))
+
+
+if __name__ == "__main__":
+    temp_args = tyro.cli(Args)
+    if temp_args.train_args is None:
+        raise SystemExit(
+            "async_td3_real_modular.py requires --train-args pointing to the "
+            "training run's args.yaml (produced by td3_training.py). It supplies "
+            "the actor/critic architecture and use_last_action_in_policy_state "
+            "flag that must match the saved checkpoint."
+        )
+    if temp_args.args_file is None:
+        raise SystemExit(
+            "async_td3_real_modular.py requires --args-file pointing to an "
+            "online-behavior YAML (e.g. td3_online.yaml). Architecture comes "
+            "from --train-args; this file supplies online training/collection "
+            "defaults only."
+        )
+    train_args = _load_train_args(temp_args.train_args)
+    mapped_defaults, applied_keys, ignored_keys = _build_args_file_defaults(temp_args.args_file)
+    mapped_defaults["args_file"] = temp_args.args_file
+    mapped_defaults["train_args"] = temp_args.train_args
+    default_args = Args(**mapped_defaults)
+
+    args = tyro.cli(Args, default=default_args)
+    print(f"[train_args] loaded architecture from: {args.train_args}")
+    print(
+        f"[train_args] "
+        f"action_scale={train_args.action_scale} "
+        f"agent_hidden_layer_size={train_args.agent_hidden_layer_size} "
+        f"agent_num_hidden_layers={train_args.agent_num_hidden_layers} "
+        f"q_hidden_layer_size={train_args.q_hidden_layer_size} "
+        f"q_num_hidden_layers={train_args.q_num_hidden_layers} "
+        f"use_last_action_in_policy_state={train_args.use_last_action_in_policy_state}"
+    )
+    print(f"[args_file] loaded defaults from: {args.args_file}")
+    if applied_keys:
+        print("[args_file] applied keys:", ", ".join(applied_keys))
+    else:
+        print("[args_file] applied keys: none")
+    if ignored_keys:
+        print("[args_file] ignored unsupported keys:", ", ".join(ignored_keys))
+    run_note = _prompt_optional_run_note()
+    _setup_run_data_dir(args, run_note)
+    main(args, train_args)

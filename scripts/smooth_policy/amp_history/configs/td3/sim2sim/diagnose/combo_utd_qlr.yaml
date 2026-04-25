@@ -1,33 +1,19 @@
-# Residual RL fine-tuning on a sim2sim target env.
+# Diagnostic: residual + UTD=1 + matched q_lr.
 #
-# Tested defaults from the 2026-04-25 hist2_motion0_to_combined campaign,
-# updated 2026-04-25 after the residual drift study (sim2sim.md "Drift
-# study" section). Source v2 settings (UTD=4, q_lr=1e-3) hit a higher
-# tail10 peak of 127.2 but degraded badly (-21% drift, final mean 84.7).
-# These updated settings (UTD=1, q_lr=3e-4) hit deterministic mean 109.3
-# / tail10 111.0 at step 30k — beats baseline peak AND reaches it 40%
-# earlier — with -13% drift and final mean 95.7 (still above zero-shot
-# 95.78 / 87.8). See notes/docs/training/sim2sim.md "Drift study" for the
-# full ablation across {bigger_buffer, lower_qlr, lower_utd, low_succ_frac,
-# combo} on hist2_motion0_to_combined.
+# Combo of the two single-knob winners from the 2026-04-25 drift study:
+#   lower_utd  (UTD=1)      → kills Q runaway (Q1@100k: 1.12 → 0.26)
+#                            but underfits critic, peak only 98 (vs 107 baseline)
+#   lower_qlr  (q_lr=3e-4)  → tail10 peak 132.7 (vs 127.2 baseline), drift -8% (vs -21%)
+#                            Q still climbs but slower
 #
-# Mechanism behind the drift: with UTD=4 the critic gets 4x updates per
-# env step on PER samples drawn 30% from the success buffer (which keeps
-# top-20% returning episodes). The success buffer becomes a "museum of
-# past peaks" the current policy can no longer reproduce; critic Q values
-# inflate (Q1@100k: 0.30 → 1.12), actor exploits, policy collapses. UTD=1
-# eliminates the runaway (Q1@100k: 0.26); matched q_lr keeps the slower
-# critic from underfitting.
+# Combined hypothesis: UTD=1 prevents the critic's gradient steps from
+# stamping in success-buffer bias; the matched q_lr lets the (now scarcer)
+# updates carry a bit more signal. Expected: stable peak comparable to
+# baseline with much less drift.
 #
-# Method (frozen base + clipped trainable residual + critic from scratch):
-#   notes/scratch/residual_rl_plan.md
-#
-# IMPORTANT: drift is reduced but not gone. ALWAYS evaluate intermediate
-# checkpoints (we set checkpoint_interval=10000 below); never use the
-# final-step model.pth as the campaign result without verifying earlier
-# checkpoints aren't better. Combo peaks at step 30k for this base+target
-# pair — your peak step may differ. A best-of-eval-checkpoint tracker in
-# td3_training.py is on the TODO list (sim2sim_infra_plan.md).
+# Two-knob change vs td3_sim2sim_residual.yaml:
+#   q_updates  4    → 1
+#   q_lr       1e-3 → 3e-4 (matched to policy_lr)
 
 total_timesteps: 100000
 num_envs: 1
@@ -39,14 +25,14 @@ tau: 0.005
 batch_size: 512
 learning_starts: 2000
 policy_lr: 0.0003
-q_lr: 0.0003           # matched to policy_lr (was 1e-3); see "Drift study" in sim2sim.md
+q_lr: 0.0003
 q_weight_decay: 0.0001
 q_frequency: 1
-q_updates: 1           # UTD=1 (was 4); kills Q runaway; see "Drift study" in sim2sim.md
+q_updates: 1
 policy_frequency: 1
 target_network_frequency: 2
 actor_updates_per_iteration: 1
-exploration_noise: 0.05   # preserve base behavior early
+exploration_noise: 0.05
 policy_noise: 0.2
 noise_clip: 0.5
 
@@ -63,9 +49,6 @@ recent_episode_window_size: 500
 critic_success_sample_fraction: 0.3
 critic_failure_sample_fraction: 0.7
 
-# Exploration primitives disabled for residual — residual_rl_plan.md §3.3.
-# Chances are zero so primitives are never sampled; weights need a non-zero
-# entry so the selector accepts the distribution at init.
 exploration_primitive_chance: 0.0
 exploration_primitive_chance_start: 0.0
 exploration_primitive_chance_pre_learning_starts: 0.0
@@ -119,29 +102,20 @@ velocity_at_zero: 0.6
 jerk_at_one: 8.0
 jerk_at_zero: 20.0
 
-# --- sim2sim targets ---------------------------------------------------------
 config: "scripts/smooth_policy/amp_history/configs/new_juggle/sim2sim_combined.yaml"
 enable_puck_delay_interpolation: true
 
-# Source actor checkpoint. Loaded into the frozen base; residual head is fresh.
 model_path: "runs/td3/hist_motion_collision/hist2_motion0/checkpoint_975000/model.pth"
 full_checkpoint_load: "residual"
-
-# Residual action magnitude bound. Campaign result (sim2sim.md):
-#   0.05 = max peak (best deterministic mean / tail10 / median; peaks at ~50k)
-#   0.10 = flatter trajectory, lower peak — pick this if you can't early-stop
-#   0.25 = TOO LARGE, actor diverges with this base+target combo (do not use)
 residual_scale: 0.05
 
-# Save more checkpoints than the default 25k so post-hoc per-checkpoint eval
-# can find the peak — both methods drift past peak with these hyperparams.
 checkpoint_interval: 10000
 
 args_file: null
-log_parent_dir: "runs/td3/sim2sim/hist2_motion0_to_combined/residual/seed0"
-run_name: "td3_sim2sim_residual"
+log_parent_dir: "runs/td3/sim2sim/hist2_motion0_to_combined/residual_diagnose/combo_utd_qlr/seed0"
+run_name: "td3_sim2sim_residual_combo_utd_qlr"
 
-device: "cuda:0"
+device: "cuda:1"
 seed: 0
 action_scale: 1.0
 h_transform_eps: 0.001

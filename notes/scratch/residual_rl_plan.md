@@ -5,13 +5,25 @@ start here.
 
 ## Status
 
-**Design stage.** Nothing is implemented yet. This doc captures:
+**Validated 2026-04-25 on `hist2_motion0_to_combined`.** Both implementation
+and method are confirmed working; residual at `residual_scale=0.05` + low UTD
+peaks at mean 106.84 / tail10 127.2 (step 50k) vs zero-shot 95.78 / 87.8.
+Full campaign log + variant table + tested defaults: see the "Fine-tune
+campaign" section in [`notes/docs/training/sim2sim.md`](../docs/training/sim2sim.md).
+
+The §3 implementation plan below was the design — what actually landed
+matches it with two refinements: (a) `residual_scale=0.25` was too loose for
+this base policy / target gap; the working value is `0.05–0.10`. (b) the
+`load_fine_tune_optimizer_state` path silently overrode `policy_lr` / `q_lr`
+config knobs from the source's saved optimizer state — fixed by explicit
+`pg["lr"] = float(args.policy_lr)` after the load (relevant to full_ft, not
+residual, but caught during this campaign).
+
+This doc captures:
 - the canonical method we chose (and why),
 - the concrete wiring into the existing TD3 code,
 - sensible default hyperparameters,
 - the first experiment to run.
-
-No code has been written. First step is implementation (§3), not more design.
 
 ## 1. Method (canonical residual RL)
 
