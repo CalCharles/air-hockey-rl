@@ -13,6 +13,7 @@ import torch
 
 from scripts.smooth_policy.agent import Agent
 from scripts.smooth_policy.deterministic_agent import DeterministicAgent
+from scripts.smooth_policy.residual_agent import ResidualActor
 
 
 def augment_policy_observation(observation, last_action, use_last_action):
@@ -46,8 +47,11 @@ def unwrap_eval_state_dict(loaded_obj):
 
 
 def infer_policy_class_from_state_dict(state_dict):
-    """Infer whether a checkpoint is an Agent or DeterministicAgent."""
+    """Infer whether a checkpoint is an Agent, DeterministicAgent, or ResidualActor."""
     keys = set(state_dict.keys())
+    if any(k.startswith("base.") for k in keys) and any(k.startswith("residual.") for k in keys):
+        return "residual_actor"
+
     has_agent_only_keys = (
         "actor_logstd" in keys
         or "LOG_STD_MIN" in keys
@@ -95,8 +99,27 @@ def build_policy(
             hidden_layer_size=agent_hidden_layer_size,
             num_hidden_layers=agent_num_hidden_layers,
         )
+    if policy_type == "residual_actor":
+        # Buffers (action_scale, residual.action_scale, action_low, action_high)
+        # are restored from state_dict, so constructor placeholders are fine.
+        base = DeterministicAgent(
+            policy_env_view,
+            action_scale=action_scale,
+            action_bias=0.0,
+            hidden_layer_size=agent_hidden_layer_size,
+            num_hidden_layers=agent_num_hidden_layers,
+        )
+        residual = DeterministicAgent(
+            policy_env_view,
+            action_scale=1.0,
+            action_bias=0.0,
+            hidden_layer_size=agent_hidden_layer_size,
+            num_hidden_layers=agent_num_hidden_layers,
+        )
+        return ResidualActor(base, residual, action_low=-1.0, action_high=1.0)
     raise ValueError(
-        f"Unsupported policy_type '{policy_type}'. Use 'agent' or 'deterministic_agent'."
+        f"Unsupported policy_type '{policy_type}'. Use 'agent', 'deterministic_agent', "
+        "or 'residual_actor'."
     )
 
 

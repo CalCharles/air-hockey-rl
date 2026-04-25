@@ -1,20 +1,12 @@
 # Residual RL fine-tuning on a sim2sim target env.
 #
-# STUB — not runnable yet. Requires:
-#   (a) ResidualActor in scripts/smooth_policy/residual_agent.py, and
-#   (b) a `residual` branch in td3_training.py's full_checkpoint_load loader
-#       (instantiate a fresh residual actor, load base from `model_path`,
-#       wrap both, skip qf/optimizer load, train critics from scratch).
+# Campaign: hist2_motion0 -> sim2sim_combined.
+# Source: hist2_motion0 checkpoint (TD3 trained on sysid_best_params_hist2.yaml,
+#         motion_reward_weight=0). Target: sim2sim_combined.yaml (combined
+#         movement/delay/wall/paddle perturbations).
 #
-# Method and wiring are specified in notes/scratch/residual_rl_plan.md.
-# This config is the sim2sim entry point for that method once implemented.
-#
-# Before use (after (a)+(b) land), update:
-#   - config: path to the **target** sim YAML
-#   - model_path: path to the source-trained actor checkpoint
-#   - log_parent_dir / run_name: per-campaign results dir
-#
-# See notes/scratch/sim2sim_infra_plan.md §4 and residual_rl_plan.md §3.
+# Method and wiring: notes/scratch/residual_rl_plan.md and
+# notes/scratch/sim2sim_infra_plan.md §4.
 
 total_timesteps: 100000
 num_envs: 1
@@ -51,6 +43,8 @@ critic_success_sample_fraction: 0.3
 critic_failure_sample_fraction: 0.7
 
 # Exploration primitives disabled for residual — residual_rl_plan.md §3.3.
+# Chances are zero so primitives are never sampled; weights need a non-zero
+# entry so the selector accepts the distribution at init.
 exploration_primitive_chance: 0.0
 exploration_primitive_chance_start: 0.0
 exploration_primitive_chance_pre_learning_starts: 0.0
@@ -58,13 +52,13 @@ exploration_primitive_chance_anneal_steps: 50000
 exploration_primitive_steps: 5
 
 exploration_primitive_weight_stand_still: 0.0
-exploration_primitive_weight_same_direction: 0.0
+exploration_primitive_weight_same_direction: 1.0
 exploration_primitive_weight_y_aligned: 0.0
 exploration_primitive_weight_policy_takeover: 0.0
 exploration_primitive_weight_target_position_directional: 0.0
 
 exploration_primitive_weight_anneal_stand_still: 0.0
-exploration_primitive_weight_anneal_same_direction: 0.0
+exploration_primitive_weight_anneal_same_direction: 1.0
 exploration_primitive_weight_anneal_y_aligned: 0.0
 exploration_primitive_weight_anneal_policy_takeover: 0.0
 exploration_primitive_weight_anneal_target_position_directional: 0.0
@@ -104,22 +98,18 @@ velocity_at_zero: 0.6
 jerk_at_one: 8.0
 jerk_at_zero: 20.0
 
-# --- sim2sim targets — fill in per campaign ---------------------------------
-config: "scripts/smooth_policy/amp_history/configs/new_juggle/sim2sim_<tag>.yaml"
+# --- sim2sim targets ---------------------------------------------------------
+config: "scripts/smooth_policy/amp_history/configs/new_juggle/sim2sim_combined.yaml"
 enable_puck_delay_interpolation: true
 
 # Source actor checkpoint. Loaded into the frozen base; residual head is fresh.
-model_path: "runs/td3/<campaign>/source/checkpoint_<step>/model.pth"
-# NOTE: 'residual' is not yet a valid value for full_checkpoint_load — this
-# file is a stub pending the residual RL implementation (see plan docs above).
+model_path: "runs/td3/hist_motion_collision/hist2_motion0/checkpoint_975000/model.pth"
 full_checkpoint_load: "residual"
 
-# Residual-specific knobs (read by future residual loader; harmless otherwise).
-residual_rl: true
 residual_scale: 0.25
 
 args_file: null
-log_parent_dir: "runs/td3/sim2sim/<src_to_tgt>/residual/seed0"
+log_parent_dir: "runs/td3/sim2sim/hist2_motion0_to_combined/residual/seed0"
 run_name: "td3_sim2sim_residual"
 
 device: "cuda:0"

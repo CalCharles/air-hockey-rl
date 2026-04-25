@@ -75,6 +75,7 @@ Key docs:
 - Rewards: [`training/reward-shaping.md`](notes/docs/training/reward-shaping.md)
 - Networks: [`training/network-architecture.md`](notes/docs/training/network-architecture.md)
 - Replay / episodes: [`training/replay-and-episodes.md`](notes/docs/training/replay-and-episodes.md)
+- Sim2sim transfer testing: [`training/sim2sim.md`](notes/docs/training/sim2sim.md)
 - Box2D env: [`environments/box2d/simulator-essentials.md`](notes/docs/environments/box2d/simulator-essentials.md)
 - Real-world stack: [`environments/real-world/overview.md`](notes/docs/environments/real-world/overview.md)
 - System ID: [`environments/real-world/puck-system-id.md`](notes/docs/environments/real-world/puck-system-id.md) · [`environments/real-world/teleop-system-id.md`](notes/docs/environments/real-world/teleop-system-id.md)

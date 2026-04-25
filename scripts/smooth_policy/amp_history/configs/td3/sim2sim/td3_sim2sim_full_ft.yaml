@@ -106,19 +106,21 @@ velocity_at_zero: 0.6
 jerk_at_one: 8.0
 jerk_at_zero: 20.0
 
-# --- sim2sim targets — fill in per campaign ---------------------------------
-# Sim config for the **target** env (perturbed physics). Author at
-# configs/new_juggle/sim2sim_<tag>.yaml; see plan §1.1.
-config: "scripts/smooth_policy/amp_history/configs/new_juggle/sim2sim_<tag>.yaml"
+# --- sim2sim targets ---------------------------------------------------------
+# Campaign: hist2_motion0 -> sim2sim_combined.
+config: "scripts/smooth_policy/amp_history/configs/new_juggle/sim2sim_combined.yaml"
 enable_puck_delay_interpolation: true
 
-# Source checkpoint (actor + qf1 + qf2 + actor_target + qf*_target).
+# Source training-state checkpoint (actor + qf* + targets + optimizers + replay).
 # Resume actor + critics + optimizer via fine_tune mode.
-model_path: "runs/td3/<campaign>/source/checkpoint_<step>/training_state.pth"
+model_path: "runs/td3/hist_motion_collision/hist2_motion0/checkpoint_975000/training_state.pth"
 full_checkpoint_load: "fine_tune"
+# Subsample N total samples from the source replay (split proportionally
+# between success/failure) and seed the fresh target buffers with them.
+fine_tune_replay_keep: 10000
 
 args_file: null
-log_parent_dir: "runs/td3/sim2sim/<src_to_tgt>/full_ft/seed0"
+log_parent_dir: "runs/td3/sim2sim/hist2_motion0_to_combined/full_ft/seed0"
 run_name: "td3_sim2sim_full_ft"
 
 # Runtime

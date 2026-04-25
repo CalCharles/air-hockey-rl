@@ -30,6 +30,7 @@ from torch.utils.tensorboard import SummaryWriter
 from airhockey import AirHockeyEnv
 from airhockey.renderers import AirHockeyRenderer
 from scripts.smooth_policy.deterministic_agent import DeterministicAgent
+from scripts.smooth_policy.residual_agent import ResidualActor, zero_init_residual_head
 from scripts.smooth_policy.amp_history.amp_training.td3.helper.dual_head_q import (
     TD3DualHeadQNetwork,
 )
@@ -44,6 +45,7 @@ from scripts.smooth_policy.amp_history.amp_training.td3.helper.td3_checkpointing
     build_training_state,
     load_fine_tune_optimizer_state,
     load_resume_training_state,
+    seed_fine_tune_replay_from_source,
 )
 from scripts.smooth_policy.amp_history.amp_training.td3.helper.td3_episode_collection import (
     EpisodeTrajectory,
@@ -536,8 +538,18 @@ class Args:
     # - "full_resume": restore full training runtime state (legacy/default behavior)
     # - "weights_only": restore actor/Q networks only, keep runtime fresh
     # - "fine_tune": restore actor/Q networks + optimizer states, keep runtime fresh
+    # - "residual": load source actor as frozen base, build fresh residual + fresh critic
     # Note: optimizer state restore may overwrite optimizer param-group values such as lr.
-    full_checkpoint_load: Literal["full_resume", "weights_only", "fine_tune"] = "full_resume"
+    full_checkpoint_load: Literal["full_resume", "weights_only", "fine_tune", "residual"] = "full_resume"
+    # Residual RL: max magnitude of the residual action component (used when
+    # full_checkpoint_load=="residual"). Combined action is clipped to the env
+    # action bounds, so residual_scale > 0 caps |residual|_inf via tanh.
+    residual_scale: float = 0.25
+    # Fine-tune replay seeding: when full_checkpoint_load=="fine_tune", how many
+    # samples (total, split proportionally between success/failure) to subsample
+    # from the source replay buffer into the fresh target buffers. None or 0
+    # disables seeding (current default behavior).
+    fine_tune_replay_keep: int | None = None
     log_parent_dir: str | None = None
     run_name: str = "default"
 
@@ -800,7 +812,56 @@ if __name__ == "__main__":
             raise FileNotFoundError(f"Model path {args.model_path} does not exist.")
         print(f"Loading model/checkpoint from {args.model_path}")
         loaded_obj = torch.load(args.model_path, map_location=args.device, weights_only=False)
-        if isinstance(loaded_obj, dict) and "actor" in loaded_obj and "qf1" in loaded_obj:
+        is_full_state = (
+            isinstance(loaded_obj, dict) and "actor" in loaded_obj and "qf1" in loaded_obj
+        )
+        if checkpoint_load_mode == "residual":
+            if args.eval_mode:
+                raise ValueError(
+                    "full_checkpoint_load='residual' is incompatible with eval_mode=True."
+                )
+            base_state = loaded_obj["actor"] if is_full_state else loaded_obj
+            actor.load_state_dict(extract_deterministic_state_dict(base_state), strict=False)
+            residual_online = DeterministicAgent(
+                policy_env_view,
+                action_scale=args.residual_scale,
+                action_bias=0.0,
+                hidden_layer_size=args.agent_hidden_layer_size,
+                num_hidden_layers=args.agent_num_hidden_layers,
+            ).to(args.device)
+            residual_target = DeterministicAgent(
+                policy_env_view,
+                action_scale=args.residual_scale,
+                action_bias=0.0,
+                hidden_layer_size=args.agent_hidden_layer_size,
+                num_hidden_layers=args.agent_num_hidden_layers,
+            ).to(args.device)
+            zero_init_residual_head(residual_online)
+            zero_init_residual_head(residual_target)
+            residual_target.load_state_dict(residual_online.state_dict())
+            residual_action_low = torch.as_tensor(
+                envs.single_action_space.low, dtype=torch.float32, device=args.device
+            )
+            residual_action_high = torch.as_tensor(
+                envs.single_action_space.high, dtype=torch.float32, device=args.device
+            )
+            actor = ResidualActor(
+                base_actor=actor,
+                residual_actor=residual_online,
+                action_low=residual_action_low,
+                action_high=residual_action_high,
+            ).to(args.device)
+            actor_target = ResidualActor(
+                base_actor=actor.base,
+                residual_actor=residual_target,
+                action_low=residual_action_low,
+                action_high=residual_action_high,
+            ).to(args.device)
+            print(
+                f"Residual mode: base frozen, residual_scale={args.residual_scale},"
+                " critic from scratch."
+            )
+        elif is_full_state:
             resume_checkpoint = loaded_obj
             if args.eval_mode:
                 if checkpoint_load_mode == "fine_tune":
@@ -839,13 +900,22 @@ if __name__ == "__main__":
     q_optimizer = optim.Adam(
         list(qf1.parameters()) + list(qf2.parameters()), lr=args.q_lr, weight_decay=args.q_weight_decay
     )
-    actor_optimizer = optim.Adam(actor.parameters(), lr=args.policy_lr)
+    if checkpoint_load_mode == "residual":
+        actor_optimizer = optim.Adam(actor.residual.parameters(), lr=args.policy_lr)
+    else:
+        actor_optimizer = optim.Adam(actor.parameters(), lr=args.policy_lr)
+    pending_fine_tune_source_replay = None
     if resume_checkpoint is not None and checkpoint_load_mode == "fine_tune":
         load_fine_tune_optimizer_state(
             resume_checkpoint,
             q_optimizer=q_optimizer,
             actor_optimizer=actor_optimizer,
         )
+        if args.fine_tune_replay_keep:
+            pending_fine_tune_source_replay = {
+                "success": resume_checkpoint.get("success_replay_buffer"),
+                "failure": resume_checkpoint.get("failure_replay_buffer"),
+            }
         resume_checkpoint = None
         print("Fine-tune load enabled: restored optimizer state, skipping replay/runtime resume.")
 
@@ -892,6 +962,21 @@ if __name__ == "__main__":
             "✓ TD3 replay buffers initialized "
             f"(success_capacity={args.success_buffer_size:,}, "
             f"failure_capacity={args.failure_buffer_size:,})\n"
+        )
+
+    if pending_fine_tune_source_replay is not None and args.fine_tune_replay_keep:
+        kept = seed_fine_tune_replay_from_source(
+            success_rb=success_rb,
+            failure_rb=failure_rb,
+            source_success=pending_fine_tune_source_replay["success"],
+            source_failure=pending_fine_tune_source_replay["failure"],
+            keep_total=int(args.fine_tune_replay_keep),
+            seed=args.seed,
+        )
+        print(
+            f"Fine-tune replay seeded: success_kept={kept['success_kept']}, "
+            f"failure_kept={kept['failure_kept']} "
+            f"(target keep_total={int(args.fine_tune_replay_keep)})"
         )
 
     velocity_magnitudes = []

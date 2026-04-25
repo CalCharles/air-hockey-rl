@@ -24,11 +24,21 @@ infrastructure" (or similar), start here.
   `load_mode: residual` branch land (see `residual_rl_plan.md`).
 
 **Still TODO (left for next sessions):**
-- Author at least one target sim config at
-  `configs/new_juggle/sim2sim_<tag>.yaml`. Perturbations are the user's
-  call; the infra is agnostic.
-- Promote stable sections to `notes/docs/training/sim2sim.md` after the
-  first end-to-end campaign.
+- Run an FT campaign (`full_ft` + `from_scratch` ≥2 seeds each) on the
+  `hist2_motion0_to_combined` target so the comparison aggregator can be
+  exercised end-to-end. `residual` is still blocked on `residual_rl_plan.md`.
+
+**Done since 2026-04-20:**
+- Authored `configs/new_juggle/sim2sim_combined.yaml` (combined kp/delay/
+  paddle-radius/wall-cone perturbations) — 2026-04-25.
+- Zero-shot evaluated `hist2_motion0/checkpoint_975000` on source vs.
+  target (mean 148 → 96, −35%) — 2026-04-25.
+- Single-knob sensitivity sweep (kp / action delay / wall cone) at
+  `runs/td3/sim2sim/hist2_motion0_to_sweeps/` — found wall cone is
+  ineffective as a perturbation lever — 2026-04-25.
+- Promoted stable sections to formal doc:
+  [`notes/docs/training/sim2sim.md`](../docs/training/sim2sim.md). Pointer
+  added to `notes/docs/index.md` and `CLAUDE.md`.
 
 ## Scope
 
