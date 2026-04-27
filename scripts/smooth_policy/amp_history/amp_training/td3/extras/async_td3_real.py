@@ -553,10 +553,12 @@ class Args:
     actor_sync_check_every_episode: bool = True
     collector_log_interval_sec: float = 60.0
     learner_log_interval_sec: float = 60.0
-    episode_artifact_dir: str = "runs/async_td3/episode_hdf5"
-    reset_artifact_dir: str = "runs/async_td3/reset_hdf5"
-    episode_gif_dir: str = "runs/async_td3/episode_gifs"
-    episode_camera_video_dir: str | None = None
+    # Single root for all collected per-episode data (HDF5s, GIFs, camera videos).
+    # `_setup_run_data_dir` creates the actual run folder at:
+    #   <data_root_dir>/<model_path_parent_dir>/data_<YYYYMMDD-HHMMSS>/
+    # and populates `episode_artifact_dir`, `reset_artifact_dir`, `episode_gif_dir`,
+    # and `episode_camera_video_dir` as runtime attributes pointing at subfolders.
+    data_root_dir: str = "runs/async_td3/data"
     # Kept for config compatibility; short-episode filtering is disabled.
     episode_min_timesteps: int = 1
     estop_episode_min_timesteps: int = 1
@@ -778,68 +780,54 @@ def _add_episode_to_shared_replay(
     return partition, episode_return, episode_return_success_threshold, inserted_steps
 
 
-def _load_replay_from_checkpoint_file(
-    *,
-    model_path: str,
-    replay: SharedTD3Replay,
-) -> bool:
-    if not os.path.exists(model_path):
-        return False
+_VITAL_TRAINING_STATE_KEYS = (
+    "actor",
+    "actor_target",
+    "qf1",
+    "qf2",
+    "qf1_target",
+    "qf2_target",
+    "success_replay_buffer",
+    "failure_replay_buffer",
+    "rng_states",
+)
+_NON_VITAL_TRAINING_STATE_KEYS = (
+    "q_optimizer",
+    "actor_optimizer",
+    "learner_q_updates",
+    "learner_actor_updates",
+    "train_metrics",
+    "collector_total_steps",
+    "run_elapsed_total_s",
+    "rolling50_task_reward_values",
+    "rolling50_motion_reward_values",
+    "rolling50_episode_length_values",
+    "rolling50_estop_episode_flags",
+)
+
+
+def _load_training_state_checkpoint(model_path: str) -> Dict[str, object]:
+    """Load and validate a training_state.pth dict. Raises on any deviation."""
     loaded_obj = torch.load(model_path, map_location="cpu", weights_only=False)
     if not isinstance(loaded_obj, dict):
-        return False
-    if "success_replay_buffer" not in loaded_obj or "failure_replay_buffer" not in loaded_obj:
-        return False
-    replay.load_state_dict(
-        {
-            "success": loaded_obj["success_replay_buffer"],
-            "failure": loaded_obj["failure_replay_buffer"],
-        }
-    )
-    snapshot = replay.state_snapshot()
-    print(
-        "[resume_replay] loaded from checkpoint "
-        f"success_rb={snapshot['success']['size']} failure_rb={snapshot['failure']['size']}"
-    )
-    return True
-
-
-def _load_runtime_perf_from_checkpoint_file(model_path: str) -> Dict[str, object]:
-    runtime_state: Dict[str, object] = {
-        "collector_total_steps": 0.0,
-        "run_elapsed_total_s": 0.0,
-        "rolling50_task_reward_values": [],
-        "rolling50_motion_reward_values": [],
-        "rolling50_episode_length_values": [],
-        "rolling50_estop_episode_flags": [],
-    }
-    if not model_path or not os.path.exists(model_path):
-        return runtime_state
-    try:
-        loaded_obj = torch.load(model_path, map_location="cpu", weights_only=False)
-    except Exception:
-        return runtime_state
-    if not isinstance(loaded_obj, dict):
-        return runtime_state
-    runtime_state["collector_total_steps"] = float(loaded_obj.get("collector_total_steps", 0.0))
-    runtime_state["run_elapsed_total_s"] = float(loaded_obj.get("run_elapsed_total_s", 0.0))
-    runtime_state["rolling50_task_reward_values"] = _coerce_float_list(
-        loaded_obj.get("rolling50_task_reward_values", []),
-        max_items=ROLLING_PERF_WINDOW_EPISODES,
-    )
-    runtime_state["rolling50_motion_reward_values"] = _coerce_float_list(
-        loaded_obj.get("rolling50_motion_reward_values", []),
-        max_items=ROLLING_PERF_WINDOW_EPISODES,
-    )
-    runtime_state["rolling50_episode_length_values"] = _coerce_float_list(
-        loaded_obj.get("rolling50_episode_length_values", []),
-        max_items=ROLLING_PERF_WINDOW_EPISODES,
-    )
-    runtime_state["rolling50_estop_episode_flags"] = _coerce_float_list(
-        loaded_obj.get("rolling50_estop_episode_flags", []),
-        max_items=ROLLING_PERF_WINDOW_EPISODES,
-    )
-    return runtime_state
+        raise TypeError(
+            f"Expected training_state.pth at {model_path} to be a dict, "
+            f"got {type(loaded_obj).__name__}."
+        )
+    missing_vital = [k for k in _VITAL_TRAINING_STATE_KEYS if k not in loaded_obj]
+    if missing_vital:
+        raise KeyError(
+            f"training_state.pth at {model_path} is missing required keys: "
+            f"{missing_vital}. Expected a dict produced by _build_async_training_state."
+        )
+    present_non_vital = [k for k in _NON_VITAL_TRAINING_STATE_KEYS if k in loaded_obj]
+    if present_non_vital and len(present_non_vital) != len(_NON_VITAL_TRAINING_STATE_KEYS):
+        missing_non_vital = [k for k in _NON_VITAL_TRAINING_STATE_KEYS if k not in loaded_obj]
+        raise KeyError(
+            f"training_state.pth at {model_path} has partial non-vital fields. "
+            f"Present: {present_non_vital}. Missing: {missing_non_vital}."
+        )
+    return loaded_obj
 
 
 def _finite_or_default(value: float, default: float = -1.0) -> float:
@@ -2062,7 +2050,7 @@ def collector_process(
                         camera_video_path = generate_episode_camera_video(
                             episode_hdf5_path=clean_result.path,
                             video_root=_bucketed_output_dir(
-                                args.episode_camera_video_dir or args.episode_gif_dir,
+                                args.episode_camera_video_dir,
                                 n_episode_steps,
                             ),
                             fps=args.episode_camera_video_fps,
@@ -2079,7 +2067,7 @@ def collector_process(
                             stop_camera_video_path = _copy_to_stop_dir(
                                 camera_video_path,
                                 _stop_output_dir(
-                                    args.episode_camera_video_dir or args.episode_gif_dir,
+                                    args.episode_camera_video_dir,
                                     episode_stop_artifact_label,
                                 ),
                             )
@@ -2528,6 +2516,7 @@ def _init_sync_learner_state(
     action_low_np: np.ndarray,
     action_high_np: np.ndarray,
     tb_log_dir: str,
+    resume_checkpoint: Dict[str, object] | None = None,
 ) -> LearnerRuntimeState:
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -2581,23 +2570,16 @@ def _init_sync_learner_state(
     )
     qf1_target.load_state_dict(qf1.state_dict())
     qf2_target.load_state_dict(qf2.state_dict())
-    resume_checkpoint: Dict[str, object] | None = None
-    if args.model_path is not None and os.path.exists(args.model_path):
-        loaded_obj = torch.load(args.model_path, map_location=device, weights_only=False)
-        if isinstance(loaded_obj, dict) and "actor" in loaded_obj:
-            actor.load_state_dict(extract_deterministic_state_dict(loaded_obj["actor"]), strict=False)
-            actor_target.load_state_dict(actor.state_dict())
-            if "qf1" in loaded_obj and "qf2" in loaded_obj:
-                qf1.load_state_dict(loaded_obj["qf1"])
-                qf2.load_state_dict(loaded_obj["qf2"])
-                if "qf1_target" in loaded_obj and "qf2_target" in loaded_obj:
-                    qf1_target.load_state_dict(loaded_obj["qf1_target"])
-                    qf2_target.load_state_dict(loaded_obj["qf2_target"])
-            if "q_optimizer" in loaded_obj and "actor_optimizer" in loaded_obj:
-                resume_checkpoint = loaded_obj
-        else:
-            actor.load_state_dict(extract_deterministic_state_dict(loaded_obj), strict=False)
-            actor_target.load_state_dict(actor.state_dict())
+    if resume_checkpoint is not None:
+        actor.load_state_dict(
+            extract_deterministic_state_dict(resume_checkpoint["actor"]), strict=False
+        )
+        actor_target.load_state_dict(actor.state_dict())
+        qf1.load_state_dict(resume_checkpoint["qf1"])
+        qf2.load_state_dict(resume_checkpoint["qf2"])
+        qf1_target.load_state_dict(resume_checkpoint["qf1_target"])
+        qf2_target.load_state_dict(resume_checkpoint["qf2_target"])
+        set_rng_states(resume_checkpoint["rng_states"])
     q_optimizer = optim.Adam(
         list(qf1.parameters()) + list(qf2.parameters()),
         lr=args.q_lr,
@@ -2607,18 +2589,15 @@ def _init_sync_learner_state(
     total_updates = 0
     total_actor_updates = 0
     latest_train_metrics: Dict[str, float] = {}
-    if resume_checkpoint is not None:
+    if resume_checkpoint is not None and "q_optimizer" in resume_checkpoint:
         q_optimizer.load_state_dict(resume_checkpoint["q_optimizer"])
         actor_optimizer.load_state_dict(resume_checkpoint["actor_optimizer"])
-        total_updates = int(resume_checkpoint.get("global_step", resume_checkpoint.get("learner_q_updates", 0)))
-        total_actor_updates = int(resume_checkpoint.get("learner_actor_updates", 0))
-        if isinstance(resume_checkpoint.get("train_metrics"), dict):
-            latest_train_metrics = {
-                str(key): float(value)
-                for key, value in resume_checkpoint["train_metrics"].items()
-            }
-        if "rng_states" in resume_checkpoint:
-            set_rng_states(resume_checkpoint["rng_states"])
+        total_updates = int(resume_checkpoint["learner_q_updates"])
+        total_actor_updates = int(resume_checkpoint["learner_actor_updates"])
+        latest_train_metrics = {
+            str(key): float(value)
+            for key, value in resume_checkpoint["train_metrics"].items()
+        }
         print(
             "[learner] resumed optimizer state "
             f"q_updates={total_updates} actor_updates={total_actor_updates}"
@@ -2869,34 +2848,58 @@ def _prompt_optional_run_note() -> str:
     return note
 
 
+def _model_path_subdir(model_path: str | None) -> Path:
+    """Return the per-model subdirectory used to scope collected data.
+
+    Mirrors the directory portion of `model_path` (i.e. everything except the
+    final `training_state.pth` / `model.pth` filename) so that runs collected
+    against the same checkpoint folder share a parent directory. Absolute model
+    paths are converted to a relative chain so they nest cleanly under
+    `data_root_dir` instead of escaping it.
+
+    Falls back to `no_model/` when no model is provided.
+    """
+    if model_path is None or not str(model_path).strip():
+        return Path("no_model")
+    model_dir = Path(str(model_path)).expanduser().parent
+    if model_dir.is_absolute():
+        # Drop the leading anchor (e.g. "/" on POSIX) so the path can be joined
+        # under data_root_dir without escaping it.
+        parts = model_dir.parts[1:]
+        return Path(*parts) if parts else Path("no_model")
+    if str(model_dir) in ("", "."):
+        return Path("no_model")
+    return model_dir
+
+
 def _setup_run_data_dir(args: Args, run_note: str) -> Path:
-    """Create a new timestamped folder under the log parent dir for collected
-    data, redirect all data output paths into it, and write the run note.
+    """Create a new timestamped folder under `data_root_dir / <model_subdir>`
+    for collected data, set runtime-only data path attributes on `args`, and
+    write the optional run note.
 
     Returns the path of the created folder.
     """
-    if args.log_parent_dir is not None and str(args.log_parent_dir).strip():
-        log_parent_base = Path(args.log_parent_dir).expanduser().resolve()
-    elif args.checkpoint_root_dir is not None and str(args.checkpoint_root_dir).strip():
-        log_parent_base = Path(args.checkpoint_root_dir).expanduser().resolve()
-    else:
-        log_parent_base = Path(args.episode_artifact_dir).expanduser().resolve().parent
+    data_root_base = Path(args.data_root_dir).expanduser().resolve()
+    model_subdir = _model_path_subdir(args.model_path)
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_data_dir = log_parent_base / f"data_{timestamp}"
+    run_data_dir = data_root_base / model_subdir / f"data_{timestamp}"
     run_data_dir.mkdir(parents=True, exist_ok=True)
 
+    # These attributes are not declared on `Args` (they are not configurable
+    # individually anymore); they are populated dynamically here so that the
+    # rest of the collector / learner code can keep reading the same names.
     args.episode_artifact_dir = str(run_data_dir / "episode_hdf5")
     args.reset_artifact_dir = str(run_data_dir / "reset_hdf5")
     args.episode_gif_dir = str(run_data_dir / "episode_gifs")
-    if args.episode_camera_video_dir is not None:
-        args.episode_camera_video_dir = str(run_data_dir / "episode_camera_videos")
+    args.episode_camera_video_dir = str(run_data_dir / "episode_camera_videos")
 
     note_path = run_data_dir / "run_note.txt"
     if run_note:
         note_path.write_text(run_note + "\n", encoding="utf-8")
 
     print(f"[run_data] collected data dir: {run_data_dir}")
+    print(f"[run_data] model subdir: {model_subdir}")
     if run_note:
         print(f"[run_data] note: {run_note}")
 
@@ -2986,57 +2989,64 @@ def main(args: Args, train_args: TrainArgs) -> None:
     stats["rolling50_motion_reward_values"] = []
     stats["rolling50_episode_length_values"] = []
     stats["rolling50_estop_episode_flags"] = []
+    training_state_checkpoint: Dict[str, object] | None = None
     if args.model_path is not None:
-        loaded_runtime_state = _load_runtime_perf_from_checkpoint_file(args.model_path)
-        stats["collector_total_steps"] = float(loaded_runtime_state.get("collector_total_steps", 0.0))
-        loaded_task_values = _coerce_float_list(
-            loaded_runtime_state.get("rolling50_task_reward_values", []),
-            max_items=ROLLING_PERF_WINDOW_EPISODES,
-        )
-        loaded_motion_values = _coerce_float_list(
-            loaded_runtime_state.get("rolling50_motion_reward_values", []),
-            max_items=ROLLING_PERF_WINDOW_EPISODES,
-        )
-        loaded_length_values = _coerce_float_list(
-            loaded_runtime_state.get("rolling50_episode_length_values", []),
-            max_items=ROLLING_PERF_WINDOW_EPISODES,
-        )
-        loaded_estop_flags = _coerce_float_list(
-            loaded_runtime_state.get("rolling50_estop_episode_flags", []),
-            max_items=ROLLING_PERF_WINDOW_EPISODES,
-        )
-        stats["run_elapsed_total_s"] = float(loaded_runtime_state.get("run_elapsed_total_s", 0.0))
-        stats["rolling50_task_reward_values"] = loaded_task_values
-        stats["rolling50_motion_reward_values"] = loaded_motion_values
-        stats["rolling50_episode_length_values"] = loaded_length_values
-        stats["rolling50_estop_episode_flags"] = loaded_estop_flags
-        stats["rolling50_window_count"] = float(
-            max(
-                len(loaded_task_values),
-                len(loaded_motion_values),
-                len(loaded_length_values),
-                len(loaded_estop_flags),
+        training_state_checkpoint = _load_training_state_checkpoint(args.model_path)
+        if "collector_total_steps" in training_state_checkpoint:
+            loaded_task_values = _coerce_float_list(
+                training_state_checkpoint["rolling50_task_reward_values"],
+                max_items=ROLLING_PERF_WINDOW_EPISODES,
             )
-        )
-        stats["rolling50_task_reward_avg"] = float(rolling_mean(loaded_task_values))
-        stats["rolling50_motion_reward_avg"] = float(rolling_mean(loaded_motion_values))
-        stats["rolling50_episode_length_avg"] = float(rolling_mean(loaded_length_values))
-        stats["rolling50_estop_episode_count"] = float(sum(loaded_estop_flags))
+            loaded_motion_values = _coerce_float_list(
+                training_state_checkpoint["rolling50_motion_reward_values"],
+                max_items=ROLLING_PERF_WINDOW_EPISODES,
+            )
+            loaded_length_values = _coerce_float_list(
+                training_state_checkpoint["rolling50_episode_length_values"],
+                max_items=ROLLING_PERF_WINDOW_EPISODES,
+            )
+            loaded_estop_flags = _coerce_float_list(
+                training_state_checkpoint["rolling50_estop_episode_flags"],
+                max_items=ROLLING_PERF_WINDOW_EPISODES,
+            )
+            stats["collector_total_steps"] = float(training_state_checkpoint["collector_total_steps"])
+            stats["run_elapsed_total_s"] = float(training_state_checkpoint["run_elapsed_total_s"])
+            stats["rolling50_task_reward_values"] = loaded_task_values
+            stats["rolling50_motion_reward_values"] = loaded_motion_values
+            stats["rolling50_episode_length_values"] = loaded_length_values
+            stats["rolling50_estop_episode_flags"] = loaded_estop_flags
+            stats["rolling50_window_count"] = float(
+                max(
+                    len(loaded_task_values),
+                    len(loaded_motion_values),
+                    len(loaded_length_values),
+                    len(loaded_estop_flags),
+                )
+            )
+            stats["rolling50_task_reward_avg"] = float(rolling_mean(loaded_task_values))
+            stats["rolling50_motion_reward_avg"] = float(rolling_mean(loaded_motion_values))
+            stats["rolling50_episode_length_avg"] = float(rolling_mean(loaded_length_values))
+            stats["rolling50_estop_episode_count"] = float(sum(loaded_estop_flags))
 
     warm_start_requested = len(args.warm_start_hdf5_dirs) > 0
     checkpoint_replay_loaded = False
-    if args.load_replay_from_checkpoint and args.model_path is not None:
-        should_load_checkpoint_replay = True
+    if args.load_replay_from_checkpoint and training_state_checkpoint is not None:
         if warm_start_requested and normalized_replay_priority == "warmstart_only":
-            should_load_checkpoint_replay = False
             print("[resume_replay] skipping checkpoint replay because warmstart_only is active.")
-        if should_load_checkpoint_replay:
-            checkpoint_replay_loaded = _load_replay_from_checkpoint_file(
-                model_path=args.model_path,
-                replay=replay,
+        else:
+            replay.load_state_dict(
+                {
+                    "success": training_state_checkpoint["success_replay_buffer"],
+                    "failure": training_state_checkpoint["failure_replay_buffer"],
+                }
             )
-            if checkpoint_replay_loaded:
-                stats["resume_replay_loaded"] = float(1)
+            snapshot = replay.state_snapshot()
+            print(
+                "[resume_replay] loaded from checkpoint "
+                f"success_rb={snapshot['success']['size']} failure_rb={snapshot['failure']['size']}"
+            )
+            checkpoint_replay_loaded = True
+            stats["resume_replay_loaded"] = float(1)
     try:
         if warm_start_requested:
             if checkpoint_replay_loaded and normalized_replay_priority == "checkpoint_only":
@@ -3084,6 +3094,7 @@ def main(args: Args, train_args: TrainArgs) -> None:
         action_low_np=action_low_np,
         action_high_np=action_high_np,
         tb_log_dir=learner_tb_dir,
+        resume_checkpoint=training_state_checkpoint,
     )
     try:
         collector_process(

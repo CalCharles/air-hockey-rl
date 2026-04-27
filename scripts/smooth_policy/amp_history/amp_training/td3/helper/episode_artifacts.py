@@ -9,6 +9,7 @@ from typing import Dict, List
 
 import cv2
 import h5py
+import imageio
 import numpy as np
 
 from scripts.smooth_policy.visualize_demo.visualize_real_trajectory import (
@@ -204,8 +205,14 @@ def generate_episode_gif(
     max_frames: int | None = None,
     subsample: int = 1,
     require_puck: bool = False,
+    panel_height: int = 240,
 ) -> Path:
-    """Generate one Box2D-style GIF from split-schema episode HDF5."""
+    """Generate a side-by-side GIF: Box2D projection of the HDF5 trajectory
+    on the left, real-world camera frame (``train_img``) on the right.
+
+    Falls back to Box2D-only rendering via ``create_trajectory_gif`` when
+    ``train_img`` is unavailable in the HDF5.
+    """
     if fps <= 0:
         raise ValueError("fps must be > 0")
     if subsample <= 0:
@@ -230,15 +237,131 @@ def generate_episode_gif(
         orientation="vertical",
         paddle_input_frame="table",
     )
-    create_trajectory_gif(
-        paddle_data,
-        renderer,
-        output_path,
+
+    with h5py.File(hdf5_path, "r") as h5_file:
+        camera_frames = (
+            np.asarray(h5_file["train_img"][:], dtype=np.uint8)
+            if "train_img" in h5_file
+            else None
+        )
+
+    if camera_frames is None:
+        create_trajectory_gif(
+            paddle_data,
+            renderer,
+            output_path,
+            max_frames=max_frames,
+            subsample=subsample,
+            fps=fps,
+        )
+        return output_path
+
+    _create_joint_trajectory_gif(
+        paddle_data=paddle_data,
+        camera_frames=camera_frames,
+        renderer=renderer,
+        output_path=output_path,
+        fps=fps,
         max_frames=max_frames,
         subsample=subsample,
-        fps=fps,
+        panel_height=panel_height,
     )
     return output_path
+
+
+def _resize_to_height(frame: np.ndarray, height: int) -> np.ndarray:
+    """Resize an image preserving aspect ratio to a target height (pixels)."""
+    if frame.shape[0] == height:
+        return frame
+    new_w = max(1, int(round(frame.shape[1] * (height / frame.shape[0]))))
+    return cv2.resize(frame, (new_w, height))
+
+
+def _side_by_side(left_rgb: np.ndarray, right_rgb: np.ndarray) -> np.ndarray:
+    """Horizontal concat with a 3px light-gray separator (mirrors
+    ``replay_real_in_sim._side_by_side``; inlined to avoid pulling Box2D)."""
+    if right_rgb.shape[0] != left_rgb.shape[0]:
+        new_w = int(round(right_rgb.shape[1] * (left_rgb.shape[0] / right_rgb.shape[0])))
+        right_rgb = cv2.resize(right_rgb, (max(1, new_w), left_rgb.shape[0]))
+    sep = np.full((left_rgb.shape[0], 3, 3), 200, dtype=np.uint8)
+    return np.concatenate([left_rgb, sep, right_rgb], axis=1)
+
+
+def _create_joint_trajectory_gif(
+    paddle_data: Dict[str, np.ndarray],
+    camera_frames: np.ndarray,
+    renderer: RealTrajectoryRenderer,
+    output_path: Path,
+    fps: int,
+    max_frames: int | None,
+    subsample: int,
+    panel_height: int,
+) -> None:
+    """Render a side-by-side GIF using the existing Box2D renderer and the
+    raw ``train_img`` camera frames. Stitching uses ``_side_by_side`` from
+    ``replay_real_in_sim.py``.
+    """
+    if camera_frames.ndim != 4:
+        raise ValueError(
+            f"camera_frames must be rank-4 (T,H,W,C), got {camera_frames.shape}"
+        )
+
+    pos_x = paddle_data["pos_x"]
+    pos_y = paddle_data["pos_y"]
+    vel_x = paddle_data["vel_x"]
+    vel_y = paddle_data["vel_y"]
+    timestamps = paddle_data["timestamps"]
+    has_puck = paddle_data.get("has_puck", False)
+    puck_x = paddle_data.get("puck_x")
+    puck_y = paddle_data.get("puck_y")
+    puck_occluded = paddle_data.get("puck_occluded")
+    has_target = paddle_data.get("has_target", False)
+    target_x = paddle_data.get("target_x")
+    target_y = paddle_data.get("target_y")
+
+    n_traj = len(pos_x)
+    n_cam = int(camera_frames.shape[0])
+    n_frames = min(n_traj, n_cam)
+    if n_frames == 0:
+        raise ValueError("No frames available to render (trajectory or train_img empty).")
+    if max_frames is not None:
+        n_frames = min(n_frames, int(max_frames))
+
+    indices = np.arange(0, n_frames, int(subsample))
+    relative_time = timestamps - timestamps[0]
+
+    frames: List[np.ndarray] = []
+    for i in indices:
+        sim_bgr = renderer.render_frame(
+            pos_x[i],
+            pos_y[i],
+            vel_x=vel_x[i],
+            vel_y=vel_y[i],
+            puck_x=(puck_x[i] if has_puck else None),
+            puck_y=(puck_y[i] if has_puck else None),
+            puck_occluded=(
+                puck_occluded[i] if (has_puck and puck_occluded is not None) else None
+            ),
+            target_x=(target_x[i] if has_target else None),
+            target_y=(target_y[i] if has_target else None),
+            timestep=int(i),
+            total_time=float(relative_time[i]),
+        )
+        sim_rgb = cv2.cvtColor(sim_bgr, cv2.COLOR_BGR2RGB)
+
+        cam = camera_frames[i]
+        if cam.shape[2] == 1:
+            cam = np.repeat(cam, 3, axis=2)
+        elif cam.shape[2] == 4:
+            cam = cam[:, :, :3]
+
+        sim_rgb = _resize_to_height(sim_rgb, panel_height)
+        cam = _resize_to_height(cam, panel_height)
+
+        frames.append(_side_by_side(sim_rgb, cam))
+
+    duration = int(1000 / fps)
+    imageio.mimsave(output_path, frames, format="GIF", loop=0, duration=duration)
 
 
 def generate_episode_camera_video(

@@ -20,7 +20,7 @@ noise_clip: 0.5
 
 
 # TODO: Initial replay buffer directories
-warm_start_hdf5_dirs: ['real_runs/warm_start_trajectories'] # e.g. ["real_runs/async_td3_explore/episode_hdf5/>200"]
+warm_start_hdf5_dirs: ['real_runs/warm_start_trajectories'] # e.g. ["real_runs/online_run"] (recursive walk picks up data_<ts>/episode_hdf5/<bucket>/*.hdf5)
 warm_start_hdf5_recursive: true
 # Replay bootstrap source policy:
 # - warmstart_only: use only warm_start_hdf5_dirs

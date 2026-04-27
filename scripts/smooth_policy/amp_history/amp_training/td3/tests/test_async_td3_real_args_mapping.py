@@ -57,9 +57,8 @@ class AsyncTd3ArgsFileMappingTests(unittest.TestCase):
             actor_sync_check_every_episode: false
             collector_log_interval_sec: 1.25
             learner_log_interval_sec: 2.5
-            episode_artifact_dir: "/tmp/episodes"
+            data_root_dir: "/tmp/data_root"
             smoke_test_seconds: 15
-            episode_camera_video_dir: "/tmp/camera"
             exploration_primitive_chance_start: 0.4
             exploration_primitive_chance: 0.1
             exploration_primitive_steps: 7
@@ -81,9 +80,8 @@ class AsyncTd3ArgsFileMappingTests(unittest.TestCase):
         self.assertFalse(mapped["actor_sync_check_every_episode"])
         self.assertEqual(mapped["collector_log_interval_sec"], 1.25)
         self.assertEqual(mapped["learner_log_interval_sec"], 2.5)
-        self.assertEqual(mapped["episode_artifact_dir"], "/tmp/episodes")
+        self.assertEqual(mapped["data_root_dir"], "/tmp/data_root")
         self.assertEqual(mapped["smoke_test_seconds"], 15)
-        self.assertEqual(mapped["episode_camera_video_dir"], "/tmp/camera")
         self.assertEqual(mapped["exploration_primitive_chance_start"], 0.4)
         self.assertEqual(mapped["exploration_primitive_chance"], 0.1)
         self.assertEqual(mapped["exploration_primitive_steps"], 7)
@@ -96,9 +94,34 @@ class AsyncTd3ArgsFileMappingTests(unittest.TestCase):
         self.assertEqual(mapped["latency_profile_output_dir"], "/tmp/latency")
         self.assertEqual(mapped["latency_profile_hist_bins"], 50)
         self.assertIn("collector_device", applied)
-        self.assertIn("episode_camera_video_dir", applied)
+        self.assertIn("data_root_dir", applied)
         self.assertIn("exploration_primitive_chance_start", applied)
         self.assertEqual(ignored, [])
+
+    def test_legacy_per_artifact_dir_keys_are_ignored(self) -> None:
+        # The split per-artifact dirs were collapsed into a single `data_root_dir`
+        # field. Older configs that still set them must be silently ignored
+        # rather than crash, but should be reported as ignored keys.
+        path = self._write_yaml(
+            """
+            episode_artifact_dir: "/tmp/episodes"
+            reset_artifact_dir: "/tmp/resets"
+            episode_gif_dir: "/tmp/gifs"
+            episode_camera_video_dir: "/tmp/camera"
+            """
+        )
+
+        mapped, applied, ignored = _build_args_file_defaults(path)
+
+        self.assertEqual(mapped, {})
+        self.assertEqual(applied, [])
+        for legacy_key in (
+            "episode_artifact_dir",
+            "reset_artifact_dir",
+            "episode_gif_dir",
+            "episode_camera_video_dir",
+        ):
+            self.assertIn(legacy_key, ignored)
 
     def test_deprecated_aliases_are_ignored_not_remapped(self) -> None:
         # Legacy alias fields from older async_td3_real versions (and td3_training.py's

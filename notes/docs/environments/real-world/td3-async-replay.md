@@ -78,9 +78,7 @@ python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_re
   --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml \
   --collector-device cpu \
   --learner-device cuda:0 \
-  --episode-artifact-dir real_runs/online_run/episode_hdf5 \
-  --episode-gif-dir real_runs/online_run/episode_gifs \
-  --reset-artifact-dir real_runs/online_run/reset_hdf5 \
+  --data-root-dir real_runs/online_run \
   --min-replay-size-before-learning 999999999 \
   --no-enable-periodic-checkpointing \
   --no-load-replay-from-checkpoint \
@@ -88,6 +86,8 @@ python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_re
 ```
 
 `--min-replay-size-before-learning 999999999` gates out learner updates (see the check at `async_td3_real.py:2626`). `--warm-start-hdf5-dirs` with no value disables replay warm-start from HDF5.
+
+`--data-root-dir` is the single root for all collected per-episode artifacts (HDF5s, GIFs, camera videos). At startup, `_setup_run_data_dir` creates `<data_root_dir>/<model_path_parent_dir>/data_<YYYYMMDD-HHMMSS>/` and writes `episode_hdf5/`, `reset_hdf5/`, `episode_gifs/`, and `episode_camera_videos/` inside it. The `<model_path_parent_dir>` mirrors the directory portion of `--model-path` (e.g. `ex_model/new_td3_model/checkpoint_325000/`) so multiple runs against the same checkpoint share a parent.
 
 ### Online training from a pretrained checkpoint (collect + train)
 
@@ -99,9 +99,7 @@ python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_re
   --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml \
   --collector-device cpu \
   --learner-device cuda:0 \
-  --episode-artifact-dir real_runs/online_run/episode_hdf5 \
-  --episode-gif-dir real_runs/online_run/episode_gifs \
-  --reset-artifact-dir real_runs/online_run/reset_hdf5
+  --data-root-dir real_runs/online_run
 ```
 
 Learning behaviour comes from `td3_online.yaml`: `learning_starts: 0`, `q_updates: 20`, low LRs (`policy_lr: 5e-5`, `q_lr: 1e-4`), warm-start replay from `real_runs/warm_start_trajectories`, periodic checkpointing every 20 successful episodes. See [td3-real-world-configs](../../training/td3-real-world-configs.md).
@@ -116,9 +114,7 @@ python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_re
   --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml \
   --collector-device cpu \
   --learner-device cuda:0 \
-  --episode-artifact-dir real_runs/online_run/episode_hdf5 \
-  --episode-gif-dir real_runs/online_run/episode_gifs \
-  --reset-artifact-dir real_runs/online_run/reset_hdf5 \
+  --data-root-dir real_runs/online_run \
   --load-replay-from-checkpoint \
   --include-non-vital-training-state-fields
 ```
