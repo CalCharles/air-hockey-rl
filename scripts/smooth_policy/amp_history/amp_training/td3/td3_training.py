@@ -8,6 +8,7 @@ Compared to SAC+AMP:
 - twin critics with separate task and motion heads in transformed space
 """
 
+import copy
 import os
 import random
 import time
@@ -545,6 +546,34 @@ class Args:
     # full_checkpoint_load=="residual"). Combined action is clipped to the env
     # action bounds, so residual_scale > 0 caps |residual|_inf via tanh.
     residual_scale: float = 0.25
+    # Residual RL drift fixes:
+    #   residual_weight_decay: L2 weight decay on the residual actor's parameters
+    #     (Adam weight_decay). Default 0 = no extra penalty. Setting > 0 keeps the
+    #     residual head close to zero even when the critic encourages large
+    #     corrections — directly counteracts the long-horizon drift observed at
+    #     residual_scale=0.15. Reasonable values: 1e-3 (mild), 1e-2 (strong).
+    residual_weight_decay: float = 0.0
+    #   residual_scale_end: if not None, the residual_scale at end of training.
+    #     Linearly anneals residual_scale → residual_scale_end over total_timesteps.
+    #     Lets the head learn corrections at high scale early then constrains them
+    #     to protect against drift late. Implemented by mutating the buffers on the
+    #     ResidualActor (online + target) at every env step.
+    residual_scale_end: float | None = None
+    #   residual_ema_decay: if not None, maintain an exponential-moving-average
+    #     copy of the residual actor's parameters, updated each actor gradient
+    #     step (`p_ema = decay*p_ema + (1-decay)*p`). Saved alongside each
+    #     checkpoint as `model_ema.pth`. Lets us deploy an averaged "smoothed"
+    #     residual that doesn't track the per-checkpoint volatility of the
+    #     online actor, addressing post-peak drift operationally rather than
+    #     preventing it. Reasonable values: 0.999 (1k-step window), 0.9999
+    #     (10k-step), 0.99999 (100k-step).
+    residual_ema_decay: float | None = None
+    #   residual_action_l2: if > 0, add `lambda * mean(residual_action^2)` to the
+    #     actor loss in residual mode. Penalizes the *output* of the residual head
+    #     directly (vs. residual_weight_decay which penalizes parameters). More
+    #     direct counter to drift: pulls residual outputs toward zero so the
+    #     wrapped policy stays close to the frozen base.
+    residual_action_l2: float = 0.0
     # Fine-tune replay seeding: when full_checkpoint_load=="fine_tune", how many
     # samples (total, split proportionally between success/failure) to subsample
     # from the source replay buffer into the fresh target buffers. None or 0
@@ -806,6 +835,7 @@ if __name__ == "__main__":
     qf2_target.load_state_dict(qf2.state_dict())
     resume_checkpoint = None
     checkpoint_load_mode = args.full_checkpoint_load
+    actor_ema = None  # set below in residual mode if args.residual_ema_decay is not None
 
     if args.model_path is not None:
         if not os.path.exists(args.model_path):
@@ -857,6 +887,24 @@ if __name__ == "__main__":
                 action_low=residual_action_low,
                 action_high=residual_action_high,
             ).to(args.device)
+            # Optional EMA copy of the residual for smoothed-checkpoint inference.
+            # Stored as a separate ResidualActor wrapping the same frozen base
+            # plus an EMA-averaged copy of the residual head.
+            actor_ema = None
+            if args.residual_ema_decay is not None:
+                residual_ema = copy.deepcopy(residual_online)
+                for p in residual_ema.parameters():
+                    p.requires_grad_(False)
+                actor_ema = ResidualActor(
+                    base_actor=actor.base,
+                    residual_actor=residual_ema,
+                    action_low=residual_action_low,
+                    action_high=residual_action_high,
+                ).to(args.device)
+                print(
+                    f"Residual EMA: decay={args.residual_ema_decay} — "
+                    f"saving model_ema.pth alongside each checkpoint"
+                )
             print(
                 f"Residual mode: base frozen, residual_scale={args.residual_scale},"
                 " critic from scratch."
@@ -901,7 +949,16 @@ if __name__ == "__main__":
         list(qf1.parameters()) + list(qf2.parameters()), lr=args.q_lr, weight_decay=args.q_weight_decay
     )
     if checkpoint_load_mode == "residual":
-        actor_optimizer = optim.Adam(actor.residual.parameters(), lr=args.policy_lr)
+        actor_optimizer = optim.Adam(
+            actor.residual.parameters(),
+            lr=args.policy_lr,
+            weight_decay=args.residual_weight_decay,
+        )
+        if args.residual_weight_decay > 0:
+            print(
+                f"Residual actor optimizer: Adam(lr={args.policy_lr}, "
+                f"weight_decay={args.residual_weight_decay}) — residual head L2 active"
+            )
     else:
         actor_optimizer = optim.Adam(actor.parameters(), lr=args.policy_lr)
     pending_fine_tune_source_replay = None
@@ -1202,6 +1259,21 @@ if __name__ == "__main__":
     while global_step < args.total_timesteps:
         should_update_train_metrics = global_step > 0 and np.random.rand() < 0.1
         should_refresh_annealing = (not args.eval_mode) and (np.random.rand() < 0.1)
+
+        # Residual scale annealing: linearly decay residual_scale → residual_scale_end
+        # over total_timesteps. Mutates the action_scale buffer on both online and target
+        # residual actors. No-op unless residual mode is active and residual_scale_end is set.
+        if (
+            checkpoint_load_mode == "residual"
+            and args.residual_scale_end is not None
+            and not args.eval_mode
+        ):
+            frac = min(1.0, max(0.0, global_step / max(1, args.total_timesteps)))
+            current_scale = (
+                args.residual_scale + (args.residual_scale_end - args.residual_scale) * frac
+            )
+            actor.residual.action_scale.fill_(current_scale)
+            actor_target.residual.action_scale.fill_(current_scale)
         
         if should_refresh_annealing:
             annealing_active = global_step < args.exploration_primitive_chance_anneal_steps
@@ -1852,9 +1924,22 @@ if __name__ == "__main__":
                     + args.motion_reward_weight * norm_motion
                 )
                 actor_loss = -actor_objective.mean()
+                if (
+                    checkpoint_load_mode == "residual"
+                    and args.residual_action_l2 > 0.0
+                ):
+                    residual_action = actor.residual.get_action(sampled_policy_observations)
+                    actor_loss = actor_loss + args.residual_action_l2 * (residual_action ** 2).mean()
                 actor_optimizer.zero_grad()
                 actor_loss.backward()
                 actor_optimizer.step()
+                if actor_ema is not None:
+                    decay = args.residual_ema_decay
+                    with torch.no_grad():
+                        for p_ema, p_online in zip(
+                            actor_ema.residual.parameters(), actor.residual.parameters()
+                        ):
+                            p_ema.data.mul_(decay).add_(p_online.data, alpha=1.0 - decay)
                 if should_update_train_metrics and actor_update_idx == args.actor_updates_per_iteration - 1:
                     train_metrics.update(
                         {
@@ -2055,6 +2140,8 @@ if __name__ == "__main__":
             model_path = f"{checkpoint_dir}/model.pth"
             torch.save(actor.state_dict(), model_path)
             torch.save(actor_target.state_dict(), f"{checkpoint_dir}/actor_target.pth")
+            if actor_ema is not None:
+                torch.save(actor_ema.state_dict(), f"{checkpoint_dir}/model_ema.pth")
             torch.save(qf1.state_dict(), f"{checkpoint_dir}/qf1.pth")
             torch.save(qf2.state_dict(), f"{checkpoint_dir}/qf2.pth")
             torch.save(qf1_target.state_dict(), f"{checkpoint_dir}/qf1_target.pth")
@@ -2142,6 +2229,8 @@ if __name__ == "__main__":
     if not args.eval_mode:
         torch.save(actor.state_dict(), f"{log_parent_dir}/model.pth")
         torch.save(actor_target.state_dict(), f"{log_parent_dir}/actor_target.pth")
+        if actor_ema is not None:
+            torch.save(actor_ema.state_dict(), f"{log_parent_dir}/model_ema.pth")
         torch.save(qf1.state_dict(), f"{log_parent_dir}/qf1.pth")
         torch.save(qf2.state_dict(), f"{log_parent_dir}/qf2.pth")
         torch.save(qf1_target.state_dict(), f"{log_parent_dir}/qf1_target.pth")

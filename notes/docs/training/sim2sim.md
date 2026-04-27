@@ -188,7 +188,7 @@ Lessons:
 | `…/td3/td3_training.py` | `Args.full_checkpoint_load` Literal extended with `"residual"`; new residual loader branch (shared base across online/target); `Args.residual_scale`; `Args.fine_tune_replay_keep`; **lr-reset after `load_fine_tune_optimizer_state`** so config knobs aren't silently overridden by source-restored optimizer state |
 | `…/td3/helper/td3_checkpointing.py` | `seed_fine_tune_replay_from_source` — proportional subsample from source success/failure buffers, added via `add()` so position/size stay consistent |
 | `scripts/smooth_policy/eval_utils.py` | `"residual_actor"` policy class; `infer_policy_class_from_state_dict` recognizes `base.*`+`residual.*`; `build_policy` constructs `ResidualActor` placeholder, state_dict restore fills buffers |
-| `…/configs/td3/sim2sim/td3_sim2sim_residual.yaml` | tested defaults: `residual_scale=0.05`, `q_updates=1`, `q_lr=3e-4`, `actor_updates_per_iteration=1`, primitives off (kept one nominal weight non-zero so the selector accepts the distribution at init). `q_updates`/`q_lr` reflect the 2026-04-25 drift-study update — see "Drift study" section below. |
+| `…/configs/td3/sim2sim/td3_sim2sim_residual.yaml` | tested defaults: `residual_scale=0.05`, `q_updates=1`, `q_lr=3e-4`, `actor_updates_per_iteration=1`, primitives off (kept one nominal weight non-zero so the selector accepts the distribution at init). `q_updates`/`q_lr` reflect the 2026-04-25 drift-study update — see "Drift study" section below. **Combo defaults reach the highest peak (109.3 @ 30k) but the trajectory is volatile (-22% trough at 50k); per-checkpoint eval is required.** |
 | `…/configs/td3/sim2sim/td3_sim2sim_full_ft.yaml` | tested defaults: `policy_lr=3e-5`, `q_lr=1e-4`, `q_updates=4`, `actor_updates_per_iteration=1`, primitives off, `fine_tune_replay_keep=10000` |
 
 ### Open follow-ups
@@ -202,6 +202,8 @@ Lessons:
 ## Drift study — residual (2026-04-25)
 
 Investigated *why* the residual v2 hit mean 106.84 @ step 50k but degraded to 84.7 by 100k (-21% drift). Hypothesis space: narrow data, high learning rate, high update-to-data, success-buffer bias.
+
+**TL;DR.** The "wider data" hypothesis was wrong (`bigger_buffer` ≈ baseline). The drift is structural to the optimization regime: critic Q values inflate over time, driven by high UTD on a PER-sampled success buffer that becomes a museum of past peaks. Single-knob `q_lr ÷ 3.3` and `UTD ÷ 4` each reduce drift; combining them gives the highest absolute peak (109.3 @ 30k) and the best final mean (95.7), but does NOT eliminate post-peak collapse — the combo still has a transient -22% trough at step 50k before recovering. The single-knob `lower_qlr` run is the most *stable* trajectory (peak 102.1, no trough below 88). All numbers below are single-seed, n=50 deterministic eval; SE ≈ 8–9 mean-return.
 
 ### Diagnostic — what we observed in v2 tensorboard
 
@@ -217,38 +219,74 @@ Across all of v2 and v3 (residual_scale 0.05 and 0.10), the same pattern:
 
 Q values climb monotonically; the bellman target stays ahead, dragging Q up. **Mechanism:** PER samples the critic 30 % from the success buffer; that buffer keeps the *top-20%* returning episodes from a 500-episode rolling window. As training progresses the success-threshold rises (135 → 160) — the bucket becomes a *museum of past peaks*. The current rolling policy degrades but doesn't get its weak rollouts into the success bucket. Critic trains on increasingly optimistic (s, a) the actor can't currently produce → Q inflates → actor exploits → rollouts collapse.
 
-### Single-knob ablation (each row vs. v2 baseline; same seed=0; same target)
+### Single-knob ablation — peak/final summary
 
 Each row reports the best deterministic mean across saved checkpoints (n=50 episodes, seed=0); tail10 is at *that same step* (not the absolute best tail10).
 
-| variant | knob change | peak mean | tail10 @ peak | peak step | final mean | drift |
+| variant | knob change | peak mean | tail10 @ peak | peak step | final mean | drift (peak→final) |
 |---|---|---:|---:|---|---:|---:|
 | zero-shot | (no FT) | — | 87.8 | — | 95.78 | — |
 | v2 baseline | (none) | 106.8 | 127.2 | 50k | 84.7 | -21% |
 | bigger_buffer | success/failure 6k/14k → 30k/70k | 103.9 | 101.2 | 90k | 84.0 | -19% |
 | lower_qlr | q_lr 1e-3 → **3e-4** | 102.1 | **132.7** | 60k | 93.7 | -8% |
-| lower_utd | q_updates 4 → **1** (UTD) | 98.4 | 113.3 | 20k | 95.2 | **-3%** |
+| lower_utd | q_updates 4 → **1** (UTD) | 98.4 | 113.3 | 20k | 95.2 | -3% |
 | low_succ_frac | critic_success_sample_fraction 0.3 → 0 | 100.2 | 92.5 | 40k | 87.5 | -13% |
 | **combo (UTD=1 + q_lr=3e-4)** | both above | **109.3** | 111.0 | **30k** | **95.7** | -13% |
 
-Findings:
+### What "drift -13%" hides — the post-peak trajectory
 
-1. **The "wider data" hypothesis is wrong.** `bigger_buffer` (5x main + buffers wide enough to hold all 100k samples) is essentially baseline. The drift is structural to the optimization regime, not the data window.
-2. **UTD is the dominant driver.** `lower_utd` flattens Q (`Q1@100k`: 1.12 → **0.26**) and reduces drift to -3 %, but underfits the critic — peak mean only 98.4.
-3. **Lower q_lr halves drift on its own.** q_lr ÷ 3.3 also gives the highest tail10 of any single-knob run (**132.7**, beating baseline's 127.2). Q still climbs but slower.
-4. **Removing success-buffer bias (`critic_success_sample_fraction=0`) is partial.** Helps drift (-13 %) but doesn't kill Q runaway (Q still 0.20 → 1.05 over 100k); current critic still chases bellman.
-5. **Combining UTD=1 + q_lr=3e-4 wins overall.** Highest peak mean (109.3 > baseline 106.8), reaches peak in **40 % less compute** (30k vs 50k), final mean stays at 95.7 (above zero-shot 95.78). Drift is still -13 % so per-checkpoint eval remains required, but the trough is much shallower.
+The peak→final number papers over what happens *between* peak and final. Per-checkpoint deterministic mean for the combo and lower_qlr-alone runs:
+
+| ckpt | combo mean | combo Δ from peak | lower_qlr mean | lower_qlr Δ from peak |
+|---|---:|---:|---:|---:|
+| 10k  |  91.34 | -16.4% |  81.06 | -20.6% |
+| 20k  |  92.82 | -15.1% |  84.40 | -17.3% |
+| 30k  | **109.30** | **PEAK** |  88.52 | -13.3% |
+| 40k  |  97.86 | -10.5% |  93.82 | -8.1% |
+| 50k  |  85.10 | **-22.2%** |  91.28 | -10.6% |
+| 60k  |  93.42 | -14.5% | **102.10** | **PEAK** |
+| 70k  |  89.34 | -18.3% | 100.82 | -1.3% |
+| 80k  |  96.16 | -12.0% |  92.36 | -9.5% |
+| 90k  |  95.84 | -12.3% |  97.02 | -5.0% |
+| final|  95.66 | -12.5% |  93.74 | -8.2% |
+
+The combo trajectory has a **transient -22.2% drop at step 50k that's the same magnitude as the v2 baseline's monotonic collapse** — the policy briefly bottoms out at 85.1 (≈ baseline-final-level bad) before bouncing back to a 90–96 band. So the precise claim that's true is:
+
+- combo reaches a **higher peak earlier** (109.3 @ 30k vs baseline 106.8 @ 50k),
+- combo finishes at a **higher floor** (95.7 vs 84.7),
+- combo does NOT keep the policy *near peak* — there's still a post-peak collapse, it just recovers.
+
+`lower_qlr` (q_lr=3e-4 alone, UTD unchanged at 4) is the **most stable** run by trajectory shape: monotonic-ish climb to peak at 60k, no checkpoint drops more than -13.3% from peak, no trough. Lower absolute peak but the policy actually stays close to it.
+
+### Statistical caveat
+
+Single seed, n=50 episodes per checkpoint, std ≈ 60 → SE ≈ 8.5 on the mean. Adjacent-checkpoint differences in the combo run are within 1–3 SE:
+- 109.3 (30k) vs 97.86 (40k): Δ = 11.4 ≈ 1.3 SE
+- 109.3 (30k) vs 85.1 (50k): Δ = 24.2 ≈ 2 SE (significant but single-seed)
+- 109.3 (30k) vs 102.1 (lower_qlr peak): Δ = 7.2 < 1 SE
+
+**Without multi-seed confirmation, "combo's peak is 109.3" and "lower_qlr's peak is 102.1" are not statistically distinguishable**, and the 50k trough may itself be partly noise. Treat the table as indicative; multi-seed re-run is the open follow-up that decides between combo and lower_qlr-alone as the residual default.
+
+### Findings
+
+1. **The "wider data" hypothesis is wrong.** `bigger_buffer` (5x main + buffers wide enough to hold all 100k samples) is essentially baseline. Drift is structural to the optimization regime, not the data window.
+2. **UTD is the dominant driver of Q runaway.** `lower_utd` flattens Q (`Q1@100k`: 1.12 → **0.26**) and gives the smallest peak→final drift (-3%), but underfits the critic — peak mean only 98.4.
+3. **Lower q_lr is the dominant driver of trajectory smoothness.** `lower_qlr` has no mid-run trough below 88, peak→final drift only -8%, and the highest tail10 of any single-knob run (132.7).
+4. **Removing success-buffer bias (`critic_success_sample_fraction=0`) is partial.** Helps peak→final drift (-13%) but doesn't kill Q runaway (Q still 0.20 → 1.05 over 100k).
+5. **Combo gets the highest peak but trades stability for it.** Higher peak (109.3) and earlier (30k) than any single-knob, but the trajectory is more volatile: -22% transient trough at 50k vs lower_qlr's -10% maximum dip. If you can early-stop on per-checkpoint eval (recommended), combo is the right pick. If you can't, lower_qlr-alone is safer.
 
 ### Default change
 
-Updated `td3_sim2sim_residual.yaml`:
+Updated `td3_sim2sim_residual.yaml` to combo defaults:
 
 | knob | old | new |
 |---|---:|---:|
 | `q_updates` | 4 | **1** |
 | `q_lr` | 1e-3 | **3e-4** |
 
-`residual_scale=0.05`, primitives off, `fine_tune_replay_keep` etc. all unchanged.
+`residual_scale=0.05`, primitives off, `fine_tune_replay_keep` etc. all unchanged. **Per-checkpoint eval is required** to pick the actual best model — combo's higher peak only matters if you don't end up with the 50k trough as your `model.pth`.
+
+If your harness can't early-stop and you must trust `model.pth` at end of training, prefer `q_lr=3e-4` *alone* (UTD=4) — slightly lower peak, much smoother trajectory, smaller risk of finishing in a trough.
 
 ### Reproducibility
 
@@ -256,9 +294,246 @@ Diagnostic configs at `scripts/smooth_policy/amp_history/configs/td3/sim2sim/dia
 
 ### Open follow-ups (specific to this study)
 
-- Apply the same UTD=1 + q_lr=3e-4 to `full_ft` and check whether it also gets a higher peak / less drift.
-- **Multi-seed (3+)** confirmation that combo's peak (109.3) and final (95.7) replicate. Single-seed numbers in the table are indicative.
+- **Multi-seed (3+)** confirmation. The 109.3 (combo) vs 102.1 (lower_qlr) peak gap is < 1 SE on a single seed — not enough to call combo a winner. Multi-seed will also tell us whether the 50k trough is a feature of the regime or a single-seed unlucky checkpoint. This is the **highest-priority** follow-up.
+- Apply UTD=1 + q_lr=3e-4 (and lower_qlr-alone) to `full_ft` and check whether either gets a higher peak / less drift. full_ft warm-starts the source critic so its dynamics are different.
 - A `success_top_fraction=1.0` (FIFO success bucket — no top-20% retention) variant would directly test the "museum" mechanism. Skipped to keep this study to single-knob + one combo.
+- Best-of-eval-checkpoint tracker in `td3_training.py` so the saved `model.pth` is the best-eval checkpoint, not the final-step weights — would close the gap between "combo is best if you per-checkpoint eval" and "lower_qlr is safer if you don't."
+
+---
+
+## 400k extension — does longer training help, does scale help? (2026-04-26)
+
+100k showed residual peaks @ 30k (combo) / 60k (lower_qlr) and then drifts. Two open questions: (1) at 400k — the budget that lets a from-scratch policy train decently — does residual close the gap to source (~148)? (2) does bumping `residual_scale` 0.05 → 0.15 unlock more correction, since the rs=0.05 head is essentially a ±5% perturbation around the frozen base?
+
+**TL;DR.** None of the four 400k residual variants stay near peak. Bigger scale (0.15) reaches higher absolute peaks (combo: 113.7, lower_qlr: 107.9) but is *more volatile* — both rs=0.15 runs end below zero-shot. Bigger scale specifically lets `lower_qlr_rs015` produce a clear 50k-window of consistent-improvement at 30-70k (avg 102.1, all > zero-shot), but the policy then catastrophically collapses to 50-65 mean from step 190k onward. **The headline finding: rs=0.05 is too tight (residual head can't express useful corrections — `lower_qlr_400k`'s best ckpt is at step 10k where the head is essentially zero from init); rs=0.15 is too loose at long horizons (drift compounds).** The right operating point under fixed `residual_scale` likely needs early stopping (per-checkpoint eval + best-tracker) or a scale schedule.
+
+### 4-way comparison — single seed, 400k each, 39 saved checkpoints + final
+
+`mean(all)` is the per-checkpoint mean averaged across all 39 saved checkpoints — i.e., what you'd expect from a randomly-picked checkpoint. `>zs` is the count of checkpoints whose mean beats zero-shot 95.78. `best phase` is the highest 5-checkpoint sliding-window mean (50k-wide).
+
+| variant | peak | @step | tail10@peak | final | mean(all) | >zs / 39 | best 50k phase |
+|---|---:|---:|---:|---:|---:|---:|---|
+| combo_400k (rs=0.05) | 97.6 | 340k | 104.2 | 83.9 | 88.9 | 3 | 93.3 (100-140k) |
+| **combo_400k_rs015 (rs=0.15)** | **113.7** | 340k | 101.1 | 86.8 | 83.9 | 3 | 98.8 (320-360k) |
+| lower_qlr_400k (rs=0.05) | 99.9 | **10k** | 94.4 | 97.4 | 83.2 | 4 | 94.3 (10-50k) |
+| **lower_qlr_400k_rs015 (rs=0.15)** | 107.9 | 70k | 95.7 | 69.4 | 78.8 | **11** | **102.1 (30-70k)** |
+| zero-shot reference | 95.8 | — | 87.8 | 95.8 | 95.8 | — | — |
+
+**Compared to 100k results** (combo peak 109.3 @ 30k, lower_qlr peak 102.1 @ 60k): the 400k extension finds higher peaks for two of four variants but no improvement in stability. **`lower_qlr_400k`'s best checkpoint is step 10k** (mean 99.94, when residual head is essentially zero from init) — meaning the rs=0.05 head adds noise the rest of training without improving on the frozen base.
+
+### Trajectory shapes — only `lower_qlr_400k_rs015` produces a stable improvement window
+
+```
+        combo_rs015 (peak 113.7 @ 340k)         lower_qlr_rs015 (peak 107.9 @ 70k)
+        103 → drop → 86 → 71 → ... → 113 ↓      85 → climb → 108 → SUSTAINED → 200k cliff
+        "single-spike" peak                      30-70k all >100, then collapse
+```
+
+- **`combo_400k_rs015`** trajectory is jittery throughout: starts at 103.2 @ 10k, dips to 59.3 @ 190k, recovers to a noisy 80-95 band, then a single-checkpoint spike to 113.7 @ 340k. Very few checkpoints beat zero-shot. The 113.7 peak is real but adjacent ckpts (97.8, 92.4) are normal — likely a noise spike given single-seed n=50.
+- **`lower_qlr_400k_rs015`** has the cleanest "good phase": from step 30k → 170k, every checkpoint mean ≥ 89, with 30k-170k average ≈ 99.5, peak 107.94 @ 70k, tail10 reaching 139.2 @ 130k. Then from step 190k onward the policy collapses: mean drops to 50-65 range and never recovers (final 69.4). This is the strongest evidence that the residual *can* learn useful corrections — and the strongest evidence that long-horizon drift is severe with rs=0.15.
+- **`combo_400k` (rs=0.05)** wanders in a 80-97 mean band the whole 400k — neither learns much nor collapses much.
+- **`lower_qlr_400k` (rs=0.05)** has the same pattern but with a long-tail decline starting around 150k (mean drifts to 70-80 range from 200k onward, then partial recovery — final 97.4).
+
+### What this means for `residual_scale`
+
+Confirms the 100k insight that 0.05 (residual ±5% around base action) is too tight for useful corrections under this source/target gap. But 0.15 trades expressive headroom for stability:
+
+- 0.15 is the only variant where any *consecutive* window of ≥5 checkpoints averages > zero-shot (lower_qlr_rs015 30-70k @ 102.1). 0.05 never does.
+- 0.15 is also the only variant where final-step performance falls below 70 (lower_qlr_rs015 final 69.4) — a ~25-point cliff from the same run's best phase.
+
+**The right next experiments** (priority order):
+1. **Early-stop / best-tracker**: pick model.pth as the best-eval checkpoint, not final. Without this, all 4 variants ship with degraded weights. (Open follow-up from drift study, now urgent.)
+2. **Scale schedule**: try `residual_scale: 0.15` annealed to 0.05 over training. Hypothesis: high scale early lets the head learn corrections; low scale late protects from drift.
+3. **Multi-seed verification** of `lower_qlr_400k_rs015` 30-70k window — single-seed result; combo_400k_rs015's 113.7 peak is a single-checkpoint spike that deserves seed-confirmation before being treated as the new ceiling.
+4. Apply scale-bump to `full_ft` (currently runs with `lr÷10`, no residual; the residual analog is `policy_lr * residual_scale_equivalent` — different mechanism so the scale knob doesn't transfer directly).
+
+### Reproducibility — 400k extension
+
+Configs at `scripts/smooth_policy/amp_history/configs/td3/sim2sim/diagnose/long/{combo_400k,combo_400k_rs015,lower_qlr_400k,lower_qlr_400k_rs015}.yaml`. Run dirs at `runs/td3/sim2sim/hist2_motion0_to_combined/residual_diagnose/long/<variant>/seed0/`. Per-checkpoint eval JSONs under `eval_combined_ckpt_*/metrics.json` (39 each + `eval_combined_final/`). Eval driver: `bash scripts/smooth_policy/eval_all_ckpts_residual.sh <run_dir> scripts/smooth_policy/amp_history/configs/new_juggle/sim2sim_combined.yaml cuda:N`.
+
+### From-scratch baseline (done 2026-04-26)
+
+`scripts/smooth_policy/amp_history/configs/td3/sim2sim/diagnose/long/from_scratch_400k.yaml` runs the canonical recommended-default TD3 hyperparams (q_updates=25, actor_updates=6, primitives ON, learning_starts=20k, buffer 100k) on `sim2sim_combined.yaml` for 400k steps. **Result: peak 82.86 @ step 370k, mean(all 39 ckpts) 43.02, no checkpoint > zero-shot 95.78.** 400k from-scratch is monotonically improving but well below the zero-shot warm-start. **Confirms the residual underperformance is NOT a method failure — the env is too hard for 400k from-scratch**, and any fine-tuning approach (residual or full_ft) has a real opportunity to do much better than starting from zero.
+
+---
+
+## Drift-fix campaign — finding `no_per + q_wd1e3` (2026-04-26)
+
+After the 400k extension showed all rs={0.05, 0.15} variants drift below zero-shot at end of training, we ran a comprehensive drift-fix campaign of 11 single-seed 200k experiments. Authoritative log: [`notes/scratch/residual_rl_drift_fix_log.md`](../../scratch/residual_rl_drift_fix_log.md).
+
+### Mechanism diagnosis
+
+The drift study traced post-peak collapse to TWO independent critic-side failure modes:
+1. **Museum effect**: PER samples 30% from the success buffer, which keeps top-20% returning episodes from a 500-episode rolling window. As training improves then degrades, the buffer keeps "ghost" peak transitions the current policy can't reproduce — the critic learns optimistic Q values from a museum of past peaks.
+2. **Q runaway**: critic Q values inflate monotonically (Q1@100k: 0.30 → 1.12 in baseline). The actor exploits inflated Q estimates and drifts to high-Q-low-actual-return regions.
+
+### What worked
+
+| fix | mechanism | result |
+|---|---|---|
+| **`per_enabled: false` + `critic_success_sample_fraction: 0.0`** | Kills museum effect (uniform sampling, no success bias) | best peak/mean (`no_per_rs015`: peak 105 @ 100k, sustained 90-130k > zs) |
+| **`q_weight_decay: 0.001` (10x default)** | Bounds Q magnitudes via critic L2 | best tail stability (`q_wd1e3_rs015`: drift only -13, last5_mean 90.2) |
+| **Both stacked** | Attacks both failure modes | **WINNER `no_per_q_wd1e3_rs015`** (see below) |
+
+### What didn't work
+
+| fix | result | why |
+|---|---|---|
+| Residual head WD=1e-3 | peak 113 but still drifts -38 | Doesn't address critic side |
+| Residual head WD=1e-2 | peak 94 (below zs) | Too aggressive, kills correction signal |
+| Scale anneal 0.15→0.05 | peak 97 @ step 10k (residual ≈ 0) | Head can't track shrinking ceiling |
+| Action L2 (λ=1) | peak 103 | Redundant with parameter L2 |
+| EMA actor on top of no_per_q_wd | regressed to drift -45 | Single-seed noise or interference |
+
+### Winning recipe — `no_per_q_wd1e3_rs015`
+
+| metric | value |
+|---|---:|
+| peak | 108.0 @ step 40k |
+| mean(all 19 ckpts) | **96.93** |
+| last5_mean | **96.50** (above zero-shot 95.78!) |
+| drift (peak → last5) | -11.5 |
+| ckpts > zero-shot | 10/19 |
+
+**This is the first variant where the policy stays above zero-shot through the END of training.** Final-step `model.pth` is competitive without per-checkpoint eval.
+
+Per-checkpoint trajectory:
+
+```
+step:   10  20  30  40   50  60  70  80   90  100  110  120  130  140  150  160  170  180  190
+mean:   94 102  89 108>  94  94  97> 98> 100> 102> 105>  90   94   92   98> 101>  93   92   99>
+```
+
+(`>` = > zero-shot 95.78). Sustained > zs windows at steps 70-110k (5 consecutive) and 150-160k (2 consecutive).
+
+### Default config update (2026-04-26)
+
+`td3_sim2sim_residual.yaml` updated to use the winning combo:
+
+```yaml
+per_enabled: false
+critic_success_sample_fraction: 0.0
+critic_failure_sample_fraction: 1.0
+q_weight_decay: 0.001       # 10x baseline 1e-4
+residual_scale: 0.15        # was 0.05
+q_updates: 4                # restored to 4 (was 1 in earlier "combo" defaults)
+q_lr: 0.0003                # lower_qlr setting unchanged
+total_timesteps: 200000     # was 100000
+```
+
+### Reproducibility — drift-fix campaign
+
+Configs under `scripts/smooth_policy/amp_history/configs/td3/sim2sim/diagnose/long/driftfix/`. Run dirs at `runs/td3/sim2sim/hist2_motion0_to_combined/residual_diagnose/long/driftfix/<variant>/seed0/`. Per-checkpoint eval JSONs in `eval_combined_ckpt_*/metrics.json`. Aggregator: `.venv/bin/python notes/scratch/aggregate_driftfix_results.py`.
+
+### Code knobs landed in `td3_training.py`
+
+| Args field | Effect |
+|---|---|
+| `residual_weight_decay: float = 0.0` | Adam weight_decay on residual head (rejected by campaign) |
+| `residual_scale_end: float \| None = None` | Linear anneal of residual_scale over training (rejected) |
+| `residual_ema_decay: float \| None = None` | EMA copy of residual head; saves `model_ema.pth` per checkpoint (operational tool) |
+| `residual_action_l2: float = 0.0` | L2 penalty on residual *output* in actor loss (rejected) |
+
+### Multi-seed verification (2026-04-26)
+
+After the seed-0 result of `no_per_q_wd1e3_rs015` looked like a clean win (mean across 19 ckpts above zero-shot, drift only -11.5), we re-ran with seeds 1, 2 and also did seeds 1, 2 of `q_wd1e3_rs015` alone. Result: **only the peak generalises across seeds, the lack of drift does not**.
+
+| recipe | seed | peak | mean(19) | last5_mean | drift | >zs |
+|---|---:|---:|---:|---:|---:|---:|
+| q_wd1e3 | 0 | 103.2 | 89.7 | 90.2 | -13.0 | 4/19 |
+| q_wd1e3 | 1 | 91.9 | 68.3 | 55.2 | -36.7 | 0/19 |
+| q_wd1e3 | 2 | 95.3 | 86.9 | 85.2 | -10.1 | 0/19 |
+| **q_wd1e3 MEAN** | — | **96.8** | **81.6** | **76.8** | -19.9 | 4/57 |
+| no_per+q_wd | 0 | 108.0 | 96.9 | 96.5 | -11.5 | 10/19 |
+| no_per+q_wd | 1 | 91.1 | 68.4 | 61.2 | -30.0 | 0/19 |
+| no_per+q_wd | 2 | 101.7 | 73.2 | 59.8 | -41.9 | 1/19 |
+| **no_per+q_wd MEAN** | — | **100.3** | **79.5** | **72.5** | -27.8 | 11/57 |
+
+**Key takeaways:**
+1. **Peak performance is reproducible** (~100 mean across seeds) — both recipes consistently produce a checkpoint somewhere in the 91-108 mean range, well above zero-shot 95.78.
+2. **Drift is partially unsolved** — 4/6 seeds across both recipes still collapse in the second half. The seed-0 "no drift" trajectory was an outlier, not the rule.
+3. **no_per+q_wd produces a slightly higher peak** (100.3 vs 96.8 cross-seed mean) but the tail is no more stable than q_wd alone.
+4. For deployment: **per-checkpoint eval is REQUIRED** to find the peak (typically step 20-60k). Final-step `model.pth` is unsafe.
+
+### Data-balance fix supersedes the prior recipe (2026-04-26)
+
+After the multi-seed disappointment, we ran a 4-variant data-balance
+ablation that fundamentally changed the default. The winning fix is a
+**single-knob change**: `success_top_fraction: 0.2 → 0.5`.
+
+| variant | knob change | peak | mean(9) | last3 | >zs |
+|---|---|---:|---:|---:|---:|
+| recency_smaller_buf | success_buffer 6000→1500 | 108.3 | 97.8 | 99.1 | 5/9 |
+| **recency_top50** | success_top_fraction 0.2→0.5 | **110.7** | **103.7** | **104.1** | **8/9** |
+| recency_top99 | success_top_fraction 0.2→0.99 | 102.7 | 91.7 | 90.2 | 3/9 |
+| recency_window100 | recent_window 500→100 | 106.0 | 96.1 | 90.9 | 5/9 |
+
+**Mechanism:** `success_top_fraction: 0.5` makes the success threshold = MEDIAN of the recent 500 episode returns. This guarantees ~50% of episodes go to `success_rb` and ~50% to `failure_rb` regardless of how policy quality moves. The threshold tracks current quality, can't ratchet up and stay there. Old peak transitions get diluted by current-quality transitions at high rate.
+
+`top99` (0.99) regresses because failure_rb starves — only the worst 1% of episodes go there, and the critic_failure_sample_fraction=0.7 then samples mostly an empty buffer.
+
+### Multi-seed verification of `recency_top50`
+
+| seed | peak | mean(9) | last3 | catastrophic? |
+|---|---:|---:|---:|---|
+| 0 | 110.7 | 103.7 | 104.1 | ✅ no |
+| 1 | 92.4 | 88.8 | 91.4 | ✅ no |
+| 2 | 98.9 | 89.2 | 88.9 | ✅ no |
+| **3-seed mean** | **100.7** | **93.9** | **94.8** | **✅ none** |
+
+Compared to prior recipes' 3-seed means:
+
+| recipe | peak | mean(N) | tail | seed collapses |
+|---|---:|---:|---:|---:|
+| q_wd1e3 alone | 96.8 | 81.6 | last5 76.8 | 1/3 (last5=55) |
+| no_per+q_wd1e3 | 100.3 | 79.5 | last5 72.5 | 2/3 (last5=60-61) |
+| **recency_top50** | 100.7 | **93.9** | **last3 94.8** | **0/3** |
+
+`recency_top50` matches the peak of prior recipes but **eliminates the catastrophic seed-dependent collapse**. Tail mean improves by +22 pts vs prior best.
+
+### Final operational recipe (revised 2026-04-26 PM)
+
+`td3_sim2sim_residual.yaml` defaults:
+```yaml
+per_enabled: true                       # restored (was false in prior recipe)
+success_top_fraction: 0.5               # median split — THE FIX (was 0.2 = top-20%)
+critic_success_sample_fraction: 0.3     # restored to default
+q_weight_decay: 0.001                   # 10x baseline; bounds Q
+residual_scale: 0.15
+q_updates: 4
+q_lr: 0.0003
+total_timesteps: 100000
+```
+
+**Deployment procedure:**
+1. Train ≥3 seeds for 100k steps each
+2. Per-checkpoint eval (n=50) every 10k steps
+3. Ship the best-mean checkpoint across (seeds, steps)
+
+Expected: peak ckpt 100-110 mean, mean across all ckpts ≥ 88 even on worst seed (no catastrophic collapse). 4-15% improvement over zero-shot 95.78.
+
+### From-scratch 1M comparison (added 2026-04-26 PM)
+
+For context, also ran from-scratch TD3 with recommended HPs to 1M steps (resumed from the 400k checkpoint). Per-checkpoint eval:
+
+| metric | from-scratch 400k | from-scratch 1M |
+|---|---:|---:|
+| peak mean | 82.86 @ 370k | **130.28 @ 990k** |
+| final mean | 85.10 | **130.28** |
+| ckpts > zero-shot | 0/39 | 24/98 |
+| last5_mean | 72.1 | 121.0 |
+
+**Trade-off:**
+- Residual at 100k reaches peak ~108 in ~30k env steps — **fast**, but ceiling at ~110.
+- From-scratch at 1M reaches peak ~130 — **higher ceiling**, no drift, but 10x the budget.
+
+For sim2sim where target dynamics are reachable from scratch given enough budget, both approaches are viable depending on time/compute constraints.
+
+### Open follow-ups
+
+- 5-seed re-run of `recency_top50` to tighten the variance estimate.
+- Test recipe on other sim2sim pairs (generalisation).
+- Combined `top50 + smaller_buf` — both target the museum from different angles; might compound.
 
 ---
 
@@ -276,5 +551,5 @@ Diagnostic configs at `scripts/smooth_policy/amp_history/configs/td3/sim2sim/dia
    ```
    Add `--save-gif --n-gifs 10` for qualitative rollouts.
 4. (Optional) Single-knob sweep — adapt `notes/scratch/sim2sim_perturbation_sweep.py` to the new target's knobs.
-5. Fine-tune: fill placeholders in `td3_sim2sim_{full_ft,residual,from_scratch}.yaml` (`config`, `model_path`, `log_parent_dir`, `run_name`, `seed`), launch ≥2 seeds each. The residual and full_ft yamls in repo carry the campaign-tested defaults (residual `scale=0.05` + `q_updates=1` + `q_lr=3e-4`, and full_ft `lr÷10`); revisit those if your source policy is much weaker / target gap is much wider. **Always evaluate intermediate checkpoints** — final-step eval is unsafe (see "Drift study" and "Fine-tune campaign" sections above).
+5. Fine-tune: fill placeholders in `td3_sim2sim_{full_ft,residual,from_scratch}.yaml` (`config`, `model_path`, `log_parent_dir`, `run_name`, `seed`), launch ≥2 seeds each. The residual and full_ft yamls in repo carry the campaign-tested defaults (residual `scale=0.05` + `q_updates=1` + `q_lr=3e-4`, and full_ft `lr÷10`); revisit those if your source policy is much weaker / target gap is much wider. The residual combo defaults reach a higher peak but the trajectory is volatile — if your harness can't reliably per-checkpoint eval, swap to `q_lr=3e-4` *alone* (UTD=4) for a smoother trajectory at a slightly lower peak (see "Drift study" section). **Always evaluate intermediate checkpoints** — final-step eval is unsafe (see "Drift study" and "Fine-tune campaign" sections above).
 6. `python scripts/smooth_policy/sim2sim_compare.py --campaign-dir runs/td3/sim2sim/<src_to_tgt>/`.

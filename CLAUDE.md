@@ -21,6 +21,7 @@ See [`notes/docs/repo/project-goal-and-safety.md`](notes/docs/repo/project-goal-
 | **Legacy sim config** | `…/pid_noise_constant_upper_half_custom_sim_params.yaml` (pre-sysid; still used by some TD3 args YAMLs) |
 | **TD3 training configs** | `scripts/smooth_policy/amp_history/configs/td3/` |
 | **Recommended TD3 default** | `…/td3/td3_recommended.yaml` (2-layer, q=25/a=6, hist_len=4 via `sysid_best_params_hist4.yaml`, no bootstrap forcing, no external warmstart — see [depth/update ablations](notes/docs/training/td3-ablations-updates-and-depth.md) and [exploration ablations](notes/docs/training/td3-exploration-ablations.md)) |
+| **Residual RL recipe (sim2sim/sim2real fine-tune)** | `…/td3/sim2sim/td3_sim2sim_residual.yaml` — uses the `recency_top50` data-balance fix. **Read [`notes/docs/training/residual-rl-recipe.md`](notes/docs/training/residual-rl-recipe.md) before running.** |
 | **Env entrypoint** | `airhockey/` (`AirHockeyEnv`) |
 | **Real-world rollout** | `scripts/real/` + `scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real/` |
 
@@ -71,6 +72,7 @@ Formal docs live in `notes/docs/`. Start at [`notes/docs/index.md`](notes/docs/i
 
 Key docs:
 - Architecture & algorithm: [`training/architecture.md`](notes/docs/training/architecture.md) · [`training/td3-algorithm.md`](notes/docs/training/td3-algorithm.md)
+- **Residual RL recipe**: [`training/residual-rl-recipe.md`](notes/docs/training/residual-rl-recipe.md) — winning data-balance recipe for sim2sim/sim2real fine-tuning
 - Configs: [`training/td3-configs.md`](notes/docs/training/td3-configs.md) · [`training/sim-env-configs.md`](notes/docs/training/sim-env-configs.md)
 - Rewards: [`training/reward-shaping.md`](notes/docs/training/reward-shaping.md)
 - Networks: [`training/network-architecture.md`](notes/docs/training/network-architecture.md)
