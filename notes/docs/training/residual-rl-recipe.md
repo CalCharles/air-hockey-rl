@@ -175,6 +175,40 @@ If you set `residual_ema_decay: 0.9999`, also use `bash scripts/smooth_policy/ev
 
 ---
 
+## Real-world residual
+
+The same recipe runs on the real-world async pipeline via
+`async_td3_real_modular.py` with `full_checkpoint_load: "residual"` in the
+config. Canonical config:
+[`scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml).
+
+```bash
+.venv/bin/python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real_modular \
+  --train-args <source_ckpt>/args.yaml \
+  --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml
+```
+
+Wiring is identical to sim2sim:
+- The same `ResidualActor` wrapper from `scripts/smooth_policy/residual_agent.py`.
+- The same data-balance recipe (`success_top_fraction: 0.5`, `q_weight_decay: 0.001`,
+  `residual_scale: 0.15`, `q_lr: 0.0003`, `q_updates: 4`, PER on).
+- The same per-checkpoint-eval requirement: train with
+  `enable_periodic_checkpointing: true` and ship the best checkpoint, NOT
+  the final one.
+
+The one functional delta vs sim2sim:
+
+- **Replay seed**: real residual MUST use `replay_source_priority: "warmstart_only"`
+  with HDF5 dirs in `warm_start_hdf5_dirs`. Loading a checkpoint replay (which
+  was collected under the source's dynamics) would teach the new critic to
+  value the obsolete dynamics — the canonical config keeps
+  `load_replay_from_checkpoint: false` for this reason.
+
+`model.pth` from a residual run contains the wrapped `ResidualActor` state_dict
+(base + residual + clamp buffers); rollout / eval scripts need to rebuild the
+same `ResidualActor` shell to load it. Standard sim2sim eval drivers already
+do this; verify your real-world rollout target supports it before deploying.
+
 ## Open follow-ups
 
 - **5-seed re-run** of `recency_top50` — current 3-seed sample tightens variance but more seeds would help.

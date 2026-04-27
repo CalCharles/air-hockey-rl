@@ -24,6 +24,7 @@ from airhockey.airhockey_base import get_observation_by_type
 from airhockey.sims.real.multiprocessing import NonBlockingConsole
 
 from scripts.smooth_policy.deterministic_agent import DeterministicAgent
+from scripts.smooth_policy.residual_agent import ResidualActor
 
 
 # Architecture fields sourced from the training args.yaml (td3_training.py convention).
@@ -286,13 +287,39 @@ if __name__ == '__main__':
     act_dim = int(np.prod(eval_env.single_action_space.shape))
     policy_obs_dim = raw_obs_dim + act_dim if use_last_action else raw_obs_dim
     policy_env_view = build_policy_env_view(policy_obs_dim=policy_obs_dim, action_dim=act_dim)
-    policy_model = DeterministicAgent(
-        policy_env_view,
-        action_scale=action_scale,
-        action_bias=0.0,
-        hidden_layer_size=agent_hidden_layer_size,
-        num_hidden_layers=agent_num_hidden_layers,
+    # Residual `model.pth` from a residual run contains keys prefixed with
+    # `base.` and `residual.`; build a `ResidualActor` shell so its state_dict
+    # round-trips. Plain DeterministicAgent checkpoints have neither prefix.
+    is_residual = any(
+        isinstance(k, str) and (k.startswith("base.") or k.startswith("residual."))
+        for k in policy_state_dict.keys()
     )
+    if is_residual:
+        base = DeterministicAgent(
+            policy_env_view,
+            action_scale=action_scale,
+            action_bias=0.0,
+            hidden_layer_size=agent_hidden_layer_size,
+            num_hidden_layers=agent_num_hidden_layers,
+        )
+        residual_head = DeterministicAgent(
+            policy_env_view,
+            action_scale=1.0,
+            action_bias=0.0,
+            hidden_layer_size=agent_hidden_layer_size,
+            num_hidden_layers=agent_num_hidden_layers,
+        )
+        # action_low / action_high / residual.action_scale buffers are restored
+        # from state_dict, so the constructor placeholders are fine.
+        policy_model = ResidualActor(base, residual_head, action_low=-1.0, action_high=1.0)
+    else:
+        policy_model = DeterministicAgent(
+            policy_env_view,
+            action_scale=action_scale,
+            action_bias=0.0,
+            hidden_layer_size=agent_hidden_layer_size,
+            num_hidden_layers=agent_num_hidden_layers,
+        )
     policy_model.load_state_dict(policy_state_dict)
     policy_model = policy_model.to(device=device)
     policy_model.eval()

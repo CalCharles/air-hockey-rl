@@ -79,6 +79,7 @@ from scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real im
     _add_episode_to_shared_replay,
     _bucketed_output_dir,
     _build_args_file_defaults,
+    _build_collector_actor,
     _coerce_float_list,
     _copy_to_stop_dir,
     _env_timing_info,
@@ -86,9 +87,8 @@ from scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real im
     _finalize_sync_learner_state,
     _init_sync_learner_state,
     _latest_camera_frame,
-    _load_replay_from_checkpoint_file,
-    _load_runtime_perf_from_checkpoint_file,
     _load_train_args,
+    _load_training_state_checkpoint,
     _next_available_episode_id,
     _normalize_replay_source_priority,
     _prepare_air_hockey_config,
@@ -103,11 +103,9 @@ from scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real im
     _build_split_episode_row,
     _write_latency_profile_episode,
     augment_policy_observation,
-    build_policy_env_view,
     deterministic_actor_action,
     primitive_exploration_chance_for_step,
 )
-from scripts.smooth_policy.deterministic_agent import DeterministicAgent
 
 
 def _save_episode_artifacts_and_pending_reset(
@@ -226,7 +224,7 @@ def _save_episode_artifacts_and_pending_reset(
                 camera_video_path = generate_episode_camera_video(
                     episode_hdf5_path=clean_result.path,
                     video_root=_bucketed_output_dir(
-                        args.episode_camera_video_dir or args.episode_gif_dir,
+                        args.episode_camera_video_dir,
                         n_episode_steps,
                     ),
                     fps=args.episode_camera_video_fps,
@@ -243,7 +241,7 @@ def _save_episode_artifacts_and_pending_reset(
                     stop_camera_video_path = _copy_to_stop_dir(
                         camera_video_path,
                         _stop_output_dir(
-                            args.episode_camera_video_dir or args.episode_gif_dir,
+                            args.episode_camera_video_dir,
                             episode_stop_artifact_label,
                         ),
                     )
@@ -645,16 +643,15 @@ def collector_process_modular(
         latency_output_dir.mkdir(parents=True, exist_ok=True)
 
     # ----------------------------- Actor / primitive selector -------------
-    policy_obs_dim = obs_dim + act_dim if train_args.use_last_action_in_policy_state else obs_dim
-    policy_env_view = build_policy_env_view(policy_obs_dim, act_dim)
-    actor = DeterministicAgent(
-        policy_env_view,
-        action_scale=train_args.action_scale,
-        action_bias=0.0,
-        hidden_layer_size=train_args.agent_hidden_layer_size,
-        num_hidden_layers=train_args.agent_num_hidden_layers,
-    ).to(device)
-    actor.eval()
+    actor = _build_collector_actor(
+        args=args,
+        train_args=train_args,
+        obs_dim=obs_dim,
+        act_dim=act_dim,
+        action_low_np=action_low_np,
+        action_high_np=action_high_np,
+        device=device,
+    )
     action_low = torch.as_tensor(action_low_np, dtype=torch.float32, device=device).unsqueeze(0)
     action_high = torch.as_tensor(action_high_np, dtype=torch.float32, device=device).unsqueeze(0)
     primitive_selector = build_primitive_exploration_selector_for_real_collector(
@@ -1117,57 +1114,64 @@ def main(args: Args, train_args: TrainArgs) -> None:
     stats["rolling50_motion_reward_values"] = []
     stats["rolling50_episode_length_values"] = []
     stats["rolling50_estop_episode_flags"] = []
+    training_state_checkpoint: Dict[str, object] | None = None
     if args.model_path is not None:
-        loaded_runtime_state = _load_runtime_perf_from_checkpoint_file(args.model_path)
-        stats["collector_total_steps"] = float(loaded_runtime_state.get("collector_total_steps", 0.0))
-        loaded_task_values = _coerce_float_list(
-            loaded_runtime_state.get("rolling50_task_reward_values", []),
-            max_items=ROLLING_PERF_WINDOW_EPISODES,
-        )
-        loaded_motion_values = _coerce_float_list(
-            loaded_runtime_state.get("rolling50_motion_reward_values", []),
-            max_items=ROLLING_PERF_WINDOW_EPISODES,
-        )
-        loaded_length_values = _coerce_float_list(
-            loaded_runtime_state.get("rolling50_episode_length_values", []),
-            max_items=ROLLING_PERF_WINDOW_EPISODES,
-        )
-        loaded_estop_flags = _coerce_float_list(
-            loaded_runtime_state.get("rolling50_estop_episode_flags", []),
-            max_items=ROLLING_PERF_WINDOW_EPISODES,
-        )
-        stats["run_elapsed_total_s"] = float(loaded_runtime_state.get("run_elapsed_total_s", 0.0))
-        stats["rolling50_task_reward_values"] = loaded_task_values
-        stats["rolling50_motion_reward_values"] = loaded_motion_values
-        stats["rolling50_episode_length_values"] = loaded_length_values
-        stats["rolling50_estop_episode_flags"] = loaded_estop_flags
-        stats["rolling50_window_count"] = float(
-            max(
-                len(loaded_task_values),
-                len(loaded_motion_values),
-                len(loaded_length_values),
-                len(loaded_estop_flags),
+        training_state_checkpoint = _load_training_state_checkpoint(args.model_path)
+        if "collector_total_steps" in training_state_checkpoint:
+            loaded_task_values = _coerce_float_list(
+                training_state_checkpoint["rolling50_task_reward_values"],
+                max_items=ROLLING_PERF_WINDOW_EPISODES,
             )
-        )
-        stats["rolling50_task_reward_avg"] = float(rolling_mean(loaded_task_values))
-        stats["rolling50_motion_reward_avg"] = float(rolling_mean(loaded_motion_values))
-        stats["rolling50_episode_length_avg"] = float(rolling_mean(loaded_length_values))
-        stats["rolling50_estop_episode_count"] = float(sum(loaded_estop_flags))
+            loaded_motion_values = _coerce_float_list(
+                training_state_checkpoint["rolling50_motion_reward_values"],
+                max_items=ROLLING_PERF_WINDOW_EPISODES,
+            )
+            loaded_length_values = _coerce_float_list(
+                training_state_checkpoint["rolling50_episode_length_values"],
+                max_items=ROLLING_PERF_WINDOW_EPISODES,
+            )
+            loaded_estop_flags = _coerce_float_list(
+                training_state_checkpoint["rolling50_estop_episode_flags"],
+                max_items=ROLLING_PERF_WINDOW_EPISODES,
+            )
+            stats["collector_total_steps"] = float(training_state_checkpoint["collector_total_steps"])
+            stats["run_elapsed_total_s"] = float(training_state_checkpoint["run_elapsed_total_s"])
+            stats["rolling50_task_reward_values"] = loaded_task_values
+            stats["rolling50_motion_reward_values"] = loaded_motion_values
+            stats["rolling50_episode_length_values"] = loaded_length_values
+            stats["rolling50_estop_episode_flags"] = loaded_estop_flags
+            stats["rolling50_window_count"] = float(
+                max(
+                    len(loaded_task_values),
+                    len(loaded_motion_values),
+                    len(loaded_length_values),
+                    len(loaded_estop_flags),
+                )
+            )
+            stats["rolling50_task_reward_avg"] = float(rolling_mean(loaded_task_values))
+            stats["rolling50_motion_reward_avg"] = float(rolling_mean(loaded_motion_values))
+            stats["rolling50_episode_length_avg"] = float(rolling_mean(loaded_length_values))
+            stats["rolling50_estop_episode_count"] = float(sum(loaded_estop_flags))
 
     warm_start_requested = len(args.warm_start_hdf5_dirs) > 0
     checkpoint_replay_loaded = False
-    if args.load_replay_from_checkpoint and args.model_path is not None:
-        should_load_checkpoint_replay = True
+    if args.load_replay_from_checkpoint and training_state_checkpoint is not None:
         if warm_start_requested and normalized_replay_priority == "warmstart_only":
-            should_load_checkpoint_replay = False
             print("[resume_replay] skipping checkpoint replay because warmstart_only is active.")
-        if should_load_checkpoint_replay:
-            checkpoint_replay_loaded = _load_replay_from_checkpoint_file(
-                model_path=args.model_path,
-                replay=replay,
+        else:
+            replay.load_state_dict(
+                {
+                    "success": training_state_checkpoint["success_replay_buffer"],
+                    "failure": training_state_checkpoint["failure_replay_buffer"],
+                }
             )
-            if checkpoint_replay_loaded:
-                stats["resume_replay_loaded"] = float(1)
+            snapshot = replay.state_snapshot()
+            print(
+                "[resume_replay] loaded from checkpoint "
+                f"success_rb={snapshot['success']['size']} failure_rb={snapshot['failure']['size']}"
+            )
+            checkpoint_replay_loaded = True
+            stats["resume_replay_loaded"] = float(1)
     try:
         if warm_start_requested:
             if checkpoint_replay_loaded and normalized_replay_priority == "checkpoint_only":
@@ -1213,6 +1217,7 @@ def main(args: Args, train_args: TrainArgs) -> None:
         action_low_np=action_low_np,
         action_high_np=action_high_np,
         tb_log_dir=learner_tb_dir,
+        resume_checkpoint=training_state_checkpoint,
     )
     try:
         collector_process_modular(

@@ -6,6 +6,7 @@ iteration is executed at each policy-episode boundary when learning is active.
 
 from __future__ import annotations
 
+import copy
 import os
 import re
 import json
@@ -18,7 +19,7 @@ from dataclasses import asdict, dataclass, fields
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Dict, Sequence, Tuple
+from typing import Dict, Literal, Sequence, Tuple
 
 import gymnasium as gym
 import numpy as np
@@ -78,6 +79,7 @@ from scripts.smooth_policy.amp_history.amp_training.td3.helper.td3_checkpointing
 )
 from scripts.real.rollout_reset_policy_real import ResetPolicyFSM
 from scripts.smooth_policy.deterministic_agent import DeterministicAgent
+from scripts.smooth_policy.residual_agent import ResidualActor, zero_init_residual_head
 
 ROLLING_PERF_WINDOW_EPISODES = 50
 
@@ -142,6 +144,53 @@ def build_policy_env_view(obs_dim: int, act_dim: int) -> SimpleNamespace:
         single_observation_space=gym.spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32),
         single_action_space=gym.spaces.Box(low=-1.0, high=1.0, shape=(act_dim,), dtype=np.float32),
     )
+
+
+def _build_collector_actor(
+    args: "Args",
+    train_args: "TrainArgs",
+    obs_dim: int,
+    act_dim: int,
+    action_low_np: np.ndarray,
+    action_high_np: np.ndarray,
+    device: torch.device,
+) -> DeterministicAgent:
+    """Construct the collector-side actor.
+
+    Returns a `DeterministicAgent` in standard mode and a `ResidualActor`
+    wrapping a frozen base + zero-init residual head in residual mode. The
+    base/residual weights are populated by the caller via a `state_dict()`
+    copy from `learner_state.actor` — this helper only builds the shell so
+    the architecture matches the learner's actor.
+    """
+    policy_obs_dim = obs_dim + act_dim if train_args.use_last_action_in_policy_state else obs_dim
+    policy_env_view = build_policy_env_view(policy_obs_dim, act_dim)
+    base = DeterministicAgent(
+        policy_env_view,
+        action_scale=train_args.action_scale,
+        action_bias=0.0,
+        hidden_layer_size=train_args.agent_hidden_layer_size,
+        num_hidden_layers=train_args.agent_num_hidden_layers,
+    ).to(device)
+    if args.full_checkpoint_load != "residual":
+        base.eval()
+        return base
+    residual_head = DeterministicAgent(
+        policy_env_view,
+        action_scale=args.residual_scale,
+        action_bias=0.0,
+        hidden_layer_size=train_args.agent_hidden_layer_size,
+        num_hidden_layers=train_args.agent_num_hidden_layers,
+    ).to(device)
+    zero_init_residual_head(residual_head)
+    actor = ResidualActor(
+        base_actor=base,
+        residual_actor=residual_head,
+        action_low=torch.as_tensor(action_low_np, dtype=torch.float32, device=device),
+        action_high=torch.as_tensor(action_high_np, dtype=torch.float32, device=device),
+    ).to(device)
+    actor.eval()
+    return actor
 
 
 def linear_anneal(start: float, end: float, step: int, anneal_steps: int) -> float:
@@ -316,6 +365,7 @@ def _save_async_checkpoint(
     total_actor_updates: int,
     latest_train_metrics: Dict[str, float],
     stats: Dict[str, object],
+    actor_ema=None,
 ) -> Path:
     checkpoint_dir = checkpoint_root / f"checkpoint_{checkpoint_tag}"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -335,6 +385,8 @@ def _save_async_checkpoint(
         print(f"[learner_checkpoint] failed to save args.yaml: {exc}")
     torch.save(actor.state_dict(), checkpoint_dir / "model.pth")
     torch.save(actor_target.state_dict(), checkpoint_dir / "actor_target.pth")
+    if actor_ema is not None:
+        torch.save(actor_ema.state_dict(), checkpoint_dir / "model_ema.pth")
     torch.save(qf1.state_dict(), checkpoint_dir / "qf1.pth")
     torch.save(qf2.state_dict(), checkpoint_dir / "qf2.pth")
     torch.save(qf1_target.state_dict(), checkpoint_dir / "qf1_target.pth")
@@ -405,6 +457,7 @@ def _save_checkpoint_from_learner_state(
         total_actor_updates=state.total_actor_updates,
         latest_train_metrics=state.latest_train_metrics,
         stats=stats,
+        actor_ema=state.actor_ema,
     )
 
 
@@ -468,6 +521,27 @@ class Args:
     args_file: str | None = None
     config: str = "configs/real_configs/rollout_config.yaml"
     model_path: str | None = None
+    # Checkpoint-load mode for `model_path`. Mirrors `td3_training.py:Args.full_checkpoint_load`.
+    # - "full_resume": load all training state (weights + optimizer + replay + RNG).
+    # - "weights_only": load network weights only; fresh optimizer + replay + RNG.
+    # - "fine_tune": load weights + optimizer; reset replay + RNG.
+    # - "residual": load source actor as frozen base, build fresh residual head + fresh critic.
+    full_checkpoint_load: Literal["full_resume", "weights_only", "fine_tune", "residual"] = "full_resume"
+    # Residual RL: max magnitude of the residual action component (used when
+    # full_checkpoint_load=="residual"). Combined action is clipped to env
+    # action bounds, so residual_scale > 0 caps |residual|_inf via tanh.
+    residual_scale: float = 0.15
+    # Residual RL: Adam weight_decay on the residual actor's parameters. Default
+    # 0.0 (off). Set to 1e-3 / 1e-2 for mild / strong L2 if drift is observed.
+    residual_weight_decay: float = 0.0
+    # Residual RL: optional EMA decay for the residual head (e.g. 0.9999). When
+    # set, an EMA-averaged copy of the residual is maintained alongside the
+    # online actor and saved as `model_ema.pth` in each checkpoint.
+    residual_ema_decay: float | None = None
+    # Residual RL: if > 0, add `lambda * mean(residual_action^2)` to the actor
+    # loss. Penalises the residual *output* directly (vs. residual_weight_decay
+    # which penalises parameters). Default 0.0 (off).
+    residual_action_l2: float = 0.0
     collector_device: str = "cpu"
     learner_device: str = "cuda:0"
     seed: int = 0
@@ -1347,16 +1421,15 @@ def collector_process(
             latency_output_dir = Path(tb_log_dir).resolve().parent / "latency_profiles"
         latency_output_dir.mkdir(parents=True, exist_ok=True)
 
-    policy_obs_dim = obs_dim + act_dim if train_args.use_last_action_in_policy_state else obs_dim
-    policy_env_view = build_policy_env_view(policy_obs_dim, act_dim)
-    actor = DeterministicAgent(
-        policy_env_view,
-        action_scale=train_args.action_scale,
-        action_bias=0.0,
-        hidden_layer_size=train_args.agent_hidden_layer_size,
-        num_hidden_layers=train_args.agent_num_hidden_layers,
-    ).to(device)
-    actor.eval()
+    actor = _build_collector_actor(
+        args=args,
+        train_args=train_args,
+        obs_dim=obs_dim,
+        act_dim=act_dim,
+        action_low_np=action_low_np,
+        action_high_np=action_high_np,
+        device=device,
+    )
 
     action_low = torch.as_tensor(action_low_np, dtype=torch.float32, device=device).unsqueeze(0)
     action_high = torch.as_tensor(action_high_np, dtype=torch.float32, device=device).unsqueeze(0)
@@ -2517,6 +2590,10 @@ class LearnerRuntimeState:
     total_actor_updates: int
     last_handled_checkpoint_request_id: int
     latest_train_metrics: Dict[str, float]
+    # Optional EMA copy of the actor, populated when residual_ema_decay is set.
+    # In residual mode this is a `ResidualActor` wrapping the same frozen base
+    # plus an EMA-averaged copy of the residual head.
+    actor_ema: DeterministicAgent | None = None
 
 
 def _make_qf(
@@ -2598,7 +2675,83 @@ def _init_sync_learner_state(
     )
     qf1_target.load_state_dict(qf1.state_dict())
     qf2_target.load_state_dict(qf2.state_dict())
-    if resume_checkpoint is not None:
+
+    actor_ema: DeterministicAgent | None = None
+    if args.full_checkpoint_load == "residual":
+        # Residual RL: load source actor weights only (frozen base), build a
+        # fresh zero-init residual head on top, and keep the critic untouched
+        # from initialization. Mirrors td3_training.py:848.
+        if args.model_path is None:
+            raise ValueError(
+                "full_checkpoint_load='residual' requires model_path to point at "
+                "the source actor checkpoint."
+            )
+        if not os.path.exists(args.model_path):
+            raise FileNotFoundError(f"Model path {args.model_path} does not exist.")
+        print(f"[learner] residual mode: loading source actor from {args.model_path}")
+        loaded_obj = torch.load(args.model_path, map_location=device, weights_only=False)
+        is_full_state = (
+            isinstance(loaded_obj, dict) and "actor" in loaded_obj and "qf1" in loaded_obj
+        )
+        base_state = loaded_obj["actor"] if is_full_state else loaded_obj
+        actor.load_state_dict(extract_deterministic_state_dict(base_state), strict=False)
+        residual_online = DeterministicAgent(
+            policy_env_view,
+            action_scale=args.residual_scale,
+            action_bias=0.0,
+            hidden_layer_size=train_args.agent_hidden_layer_size,
+            num_hidden_layers=train_args.agent_num_hidden_layers,
+        ).to(device)
+        residual_target = DeterministicAgent(
+            policy_env_view,
+            action_scale=args.residual_scale,
+            action_bias=0.0,
+            hidden_layer_size=train_args.agent_hidden_layer_size,
+            num_hidden_layers=train_args.agent_num_hidden_layers,
+        ).to(device)
+        zero_init_residual_head(residual_online)
+        zero_init_residual_head(residual_target)
+        residual_target.load_state_dict(residual_online.state_dict())
+        residual_action_low = torch.as_tensor(
+            action_low_np, dtype=torch.float32, device=device
+        )
+        residual_action_high = torch.as_tensor(
+            action_high_np, dtype=torch.float32, device=device
+        )
+        # Wrap actor + actor_target. Both targets share the same frozen base
+        # instance so target sync only touches the residual head — matches
+        # td3_training.py:885.
+        actor = ResidualActor(
+            base_actor=actor,
+            residual_actor=residual_online,
+            action_low=residual_action_low,
+            action_high=residual_action_high,
+        ).to(device)
+        actor_target = ResidualActor(
+            base_actor=actor.base,
+            residual_actor=residual_target,
+            action_low=residual_action_low,
+            action_high=residual_action_high,
+        ).to(device)
+        if args.residual_ema_decay is not None:
+            residual_ema = copy.deepcopy(residual_online)
+            for p in residual_ema.parameters():
+                p.requires_grad_(False)
+            actor_ema = ResidualActor(
+                base_actor=actor.base,
+                residual_actor=residual_ema,
+                action_low=residual_action_low,
+                action_high=residual_action_high,
+            ).to(device)
+            print(
+                f"[learner] residual EMA: decay={args.residual_ema_decay} — "
+                "saving model_ema.pth alongside each checkpoint"
+            )
+        print(
+            f"[learner] residual mode: base frozen, residual_scale={args.residual_scale}, "
+            "critic from scratch."
+        )
+    elif resume_checkpoint is not None:
         actor.load_state_dict(
             extract_deterministic_state_dict(resume_checkpoint["actor"]), strict=False
         )
@@ -2613,19 +2766,36 @@ def _init_sync_learner_state(
         lr=args.q_lr,
         weight_decay=args.q_weight_decay,
     )
-    actor_optimizer = optim.Adam(actor.parameters(), lr=args.policy_lr)
+    if args.full_checkpoint_load == "residual":
+        actor_optimizer = optim.Adam(
+            actor.residual.parameters(),
+            lr=args.policy_lr,
+            weight_decay=args.residual_weight_decay,
+        )
+        if args.residual_weight_decay > 0:
+            print(
+                f"[learner] residual actor optimizer: Adam(lr={args.policy_lr}, "
+                f"weight_decay={args.residual_weight_decay}) — residual head L2 active"
+            )
+    else:
+        actor_optimizer = optim.Adam(actor.parameters(), lr=args.policy_lr)
     total_updates = 0
     total_actor_updates = 0
     latest_train_metrics: Dict[str, float] = {}
     if resume_checkpoint is not None and "q_optimizer" in resume_checkpoint:
         q_optimizer.load_state_dict(resume_checkpoint["q_optimizer"])
         actor_optimizer.load_state_dict(resume_checkpoint["actor_optimizer"])
-        total_updates = int(resume_checkpoint["learner_q_updates"])
-        total_actor_updates = int(resume_checkpoint["learner_actor_updates"])
-        latest_train_metrics = {
-            str(key): float(value)
-            for key, value in resume_checkpoint["train_metrics"].items()
-        }
+        total_updates = int(
+            resume_checkpoint.get(
+                "learner_q_updates", resume_checkpoint.get("global_step", 0)
+            )
+        )
+        total_actor_updates = int(resume_checkpoint.get("learner_actor_updates", 0))
+        if isinstance(resume_checkpoint.get("train_metrics"), dict):
+            latest_train_metrics = {
+                str(key): float(value)
+                for key, value in resume_checkpoint["train_metrics"].items()
+            }
         print(
             "[learner] resumed optimizer state "
             f"q_updates={total_updates} actor_updates={total_actor_updates}"
@@ -2649,6 +2819,7 @@ def _init_sync_learner_state(
         total_actor_updates=total_actor_updates,
         last_handled_checkpoint_request_id=int(stats.get("checkpoint_save_request_id", 0)),
         latest_train_metrics=latest_train_metrics,
+        actor_ema=actor_ema,
     )
 
 
@@ -2826,11 +2997,28 @@ def _run_sync_learner_iteration(
         q1_motion = h_inverse(q1_motion_h, eps=float(args.h_transform_eps)).view(-1)
         actor_objective = float(args.task_reward_weight) * q1_task + float(args.motion_reward_weight) * q1_motion
         actor_loss = -actor_objective.mean()
+        residual_action_l2_loss: float | None = None
+        if (
+            args.full_checkpoint_load == "residual"
+            and args.residual_action_l2 > 0.0
+        ):
+            residual_action = state.actor.residual.get_action(actor_policy_obs)
+            l2_term = (residual_action ** 2).mean()
+            actor_loss = actor_loss + args.residual_action_l2 * l2_term
+            residual_action_l2_loss = float(l2_term.item())
         state.actor_optimizer.zero_grad(set_to_none=True)
         actor_loss.backward()
         state.actor_optimizer.step()
         state.total_actor_updates += 1
         actor_updated = True
+        if state.actor_ema is not None and args.full_checkpoint_load == "residual":
+            decay = float(args.residual_ema_decay)
+            with torch.no_grad():
+                for ema_param, online_param in zip(
+                    state.actor_ema.residual.parameters(),
+                    state.actor.residual.parameters(),
+                ):
+                    ema_param.data.mul_(decay).add_(online_param.data, alpha=1.0 - decay)
         norm_task = (1.0 - float(args.task_gamma)) * q1_task
         norm_motion = (1.0 - float(args.motion_gamma)) * q1_motion
         state.latest_train_metrics.update(
@@ -2840,6 +3028,8 @@ def _run_sync_learner_iteration(
                 "losses/actor_norm_motion_mean": float(norm_motion.mean().item()),
             }
         )
+        if residual_action_l2_loss is not None:
+            state.latest_train_metrics["losses/residual_action_l2"] = residual_action_l2_loss
     now = time.time()
     if now - state.last_log_time >= float(args.learner_log_interval_sec):
         stats["learner_q_updates"] = float(state.total_updates)
@@ -2971,6 +3161,14 @@ def main(args: Args, train_args: TrainArgs) -> None:
         raise ValueError("critic_success_sample_fraction + critic_failure_sample_fraction must equal 1.0.")
     if args.enable_periodic_checkpointing and int(args.checkpoint_every_successful_online_episodes) <= 0:
         raise ValueError("checkpoint_every_successful_online_episodes must be > 0 when checkpointing is enabled.")
+    if args.full_checkpoint_load == "residual":
+        if args.model_path is None:
+            raise ValueError(
+                "full_checkpoint_load='residual' requires model_path to point at "
+                "the source actor checkpoint (frozen base)."
+            )
+        if not (args.residual_scale > 0.0):
+            raise ValueError("residual_scale must be > 0 when full_checkpoint_load='residual'.")
     normalized_replay_priority = _normalize_replay_source_priority(args.replay_source_priority)
     if normalized_replay_priority != str(args.replay_source_priority).strip().lower():
         print("[main] replay_source_priority normalized to 'warmstart_only' due to invalid input.")
@@ -3018,7 +3216,11 @@ def main(args: Args, train_args: TrainArgs) -> None:
     stats["rolling50_episode_length_values"] = []
     stats["rolling50_estop_episode_flags"] = []
     training_state_checkpoint: Dict[str, object] | None = None
-    if args.model_path is not None:
+    # Residual mode loads the source actor directly inside _init_sync_learner_state
+    # via torch.load + extract_deterministic_state_dict. Skip the full
+    # training_state load + replay/runtime restore here since residual builds a
+    # fresh critic, optimizer, and replay (warm-start only).
+    if args.model_path is not None and args.full_checkpoint_load != "residual":
         training_state_checkpoint = _load_training_state_checkpoint(args.model_path)
         if "collector_total_steps" in training_state_checkpoint:
             loaded_task_values = _coerce_float_list(
