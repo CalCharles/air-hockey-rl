@@ -791,23 +791,42 @@ _VITAL_TRAINING_STATE_KEYS = (
     "failure_replay_buffer",
     "rng_states",
 )
-_NON_VITAL_TRAINING_STATE_KEYS = (
-    "q_optimizer",
-    "actor_optimizer",
-    "learner_q_updates",
-    "learner_actor_updates",
-    "train_metrics",
-    "collector_total_steps",
-    "run_elapsed_total_s",
-    "rolling50_task_reward_values",
-    "rolling50_motion_reward_values",
-    "rolling50_episode_length_values",
-    "rolling50_estop_episode_flags",
-)
+# Default values for non-vital training_state.pth fields. Cross-source
+# checkpoints (e.g., a sim-trained `td3_training.py` training_state used as a
+# residual base) only contain a subset of these; missing keys are filled with
+# the defaults below so downstream readers can dict-access them unconditionally.
+# `q_optimizer` / `actor_optimizer` are intentionally NOT defaulted — their
+# presence is the gate the learner uses to decide whether to restore optimizer
+# state at all (`async_td3_real.py:_init_sync_learner_state`).
+_NON_VITAL_TRAINING_STATE_DEFAULTS: Dict[str, object] = {
+    "learner_q_updates": 0,
+    "learner_actor_updates": 0,
+    "train_metrics": {},
+    "collector_total_steps": 0,
+    "run_elapsed_total_s": 0.0,
+    "rolling50_task_reward_values": [],
+    "rolling50_motion_reward_values": [],
+    "rolling50_episode_length_values": [],
+    "rolling50_estop_episode_flags": [],
+}
 
 
 def _load_training_state_checkpoint(model_path: str) -> Dict[str, object]:
-    """Load and validate a training_state.pth dict. Raises on any deviation."""
+    """Load a training_state.pth dict, with strict vital-key validation and
+    per-key defaults for missing non-vital fields.
+
+    Vital keys (actor/critic/target weights, replay buffers, RNG state) are
+    required and trigger a hard failure if absent.
+
+    Non-vital keys (learner counters, rolling perf stats, train metrics) are
+    filled with safe defaults from `_NON_VITAL_TRAINING_STATE_DEFAULTS` when
+    missing, and a single log line lists which keys were defaulted. This
+    accommodates cross-source resumes where a sim-trained `td3_training.py`
+    training_state is loaded as a base for real-world residual / fine-tune
+    flows — sim sources contain only a subset of the real-world non-vital
+    fields. `q_optimizer` / `actor_optimizer` are intentionally not in the
+    defaults: their presence is the gate the learner uses to decide whether
+    to restore optimizer state."""
     loaded_obj = torch.load(model_path, map_location="cpu", weights_only=False)
     if not isinstance(loaded_obj, dict):
         raise TypeError(
@@ -820,12 +839,21 @@ def _load_training_state_checkpoint(model_path: str) -> Dict[str, object]:
             f"training_state.pth at {model_path} is missing required keys: "
             f"{missing_vital}. Expected a dict produced by _build_async_training_state."
         )
-    present_non_vital = [k for k in _NON_VITAL_TRAINING_STATE_KEYS if k in loaded_obj]
-    if present_non_vital and len(present_non_vital) != len(_NON_VITAL_TRAINING_STATE_KEYS):
-        missing_non_vital = [k for k in _NON_VITAL_TRAINING_STATE_KEYS if k not in loaded_obj]
-        raise KeyError(
-            f"training_state.pth at {model_path} has partial non-vital fields. "
-            f"Present: {present_non_vital}. Missing: {missing_non_vital}."
+    defaulted: list[str] = []
+    for key, default in _NON_VITAL_TRAINING_STATE_DEFAULTS.items():
+        if key not in loaded_obj:
+            # Copy mutable defaults so the module-level dict is never aliased.
+            if isinstance(default, dict):
+                loaded_obj[key] = dict(default)
+            elif isinstance(default, list):
+                loaded_obj[key] = list(default)
+            else:
+                loaded_obj[key] = default
+            defaulted.append(key)
+    if defaulted:
+        print(
+            f"[resume] training_state.pth at {model_path} missing non-vital "
+            f"keys; filled with defaults: {defaulted}"
         )
     return loaded_obj
 
