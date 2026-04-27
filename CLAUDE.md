@@ -23,7 +23,7 @@ See [`notes/docs/repo/project-goal-and-safety.md`](notes/docs/repo/project-goal-
 | **Recommended TD3 default** | `…/td3/td3_recommended.yaml` (2-layer, q=25/a=6, hist_len=4 via `sysid_best_params_hist4.yaml`, no bootstrap forcing, no external warmstart — see [depth/update ablations](notes/docs/training/td3-ablations-updates-and-depth.md) and [exploration ablations](notes/docs/training/td3-exploration-ablations.md)) |
 | **Residual RL recipe (sim2sim/sim2real fine-tune)** | `…/td3/sim2sim/td3_sim2sim_residual.yaml` (sim2sim) · `…/td3_real_world/td3_residual.yaml` (real, via `async_td3_real_modular.py`) — both use the `recency_top50` data-balance fix. **Read [`notes/docs/training/residual-rl-recipe.md`](notes/docs/training/residual-rl-recipe.md) before running.** |
 | **Env entrypoint** | `airhockey/` (`AirHockeyEnv`) |
-| **Real-world rollout** | `scripts/real/` + `scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real/` |
+| **Real-world rollout entrypoint** | `scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real_modular.py` (only entrypoint; the non-modular `async_td3_real.py` is now a shared library — `Args`, `LearnerRuntimeState`, helpers). Plus `scripts/real/` for non-training rollout helpers. |
 
 The config file passed to `td3_training.py` (e.g., `td3_no_alignment.yaml`) has a `config:` key pointing to the sim config and a `model_path:` key for resuming.
 
@@ -74,6 +74,7 @@ Key docs:
 - Architecture & algorithm: [`training/architecture.md`](notes/docs/training/architecture.md) · [`training/td3-algorithm.md`](notes/docs/training/td3-algorithm.md)
 - **Residual RL recipe**: [`training/residual-rl-recipe.md`](notes/docs/training/residual-rl-recipe.md) — winning data-balance recipe for sim2sim/sim2real fine-tuning
 - Configs: [`training/td3-configs.md`](notes/docs/training/td3-configs.md) · [`training/sim-env-configs.md`](notes/docs/training/sim-env-configs.md)
+- Monitoring (TensorBoard layout, scalar reference, console output): [`training/monitoring.md`](notes/docs/training/monitoring.md)
 - Rewards: [`training/reward-shaping.md`](notes/docs/training/reward-shaping.md)
 - Networks: [`training/network-architecture.md`](notes/docs/training/network-architecture.md)
 - Replay / episodes: [`training/replay-and-episodes.md`](notes/docs/training/replay-and-episodes.md)

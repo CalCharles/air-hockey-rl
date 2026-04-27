@@ -3,7 +3,7 @@
 Save/resume system for TD3 training state.
 
 Simulation code: [`helper/td3_checkpointing.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/td3_checkpointing.py).
-Real-world code: `_build_async_training_state` / `_save_async_checkpoint` in [`async_td3_real.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py).
+Real-world code: `_build_async_training_state` / `_save_async_checkpoint` in [`async_td3_real.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py) (shared library; entrypoint is [`async_td3_real_modular.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real_modular.py)).
 
 ## Checkpoint schema
 

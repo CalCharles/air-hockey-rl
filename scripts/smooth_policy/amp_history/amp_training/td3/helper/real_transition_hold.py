@@ -1,8 +1,8 @@
 """Transition-hold state machine for the real-world TD3 collector.
 
-Splits the `begin_transition_hold` closure (formerly inlined in
-`async_td3_real.collector_process`) and its five mutable nonlocals into two
-sibling dataclasses:
+Splits the ``begin_transition_hold`` closure (formerly inlined in the
+deleted monolithic ``async_td3_real.collector_process``) and its five
+mutable nonlocals into two sibling dataclasses:
 
 - ``RolloutContext`` — per-rollout state that crosses the PolicyRunner /
   orchestrator boundary (last actions + previous puck position used by the
@@ -13,8 +13,7 @@ sibling dataclasses:
 - ``TransitionHoldState`` — the hold counters and the ``begin``/``tick``
   methods.
 
-Behavior is a structural lift of the current source — see
-``async_td3_real.py`` L1394–1442, L1758–1776 for the original code paths.
+Used by ``collector_process_modular`` in ``async_td3_real_modular.py``.
 """
 from __future__ import annotations
 
@@ -56,8 +55,8 @@ def request_sim_transition_hold(env: AirHockeyEnv, steps: int, reason: str) -> b
 class RolloutContext:
     """Mutable per-rollout state shared between PolicyRunner and orchestrator.
 
-    PolicyRunner mutates all three fields every env step (see source
-    L1760–1766). ``TransitionHoldState.begin`` re-extracts
+    PolicyRunner mutates all three fields every env step.
+    ``TransitionHoldState.begin`` re-extracts
     ``previous_puck_position_for_primitive`` from env and may overwrite
     ``last_action_for_policy`` per the configured ``last_action_mode``.
     """
@@ -71,7 +70,7 @@ class RolloutContext:
 class TransitionHoldState:
     """Counters and trigger logic for the transition-hold state machine.
 
-    The five fields mirror the original locals in
+    The five fields mirror the original locals in the old monolithic
     ``async_td3_real.collector_process``:
         transition_hold_steps_remaining → ``steps_remaining``
         transition_hold_reason          → ``reason``
@@ -79,8 +78,7 @@ class TransitionHoldState:
         transition_hold_reason_counts   → ``reason_counts``
         transition_last_action_mode     → ``last_action_mode``
 
-    ``steps_total`` is the accumulated counter
-    ``transition_hold_steps_total`` (L1473), separate from
+    ``steps_total`` is the accumulated total-hold counter, separate from
     ``steps_remaining``.
     """
 

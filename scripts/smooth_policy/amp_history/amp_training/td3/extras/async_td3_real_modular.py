@@ -1,13 +1,15 @@
-"""Modular real-world TD3 entrypoint — same CLI/behavior as async_td3_real.py.
+"""Modular real-world TD3 entrypoint — sole runnable async-real script.
 
 Refactored orchestrator that drives ``PolicyRunner`` (one episode at a time)
 and ``ResetRunner`` (one reset at a time, including the four-way kind
-table) instead of inlining a 1200-line ``collector_process`` function.
+table) instead of the 1200-line ``collector_process`` that this file
+replaced.
 
-This file is meant to live next to ``async_td3_real.py`` so both
-entrypoints can be invoked from the same directory; init / teardown /
-learner / args parsing are imported from ``async_td3_real`` directly so
-nothing is duplicated.
+Sibling module ``async_td3_real.py`` is now a shared library: it owns
+``Args`` / ``TrainArgs`` / ``LearnerRuntimeState``, args-file parsing,
+checkpoint helpers, episode/replay utilities, reset-FSM helpers, and the
+synchronous learner step. This file imports those symbols and is the only
+``__main__`` for real-world async TD3 runs.
 
 See ``notes/scratch/async_td3_real_modularization_plan.md`` for the
 contracts.
@@ -40,10 +42,12 @@ from scripts.smooth_policy.amp_history.amp_training.td3.helper.real_collector_fa
     build_primitive_exploration_selector_for_real_collector,
 )
 from scripts.smooth_policy.amp_history.amp_training.td3.helper.real_collector_metrics import (
-    compute_rolling50_metrics,
+    ROLLING_WINDOW_SIZES,
+    compute_rolling_window_metrics_multi,
+    format_rolling_window_console_line,
     rolling_mean,
-    update_stats_dict_rolling50,
-    write_rolling50_tensorboard_scalars,
+    update_stats_dict_rolling_windows,
+    write_rolling_windows_tensorboard_scalars,
 )
 from scripts.smooth_policy.amp_history.amp_training.td3.helper.real_motion_rewards import (
     _init_motion_reward_state,
@@ -116,12 +120,16 @@ def _save_episode_artifacts_and_pending_reset(
     pending_reset_artifact,
     latency_output_dir: Path | None,
     counters: dict,
-) -> int:
+) -> tuple[int, bool]:
     """HDF5 + GIF + camera video + pending reset flush — matches L1953–L2154.
 
     Mutates ``counters`` (dict of named tally counters); returns the new
-    ``next_episode_file_id``. The pending-reset flush is included here
-    because it lives in the same artifact-save block in the source.
+    ``next_episode_file_id`` together with ``episode_kept`` (True iff
+    ``clean_episode_hdf5`` accepted the trajectory). Callers use
+    ``episode_kept`` to suppress training, replay, and performance-metric
+    updates for trajectories that the validator discarded. The
+    pending-reset flush is included here because it lives in the same
+    artifact-save block in the source.
     """
     n_episode_steps = len(result.rows)
     n_camera_frames = len(result.images)
@@ -304,7 +312,7 @@ def _save_episode_artifacts_and_pending_reset(
                 f"saved to {reset_clean_result.path}"
             )
 
-    return next_episode_file_id + 1
+    return next_episode_file_id + 1, bool(clean_result.kept)
 
 
 def _periodic_log(
@@ -336,12 +344,14 @@ def _periodic_log(
     now = time.time()
     snapshot = replay.state_snapshot()
     elapsed_s = max(0.0, elapsed_offset_s + (now - collector_start_time))
-    rolling50_m = compute_rolling50_metrics(
-        rolling_state["task"],
-        rolling_state["motion"],
-        rolling_state["length"],
-        rolling_state["estop"],
+    rolling_multi = compute_rolling_window_metrics_multi(
+        task_reward_values=rolling_state["task"],
+        motion_reward_values=rolling_state["motion"],
+        episode_length_values=rolling_state["length"],
+        estop_episode_flags=rolling_state["estop"],
+        episode_return_values=rolling_state["return"],
     )
+    rolling50_m = rolling_multi[50]
     stats["collector_steps"] = float(total_steps)
     stats["collector_total_steps"] = float(total_steps)
     stats["collector_episodes"] = float(total_episodes)
@@ -371,14 +381,14 @@ def _periodic_log(
         interval_state["target_position_directional"]
     )
     stats["run_elapsed_total_s"] = float(elapsed_s)
-    update_stats_dict_rolling50(
+    update_stats_dict_rolling_windows(
         stats,
-        rolling50_m,
-        window_size=ROLLING_PERF_WINDOW_EPISODES,
-        rolling50_task_reward_values=rolling_state["task"],
-        rolling50_motion_reward_values=rolling_state["motion"],
-        rolling50_episode_length_values=rolling_state["length"],
-        rolling50_estop_episode_flags=rolling_state["estop"],
+        rolling_multi,
+        raw_task_reward_values=rolling_state["task"],
+        raw_motion_reward_values=rolling_state["motion"],
+        raw_episode_length_values=rolling_state["length"],
+        raw_estop_episode_flags=rolling_state["estop"],
+        raw_episode_return_values=rolling_state["return"],
     )
     writer.add_scalar("replay/success_buffer_size", float(snapshot["success"]["size"]), total_steps)
     writer.add_scalar("replay/failure_buffer_size", float(snapshot["failure"]["size"]), total_steps)
@@ -452,7 +462,7 @@ def _periodic_log(
         total_steps,
     )
     writer.add_scalar("runtime/elapsed_total_s", float(elapsed_s), total_steps)
-    write_rolling50_tensorboard_scalars(writer, rolling50_m, total_steps)
+    write_rolling_windows_tensorboard_scalars(writer, rolling_multi, total_steps)
     if episodic_returns:
         writer.add_scalar("charts/avg_episodic_return", float(np.mean(episodic_returns)), total_steps)
         writer.add_scalar("charts/min_episodic_return", float(np.min(episodic_returns)), total_steps)
@@ -501,6 +511,9 @@ def _periodic_log(
         f"rolling50_len_avg={rolling50_m.episode_length_avg:.2f} "
         f"rolling50_estops={rolling50_m.estop_episode_count:.0f}"
     )
+    for window_size in ROLLING_WINDOW_SIZES:
+        m = rolling_multi[window_size]
+        print(f"[collector_rolling{window_size}] {format_rolling_window_console_line(m)}")
     if transition_hold.reason_counts:
         print(
             "[collector_transition] "
@@ -547,12 +560,14 @@ def _print_episode_progress(
     elapsed_s = max(0.0, elapsed_offset_s + (time.time() - collector_start_time))
     elapsed_min = elapsed_s / 60.0
     elapsed_hr = elapsed_s / 3600.0
-    rolling50_m = compute_rolling50_metrics(
-        rolling_state["task"],
-        rolling_state["motion"],
-        rolling_state["length"],
-        rolling_state["estop"],
+    rolling_multi = compute_rolling_window_metrics_multi(
+        task_reward_values=rolling_state["task"],
+        motion_reward_values=rolling_state["motion"],
+        episode_length_values=rolling_state["length"],
+        estop_episode_flags=rolling_state["estop"],
+        episode_return_values=rolling_state["return"],
     )
+    rolling50_m = rolling_multi[50]
     stop_state_reason = (
         result.terminal.stop_state_reason if result.terminal.stop_now else "none"
     )
@@ -589,6 +604,9 @@ def _print_episode_progress(
         f"rolling50_len_avg={rolling50_m.episode_length_avg:.2f} "
         f"rolling50_estops={rolling50_m.estop_episode_count:.0f}"
     )
+    for window_size in ROLLING_WINDOW_SIZES:
+        m = rolling_multi[window_size]
+        print(f"[collector_rolling{window_size}] {format_rolling_window_console_line(m)}")
 
 
 # ---------------------------------------------------------------------------
@@ -609,8 +627,8 @@ def collector_process_modular(
     tb_log_dir: str,
 ) -> None:
     """Modular orchestrator. Drives PolicyRunner + ResetRunner around the
-    learner, replay push, and artifact saves. Same external behavior as
-    ``async_td3_real.collector_process``."""
+    learner, replay push, and artifact saves. Replaces the monolithic
+    ``collector_process`` that previously lived in ``async_td3_real.py``."""
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -814,6 +832,16 @@ def collector_process_modular(
             ),
             maxlen=ROLLING_PERF_WINDOW_EPISODES,
         ),
+        # Total episode return distribution (avg/min/max/std/median over
+        # the last 50 episodes). Defaults to empty when resuming from a
+        # checkpoint that predates this series.
+        "return": deque(
+            _coerce_float_list(
+                stats.get("rolling50_episode_return_values", []),
+                max_items=ROLLING_PERF_WINDOW_EPISODES,
+            ),
+            maxlen=ROLLING_PERF_WINDOW_EPISODES,
+        ),
         "recent_episode_window_count": 0,
     }
     interval_state = {
@@ -846,7 +874,10 @@ def collector_process_modular(
         episode_end_wall_time = time.time()
         total_steps = policy_runner.total_steps
         total_episodes += 1
-        # Accumulate orchestrator counters.
+        # Operational/safety counters: always update — these reflect what
+        # physically happened in the world (e-stops, disconnects, readiness
+        # faults, reset-FSM steps), not what the trained policy learned, so
+        # they must remain accurate even when the trajectory is discarded.
         counters["protective_stop_steps"] += result.metrics.delta_protective_stop_steps
         counters["controller_disconnect_steps"] += result.metrics.delta_controller_disconnect_steps
         counters["readiness_fail_steps_total"] += result.metrics.delta_readiness_fail_steps
@@ -859,61 +890,141 @@ def collector_process_modular(
             counters["controller_disconnect_episodes"] += 1
         if result.terminal.readiness_fail_estop:
             counters["readiness_fail_estop_episodes"] += 1
-        interval_state["primitive"] += result.metrics.delta_interval_primitive_env_steps
-        interval_state["primitive_horizontal"] += (
-            result.metrics.delta_interval_primitive_horizontal_env_steps
-        )
-        interval_state["target_position_directional"] += (
-            result.metrics.delta_interval_target_position_directional_env_steps
-        )
-        rolling_state["task"].append(result.metrics.episode_task_reward)
-        rolling_state["motion"].append(result.metrics.episode_motion_reward)
-        rolling_state["length"].append(result.metrics.episode_length)
-        rolling_state["estop"].append(result.metrics.episode_estop_flag)
-        episodic_returns.append(result.metrics.episode_return)
-        episodic_lengths.append(result.metrics.episode_length)
-        success_rates.append(1.0 if result.terminal.episode_success else 0.0)
 
-        # Per-episode TB scalars.
-        _write_per_episode_tb(writer, result=result, total_steps=total_steps, stats=stats)
-
-        # 2. Push to replay UNCONDITIONALLY (already trimmed) + run learner.
-        partition, ep_return, episode_return_success_threshold, _ = _add_episode_to_shared_replay(
-            replay=replay,
-            episode_trajectory=result.trajectory,
-            recent_episode_returns=recent_episode_returns,
-            success_top_fraction=args.success_top_fraction,
-        )
-        rolling_state["recent_episode_window_count"] = len(recent_episode_returns)
-        actor_updated = _run_sync_learner_iteration(
+        # 2. Save artifacts + flush pending reset FIRST so we know whether
+        # the trajectory passed validation. Trajectories rejected by
+        # `clean_episode_hdf5` (non-finite values, inconsistent dataset
+        # lengths, zero timesteps, etc.) must not contribute to replay,
+        # learner updates, or any performance metric.
+        saved_episode_id = next_episode_file_id
+        next_episode_file_id, episode_kept = _save_episode_artifacts_and_pending_reset(
             args=args,
-            train_args=train_args,
-            replay=replay,
-            stats=stats,
-            state=learner_state,
-        )
-        if actor_updated:
-            actor.load_state_dict(
-                {k: v.detach().cpu() for k, v in learner_state.actor.state_dict().items()},
-                strict=False,
-            )
-            transition_hold.begin(
-                reason="actor_sync_update",
-                hold_steps=int(args.transition_hold_steps_post_actor_sync),
-                sim_hold=False,
-                env=env,
-                ctx=ctx,
-                primitive_selector=primitive_selector,
-                extract_primitive_state_tensors=_extract_primitive_state_tensors,
-                reset_primitive_rollout_state=_reset_primitive_rollout_state,
-                use_last_action_in_policy_state=train_args.use_last_action_in_policy_state,
-                device=device,
-            )
-
-        # Per-episode progress lines.
-        _print_episode_progress(
             result=result,
             next_episode_file_id=next_episode_file_id,
+            pending_reset_artifact=pending_reset_artifact,
+            latency_output_dir=latency_output_dir,
+            counters=counters,
+        )
+        pending_reset_artifact = None
+
+        # Wall-clock + step counters track elapsed time for the run; safe
+        # to update regardless of whether this episode was kept.
+        elapsed_s = max(0.0, elapsed_offset_s + (time.time() - collector_start_time))
+        stats["run_elapsed_total_s"] = float(elapsed_s)
+        stats["collector_steps"] = float(total_steps)
+        stats["collector_total_steps"] = float(total_steps)
+
+        # 3. Apply the kept-trajectory updates: replay push, learner step,
+        # rolling/episodic perf metrics, per-episode TB scalars, and the
+        # periodic-checkpoint trigger. All are skipped if the validator
+        # rejected the trajectory.
+        if episode_kept:
+            interval_state["primitive"] += result.metrics.delta_interval_primitive_env_steps
+            interval_state["primitive_horizontal"] += (
+                result.metrics.delta_interval_primitive_horizontal_env_steps
+            )
+            interval_state["target_position_directional"] += (
+                result.metrics.delta_interval_target_position_directional_env_steps
+            )
+            rolling_state["task"].append(result.metrics.episode_task_reward)
+            rolling_state["motion"].append(result.metrics.episode_motion_reward)
+            rolling_state["length"].append(result.metrics.episode_length)
+            rolling_state["estop"].append(result.metrics.episode_estop_flag)
+            rolling_state["return"].append(result.metrics.episode_return)
+            episodic_returns.append(result.metrics.episode_return)
+            episodic_lengths.append(result.metrics.episode_length)
+            success_rates.append(1.0 if result.terminal.episode_success else 0.0)
+
+            _write_per_episode_tb(writer, result=result, total_steps=total_steps, stats=stats)
+
+            partition, ep_return, episode_return_success_threshold, _ = _add_episode_to_shared_replay(
+                replay=replay,
+                episode_trajectory=result.trajectory,
+                recent_episode_returns=recent_episode_returns,
+                success_top_fraction=args.success_top_fraction,
+            )
+            rolling_state["recent_episode_window_count"] = len(recent_episode_returns)
+            actor_updated = _run_sync_learner_iteration(
+                args=args,
+                train_args=train_args,
+                replay=replay,
+                stats=stats,
+                state=learner_state,
+            )
+            if actor_updated:
+                actor.load_state_dict(
+                    {k: v.detach().cpu() for k, v in learner_state.actor.state_dict().items()},
+                    strict=False,
+                )
+                transition_hold.begin(
+                    reason="actor_sync_update",
+                    hold_steps=int(args.transition_hold_steps_post_actor_sync),
+                    sim_hold=False,
+                    env=env,
+                    ctx=ctx,
+                    primitive_selector=primitive_selector,
+                    extract_primitive_state_tensors=_extract_primitive_state_tensors,
+                    reset_primitive_rollout_state=_reset_primitive_rollout_state,
+                    use_last_action_in_policy_state=train_args.use_last_action_in_policy_state,
+                    device=device,
+                )
+
+            rolling_multi = compute_rolling_window_metrics_multi(
+                task_reward_values=rolling_state["task"],
+                motion_reward_values=rolling_state["motion"],
+                episode_length_values=rolling_state["length"],
+                estop_episode_flags=rolling_state["estop"],
+                episode_return_values=rolling_state["return"],
+            )
+            update_stats_dict_rolling_windows(
+                stats,
+                rolling_multi,
+                raw_task_reward_values=rolling_state["task"],
+                raw_motion_reward_values=rolling_state["motion"],
+                raw_episode_length_values=rolling_state["length"],
+                raw_estop_episode_flags=rolling_state["estop"],
+                raw_episode_return_values=rolling_state["return"],
+            )
+            write_rolling_windows_tensorboard_scalars(writer, rolling_multi, total_steps)
+
+            # Periodic-checkpoint trigger (matches L2011–2022). Compares
+            # current counter against the previous stats value, so it must
+            # run before stats["successful_online_episodes_kept"] is
+            # refreshed below.
+            if (
+                args.enable_periodic_checkpointing
+                and counters["successful_online_episodes_kept"] > int(
+                    stats.get("successful_online_episodes_kept", 0)
+                )
+                and int(args.checkpoint_every_successful_online_episodes) > 0
+                and (
+                    counters["successful_online_episodes_kept"]
+                    % int(args.checkpoint_every_successful_online_episodes)
+                    == 0
+                )
+            ):
+                checkpoint_save_request_id += 1
+                stats["checkpoint_save_request_id"] = float(checkpoint_save_request_id)
+                stats["checkpoint_reason"] = "periodic_successful_online_episode"
+                stats["checkpoint_trigger_episode_id"] = float(next_episode_file_id - 1)
+                stats["checkpoint_trigger_successful_online_episodes_kept"] = float(
+                    counters["successful_online_episodes_kept"]
+                )
+        else:
+            print(
+                f"[collector] episode_id={saved_episode_id} discarded by validation; "
+                "skipping replay push, learner update, and performance logging."
+            )
+
+        stats["successful_online_episodes_kept"] = float(
+            counters["successful_online_episodes_kept"]
+        )
+
+        # Per-episode progress lines (always print; uses the id the
+        # discarded artifact would have taken so logs stay greppable).
+        _print_episode_progress(
+            result=result,
+            next_episode_file_id=saved_episode_id,
             counters=counters,
             total_steps=total_steps,
             total_episodes=total_episodes,
@@ -922,60 +1033,6 @@ def collector_process_modular(
             collector_start_time=collector_start_time,
             rolling_state=rolling_state,
         )
-        rolling50_m = compute_rolling50_metrics(
-            rolling_state["task"],
-            rolling_state["motion"],
-            rolling_state["length"],
-            rolling_state["estop"],
-        )
-        elapsed_s = max(0.0, elapsed_offset_s + (time.time() - collector_start_time))
-        stats["run_elapsed_total_s"] = float(elapsed_s)
-        stats["collector_steps"] = float(total_steps)
-        stats["collector_total_steps"] = float(total_steps)
-        update_stats_dict_rolling50(
-            stats,
-            rolling50_m,
-            window_size=ROLLING_PERF_WINDOW_EPISODES,
-            rolling50_task_reward_values=rolling_state["task"],
-            rolling50_motion_reward_values=rolling_state["motion"],
-            rolling50_episode_length_values=rolling_state["length"],
-            rolling50_estop_episode_flags=rolling_state["estop"],
-        )
-        write_rolling50_tensorboard_scalars(writer, rolling50_m, total_steps)
-
-        # 3. Save artifacts + flush pending reset.
-        next_episode_file_id = _save_episode_artifacts_and_pending_reset(
-            args=args,
-            result=result,
-            next_episode_file_id=next_episode_file_id,
-            pending_reset_artifact=pending_reset_artifact,
-            latency_output_dir=latency_output_dir,
-            counters=counters,
-        )
-        # Periodic-checkpoint trigger (matches L2011–2022).
-        if (
-            args.enable_periodic_checkpointing
-            and counters["successful_online_episodes_kept"] > int(
-                stats.get("successful_online_episodes_kept", 0)
-            )
-            and int(args.checkpoint_every_successful_online_episodes) > 0
-            and (
-                counters["successful_online_episodes_kept"]
-                % int(args.checkpoint_every_successful_online_episodes)
-                == 0
-            )
-        ):
-            checkpoint_save_request_id += 1
-            stats["checkpoint_save_request_id"] = float(checkpoint_save_request_id)
-            stats["checkpoint_reason"] = "periodic_successful_online_episode"
-            stats["checkpoint_trigger_episode_id"] = float(next_episode_file_id - 1)
-            stats["checkpoint_trigger_successful_online_episodes_kept"] = float(
-                counters["successful_online_episodes_kept"]
-            )
-        stats["successful_online_episodes_kept"] = float(
-            counters["successful_online_episodes_kept"]
-        )
-        pending_reset_artifact = None
 
         # 4. Pick reset kind and run reset to completion.
         kind = pick_reset_kind(
@@ -1114,6 +1171,7 @@ def main(args: Args, train_args: TrainArgs) -> None:
     stats["rolling50_motion_reward_values"] = []
     stats["rolling50_episode_length_values"] = []
     stats["rolling50_estop_episode_flags"] = []
+    stats["rolling50_episode_return_values"] = []
     training_state_checkpoint: Dict[str, object] | None = None
     if args.model_path is not None:
         training_state_checkpoint = _load_training_state_checkpoint(args.model_path)
@@ -1134,23 +1192,33 @@ def main(args: Args, train_args: TrainArgs) -> None:
                 training_state_checkpoint["rolling50_estop_episode_flags"],
                 max_items=ROLLING_PERF_WINDOW_EPISODES,
             )
+            # Use .get(...) so checkpoints saved before the return series
+            # was tracked still load — the resume just starts with an
+            # empty return window and refills as new episodes arrive.
+            loaded_return_values = _coerce_float_list(
+                training_state_checkpoint.get("rolling50_episode_return_values", []),
+                max_items=ROLLING_PERF_WINDOW_EPISODES,
+            )
             stats["collector_total_steps"] = float(training_state_checkpoint["collector_total_steps"])
             stats["run_elapsed_total_s"] = float(training_state_checkpoint["run_elapsed_total_s"])
             stats["rolling50_task_reward_values"] = loaded_task_values
             stats["rolling50_motion_reward_values"] = loaded_motion_values
             stats["rolling50_episode_length_values"] = loaded_length_values
             stats["rolling50_estop_episode_flags"] = loaded_estop_flags
+            stats["rolling50_episode_return_values"] = loaded_return_values
             stats["rolling50_window_count"] = float(
                 max(
                     len(loaded_task_values),
                     len(loaded_motion_values),
                     len(loaded_length_values),
                     len(loaded_estop_flags),
+                    len(loaded_return_values),
                 )
             )
             stats["rolling50_task_reward_avg"] = float(rolling_mean(loaded_task_values))
             stats["rolling50_motion_reward_avg"] = float(rolling_mean(loaded_motion_values))
             stats["rolling50_episode_length_avg"] = float(rolling_mean(loaded_length_values))
+            stats["rolling50_episode_return_avg"] = float(rolling_mean(loaded_return_values))
             stats["rolling50_estop_episode_count"] = float(sum(loaded_estop_flags))
 
     warm_start_requested = len(args.warm_start_hdf5_dirs) > 0
@@ -1189,18 +1257,9 @@ def main(args: Args, train_args: TrainArgs) -> None:
                     stats[f"warm_start/{key}"] = float(value)
     finally:
         probe_env.close()
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    if args.checkpoint_root_dir is not None and str(args.checkpoint_root_dir).strip():
-        base_log_dir = str(Path(args.checkpoint_root_dir).expanduser().resolve())
-        if args.log_parent_dir is not None and str(args.log_parent_dir).strip():
-            requested_log_dir = str(Path(args.log_parent_dir).expanduser().resolve())
-            if requested_log_dir != base_log_dir:
-                print(
-                    "[main] log_parent_dir differs from checkpoint_root_dir; "
-                    "using checkpoint_root_dir for TensorBoard logs."
-                )
-    else:
-        base_log_dir = args.log_parent_dir or f"runs/async_td3/{args.run_name}_{timestamp}"
+    # `_setup_run_data_dir` already populated `checkpoint_root_dir` with the
+    # unified run folder, so TB logs land alongside the episode data.
+    base_log_dir = str(Path(args.checkpoint_root_dir).expanduser().resolve())
     collector_tb_dir = os.path.join(base_log_dir, "collector_tb")
     learner_tb_dir = os.path.join(base_log_dir, "learner_tb")
     os.makedirs(collector_tb_dir, exist_ok=True)

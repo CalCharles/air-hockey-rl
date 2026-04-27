@@ -1,6 +1,6 @@
 # TD3 training algorithm
 
-Core training loop for both simulation ([`td3_training.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py)) and real-world ([`async_td3_real.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py)).
+Core training loop for both simulation ([`td3_training.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py)) and real-world ([`async_td3_real_modular.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real_modular.py); shared library [`async_td3_real.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py)).
 
 ## Transformed Bellman targets (h / h-inverse)
 

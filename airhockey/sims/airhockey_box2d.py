@@ -509,6 +509,12 @@ class AirHockeyBox2D:
             'render_masks': False,
             'gravity': -5,
             'paddle_density': 1000,
+            # When non-None, the effective paddle density is scaled at init so
+            # mass = paddle_density * pi * paddle_mass_reference_radius**2 is
+            # preserved regardless of the actual paddle_radius. Use this to
+            # perturb paddle_radius without changing paddle mass. Default None
+            # leaves behavior unchanged from the prior implementation.
+            'paddle_mass_reference_radius': None,
             'enable_paddle_density_fluctuation': False,
             'paddle_density_fluctuation_relative_range': 0.25,
             'paddle_density_fluctuation_hold_steps': 5,
@@ -517,6 +523,11 @@ class AirHockeyBox2D:
             'action_force_attenuation_min': 0.25,
             'action_force_attenuation_max': 0.75,
             'puck_density': 250,
+            # Same mass-preservation knob for the puck. When non-None,
+            # effective puck density is scaled to keep
+            # mass = puck_density * pi * puck_mass_reference_radius**2 fixed
+            # as puck_radius is varied.
+            'puck_mass_reference_radius': None,
             'block_density': 1000,
             'max_paddle_vel': 2,
             'time_frequency': 20,
@@ -552,6 +563,14 @@ class AirHockeyBox2D:
             'delay_seconds': 0.025,
             'randomize_delay': False,
             'delay_relative_range': 0.25,
+            # Jitter distribution. "uniform" (default) preserves existing
+            # behavior. "normal" samples a zero-mean Gaussian scaled by
+            # delay_jitter_normal_std_fraction, then clips to
+            # ±delay_relative_range. When std is None and distribution is
+            # "normal", std defaults to delay_relative_range / 2 (so the
+            # clip occurs at ±2σ → ~95% coverage pre-clip).
+            'delay_jitter_distribution': 'uniform',
+            'delay_jitter_normal_std_fraction': None,
             'action_lag': 0.0,
             'puck_noise': False,
             'puck_noise_std': 0.005,
@@ -689,7 +708,20 @@ class AirHockeyBox2D:
         self.max_speed_start = config.width
         self.min_speed_start = -config.width
         self.paddle_density = float(config.paddle_density)
-        self._paddle_density_base = float(config.paddle_density)
+        # Optional mass preservation: if a reference radius is supplied, scale
+        # the effective paddle density so mass stays at
+        # paddle_density_input * pi * reference**2 regardless of paddle_radius.
+        # Density fluctuations (if enabled) act multiplicatively on this
+        # mass-preserving baseline.
+        self.paddle_mass_reference_radius = config.paddle_mass_reference_radius
+        if (
+            self.paddle_mass_reference_radius is not None
+            and float(self.paddle_mass_reference_radius) > 0.0
+            and self.paddle_radius > 0.0
+        ):
+            ref = float(self.paddle_mass_reference_radius)
+            self.paddle_density *= (ref / self.paddle_radius) ** 2
+        self._paddle_density_base = self.paddle_density
         self.enable_paddle_density_fluctuation = bool(config.enable_paddle_density_fluctuation)
         self.paddle_density_fluctuation_relative_range = max(
             float(config.paddle_density_fluctuation_relative_range), 0.0
@@ -703,7 +735,15 @@ class AirHockeyBox2D:
         self.action_force_attenuation_prob = float(config.action_force_attenuation_prob)
         self.action_force_attenuation_min = float(config.action_force_attenuation_min)
         self.action_force_attenuation_max = float(config.action_force_attenuation_max)
-        self.puck_density = config.puck_density
+        self.puck_density = float(config.puck_density)
+        self.puck_mass_reference_radius = config.puck_mass_reference_radius
+        if (
+            self.puck_mass_reference_radius is not None
+            and float(self.puck_mass_reference_radius) > 0.0
+            and self.puck_radius > 0.0
+        ):
+            ref = float(self.puck_mass_reference_radius)
+            self.puck_density *= (ref / self.puck_radius) ** 2
         self.block_density = config.block_density
         self.action_x_scaling = config.action_x_scaling
         self.action_y_scaling = config.action_y_scaling
@@ -727,6 +767,19 @@ class AirHockeyBox2D:
         self.enable_observation_delay = bool(config.enable_observation_delay)
         self.randomize_delay = bool(config.randomize_delay)
         self.delay_relative_range = max(float(config.delay_relative_range), 0.0)
+        delay_jitter_distribution = str(config.delay_jitter_distribution).lower()
+        if delay_jitter_distribution not in ("uniform", "normal"):
+            raise ValueError(
+                f"delay_jitter_distribution must be 'uniform' or 'normal', "
+                f"got {config.delay_jitter_distribution!r}"
+            )
+        self.delay_jitter_distribution = delay_jitter_distribution
+        if config.delay_jitter_normal_std_fraction is None:
+            self.delay_jitter_normal_std_fraction = self.delay_relative_range / 2.0
+        else:
+            self.delay_jitter_normal_std_fraction = max(
+                float(config.delay_jitter_normal_std_fraction), 0.0
+            )
         self.action_lag = float(config.action_lag)
         assert self.action_lag >= 0 and self.action_lag <= 1, "Action lag must be between 0 and 1"
         base_delay_seconds = float(config.delay_seconds)
@@ -1605,10 +1658,23 @@ class AirHockeyBox2D:
                 self._jerk_estop_latched = True
                 self._jerk_estop_reason = "jerk_avg"
 
+    def _sample_delay_jitter_scale(self):
+        # Returns a multiplicative scale ~1.0 to apply to delay_seconds.
+        # Uniform path is numerically identical to the prior implementation,
+        # so existing seeded runs with distribution="uniform" do not shift.
+        if self.delay_jitter_distribution == "normal":
+            std = self.delay_jitter_normal_std_fraction
+            if std <= 0.0:
+                return 1.0
+            sample = float(self.rng.normal(0.0, std))
+            sample = float(np.clip(sample, -self.delay_relative_range, self.delay_relative_range))
+            return 1.0 + sample
+        return 1.0 + self.rng.uniform(-self.delay_relative_range, self.delay_relative_range)
+
     def _resolve_delay_seconds_for_step(self):
         delay_seconds = max(float(self.delay_seconds), 0.0)
         if self.randomize_delay and self.delay_relative_range > 0.0:
-            random_scale = 1.0 + self.rng.uniform(-self.delay_relative_range, self.delay_relative_range)
+            random_scale = self._sample_delay_jitter_scale()
             delay_seconds *= random_scale
         return float(np.clip(delay_seconds, 0.0, self.time_per_step))
 

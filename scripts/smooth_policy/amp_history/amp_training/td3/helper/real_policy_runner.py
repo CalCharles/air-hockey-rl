@@ -1,10 +1,10 @@
 """PolicyRunner — runs one TD3 policy episode against the real (or sim) env.
 
-Lifts the per-step body and episode-end finalization out of
-``async_td3_real.collector_process`` (source L1553–L1891). Returns a
-``PolicyEpisodeResult`` that the orchestrator pushes to replay, runs the
-learner against, and saves to disk — none of those concerns leak into the
-runner.
+Lifts the per-step body and episode-end finalization out of the old
+monolithic ``async_td3_real.collector_process``. Returns a
+``PolicyEpisodeResult`` that the orchestrator (``collector_process_modular``
+in ``async_td3_real_modular.py``) pushes to replay, runs the learner
+against, and saves to disk — none of those concerns leak into the runner.
 
 The runner ticks ``TransitionHoldState`` internally, truncates the trajectory
 on readiness-fail e-stops, and exposes all delta counters the orchestrator

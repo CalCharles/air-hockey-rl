@@ -1,12 +1,13 @@
 """Reset orchestration for the real-world TD3 collector.
 
-Collapses the four reset-FSM call-sites in ``async_td3_real.collector_process``
-(startup L1373, soft post-episode L2172, hard-with-FSM L2230, hard-skip-FSM
-L2255) into a single ``ResetRunner.run(kind=...)`` method.
+Collapses the four reset-FSM call-sites that the old monolithic
+``async_td3_real.collector_process`` had (startup, soft post-episode,
+hard-with-FSM, hard-skip-FSM) into a single ``ResetRunner.run(kind=...)``
+method, called from ``collector_process_modular`` in ``async_td3_real_modular.py``.
 
-Also lifts ``run_reset_fsm`` (L661–737), ``_hard_reset_with_pause``
-(L1191–1222), and ``_should_run_reset_policy_at_episode_start`` (L1158–1188)
-out of the orchestrator file so the entire reset code path lives here.
+Also lifts ``run_reset_fsm``, ``_hard_reset_with_pause``, and
+``_should_run_reset_policy_at_episode_start`` out of the orchestrator
+so the entire reset code path lives here.
 """
 from __future__ import annotations
 
@@ -29,7 +30,7 @@ from .real_stop_state import _classify_stop_event
 
 
 # ---------------------------------------------------------------------------
-# Reset FSM execution + supporting helpers (lifted from async_td3_real.py).
+# Reset FSM execution + supporting helpers.
 # ---------------------------------------------------------------------------
 
 

@@ -2,7 +2,7 @@
 
 End-to-end flow of a single policy episode on the real UR5, from collection through replay ingestion and artifact output.
 
-Primary code: [`async_td3_real.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py) (`collector_process`).
+Primary code: [`async_td3_real_modular.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real_modular.py) (`collector_process_modular`); shared dataclasses, learner, and reset helpers live in [`async_td3_real.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py).
 Helpers: [`real_episode_buffers.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_episode_buffers.py), [`real_stop_state.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_stop_state.py), [`real_motion_rewards.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_motion_rewards.py), [`episode_artifacts.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/episode_artifacts.py), [`real_warm_start.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_warm_start.py).
 
 ## Overview
