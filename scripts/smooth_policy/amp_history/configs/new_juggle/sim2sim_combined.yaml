@@ -4,20 +4,31 @@
 # physics. Same task / obs (history) / action space as source. Only the keys
 # called out below differ from the source config.
 #
+# Updated 2026-04-29 after the mass-preserved radius sweep
+# (notes/scratch/sim2sim_delay_puck_perturbation_sweep.md). Old sim2sim_combined
+# shrank paddle_radius without compensating density, silently dropping paddle
+# mass 24.32 -> 15.57 (-36%); the apparent perturbation was a confound. New
+# canonical target: paddle -50% with mass preserved, plus the v2-style normal
+# delay jitter. Verified zero-shot mean ~67.5 on hist2_motion0 (n=50).
+#
 # Perturbations:
 #   1. Movement: pid_kp 9000 -> 7200 (-20%) — softer position controller, slower
 #      paddle response to commanded targets.
-#   2. Delay: action delay enabled, base delay 0.025 -> 0.030s (+20%). Existing
-#      observation delay and the relative jitter range (delay_relative_range)
-#      are unchanged ("same inconsistent delay").
+#   2. Delay: action delay enabled, base delay 0.025 -> 0.030s (+20%);
+#      jitter switched from uniform/0.25 to normal-clipped/0.35 (carried over
+#      from sim2sim_combined_v2 — heavier-tailed inconsistent delay).
 #   3. Wall collisions: wall_direction_cone_deg 10 -> 25 (random angular
 #      perturbation widens). Note: this widens variance only; the mean bounce
 #      direction is still the wall normal. A deterministic angular bias would
 #      need a new sim param.
-#   4. Puck-paddle collisions: paddle_radius 0.0508 -> 0.04064 (-20%). Smaller
-#      paddle makes edge collisions more common and unstable.
+#   4. Puck-paddle collisions: paddle_radius 0.0508 -> 0.02540 (-50%) with
+#      paddle_mass_reference_radius=0.0508 so paddle MASS is preserved against
+#      source (effective density auto-scales 3000 -> 12000). Smaller paddle
+#      shrinks the contact window without confounding the perturbation with
+#      mass loss; recommended residual-RL target per the sweep doc.
 #
-# See notes/scratch/sim2sim_infra_plan.md.
+# See notes/scratch/sim2sim_delay_puck_perturbation_sweep.md and
+# notes/scratch/sim2sim_infra_plan.md.
 
 air_hockey:
   diagonal_motion_rew: 0.0
@@ -56,7 +67,8 @@ air_hockey:
     block_width: 0.0254
     length: 1.9304
     max_force_timestep: 10000
-    paddle_radius: 0.04064          # PERTURBED: 0.0508 * 0.8 (-20%)
+    paddle_radius: 0.02540                   # PERTURBED: 0.0508 * 0.5 (-50%)
+    paddle_mass_reference_radius: 0.0508     # preserve paddle mass against source (density auto-scales 3000 -> 12000)
     force_scaling: 0.99
     paddle_damping: 17
     paddle_density: 3000
@@ -94,7 +106,8 @@ air_hockey:
     enable_observation_delay: true
     delay_seconds: 0.030            # PERTURBED: 0.025 * 1.2 (+20%)
     randomize_delay: true
-    delay_relative_range: 0.25      # unchanged — "same inconsistent delay"
+    delay_relative_range: 0.35      # PERTURBED: 0.25 -> 0.35 (carried over from v2, clipped)
+    delay_jitter_distribution: "normal"  # PERTURBED: uniform -> normal-clipped (carried over from v2)
     enable_action_force_attenuation: true
     action_force_attenuation_prob: 0.30
     action_force_attenuation_min: 0.25

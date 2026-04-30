@@ -15,6 +15,7 @@ class TD3PrioritizedReplayBuffer:
         n_envs=1,
         alpha=0.6,
         priority_eps=1e-6,
+        age_decay=0.0,
     ):
         self.buffer_size = int(buffer_size)
         self.obs_shape = obs_shape
@@ -23,6 +24,12 @@ class TD3PrioritizedReplayBuffer:
         self.n_envs = n_envs
         self.alpha = float(alpha)
         self.priority_eps = float(priority_eps)
+        # Age-weighted sampling: priority is multiplied by exp(-age_decay * age_in_slots)
+        # before alpha-scaling at sample time. age_decay=0.0 disables. Reasonable
+        # values: 1e-5 (very gentle, half-life ~70k slots) to 1e-3 (aggressive,
+        # half-life ~700 slots). Implements "stochastic recency-weighted sampling"
+        # from residual_rl_drift_fix_log.md open follow-ups.
+        self.age_decay = float(age_decay)
 
         self.observations = torch.zeros((buffer_size, *obs_shape), dtype=torch.float32, device=device)
         self.next_observations = torch.zeros((buffer_size, *obs_shape), dtype=torch.float32, device=device)
@@ -80,6 +87,29 @@ class TD3PrioritizedReplayBuffer:
             raise ValueError("Cannot sample from empty buffer")
 
         valid_priorities = self.priorities[: self.size].clamp_min(self.priority_eps)
+        # Age-weighted sampling. Each slot's age in "slots since added" is
+        # computed from its index relative to self.position (write head).
+        # Newer slots (higher index, freshly written) get age ~0 and full priority.
+        # Older slots get exponentially down-weighted: w = exp(-age_decay * age).
+        # This implements proper stochastic recency-weighted sampling — orthogonal
+        # to FIFO eviction (which is binary "in / out") and to TD-error PER (which
+        # ignores age).
+        if self.age_decay > 0.0:
+            if self.size < self.buffer_size:
+                # Buffer not yet full: indices 0..size-1 contain entries in
+                # temporal order. age(i) = (size-1) - i.
+                ages = (self.size - 1) - torch.arange(
+                    self.size, device=self.device, dtype=torch.float32
+                )
+            else:
+                # Buffer full: write head at self.position.
+                # Most recent write was at (position - 1) mod N → age 0.
+                # Oldest live entry is at self.position → age N-1.
+                idx = torch.arange(self.buffer_size, device=self.device, dtype=torch.long)
+                ages = ((self.position - 1 - idx) % self.buffer_size).to(torch.float32)
+            age_weights = torch.exp(-self.age_decay * ages)
+            valid_priorities = valid_priorities * age_weights
+
         scaled = valid_priorities.pow(self.alpha)
         scaled_sum = scaled.sum()
         if not torch.isfinite(scaled_sum) or scaled_sum.item() <= 0.0:

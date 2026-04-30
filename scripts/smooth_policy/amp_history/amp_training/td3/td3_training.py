@@ -452,6 +452,14 @@ class Args:
     per_beta_end: float = 1.0
     per_beta_anneal_steps: int = 200000
     per_eps: float = 1e-6
+    # Age-weighted PER: multiplies sample priorities by exp(-priority_age_decay
+    # * age_in_slots) before alpha-scaling. age_in_slots is 0 for the most
+    # recently added transition and grows linearly with eviction order.
+    # Implements "stochastic recency-weighted sampling" — orthogonal to FIFO
+    # eviction (which binary-evicts) and TD-error PER (age-blind). 0.0 disables.
+    # Reasonable: 1e-5 (gentle, half-life ≈ 70k slots), 1e-4 (medium, ≈7k),
+    # 1e-3 (aggressive, ≈700). Used in residual_rl_paddle50_log.md v9+.
+    priority_age_decay: float = 0.0
     critic_per_fraction: float = 0.7
     critic_uniform_fraction: float = 0.3
     success_buffer_size: int = int(2e5)
@@ -994,6 +1002,7 @@ if __name__ == "__main__":
             n_envs=args.num_envs,
             alpha=args.per_alpha,
             priority_eps=args.per_eps,
+            age_decay=args.priority_age_decay,
         )
         failure_rb = TD3PrioritizedReplayBuffer(
             buffer_size=args.failure_buffer_size,
@@ -1003,6 +1012,7 @@ if __name__ == "__main__":
             n_envs=args.num_envs,
             alpha=args.per_alpha,
             priority_eps=args.per_eps,
+            age_decay=args.priority_age_decay,
         )
         print(
             "✓ TD3 prioritized replay buffers initialized "
