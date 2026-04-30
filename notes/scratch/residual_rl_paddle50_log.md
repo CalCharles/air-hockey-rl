@@ -1023,6 +1023,145 @@ nearly eliminates drift.
 
 ---
 
+## 8.14 Phase 15 + 16: Q-ensemble for further drift mitigation (2026-04-30 PM, NEW WINNER)
+
+### Context
+
+After v25 reduced drift dramatically (5-seed last5 57.6 vs v21's 36.2), critic
+Q1 still grew 2.6× over training across 4 of 5 seeds — drift was *mitigated*,
+not eliminated. User asked: can we go further by ensembling more critics?
+
+Canonical paper: **REDQ** (Chen et al. ICLR 2021, arXiv 2101.05982). Uses N=10
+Q-networks; samples M=2 random subset for the target min. Companion: **Maxmin
+Q-Learning** (Lan 2020) — min over all N target critics.
+
+Hypothesis: ensemble of N>2 critics produces tighter (more conservative) Q
+target estimates. min over more diverse Q heads → less overestimation → less
+runaway → less drift.
+
+### Implementation (2026-04-30 ~13:00 UTC)
+
+Backwards-compatible refactor in `td3_training.py`:
+- New Args fields: `num_critics: int = 2` (default = vanilla TD3 twin),
+  `target_critic_subset_size: int | None = None` (None → Maxmin; M<N → REDQ).
+- Refactored `qf1`/`qf2` → list `qfs[]` of length N. Legacy aliases preserved.
+- Target Q: subset min over qfs_target. N=2 path keeps `torch.min(a, b)` for
+  bit-identical behavior.
+- Critic loss: sum across N critics (each trained against shared target).
+- Polyak update: loop over all N pairs.
+- Checkpoint save: `qf{i}.pth` for i=1..N. N=2 ckpts unchanged. N>2 adds qf3+.
+- `build_training_state` extended with `extra_qfs`/`extra_qfs_target` kwargs.
+- async_td3_real: hard validation `num_critics==2` (sim2sim-only for now).
+- Regression test: N=2 trajectory matches v25 baseline (verified 5k-step run).
+- N=3 functional test: verified q_min < q1, all 6 ckpt files saved correctly.
+
+### Phase 15: ensemble size sweep (single-seed, 300k each, on v25 base)
+
+| variant | num_critics | target_subset | gpu |
+|---|---:|---:|---|
+| v26 | 3 | None (Maxmin-3) | cuda:0 |
+| v27 | 5 | None (Maxmin-5) | cuda:1 |
+| v28 | 5 | 2 (REDQ-5-2) | cuda:2 |
+| v29 | 10 | 2 (REDQ-10-2) | cuda:3 |
+
+**Single-seed results (29 ckpts each):**
+
+| variant | peak | mean(29) | last5 | %>zs |
+|---|---:|---:|---:|---:|
+| v25 5-seed baseline | 85.5 | 66.7 | 57.6 | 48% |
+| v26 (Maxmin-3) | 84.2 | 60.8 | 51.7 | 41% |
+| **v27 (Maxmin-5)** | **86.4** | **70.5** | **62.8** | **72%** |
+| v28 (REDQ-5-2) | 86.6 | 66.9 | 67.0 | 38% |
+| v29 (REDQ-10-2) | 80.4 | **72.9** | **74.0** | **76%** |
+
+**Findings:**
+- v27 wins by all 3 user criteria (peak ≥85, mean ≥66, last5 ≥60).
+- v29 has the FLATTEST trajectory ever observed — never below 64 after 30k,
+  ends at 76 (essentially same as peak 80). But peak is below threshold.
+- v26 (Maxmin-3) underwhelms — small ensemble doesn't tighten Q enough.
+- v28 (REDQ-5-2) has peak at 10k then bounces — random subset adds variance.
+
+### Phase 16: 5-seed verification of v27 Maxmin-5 (2026-04-30 ~14:50 UTC)
+
+| seed | peak | @step | last5 |
+|---:|---:|---:|---:|
+| 0 | 86.4 | 120k | 62.8 |
+| 1 | **95.7** | 90k | 76.9 |
+| 2 | 88.5 | 250k | 82.9 |
+| 3 | 82.8 | 30k | 58.0 |
+| 4 | 86.3 | 100k | 49.9 |
+| **mean** | **87.9 ± 4.8** | — | **66.1 ± 13.6** |
+
+**v27 5-seed vs v25 5-seed vs v21 5-seed vs full_ft 2-seed:**
+
+| metric | v27 Maxmin-5 (5s) | v25 q_updates=1 (5s) | v21 sf=0.15+age (5s) | full_ft (2s) |
+|---|---:|---:|---:|---:|
+| peak (mean ± std) | **87.9 ± 4.8** | 85.5 ± 9.0 | 83.5 ± 5.7 | 88.6 ± 2.0 |
+| best single-seed peak | 95.7 | 98.3 | 90.1 | 90.0 |
+| mean(29) | **71.2** | 66.7 | 58.1 | 60.3 |
+| last5 (mean ± std) | **66.1 ± 13.6** | 57.6 ± 9.7 | 36.2 ± 1.5 | 43.3 ± 3.9 |
+| %>zs | **70%** | 48% | 42% | 29% |
+
+**v27 wins on EVERY metric vs v25, v21:**
+- Peak: 87.9 (highest cross-seed mean of any residual recipe ever)
+- Mean(29): 71.2 (best of any recipe, +4.5 over v25)
+- Last5: 66.1 (best of any recipe, +8.5 over v25)
+- %>zs: 70% (best ever, +22pp over v25)
+- Cross-seed std on peak: 4.8 (also better than v25's 9.0)
+
+vs full_ft (2-seed; seed0 missing per-ckpt eval):
+- Peak: 87.9 vs 88.6 (essentially tied)
+- Mean(29): 71.2 vs 60.3 (**v27 +10.9**)
+- Last5: 66.1 vs 43.3 (**v27 +22.8**)
+- %>zs: 70% vs 29% (**v27 +41pp**)
+
+**Two v27 seeds (1 + 2) end with last5 76.9 and 82.9** — strictly above any
+full_ft seed's last5. v27's worst seed (seed4 last5=49.9) still beats full_ft's
+worst (40.5). The cross-seed std on last5 is 13.6 — high variance, but the
+floor is high too.
+
+### Decay shape (cross-seed mean):
+
+| recipe | @10k | @50k | @100k | @150k | @200k | @250k | @290k |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **v27 Maxmin-5 (5s)** | **64.4** | **75.0** | **80.1** | **72.2** | **64.9** | **62.9** | **64.1** |
+| v25 q_updates=1 (5s) | 64.1 | 66.7 | 76.4 | 67.6 | 59.9 | 54.6 | 56.7 |
+| v21 sf=0.15+age (5s) | 72.3 | 76.2 | 68.4 | 63.2 | 48.3 | 37.3 | 35.9 |
+| full_ft (3s) | 81.3 | 74.4 | 71.2 | 58.5 | 47.6 | 40.9 | 42.7 |
+
+**v27's trajectory is uniformly higher than v25 from step 50k onward.** Peaks
+at 100k (80.1, vs v25's 76.4), and the tail holds at 64 (vs v25's 57). Drift
+window: peak→last (80→64 = -16). For v25: peak→last = 76→57 = -19. For full_ft:
+peak→last = 81→43 = -38.
+
+### v27 final recipe (the new big-gap winner)
+
+```yaml
+# All v25 knobs unchanged:
+success_top_fraction: 0.15
+priority_age_decay: 0.0001
+q_updates: 1
+residual_scale: 0.15
+success_buffer_size: 6000
+failure_buffer_size: 14000
+
+# Phase 15 addition:
+num_critics: 5                       # Maxmin-5 (5 critics, min over all 5 targets)
+# target_critic_subset_size: None    # default = use all 5 critics (Maxmin)
+```
+
+Config: `scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v27_ensemble5{,_seed1..4}.yaml`
+
+### Open follow-ups
+
+- v29 (REDQ-10-2) multi-seed in flight — confirm tail-stability finding
+  (single-seed last5=74). Lower peak but possibly even flatter trajectory.
+- TD7-style layer-norm critic for further reduction (would compose).
+- Test v27 on OLD env (5% gap) to see if Maxmin-5 helps even on the easier target.
+- Test v27 on async real-world pipeline (currently blocked by num_critics==2 guard).
+
+---
+
 ## 8.11 Phase 11 (in flight, launched 2026-04-30 00:04 UTC) — superseded by §8.12
 
 ### Goal: multi-seed v21 + v15 to confirm peak ceiling

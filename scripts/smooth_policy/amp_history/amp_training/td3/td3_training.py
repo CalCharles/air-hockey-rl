@@ -440,6 +440,12 @@ class Args:
     q_weight_decay: float = 1e-4
     q_frequency: int = 1
     q_updates: int = 1
+    # Critic ensemble (REDQ-style — Chen et al. ICLR 2021).
+    # num_critics=2 reproduces vanilla TD3 (default; backwards compatible).
+    # num_critics>2 with target_critic_subset_size=None → Maxmin-N (min over all N targets).
+    # num_critics>2 with target_critic_subset_size=M (M<N) → REDQ-N-M (min over a random M-subset).
+    num_critics: int = 2
+    target_critic_subset_size: int | None = None
     policy_frequency: int = 2
     target_network_frequency: int = 1
     actor_updates_per_iteration: int = 1
@@ -815,32 +821,40 @@ if __name__ == "__main__":
     actor_target.load_state_dict(actor.state_dict())
 
     obs_dim = int(np.prod(envs.single_observation_space.shape))
-    qf1 = TD3DualHeadQNetwork(
-        obs_dim=obs_dim,
-        act_dim=act_dim,
-        hidden_layer_size=args.q_hidden_layer_size,
-        num_hidden_layers=args.q_num_hidden_layers,
-    ).to(args.device)
-    qf2 = TD3DualHeadQNetwork(
-        obs_dim=obs_dim,
-        act_dim=act_dim,
-        hidden_layer_size=args.q_hidden_layer_size,
-        num_hidden_layers=args.q_num_hidden_layers,
-    ).to(args.device)
-    qf1_target = TD3DualHeadQNetwork(
-        obs_dim=obs_dim,
-        act_dim=act_dim,
-        hidden_layer_size=args.q_hidden_layer_size,
-        num_hidden_layers=args.q_num_hidden_layers,
-    ).to(args.device)
-    qf2_target = TD3DualHeadQNetwork(
-        obs_dim=obs_dim,
-        act_dim=act_dim,
-        hidden_layer_size=args.q_hidden_layer_size,
-        num_hidden_layers=args.q_num_hidden_layers,
-    ).to(args.device)
-    qf1_target.load_state_dict(qf1.state_dict())
-    qf2_target.load_state_dict(qf2.state_dict())
+    if args.num_critics < 2:
+        raise ValueError(f"num_critics must be >=2, got {args.num_critics}")
+    if args.target_critic_subset_size is not None and not (
+        1 <= args.target_critic_subset_size <= args.num_critics
+    ):
+        raise ValueError(
+            f"target_critic_subset_size must be in [1, num_critics={args.num_critics}], "
+            f"got {args.target_critic_subset_size}"
+        )
+    # Build N critics + N targets. RNG advances between modules → diverse inits.
+    qfs = [
+        TD3DualHeadQNetwork(
+            obs_dim=obs_dim,
+            act_dim=act_dim,
+            hidden_layer_size=args.q_hidden_layer_size,
+            num_hidden_layers=args.q_num_hidden_layers,
+        ).to(args.device)
+        for _ in range(args.num_critics)
+    ]
+    qfs_target = [
+        TD3DualHeadQNetwork(
+            obs_dim=obs_dim,
+            act_dim=act_dim,
+            hidden_layer_size=args.q_hidden_layer_size,
+            num_hidden_layers=args.q_num_hidden_layers,
+        ).to(args.device)
+        for _ in range(args.num_critics)
+    ]
+    for q, qt in zip(qfs, qfs_target):
+        qt.load_state_dict(q.state_dict())
+    # Legacy aliases — preserved so anything outside the training loop that
+    # still references qf1/qf2 keeps working. Critics 3+ live only in qfs.
+    qf1, qf2 = qfs[0], qfs[1]
+    qf1_target, qf2_target = qfs_target[0], qfs_target[1]
     resume_checkpoint = None
     checkpoint_load_mode = args.full_checkpoint_load
     actor_ema = None  # set below in residual mode if args.residual_ema_decay is not None
@@ -939,10 +953,22 @@ if __name__ == "__main__":
                 )
             else:
                 actor_target.load_state_dict(actor.state_dict())
-            qf1.load_state_dict(resume_checkpoint["qf1"])
-            qf2.load_state_dict(resume_checkpoint["qf2"])
-            qf1_target.load_state_dict(resume_checkpoint["qf1_target"])
-            qf2_target.load_state_dict(resume_checkpoint["qf2_target"])
+            # Backwards-compat: legacy ckpts have only qf1/qf2 keys. Newer
+            # ckpts (num_critics>2) add qf3, qf4, ... and corresponding _target.
+            n_in_ckpt = sum(
+                1
+                for k in resume_checkpoint
+                if k.startswith("qf") and not k.endswith("_target") and k[2:].isdigit()
+            )
+            if n_in_ckpt != args.num_critics:
+                raise ValueError(
+                    f"Resume mismatch: checkpoint has {n_in_ckpt} critics but "
+                    f"args.num_critics={args.num_critics}. Either set num_critics to match "
+                    f"the checkpoint, or start a fresh run."
+                )
+            for i, (q, qt) in enumerate(zip(qfs, qfs_target), start=1):
+                q.load_state_dict(resume_checkpoint[f"qf{i}"])
+                qt.load_state_dict(resume_checkpoint[f"qf{i}_target"])
             print("Full training checkpoint loaded (network weights).")
             if checkpoint_load_mode == "weights_only":
                 # Weights-only mode: keep networks, skip optimizer/replay/runtime restore.
@@ -954,7 +980,9 @@ if __name__ == "__main__":
             print("Actor-only model loaded successfully.")
 
     q_optimizer = optim.Adam(
-        list(qf1.parameters()) + list(qf2.parameters()), lr=args.q_lr, weight_decay=args.q_weight_decay
+        [p for q in qfs for p in q.parameters()],
+        lr=args.q_lr,
+        weight_decay=args.q_weight_decay,
     )
     if checkpoint_load_mode == "residual":
         actor_optimizer = optim.Adam(
@@ -1727,17 +1755,40 @@ if __name__ == "__main__":
                     noise = torch.clamp(noise, -args.noise_clip, args.noise_clip)
                     target_next_action = torch.clamp(target_next_action + noise, action_low, action_high)
 
-                    q1_next_task_h, q1_next_motion_h = qf1_target(
-                        sampled_next_observations,
-                        target_next_action,
-                    )
-                    q2_next_task_h, q2_next_motion_h = qf2_target(
-                        sampled_next_observations,
-                        target_next_action,
-                    )
-
-                    min_next_task_h = torch.min(q1_next_task_h, q2_next_task_h)
-                    min_next_motion_h = torch.min(q1_next_motion_h, q2_next_motion_h)
+                    # Subset selection for the target Q (REDQ-style; min over a
+                    # sampled M-subset). When target_critic_subset_size is None
+                    # OR equals num_critics, behaves as Maxmin-N. With N=2 and
+                    # subset=None, this is bit-identical to original twin TD3.
+                    if (
+                        args.target_critic_subset_size is None
+                        or args.target_critic_subset_size >= args.num_critics
+                    ):
+                        target_indices = list(range(args.num_critics))
+                    else:
+                        target_indices = (
+                            torch.randperm(args.num_critics)[
+                                : args.target_critic_subset_size
+                            ]
+                            .tolist()
+                        )
+                    next_task_h_list = []
+                    next_motion_h_list = []
+                    for ti in target_indices:
+                        nt_h, nm_h = qfs_target[ti](
+                            sampled_next_observations, target_next_action
+                        )
+                        next_task_h_list.append(nt_h)
+                        next_motion_h_list.append(nm_h)
+                    if len(next_task_h_list) == 1:
+                        min_next_task_h = next_task_h_list[0]
+                        min_next_motion_h = next_motion_h_list[0]
+                    elif len(next_task_h_list) == 2:
+                        # Preserve original kernel path for bit-identical behavior on N=2.
+                        min_next_task_h = torch.min(next_task_h_list[0], next_task_h_list[1])
+                        min_next_motion_h = torch.min(next_motion_h_list[0], next_motion_h_list[1])
+                    else:
+                        min_next_task_h = torch.stack(next_task_h_list, dim=0).min(dim=0).values
+                        min_next_motion_h = torch.stack(next_motion_h_list, dim=0).min(dim=0).values
 
                     min_next_task = h_inverse(min_next_task_h, eps=args.h_transform_eps).view(-1)
                     min_next_motion = h_inverse(min_next_motion_h, eps=args.h_transform_eps).view(-1)
@@ -1770,36 +1821,44 @@ if __name__ == "__main__":
                             }
                         )
 
-                q1_task_h, q1_motion_h = qf1(
-                    sampled_observations,
-                    sampled_actions,
-                )
-                q2_task_h, q2_motion_h = qf2(
-                    sampled_observations,
-                    sampled_actions,
-                )
+                # Forward pass over all N critics; train each against the shared target.
+                qi_task_h_list = []
+                qi_motion_h_list = []
+                qi_task_err_list = []
+                qi_motion_err_list = []
+                qi_task_loss_list = []
+                qi_motion_loss_list = []
+                for q in qfs:
+                    qi_task_h, qi_motion_h = q(sampled_observations, sampled_actions)
+                    qi_task_err = qi_task_h.view(-1) - next_q_task_value_h
+                    qi_motion_err = qi_motion_h.view(-1) - next_q_motion_value_h
+                    qi_task_h_list.append(qi_task_h)
+                    qi_motion_h_list.append(qi_motion_h)
+                    qi_task_err_list.append(qi_task_err)
+                    qi_motion_err_list.append(qi_motion_err)
+                    qi_task_loss_list.append((sampled_weights * qi_task_err.pow(2)).mean())
+                    qi_motion_loss_list.append((sampled_weights * qi_motion_err.pow(2)).mean())
+                # Legacy aliases — used by debug logs and PER on N=2.
+                q1_task_h, q1_motion_h = qi_task_h_list[0], qi_motion_h_list[0]
+                q2_task_h, q2_motion_h = qi_task_h_list[1], qi_motion_h_list[1]
+                q1_task_error_h, q1_motion_error_h = qi_task_err_list[0], qi_motion_err_list[0]
+                q2_task_error_h, q2_motion_error_h = qi_task_err_list[1], qi_motion_err_list[1]
+                q1_task_loss, q1_motion_loss = qi_task_loss_list[0], qi_motion_loss_list[0]
+                q2_task_loss, q2_motion_loss = qi_task_loss_list[1], qi_motion_loss_list[1]
 
-                q1_task_error_h = q1_task_h.view(-1) - next_q_task_value_h
-                q2_task_error_h = q2_task_h.view(-1) - next_q_task_value_h
-                q1_motion_error_h = q1_motion_h.view(-1) - next_q_motion_value_h
-                q2_motion_error_h = q2_motion_h.view(-1) - next_q_motion_value_h
-
-                q1_task_loss = (sampled_weights * q1_task_error_h.pow(2)).mean()
-                q2_task_loss = (sampled_weights * q2_task_error_h.pow(2)).mean()
-                q1_motion_loss = (sampled_weights * q1_motion_error_h.pow(2)).mean()
-                q2_motion_loss = (sampled_weights * q2_motion_error_h.pow(2)).mean()
-                q_total_loss = q1_task_loss + q2_task_loss + q1_motion_loss + q2_motion_loss
+                q_total_loss = sum(qi_task_loss_list) + sum(qi_motion_loss_list)
 
                 q_optimizer.zero_grad()
                 q_total_loss.backward()
                 q_optimizer.step()
 
-                priority_td_error = 0.25 * (
-                    q1_task_error_h.abs()
-                    + q2_task_error_h.abs()
-                    + q1_motion_error_h.abs()
-                    + q2_motion_error_h.abs()
-                )
+                # PER priority: mean of |TD error| across all (critic, head) pairs.
+                # For N=2 this reduces to the original 0.25 * sum_4 expression.
+                num_err_components = 2 * args.num_critics
+                priority_td_error = (
+                    sum(e.abs() for e in qi_task_err_list)
+                    + sum(e.abs() for e in qi_motion_err_list)
+                ) / num_err_components
                 if args.per_enabled and per_sample_count > 0:
                     for source_buffer, per_indices, start_idx, end_idx in per_priority_update_slices:
                         source_buffer.update_priorities(
@@ -1822,8 +1881,8 @@ if __name__ == "__main__":
                     )
                     train_metrics.update(
                         {
-                            "losses/q_task_loss": (q1_task_loss + q2_task_loss).item() / 2.0,
-                            "losses/q_motion_loss": (q1_motion_loss + q2_motion_loss).item() / 2.0,
+                            "losses/q_task_loss": sum(l.item() for l in qi_task_loss_list) / args.num_critics,
+                            "losses/q_motion_loss": sum(l.item() for l in qi_motion_loss_list) / args.num_critics,
                             "losses/q_total_loss": q_total_loss.item(),
                             "losses/q1_task_mean": q1_task_h.mean().item(),
                             "losses/q1_motion_mean": q1_motion_h.mean().item(),
@@ -1876,14 +1935,27 @@ if __name__ == "__main__":
                             "replay/recent_episode_window_count": float(len(recent_episode_returns)),
                         }
                     )
+                    # Per-critic Q stats (only if ensemble; q1_*_mean already logged above).
+                    if args.num_critics > 2:
+                        for ci, (qt_h, qm_h) in enumerate(
+                            zip(qi_task_h_list, qi_motion_h_list), start=1
+                        ):
+                            if ci == 1:
+                                continue  # already logged as q1_task_mean above
+                            train_metrics[f"losses/q{ci}_task_mean"] = qt_h.mean().item()
+                            train_metrics[f"losses/q{ci}_motion_mean"] = qm_h.mean().item()
+                        all_task_h = torch.stack(qi_task_h_list, dim=0)
+                        all_motion_h = torch.stack(qi_motion_h_list, dim=0)
+                        train_metrics["losses/q_min_task_mean"] = all_task_h.min(dim=0).values.mean().item()
+                        train_metrics["losses/q_min_motion_mean"] = all_motion_h.min(dim=0).values.mean().item()
+                        train_metrics["losses/q_mean_task_mean"] = all_task_h.mean().item()
 
                 if (q_update_idx + 1) % args.target_network_frequency == 0:
                     for param, target_param in zip(actor.parameters(), actor_target.parameters()):
                         target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
-                    for param, target_param in zip(qf1.parameters(), qf1_target.parameters()):
-                        target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
-                    for param, target_param in zip(qf2.parameters(), qf2_target.parameters()):
-                        target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
+                    for q, qt in zip(qfs, qfs_target):
+                        for param, target_param in zip(q.parameters(), qt.parameters()):
+                            target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
 
             for actor_update_idx in range(args.actor_updates_per_iteration):
                 actor_success_count, actor_failure_count = critic_success_failure_counts(
@@ -2152,10 +2224,9 @@ if __name__ == "__main__":
             torch.save(actor_target.state_dict(), f"{checkpoint_dir}/actor_target.pth")
             if actor_ema is not None:
                 torch.save(actor_ema.state_dict(), f"{checkpoint_dir}/model_ema.pth")
-            torch.save(qf1.state_dict(), f"{checkpoint_dir}/qf1.pth")
-            torch.save(qf2.state_dict(), f"{checkpoint_dir}/qf2.pth")
-            torch.save(qf1_target.state_dict(), f"{checkpoint_dir}/qf1_target.pth")
-            torch.save(qf2_target.state_dict(), f"{checkpoint_dir}/qf2_target.pth")
+            for ci, q in enumerate(qfs, start=1):
+                torch.save(q.state_dict(), f"{checkpoint_dir}/qf{ci}.pth")
+                torch.save(qfs_target[ci - 1].state_dict(), f"{checkpoint_dir}/qf{ci}_target.pth")
             training_state = build_training_state(
                 global_step=global_step,
                 iteration=iteration,
@@ -2165,6 +2236,8 @@ if __name__ == "__main__":
                 qf2=qf2,
                 qf1_target=qf1_target,
                 qf2_target=qf2_target,
+                extra_qfs=qfs[2:] if args.num_critics > 2 else None,
+                extra_qfs_target=qfs_target[2:] if args.num_critics > 2 else None,
                 q_optimizer=q_optimizer,
                 actor_optimizer=actor_optimizer,
                 success_rb=success_rb,
@@ -2241,10 +2314,9 @@ if __name__ == "__main__":
         torch.save(actor_target.state_dict(), f"{log_parent_dir}/actor_target.pth")
         if actor_ema is not None:
             torch.save(actor_ema.state_dict(), f"{log_parent_dir}/model_ema.pth")
-        torch.save(qf1.state_dict(), f"{log_parent_dir}/qf1.pth")
-        torch.save(qf2.state_dict(), f"{log_parent_dir}/qf2.pth")
-        torch.save(qf1_target.state_dict(), f"{log_parent_dir}/qf1_target.pth")
-        torch.save(qf2_target.state_dict(), f"{log_parent_dir}/qf2_target.pth")
+        for ci, q in enumerate(qfs, start=1):
+            torch.save(q.state_dict(), f"{log_parent_dir}/qf{ci}.pth")
+            torch.save(qfs_target[ci - 1].state_dict(), f"{log_parent_dir}/qf{ci}_target.pth")
         final_training_state = build_training_state(
             global_step=global_step,
             iteration=iteration,
@@ -2254,6 +2326,8 @@ if __name__ == "__main__":
             qf2=qf2,
             qf1_target=qf1_target,
             qf2_target=qf2_target,
+            extra_qfs=qfs[2:] if args.num_critics > 2 else None,
+            extra_qfs_target=qfs_target[2:] if args.num_critics > 2 else None,
             q_optimizer=q_optimizer,
             actor_optimizer=actor_optimizer,
             success_rb=success_rb,

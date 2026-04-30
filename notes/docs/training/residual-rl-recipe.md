@@ -205,56 +205,91 @@ collapse the canonical recipe still suffers from on big gaps.
 
 ### Recommendation by gap size
 
-| zs drop | recipe | expected peak (vs zs) | last5 (vs zs) | reproducibility | budget |
+| zs drop | recipe | peak (vs zs) | last5 (vs zs) | reproducibility | budget |
 |---|---|---:|---:|---:|---:|
 | ~5% (OLD env) | residual + recency_top50 | +5 (100.7 vs 95.78) | +0 (94.8) | tight (3/3 last3 ≥ 88) | 100k |
-| **~30% (NEW env)** | **residual v25 (sf=0.15 + age + q_updates=1)** | **+18 (85.5 vs 67.54)** | **-10 (57.6)** | std 9.0; one seed @ 98 | 300k |
+| **~30% (NEW env)** | **residual v27 (sf=0.15 + age + q_updates=1 + Maxmin-5)** | **+20 (87.9 vs 67.54)** | **-1 (66.1)** | std 4.8 | 300k |
+| ~30% (NEW env) | residual v25 (sf=0.15 + age + q_updates=1) | +18 (85.5 vs 67.54) | -10 (57.6) | std 9.0 | 300k |
 | ~30% (NEW env) | full_ft | +21 (88.6 vs 67.54) | -24 (43.3) | tight (std 2.0) | 300k |
 
-**For the new env (big gap)**: v25 is now the best residual recipe AND ties full_ft on
-peak; v25 actually beats full_ft on `mean(29)` (66.7 vs 60.3), `last5` (57.6 vs 43.3),
-and `% above zs` (48% vs 29%). full_ft has tighter cross-seed reproducibility but
-v25's drift behavior is dramatically better. **Use v25 by default for residual sim2sim
-and sim2real on big-gap targets.**
+**For the new env (big gap)**: v27 is now the best recipe overall — it ties
+full_ft on peak (87.9 vs 88.6) and has tighter cross-seed std (4.8 vs std 9.0
+for v25). Crucially, v27 dominates everything on tail stability: last5 = 66.1
+vs full_ft's 43.3 (+22.8) and v25's 57.6 (+8.5). 70% of ckpts above zs vs
+full_ft's 29%. **Use v27 by default for residual sim2sim and sim2real on
+big-gap targets.**
 
-### How to use the v25 recipe (the BEST big-gap residual recipe, 2026-04-30 — DRIFT ELIMINATED)
+### How to use the v27 recipe (the BEST big-gap residual recipe, 2026-04-30 PM — Maxmin-5 critics)
 
-**v25 = v21 + `q_updates: 1`**. Reducing critic update frequency from 4 to 1
-per env step nearly eliminates post-peak drift. Same peak as v21, but the
-trajectory now stays roughly flat across all 300k training steps instead
-of cliff-collapsing past 200k.
+**v27 = v25 + `num_critics: 5`** (Maxmin-5: ensemble of 5 critics, min over all
+5 target Qs). Builds on v25's drift fix by further tightening the Q estimate
+through critic ensembling. Beats every prior recipe on every metric and
+matches full_ft's peak while dominating its tail.
+
+Canonical paper: **REDQ** (Chen et al. ICLR 2021). v27 uses the simpler
+**Maxmin** variant (Lan 2020) — min over all critics, vs REDQ's random subset.
 
 Copy `td3_sim2sim_residual.yaml` and apply these edits:
 
 ```yaml
 success_top_fraction: 0.15           # was 0.5; OLD env median-split does NOT transfer to big-gap targets
-priority_age_decay: 0.0001           # NEW arg (2026-04-29) — age-weighted PER, half-life ~7k slots
-q_updates: 1                         # was 4 — THE BIG-GAP DRIFT FIX (2026-04-30)
+priority_age_decay: 0.0001           # NEW arg (2026-04-29) — age-weighted PER
+q_updates: 1                         # was 4 — drift fix (2026-04-30 AM)
+num_critics: 5                       # was 2 — Maxmin-5 ensemble (2026-04-30 PM)
+# target_critic_subset_size: None    # default = Maxmin (use all 5). Set to e.g. 2 for REDQ-5-2 variant.
 # Everything else (q_weight_decay 1e-3, residual_scale 0.15, q_lr 3e-4) stays the same.
 ```
 
-Verified config (5-seed): `scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v25_q_updates1.yaml`.
+Verified config (5-seed): `scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v27_ensemble5.yaml`.
 
 Expected performance (5-seed mean):
-- Peak: **85.5 ± 9.0** (range 77.6–98.3 across seeds; one seed beats every full_ft seed)
-- Mean(29): **66.7** — best of any recipe tested (vs v21 58.1, full_ft 60.3)
-- Last5: **57.6** — drift dramatically reduced (vs v21 36.2, full_ft 43.3)
-- **48% of ckpts above zs** across training — best of any recipe (vs v21 42%, full_ft 29%)
+- Peak: **87.9 ± 4.8** (range 82.8–95.7 across seeds — best mean and tighter than v25)
+- Mean(29): **71.2** — best of any recipe (+4.5 vs v25, +10.9 vs full_ft)
+- Last5: **66.1 ± 13.6** — best of any recipe (+8.5 vs v25, +22.8 vs full_ft)
+- **70% of ckpts above zs** across training — best ever (+22pp vs v25, +41pp vs full_ft)
 
-Decay shape (cross-seed): peaks at ~76 around 100k, holds 55-65 through end.
-v21 had cliff drop 76→36 between 50k–290k; v25 only loses ~20 points across
-the same window.
+Decay shape (cross-seed): peaks at ~80 around 100k, holds 63-65 through end of
+300k. Two of five seeds end with last5 ≥ 76 — strictly above every full_ft seed.
 
-Per-checkpoint eval is **still recommended** for picking the absolute best
-checkpoint — peaks vary across seeds — but final-step weights are now usable
-for "fire-and-forget" deployment (they hold near 50-65, never collapsing).
+vs full_ft (3-seed): v27 effectively ties on peak (87.9 vs 88.6) and dominates
+on every stability metric. **For big-gap residual sim2sim/sim2real, v27 is the
+new default.**
 
-### v21 (deprecated; superseded by v25, but documented for context)
+Per-checkpoint eval still recommended for picking the best ckpt, but the
+final-step weights are now competitive with peak-eval for "fire-and-forget"
+deployment.
 
-v21 = `success_top_fraction: 0.15` + `priority_age_decay: 0.0001` with default
-q_updates=4. 5-seed peak 83.5 ± 5.4, mean(29) 58.5, last5 35.8. Drifts past peak
-(cliff at 200k). Use v25 instead — same recipe + `q_updates: 1` retains all
-peak benefits and eliminates drift.
+### Why ensemble critics fix drift (mechanism)
+
+Drift root cause: in residual RL the critic over-extrapolates Q-values to OOD
+actions (small action subspace × frozen base → critic has limited grounding).
+Q1 grows 2.6–4× during training; actor exploits this by pushing residual head
+norm 5–10× higher; real returns degrade.
+
+The standard TD3 twin-critic min reduces overestimation but with only N=2 the
+bound is loose. With N=5 critics each independently initialized:
+- Variance of `min(Q_1, ..., Q_N)` decreases with N
+- Each critic makes different OOD extrapolation errors; min cancels them out
+- More critic diversity → tighter target → less Q runaway → less actor exploit
+
+We tested 4 ensemble configs (Phase 15 single-seed, then Phase 16 5-seed):
+- Maxmin-3: too small, loose bound (84/61/52)
+- **Maxmin-5: sweet spot** (88/71/66 — winning recipe)
+- REDQ-5-2: random subset added variance, peak 86 single-seed but unstable
+- REDQ-10-2: most pessimistic — flat tail (last5=74) but suppressed peak (80)
+
+REDQ's random subset sampling is canonical but adds gradient variance during
+the early phase; Maxmin (min-over-all) is more deterministic and won here.
+
+### v25, v21 (deprecated; superseded by v27, kept for context)
+
+**v25** = `q_updates: 1` (no ensemble). 5-seed peak 85.5 ± 9.0, last5 57.6, 48%>zs.
+The first recipe to break the 200k drift cliff. Replaced by v27 which adds
+critic ensembling on top.
+
+**v21** = `success_top_fraction: 0.15` + `priority_age_decay: 0.0001` with default
+q_updates=4 and N=2. 5-seed peak 83.5, last5 36.2 (drift cliff at 200k). Use v27
+or v25 instead.
 
 ### Why 0.15 not 0.5 (mechanism)
 

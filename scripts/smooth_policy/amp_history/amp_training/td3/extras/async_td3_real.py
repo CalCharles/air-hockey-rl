@@ -1452,6 +1452,15 @@ def _init_sync_learner_state(
     device = torch.device(args.learner_device)
     writer = SummaryWriter(tb_log_dir)
 
+    # Critic ensemble (num_critics>2) is sim2sim-only at present; the async
+    # real-world path still uses the original twin TD3 critic pair. Validate
+    # to fail loudly rather than silently dropping critics.
+    _async_num_critics = getattr(train_args, "num_critics", 2)
+    if _async_num_critics != 2:
+        raise NotImplementedError(
+            f"async_td3_real currently only supports num_critics=2 (got {_async_num_critics}). "
+            "Ensemble critics (REDQ/Maxmin) are sim2sim-only. Use td3_training.py for ensemble runs."
+        )
     policy_obs_dim = obs_dim + act_dim if train_args.use_last_action_in_policy_state else obs_dim
     policy_env_view = build_policy_env_view(policy_obs_dim, act_dim)
     actor = DeterministicAgent(

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import random
 from collections import deque
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
@@ -308,6 +308,8 @@ def build_training_state(
     rolling_step_stats_window,
     rolling_episode_stats_window,
     args_dict: Dict[str, Any],
+    extra_qfs: Optional[List[Any]] = None,
+    extra_qfs_target: Optional[List[Any]] = None,
 ) -> Dict[str, Any]:
     state: Dict[str, Any] = {
         "checkpoint_version": 2,
@@ -368,4 +370,12 @@ def build_training_state(
     if include_replay_buffer:
         state["success_replay_buffer"] = success_rb.state_dict()
         state["failure_replay_buffer"] = failure_rb.state_dict()
+    # Critics 3+ (only present for ensemble runs; backwards compat for N=2 ckpts).
+    if extra_qfs is not None and extra_qfs_target is not None:
+        if len(extra_qfs) != len(extra_qfs_target):
+            raise ValueError("extra_qfs and extra_qfs_target must have same length")
+        for offset, (q, qt) in enumerate(zip(extra_qfs, extra_qfs_target)):
+            ci = offset + 3  # qf3, qf4, ...
+            state[f"qf{ci}"] = q.state_dict()
+            state[f"qf{ci}_target"] = qt.state_dict()
     return state
