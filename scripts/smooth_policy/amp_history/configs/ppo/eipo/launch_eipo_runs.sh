@@ -27,7 +27,7 @@ set -e
 cd "$(git rev-parse --show-toplevel)"
 
 SESSION="eipo"
-SCRIPT="scripts/smooth_policy/amp_history/amp_training/train_lsgan_eipo.py"
+SCRIPT="scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py"
 BASE_CFG="scripts/smooth_policy/amp_history/configs/ppo/eipo/eipo_target.yaml"
 RUNS_DIR="runs/eipo_runs"
 

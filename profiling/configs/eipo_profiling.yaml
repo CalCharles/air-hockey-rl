@@ -1,0 +1,78 @@
+# Profiling config — mirrors eipo_target.yaml with full normal-training params.
+# Compute-relevant settings are IDENTICAL to real training so the profile is
+# representative. Only num_iterations / run_name / log_parent_dir are tweaked
+# as a safety net (the profiled script also exits via sys.exit(0) after the
+# active iteration, so num_iterations rarely matters).
+
+# Core PPO
+num_envs: 8
+num_steps: 512
+learning_rate: 0.0001
+num_iterations: 20         # safety net only; sys.exit(0) fires at iter 6
+anneal_lr: false
+gamma: 0.99
+gae_lambda: 0.95
+minibatch_size: 32
+update_epochs: 10
+clip_coef: 0.2
+clip_vloss: false
+ent_coef: 0.0
+vf_coef: 0.5
+max_grad_norm: 0.5
+target_kl: null
+batch_size: 0
+norm_adv: true
+
+use_last_action_in_policy_state: true
+
+# AMP
+use_action_discriminator: false
+disc_replay_buffer_size: 50000
+disc_replay_samples: 2048
+disc_batch_size: 256
+disc_learning_rate: 0.0001
+disc_logit_reg: 0.01
+disc_grad_penalty: 5.0
+disc_weight_decay: 0.0001
+num_discriminator_updates: 3
+disc_hidden_layer_size: 64
+disc_num_hidden_layers: 3
+
+task_reward_weight: 0.5
+disc_reward_weight: 0.5
+
+include_inherited_reward: false
+
+temporal_alignment_reward_scale: 0.4
+action_magnitude_reward_scale: 0.4
+
+# Paths
+config: "scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_constant_upper_half_custom_sim_params.yaml"
+args_file: null
+model_path: null
+discriminator_path: null
+amp_components_path: null
+run_name: "profiling_baseline"
+log_parent_dir: "profiling/torch_profiler"
+demo_data_path: "scripts/smooth_policy/amp_history/amp_training/amp_data/all_trajectories_bc.pt"
+
+seed: 0
+device: "cuda:1"
+action_scale: 1
+
+use_reference_state_init: false
+reference_data_path: null
+ref_max_episode_steps: 30
+
+agent_hidden_layer_size: 64
+agent_num_hidden_layers: 5
+
+# EIPO
+use_eipo: true
+eipo_alpha_init: 1.0
+eipo_alpha_lr: 0.01
+eipo_alpha_min: 0.0
+eipo_alpha_max: 100.0
+disc_stationarity_mode: "target"
+disc_ema_tau: 0.005
+disc_pretrain_iters: 0

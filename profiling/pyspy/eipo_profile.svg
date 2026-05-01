@@ -1,0 +1,491 @@
+<?xml version="1.0" standalone="no"?><!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"><svg version="1.1" width="1200" height="362" onload="init(evt)" viewBox="0 0 1200 362" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:fg="http://github.com/jonhoo/inferno"><!--Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples.--><!--NOTES: --><defs><linearGradient id="background" y1="0" y2="1" x1="0" x2="0"><stop stop-color="#eeeeee" offset="5%"/><stop stop-color="#eeeeb0" offset="95%"/></linearGradient></defs><style type="text/css">
+text { font-family:monospace; font-size:12px }
+#title { text-anchor:middle; font-size:17px; }
+#matched { text-anchor:end; }
+#search { text-anchor:end; opacity:0.1; cursor:pointer; }
+#search:hover, #search.show { opacity:1; }
+#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+#unzoom { cursor:pointer; }
+#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+.hide { display:none; }
+.parent { opacity:0.5; }
+</style><script type="text/ecmascript"><![CDATA[
+        var nametype = 'Function:';
+        var fontsize = 12;
+        var fontwidth = 0.59;
+        var xpad = 10;
+        var inverted = true;
+        var searchcolor = 'rgb(230,0,230)';
+        var fluiddrawing = true;
+        var truncate_text_right = false;
+    ]]><![CDATA["use strict";
+var details, searchbtn, unzoombtn, matchedtxt, svg, searching, frames, known_font_width;
+function init(evt) {
+    details = document.getElementById("details").firstChild;
+    searchbtn = document.getElementById("search");
+    unzoombtn = document.getElementById("unzoom");
+    matchedtxt = document.getElementById("matched");
+    svg = document.getElementsByTagName("svg")[0];
+    frames = document.getElementById("frames");
+    known_font_width = get_monospace_width(frames);
+    total_samples = parseInt(frames.attributes.total_samples.value);
+    searching = 0;
+
+    // Use GET parameters to restore a flamegraph's state.
+    var restore_state = function() {
+        var params = get_params();
+        if (params.x && params.y)
+            zoom(find_group(document.querySelector('[*|x="' + params.x + '"][y="' + params.y + '"]')));
+        if (params.s)
+            search(params.s);
+    };
+
+    if (fluiddrawing) {
+        // Make width dynamic so the SVG fits its parent's width.
+        svg.removeAttribute("width");
+        // Edge requires us to have a viewBox that gets updated with size changes.
+        var isEdge = /Edge\/\d./i.test(navigator.userAgent);
+        if (!isEdge) {
+            svg.removeAttribute("viewBox");
+        }
+        var update_for_width_change = function() {
+            if (isEdge) {
+                svg.attributes.viewBox.value = "0 0 " + svg.width.baseVal.value + " " + svg.height.baseVal.value;
+            }
+
+            // Keep consistent padding on left and right of frames container.
+            frames.attributes.width.value = svg.width.baseVal.value - xpad * 2;
+
+            // Text truncation needs to be adjusted for the current width.
+            update_text_for_elements(frames.children);
+
+            // Keep search elements at a fixed distance from right edge.
+            var svgWidth = svg.width.baseVal.value;
+            searchbtn.attributes.x.value = svgWidth - xpad;
+            matchedtxt.attributes.x.value = svgWidth - xpad;
+        };
+        window.addEventListener('resize', function() {
+            update_for_width_change();
+        });
+        // This needs to be done asynchronously for Safari to work.
+        setTimeout(function() {
+            unzoom();
+            update_for_width_change();
+            restore_state();
+        }, 0);
+    } else {
+        restore_state();
+    }
+}
+// event listeners
+window.addEventListener("click", function(e) {
+    var target = find_group(e.target);
+    if (target) {
+        if (target.nodeName == "a") {
+            if (e.ctrlKey === false) return;
+            e.preventDefault();
+        }
+        if (target.classList.contains("parent")) unzoom();
+        zoom(target);
+
+        // set parameters for zoom state
+        var el = target.querySelector("rect");
+        if (el && el.attributes && el.attributes.y && el.attributes["fg:x"]) {
+            var params = get_params()
+            params.x = el.attributes["fg:x"].value;
+            params.y = el.attributes.y.value;
+            history.replaceState(null, null, parse_params(params));
+        }
+    }
+    else if (e.target.id == "unzoom") {
+        unzoom();
+
+        // remove zoom state
+        var params = get_params();
+        if (params.x) delete params.x;
+        if (params.y) delete params.y;
+        history.replaceState(null, null, parse_params(params));
+    }
+    else if (e.target.id == "search") search_prompt();
+}, false)
+// mouse-over for info
+// show
+window.addEventListener("mouseover", function(e) {
+    var target = find_group(e.target);
+    if (target) details.nodeValue = nametype + " " + g_to_text(target);
+}, false)
+// clear
+window.addEventListener("mouseout", function(e) {
+    var target = find_group(e.target);
+    if (target) details.nodeValue = ' ';
+}, false)
+// ctrl-F for search
+window.addEventListener("keydown",function (e) {
+    if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+        e.preventDefault();
+        search_prompt();
+    }
+}, false)
+// functions
+function get_params() {
+    var params = {};
+    var paramsarr = window.location.search.substr(1).split('&');
+    for (var i = 0; i < paramsarr.length; ++i) {
+        var tmp = paramsarr[i].split("=");
+        if (!tmp[0] || !tmp[1]) continue;
+        params[tmp[0]]  = decodeURIComponent(tmp[1]);
+    }
+    return params;
+}
+function parse_params(params) {
+    var uri = "?";
+    for (var key in params) {
+        uri += key + '=' + encodeURIComponent(params[key]) + '&';
+    }
+    if (uri.slice(-1) == "&")
+        uri = uri.substring(0, uri.length - 1);
+    if (uri == '?')
+        uri = window.location.href.split('?')[0];
+    return uri;
+}
+function find_child(node, selector) {
+    var children = node.querySelectorAll(selector);
+    if (children.length) return children[0];
+    return;
+}
+function find_group(node) {
+    var parent = node.parentElement;
+    if (!parent) return;
+    if (parent.id == "frames") return node;
+    return find_group(parent);
+}
+function orig_save(e, attr, val) {
+    if (e.attributes["fg:orig_" + attr] != undefined) return;
+    if (e.attributes[attr] == undefined) return;
+    if (val == undefined) val = e.attributes[attr].value;
+    e.setAttribute("fg:orig_" + attr, val);
+}
+function orig_load(e, attr) {
+    if (e.attributes["fg:orig_"+attr] == undefined) return;
+    e.attributes[attr].value = e.attributes["fg:orig_" + attr].value;
+    e.removeAttribute("fg:orig_" + attr);
+}
+function g_to_text(e) {
+    var text = find_child(e, "title").firstChild.nodeValue;
+    return (text)
+}
+function g_to_func(e) {
+    var func = g_to_text(e);
+    // if there's any manipulation we want to do to the function
+    // name before it's searched, do it here before returning.
+    return (func);
+}
+function get_monospace_width(frames) {
+    // Given the id="frames" element, return the width of text characters if
+    // this is a monospace font, otherwise return 0.
+    text = find_child(frames.children[0], "text");
+    originalContent = text.textContent;
+    text.textContent = "!";
+    bangWidth = text.getComputedTextLength();
+    text.textContent = "W";
+    wWidth = text.getComputedTextLength();
+    text.textContent = originalContent;
+    if (bangWidth === wWidth) {
+        return bangWidth;
+    } else {
+        return 0;
+    }
+}
+function update_text_for_elements(elements) {
+    // In order to render quickly in the browser, you want to do one pass of
+    // reading attributes, and one pass of mutating attributes. See
+    // https://web.dev/avoid-large-complex-layouts-and-layout-thrashing/ for details.
+
+    // Fall back to inefficient calculation, if we're variable-width font.
+    // TODO This should be optimized somehow too.
+    if (known_font_width === 0) {
+        for (var i = 0; i < elements.length; i++) {
+            update_text(elements[i]);
+        }
+        return;
+    }
+
+    var textElemNewAttributes = [];
+    for (var i = 0; i < elements.length; i++) {
+        var e = elements[i];
+        var r = find_child(e, "rect");
+        var t = find_child(e, "text");
+        var w = parseFloat(r.attributes.width.value) * frames.attributes.width.value / 100 - 3;
+        var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+        var newX = format_percent((parseFloat(r.attributes.x.value) + (100 * 3 / frames.attributes.width.value)));
+
+        // Smaller than this size won't fit anything
+        if (w < 2 * known_font_width) {
+            textElemNewAttributes.push([newX, ""]);
+            continue;
+        }
+
+        // Fit in full text width
+        if (txt.length * known_font_width < w) {
+            textElemNewAttributes.push([newX, txt]);
+            continue;
+        }
+
+        var substringLength = Math.floor(w / known_font_width) - 2;
+        if (truncate_text_right) {
+            // Truncate the right side of the text.
+            textElemNewAttributes.push([newX, txt.substring(0, substringLength) + ".."]);
+            continue;
+        } else {
+            // Truncate the left side of the text.
+            textElemNewAttributes.push([newX, ".." + txt.substring(txt.length - substringLength, txt.length)]);
+            continue;
+        }
+    }
+
+    console.assert(textElemNewAttributes.length === elements.length, "Resize failed, please file a bug at https://github.com/jonhoo/inferno/");
+
+    // Now that we know new textContent, set it all in one go so we don't refresh a bazillion times.
+    for (var i = 0; i < elements.length; i++) {
+        var e = elements[i];
+        var values = textElemNewAttributes[i];
+        var t = find_child(e, "text");
+        t.attributes.x.value = values[0];
+        t.textContent = values[1];
+    }
+}
+
+function update_text(e) {
+    var r = find_child(e, "rect");
+    var t = find_child(e, "text");
+    var w = parseFloat(r.attributes.width.value) * frames.attributes.width.value / 100 - 3;
+    var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+    t.attributes.x.value = format_percent((parseFloat(r.attributes.x.value) + (100 * 3 / frames.attributes.width.value)));
+
+    // Smaller than this size won't fit anything
+    if (w < 2 * fontsize * fontwidth) {
+        t.textContent = "";
+        return;
+    }
+    t.textContent = txt;
+    // Fit in full text width
+    if (t.getComputedTextLength() < w)
+        return;
+    if (truncate_text_right) {
+        // Truncate the right side of the text.
+        for (var x = txt.length - 2; x > 0; x--) {
+            if (t.getSubStringLength(0, x + 2) <= w) {
+                t.textContent = txt.substring(0, x) + "..";
+                return;
+            }
+        }
+    } else {
+        // Truncate the left side of the text.
+        for (var x = 2; x < txt.length; x++) {
+            if (t.getSubStringLength(x - 2, txt.length) <= w) {
+                t.textContent = ".." + txt.substring(x, txt.length);
+                return;
+            }
+        }
+    }
+    t.textContent = "";
+}
+// zoom
+function zoom_reset(e) {
+    if (e.tagName == "rect") {
+        e.attributes.x.value = format_percent(100 * parseInt(e.attributes["fg:x"].value) / total_samples);
+        e.attributes.width.value = format_percent(100 * parseInt(e.attributes["fg:w"].value) / total_samples);
+    }
+    if (e.childNodes == undefined) return;
+    for(var i = 0, c = e.childNodes; i < c.length; i++) {
+        zoom_reset(c[i]);
+    }
+}
+function zoom_child(e, x, zoomed_width_samples) {
+    if (e.tagName == "text") {
+        var parent_x = parseFloat(find_child(e.parentNode, "rect[x]").attributes.x.value);
+        e.attributes.x.value = format_percent(parent_x + (100 * 3 / frames.attributes.width.value));
+    } else if (e.tagName == "rect") {
+        e.attributes.x.value = format_percent(100 * (parseInt(e.attributes["fg:x"].value) - x) / zoomed_width_samples);
+        e.attributes.width.value = format_percent(100 * parseInt(e.attributes["fg:w"].value) / zoomed_width_samples);
+    }
+    if (e.childNodes == undefined) return;
+    for(var i = 0, c = e.childNodes; i < c.length; i++) {
+        zoom_child(c[i], x, zoomed_width_samples);
+    }
+}
+function zoom_parent(e) {
+    if (e.attributes) {
+        if (e.attributes.x != undefined) {
+            e.attributes.x.value = "0.0%";
+        }
+        if (e.attributes.width != undefined) {
+            e.attributes.width.value = "100.0%";
+        }
+    }
+    if (e.childNodes == undefined) return;
+    for(var i = 0, c = e.childNodes; i < c.length; i++) {
+        zoom_parent(c[i]);
+    }
+}
+function zoom(node) {
+    var attr = find_child(node, "rect").attributes;
+    var width = parseInt(attr["fg:w"].value);
+    var xmin = parseInt(attr["fg:x"].value);
+    var xmax = xmin + width;
+    var ymin = parseFloat(attr.y.value);
+    unzoombtn.classList.remove("hide");
+    var el = frames.children;
+    var to_update_text = [];
+    for (var i = 0; i < el.length; i++) {
+        var e = el[i];
+        var a = find_child(e, "rect").attributes;
+        var ex = parseInt(a["fg:x"].value);
+        var ew = parseInt(a["fg:w"].value);
+        // Is it an ancestor
+        if (!inverted) {
+            var upstack = parseFloat(a.y.value) > ymin;
+        } else {
+            var upstack = parseFloat(a.y.value) < ymin;
+        }
+        if (upstack) {
+            // Direct ancestor
+            if (ex <= xmin && (ex+ew) >= xmax) {
+                e.classList.add("parent");
+                zoom_parent(e);
+                to_update_text.push(e);
+            }
+            // not in current path
+            else
+                e.classList.add("hide");
+        }
+        // Children maybe
+        else {
+            // no common path
+            if (ex < xmin || ex >= xmax) {
+                e.classList.add("hide");
+            }
+            else {
+                zoom_child(e, xmin, width);
+                to_update_text.push(e);
+            }
+        }
+    }
+    update_text_for_elements(to_update_text);
+}
+function unzoom() {
+    unzoombtn.classList.add("hide");
+    var el = frames.children;
+    for(var i = 0; i < el.length; i++) {
+        el[i].classList.remove("parent");
+        el[i].classList.remove("hide");
+        zoom_reset(el[i]);
+    }
+    update_text_for_elements(el);
+}
+// search
+function reset_search() {
+    var el = document.querySelectorAll("#frames rect");
+    for (var i = 0; i < el.length; i++) {
+        orig_load(el[i], "fill")
+    }
+    var params = get_params();
+    delete params.s;
+    history.replaceState(null, null, parse_params(params));
+}
+function search_prompt() {
+    if (!searching) {
+        var term = prompt("Enter a search term (regexp " +
+            "allowed, eg: ^ext4_)", "");
+        if (term != null) {
+            search(term)
+        }
+    } else {
+        reset_search();
+        searching = 0;
+        searchbtn.classList.remove("show");
+        searchbtn.firstChild.nodeValue = "Search"
+        matchedtxt.classList.add("hide");
+        matchedtxt.firstChild.nodeValue = ""
+    }
+}
+function search(term) {
+    var re = new RegExp(term);
+    var el = frames.children;
+    var matches = new Object();
+    var maxwidth = 0;
+    for (var i = 0; i < el.length; i++) {
+        var e = el[i];
+        // Skip over frames which are either not visible, or below the zoomed-to frame
+        if (e.classList.contains("hide") || e.classList.contains("parent")) {
+            continue;
+        }
+        var func = g_to_func(e);
+        var rect = find_child(e, "rect");
+        if (func == null || rect == null)
+            continue;
+        // Save max width. Only works as we have a root frame
+        var w = parseInt(rect.attributes["fg:w"].value);
+        if (w > maxwidth)
+            maxwidth = w;
+        if (func.match(re)) {
+            // highlight
+            var x = parseInt(rect.attributes["fg:x"].value);
+            orig_save(rect, "fill");
+            rect.attributes.fill.value = searchcolor;
+            // remember matches
+            if (matches[x] == undefined) {
+                matches[x] = w;
+            } else {
+                if (w > matches[x]) {
+                    // overwrite with parent
+                    matches[x] = w;
+                }
+            }
+            searching = 1;
+        }
+    }
+    if (!searching)
+        return;
+    var params = get_params();
+    params.s = term;
+    history.replaceState(null, null, parse_params(params));
+
+    searchbtn.classList.add("show");
+    searchbtn.firstChild.nodeValue = "Reset Search";
+    // calculate percent matched, excluding vertical overlap
+    var count = 0;
+    var lastx = -1;
+    var lastw = 0;
+    var keys = Array();
+    for (k in matches) {
+        if (matches.hasOwnProperty(k))
+            keys.push(k);
+    }
+    // sort the matched frames by their x location
+    // ascending, then width descending
+    keys.sort(function(a, b){
+        return a - b;
+    });
+    // Step through frames saving only the biggest bottom-up frames
+    // thanks to the sort order. This relies on the tree property
+    // where children are always smaller than their parents.
+    for (var k in keys) {
+        var x = parseInt(keys[k]);
+        var w = matches[keys[k]];
+        if (x >= lastx + lastw) {
+            count += w;
+            lastx = x;
+            lastw = w;
+        }
+    }
+    // display matched percent
+    matchedtxt.classList.remove("hide");
+    var pct = 100 * count / maxwidth;
+    if (pct != 100) pct = pct.toFixed(1);
+    matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+}
+function format_percent(n) {
+    return n.toFixed(4) + "%";
+}
+]]></script><rect x="0" y="0" width="100%" height="362" fill="url(#background)"/><text id="title" fill="rgb(0,0,0)" x="50.0000%" y="24.00">.venv/bin/py-spy record -o eipo_profile.svg --rate 100 --subprocesses --idle -- .venv/bin/python scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py --args-file scripts/smooth_policy/amp_history/configs/ppo/eipo/eipo_target.yaml --device cuda:1 --log-parent-dir runs/profiling --run-name pyspy-test --disc-stationarity-mode target --disc-ema-tau 0.005 --eipo-alpha-lr 0.01 --eipo-alpha-init 1.0</text><text id="details" fill="rgb(0,0,0)" x="10" y="40.00"> </text><text id="unzoom" class="hide" fill="rgb(0,0,0)" x="10" y="24.00">Reset Zoom</text><text id="search" fill="rgb(0,0,0)" x="1190" y="24.00">Search</text><text id="matched" fill="rgb(0,0,0)" x="1190" y="351.00"> </text><svg id="frames" x="10" width="1180" total_samples="692455"><g><title>forward (torch/nn/modules/container.py:219) (1,343 samples, 0.19%)</title><rect x="27.4344%" y="260" width="0.1939%" height="15" fill="rgb(227,0,7)" fg:x="189971" fg:w="1343"/><text x="27.6844%" y="270.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (1,288 samples, 0.19%)</title><rect x="27.4424%" y="276" width="0.1860%" height="15" fill="rgb(217,0,24)" fg:x="190026" fg:w="1288"/><text x="27.6924%" y="286.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (1,207 samples, 0.17%)</title><rect x="27.4541%" y="292" width="0.1743%" height="15" fill="rgb(221,193,54)" fg:x="190107" fg:w="1207"/><text x="27.7041%" y="302.50"></text></g><g><title>forward (scripts/smooth_policy/agent.py:52) (1,418 samples, 0.20%)</title><rect x="27.4237%" y="212" width="0.2048%" height="15" fill="rgb(248,212,6)" fg:x="189897" fg:w="1418"/><text x="27.6737%" y="222.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (1,397 samples, 0.20%)</title><rect x="27.4268%" y="228" width="0.2017%" height="15" fill="rgb(208,68,35)" fg:x="189918" fg:w="1397"/><text x="27.6768%" y="238.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (1,369 samples, 0.20%)</title><rect x="27.4308%" y="244" width="0.1977%" height="15" fill="rgb(232,128,0)" fg:x="189946" fg:w="1369"/><text x="27.6808%" y="254.50"></text></g><g><title>get_action_mean_and_logstd (scripts/smooth_policy/agent.py:138) (1,577 samples, 0.23%)</title><rect x="27.4099%" y="116" width="0.2277%" height="15" fill="rgb(207,160,47)" fg:x="189801" fg:w="1577"/><text x="27.6599%" y="126.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (1,566 samples, 0.23%)</title><rect x="27.4115%" y="132" width="0.2262%" height="15" fill="rgb(228,23,34)" fg:x="189812" fg:w="1566"/><text x="27.6615%" y="142.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (1,562 samples, 0.23%)</title><rect x="27.4120%" y="148" width="0.2256%" height="15" fill="rgb(218,30,26)" fg:x="189816" fg:w="1562"/><text x="27.6620%" y="158.50"></text></g><g><title>forward (scripts/smooth_policy/agent.py:73) (1,562 samples, 0.23%)</title><rect x="27.4120%" y="164" width="0.2256%" height="15" fill="rgb(220,122,19)" fg:x="189816" fg:w="1562"/><text x="27.6620%" y="174.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (1,559 samples, 0.23%)</title><rect x="27.4125%" y="180" width="0.2251%" height="15" fill="rgb(250,228,42)" fg:x="189819" fg:w="1559"/><text x="27.6625%" y="190.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (1,548 samples, 0.22%)</title><rect x="27.4141%" y="196" width="0.2236%" height="15" fill="rgb(240,193,28)" fg:x="189830" fg:w="1548"/><text x="27.6641%" y="206.50"></text></g><g><title>get_action_and_value (scripts/smooth_policy/agent.py:159) (1,742 samples, 0.25%)</title><rect x="27.4096%" y="100" width="0.2516%" height="15" fill="rgb(216,20,37)" fg:x="189799" fg:w="1742"/><text x="27.6596%" y="110.50"></text></g><g><title>forward (scripts/smooth_policy/agent.py:52) (1,315 samples, 0.19%)</title><rect x="27.7472%" y="196" width="0.1899%" height="15" fill="rgb(206,188,39)" fg:x="192137" fg:w="1315"/><text x="27.9972%" y="206.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (1,295 samples, 0.19%)</title><rect x="27.7501%" y="212" width="0.1870%" height="15" fill="rgb(217,207,13)" fg:x="192157" fg:w="1295"/><text x="28.0001%" y="222.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (1,275 samples, 0.18%)</title><rect x="27.7530%" y="228" width="0.1841%" height="15" fill="rgb(231,73,38)" fg:x="192177" fg:w="1275"/><text x="28.0030%" y="238.50"></text></g><g><title>forward (torch/nn/modules/container.py:219) (1,240 samples, 0.18%)</title><rect x="27.7580%" y="244" width="0.1791%" height="15" fill="rgb(225,20,46)" fg:x="192212" fg:w="1240"/><text x="28.0080%" y="254.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (1,175 samples, 0.17%)</title><rect x="27.7674%" y="260" width="0.1697%" height="15" fill="rgb(210,31,41)" fg:x="192277" fg:w="1175"/><text x="28.0174%" y="270.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (1,081 samples, 0.16%)</title><rect x="27.7810%" y="276" width="0.1561%" height="15" fill="rgb(221,200,47)" fg:x="192371" fg:w="1081"/><text x="28.0310%" y="286.50"></text></g><g><title>forward (scripts/smooth_policy/agent.py:73) (1,424 samples, 0.21%)</title><rect x="27.7381%" y="148" width="0.2056%" height="15" fill="rgb(226,26,5)" fg:x="192074" fg:w="1424"/><text x="27.9881%" y="158.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (1,417 samples, 0.20%)</title><rect x="27.7391%" y="164" width="0.2046%" height="15" fill="rgb(249,33,26)" fg:x="192081" fg:w="1417"/><text x="27.9891%" y="174.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (1,409 samples, 0.20%)</title><rect x="27.7403%" y="180" width="0.2035%" height="15" fill="rgb(235,183,28)" fg:x="192089" fg:w="1409"/><text x="27.9903%" y="190.50"></text></g><g><title>&lt;module&gt; (scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py:1102) (3,743 samples, 0.54%)</title><rect x="27.4084%" y="84" width="0.5405%" height="15" fill="rgb(221,5,38)" fg:x="189791" fg:w="3743"/><text x="27.6584%" y="94.50"></text></g><g><title>get_action_and_value (scripts/smooth_policy/agent.py:176) (1,478 samples, 0.21%)</title><rect x="27.7355%" y="100" width="0.2134%" height="15" fill="rgb(247,18,42)" fg:x="192056" fg:w="1478"/><text x="27.9855%" y="110.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (1,478 samples, 0.21%)</title><rect x="27.7355%" y="116" width="0.2134%" height="15" fill="rgb(241,131,45)" fg:x="192056" fg:w="1478"/><text x="27.9855%" y="126.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (1,466 samples, 0.21%)</title><rect x="27.7373%" y="132" width="0.2117%" height="15" fill="rgb(249,31,29)" fg:x="192068" fg:w="1466"/><text x="27.9873%" y="142.50"></text></g><g><title>forward (scripts/smooth_policy/agent.py:52) (1,366 samples, 0.20%)</title><rect x="27.9705%" y="212" width="0.1973%" height="15" fill="rgb(225,111,53)" fg:x="193683" fg:w="1366"/><text x="28.2205%" y="222.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (1,347 samples, 0.19%)</title><rect x="27.9732%" y="228" width="0.1945%" height="15" fill="rgb(238,160,17)" fg:x="193702" fg:w="1347"/><text x="28.2232%" y="238.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (1,319 samples, 0.19%)</title><rect x="27.9773%" y="244" width="0.1905%" height="15" fill="rgb(214,148,48)" fg:x="193730" fg:w="1319"/><text x="28.2273%" y="254.50"></text></g><g><title>forward (torch/nn/modules/container.py:219) (1,281 samples, 0.18%)</title><rect x="27.9828%" y="260" width="0.1850%" height="15" fill="rgb(232,36,49)" fg:x="193768" fg:w="1281"/><text x="28.2328%" y="270.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (1,228 samples, 0.18%)</title><rect x="27.9904%" y="276" width="0.1773%" height="15" fill="rgb(209,103,24)" fg:x="193821" fg:w="1228"/><text x="28.2404%" y="286.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (1,130 samples, 0.16%)</title><rect x="28.0046%" y="292" width="0.1632%" height="15" fill="rgb(229,88,8)" fg:x="193919" fg:w="1130"/><text x="28.2546%" y="302.50"></text></g><g><title>forward (scripts/smooth_policy/agent.py:73) (1,501 samples, 0.22%)</title><rect x="27.9595%" y="164" width="0.2168%" height="15" fill="rgb(213,181,19)" fg:x="193607" fg:w="1501"/><text x="28.2095%" y="174.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (1,493 samples, 0.22%)</title><rect x="27.9607%" y="180" width="0.2156%" height="15" fill="rgb(254,191,54)" fg:x="193615" fg:w="1493"/><text x="28.2107%" y="190.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (1,483 samples, 0.21%)</title><rect x="27.9621%" y="196" width="0.2142%" height="15" fill="rgb(241,83,37)" fg:x="193625" fg:w="1483"/><text x="28.2121%" y="206.50"></text></g><g><title>get_action_mean_and_logstd (scripts/smooth_policy/agent.py:138) (1,508 samples, 0.22%)</title><rect x="27.9586%" y="116" width="0.2178%" height="15" fill="rgb(233,36,39)" fg:x="193601" fg:w="1508"/><text x="28.2086%" y="126.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (1,505 samples, 0.22%)</title><rect x="27.9591%" y="132" width="0.2173%" height="15" fill="rgb(226,3,54)" fg:x="193604" fg:w="1505"/><text x="28.2091%" y="142.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (1,505 samples, 0.22%)</title><rect x="27.9591%" y="148" width="0.2173%" height="15" fill="rgb(245,192,40)" fg:x="193604" fg:w="1505"/><text x="28.2091%" y="158.50"></text></g><g><title>get_action_and_value (scripts/smooth_policy/agent.py:159) (1,636 samples, 0.24%)</title><rect x="27.9585%" y="100" width="0.2363%" height="15" fill="rgb(238,167,29)" fg:x="193600" fg:w="1636"/><text x="28.2085%" y="110.50"></text></g><g><title>forward (scripts/smooth_policy/agent.py:52) (1,353 samples, 0.20%)</title><rect x="28.2798%" y="196" width="0.1954%" height="15" fill="rgb(232,182,51)" fg:x="195825" fg:w="1353"/><text x="28.5298%" y="206.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (1,340 samples, 0.19%)</title><rect x="28.2817%" y="212" width="0.1935%" height="15" fill="rgb(231,60,39)" fg:x="195838" fg:w="1340"/><text x="28.5317%" y="222.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (1,300 samples, 0.19%)</title><rect x="28.2875%" y="228" width="0.1877%" height="15" fill="rgb(208,69,12)" fg:x="195878" fg:w="1300"/><text x="28.5375%" y="238.50"></text></g><g><title>forward (torch/nn/modules/container.py:219) (1,270 samples, 0.18%)</title><rect x="28.2918%" y="244" width="0.1834%" height="15" fill="rgb(235,93,37)" fg:x="195908" fg:w="1270"/><text x="28.5418%" y="254.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (1,205 samples, 0.17%)</title><rect x="28.3012%" y="260" width="0.1740%" height="15" fill="rgb(213,116,39)" fg:x="195973" fg:w="1205"/><text x="28.5512%" y="270.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (1,120 samples, 0.16%)</title><rect x="28.3135%" y="276" width="0.1617%" height="15" fill="rgb(222,207,29)" fg:x="196058" fg:w="1120"/><text x="28.5635%" y="286.50"></text></g><g><title>forward (scripts/smooth_policy/agent.py:73) (1,465 samples, 0.21%)</title><rect x="28.2707%" y="148" width="0.2116%" height="15" fill="rgb(206,96,30)" fg:x="195762" fg:w="1465"/><text x="28.5207%" y="158.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (1,462 samples, 0.21%)</title><rect x="28.2712%" y="164" width="0.2111%" height="15" fill="rgb(218,138,4)" fg:x="195765" fg:w="1462"/><text x="28.5212%" y="174.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (1,455 samples, 0.21%)</title><rect x="28.2722%" y="180" width="0.2101%" height="15" fill="rgb(250,191,14)" fg:x="195772" fg:w="1455"/><text x="28.5222%" y="190.50"></text></g><g><title>&lt;module&gt; (scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py:1110) (3,667 samples, 0.53%)</title><rect x="27.9573%" y="84" width="0.5296%" height="15" fill="rgb(239,60,40)" fg:x="193592" fg:w="3667"/><text x="28.2073%" y="94.50"></text></g><g><title>get_action_and_value (scripts/smooth_policy/agent.py:176) (1,510 samples, 0.22%)</title><rect x="28.2688%" y="100" width="0.2181%" height="15" fill="rgb(206,27,48)" fg:x="195749" fg:w="1510"/><text x="28.5188%" y="110.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (1,507 samples, 0.22%)</title><rect x="28.2693%" y="116" width="0.2176%" height="15" fill="rgb(225,35,8)" fg:x="195752" fg:w="1507"/><text x="28.5193%" y="126.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (1,503 samples, 0.22%)</title><rect x="28.2699%" y="132" width="0.2171%" height="15" fill="rgb(250,213,24)" fg:x="195756" fg:w="1503"/><text x="28.5199%" y="142.50"></text></g><g><title>_recv_bytes (multiprocessing/connection.py:414) (1,871 samples, 0.27%)</title><rect x="28.5584%" y="148" width="0.2702%" height="15" fill="rgb(247,123,22)" fg:x="197754" fg:w="1871"/><text x="28.8084%" y="158.50"></text></g><g><title>_recv (multiprocessing/connection.py:379) (1,870 samples, 0.27%)</title><rect x="28.5585%" y="164" width="0.2701%" height="15" fill="rgb(231,138,38)" fg:x="197755" fg:w="1870"/><text x="28.8085%" y="174.50"></text></g><g><title>recv (multiprocessing/connection.py:250) (1,895 samples, 0.27%)</title><rect x="28.5582%" y="132" width="0.2737%" height="15" fill="rgb(231,145,46)" fg:x="197753" fg:w="1895"/><text x="28.8082%" y="142.50"></text></g><g><title>step_wait (gymnasium/vector/async_vector_env.py:322) (1,968 samples, 0.28%)</title><rect x="28.5577%" y="116" width="0.2842%" height="15" fill="rgb(251,118,11)" fg:x="197749" fg:w="1968"/><text x="28.8077%" y="126.50"></text></g><g><title>&lt;module&gt; (scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py:1113) (2,555 samples, 0.37%)</title><rect x="28.4963%" y="84" width="0.3690%" height="15" fill="rgb(217,147,25)" fg:x="197324" fg:w="2555"/><text x="28.7463%" y="94.50"></text></g><g><title>step (gymnasium/vector/vector_env.py:204) (2,134 samples, 0.31%)</title><rect x="28.5571%" y="100" width="0.3082%" height="15" fill="rgb(247,81,37)" fg:x="197745" fg:w="2134"/><text x="28.8071%" y="110.50"></text></g><g><title>forward (scripts/smooth_policy/agent.py:52) (1,135 samples, 0.16%)</title><rect x="28.9548%" y="196" width="0.1639%" height="15" fill="rgb(209,12,38)" fg:x="200499" fg:w="1135"/><text x="29.2048%" y="206.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (1,120 samples, 0.16%)</title><rect x="28.9570%" y="212" width="0.1617%" height="15" fill="rgb(227,1,9)" fg:x="200514" fg:w="1120"/><text x="29.2070%" y="222.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (1,102 samples, 0.16%)</title><rect x="28.9596%" y="228" width="0.1591%" height="15" fill="rgb(248,47,43)" fg:x="200532" fg:w="1102"/><text x="29.2096%" y="238.50"></text></g><g><title>forward (torch/nn/modules/container.py:219) (1,083 samples, 0.16%)</title><rect x="28.9623%" y="244" width="0.1564%" height="15" fill="rgb(221,10,30)" fg:x="200551" fg:w="1083"/><text x="29.2123%" y="254.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (1,019 samples, 0.15%)</title><rect x="28.9716%" y="260" width="0.1472%" height="15" fill="rgb(210,229,1)" fg:x="200615" fg:w="1019"/><text x="29.2216%" y="270.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (961 samples, 0.14%)</title><rect x="28.9799%" y="276" width="0.1388%" height="15" fill="rgb(222,148,37)" fg:x="200673" fg:w="961"/><text x="29.2299%" y="286.50"></text></g><g><title>forward (scripts/smooth_policy/agent.py:73) (1,248 samples, 0.18%)</title><rect x="28.9469%" y="148" width="0.1802%" height="15" fill="rgb(234,67,33)" fg:x="200444" fg:w="1248"/><text x="29.1969%" y="158.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (1,243 samples, 0.18%)</title><rect x="28.9476%" y="164" width="0.1795%" height="15" fill="rgb(247,98,35)" fg:x="200449" fg:w="1243"/><text x="29.1976%" y="174.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (1,236 samples, 0.18%)</title><rect x="28.9486%" y="180" width="0.1785%" height="15" fill="rgb(247,138,52)" fg:x="200456" fg:w="1236"/><text x="29.1986%" y="190.50"></text></g><g><title>&lt;module&gt; (scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py:1288) (1,287 samples, 0.19%)</title><rect x="28.9441%" y="84" width="0.1859%" height="15" fill="rgb(213,79,30)" fg:x="200425" fg:w="1287"/><text x="29.1941%" y="94.50"></text></g><g><title>get_value (scripts/smooth_policy/agent.py:135) (1,276 samples, 0.18%)</title><rect x="28.9457%" y="100" width="0.1843%" height="15" fill="rgb(246,177,23)" fg:x="200436" fg:w="1276"/><text x="29.1957%" y="110.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (1,274 samples, 0.18%)</title><rect x="28.9460%" y="116" width="0.1840%" height="15" fill="rgb(230,62,27)" fg:x="200438" fg:w="1274"/><text x="29.1960%" y="126.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (1,271 samples, 0.18%)</title><rect x="28.9464%" y="132" width="0.1835%" height="15" fill="rgb(216,154,8)" fg:x="200441" fg:w="1271"/><text x="29.1964%" y="142.50"></text></g><g><title>forward (torch/nn/modules/linear.py:117) (1,399 samples, 0.20%)</title><rect x="29.4119%" y="308" width="0.2020%" height="15" fill="rgb(244,35,45)" fg:x="203664" fg:w="1399"/><text x="29.6619%" y="318.50"></text></g><g><title>forward (torch/nn/modules/normalization.py:202) (1,163 samples, 0.17%)</title><rect x="29.6139%" y="308" width="0.1680%" height="15" fill="rgb(251,115,12)" fg:x="205063" fg:w="1163"/><text x="29.8639%" y="318.50"></text></g><g><title>layer_norm (torch/nn/functional.py:2576) (1,140 samples, 0.16%)</title><rect x="29.6172%" y="324" width="0.1646%" height="15" fill="rgb(240,54,50)" fg:x="205086" fg:w="1140"/><text x="29.8672%" y="334.50"></text></g><g><title>forward (scripts/smooth_policy/agent.py:52) (3,697 samples, 0.53%)</title><rect x="29.2636%" y="212" width="0.5339%" height="15" fill="rgb(233,84,52)" fg:x="202637" fg:w="3697"/><text x="29.5136%" y="222.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (3,683 samples, 0.53%)</title><rect x="29.2656%" y="228" width="0.5319%" height="15" fill="rgb(207,117,47)" fg:x="202651" fg:w="3683"/><text x="29.5156%" y="238.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (3,626 samples, 0.52%)</title><rect x="29.2738%" y="244" width="0.5236%" height="15" fill="rgb(249,43,39)" fg:x="202708" fg:w="3626"/><text x="29.5238%" y="254.50"></text></g><g><title>forward (torch/nn/modules/container.py:219) (3,578 samples, 0.52%)</title><rect x="29.2807%" y="260" width="0.5167%" height="15" fill="rgb(209,38,44)" fg:x="202756" fg:w="3578"/><text x="29.5307%" y="270.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (3,500 samples, 0.51%)</title><rect x="29.2920%" y="276" width="0.5054%" height="15" fill="rgb(236,212,23)" fg:x="202834" fg:w="3500"/><text x="29.5420%" y="286.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (3,285 samples, 0.47%)</title><rect x="29.3231%" y="292" width="0.4744%" height="15" fill="rgb(242,79,21)" fg:x="203049" fg:w="3285"/><text x="29.5731%" y="302.50"></text></g><g><title>get_action_mean_and_logstd (scripts/smooth_policy/agent.py:138) (4,105 samples, 0.59%)</title><rect x="29.2275%" y="116" width="0.5928%" height="15" fill="rgb(211,96,35)" fg:x="202387" fg:w="4105"/><text x="29.4775%" y="126.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (4,093 samples, 0.59%)</title><rect x="29.2292%" y="132" width="0.5911%" height="15" fill="rgb(253,215,40)" fg:x="202399" fg:w="4093"/><text x="29.4792%" y="142.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (4,083 samples, 0.59%)</title><rect x="29.2306%" y="148" width="0.5896%" height="15" fill="rgb(211,81,21)" fg:x="202409" fg:w="4083"/><text x="29.4806%" y="158.50"></text></g><g><title>forward (scripts/smooth_policy/agent.py:73) (4,074 samples, 0.59%)</title><rect x="29.2319%" y="164" width="0.5883%" height="15" fill="rgb(208,190,38)" fg:x="202418" fg:w="4074"/><text x="29.4819%" y="174.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (4,068 samples, 0.59%)</title><rect x="29.2328%" y="180" width="0.5875%" height="15" fill="rgb(235,213,38)" fg:x="202424" fg:w="4068"/><text x="29.4828%" y="190.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (4,054 samples, 0.59%)</title><rect x="29.2348%" y="196" width="0.5855%" height="15" fill="rgb(237,122,38)" fg:x="202438" fg:w="4054"/><text x="29.4848%" y="206.50"></text></g><g><title>get_action_and_value (scripts/smooth_policy/agent.py:159) (4,431 samples, 0.64%)</title><rect x="29.2270%" y="100" width="0.6399%" height="15" fill="rgb(244,218,35)" fg:x="202384" fg:w="4431"/><text x="29.4770%" y="110.50"></text></g><g><title>forward (torch/nn/modules/linear.py:117) (1,290 samples, 0.19%)</title><rect x="30.2408%" y="292" width="0.1863%" height="15" fill="rgb(240,68,47)" fg:x="209404" fg:w="1290"/><text x="30.4908%" y="302.50"></text></g><g><title>forward (torch/nn/modules/normalization.py:202) (1,186 samples, 0.17%)</title><rect x="30.4271%" y="292" width="0.1713%" height="15" fill="rgb(210,16,53)" fg:x="210694" fg:w="1186"/><text x="30.6771%" y="302.50"></text></g><g><title>layer_norm (torch/nn/functional.py:2576) (1,160 samples, 0.17%)</title><rect x="30.4309%" y="308" width="0.1675%" height="15" fill="rgb(235,124,12)" fg:x="210720" fg:w="1160"/><text x="30.6809%" y="318.50"></text></g><g><title>forward (torch/nn/modules/container.py:219) (3,467 samples, 0.50%)</title><rect x="30.1110%" y="244" width="0.5007%" height="15" fill="rgb(224,169,11)" fg:x="208505" fg:w="3467"/><text x="30.3610%" y="254.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (3,394 samples, 0.49%)</title><rect x="30.1215%" y="260" width="0.4901%" height="15" fill="rgb(250,166,2)" fg:x="208578" fg:w="3394"/><text x="30.3715%" y="270.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (3,184 samples, 0.46%)</title><rect x="30.1519%" y="276" width="0.4598%" height="15" fill="rgb(242,216,29)" fg:x="208788" fg:w="3184"/><text x="30.4019%" y="286.50"></text></g><g><title>forward (scripts/smooth_policy/agent.py:52) (3,631 samples, 0.52%)</title><rect x="30.0877%" y="196" width="0.5244%" height="15" fill="rgb(230,116,27)" fg:x="208344" fg:w="3631"/><text x="30.3377%" y="206.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (3,601 samples, 0.52%)</title><rect x="30.0921%" y="212" width="0.5200%" height="15" fill="rgb(228,99,48)" fg:x="208374" fg:w="3601"/><text x="30.3421%" y="222.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (3,531 samples, 0.51%)</title><rect x="30.1022%" y="228" width="0.5099%" height="15" fill="rgb(253,11,6)" fg:x="208444" fg:w="3531"/><text x="30.3522%" y="238.50"></text></g><g><title>forward (scripts/smooth_policy/agent.py:73) (3,978 samples, 0.57%)</title><rect x="30.0578%" y="148" width="0.5745%" height="15" fill="rgb(247,143,39)" fg:x="208137" fg:w="3978"/><text x="30.3078%" y="158.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (3,973 samples, 0.57%)</title><rect x="30.0586%" y="164" width="0.5738%" height="15" fill="rgb(236,97,10)" fg:x="208142" fg:w="3973"/><text x="30.3086%" y="174.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (3,946 samples, 0.57%)</title><rect x="30.0625%" y="180" width="0.5699%" height="15" fill="rgb(233,208,19)" fg:x="208169" fg:w="3946"/><text x="30.3125%" y="190.50"></text></g><g><title>&lt;module&gt; (scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py:1489) (10,106 samples, 1.46%)</title><rect x="29.1880%" y="84" width="1.4594%" height="15" fill="rgb(216,164,2)" fg:x="202114" fg:w="10106"/><text x="29.4380%" y="94.50"></text></g><g><title>get_action_and_value (scripts/smooth_policy/agent.py:176) (4,120 samples, 0.59%)</title><rect x="30.0525%" y="100" width="0.5950%" height="15" fill="rgb(220,129,5)" fg:x="208100" fg:w="4120"/><text x="30.3025%" y="110.50"></text></g><g><title>_wrapped_call_impl (torch/nn/modules/module.py:1553) (4,104 samples, 0.59%)</title><rect x="30.0548%" y="116" width="0.5927%" height="15" fill="rgb(242,17,10)" fg:x="208116" fg:w="4104"/><text x="30.3048%" y="126.50"></text></g><g><title>_call_impl (torch/nn/modules/module.py:1562) (4,094 samples, 0.59%)</title><rect x="30.0562%" y="132" width="0.5912%" height="15" fill="rgb(242,107,0)" fg:x="208126" fg:w="4094"/><text x="30.3062%" y="142.50"></text></g><g><title>_fn (torch/_dynamo/eval_frame.py:600) (752 samples, 0.11%)</title><rect x="30.9198%" y="116" width="0.1086%" height="15" fill="rgb(251,28,31)" fg:x="214106" fg:w="752"/><text x="31.1698%" y="126.50"></text></g><g><title>&lt;module&gt; (scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py:1542) (759 samples, 0.11%)</title><rect x="30.9190%" y="84" width="0.1096%" height="15" fill="rgb(233,223,10)" fg:x="214100" fg:w="759"/><text x="31.1690%" y="94.50"></text></g><g><title>inner (torch/_compile.py:31) (755 samples, 0.11%)</title><rect x="30.9196%" y="100" width="0.1090%" height="15" fill="rgb(215,21,27)" fg:x="214104" fg:w="755"/><text x="31.1696%" y="110.50"></text></g><g><title>_engine_run_backward (torch/autograd/graph.py:769) (13,366 samples, 1.93%)</title><rect x="31.0407%" y="132" width="1.9302%" height="15" fill="rgb(232,23,21)" fg:x="214943" fg:w="13366"/><text x="31.2907%" y="142.50">_..</text></g><g><title>&lt;module&gt; (scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py:1543) (13,451 samples, 1.94%)</title><rect x="31.0286%" y="84" width="1.9425%" height="15" fill="rgb(244,5,23)" fg:x="214859" fg:w="13451"/><text x="31.2786%" y="94.50">&lt;..</text></g><g><title>backward (torch/_tensor.py:521) (13,446 samples, 1.94%)</title><rect x="31.0293%" y="100" width="1.9418%" height="15" fill="rgb(226,81,46)" fg:x="214864" fg:w="13446"/><text x="31.2793%" y="110.50">b..</text></g><g><title>backward (torch/autograd/__init__.py:289) (13,372 samples, 1.93%)</title><rect x="31.0400%" y="116" width="1.9311%" height="15" fill="rgb(247,70,30)" fg:x="214938" fg:w="13372"/><text x="31.2900%" y="126.50">b..</text></g><g><title>parameters (torch/nn/modules/module.py:2255) (833 samples, 0.12%)</title><rect x="33.0793%" y="148" width="0.1203%" height="15" fill="rgb(212,68,19)" fg:x="229059" fg:w="833"/><text x="33.3293%" y="158.50"></text></g><g><title>named_parameters (torch/nn/modules/module.py:2288) (813 samples, 0.12%)</title><rect x="33.0821%" y="164" width="0.1174%" height="15" fill="rgb(240,187,13)" fg:x="229079" fg:w="813"/><text x="33.3321%" y="174.50"></text></g><g><title>clip_grad_norm_ (torch/nn/utils/clip_grad.py:53) (1,144 samples, 0.17%)</title><rect x="33.0354%" y="116" width="0.1652%" height="15" fill="rgb(223,113,26)" fg:x="228755" fg:w="1144"/><text x="33.2854%" y="126.50"></text></g><g><title>&lt;listcomp&gt; (torch/nn/utils/clip_grad.py:53) (1,144 samples, 0.17%)</title><rect x="33.0354%" y="132" width="0.1652%" height="15" fill="rgb(206,192,2)" fg:x="228755" fg:w="1144"/><text x="33.2854%" y="142.50"></text></g><g><title>clip_grad_norm_ (torch/nn/utils/clip_grad.py:68) (933 samples, 0.13%)</title><rect x="33.2176%" y="116" width="0.1347%" height="15" fill="rgb(241,108,4)" fg:x="230017" fg:w="933"/><text x="33.4676%" y="126.50"></text></g><g><title>clip_grad_norm_ (torch/nn/utils/clip_grad.py:74) (780 samples, 0.11%)</title><rect x="33.3523%" y="116" width="0.1126%" height="15" fill="rgb(247,173,49)" fg:x="230950" fg:w="780"/><text x="33.6023%" y="126.50"></text></g><g><title>&lt;module&gt; (scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py:1544) (3,807 samples, 0.55%)</title><rect x="32.9711%" y="84" width="0.5498%" height="15" fill="rgb(224,114,35)" fg:x="228310" fg:w="3807"/><text x="33.2211%" y="94.50"></text></g><g><title>_no_grad_wrapper (torch/nn/utils/clip_grad.py:21) (3,771 samples, 0.54%)</title><rect x="32.9763%" y="100" width="0.5446%" height="15" fill="rgb(245,159,27)" fg:x="228346" fg:w="3771"/><text x="33.2263%" y="110.50"></text></g><g><title>step (torch/optim/adam.py:216) (907 samples, 0.13%)</title><rect x="33.5628%" y="132" width="0.1310%" height="15" fill="rgb(245,172,44)" fg:x="232407" fg:w="907"/><text x="33.8128%" y="142.50"></text></g><g><title>_multi_tensor_adam (torch/optim/adam.py:602) (949 samples, 0.14%)</title><rect x="34.1925%" y="180" width="0.1370%" height="15" fill="rgb(236,23,11)" fg:x="236768" fg:w="949"/><text x="34.4425%" y="190.50"></text></g><g><title>adam (torch/optim/adam.py:766) (4,545 samples, 0.66%)</title><rect x="33.7587%" y="164" width="0.6564%" height="15" fill="rgb(205,117,38)" fg:x="233764" fg:w="4545"/><text x="34.0087%" y="174.50"></text></g><g><title>step (torch/optim/adam.py:226) (4,996 samples, 0.72%)</title><rect x="33.6937%" y="132" width="0.7215%" height="15" fill="rgb(237,72,25)" fg:x="233314" fg:w="4996"/><text x="33.9437%" y="142.50"></text></g><g><title>maybe_fallback (torch/optim/optimizer.py:161) (4,985 samples, 0.72%)</title><rect x="33.6953%" y="148" width="0.7199%" height="15" fill="rgb(244,70,9)" fg:x="233325" fg:w="4985"/><text x="33.9453%" y="158.50"></text></g><g><title>_use_grad (torch/optim/optimizer.py:89) (6,002 samples, 0.87%)</title><rect x="33.5490%" y="116" width="0.8668%" height="15" fill="rgb(217,125,39)" fg:x="232312" fg:w="6002"/><text x="33.7990%" y="126.50"></text></g><g><title>wrapper (torch/optim/optimizer.py:484) (6,034 samples, 0.87%)</title><rect x="33.5464%" y="100" width="0.8714%" height="15" fill="rgb(235,36,10)" fg:x="232294" fg:w="6034"/><text x="33.7964%" y="110.50"></text></g><g><title>&lt;module&gt; (scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py:1546) (6,218 samples, 0.90%)</title><rect x="33.5209%" y="84" width="0.8980%" height="15" fill="rgb(251,123,47)" fg:x="232117" fg:w="6218"/><text x="33.7709%" y="94.50"></text></g><g><title>get (queue.py:180) (50,136 samples, 7.24%)</title><rect x="34.7754%" y="148" width="7.2403%" height="15" fill="rgb(221,13,13)" fg:x="240804" fg:w="50136"/><text x="35.0254%" y="158.50">get (queue..</text></g><g><title>wait (threading.py:324) (50,135 samples, 7.24%)</title><rect x="34.7755%" y="164" width="7.2402%" height="15" fill="rgb(238,131,9)" fg:x="240805" fg:w="50135"/><text x="35.0255%" y="174.50">wait (thre..</text></g><g><title>_run (tensorboard/summary/writer/event_file_writer.py:269) (50,140 samples, 7.24%)</title><rect x="34.7751%" y="132" width="7.2409%" height="15" fill="rgb(211,50,8)" fg:x="240802" fg:w="50140"/><text x="35.0251%" y="142.50">_run (tens..</text></g><g><title>_bootstrap (threading.py:973) (50,195 samples, 7.25%)</title><rect x="34.7751%" y="84" width="7.2488%" height="15" fill="rgb(245,182,24)" fg:x="240802" fg:w="50195"/><text x="35.0251%" y="94.50">_bootstrap..</text></g><g><title>_bootstrap_inner (threading.py:1016) (50,195 samples, 7.25%)</title><rect x="34.7751%" y="100" width="7.2488%" height="15" fill="rgb(242,14,37)" fg:x="240802" fg:w="50195"/><text x="35.0251%" y="110.50">_bootstrap..</text></g><g><title>run (tensorboard/summary/writer/event_file_writer.py:244) (50,195 samples, 7.25%)</title><rect x="34.7751%" y="116" width="7.2488%" height="15" fill="rgb(246,228,12)" fg:x="240802" fg:w="50195"/><text x="35.0251%" y="126.50">run (tenso..</text></g><g><title>_recv_bytes (multiprocessing/connection.py:414) (49,754 samples, 7.19%)</title><rect x="42.0242%" y="260" width="7.1852%" height="15" fill="rgb(213,55,15)" fg:x="290999" fg:w="49754"/><text x="42.2742%" y="270.50">_recv_byte..</text></g><g><title>_recv (multiprocessing/connection.py:379) (49,753 samples, 7.19%)</title><rect x="42.0244%" y="276" width="7.1850%" height="15" fill="rgb(209,9,3)" fg:x="291000" fg:w="49753"/><text x="42.2744%" y="286.50">_recv (mul..</text></g><g><title>recv (multiprocessing/connection.py:250) (49,764 samples, 7.19%)</title><rect x="42.0242%" y="244" width="7.1866%" height="15" fill="rgb(230,59,30)" fg:x="290999" fg:w="49764"/><text x="42.2742%" y="254.50">recv (mult..</text></g><g><title>_worker_shared_memory (gymnasium/vector/async_vector_env.py:626) (49,786 samples, 7.19%)</title><rect x="42.0240%" y="228" width="7.1898%" height="15" fill="rgb(209,121,21)" fg:x="290997" fg:w="49786"/><text x="42.2740%" y="238.50">_worker_sh..</text></g><g><title>process 464730:&quot;.venv/bin/python scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py --args-file scripts/smooth_policy/amp_history/configs/ppo/eipo/eipo_target.yaml --device cuda:1 --log-parent-dir runs/profiling --run-name pyspy-test --disc-stationarity-mode target --disc-ema-tau 0.005 --eipo-alpha-lr 0.01 --eipo-alpha-init 1.0&quot; (50,198 samples, 7.25%)</title><rect x="42.0240%" y="84" width="7.2493%" height="15" fill="rgb(220,109,13)" fg:x="290997" fg:w="50198"/><text x="42.2740%" y="94.50">process 46..</text></g><g><title>&lt;module&gt; (scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py:659) (50,198 samples, 7.25%)</title><rect x="42.0240%" y="100" width="7.2493%" height="15" fill="rgb(232,18,1)" fg:x="290997" fg:w="50198"/><text x="42.2740%" y="110.50">&lt;module&gt; (..</text></g><g><title>__init__ (gymnasium/vector/async_vector_env.py:167) (50,198 samples, 7.25%)</title><rect x="42.0240%" y="116" width="7.2493%" height="15" fill="rgb(215,41,42)" fg:x="290997" fg:w="50198"/><text x="42.2740%" y="126.50">__init__ (..</text></g><g><title>start (multiprocessing/process.py:121) (50,198 samples, 7.25%)</title><rect x="42.0240%" y="132" width="7.2493%" height="15" fill="rgb(224,123,36)" fg:x="290997" fg:w="50198"/><text x="42.2740%" y="142.50">start (mul..</text></g><g><title>_Popen (multiprocessing/context.py:281) (50,198 samples, 7.25%)</title><rect x="42.0240%" y="148" width="7.2493%" height="15" fill="rgb(240,125,3)" fg:x="290997" fg:w="50198"/><text x="42.2740%" y="158.50">_Popen (mu..</text></g><g><title>__init__ (multiprocessing/popen_fork.py:19) (50,198 samples, 7.25%)</title><rect x="42.0240%" y="164" width="7.2493%" height="15" fill="rgb(205,98,50)" fg:x="290997" fg:w="50198"/><text x="42.2740%" y="174.50">__init__ (..</text></g><g><title>_launch (multiprocessing/popen_fork.py:71) (50,198 samples, 7.25%)</title><rect x="42.0240%" y="180" width="7.2493%" height="15" fill="rgb(205,185,37)" fg:x="290997" fg:w="50198"/><text x="42.2740%" y="190.50">_launch (m..</text></g><g><title>_bootstrap (multiprocessing/process.py:314) (50,198 samples, 7.25%)</title><rect x="42.0240%" y="196" width="7.2493%" height="15" fill="rgb(238,207,15)" fg:x="290997" fg:w="50198"/><text x="42.2740%" y="206.50">_bootstrap..</text></g><g><title>run (multiprocessing/process.py:108) (50,198 samples, 7.25%)</title><rect x="42.0240%" y="212" width="7.2493%" height="15" fill="rgb(213,199,42)" fg:x="290997" fg:w="50198"/><text x="42.2740%" y="222.50">run (multi..</text></g><g><title>_recv_bytes (multiprocessing/connection.py:414) (49,739 samples, 7.18%)</title><rect x="49.2737%" y="260" width="7.1830%" height="15" fill="rgb(235,201,11)" fg:x="341198" fg:w="49739"/><text x="49.5237%" y="270.50">_recv_byte..</text></g><g><title>_recv (multiprocessing/connection.py:379) (49,739 samples, 7.18%)</title><rect x="49.2737%" y="276" width="7.1830%" height="15" fill="rgb(207,46,11)" fg:x="341198" fg:w="49739"/><text x="49.5237%" y="286.50">_recv (mul..</text></g><g><title>recv (multiprocessing/connection.py:250) (49,750 samples, 7.18%)</title><rect x="49.2737%" y="244" width="7.1846%" height="15" fill="rgb(241,35,35)" fg:x="341198" fg:w="49750"/><text x="49.5237%" y="254.50">recv (mult..</text></g><g><title>_worker_shared_memory (gymnasium/vector/async_vector_env.py:626) (49,780 samples, 7.19%)</title><rect x="49.2732%" y="228" width="7.1889%" height="15" fill="rgb(243,32,47)" fg:x="341195" fg:w="49780"/><text x="49.5232%" y="238.50">_worker_sh..</text></g><g><title>process 464731:&quot;.venv/bin/python scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py --args-file scripts/smooth_policy/amp_history/configs/ppo/eipo/eipo_target.yaml --device cuda:1 --log-parent-dir runs/profiling --run-name pyspy-test --disc-stationarity-mode target --disc-ema-tau 0.005 --eipo-alpha-lr 0.01 --eipo-alpha-init 1.0&quot; (50,181 samples, 7.25%)</title><rect x="49.2732%" y="84" width="7.2468%" height="15" fill="rgb(247,202,23)" fg:x="341195" fg:w="50181"/><text x="49.5232%" y="94.50">process 46..</text></g><g><title>&lt;module&gt; (scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py:659) (50,181 samples, 7.25%)</title><rect x="49.2732%" y="100" width="7.2468%" height="15" fill="rgb(219,102,11)" fg:x="341195" fg:w="50181"/><text x="49.5232%" y="110.50">&lt;module&gt; (..</text></g><g><title>__init__ (gymnasium/vector/async_vector_env.py:167) (50,181 samples, 7.25%)</title><rect x="49.2732%" y="116" width="7.2468%" height="15" fill="rgb(243,110,44)" fg:x="341195" fg:w="50181"/><text x="49.5232%" y="126.50">__init__ (..</text></g><g><title>start (multiprocessing/process.py:121) (50,181 samples, 7.25%)</title><rect x="49.2732%" y="132" width="7.2468%" height="15" fill="rgb(222,74,54)" fg:x="341195" fg:w="50181"/><text x="49.5232%" y="142.50">start (mul..</text></g><g><title>_Popen (multiprocessing/context.py:281) (50,181 samples, 7.25%)</title><rect x="49.2732%" y="148" width="7.2468%" height="15" fill="rgb(216,99,12)" fg:x="341195" fg:w="50181"/><text x="49.5232%" y="158.50">_Popen (mu..</text></g><g><title>__init__ (multiprocessing/popen_fork.py:19) (50,181 samples, 7.25%)</title><rect x="49.2732%" y="164" width="7.2468%" height="15" fill="rgb(226,22,26)" fg:x="341195" fg:w="50181"/><text x="49.5232%" y="174.50">__init__ (..</text></g><g><title>_launch (multiprocessing/popen_fork.py:71) (50,181 samples, 7.25%)</title><rect x="49.2732%" y="180" width="7.2468%" height="15" fill="rgb(217,163,10)" fg:x="341195" fg:w="50181"/><text x="49.5232%" y="190.50">_launch (m..</text></g><g><title>_bootstrap (multiprocessing/process.py:314) (50,181 samples, 7.25%)</title><rect x="49.2732%" y="196" width="7.2468%" height="15" fill="rgb(213,25,53)" fg:x="341195" fg:w="50181"/><text x="49.5232%" y="206.50">_bootstrap..</text></g><g><title>run (multiprocessing/process.py:108) (50,181 samples, 7.25%)</title><rect x="49.2732%" y="212" width="7.2468%" height="15" fill="rgb(252,105,26)" fg:x="341195" fg:w="50181"/><text x="49.5232%" y="222.50">run (multi..</text></g><g><title>_recv (multiprocessing/connection.py:379) (49,728 samples, 7.18%)</title><rect x="56.5205%" y="276" width="7.1814%" height="15" fill="rgb(220,39,43)" fg:x="391379" fg:w="49728"/><text x="56.7705%" y="286.50">_recv (mul..</text></g><g><title>_recv_bytes (multiprocessing/connection.py:414) (49,730 samples, 7.18%)</title><rect x="56.5204%" y="260" width="7.1817%" height="15" fill="rgb(229,68,48)" fg:x="391378" fg:w="49730"/><text x="56.7704%" y="270.50">_recv_byte..</text></g><g><title>recv (multiprocessing/connection.py:250) (49,743 samples, 7.18%)</title><rect x="56.5202%" y="244" width="7.1836%" height="15" fill="rgb(252,8,32)" fg:x="391377" fg:w="49743"/><text x="56.7702%" y="254.50">recv (mult..</text></g><g><title>_worker_shared_memory (gymnasium/vector/async_vector_env.py:626) (49,770 samples, 7.19%)</title><rect x="56.5201%" y="228" width="7.1875%" height="15" fill="rgb(223,20,43)" fg:x="391376" fg:w="49770"/><text x="56.7701%" y="238.50">_worker_sh..</text></g><g><title>process 464733:&quot;.venv/bin/python scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py --args-file scripts/smooth_policy/amp_history/configs/ppo/eipo/eipo_target.yaml --device cuda:1 --log-parent-dir runs/profiling --run-name pyspy-test --disc-stationarity-mode target --disc-ema-tau 0.005 --eipo-alpha-lr 0.01 --eipo-alpha-init 1.0&quot; (50,182 samples, 7.25%)</title><rect x="56.5201%" y="84" width="7.2470%" height="15" fill="rgb(229,81,49)" fg:x="391376" fg:w="50182"/><text x="56.7701%" y="94.50">process 46..</text></g><g><title>&lt;module&gt; (scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py:659) (50,182 samples, 7.25%)</title><rect x="56.5201%" y="100" width="7.2470%" height="15" fill="rgb(236,28,36)" fg:x="391376" fg:w="50182"/><text x="56.7701%" y="110.50">&lt;module&gt; (..</text></g><g><title>__init__ (gymnasium/vector/async_vector_env.py:167) (50,182 samples, 7.25%)</title><rect x="56.5201%" y="116" width="7.2470%" height="15" fill="rgb(249,185,26)" fg:x="391376" fg:w="50182"/><text x="56.7701%" y="126.50">__init__ (..</text></g><g><title>start (multiprocessing/process.py:121) (50,182 samples, 7.25%)</title><rect x="56.5201%" y="132" width="7.2470%" height="15" fill="rgb(249,174,33)" fg:x="391376" fg:w="50182"/><text x="56.7701%" y="142.50">start (mul..</text></g><g><title>_Popen (multiprocessing/context.py:281) (50,182 samples, 7.25%)</title><rect x="56.5201%" y="148" width="7.2470%" height="15" fill="rgb(233,201,37)" fg:x="391376" fg:w="50182"/><text x="56.7701%" y="158.50">_Popen (mu..</text></g><g><title>__init__ (multiprocessing/popen_fork.py:19) (50,182 samples, 7.25%)</title><rect x="56.5201%" y="164" width="7.2470%" height="15" fill="rgb(221,78,26)" fg:x="391376" fg:w="50182"/><text x="56.7701%" y="174.50">__init__ (..</text></g><g><title>_launch (multiprocessing/popen_fork.py:71) (50,182 samples, 7.25%)</title><rect x="56.5201%" y="180" width="7.2470%" height="15" fill="rgb(250,127,30)" fg:x="391376" fg:w="50182"/><text x="56.7701%" y="190.50">_launch (m..</text></g><g><title>_bootstrap (multiprocessing/process.py:314) (50,182 samples, 7.25%)</title><rect x="56.5201%" y="196" width="7.2470%" height="15" fill="rgb(230,49,44)" fg:x="391376" fg:w="50182"/><text x="56.7701%" y="206.50">_bootstrap..</text></g><g><title>run (multiprocessing/process.py:108) (50,182 samples, 7.25%)</title><rect x="56.5201%" y="212" width="7.2470%" height="15" fill="rgb(229,67,23)" fg:x="391376" fg:w="50182"/><text x="56.7701%" y="222.50">run (multi..</text></g><g><title>_recv (multiprocessing/connection.py:379) (49,700 samples, 7.18%)</title><rect x="63.7676%" y="276" width="7.1774%" height="15" fill="rgb(249,83,47)" fg:x="441562" fg:w="49700"/><text x="64.0176%" y="286.50">_recv (mul..</text></g><g><title>_recv_bytes (multiprocessing/connection.py:414) (49,702 samples, 7.18%)</title><rect x="63.7675%" y="260" width="7.1777%" height="15" fill="rgb(215,43,3)" fg:x="441561" fg:w="49702"/><text x="64.0175%" y="270.50">_recv_byte..</text></g><g><title>recv (multiprocessing/connection.py:250) (49,715 samples, 7.18%)</title><rect x="63.7673%" y="244" width="7.1795%" height="15" fill="rgb(238,154,13)" fg:x="441560" fg:w="49715"/><text x="64.0173%" y="254.50">recv (mult..</text></g><g><title>_worker_shared_memory (gymnasium/vector/async_vector_env.py:626) (49,745 samples, 7.18%)</title><rect x="63.7672%" y="228" width="7.1839%" height="15" fill="rgb(219,56,2)" fg:x="441559" fg:w="49745"/><text x="64.0172%" y="238.50">_worker_sh..</text></g><g><title>process 464734:&quot;.venv/bin/python scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py --args-file scripts/smooth_policy/amp_history/configs/ppo/eipo/eipo_target.yaml --device cuda:1 --log-parent-dir runs/profiling --run-name pyspy-test --disc-stationarity-mode target --disc-ema-tau 0.005 --eipo-alpha-lr 0.01 --eipo-alpha-init 1.0&quot; (50,181 samples, 7.25%)</title><rect x="63.7670%" y="84" width="7.2468%" height="15" fill="rgb(233,0,4)" fg:x="441558" fg:w="50181"/><text x="64.0170%" y="94.50">process 46..</text></g><g><title>&lt;module&gt; (scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py:659) (50,181 samples, 7.25%)</title><rect x="63.7670%" y="100" width="7.2468%" height="15" fill="rgb(235,30,7)" fg:x="441558" fg:w="50181"/><text x="64.0170%" y="110.50">&lt;module&gt; (..</text></g><g><title>__init__ (gymnasium/vector/async_vector_env.py:167) (50,181 samples, 7.25%)</title><rect x="63.7670%" y="116" width="7.2468%" height="15" fill="rgb(250,79,13)" fg:x="441558" fg:w="50181"/><text x="64.0170%" y="126.50">__init__ (..</text></g><g><title>start (multiprocessing/process.py:121) (50,181 samples, 7.25%)</title><rect x="63.7670%" y="132" width="7.2468%" height="15" fill="rgb(211,146,34)" fg:x="441558" fg:w="50181"/><text x="64.0170%" y="142.50">start (mul..</text></g><g><title>_Popen (multiprocessing/context.py:281) (50,181 samples, 7.25%)</title><rect x="63.7670%" y="148" width="7.2468%" height="15" fill="rgb(228,22,38)" fg:x="441558" fg:w="50181"/><text x="64.0170%" y="158.50">_Popen (mu..</text></g><g><title>__init__ (multiprocessing/popen_fork.py:19) (50,181 samples, 7.25%)</title><rect x="63.7670%" y="164" width="7.2468%" height="15" fill="rgb(235,168,5)" fg:x="441558" fg:w="50181"/><text x="64.0170%" y="174.50">__init__ (..</text></g><g><title>_launch (multiprocessing/popen_fork.py:71) (50,181 samples, 7.25%)</title><rect x="63.7670%" y="180" width="7.2468%" height="15" fill="rgb(221,155,16)" fg:x="441558" fg:w="50181"/><text x="64.0170%" y="190.50">_launch (m..</text></g><g><title>_bootstrap (multiprocessing/process.py:314) (50,181 samples, 7.25%)</title><rect x="63.7670%" y="196" width="7.2468%" height="15" fill="rgb(215,215,53)" fg:x="441558" fg:w="50181"/><text x="64.0170%" y="206.50">_bootstrap..</text></g><g><title>run (multiprocessing/process.py:108) (50,181 samples, 7.25%)</title><rect x="63.7670%" y="212" width="7.2468%" height="15" fill="rgb(223,4,10)" fg:x="441558" fg:w="50181"/><text x="64.0170%" y="222.50">run (multi..</text></g><g><title>_recv (multiprocessing/connection.py:379) (49,705 samples, 7.18%)</title><rect x="71.0144%" y="276" width="7.1781%" height="15" fill="rgb(234,103,6)" fg:x="491743" fg:w="49705"/><text x="71.2644%" y="286.50">_recv (mul..</text></g><g><title>_recv_bytes (multiprocessing/connection.py:414) (49,707 samples, 7.18%)</title><rect x="71.0143%" y="260" width="7.1784%" height="15" fill="rgb(227,97,0)" fg:x="491742" fg:w="49707"/><text x="71.2643%" y="270.50">_recv_byte..</text></g><g><title>recv (multiprocessing/connection.py:250) (49,713 samples, 7.18%)</title><rect x="71.0143%" y="244" width="7.1792%" height="15" fill="rgb(234,150,53)" fg:x="491742" fg:w="49713"/><text x="71.2643%" y="254.50">recv (mult..</text></g><g><title>_worker_shared_memory (gymnasium/vector/async_vector_env.py:626) (49,742 samples, 7.18%)</title><rect x="71.0139%" y="228" width="7.1834%" height="15" fill="rgb(228,201,54)" fg:x="491739" fg:w="49742"/><text x="71.2639%" y="238.50">_worker_sh..</text></g><g><title>process 464735:&quot;.venv/bin/python scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py --args-file scripts/smooth_policy/amp_history/configs/ppo/eipo/eipo_target.yaml --device cuda:1 --log-parent-dir runs/profiling --run-name pyspy-test --disc-stationarity-mode target --disc-ema-tau 0.005 --eipo-alpha-lr 0.01 --eipo-alpha-init 1.0&quot; (50,179 samples, 7.25%)</title><rect x="71.0139%" y="84" width="7.2465%" height="15" fill="rgb(222,22,37)" fg:x="491739" fg:w="50179"/><text x="71.2639%" y="94.50">process 46..</text></g><g><title>&lt;module&gt; (scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py:659) (50,179 samples, 7.25%)</title><rect x="71.0139%" y="100" width="7.2465%" height="15" fill="rgb(237,53,32)" fg:x="491739" fg:w="50179"/><text x="71.2639%" y="110.50">&lt;module&gt; (..</text></g><g><title>__init__ (gymnasium/vector/async_vector_env.py:167) (50,179 samples, 7.25%)</title><rect x="71.0139%" y="116" width="7.2465%" height="15" fill="rgb(233,25,53)" fg:x="491739" fg:w="50179"/><text x="71.2639%" y="126.50">__init__ (..</text></g><g><title>start (multiprocessing/process.py:121) (50,179 samples, 7.25%)</title><rect x="71.0139%" y="132" width="7.2465%" height="15" fill="rgb(210,40,34)" fg:x="491739" fg:w="50179"/><text x="71.2639%" y="142.50">start (mul..</text></g><g><title>_Popen (multiprocessing/context.py:281) (50,179 samples, 7.25%)</title><rect x="71.0139%" y="148" width="7.2465%" height="15" fill="rgb(241,220,44)" fg:x="491739" fg:w="50179"/><text x="71.2639%" y="158.50">_Popen (mu..</text></g><g><title>__init__ (multiprocessing/popen_fork.py:19) (50,179 samples, 7.25%)</title><rect x="71.0139%" y="164" width="7.2465%" height="15" fill="rgb(235,28,35)" fg:x="491739" fg:w="50179"/><text x="71.2639%" y="174.50">__init__ (..</text></g><g><title>_launch (multiprocessing/popen_fork.py:71) (50,179 samples, 7.25%)</title><rect x="71.0139%" y="180" width="7.2465%" height="15" fill="rgb(210,56,17)" fg:x="491739" fg:w="50179"/><text x="71.2639%" y="190.50">_launch (m..</text></g><g><title>_bootstrap (multiprocessing/process.py:314) (50,179 samples, 7.25%)</title><rect x="71.0139%" y="196" width="7.2465%" height="15" fill="rgb(224,130,29)" fg:x="491739" fg:w="50179"/><text x="71.2639%" y="206.50">_bootstrap..</text></g><g><title>run (multiprocessing/process.py:108) (50,179 samples, 7.25%)</title><rect x="71.0139%" y="212" width="7.2465%" height="15" fill="rgb(235,212,8)" fg:x="491739" fg:w="50179"/><text x="71.2639%" y="222.50">run (multi..</text></g><g><title>_recv (multiprocessing/connection.py:379) (49,702 samples, 7.18%)</title><rect x="78.2605%" y="276" width="7.1777%" height="15" fill="rgb(223,33,50)" fg:x="541919" fg:w="49702"/><text x="78.5105%" y="286.50">_recv (mul..</text></g><g><title>_recv_bytes (multiprocessing/connection.py:414) (49,705 samples, 7.18%)</title><rect x="78.2605%" y="260" width="7.1781%" height="15" fill="rgb(219,149,13)" fg:x="541919" fg:w="49705"/><text x="78.5105%" y="270.50">_recv_byte..</text></g><g><title>recv (multiprocessing/connection.py:250) (49,715 samples, 7.18%)</title><rect x="78.2605%" y="244" width="7.1795%" height="15" fill="rgb(250,156,29)" fg:x="541919" fg:w="49715"/><text x="78.5105%" y="254.50">recv (mult..</text></g><g><title>_worker_shared_memory (gymnasium/vector/async_vector_env.py:626) (49,734 samples, 7.18%)</title><rect x="78.2604%" y="228" width="7.1823%" height="15" fill="rgb(216,193,19)" fg:x="541918" fg:w="49734"/><text x="78.5104%" y="238.50">_worker_sh..</text></g><g><title>process 464736:&quot;.venv/bin/python scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py --args-file scripts/smooth_policy/amp_history/configs/ppo/eipo/eipo_target.yaml --device cuda:1 --log-parent-dir runs/profiling --run-name pyspy-test --disc-stationarity-mode target --disc-ema-tau 0.005 --eipo-alpha-lr 0.01 --eipo-alpha-init 1.0&quot; (50,179 samples, 7.25%)</title><rect x="78.2604%" y="84" width="7.2465%" height="15" fill="rgb(216,135,14)" fg:x="541918" fg:w="50179"/><text x="78.5104%" y="94.50">process 46..</text></g><g><title>&lt;module&gt; (scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py:659) (50,179 samples, 7.25%)</title><rect x="78.2604%" y="100" width="7.2465%" height="15" fill="rgb(241,47,5)" fg:x="541918" fg:w="50179"/><text x="78.5104%" y="110.50">&lt;module&gt; (..</text></g><g><title>__init__ (gymnasium/vector/async_vector_env.py:167) (50,179 samples, 7.25%)</title><rect x="78.2604%" y="116" width="7.2465%" height="15" fill="rgb(233,42,35)" fg:x="541918" fg:w="50179"/><text x="78.5104%" y="126.50">__init__ (..</text></g><g><title>start (multiprocessing/process.py:121) (50,179 samples, 7.25%)</title><rect x="78.2604%" y="132" width="7.2465%" height="15" fill="rgb(231,13,6)" fg:x="541918" fg:w="50179"/><text x="78.5104%" y="142.50">start (mul..</text></g><g><title>_Popen (multiprocessing/context.py:281) (50,179 samples, 7.25%)</title><rect x="78.2604%" y="148" width="7.2465%" height="15" fill="rgb(207,181,40)" fg:x="541918" fg:w="50179"/><text x="78.5104%" y="158.50">_Popen (mu..</text></g><g><title>__init__ (multiprocessing/popen_fork.py:19) (50,179 samples, 7.25%)</title><rect x="78.2604%" y="164" width="7.2465%" height="15" fill="rgb(254,173,49)" fg:x="541918" fg:w="50179"/><text x="78.5104%" y="174.50">__init__ (..</text></g><g><title>_launch (multiprocessing/popen_fork.py:71) (50,179 samples, 7.25%)</title><rect x="78.2604%" y="180" width="7.2465%" height="15" fill="rgb(221,1,38)" fg:x="541918" fg:w="50179"/><text x="78.5104%" y="190.50">_launch (m..</text></g><g><title>_bootstrap (multiprocessing/process.py:314) (50,179 samples, 7.25%)</title><rect x="78.2604%" y="196" width="7.2465%" height="15" fill="rgb(206,124,46)" fg:x="541918" fg:w="50179"/><text x="78.5104%" y="206.50">_bootstrap..</text></g><g><title>run (multiprocessing/process.py:108) (50,179 samples, 7.25%)</title><rect x="78.2604%" y="212" width="7.2465%" height="15" fill="rgb(249,21,11)" fg:x="541918" fg:w="50179"/><text x="78.5104%" y="222.50">run (multi..</text></g><g><title>_recv (multiprocessing/connection.py:379) (49,723 samples, 7.18%)</title><rect x="85.5072%" y="276" width="7.1807%" height="15" fill="rgb(222,201,40)" fg:x="592099" fg:w="49723"/><text x="85.7572%" y="286.50">_recv (mul..</text></g><g><title>_recv_bytes (multiprocessing/connection.py:414) (49,726 samples, 7.18%)</title><rect x="85.5071%" y="260" width="7.1811%" height="15" fill="rgb(235,61,29)" fg:x="592098" fg:w="49726"/><text x="85.7571%" y="270.50">_recv_byte..</text></g><g><title>recv (multiprocessing/connection.py:250) (49,731 samples, 7.18%)</title><rect x="85.5071%" y="244" width="7.1818%" height="15" fill="rgb(219,207,3)" fg:x="592098" fg:w="49731"/><text x="85.7571%" y="254.50">recv (mult..</text></g><g><title>_worker_shared_memory (gymnasium/vector/async_vector_env.py:626) (49,762 samples, 7.19%)</title><rect x="85.5069%" y="228" width="7.1863%" height="15" fill="rgb(222,56,46)" fg:x="592097" fg:w="49762"/><text x="85.7569%" y="238.50">_worker_sh..</text></g><g><title>process 464737:&quot;.venv/bin/python scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py --args-file scripts/smooth_policy/amp_history/configs/ppo/eipo/eipo_target.yaml --device cuda:1 --log-parent-dir runs/profiling --run-name pyspy-test --disc-stationarity-mode target --disc-ema-tau 0.005 --eipo-alpha-lr 0.01 --eipo-alpha-init 1.0&quot; (50,178 samples, 7.25%)</title><rect x="85.5069%" y="84" width="7.2464%" height="15" fill="rgb(239,76,54)" fg:x="592097" fg:w="50178"/><text x="85.7569%" y="94.50">process 46..</text></g><g><title>&lt;module&gt; (scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py:659) (50,178 samples, 7.25%)</title><rect x="85.5069%" y="100" width="7.2464%" height="15" fill="rgb(231,124,27)" fg:x="592097" fg:w="50178"/><text x="85.7569%" y="110.50">&lt;module&gt; (..</text></g><g><title>__init__ (gymnasium/vector/async_vector_env.py:167) (50,178 samples, 7.25%)</title><rect x="85.5069%" y="116" width="7.2464%" height="15" fill="rgb(249,195,6)" fg:x="592097" fg:w="50178"/><text x="85.7569%" y="126.50">__init__ (..</text></g><g><title>start (multiprocessing/process.py:121) (50,178 samples, 7.25%)</title><rect x="85.5069%" y="132" width="7.2464%" height="15" fill="rgb(237,174,47)" fg:x="592097" fg:w="50178"/><text x="85.7569%" y="142.50">start (mul..</text></g><g><title>_Popen (multiprocessing/context.py:281) (50,178 samples, 7.25%)</title><rect x="85.5069%" y="148" width="7.2464%" height="15" fill="rgb(206,201,31)" fg:x="592097" fg:w="50178"/><text x="85.7569%" y="158.50">_Popen (mu..</text></g><g><title>__init__ (multiprocessing/popen_fork.py:19) (50,178 samples, 7.25%)</title><rect x="85.5069%" y="164" width="7.2464%" height="15" fill="rgb(231,57,52)" fg:x="592097" fg:w="50178"/><text x="85.7569%" y="174.50">__init__ (..</text></g><g><title>_launch (multiprocessing/popen_fork.py:71) (50,178 samples, 7.25%)</title><rect x="85.5069%" y="180" width="7.2464%" height="15" fill="rgb(248,177,22)" fg:x="592097" fg:w="50178"/><text x="85.7569%" y="190.50">_launch (m..</text></g><g><title>_bootstrap (multiprocessing/process.py:314) (50,178 samples, 7.25%)</title><rect x="85.5069%" y="196" width="7.2464%" height="15" fill="rgb(215,211,37)" fg:x="592097" fg:w="50178"/><text x="85.7569%" y="206.50">_bootstrap..</text></g><g><title>run (multiprocessing/process.py:108) (50,178 samples, 7.25%)</title><rect x="85.5069%" y="212" width="7.2464%" height="15" fill="rgb(241,128,51)" fg:x="592097" fg:w="50178"/><text x="85.7569%" y="222.50">run (multi..</text></g><g><title>_recv (multiprocessing/connection.py:379) (49,717 samples, 7.18%)</title><rect x="92.7536%" y="276" width="7.1798%" height="15" fill="rgb(227,165,31)" fg:x="642277" fg:w="49717"/><text x="93.0036%" y="286.50">_recv (mul..</text></g><g><title>_recv_bytes (multiprocessing/connection.py:414) (49,719 samples, 7.18%)</title><rect x="92.7536%" y="260" width="7.1801%" height="15" fill="rgb(228,167,24)" fg:x="642277" fg:w="49719"/><text x="93.0036%" y="270.50">_recv_byte..</text></g><g><title>recv (multiprocessing/connection.py:250) (49,728 samples, 7.18%)</title><rect x="92.7535%" y="244" width="7.1814%" height="15" fill="rgb(228,143,12)" fg:x="642276" fg:w="49728"/><text x="93.0035%" y="254.50">recv (mult..</text></g><g><title>_worker_shared_memory (gymnasium/vector/async_vector_env.py:626) (49,756 samples, 7.19%)</title><rect x="92.7533%" y="228" width="7.1854%" height="15" fill="rgb(249,149,8)" fg:x="642275" fg:w="49756"/><text x="93.0033%" y="238.50">_worker_sh..</text></g><g><title>all (692,455 samples, 100%)</title><rect x="0.0000%" y="52" width="100.0000%" height="15" fill="rgb(243,35,44)" fg:x="0" fg:w="692455"/><text x="0.2500%" y="62.50"></text></g><g><title>process 464468:&quot;.venv/bin/python scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py --args-file scripts/smooth_policy/amp_history/configs/ppo/eipo/eipo_target.yaml --device cuda:1 --log-parent-dir runs/profiling --run-name pyspy-test --disc-stationarity-mode target --disc-ema-tau 0.005 --eipo-alpha-lr 0.01 --eipo-alpha-init 1.0&quot; (692,455 samples, 100.00%)</title><rect x="0.0000%" y="68" width="100.0000%" height="15" fill="rgb(246,89,9)" fg:x="0" fg:w="692455"/><text x="0.2500%" y="78.50">process 464468:&quot;.venv/bin/python scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py --args-file scripts/smooth_policy/amp_history/configs/ppo/eipo/..</text></g><g><title>process 464738:&quot;.venv/bin/python scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py --args-file scripts/smooth_policy/amp_history/configs/ppo/eipo/eipo_target.yaml --device cuda:1 --log-parent-dir runs/profiling --run-name pyspy-test --disc-stationarity-mode target --disc-ema-tau 0.005 --eipo-alpha-lr 0.01 --eipo-alpha-init 1.0&quot; (50,180 samples, 7.25%)</title><rect x="92.7533%" y="84" width="7.2467%" height="15" fill="rgb(233,213,13)" fg:x="642275" fg:w="50180"/><text x="93.0033%" y="94.50">process 46..</text></g><g><title>&lt;module&gt; (scripts/smooth_policy/amp_history/amp_training/ppo/train_lsgan_eipo.py:659) (50,180 samples, 7.25%)</title><rect x="92.7533%" y="100" width="7.2467%" height="15" fill="rgb(233,141,41)" fg:x="642275" fg:w="50180"/><text x="93.0033%" y="110.50">&lt;module&gt; (..</text></g><g><title>__init__ (gymnasium/vector/async_vector_env.py:167) (50,180 samples, 7.25%)</title><rect x="92.7533%" y="116" width="7.2467%" height="15" fill="rgb(239,167,4)" fg:x="642275" fg:w="50180"/><text x="93.0033%" y="126.50">__init__ (..</text></g><g><title>start (multiprocessing/process.py:121) (50,180 samples, 7.25%)</title><rect x="92.7533%" y="132" width="7.2467%" height="15" fill="rgb(209,217,16)" fg:x="642275" fg:w="50180"/><text x="93.0033%" y="142.50">start (mul..</text></g><g><title>_Popen (multiprocessing/context.py:281) (50,180 samples, 7.25%)</title><rect x="92.7533%" y="148" width="7.2467%" height="15" fill="rgb(219,88,35)" fg:x="642275" fg:w="50180"/><text x="93.0033%" y="158.50">_Popen (mu..</text></g><g><title>__init__ (multiprocessing/popen_fork.py:19) (50,180 samples, 7.25%)</title><rect x="92.7533%" y="164" width="7.2467%" height="15" fill="rgb(220,193,23)" fg:x="642275" fg:w="50180"/><text x="93.0033%" y="174.50">__init__ (..</text></g><g><title>_launch (multiprocessing/popen_fork.py:71) (50,180 samples, 7.25%)</title><rect x="92.7533%" y="180" width="7.2467%" height="15" fill="rgb(230,90,52)" fg:x="642275" fg:w="50180"/><text x="93.0033%" y="190.50">_launch (m..</text></g><g><title>_bootstrap (multiprocessing/process.py:314) (50,180 samples, 7.25%)</title><rect x="92.7533%" y="196" width="7.2467%" height="15" fill="rgb(252,106,19)" fg:x="642275" fg:w="50180"/><text x="93.0033%" y="206.50">_bootstrap..</text></g><g><title>run (multiprocessing/process.py:108) (50,180 samples, 7.25%)</title><rect x="92.7533%" y="212" width="7.2467%" height="15" fill="rgb(206,74,20)" fg:x="642275" fg:w="50180"/><text x="93.0033%" y="222.50">run (multi..</text></g></svg></svg>
