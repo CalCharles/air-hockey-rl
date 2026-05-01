@@ -955,20 +955,43 @@ if __name__ == "__main__":
                 actor_target.load_state_dict(actor.state_dict())
             # Backwards-compat: legacy ckpts have only qf1/qf2 keys. Newer
             # ckpts (num_critics>2) add qf3, qf4, ... and corresponding _target.
+            # When resuming with a LARGER ensemble than the ckpt (e.g., fine-tuning
+            # a 2-critic source into a 5-critic ensemble), load what's available
+            # and leave the extra critics at their fresh init.
             n_in_ckpt = sum(
                 1
                 for k in resume_checkpoint
                 if k.startswith("qf") and not k.endswith("_target") and k[2:].isdigit()
             )
-            if n_in_ckpt != args.num_critics:
+            if n_in_ckpt > args.num_critics:
                 raise ValueError(
                     f"Resume mismatch: checkpoint has {n_in_ckpt} critics but "
-                    f"args.num_critics={args.num_critics}. Either set num_critics to match "
-                    f"the checkpoint, or start a fresh run."
+                    f"args.num_critics={args.num_critics} is smaller. "
+                    "Cannot drop critics from an ensemble checkpoint."
                 )
-            for i, (q, qt) in enumerate(zip(qfs, qfs_target), start=1):
-                q.load_state_dict(resume_checkpoint[f"qf{i}"])
-                qt.load_state_dict(resume_checkpoint[f"qf{i}_target"])
+            n_to_load = min(n_in_ckpt, args.num_critics)
+            for i in range(1, n_to_load + 1):
+                qfs[i - 1].load_state_dict(resume_checkpoint[f"qf{i}"])
+                qfs_target[i - 1].load_state_dict(resume_checkpoint[f"qf{i}_target"])
+            if n_in_ckpt < args.num_critics:
+                # Critical: when expanding from a smaller ensemble (e.g., 2-critic
+                # source -> 5-critic ensemble), do NOT leave qf{n+1}..qf{N} at
+                # fresh init. The min-over-critics target would then be dominated
+                # by the untrained fresh critics (Q ~ 0), collapsing the entire
+                # Q estimate and crashing the actor. Instead, clone qf1's loaded
+                # weights into all extra slots — diversity will emerge through
+                # subsequent independent gradient updates.
+                src_state = qfs[0].state_dict()
+                src_target_state = qfs_target[0].state_dict()
+                for i in range(n_to_load + 1, args.num_critics + 1):
+                    qfs[i - 1].load_state_dict(src_state)
+                    qfs_target[i - 1].load_state_dict(src_target_state)
+                print(
+                    f"Partial critic load: checkpoint has {n_in_ckpt} critics, "
+                    f"args.num_critics={args.num_critics}. Loaded qf1..qf{n_to_load}, "
+                    f"cloned qf1 into qf{n_to_load+1}..qf{args.num_critics} "
+                    f"(extra critics start with same weights; diverge via training updates)."
+                )
             print("Full training checkpoint loaded (network weights).")
             if checkpoint_load_mode == "weights_only":
                 # Weights-only mode: keep networks, skip optimizer/replay/runtime restore.
@@ -999,11 +1022,27 @@ if __name__ == "__main__":
         actor_optimizer = optim.Adam(actor.parameters(), lr=args.policy_lr)
     pending_fine_tune_source_replay = None
     if resume_checkpoint is not None and checkpoint_load_mode == "fine_tune":
-        load_fine_tune_optimizer_state(
-            resume_checkpoint,
-            q_optimizer=q_optimizer,
-            actor_optimizer=actor_optimizer,
+        # When num_critics differs from the source checkpoint, the q_optimizer
+        # has more parameters than the saved state — skip optimizer restore in
+        # that case (only ~learning_starts steps of momentum lost; negligible).
+        n_ckpt_critics = sum(
+            1
+            for k in resume_checkpoint
+            if k.startswith("qf") and not k.endswith("_target") and k[2:].isdigit()
         )
+        skip_q_optimizer = n_ckpt_critics != args.num_critics
+        if skip_q_optimizer:
+            print(
+                f"Skipping q_optimizer state restore (ckpt has {n_ckpt_critics} critics, "
+                f"args.num_critics={args.num_critics}); only restoring actor_optimizer."
+            )
+            actor_optimizer.load_state_dict(resume_checkpoint["actor_optimizer"])
+        else:
+            load_fine_tune_optimizer_state(
+                resume_checkpoint,
+                q_optimizer=q_optimizer,
+                actor_optimizer=actor_optimizer,
+            )
         # Optimizer state restore overwrites param-group lr from the source's value.
         # Re-apply current args lrs so config knobs take effect during FT.
         for pg in actor_optimizer.param_groups:

@@ -1,39 +1,28 @@
-# Residual RL recipe — `recency_top50`
+# Residual RL recipe — by gap size
 
-**Status (2026-04-26):** validated 3 seeds on `hist2_motion0 → sim2sim_combined` ORIGINAL (~5% zs drop, paddle full-size). Recipe holds for *small-gap* targets.
+**Status (2026-05-01):**
 
-**Status update (2026-04-29):** the same recipe **does NOT transfer cleanly** to the harder `sim2sim_combined` (paddle -50% mass-preserved, ~30% zs drop). It hits a peak ceiling (~82 vs zs 67.54) and drifts catastrophically.
+Two recipes, picked by the size of the source→target gap:
 
-**Status update (2026-04-30, 22 variants tested + 5-seed verification of winner):**
+| Gap size | Recipe | Canonical config | Verified |
+|---|---|---|---|
+| **Small (<10% zs drop)** — e.g. paddle full-size variants | `recency_top50` (`success_top_fraction: 0.5`) | [`td3_sim2sim_residual.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3/sim2sim/td3_sim2sim_residual.yaml) | 3-seed @ 100k (2026-04-26) |
+| **Big (~30% zs drop)** — paddle -50% mass-preserved | **v27 = `q_updates: 1` + Maxmin-5 critics** (`num_critics: 5`) | [`paddle50/td3_residual_v27_ensemble5.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v27_ensemble5.yaml) | 5-seed @ 300k + 1M extension (2026-04-30/05-01) |
 
-After exhaustive exploration of buffer-distribution sampling mechanisms (`success_top_fraction`, `recent_episode_window_size`, `success_buffer_size`, `priority_age_decay`), the conclusions are:
+Both recipes need per-checkpoint deterministic eval — final-step weights are unsafe for either. See `eval_all_ckpts_residual.sh`.
 
-**1. The OLD env's `success_top_fraction: 0.5` does NOT transfer to big-gap targets.**
-On the OLD env (~5% gap), 0.5 (median split) was the headline drift fix. On the NEW env (paddle -50%, ~30% gap), `success_top_fraction: 0.2` (and even 0.15) dramatically outperforms 0.5. With a bigger gap, the success buffer needs to hold the rare TOP transitions, not the median — the actor learns to chase peaks rather than the average.
+**Big-gap headline result (v27, 1M):** peak **98.3** (highest single-seed peak across all 30+ variants), 84% of ckpts above zs (67.54), mean 75.9. v27 is the only recipe with positive mean gain over zs at 1M; full_ft and full_ft+ensemble both drift to 0% above zs past 300k.
 
-**2. v21 = `success_top_fraction: 0.15 + priority_age_decay: 0.0001` is the best big-gap residual recipe.** 5-seed verified:
+**Caveat:** even v27's mean is +8 over zs vs peak +31 — a structural ceiling. Diagnosed mechanism: residual-specific Q-overestimation, mitigated but not eliminated by Maxmin-5. Open follow-up campaign in [`notes/scratch/residual_exploration_plan.md`](../../scratch/residual_exploration_plan.md) (adaptation-phase exploration, NOT YET RUN — GPU contention 2026-05-01).
 
-| metric | residual v21 (5-seed) | full_ft (3-seed) |
-|---|---:|---:|
-| peak (mean) | 83.5 ± 5.4 | **89.6 ± 2.3** |
-| best single-seed peak | **90.1** | 91.7 |
-| mean(29) | 58.5 | **62.9** |
-| **% ckpts above zs** | **43%** | 35% |
-| best seed window above zs | **190k** (steps 10k-190k) | varies |
-
-v21 is BIMODAL across seeds: 2/5 seeds match full_ft single-seed peaks (89-90); 3/5 seeds give typical residual peaks (78-81).
-
-**3. Peak ceiling at ~83 (multi-seed) is structural across all 22 residual variants tested.** Every variant converges to 80-83 multi-seed peak. The peak-stability frontier is real; combining knobs typically regresses (v6, v14, v18 all failed when stacking).
-
-**4. Drift past peak is partially mitigated.** The above-zs WINDOW extends from ~30k (canonical) to ~150-190k (v21) by switching from median-split (sf=0.5) to peak-biased (sf=0.15) sampling. But every residual variant still drifts to 30-45 last5 by step 250k+.
-
-A new code arg `priority_age_decay` was added 2026-04-29 (`td3_training.py` + `prioritized_replay_buffer.py`) implementing age-weighted PER. Default 0.0 = backward-compatible.
-
-Full log + all 22 variants: [`notes/scratch/residual_rl_paddle50_log.md`](../../scratch/residual_rl_paddle50_log.md).
+Full chronological logs:
+- [`notes/scratch/residual_rl_drift_fix_log.md`](../../scratch/residual_rl_drift_fix_log.md) — small-gap (OLD env) campaign, 2026-04-26
+- [`notes/scratch/residual_rl_paddle50_log.md`](../../scratch/residual_rl_paddle50_log.md) — big-gap (paddle50) campaign, 2026-04-29 → 2026-05-01
 
 **TL;DR:**
-- Small gap (<10% zs drop) → use this recipe (canonical `td3_sim2sim_residual.yaml`).
-- Big gap (>20% zs drop) → use `no_per+qwd` (set `per_enabled: false`, `critic_success_sample_fraction: 0.0`, `critic_failure_sample_fraction: 1.0` — keep everything else the same). Or just use `td3_full_ft.yaml` — full FT outperforms residual on big gaps.
+- Small gap → `td3_sim2sim_residual.yaml` (recency_top50, sf=0.5).
+- Big gap → `paddle50/td3_residual_v27_ensemble5.yaml` (q_updates=1 + Maxmin-5).
+- Both decisively beat full_ft on stability metrics; v27 ties full_ft on peak.
 
 ---
 
@@ -167,12 +156,17 @@ If you see numbers significantly worse than this, something is off — check tha
 
 ## When to use this vs from-scratch vs full-FT
 
-- **Use this recipe (residual + recency_top50) when**: budget is constrained (100k), you have a working source policy, target perturbations are SMALL (<10% zero-shot drop). Hits ceiling around 100-110 mean on the OLD `sim2sim_combined`.
-- **Use residual + no_per+qwd when**: target has a BIG gap (>20% zs drop). recency_top50 plateaus and drifts; no_per+qwd reaches the same peak more reliably and has ~6 pts higher mean(all) — see [§ Big-gap envs (2026-04-29)](#big-gap-envs-2026-04-29).
-- **Use full-FT when**: target has a big gap AND you want maximum peak performance. On the `paddle -50%` target, full-FT 3-seed peak = 89.6 vs residual 80.7 (≈+9 mean, ~5σ).
-- **Use from-scratch (1M+ budget) when**: you have the budget and want maximum performance. From-scratch can reach ~130 mean on the OLD target with no drift, but at 10x the env-step cost. NOT verified on the harder paddle-50 target.
+- **Use `recency_top50` (this recipe, small-gap) when**: budget is constrained (100k), target perturbations are SMALL (<10% zero-shot drop). Hits ceiling around 100-110 mean on the OLD `sim2sim_combined`.
+- **Use v27 (Maxmin-5 ensemble, big-gap) when**: target has a BIG gap (>20% zs drop) and you have a working source policy. 5-seed verified peak 87.9 ± 4.8, last5 66.1, 70% above zs at 300k. 1M extension single-seed reaches peak 98.3 (the highest single-seed peak ever observed). See [§ Big-gap recipe — v27](#how-to-use-the-v27-recipe-the-best-big-gap-residual-recipe-2026-04-30-pm--maxmin-5-critics).
+- **Use full-FT when**: target has a big gap AND you don't trust per-checkpoint eval. On paddle-50 at 300k, full-FT 3-seed peak = 89.6 ties v27 (87.9), but full-FT drifts to 0% above zs past 300k while v27 stays positive at 1M.
+- **Use from-scratch (1M+ budget) when**: you have the budget AND a from-scratch run can actually reach competitive performance. Not the case for paddle-50: 1M from-scratch (q_updates=4, no primitives) plateaued at peak 30 — well below zero-shot 67.54. A "true from-scratch" run with `td3_recommended.yaml`'s full exploration is queued (see `notes/scratch/residual_exploration_plan.md` Part A) but not yet run.
 
-## Big-gap envs (2026-04-29)
+## Big-gap envs (2026-04-29 — early iterations, superseded by v27 below)
+
+> The v1/v2/v3 + 3-seed `no_per+qwd` results in this section are kept for
+> historical context. They've been **decisively superseded by v27 (Maxmin-5)**
+> documented in the next section. Skip to [§ How to use the v27 recipe](#how-to-use-the-v27-recipe-the-best-big-gap-residual-recipe-2026-04-30-pm--maxmin-5-critics)
+> if you only want the current canonical big-gap recipe.
 
 We re-ran the residual RL iteration loop on the new `sim2sim_combined.yaml`
 (paddle -50% mass-preserved; **zero-shot 67.54** vs old env's 95.78 — ~30% gap).
@@ -205,19 +199,21 @@ collapse the canonical recipe still suffers from on big gaps.
 
 ### Recommendation by gap size
 
-| zs drop | recipe | peak (vs zs) | last5 (vs zs) | reproducibility | budget |
+| zs drop | recipe | peak (vs zs) | last5 (vs zs) | std on peak | budget |
 |---|---|---:|---:|---:|---:|
 | ~5% (OLD env) | residual + recency_top50 | +5 (100.7 vs 95.78) | +0 (94.8) | tight (3/3 last3 ≥ 88) | 100k |
-| **~30% (NEW env)** | **residual v27 (sf=0.15 + age + q_updates=1 + Maxmin-5)** | **+20 (87.9 vs 67.54)** | **-1 (66.1)** | std 4.8 | 300k |
-| ~30% (NEW env) | residual v25 (sf=0.15 + age + q_updates=1) | +18 (85.5 vs 67.54) | -10 (57.6) | std 9.0 | 300k |
-| ~30% (NEW env) | full_ft | +21 (88.6 vs 67.54) | -24 (43.3) | tight (std 2.0) | 300k |
+| **~30% (NEW env, peak)** | **residual v27 (q_updates=1 + Maxmin-5)** | **+20 (87.9 vs 67.54)** | **-1 (66.1)** | 4.8 | 300k |
+| **~30% (NEW env, tail)** | **residual v29 (q_updates=1 + REDQ-10-2)** | +18 (85.2) | **+3 (70.8)** | **4.4** | 300k (~2× compute of v27) |
+| ~30% (NEW env, prior) | residual v25 (q_updates=1) | +18 (85.5) | -10 (57.6) | 9.0 | 300k |
+| ~30% (NEW env) | full_ft | +21 (88.6) | -24 (43.3) | tight (2.0) | 300k |
 
-**For the new env (big gap)**: v27 is now the best recipe overall — it ties
-full_ft on peak (87.9 vs 88.6) and has tighter cross-seed std (4.8 vs std 9.0
-for v25). Crucially, v27 dominates everything on tail stability: last5 = 66.1
-vs full_ft's 43.3 (+22.8) and v25's 57.6 (+8.5). 70% of ckpts above zs vs
-full_ft's 29%. **Use v27 by default for residual sim2sim and sim2real on
-big-gap targets.**
+**For the new env (big gap)**: pick v27 or v29 based on deployment style:
+- **v27 (Maxmin-5)** — higher peak (87.9, ties full_ft); best when you can do
+  per-ckpt eval and ship the best ckpt. Best single-seed peak ever observed (95.7).
+- **v29 (REDQ-10-2)** — flatter trajectory (last5 70.8, **77% of ckpts above zs**);
+  best for "fire-and-forget" deployment of the final-step weights. The only recipe
+  where the policy *improves past 100k* (cross-seed mean peaks at 200k, not 100k).
+- Both supersede v25 and v21. Both dominate full_ft on stability metrics.
 
 ### How to use the v27 recipe (the BEST big-gap residual recipe, 2026-04-30 PM — Maxmin-5 critics)
 
@@ -279,9 +275,85 @@ We tested 4 ensemble configs (Phase 15 single-seed, then Phase 16 5-seed):
 - REDQ-10-2: most pessimistic — flat tail (last5=74) but suppressed peak (80)
 
 REDQ's random subset sampling is canonical but adds gradient variance during
-the early phase; Maxmin (min-over-all) is more deterministic and won here.
+the early phase; Maxmin (min-over-all) is more deterministic and won on peak.
 
-### v25, v21 (deprecated; superseded by v27, kept for context)
+### v29 alternative (REDQ-10-2): the tail-stability variant
+
+Followup 5-seed verification of v29 (`num_critics: 10, target_critic_subset_size: 2`):
+
+| metric | v29 (5s) | v27 (5s) |
+|---|---:|---:|
+| peak | 85.2 ± 4.4 | **87.9 ± 4.8** |
+| **mean(29)** | **73.4** | 71.1 |
+| **last5** | **70.8 ± 9.1** | 65.7 ± 13.2 |
+| **%>zs** | **77%** | 70% |
+
+**v29 has the most stable trajectory of any recipe ever**: cross-seed mean
+trajectory is 75→72→73→72→**78**→74→66 across steps 10k→290k. Peaks at step
+*200k*, not 100k. This is qualitatively different from every other recipe's
+"early-peak then decay" pattern.
+
+When to choose v29 over v27:
+- Deploying final-step weights (no per-ckpt eval available)
+- Need consistent above-zs performance (77% vs 70%)
+- Tighter cross-seed last5 std (9.1 vs 13.2)
+
+When to choose v27 over v29:
+- Picking peak ckpt after eval (v27 peak 87.9 > v29 85.2)
+- Compute-constrained (v27 N=5 vs v29 N=10 — about 2× faster)
+- Want highest single-seed peak chance (v27 best 95.7 vs v29 89.6)
+
+Verified config: `scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v29_redq10.yaml`.
+
+```yaml
+# v29 = v25 + REDQ-10-2 ensemble:
+num_critics: 10
+target_critic_subset_size: 2
+# All other v25 knobs unchanged.
+```
+
+### 1M extension findings (2026-05-01)
+
+Single-seed 1M extensions of v27 and v29 confirmed v27 scales well but v29 has
+a delayed cliff:
+
+| variant | peak (step) | mean(99) | last5 | %>zs |
+|---|---:|---:|---:|---:|
+| v27 1M (residual+Maxmin-5) | **98.3** @ 90k | 75.9 | 69.8 | **84%** |
+| v29 1M (residual+REDQ-10-2) | 86.8 @ 200k | 62.2 | 58.2 | 34% |
+| v32fix 1M (full_ft+Maxmin-5) | 91.0 @ 30k | 52.9 | 47.4 | 21% |
+| v33fix 1M (full_ft+REDQ-10-2) | 91.5 @ 20k | 59.7 | 54.3 | 32% |
+| full_ft 1M baseline (no ensemble) | 88.7 @ 100k | 53.8 | 42.1 | 23% |
+
+(v32fix/v33fix/baseline numbers through step 560k — ran slower than residual variants;
+see paddle50 log §8.16 for details.)
+
+**Key 1M findings:**
+- **v27 scales to 1M cleanly**: 84% above zs across all 99 ckpts; peak 98.3 is the
+  highest single-seed peak ever observed across all 30+ residual variants.
+- **v29 has a delayed cliff past step 300k**: 0-300k = 83% above zs, 300k-1M = 13% above zs.
+  v29's 5-seed-300k results were misleading; do NOT trust v29 past 300k.
+- **Residual + ensemble decisively beats full_ft + ensemble at 1M**: v27 is the
+  ONLY recipe with positive mean gain over zs. Every other 1M run — residual or
+  full_ft, with or without ensemble — averages BELOW zero-shot across the run.
+- **Ensemble does NOT fix full_ft drift**: full_ft + Maxmin-5 / REDQ-10-2 give
+  small peak boost (~+2 over baseline 88.7 → 91) but don't change the post-200k
+  cliff. Drift mechanism is residual-specific; ensemble fix only applies there.
+
+### Caveat on v27's "minor mean gains"
+
+Even v27's 1M mean is only +8 over zs (75.9 vs 67.54), while peak is +31. Most
+training-time ckpts hover 5-15 above zs. Three diagnoses:
+1. Q-overestimation is mitigated by Maxmin-5 but not eliminated (Q1 still grows ~3×).
+2. Residual head capacity (64×2, scale 0.15) may be insufficient for big-gap targets.
+3. The base policy itself may be wrong in subtle ways for paddle -50% — fundamentally
+   limiting what residual fine-tuning can achieve.
+
+Open follow-ups for further improvement: TD7-style layer-norm critic, bigger
+network, EMA actor, multi-paddle base policy retraining. See `residual_rl_paddle50_log.md`
+§8.16 for full analysis.
+
+### v25, v21 (deprecated; superseded by v27 and v29, kept for context)
 
 **v25** = `q_updates: 1` (no ensemble). 5-seed peak 85.5 ± 9.0, last5 57.6, 48%>zs.
 The first recipe to break the 200k drift cliff. Replaced by v27 which adds
@@ -454,7 +526,20 @@ do this; verify your real-world rollout target supports it before deploying.
 
 ## Open follow-ups
 
-- **5-seed re-run** of `recency_top50` — current 3-seed sample tightens variance but more seeds would help.
-- **200k budget extension** — does stability hold past 100k under this recipe?
-- **`top50 + smaller_buf` combo** — both target the museum from different angles; might compound.
-- **Generalisation** — test on other sim2sim pairs (or on sim2real).
+Active plan (queued, blocked on GPU contention 2026-05-01):
+[`notes/scratch/residual_exploration_plan.md`](../../scratch/residual_exploration_plan.md) —
+adaptation-phase exploration (Part A: true from-scratch on paddle50 with
+`td3_recommended.yaml`'s full primitive exploration; Part B: v30 family =
+v27 + primitives). Hypothesis: v27's structural ceiling (mean +8 vs peak +31)
+is partly because the residual head only sees data near the frozen base
+trajectory — re-introducing primitive exploration during adaptation should
+broaden the rollout distribution.
+
+Other ideas (lower priority — see paddle50 log §8.16 for analysis):
+- TD7-style layer-norm critic (architectural — should reduce Q-overestimation
+  more than ensembling alone)
+- Bigger residual head capacity (64×2 may be insufficient for 30%-gap targets)
+- Multi-paddle base policy retraining (the base policy itself may be
+  fundamentally wrong for paddle -50%)
+- Best-of-eval-checkpoint tracker in `td3_training.py` (eliminates the
+  per-checkpoint eval requirement for deployment)

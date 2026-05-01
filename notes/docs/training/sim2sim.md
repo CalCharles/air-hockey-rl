@@ -4,6 +4,8 @@ A *sim2sim* campaign trains a policy on one Box2D sim ("source") and tests how i
 
 This page documents the harness, the layout, the campaign run on the `hist2_motion0` checkpoint (2026-04-25), and what we learned about which perturbations actually move the needle.
 
+> **For residual RL recipes**, see [`training/residual-rl-recipe.md`](residual-rl-recipe.md) — that's the canonical doc, including the v27 (Maxmin-5) winner for big-gap targets. The "Drift study" / "400k extension" / "Drift-fix campaign" sections below trace the *small-gap* (OLD `sim2sim_combined`, paddle full-size) campaign through 2026-04-26. The harder paddle-50 (big-gap) campaign — and the v27 recipe that came out of it — lives at [`notes/scratch/residual_rl_paddle50_log.md`](../../scratch/residual_rl_paddle50_log.md) and is summarized in the recipe doc.
+
 Planning + open-questions doc: [`notes/scratch/sim2sim_infra_plan.md`](../../scratch/sim2sim_infra_plan.md). Residual-method details live in [`notes/scratch/residual_rl_plan.md`](../../scratch/residual_rl_plan.md).
 
 ---
@@ -23,7 +25,7 @@ All eval/comparison helpers reuse `scripts/smooth_policy/eval_utils.py` (factore
 
 - **Source sim**: any `configs/new_juggle/sysid_best_params*.yaml`. Currently the canonical source is `sysid_best_params_hist4.yaml`; ablations use the matching `_hist2.yaml` / `_hist3.yaml` / `_hist5.yaml`.
 - **Target sim**: lives next to source as `configs/new_juggle/sim2sim_<tag>.yaml`. Inherits structurally from one source — only physics keys differ. First line is `# Source: <source_yaml>` for provenance. Each modified key has an inline `# PERTURBED: ...` comment.
-- **Training configs**: under `configs/td3/sim2sim/`. Four files (`zero_shot`, `full_ft`, `residual`, `from_scratch`); only `config:` / `model_path:` / `log_parent_dir:` change per campaign. The `residual` config is a stub until `ResidualActor` lands (see residual_rl_plan).
+- **Training configs**: under `configs/td3/sim2sim/`. Files for `zero_shot`, `full_ft`, `residual`, `from_scratch`; only `config:` / `model_path:` / `log_parent_dir:` change per campaign. The `residual` config carries the small-gap canonical recipe (`recency_top50`, `success_top_fraction: 0.5`); for big-gap targets use `paddle50/td3_residual_v27_ensemble5.yaml` (see [residual-rl-recipe.md](residual-rl-recipe.md)).
 
 ### Results directory
 
@@ -188,14 +190,14 @@ Lessons:
 | `…/td3/td3_training.py` | `Args.full_checkpoint_load` Literal extended with `"residual"`; new residual loader branch (shared base across online/target); `Args.residual_scale`; `Args.fine_tune_replay_keep`; **lr-reset after `load_fine_tune_optimizer_state`** so config knobs aren't silently overridden by source-restored optimizer state |
 | `…/td3/helper/td3_checkpointing.py` | `seed_fine_tune_replay_from_source` — proportional subsample from source success/failure buffers, added via `add()` so position/size stay consistent |
 | `scripts/smooth_policy/eval_utils.py` | `"residual_actor"` policy class; `infer_policy_class_from_state_dict` recognizes `base.*`+`residual.*`; `build_policy` constructs `ResidualActor` placeholder, state_dict restore fills buffers |
-| `…/configs/td3/sim2sim/td3_sim2sim_residual.yaml` | tested defaults: `residual_scale=0.05`, `q_updates=1`, `q_lr=3e-4`, `actor_updates_per_iteration=1`, primitives off (kept one nominal weight non-zero so the selector accepts the distribution at init). `q_updates`/`q_lr` reflect the 2026-04-25 drift-study update — see "Drift study" section below. **Combo defaults reach the highest peak (109.3 @ 30k) but the trajectory is volatile (-22% trough at 50k); per-checkpoint eval is required.** |
+| `…/configs/td3/sim2sim/td3_sim2sim_residual.yaml` | initial post-drift-study defaults: `residual_scale=0.05`, `q_updates=1`, `q_lr=3e-4`, `actor_updates_per_iteration=1`, primitives off. **Superseded by the drift-fix campaign defaults below (`residual_scale=0.15`, `q_updates=4`, `success_top_fraction=0.5`)** — that's what the YAML actually contains today. |
 | `…/configs/td3/sim2sim/td3_sim2sim_full_ft.yaml` | tested defaults: `policy_lr=3e-5`, `q_lr=1e-4`, `q_updates=4`, `actor_updates_per_iteration=1`, primitives off, `fine_tune_replay_keep=10000` |
 
 ### Open follow-ups
 
-- **Best-of-eval-checkpoint tracker** in `td3_training.py`: compute deterministic eval at each checkpoint and save the best so far as `model.pth`. Without it, every campaign needs the post-hoc per-checkpoint eval we did here.
-- **Multi-seed verification** at the chosen peak step (now 30k for residual w/ updated defaults, 100k for full_ft). Single-seed numbers above are indicative, not statistically tight.
-- **Apply the same drift study to full_ft.** The drift study below was residual-only. full_ft warm-starts the source critic, so its dynamics are different — the same UTD/q_lr knobs may or may not move the needle.
+- **Best-of-eval-checkpoint tracker** in `td3_training.py`: compute deterministic eval at each checkpoint and save the best so far as `model.pth`. Without it, every campaign needs the post-hoc per-checkpoint eval we did here. Still open as of 2026-05-01.
+- ~~Multi-seed verification at the chosen peak step.~~ Done (3-seed `recency_top50` and 5-seed v27, both in residual-rl-recipe.md).
+- ~~Apply the drift study to full_ft.~~ Done — full_ft + Maxmin-5 / REDQ-10-2 ensemble verified at 1M (paddle50 log §8.16). Ensemble fixes residual-specific Q-overestimation, not full_ft drift.
 
 ---
 
@@ -294,10 +296,10 @@ Diagnostic configs at `scripts/smooth_policy/amp_history/configs/td3/sim2sim/dia
 
 ### Open follow-ups (specific to this study)
 
-- **Multi-seed (3+)** confirmation. The 109.3 (combo) vs 102.1 (lower_qlr) peak gap is < 1 SE on a single seed — not enough to call combo a winner. Multi-seed will also tell us whether the 50k trough is a feature of the regime or a single-seed unlucky checkpoint. This is the **highest-priority** follow-up.
-- Apply UTD=1 + q_lr=3e-4 (and lower_qlr-alone) to `full_ft` and check whether either gets a higher peak / less drift. full_ft warm-starts the source critic so its dynamics are different.
-- A `success_top_fraction=1.0` (FIFO success bucket — no top-20% retention) variant would directly test the "museum" mechanism. Skipped to keep this study to single-knob + one combo.
-- Best-of-eval-checkpoint tracker in `td3_training.py` so the saved `model.pth` is the best-eval checkpoint, not the final-step weights — would close the gap between "combo is best if you per-checkpoint eval" and "lower_qlr is safer if you don't."
+- ~~Multi-seed confirmation of combo vs lower_qlr.~~ Done — superseded by the drift-fix campaign + 3-seed `recency_top50` verification below; both old "combo" and "lower_qlr" defaults were dropped in favor of `success_top_fraction: 0.5`.
+- ~~Apply UTD=1 + q_lr=3e-4 to full_ft.~~ Done — see drift-fix campaign and the big-gap full_ft+ensemble runs in the paddle50 log.
+- ~~`success_top_fraction=1.0` test of the museum mechanism.~~ Done in the data-balance ablation below (`recency_top99` regressed because failure_rb starves).
+- Best-of-eval-checkpoint tracker in `td3_training.py` — STILL OPEN.
 
 ---
 

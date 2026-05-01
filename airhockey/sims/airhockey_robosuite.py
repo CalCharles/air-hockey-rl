@@ -384,6 +384,7 @@ class AirHockeyRobosuite(AirHockeySim):
         
         self.timestep = 0
         self.puck_history = [(-2 + self.center_offset_constant,0,1) for i in range(5)]
+        self.paddle_history = [(-2 + self.center_offset_constant,0,1) for i in range(5)]
         self.last_action = np.zeros(2)
 
         if not self.initialized_objects:
@@ -800,7 +801,10 @@ class AirHockeyRobosuite(AirHockeySim):
         
         if 'pucks' in current_state: self.puck_history.append(list(current_state['pucks'][0]["position"]) + [0])
         else: self.puck_history.append([-2 + self.center_offset_constant,0,1])
-        
+
+        paddle_pos = current_state['paddles']['paddle_ego']['position']
+        self.paddle_history.append([float(paddle_pos[0]), float(paddle_pos[1]), 0])
+
         final_vel = current_state['paddles']['paddle_ego']['velocity']
         
         current_state['paddles']['paddle_ego']['acceleration'] = final_vel - initial_vel[:1]

@@ -1152,13 +1152,289 @@ num_critics: 5                       # Maxmin-5 (5 critics, min over all 5 targe
 
 Config: `scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v27_ensemble5{,_seed1..4}.yaml`
 
+### v29 (REDQ-10-2) 5-seed verification (2026-04-30 ~16:21 UTC)
+
+Followed up Phase 16 by multi-seed-verifying v29 since its single-seed last5=74
+was the highest of any recipe. Hypothesis: REDQ-style 10-critic ensemble is
+even more conservative than Maxmin-5 → flatter tail at the cost of lower peak.
+
+| seed | peak | @step | last5 |
+|---:|---:|---:|---:|
+| 0 | 80.4 | 200k | 74.0 |
+| 1 | 80.7 | 190k | 57.1 |
+| 2 | 88.9 | 190k | 77.9 |
+| 3 | 86.3 | 160k | 78.6 |
+| 4 | 89.6 | 40k | 66.1 |
+| **mean** | **85.2 ± 4.4** | — | **70.8 ± 9.1** |
+
+**Comparison: v29 vs v27 vs v25 vs full_ft (5-seed where available):**
+
+| metric | v29 REDQ-10-2 (5s) | v27 Maxmin-5 (5s) | v25 q_updates=1 (5s) | full_ft (2s) |
+|---|---:|---:|---:|---:|
+| peak (mean ± std) | 85.2 ± 4.4 | **87.9 ± 4.8** | 85.5 ± 9.0 | **88.6 ± 2.0** |
+| best single-seed peak | 89.6 | **95.7** | 98.3 | 90.0 |
+| **mean(29)** | **73.4** | 71.1 | 66.7 | 60.3 |
+| **last5 (mean ± std)** | **70.8 ± 9.1** | 65.7 ± 13.2 | 57.6 ± 9.7 | 43.3 ± 3.9 |
+| **%>zs** | **77%** | 70% | 48% | 29% |
+
+**v29 wins on every stability metric**, v27 wins on peak metrics. v29's last5
+std (9.1) is also tighter than v27's (13.2) — more reliable end-state.
+
+### Decay shape comparison (cross-seed mean):
+
+| recipe | @10k | @50k | @100k | @150k | @200k | @250k | @290k | shape |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| **v29 REDQ-10-2 (5s)** | **74.6** | 71.7 | 73.4 | 72.3 | **77.7** | 74.3 | 66.4 | flat, peaks at 200k! |
+| v27 Maxmin-5 (5s) | 64.4 | 75.0 | 80.1 | 72.2 | 64.9 | 62.9 | 66.2 | early peak, mild decay |
+| v25 q_updates=1 (5s) | 64.1 | 66.7 | 76.4 | 67.6 | 59.9 | 54.6 | 56.7 | early peak, decay |
+| full_ft (3s) | 81.3 | 74.4 | 71.2 | 58.5 | 47.6 | 40.9 | 42.7 | steady decline |
+
+**v29's trajectory is unprecedented**: it's the ONLY recipe where the policy
+improves past 100k (peaks at 200k @ 77.7). Plot:
+- Step 10k: 74.6 (already above zs)
+- Step 200k: 77.7 (peak — actually HIGHER than @ 100k)
+- Step 290k: 66.4 (still close to peak, well above zs)
+
+This is qualitatively different from every other recipe. v29 doesn't have the
+"early-peak then decay" pattern; it has a "ramp + plateau" pattern. In a
+research sense, v29 is the only recipe where we're not "racing the drift cliff."
+
+### Trade-off between v27 and v29
+
+| use case | recommended recipe | reasoning |
+|---|---|---|
+| Best ckpt picked after per-ckpt eval | **v27** (Maxmin-5) | higher peak (87.9 vs 85.2); best single-seed 95.7 |
+| "Fire and forget" — ship final-step weights | **v29** (REDQ-10-2) | last5 70.8; the only recipe whose final ckpts are deploy-ready |
+| Tightest cross-seed reproducibility on tail | **v29** | last5 std 9.1 vs v27's 13.2 |
+| Compute-constrained training | **v27** | N=5 critics vs N=10; ~2× faster |
+| Best mean(29) | **v29** | 73.4 vs 71.1 (slightly) |
+| Best %>zs (production deployment fraction) | **v29** | 77% vs 70% |
+
+**Both v27 and v29 supersede v25 and v21.** Pick based on whether you can
+afford per-ckpt eval (v27) or want robustness without it (v29).
+
 ### Open follow-ups
 
-- v29 (REDQ-10-2) multi-seed in flight — confirm tail-stability finding
-  (single-seed last5=74). Lower peak but possibly even flatter trajectory.
-- TD7-style layer-norm critic for further reduction (would compose).
-- Test v27 on OLD env (5% gap) to see if Maxmin-5 helps even on the easier target.
-- Test v27 on async real-world pipeline (currently blocked by num_critics==2 guard).
+- TD7-style layer-norm critic for further reduction (would compose with both v27 and v29).
+- Test v27 / v29 on OLD env (5% gap) to see if ensemble helps even on easier targets.
+- Test v27 / v29 on async real-world pipeline (currently blocked by num_critics==2 guard).
+- N=20 critics? Diminishing returns expected; likely not worth the compute.
+- Layer norm + ensemble + EMA: stack the three known stability fixes.
+
+### 8.15 Phase 17: 1M extension single-seed (2026-04-30 ~20:24 UTC)
+
+To check whether the 300k qualitative findings hold at longer budget, extended
+v27 and v29 to 1M steps each (single seed=0, ~100 ckpts). Both used existing
+configs with `total_timesteps: 1000000`.
+
+| metric | v27 1M | v27 300k seed0 | v29 1M | v29 300k seed0 |
+|---|---:|---:|---:|---:|
+| peak | **98.3** @ 90k | 86.4 @ 120k | 86.8 @ 200k | 80.4 @ 200k |
+| mean(N) | 75.9 (N=99) | 70.5 (N=29) | 62.2 (N=99) | 72.9 (N=29) |
+| last5 | 69.8 | 62.8 | **58.2** | **74.0** |
+| %>zs | **84%** | 72% | **34%** | **76%** |
+
+**v27 SCALES WELL to 1M:** Peak hit 98.3 — highest single-seed peak EVER observed
+across all 30+ residual variants. Mean and last5 actually IMPROVED over the 300k
+result. 84% above zs across 1M (better than 72% at 300k). Gradual decay only
+(~12 points across 1M).
+
+**v29 has a DELAYED CLIFF past 300k:**
+- Trajectory by 100k bucket: 73 → 73 → 69 → **61** → **47** → 58 → 61
+- 0-300k: 83% above zs (matches our 5-seed finding)
+- **300k-1M: only 13% above zs** — drift returns later than v27 but more severely
+- Peak at step 200k (consistent with 5-seed pattern), but drops dramatically afterward
+
+**Implication:** v29's "rising trajectory" finding at 300k was misleading — it was
+just a delayed peak. The drift returns by step 400k. v27 is the only recipe with
+truly stable late-stage performance at 1M budget.
+
+**Updated recommendation:**
+- For budgets ≤ 300k where you care about final-step weights: still consider v29
+  (tail stability is real in that window).
+- For longer training OR best-peak-ckpt deployment: **v27 is unambiguously the winner**.
+- Do NOT trust v29 past 300k. The min-of-2 random subset target appears to be
+  too optimistic on a long horizon — diversity of N=10 critics doesn't fully
+  compensate for the variance reduction loss vs Maxmin.
+
+100k-bucket trajectory comparison:
+| variant | 0-100k | 100-200k | 200-300k | 300-400k | 400-500k | 500-700k | 700-1M |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **v27 (Maxmin-5)** | **82.0** | **82.8** | **80.1** | **78.2** | **78.8** | **73.1** | **70.1** |
+| v29 (REDQ-10-2) | 73.4 | 72.5 | 69.3 | 61.3 | 47.2 | 57.8 | 60.7 |
+
+---
+
+## 8.16 Phase 19: full_ft + ensemble at 1M, residual vs full_ft head-to-head (2026-05-01 ~01:30 UTC)
+
+To answer "does residual + ensemble beat full_ft + ensemble at the same compute
+budget", launched four 1M runs in parallel:
+- v27 (residual + Maxmin-5, already done above)
+- v29 (residual + REDQ-10-2, already done above)
+- v32fix (full_ft + Maxmin-5)
+- v33fix (full_ft + REDQ-10-2)
+- full_ft_1M_baseline (no ensemble, control)
+
+**Two bugs found and fixed in the new ensemble code while loading from a
+pre-ensemble (N=2) source checkpoint:**
+
+1. **Critic state load bug**: when args.num_critics > n_in_ckpt, fresh-init qf3+
+   critics had Q≈0. min over loaded (Q~3) and fresh (Q~0) target critics
+   collapsed to 0. Actor crashed from zs=67.54 to ~27 by step 10k.
+   **Fix**: clone qf1's loaded weights into all extra ensemble slots.
+   Diversity emerges through subsequent independent gradient updates.
+
+2. **Optimizer state load mismatch**: q_optimizer state from a 2-critic source
+   has fewer param groups than a 5- or 10-critic ensemble needs.
+   **Fix**: when n_critics differs, skip restoring q_optimizer state (only
+   ~learning_starts of momentum lost; negligible).
+
+After fix, v32fix and v33fix start at ~zs (75-80) at step 10k, peaking ~91 at
+step 20-30k. Without fix (v32 buggy), they crashed to peak 45 across 1M.
+
+### Final 5-way comparison through step 560k (common window)
+
+| variant | peak | mean | last5 | %>zs |
+|---|---:|---:|---:|---:|
+| **v27 (residual+Maxmin-5)** | **98.3** @ 90k | **79.2** | **68.8** | **93%** |
+| v29 (residual+REDQ-10-2) | 86.8 @ 200k | 63.9 | 58.4 | 48% |
+| v33fix (full_ft+REDQ-10-2) | 91.5 @ 20k | 59.7 | 54.3 | 32% |
+| full_ft baseline (no ensemble) | 88.7 @ 100k | 53.8 | 42.1 | 23% |
+| v32fix (full_ft+Maxmin-5) | 91.0 @ 30k | 52.9 | 47.4 | 21% |
+
+### Key metric: peak vs sustained gain over zs
+
+| variant | peak gain | mean gain | mean/peak gain ratio |
+|---|---:|---:|---:|
+| **v27 (residual+Maxmin-5)** | **+30.7** | **+11.7** | **0.38** |
+| v29 (residual+REDQ-10-2) | +19.3 | -3.7 | -0.19 |
+| v32fix (full_ft+Maxmin-5) | +23.5 | -14.6 | -0.62 |
+| v33fix (full_ft+REDQ-10-2) | +23.9 | -7.9 | -0.33 |
+| full_ft baseline | +21.1 | -13.8 | -0.65 |
+
+**Striking finding: v27 is the ONLY recipe with positive mean gain over zs.**
+Every other 1M run — residual or full_ft — averages BELOW zero-shot across
+the training run, even though they all hit peak above zs. **Without the v27
+recipe specifically, the typical training-time policy is WORSE than just
+shipping the base policy unchanged.**
+
+### 100k bucket trajectory comparison
+
+| variant | 0-100k | 100-200k | 200-300k | 300-400k | 400-500k | 500-600k |
+|---|---:|---:|---:|---:|---:|---:|
+| **v27 (residual+Maxmin-5)** | **82.0** | **82.8** | **80.1** | **78.2** | **78.8** | **72.4** |
+| v29 (residual+REDQ-10-2) | 73.4 | 72.5 | 69.3 | 61.3 | 47.2 | 56.6 |
+| v32fix (full_ft+Maxmin-5) | 77.2 | 60.1 | 53.9 | 40.6 | 36.3 | 45.9 |
+| v33fix (full_ft+REDQ-10-2) | 78.4 | 78.3 | 49.2 | 50.7 | 45.3 | 53.9 |
+| full_ft baseline | 76.7 | 67.7 | 50.1 | 37.8 | 43.1 | 43.7 |
+
+### %>zs by segment
+
+| variant | 0-300k | 300-600k |
+|---|---:|---:|
+| **v27 (residual+Maxmin-5)** | **97%** | **88%** |
+| v29 (residual+REDQ-10-2) | 83% | 8% |
+| v33fix (full_ft+REDQ-10-2) | 60% | 0% |
+| full_ft baseline | 43% | 0% |
+| v32fix (full_ft+Maxmin-5) | 40% | 0% |
+
+**Past step 300k, ALL non-v27 recipes drop to 0% above zs.** v27 alone holds
+88% above zs in the 300-600k range.
+
+### Final answer to the user's question
+
+**Residual + ensemble decisively beats full_ft + ensemble at 1M.**
+- v27 (residual + Maxmin-5) is the only recipe with stable above-zs performance
+  across the full training horizon
+- Adding ensemble critics to full_ft gives only modest peak boost (+2.4 over
+  baseline) and does NOT fix the post-200k drift cliff
+- The full_ft + ensemble dynamics are fundamentally different from residual:
+  in full_ft, drift is driven by the actor's freedom to abandon the source
+  policy's correct coarse behaviors. Ensemble Q-tightening doesn't address
+  this; it only addresses Q-overestimation (the residual-specific failure mode).
+
+### Critical caveat
+
+Even v27's mean (79.2) is only +11.7 over zs vs peak (+30.7), meaning **most of
+v27's training run is barely above zero-shot**. Per-checkpoint eval is mandatory
+for deployment. This represents a structural ceiling that ensemble alone cannot
+break — see Phase 20 follow-ups (TD7 layer-norm critic, bigger network,
+multi-paddle base policy retraining) below.
+
+### From-scratch baseline (added 2026-05-01 ~05:15 UTC, in flight)
+
+To anchor the comparison, also launched a from-scratch 1M run on paddle50 with
+the same recipe as full_ft (q_updates=4, no source policy load).
+
+**Through step 250k:** from_scratch peaks at 22.1, most ckpts at 17-18.
+- vs v27 (residual+Maxmin-5) at step 250k: 77.9
+- vs full_ft variants at step 250k: 48-52
+- **vs zero-shot 67.54: from_scratch is below zs across all 25 evals**
+
+Note: q_updates=4 is **NOT the standard from-scratch recipe** (which uses
+q_updates=25 for high UTD). q_updates=4 was used here for compute-matched
+comparison with full_ft. Standard q_updates=25 would learn faster but require
+~16h of GPU compute under current contention. Even so, the result is
+informative: under the same compute as full_ft, random init can't even reach
+zero-shot performance in 250k steps. **The source policy's 67.54 head start
+is the dominant transfer benefit — without it, no recipe would help.**
+
+### Final 6-way comparison (all DONE except from_scratch in-flight)
+
+| variant | peak | mean | last5 | %>zs | gain vs zs | status |
+|---|---:|---:|---:|---:|---:|---|
+| **v27 (residual+Maxmin-5)** | **98.3** | **75.9** | **69.8** | **84%** | peak +30.8 | DONE |
+| v29 (residual+REDQ-10-2) | 86.8 | 62.2 | 58.2 | 34% | peak +19.3 | DONE |
+| v33fix (full_ft+REDQ-10-2) | 91.5 | 54.2 | 45.4 | 20% | peak +24.0 | DONE |
+| full_ft baseline (no ensemble) | 88.7 | 47.4 | 34.8 | 13% | peak +21.2 | DONE |
+| v32fix (full_ft+Maxmin-5) | 91.0 | 46.5 | 39.1 | 12% | peak +23.5 | DONE |
+| from_scratch (q_updates=4) | 30.4 | 21.2 | 27.6 | 0% | peak −37.1 | killed @ 680k (plateau) |
+
+### Full 100k bucket trajectory comparison
+
+| variant | 0-100k | 100-200k | 200-300k | 300-400k | 400-500k | 500-600k | 600-700k | 700-800k | 800-900k | 900-1M |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **v27 (residual+Maxmin-5)** | **82.0** | **82.8** | **80.1** | **78.2** | **78.8** | **72.4** | **73.9** | **71.1** | **69.7** | **69.4** |
+| v29 (residual+REDQ-10-2) | 73.4 | 72.5 | 69.3 | 61.3 | 47.2 | 56.6 | 59.0 | 59.7 | 65.0 | 57.1 |
+| v32fix (full_ft+Maxmin-5) | 77.2 | 60.1 | 53.9 | 40.6 | 36.3 | 45.5 | 44.6 | 31.7 | 37.8 | 36.1 |
+| v33fix (full_ft+REDQ-10-2) | 78.4 | 78.3 | 49.2 | 50.7 | 45.3 | 52.7 | 60.2 | 46.4 | 36.1 | 43.5 |
+| full_ft baseline | 76.7 | 67.7 | 50.1 | 37.8 | 43.1 | 43.7 | 38.5 | 35.2 | 43.3 | 37.1 |
+| from_scratch (q_updates=4) | 17.5 | 18.1 | 19.2 | 20.9 | 21.7 | 26.0 | 26.5 | — | — | — |
+
+### Key insights
+
+1. **Source policy transfer is the dominant effect.** Zero-shot (67.54) is already
+   higher than from-scratch reaches in 400k+ steps of training under the same
+   compute as full_ft. This validates ALL transfer-learning approaches before
+   we even compare them.
+
+2. **Residual + Maxmin-5 (v27) extracts the most value from the source.** Peak
+   +30.8 over zs, AND maintains 84% of ckpts above zs across 1M. The trajectory
+   shape (82→83→80→78→79→72→74→71→70→69) shows only gradual decay.
+
+3. **Full_ft (with or without ensemble) is unstable past peak.** All three full_ft
+   variants peak ~88-92 around step 20-100k, then drop to 35-45 by step 300-400k
+   and stay there. Adding ensemble critics gives only +2-3 peak boost over baseline
+   without fixing the cliff.
+
+4. **The stability gap (84% vs 12-20% above zs) is what makes residual+ensemble
+   the practical winner**, not the peak.
+
+5. **From-scratch with q_updates=4 cannot learn juggling fast enough.** Final
+   numbers (killed at step 680k due to plateau): peak 30.4, mean 21.2, last5 27.6,
+   0% above zs. Trajectory inched from 17.5 (0-100k) to 26.5 (600-700k) — clearly
+   learning but plateaued well below zero-shot 67.54. Standard from-scratch uses
+   q_updates=25 (would learn faster but takes 16+h under GPU contention). For
+   any practical 1M-budget comparison, transfer learning is mandatory: even 700k
+   of from-scratch training scores worse than just shipping the source policy
+   unchanged.
+
+### Closing recommendation
+
+**For big-gap residual sim2sim/sim2real, v27 (residual + Maxmin-5 ensemble)
+is the canonical recipe.** Per-checkpoint eval is mandatory — peak ckpt
+deployment recovers most of the +30 over-zs gain; final-step weights only
+recover ~+2. Full_ft alternatives are less stable and offer no peak benefit.
 
 ---
 

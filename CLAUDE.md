@@ -101,4 +101,4 @@ Key docs:
 - `scripts/domain_adaptation/`, `scripts/gat/`, `scripts/curriculum/`, `scripts/rl/` — older research paths, not part of active TD3 pipeline.
 - `scripts/trainers/` — structured trainer abstraction (SAC, PPO), not used by current TD3 training.
 - `offline_rl_algorithms/` — offline RL experiments, not active.
-- `airhockey/sims/airhockey_robosuite.py` — MuJoCo/robosuite backend, not currently used for training.
+- `airhockey/sims/airhockey_robosuite.py` — MuJoCo/robosuite backend, **legacy and currently broken**, not used for training. Documented in [`notes/docs/environments/robosuite/overview.md`](notes/docs/environments/robosuite/overview.md) (covers integration, test-rendering script at `scripts/test_controller.py`, and gaps for TD3 compatibility).

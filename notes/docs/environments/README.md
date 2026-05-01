@@ -4,6 +4,7 @@ Task wrappers and simulator backends for air hockey: shared env APIs, Box2D, and
 
 - **Architecture (layers and adapters):** this page below.
 - **Box2D:** [`box2d/simulator-essentials.md`](box2d/simulator-essentials.md)
+- **Robosuite (legacy, currently broken):** [`robosuite/overview.md`](robosuite/overview.md)
 - **Real world:** [`real-world/overview.md`](real-world/overview.md) · [`real-world/homography.md`](real-world/homography.md) · [`real-world/td3-async-replay.md`](real-world/td3-async-replay.md) (async TD3 replay semantics and legacy buffers)
 
 ---
@@ -26,6 +27,7 @@ The [`airhockey`](../../../airhockey) package provides environment/task wrappers
 - Simulator adapters live in [`airhockey/sims`](../../../airhockey/sims)
 - Real-world adapter: [`airhockey/sims/air_hockey_real.py`](../../../airhockey/sims/air_hockey_real.py) — details in [`real-world/overview.md`](real-world/overview.md)
 - Box2D adapter: [`airhockey/sims/airhockey_box2d.py`](../../../airhockey/sims/airhockey_box2d.py) — details in [`box2d/simulator-essentials.md`](box2d/simulator-essentials.md)
+- Robosuite/MuJoCo adapter: [`airhockey/sims/airhockey_robosuite.py`](../../../airhockey/sims/airhockey_robosuite.py) — details in [`robosuite/overview.md`](robosuite/overview.md). Legacy, **currently broken**; not used for active TD3 training.
 - Shared simulator abstractions/utilities: [`airhockey/sims/airhockey_sim.py`](../../../airhockey/sims/airhockey_sim.py)
 
 ## Guidance for edits
