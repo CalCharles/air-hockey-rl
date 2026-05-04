@@ -21,7 +21,7 @@ import inspect
 import time
 import traceback
 from collections import deque
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -298,10 +298,8 @@ def _build_async_training_state(
     replay: SharedTD3Replay,
     actor,
     actor_target,
-    qf1,
-    qf2,
-    qf1_target,
-    qf2_target,
+    qfs,
+    qfs_target,
     q_optimizer,
     actor_optimizer,
     total_updates: int,
@@ -314,6 +312,8 @@ def _build_async_training_state(
     rolling50_episode_length_values: Sequence[float],
     rolling50_estop_episode_flags: Sequence[float],
     rolling50_episode_return_values: Sequence[float] = (),
+    rolling50_episode_juggles_values: Sequence[float] = (),
+    rolling50_episode_contacts_values: Sequence[float] = (),
     include_non_vital_training_state_fields: bool,
 ) -> Dict[str, object]:
     replay_state = replay.state_dict()
@@ -321,14 +321,16 @@ def _build_async_training_state(
         "checkpoint_version": 2,
         "actor": actor.state_dict(),
         "actor_target": actor_target.state_dict(),
-        "qf1": qf1.state_dict(),
-        "qf2": qf2.state_dict(),
-        "qf1_target": qf1_target.state_dict(),
-        "qf2_target": qf2_target.state_dict(),
         "success_replay_buffer": replay_state["success"],
         "failure_replay_buffer": replay_state["failure"],
         "rng_states": get_rng_states(),
     }
+    # Save N critics under qf1..qfN / qf1_target..qfN_target. N=2 is bit-identical
+    # to the legacy two-key layout, so old readers (eval scripts, sim2sim ckpts)
+    # keep working unchanged.
+    for i, (q, qt) in enumerate(zip(qfs, qfs_target), start=1):
+        payload[f"qf{i}"] = q.state_dict()
+        payload[f"qf{i}_target"] = qt.state_dict()
     if include_non_vital_training_state_fields:
         payload.update(
             {
@@ -347,6 +349,8 @@ def _build_async_training_state(
                 "rolling50_episode_length_values": list(rolling50_episode_length_values),
                 "rolling50_estop_episode_flags": list(rolling50_estop_episode_flags),
                 "rolling50_episode_return_values": list(rolling50_episode_return_values),
+                "rolling50_episode_juggles_values": list(rolling50_episode_juggles_values),
+                "rolling50_episode_contacts_values": list(rolling50_episode_contacts_values),
                 # Metadata only; runtime args always come from external CLI/args_file.
                 "args": {**asdict(args), **asdict(train_args)},
             }
@@ -363,10 +367,8 @@ def _save_async_checkpoint(
     replay: SharedTD3Replay,
     actor,
     actor_target,
-    qf1,
-    qf2,
-    qf1_target,
-    qf2_target,
+    qfs,
+    qfs_target,
     q_optimizer,
     actor_optimizer,
     total_updates: int,
@@ -395,20 +397,20 @@ def _save_async_checkpoint(
     torch.save(actor_target.state_dict(), checkpoint_dir / "actor_target.pth")
     if actor_ema is not None:
         torch.save(actor_ema.state_dict(), checkpoint_dir / "model_ema.pth")
-    torch.save(qf1.state_dict(), checkpoint_dir / "qf1.pth")
-    torch.save(qf2.state_dict(), checkpoint_dir / "qf2.pth")
-    torch.save(qf1_target.state_dict(), checkpoint_dir / "qf1_target.pth")
-    torch.save(qf2_target.state_dict(), checkpoint_dir / "qf2_target.pth")
+    # Per-critic flat .pth dumps — qf1.pth..qfN.pth and matching _target. Eval
+    # scripts that only care about qf1/qf2 keep working; ensemble runs (N>2)
+    # additionally drop qf3.pth, qf4.pth, ... in the same directory.
+    for i, (q, qt) in enumerate(zip(qfs, qfs_target), start=1):
+        torch.save(q.state_dict(), checkpoint_dir / f"qf{i}.pth")
+        torch.save(qt.state_dict(), checkpoint_dir / f"qf{i}_target.pth")
     training_state = _build_async_training_state(
         args=args,
         train_args=train_args,
         replay=replay,
         actor=actor,
         actor_target=actor_target,
-        qf1=qf1,
-        qf2=qf2,
-        qf1_target=qf1_target,
-        qf2_target=qf2_target,
+        qfs=qfs,
+        qfs_target=qfs_target,
         q_optimizer=q_optimizer,
         actor_optimizer=actor_optimizer,
         total_updates=total_updates,
@@ -436,6 +438,14 @@ def _save_async_checkpoint(
             stats.get("rolling50_episode_return_values", []),
             max_items=ROLLING_PERF_WINDOW_EPISODES,
         ),
+        rolling50_episode_juggles_values=_coerce_float_list(
+            stats.get("rolling50_episode_juggles_values", []),
+            max_items=ROLLING_PERF_WINDOW_EPISODES,
+        ),
+        rolling50_episode_contacts_values=_coerce_float_list(
+            stats.get("rolling50_episode_contacts_values", []),
+            max_items=ROLLING_PERF_WINDOW_EPISODES,
+        ),
         include_non_vital_training_state_fields=args.include_non_vital_training_state_fields,
     )
     _atomic_torch_save(training_state, checkpoint_dir / "training_state.pth")
@@ -459,10 +469,8 @@ def _save_checkpoint_from_learner_state(
         replay=replay,
         actor=state.actor,
         actor_target=state.actor_target,
-        qf1=state.qf1,
-        qf2=state.qf2,
-        qf1_target=state.qf1_target,
-        qf2_target=state.qf2_target,
+        qfs=state.qfs,
+        qfs_target=state.qfs_target,
         q_optimizer=state.q_optimizer,
         actor_optimizer=state.actor_optimizer,
         total_updates=state.total_updates,
@@ -477,10 +485,15 @@ def _save_checkpoint_from_learner_state(
 class TrainArgs:
     """Architecture spec sourced from a td3_training.py-style args.yaml.
 
-    These six fields describe the actor/critic network shape and policy-state
-    contract used during training. They must be read from the training run's
-    args.yaml — NOT from the online `--args-file` or CLI — so the rebuilt
-    actor/critic layers match the saved checkpoint exactly.
+    These fields describe the actor/critic network shape, ensemble size, and
+    policy-state contract used during training. They must be read from the
+    training run's args.yaml — NOT from the online `--args-file` or CLI — so
+    the rebuilt actor/critic layers match the saved checkpoint exactly.
+
+    `num_critics` and `target_critic_subset_size` were added 2026-05-04 to
+    support v27-style Maxmin-N / REDQ-N-M ensembles in the async real-world
+    learner. Old args.yaml files predate these keys and resolve to the
+    backwards-compatible vanilla-TD3 default (N=2, subset=None).
     """
 
     action_scale: float
@@ -489,9 +502,26 @@ class TrainArgs:
     q_hidden_layer_size: int
     q_num_hidden_layers: int
     use_last_action_in_policy_state: bool
+    # Ensemble size (≥2). 2 = vanilla twin-TD3 (default; backwards-compat).
+    # >2 with subset=None → Maxmin-N. >2 with subset=M<N → REDQ-N-M.
+    num_critics: int = 2
+    # Subset size used when computing the target Q (random M-of-N at every
+    # update). None or ≥num_critics → Maxmin (use all critics).
+    target_critic_subset_size: int | None = None
 
 
 TRAIN_ARGS_FIELD_NAMES: Tuple[str, ...] = tuple(f.name for f in fields(TrainArgs))
+# Required architecture keys — every td3_training.py args.yaml has these.
+# Ensemble keys are optional with safe defaults so older args.yaml files keep
+# loading; see _load_train_args (and feedback_loader_defaults memory).
+_TRAIN_ARGS_REQUIRED_FIELDS: Tuple[str, ...] = (
+    "action_scale",
+    "agent_hidden_layer_size",
+    "agent_num_hidden_layers",
+    "q_hidden_layer_size",
+    "q_num_hidden_layers",
+    "use_last_action_in_policy_state",
+)
 
 
 def _load_train_args(train_args_path: str) -> TrainArgs:
@@ -509,12 +539,14 @@ def _load_train_args(train_args_path: str) -> TrainArgs:
         raise ValueError(
             f"Expected --train-args to contain a YAML mapping, got: {type(loaded)}"
         )
-    missing = [name for name in TRAIN_ARGS_FIELD_NAMES if name not in loaded]
+    missing = [name for name in _TRAIN_ARGS_REQUIRED_FIELDS if name not in loaded]
     if missing:
         raise KeyError(
             f"--train-args file {train_args_path} is missing required fields: {missing}. "
             f"Expected canonical td3_training.py args.yaml field names."
         )
+    raw_subset = loaded.get("target_critic_subset_size", None)
+    target_subset: int | None = None if raw_subset is None else int(raw_subset)
     return TrainArgs(
         action_scale=float(loaded["action_scale"]),
         agent_hidden_layer_size=int(loaded["agent_hidden_layer_size"]),
@@ -522,6 +554,8 @@ def _load_train_args(train_args_path: str) -> TrainArgs:
         q_hidden_layer_size=int(loaded["q_hidden_layer_size"]),
         q_num_hidden_layers=int(loaded["q_num_hidden_layers"]),
         use_last_action_in_policy_state=bool(loaded["use_last_action_in_policy_state"]),
+        num_critics=int(loaded.get("num_critics", 2)),
+        target_critic_subset_size=target_subset,
     )
 
 
@@ -534,11 +568,20 @@ class Args:
     config: str = "configs/real_configs/rollout_config.yaml"
     model_path: str | None = None
     # Checkpoint-load mode for `model_path`. Mirrors `td3_training.py:Args.full_checkpoint_load`.
-    # - "full_resume": load all training state (weights + optimizer + replay + RNG).
-    # - "weights_only": load network weights only; fresh optimizer + replay + RNG.
-    # - "fine_tune": load weights + optimizer; reset replay + RNG.
-    # - "residual": load source actor as frozen base, build fresh residual head + fresh critic.
-    full_checkpoint_load: Literal["full_resume", "weights_only", "fine_tune", "residual"] = "full_resume"
+    # - "full_resume":     load all training state (weights + optimizer + replay + RNG).
+    # - "weights_only":    load network weights only; fresh optimizer + replay + RNG.
+    # - "fine_tune":       load weights + optimizer; reset replay + RNG.
+    # - "residual":        load source actor as frozen base, build fresh residual head + fresh critic.
+    # - "residual_resume": resume a prior RESIDUAL run from its training_state.pth.
+    #                      Loads the wrapped ResidualActor (base + trained residual head) +
+    #                      the N-critic ensemble + (with load_replay_from_checkpoint) the
+    #                      replay buffer + (with include_non_vital_training_state_fields)
+    #                      the optimizer state. Use this — NOT "residual" — when continuing
+    #                      a previously-checkpointed residual training run. See
+    #                      notes/docs/training/residual-rl-recipe.md "Resuming a residual run".
+    full_checkpoint_load: Literal[
+        "full_resume", "weights_only", "fine_tune", "residual", "residual_resume"
+    ] = "full_resume"
     # Residual RL: max magnitude of the residual action component (used when
     # full_checkpoint_load=="residual"). Combined action is clipped to env
     # action bounds, so residual_scale > 0 caps |residual|_inf via tanh.
@@ -571,7 +614,20 @@ class Args:
     motion_gamma: float = 0.8
     tau: float = 0.005
     batch_size: int = 256
+    # Gates the learner on TOTAL replay size (success + failure). Engaged
+    # whenever total replay < this value — useful when there is no warm-start.
     min_replay_size_before_learning: int = 5000
+    # Gates the learner on FRESH post-launch collector steps only, independent
+    # of warm-start replay size. Mirrors td3_training.py's `learning_starts`:
+    # for the first N fresh steps the agent collects (frozen base + zero-init
+    # residual + exploration_noise) and pushes transitions into replay, but
+    # the critic does NOT update. After N steps the critic has seen pure
+    # on-policy data before its first gradient step. v27 sim2sim uses 2000;
+    # 0 disables (default — preserves legacy async-real behavior). Run-
+    # relative: on resume, fresh-step counting restarts from 0, which means
+    # if you set this >0 and resume mid-fill, the gate re-engages until N
+    # *new* fresh steps land.
+    learning_starts_fresh_steps: int = 0
     q_lr: float = 1e-3
     q_weight_decay: float = 1e-4
     policy_lr: float = 3e-4
@@ -894,6 +950,8 @@ _NON_VITAL_TRAINING_STATE_DEFAULTS: Dict[str, object] = {
     "rolling50_motion_reward_values": [],
     "rolling50_episode_length_values": [],
     "rolling50_estop_episode_flags": [],
+    "rolling50_episode_juggles_values": [],
+    "rolling50_episode_contacts_values": [],
 }
 
 
@@ -1118,7 +1176,20 @@ def _build_split_episode_row(
     protective_stop_active: bool,
     controller_disconnected: bool,
     reset_stage_id: int | None = None,
+    *,
+    task_reward: float | None = None,
+    motion_reward: float | None = None,
+    done: float | None = None,
 ) -> Dict[str, np.ndarray]:
+    """Build one HDF5 row for a single env step.
+
+    Optional ``task_reward`` / ``motion_reward`` / ``done`` are written when
+    provided (the policy runner passes them every step) and omitted
+    otherwise (the reset-FSM runner has no policy reward stream). Together
+    with ``policy_action`` (the raw [-1, 1] action vector recorded
+    alongside the post-transform ``desired_pose``), these fields make a
+    policy-collected HDF5 self-sufficient for offline policy replay.
+    """
     state_info = getattr(env, "current_state", None)
     if not isinstance(state_info, dict):
         state_info = env.simulator.get_current_state()
@@ -1211,6 +1282,11 @@ def _build_split_episode_row(
     }
     if reset_stage_id is not None:
         row["reset_stage_id"] = np.array([float(reset_stage_id)], dtype=np.float64)
+    if task_reward is not None:
+        row["policy_action"] = np.asarray(action_xy, dtype=np.float64).reshape(-1)[:2]
+        row["task_reward"] = np.array([float(task_reward)], dtype=np.float64)
+        row["motion_reward"] = np.array([float(motion_reward) if motion_reward is not None else 0.0], dtype=np.float64)
+        row["done"] = np.array([float(done) if done is not None else 0.0], dtype=np.float64)
     return row
 
 
@@ -1398,26 +1474,47 @@ def _simulator_step_readiness(env: AirHockeyEnv) -> tuple[bool, str]:
 class LearnerRuntimeState:
     actor: DeterministicAgent
     actor_target: DeterministicAgent
-    qf1: TD3DualHeadQNetwork
-    qf2: TD3DualHeadQNetwork
-    qf1_target: TD3DualHeadQNetwork
-    qf2_target: TD3DualHeadQNetwork
-    q_optimizer: optim.Optimizer
-    actor_optimizer: optim.Optimizer
-    action_low: torch.Tensor
-    action_high: torch.Tensor
-    writer: SummaryWriter
-    checkpoint_root: Path
-    last_log_time: float
-    learner_start_time: float
-    total_updates: int
-    total_actor_updates: int
-    last_handled_checkpoint_request_id: int
-    latest_train_metrics: Dict[str, float]
+    # Critic ensemble — N online critics + N targets (N = train_args.num_critics).
+    # N=2 reproduces vanilla twin-TD3; N>2 enables Maxmin-N / REDQ-N-M (v27).
+    # `qf1`, `qf2`, `qf1_target`, `qf2_target` are properties that alias
+    # qfs[0]/qfs[1] for backwards compatibility with checkpoint helpers and
+    # sites that predate the ensemble path. Anything new should index `qfs`.
+    qfs: list[TD3DualHeadQNetwork] = field(default_factory=list)
+    qfs_target: list[TD3DualHeadQNetwork] = field(default_factory=list)
+    # M = target_critic_subset_size (None → Maxmin: use all N targets).
+    target_critic_subset_size: int | None = None
+    q_optimizer: optim.Optimizer = None  # type: ignore[assignment]
+    actor_optimizer: optim.Optimizer = None  # type: ignore[assignment]
+    action_low: torch.Tensor = None  # type: ignore[assignment]
+    action_high: torch.Tensor = None  # type: ignore[assignment]
+    writer: SummaryWriter = None  # type: ignore[assignment]
+    checkpoint_root: Path = None  # type: ignore[assignment]
+    last_log_time: float = 0.0
+    learner_start_time: float = 0.0
+    total_updates: int = 0
+    total_actor_updates: int = 0
+    last_handled_checkpoint_request_id: int = 0
+    latest_train_metrics: Dict[str, float] = field(default_factory=dict)
     # Optional EMA copy of the actor, populated when residual_ema_decay is set.
     # In residual mode this is a `ResidualActor` wrapping the same frozen base
     # plus an EMA-averaged copy of the residual head.
     actor_ema: DeterministicAgent | None = None
+
+    @property
+    def qf1(self) -> TD3DualHeadQNetwork:
+        return self.qfs[0]
+
+    @property
+    def qf2(self) -> TD3DualHeadQNetwork:
+        return self.qfs[1]
+
+    @property
+    def qf1_target(self) -> TD3DualHeadQNetwork:
+        return self.qfs_target[0]
+
+    @property
+    def qf2_target(self) -> TD3DualHeadQNetwork:
+        return self.qfs_target[1]
 
 
 def _make_qf(
@@ -1452,14 +1549,18 @@ def _init_sync_learner_state(
     device = torch.device(args.learner_device)
     writer = SummaryWriter(tb_log_dir)
 
-    # Critic ensemble (num_critics>2) is sim2sim-only at present; the async
-    # real-world path still uses the original twin TD3 critic pair. Validate
-    # to fail loudly rather than silently dropping critics.
-    _async_num_critics = getattr(train_args, "num_critics", 2)
-    if _async_num_critics != 2:
-        raise NotImplementedError(
-            f"async_td3_real currently only supports num_critics=2 (got {_async_num_critics}). "
-            "Ensemble critics (REDQ/Maxmin) are sim2sim-only. Use td3_training.py for ensemble runs."
+    # Critic ensemble — N online critics + N targets (Maxmin-N when
+    # target_critic_subset_size is None or ≥N; REDQ-N-M for smaller M). N=2
+    # reproduces vanilla twin-TD3 (default). N=5 with subset=None is the
+    # canonical v27 recipe. See `notes/docs/training/residual-rl-recipe.md`.
+    num_critics = int(getattr(train_args, "num_critics", 2))
+    if num_critics < 2:
+        raise ValueError(f"num_critics must be >=2, got {num_critics}")
+    target_subset = getattr(train_args, "target_critic_subset_size", None)
+    if target_subset is not None and not (1 <= int(target_subset) <= num_critics):
+        raise ValueError(
+            f"target_critic_subset_size must be in [1, num_critics={num_critics}], "
+            f"got {target_subset}"
         )
     policy_obs_dim = obs_dim + act_dim if train_args.use_last_action_in_policy_state else obs_dim
     policy_env_view = build_policy_env_view(policy_obs_dim, act_dim)
@@ -1478,36 +1579,44 @@ def _init_sync_learner_state(
         num_hidden_layers=train_args.agent_num_hidden_layers,
     ).to(device)
     actor_target.load_state_dict(actor.state_dict())
-    qf1 = _make_qf(
-        obs_dim,
-        act_dim,
-        train_args.q_hidden_layer_size,
-        train_args.q_num_hidden_layers,
-        device,
-    )
-    qf2 = _make_qf(
-        obs_dim,
-        act_dim,
-        train_args.q_hidden_layer_size,
-        train_args.q_num_hidden_layers,
-        device,
-    )
-    qf1_target = _make_qf(
-        obs_dim,
-        act_dim,
-        train_args.q_hidden_layer_size,
-        train_args.q_num_hidden_layers,
-        device,
-    )
-    qf2_target = _make_qf(
-        obs_dim,
-        act_dim,
-        train_args.q_hidden_layer_size,
-        train_args.q_num_hidden_layers,
-        device,
-    )
-    qf1_target.load_state_dict(qf1.state_dict())
-    qf2_target.load_state_dict(qf2.state_dict())
+    # Build N critics + N targets. Distinct nn.Module instances → diverse inits.
+    qfs: list[TD3DualHeadQNetwork] = [
+        _make_qf(
+            obs_dim,
+            act_dim,
+            train_args.q_hidden_layer_size,
+            train_args.q_num_hidden_layers,
+            device,
+        )
+        for _ in range(num_critics)
+    ]
+    qfs_target: list[TD3DualHeadQNetwork] = [
+        _make_qf(
+            obs_dim,
+            act_dim,
+            train_args.q_hidden_layer_size,
+            train_args.q_num_hidden_layers,
+            device,
+        )
+        for _ in range(num_critics)
+    ]
+    for q, qt in zip(qfs, qfs_target):
+        qt.load_state_dict(q.state_dict())
+    if num_critics > 2:
+        subset_str = (
+            "Maxmin"
+            if target_subset is None or int(target_subset) >= num_critics
+            else f"REDQ-{num_critics}-{int(target_subset)}"
+        )
+        print(
+            f"[learner] critic ensemble: num_critics={num_critics} "
+            f"target_subset={target_subset} ({subset_str})"
+        )
+    # Legacy aliases — kept so the rest of this function (residual setup,
+    # resume path, target sync site) and existing checkpoint helpers can
+    # still reference qf1/qf2 by name. New code should index `qfs` directly.
+    qf1, qf2 = qfs[0], qfs[1]
+    qf1_target, qf2_target = qfs_target[0], qfs_target[1]
 
     actor_ema: DeterministicAgent | None = None
     if args.full_checkpoint_load == "residual":
@@ -1584,22 +1693,175 @@ def _init_sync_learner_state(
             f"[learner] residual mode: base frozen, residual_scale={args.residual_scale}, "
             "critic from scratch."
         )
+    elif args.full_checkpoint_load == "residual_resume":
+        # Resume a previously-checkpointed RESIDUAL run. The saved actor
+        # state_dict is a wrapped ResidualActor (keys: `base.*`, `residual.*`,
+        # `action_low`, `action_high`) — `extract_deterministic_state_dict`
+        # would silently strip them all, so we don't go through that filter.
+        # Build the same ResidualActor wrapper as residual mode, then load
+        # the saved state_dict directly into it (base inside the wrapper picks
+        # up the original frozen weights from the saved dict; residual head
+        # picks up the trained weights). N critics + targets + optimizer +
+        # replay + RNG come from the same training_state.pth, same paths as
+        # full_resume.
+        if resume_checkpoint is None:
+            raise ValueError(
+                "full_checkpoint_load='residual_resume' requires model_path to "
+                "point at the prior residual training_state.pth."
+            )
+        if "actor" not in resume_checkpoint or "qf1" not in resume_checkpoint:
+            raise KeyError(
+                "residual_resume: checkpoint is missing required keys 'actor' "
+                "and/or 'qf1'. Pass a training_state.pth from a residual run."
+            )
+        residual_online = DeterministicAgent(
+            policy_env_view,
+            action_scale=args.residual_scale,
+            action_bias=0.0,
+            hidden_layer_size=train_args.agent_hidden_layer_size,
+            num_hidden_layers=train_args.agent_num_hidden_layers,
+        ).to(device)
+        residual_target = DeterministicAgent(
+            policy_env_view,
+            action_scale=args.residual_scale,
+            action_bias=0.0,
+            hidden_layer_size=train_args.agent_hidden_layer_size,
+            num_hidden_layers=train_args.agent_num_hidden_layers,
+        ).to(device)
+        residual_action_low = torch.as_tensor(
+            action_low_np, dtype=torch.float32, device=device
+        )
+        residual_action_high = torch.as_tensor(
+            action_high_np, dtype=torch.float32, device=device
+        )
+        # Wrap the placeholder base + placeholder residual; the saved
+        # state_dict overwrites both below. Both targets share the frozen
+        # base instance — same invariant as residual mode.
+        actor = ResidualActor(
+            base_actor=actor,
+            residual_actor=residual_online,
+            action_low=residual_action_low,
+            action_high=residual_action_high,
+        ).to(device)
+        actor_target = ResidualActor(
+            base_actor=actor.base,
+            residual_actor=residual_target,
+            action_low=residual_action_low,
+            action_high=residual_action_high,
+        ).to(device)
+        actor.load_state_dict(resume_checkpoint["actor"], strict=False)
+        if "actor_target" in resume_checkpoint:
+            actor_target.load_state_dict(resume_checkpoint["actor_target"], strict=False)
+        else:
+            actor_target.load_state_dict(actor.state_dict(), strict=False)
+        # Re-freeze the base. ResidualActor.__init__ flips requires_grad off,
+        # but load_state_dict above doesn't touch the requires_grad flag, so
+        # this is defensive — kept in case a future state_dict serializes the
+        # flag differently.
+        for p in actor.base.parameters():
+            p.requires_grad_(False)
+        for p in actor_target.base.parameters():
+            p.requires_grad_(False)
+        # Critics — same growth-tolerant logic as the standard resume branch.
+        n_in_ckpt = sum(
+            1
+            for k in resume_checkpoint
+            if k.startswith("qf") and not k.endswith("_target") and k[2:].isdigit()
+        )
+        if n_in_ckpt == 0:
+            n_in_ckpt = 2
+        if n_in_ckpt > num_critics:
+            raise ValueError(
+                f"residual_resume mismatch: checkpoint has {n_in_ckpt} critics "
+                f"but num_critics={num_critics} is smaller. Cannot drop critics."
+            )
+        n_to_load = min(n_in_ckpt, num_critics)
+        for i in range(1, n_to_load + 1):
+            qfs[i - 1].load_state_dict(resume_checkpoint[f"qf{i}"])
+            qfs_target[i - 1].load_state_dict(resume_checkpoint[f"qf{i}_target"])
+        if n_in_ckpt < num_critics:
+            print(
+                f"[learner] residual_resume: checkpoint has {n_in_ckpt} critics "
+                f"but num_critics={num_critics}. Cloning qf1 into "
+                f"qf{n_to_load+1}..qf{num_critics}."
+            )
+            for i in range(n_to_load + 1, num_critics + 1):
+                qfs[i - 1].load_state_dict(qfs[0].state_dict())
+                qfs_target[i - 1].load_state_dict(qfs_target[0].state_dict())
+        set_rng_states(resume_checkpoint["rng_states"])
+        if args.residual_ema_decay is not None:
+            # Initialize EMA from the (just-restored) online residual head;
+            # if the prior run was saving model_ema.pth there isn't a
+            # canonical key in training_state.pth to restore from, so EMA
+            # restarts from the current online head — acceptable given EMA
+            # is a smoothing tool, not a load-bearing checkpoint artifact.
+            residual_ema = copy.deepcopy(actor.residual)
+            for p in residual_ema.parameters():
+                p.requires_grad_(False)
+            actor_ema = ResidualActor(
+                base_actor=actor.base,
+                residual_actor=residual_ema,
+                action_low=residual_action_low,
+                action_high=residual_action_high,
+            ).to(device)
+            print(
+                f"[learner] residual_resume: EMA re-initialized from restored "
+                f"online residual head (decay={args.residual_ema_decay})."
+            )
+        print(
+            f"[learner] residual_resume: restored ResidualActor (base+residual) "
+            f"+ {n_to_load} critic(s) from {args.model_path}."
+        )
     elif resume_checkpoint is not None:
         actor.load_state_dict(
             extract_deterministic_state_dict(resume_checkpoint["actor"]), strict=False
         )
         actor_target.load_state_dict(actor.state_dict())
-        qf1.load_state_dict(resume_checkpoint["qf1"])
-        qf2.load_state_dict(resume_checkpoint["qf2"])
-        qf1_target.load_state_dict(resume_checkpoint["qf1_target"])
-        qf2_target.load_state_dict(resume_checkpoint["qf2_target"])
+        # Resume N critics. Old checkpoints only have qf1/qf2; newer ones
+        # (num_critics>2) add qf3, qf4, ... and matching _target keys. Load
+        # whatever's there, leave any extra critics at fresh init when growing
+        # the ensemble; refuse to shrink it. Mirrors td3_training.py:957–991.
+        n_in_ckpt = sum(
+            1
+            for k in resume_checkpoint
+            if k.startswith("qf") and not k.endswith("_target") and k[2:].isdigit()
+        )
+        if n_in_ckpt == 0:
+            n_in_ckpt = 2  # legacy ckpts always have qf1/qf2
+        if n_in_ckpt > num_critics:
+            raise ValueError(
+                f"Resume mismatch: checkpoint has {n_in_ckpt} critics but "
+                f"num_critics={num_critics} is smaller. Cannot drop critics "
+                "from an ensemble checkpoint."
+            )
+        n_to_load = min(n_in_ckpt, num_critics)
+        for i in range(1, n_to_load + 1):
+            qfs[i - 1].load_state_dict(resume_checkpoint[f"qf{i}"])
+            qfs_target[i - 1].load_state_dict(resume_checkpoint[f"qf{i}_target"])
+        if n_in_ckpt < num_critics:
+            print(
+                f"[learner] resume: checkpoint has {n_in_ckpt} critics but "
+                f"num_critics={num_critics}. Cloning qf1 into qf{n_to_load+1}.."
+                f"qf{num_critics} so the ensemble doesn't dominate the "
+                "min-target with fresh-init critics."
+            )
+            for i in range(n_to_load + 1, num_critics + 1):
+                qfs[i - 1].load_state_dict(qfs[0].state_dict())
+                qfs_target[i - 1].load_state_dict(qfs_target[0].state_dict())
         set_rng_states(resume_checkpoint["rng_states"])
+    q_params: list = []
+    for q in qfs:
+        q_params.extend(q.parameters())
     q_optimizer = optim.Adam(
-        list(qf1.parameters()) + list(qf2.parameters()),
+        q_params,
         lr=args.q_lr,
         weight_decay=args.q_weight_decay,
     )
-    if args.full_checkpoint_load == "residual":
+    if args.full_checkpoint_load in ("residual", "residual_resume"):
+        # Both residual modes: actor_optimizer covers ONLY the trainable
+        # residual head — base is frozen. Optimizer state from a residual
+        # checkpoint matches this param set (same head architecture), so
+        # the resume load below is shape-compatible.
         actor_optimizer = optim.Adam(
             actor.residual.parameters(),
             lr=args.policy_lr,
@@ -1615,7 +1877,23 @@ def _init_sync_learner_state(
     total_updates = 0
     total_actor_updates = 0
     latest_train_metrics: Dict[str, float] = {}
-    if resume_checkpoint is not None and "q_optimizer" in resume_checkpoint:
+    # Optimizer state is mode-specific:
+    #   - "residual" / "weights_only": optimizer covers a DIFFERENT param set
+    #     than the source (residual head only / fresh critic ensemble), so
+    #     loading source optimizer state would fail with a shape mismatch
+    #     (e.g., source num_critics=2 → run num_critics=5). Skip the load —
+    #     the optimizer starts fresh, learner counters start at 0. Mirrors
+    #     td3_training.py's behavior.
+    #   - "residual_resume": optimizer covers the SAME param set as the saved
+    #     state (same residual head + same critic ensemble), so the load is
+    #     shape-compatible.
+    #   - "full_resume" / "fine_tune": same architecture as source, load works.
+    optimizer_load_modes = {"full_resume", "fine_tune", "residual_resume"}
+    if (
+        args.full_checkpoint_load in optimizer_load_modes
+        and resume_checkpoint is not None
+        and "q_optimizer" in resume_checkpoint
+    ):
         q_optimizer.load_state_dict(resume_checkpoint["q_optimizer"])
         actor_optimizer.load_state_dict(resume_checkpoint["actor_optimizer"])
         total_updates = int(
@@ -1633,13 +1911,22 @@ def _init_sync_learner_state(
             "[learner] resumed optimizer state "
             f"q_updates={total_updates} actor_updates={total_actor_updates}"
         )
+    elif (
+        args.full_checkpoint_load in ("residual", "weights_only")
+        and resume_checkpoint is not None
+        and "q_optimizer" in resume_checkpoint
+    ):
+        print(
+            f"[learner] {args.full_checkpoint_load} mode: skipping source "
+            "optimizer state restore (param set differs from source — fresh "
+            "Adam momentum + counters at 0)."
+        )
     return LearnerRuntimeState(
         actor=actor,
         actor_target=actor_target,
-        qf1=qf1,
-        qf2=qf2,
-        qf1_target=qf1_target,
-        qf2_target=qf2_target,
+        qfs=qfs,
+        qfs_target=qfs_target,
+        target_critic_subset_size=(None if target_subset is None else int(target_subset)),
         q_optimizer=q_optimizer,
         actor_optimizer=actor_optimizer,
         action_low=torch.as_tensor(action_low_np, dtype=torch.float32, device=device).unsqueeze(0),
@@ -1696,6 +1983,36 @@ def _run_sync_learner_iteration(
     if total_replay_size < int(args.min_replay_size_before_learning):
         return False
 
+    # Fresh-buffer-fill phase. Mirrors td3_training.py's `learning_starts`:
+    # gate the learner on fresh post-launch collector steps only, so the
+    # critic's first gradient step lands on a buffer that has seen pure
+    # on-policy data — independent of how full warm-start replay is. The
+    # orchestrator publishes `fresh_collector_steps_this_run` to stats
+    # before each learner call (run-relative, so resumes auto-skip when
+    # the prior run already crossed the gate). 0 disables (default).
+    if int(args.learning_starts_fresh_steps) > 0:
+        fresh_steps_this_run = int(stats.get("fresh_collector_steps_this_run", 0))
+        threshold = int(args.learning_starts_fresh_steps)
+        if fresh_steps_this_run < threshold:
+            stats["learning_starts_pending"] = float(threshold - fresh_steps_this_run)
+            # Log once when the gate first engages, so it's visible without
+            # spamming every episode boundary.
+            if not bool(stats.get("learning_starts_logged_engage", False)):
+                print(
+                    f"[learner] buffer-fill gate engaged: waiting for "
+                    f"{threshold} fresh collector steps before first "
+                    f"learner update (currently at {fresh_steps_this_run})."
+                )
+                stats["learning_starts_logged_engage"] = True
+            return False
+        # Gate just opened — log once and stop reporting `learning_starts_pending`.
+        if stats.pop("learning_starts_pending", None) is not None:
+            print(
+                f"[learner] buffer-fill gate cleared at "
+                f"{fresh_steps_this_run} fresh collector steps "
+                f"(threshold={threshold}). Starting critic / actor updates."
+            )
+
     actor_updated = False
     for q_update_idx in range(args.q_updates):
         batch, success_batch_count, failure_batch_count = _mixed_sample_from_shared(
@@ -1718,20 +2035,44 @@ def _run_sync_learner_iteration(
             sampled_next_prev_actions,
             train_args.use_last_action_in_policy_state,
         )
+        n_critics = len(state.qfs)
         with torch.no_grad():
             target_next_action = deterministic_actor_action(state.actor_target, sampled_next_policy_observations)
             noise = torch.randn_like(target_next_action) * float(args.policy_noise)
             noise = torch.clamp(noise, -float(args.noise_clip), float(args.noise_clip))
             target_next_action = torch.clamp(target_next_action + noise, state.action_low, state.action_high)
-            q1_next_task_h, q1_next_motion_h = state.qf1_target(sampled_next_observations, target_next_action)
-            q2_next_task_h, q2_next_motion_h = state.qf2_target(sampled_next_observations, target_next_action)
+            # Target Q = min over the chosen subset (Maxmin if subset is None or
+            # ≥N; REDQ-style random M-of-N otherwise). Re-sampled each update.
+            subset_size = state.target_critic_subset_size
+            if subset_size is None or int(subset_size) >= n_critics:
+                target_indices = list(range(n_critics))
+            else:
+                target_indices = (
+                    torch.randperm(n_critics)[: int(subset_size)].tolist()
+                )
+            next_task_h_list = []
+            next_motion_h_list = []
+            for ti in target_indices:
+                nt_h, nm_h = state.qfs_target[ti](
+                    sampled_next_observations, target_next_action
+                )
+                next_task_h_list.append(nt_h)
+                next_motion_h_list.append(nm_h)
+            if len(next_task_h_list) == 1:
+                min_next_task_h = next_task_h_list[0]
+                min_next_motion_h = next_motion_h_list[0]
+            elif len(next_task_h_list) == 2:
+                # Preserve the original kernel path so N=2 is bit-identical.
+                min_next_task_h = torch.min(next_task_h_list[0], next_task_h_list[1])
+                min_next_motion_h = torch.min(next_motion_h_list[0], next_motion_h_list[1])
+            else:
+                min_next_task_h = torch.stack(next_task_h_list, dim=0).min(dim=0).values
+                min_next_motion_h = torch.stack(next_motion_h_list, dim=0).min(dim=0).values
             min_next_task = h_inverse(
-                torch.min(q1_next_task_h, q2_next_task_h),
-                eps=float(args.h_transform_eps),
+                min_next_task_h, eps=float(args.h_transform_eps)
             ).view(-1)
             min_next_motion = h_inverse(
-                torch.min(q1_next_motion_h, q2_next_motion_h),
-                eps=float(args.h_transform_eps),
+                min_next_motion_h, eps=float(args.h_transform_eps)
             ).view(-1)
             bellman_task = (
                 sampled_task_rewards
@@ -1743,13 +2084,27 @@ def _run_sync_learner_iteration(
             )
             target_task_h = h_transform(bellman_task, eps=float(args.h_transform_eps))
             target_motion_h = h_transform(bellman_motion, eps=float(args.h_transform_eps))
-        q1_task_h, q1_motion_h = state.qf1(sampled_observations, sampled_actions)
-        q2_task_h, q2_motion_h = state.qf2(sampled_observations, sampled_actions)
-        q1_task_loss = torch.nn.functional.mse_loss(q1_task_h.view(-1), target_task_h)
-        q2_task_loss = torch.nn.functional.mse_loss(q2_task_h.view(-1), target_task_h)
-        q1_motion_loss = torch.nn.functional.mse_loss(q1_motion_h.view(-1), target_motion_h)
-        q2_motion_loss = torch.nn.functional.mse_loss(q2_motion_h.view(-1), target_motion_h)
-        q_loss = q1_task_loss + q2_task_loss + q1_motion_loss + q2_motion_loss
+        # Forward pass over all N critics; train each against the shared target.
+        qi_task_h_list = []
+        qi_motion_h_list = []
+        qi_task_loss_list = []
+        qi_motion_loss_list = []
+        for q in state.qfs:
+            qi_task_h, qi_motion_h = q(sampled_observations, sampled_actions)
+            qi_task_h_list.append(qi_task_h)
+            qi_motion_h_list.append(qi_motion_h)
+            qi_task_loss_list.append(
+                torch.nn.functional.mse_loss(qi_task_h.view(-1), target_task_h)
+            )
+            qi_motion_loss_list.append(
+                torch.nn.functional.mse_loss(qi_motion_h.view(-1), target_motion_h)
+            )
+        # Legacy aliases for the metrics block below; behavior matches td3_training.py:1881.
+        q1_task_h, q1_motion_h = qi_task_h_list[0], qi_motion_h_list[0]
+        q1_task_loss, q1_motion_loss = qi_task_loss_list[0], qi_motion_loss_list[0]
+        q2_task_loss = qi_task_loss_list[1]
+        q2_motion_loss = qi_motion_loss_list[1]
+        q_loss = sum(qi_task_loss_list) + sum(qi_motion_loss_list)
         state.q_optimizer.zero_grad(set_to_none=True)
         q_loss.backward()
         state.q_optimizer.step()
@@ -1760,8 +2115,12 @@ def _run_sync_learner_iteration(
         positive_task_rewards = sampled_task_rewards[positive_task_reward_mask]
         state.latest_train_metrics.update(
             {
-                "losses/q_task_loss": float(((q1_task_loss + q2_task_loss) / 2.0).item()),
-                "losses/q_motion_loss": float(((q1_motion_loss + q2_motion_loss) / 2.0).item()),
+                "losses/q_task_loss": float(
+                    (sum(qi_task_loss_list) / float(n_critics)).item()
+                ),
+                "losses/q_motion_loss": float(
+                    (sum(qi_motion_loss_list) / float(n_critics)).item()
+                ),
                 "losses/q_total_loss": float(q_loss.item()),
                 "losses/q1_task_mean": float(q1_task_h.mean().item()),
                 "losses/q1_motion_mean": float(q1_motion_h.mean().item()),
@@ -1799,11 +2158,16 @@ def _run_sync_learner_iteration(
         )
         if (q_update_idx + 1) % int(args.target_network_frequency) == 0:
             with torch.no_grad():
-                for source, target in (
-                    (state.qf1, state.qf1_target),
-                    (state.qf2, state.qf2_target),
-                    (state.actor, state.actor_target),
-                ):
+                # Polyak-average all N critic-target pairs + the actor target.
+                # In residual mode the wrapped ResidualActor target shares the
+                # frozen base with the online ResidualActor, so this only
+                # updates the residual head (and clamp buffers, which are
+                # parameters with no grad) — matches td3_training.py.
+                sync_pairs: list[tuple] = [
+                    (q, qt) for q, qt in zip(state.qfs, state.qfs_target)
+                ]
+                sync_pairs.append((state.actor, state.actor_target))
+                for source, target in sync_pairs:
                     for param, target_param in zip(source.parameters(), target.parameters()):
                         target_param.data.copy_(
                             float(args.tau) * param.data + (1.0 - float(args.tau)) * target_param.data

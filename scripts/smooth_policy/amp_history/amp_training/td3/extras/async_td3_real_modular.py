@@ -20,7 +20,7 @@ import os
 import time
 import traceback
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict
 
@@ -48,6 +48,21 @@ from scripts.smooth_policy.amp_history.amp_training.td3.helper.real_collector_me
     rolling_mean,
     update_stats_dict_rolling_windows,
     write_rolling_windows_tensorboard_scalars,
+)
+from scripts.smooth_policy.amp_history.amp_training.td3.helper.run_event_log import (
+    append_episode_summary,
+    append_reset_summary,
+    append_run_event,
+    episode_summaries_path,
+    reset_summaries_path,
+    run_data_dir_from_args,
+    run_events_path,
+    utc_timestamps,
+)
+from scripts.smooth_policy.amp_history.amp_training.td3.helper.juggle_counter import (
+    JUGGLE_SUCCESS_THRESHOLD,
+    JuggleCounts,
+    count_juggles_from_rows,
 )
 from scripts.smooth_policy.amp_history.amp_training.td3.helper.real_motion_rewards import (
     _init_motion_reward_state,
@@ -120,16 +135,25 @@ def _save_episode_artifacts_and_pending_reset(
     pending_reset_artifact,
     latency_output_dir: Path | None,
     counters: dict,
-) -> tuple[int, bool]:
+) -> tuple[int, bool, str, Path | None]:
     """HDF5 + GIF + camera video + pending reset flush — matches L1953–L2154.
 
-    Mutates ``counters`` (dict of named tally counters); returns the new
-    ``next_episode_file_id`` together with ``episode_kept`` (True iff
-    ``clean_episode_hdf5`` accepted the trajectory). Callers use
-    ``episode_kept`` to suppress training, replay, and performance-metric
-    updates for trajectories that the validator discarded. The
-    pending-reset flush is included here because it lives in the same
-    artifact-save block in the source.
+    Mutates ``counters`` (dict of named tally counters); returns
+    ``(next_episode_file_id, episode_kept, clean_reason, artifact_path)``:
+
+    * ``episode_kept`` — True iff ``clean_episode_hdf5`` accepted the
+      trajectory. Callers use it to suppress training, replay, and
+      performance-metric updates for trajectories that the validator
+      discarded.
+    * ``clean_reason`` — ``"kept"`` when the file was retained, otherwise
+      the rejection reason from ``clean_episode_hdf5`` (e.g.,
+      ``"short_episode"``, ``"non_finite_pose"``).
+    * ``artifact_path`` — absolute path to the retained HDF5 trajectory
+      file, or ``None`` if it was discarded (the file is unlinked by
+      the validator in that case).
+
+    The pending-reset flush is included here because it lives in the
+    same artifact-save block in the source.
     """
     n_episode_steps = len(result.rows)
     n_camera_frames = len(result.images)
@@ -311,8 +335,40 @@ def _save_episode_artifacts_and_pending_reset(
                 f"episode_id={pending_reset_artifact.episode_id} "
                 f"saved to {reset_clean_result.path}"
             )
+        # One JSONL row per reset event (success and failure) so the reset
+        # timeline is queryable in the same shape as episode_summaries.
+        # Wall time is the moment the reset FSM finished (captured by
+        # ResetRunner), not flush time, so resets and episodes interleave
+        # correctly when sorted by wall_time_s.
+        wall_time_s_end = float(getattr(pending_reset_artifact, "wall_time_s_end", 0.0))
+        timestamp_iso_end = (
+            datetime.fromtimestamp(wall_time_s_end, tz=timezone.utc).isoformat()
+            if wall_time_s_end > 0.0
+            else None
+        )
+        append_reset_summary(
+            args,
+            {
+                "reset_id": int(pending_reset_artifact.episode_id),
+                "wall_time_s_end": wall_time_s_end,
+                "timestamp_iso_end": timestamp_iso_end,
+                "partition": pending_reset_artifact.partition,
+                "done_reason": pending_reset_artifact.done_reason,
+                "step_count": int(pending_reset_artifact.step_count),
+                "camera_null_frames": int(pending_reset_artifact.camera_null_frames),
+                "kept": bool(reset_clean_result.kept),
+                "clean_reason": str(reset_clean_result.reason),
+                "artifact_path": str(reset_clean_result.path) if reset_clean_result.kept else None,
+                "flush_after_policy_episode": int(next_episode_file_id),
+            },
+        )
 
-    return next_episode_file_id + 1, bool(clean_result.kept)
+    return (
+        next_episode_file_id + 1,
+        bool(clean_result.kept),
+        str(clean_result.reason),
+        Path(clean_result.path) if clean_result.kept else None,
+    )
 
 
 def _periodic_log(
@@ -333,6 +389,8 @@ def _periodic_log(
     episodic_returns: list,
     episodic_lengths: list,
     success_rates: list,
+    episodic_juggles: list,
+    episodic_contacts: list,
     interval_state: dict,
     last_log_time: float,
     episode_return_success_threshold: float,
@@ -350,6 +408,8 @@ def _periodic_log(
         episode_length_values=rolling_state["length"],
         estop_episode_flags=rolling_state["estop"],
         episode_return_values=rolling_state["return"],
+        episode_juggles_values=rolling_state["juggles"],
+        episode_contacts_values=rolling_state["contacts"],
     )
     rolling50_m = rolling_multi[50]
     stats["collector_steps"] = float(total_steps)
@@ -389,6 +449,8 @@ def _periodic_log(
         raw_episode_length_values=rolling_state["length"],
         raw_estop_episode_flags=rolling_state["estop"],
         raw_episode_return_values=rolling_state["return"],
+        raw_episode_juggles_values=rolling_state["juggles"],
+        raw_episode_contacts_values=rolling_state["contacts"],
     )
     writer.add_scalar("replay/success_buffer_size", float(snapshot["success"]["size"]), total_steps)
     writer.add_scalar("replay/failure_buffer_size", float(snapshot["failure"]["size"]), total_steps)
@@ -478,6 +540,28 @@ def _periodic_log(
         episodic_returns.clear()
         episodic_lengths.clear()
         success_rates.clear()
+    if episodic_juggles:
+        writer.add_scalar(
+            "charts/avg_episodic_juggles", float(np.mean(episodic_juggles)), total_steps
+        )
+        writer.add_scalar(
+            "charts/min_episodic_juggles", float(np.min(episodic_juggles)), total_steps
+        )
+        writer.add_scalar(
+            "charts/max_episodic_juggles", float(np.max(episodic_juggles)), total_steps
+        )
+        writer.add_scalar(
+            "charts/avg_juggle_success_rate",
+            float(np.mean([1.0 if j >= JUGGLE_SUCCESS_THRESHOLD else 0.0 for j in episodic_juggles])),
+            total_steps,
+        )
+        writer.add_scalar(
+            "charts/avg_episodic_contacts",
+            float(np.mean(episodic_contacts)) if episodic_contacts else 0.0,
+            total_steps,
+        )
+        episodic_juggles.clear()
+        episodic_contacts.clear()
 
     print(
         "[collector] "
@@ -506,6 +590,7 @@ def _periodic_log(
         f"transition_events_total={transition_hold.events_total} "
         f"transition_reason={transition_hold.reason} "
         f"elapsed_total_s={elapsed_s:.1f} "
+        f"rolling50_juggles_avg={rolling50_m.episode_juggles.avg:.2f} "
         f"rolling50_task_avg={rolling50_m.task_reward_avg:.4f} "
         f"rolling50_motion_avg={rolling50_m.motion_reward_avg:.4f} "
         f"rolling50_len_avg={rolling50_m.episode_length_avg:.2f} "
@@ -526,13 +611,25 @@ def _periodic_log(
 
 
 def _write_per_episode_tb(
-    writer: SummaryWriter, *, result, total_steps: int, stats: Dict[str, object]
+    writer: SummaryWriter,
+    *,
+    result,
+    total_steps: int,
+    stats: Dict[str, object],
+    juggle_counts: JuggleCounts,
 ) -> None:
     """Per-episode TB scalars (matches L1860–1867)."""
     writer.add_scalar("charts/episodic_return", result.metrics.episode_return, total_steps)
     writer.add_scalar("charts/episodic_length", result.metrics.episode_length, total_steps)
     writer.add_scalar(
         "charts/episodic_success", float(1.0 if result.terminal.episode_success else 0.0), total_steps
+    )
+    writer.add_scalar("charts/episodic_juggles", float(juggle_counts.n_juggles), total_steps)
+    writer.add_scalar("charts/episodic_contacts", float(juggle_counts.n_contacts), total_steps)
+    writer.add_scalar(
+        "charts/episodic_juggle_success",
+        float(1.0 if juggle_counts.juggle_success else 0.0),
+        total_steps,
     )
     if result.metrics.motion_metric_count > 0:
         for metric_name in MOTION_METRIC_NAMES:
@@ -552,6 +649,7 @@ def _print_episode_progress(
     elapsed_offset_s: float,
     collector_start_time: float,
     rolling_state: dict,
+    juggle_counts: JuggleCounts,
 ) -> None:
     """Per-episode progress lines (matches L1921–1952)."""
     n_episode_steps = len(result.rows)
@@ -566,6 +664,8 @@ def _print_episode_progress(
         episode_length_values=rolling_state["length"],
         estop_episode_flags=rolling_state["estop"],
         episode_return_values=rolling_state["return"],
+        episode_juggles_values=rolling_state["juggles"],
+        episode_contacts_values=rolling_state["contacts"],
     )
     rolling50_m = rolling_multi[50]
     stop_state_reason = (
@@ -599,6 +699,10 @@ def _print_episode_progress(
         f"elapsed_s={elapsed_s:.1f} "
         f"elapsed_min={elapsed_min:.2f} "
         f"elapsed_hr={elapsed_hr:.3f} "
+        f"juggles={juggle_counts.n_juggles} "
+        f"contacts={juggle_counts.n_contacts} "
+        f"juggle_success={int(juggle_counts.juggle_success)} "
+        f"rolling50_juggles_avg={rolling50_m.episode_juggles.avg:.2f} "
         f"rolling50_task_avg={rolling50_m.task_reward_avg:.4f} "
         f"rolling50_motion_avg={rolling50_m.motion_reward_avg:.4f} "
         f"rolling50_len_avg={rolling50_m.episode_length_avg:.2f} "
@@ -659,6 +763,29 @@ def collector_process_modular(
         else:
             latency_output_dir = Path(tb_log_dir).resolve().parent / "latency_profiles"
         latency_output_dir.mkdir(parents=True, exist_ok=True)
+    run_data_dir = run_data_dir_from_args(args)
+    print(
+        "[run_event_log] writing per-run JSONL streams to:\n"
+        f"    episodes : {episode_summaries_path(args)}\n"
+        f"    resets   : {reset_summaries_path(args)}\n"
+        f"    events   : {run_events_path(args)}"
+    )
+    # ----------------------------- Run-start event ------------------------
+    # Stamp the start of this run into the events stream. Anchors the
+    # chronological log: every later wall_time_s in the JSONLs can be
+    # offset against this row to yield run-elapsed seconds.
+    append_run_event(
+        args,
+        "run_start",
+        run_data_dir=str(run_data_dir),
+        run_name=str(getattr(args, "run_name", "")),
+        seed=int(getattr(args, "seed", 0)),
+        args_file=str(getattr(args, "args_file", "")) if getattr(args, "args_file", None) else None,
+        train_args=str(getattr(args, "train_args", "")) if getattr(args, "train_args", None) else None,
+        config=str(getattr(args, "config", "")) if getattr(args, "config", None) else None,
+        model_path=str(getattr(args, "model_path", "")) if getattr(args, "model_path", None) else None,
+        smoke_test_seconds=float(getattr(args, "smoke_test_seconds", 0.0)),
+    )
 
     # ----------------------------- Actor / primitive selector -------------
     actor = _build_collector_actor(
@@ -777,6 +904,11 @@ def collector_process_modular(
     )
     total_steps = int(stats.get("collector_total_steps", stats.get("collector_steps", 0.0)))
     policy_runner.set_total_steps(total_steps)
+    # Fresh-step counter base. `total_steps` may be non-zero on resume — we
+    # want `fresh_collector_steps_this_run` to count post-launch steps only,
+    # so the learning_starts_fresh_steps gate has run-relative semantics.
+    run_start_total_steps = total_steps
+    stats["fresh_collector_steps_this_run"] = float(0)
 
     # Startup transition hold (reset → policy). Source L1438.
     transition_hold.begin(
@@ -842,6 +974,23 @@ def collector_process_modular(
             ),
             maxlen=ROLLING_PERF_WINDOW_EPISODES,
         ),
+        # Juggle / contact counts per episode (paddle-puck contact + clear
+        # long-term direction flip — see helper/juggle_counter.py). Treated
+        # as a sliding-window evaluation metric in parallel with `return`.
+        "juggles": deque(
+            _coerce_float_list(
+                stats.get("rolling50_episode_juggles_values", []),
+                max_items=ROLLING_PERF_WINDOW_EPISODES,
+            ),
+            maxlen=ROLLING_PERF_WINDOW_EPISODES,
+        ),
+        "contacts": deque(
+            _coerce_float_list(
+                stats.get("rolling50_episode_contacts_values", []),
+                max_items=ROLLING_PERF_WINDOW_EPISODES,
+            ),
+            maxlen=ROLLING_PERF_WINDOW_EPISODES,
+        ),
         "recent_episode_window_count": 0,
     }
     interval_state = {
@@ -852,9 +1001,15 @@ def collector_process_modular(
     episodic_returns: list = []
     episodic_lengths: list = []
     success_rates: list = []
+    episodic_juggles: list = []
+    episodic_contacts: list = []
     elapsed_offset_s = float(stats.get("run_elapsed_total_s", 0.0))
     collector_start_time = time.time()
     checkpoint_save_request_id = int(stats.get("checkpoint_save_request_id", 0))
+    # Tracks the last checkpoint request id the orchestrator has already
+    # surfaced as a run_events.jsonl row. Initialized from the stats so a
+    # resumed run does not double-emit checkpoint events.
+    last_seen_checkpoint_request_id = int(stats.get("last_checkpoint_request_id", 0))
 
     # ----------------------------- Main loop ------------------------------
     while True:
@@ -865,6 +1020,12 @@ def collector_process_modular(
             print(
                 f"[collector] smoke-test duration reached ({args.smoke_test_seconds:.1f}s), "
                 "stopping."
+            )
+            append_run_event(
+                args,
+                "smoke_test_done",
+                smoke_test_seconds=float(args.smoke_test_seconds),
+                elapsed_s=float(time.time() - collector_start_time),
             )
             break
 
@@ -897,7 +1058,12 @@ def collector_process_modular(
         # lengths, zero timesteps, etc.) must not contribute to replay,
         # learner updates, or any performance metric.
         saved_episode_id = next_episode_file_id
-        next_episode_file_id, episode_kept = _save_episode_artifacts_and_pending_reset(
+        (
+            next_episode_file_id,
+            episode_kept,
+            clean_reason,
+            artifact_path,
+        ) = _save_episode_artifacts_and_pending_reset(
             args=args,
             result=result,
             next_episode_file_id=next_episode_file_id,
@@ -906,6 +1072,12 @@ def collector_process_modular(
             counters=counters,
         )
         pending_reset_artifact = None
+        # Replay partition + success threshold are only assigned for kept
+        # episodes (inside the block below); seed defaults so the
+        # episode summary record has consistent fields for discarded
+        # episodes too.
+        replay_partition: str | None = None
+        replay_threshold_at_episode: float | None = None
 
         # Wall-clock + step counters track elapsed time for the run; safe
         # to update regardless of whether this episode was kept.
@@ -913,11 +1085,23 @@ def collector_process_modular(
         stats["run_elapsed_total_s"] = float(elapsed_s)
         stats["collector_steps"] = float(total_steps)
         stats["collector_total_steps"] = float(total_steps)
+        # Run-relative fresh-step counter — read by the learner's
+        # `learning_starts_fresh_steps` gate. On resume `total_steps`
+        # carries over from prior runs but `run_start_total_steps` is
+        # snapshot at the top of this orchestrator call, so the gate
+        # auto-skips when the prior run already crossed it.
+        stats["fresh_collector_steps_this_run"] = float(
+            max(0, total_steps - run_start_total_steps)
+        )
 
         # 3. Apply the kept-trajectory updates: replay push, learner step,
         # rolling/episodic perf metrics, per-episode TB scalars, and the
         # periodic-checkpoint trigger. All are skipped if the validator
         # rejected the trajectory.
+        # Compute juggle/contact counts for kept *and* discarded episodes —
+        # cheap (<1ms over a few hundred rows) and lets the JSONL summary
+        # carry them for offline analysis even on rejected trajectories.
+        episode_juggle_counts = count_juggles_from_rows(result.rows)
         if episode_kept:
             interval_state["primitive"] += result.metrics.delta_interval_primitive_env_steps
             interval_state["primitive_horizontal"] += (
@@ -931,11 +1115,21 @@ def collector_process_modular(
             rolling_state["length"].append(result.metrics.episode_length)
             rolling_state["estop"].append(result.metrics.episode_estop_flag)
             rolling_state["return"].append(result.metrics.episode_return)
+            rolling_state["juggles"].append(float(episode_juggle_counts.n_juggles))
+            rolling_state["contacts"].append(float(episode_juggle_counts.n_contacts))
             episodic_returns.append(result.metrics.episode_return)
             episodic_lengths.append(result.metrics.episode_length)
             success_rates.append(1.0 if result.terminal.episode_success else 0.0)
+            episodic_juggles.append(float(episode_juggle_counts.n_juggles))
+            episodic_contacts.append(float(episode_juggle_counts.n_contacts))
 
-            _write_per_episode_tb(writer, result=result, total_steps=total_steps, stats=stats)
+            _write_per_episode_tb(
+                writer,
+                result=result,
+                total_steps=total_steps,
+                stats=stats,
+                juggle_counts=episode_juggle_counts,
+            )
 
             partition, ep_return, episode_return_success_threshold, _ = _add_episode_to_shared_replay(
                 replay=replay,
@@ -943,6 +1137,8 @@ def collector_process_modular(
                 recent_episode_returns=recent_episode_returns,
                 success_top_fraction=args.success_top_fraction,
             )
+            replay_partition = partition
+            replay_threshold_at_episode = float(episode_return_success_threshold)
             rolling_state["recent_episode_window_count"] = len(recent_episode_returns)
             actor_updated = _run_sync_learner_iteration(
                 args=args,
@@ -951,6 +1147,25 @@ def collector_process_modular(
                 stats=stats,
                 state=learner_state,
             )
+            # If the learner just finished a periodic checkpoint as a side
+            # effect, surface it as a row in run_events.jsonl. We detect
+            # the save by polling stats["last_checkpoint_request_id"]
+            # (set inside _run_sync_learner_iteration on a successful
+            # save) against the value we saw on the previous iteration.
+            new_ckpt_request_id = int(stats.get("last_checkpoint_request_id", 0))
+            if new_ckpt_request_id > last_seen_checkpoint_request_id:
+                append_run_event(
+                    args,
+                    "checkpoint_saved",
+                    request_id=new_ckpt_request_id,
+                    checkpoint_dir=str(stats.get("last_checkpoint_dir", "")),
+                    q_updates=int(float(stats.get("last_checkpoint_q_updates", 0.0))),
+                    successful_episodes_kept=int(
+                        float(stats.get("last_checkpoint_success_episode_count", 0.0))
+                    ),
+                    trigger=str(stats.get("checkpoint_reason", "")),
+                )
+                last_seen_checkpoint_request_id = new_ckpt_request_id
             if actor_updated:
                 actor.load_state_dict(
                     {k: v.detach().cpu() for k, v in learner_state.actor.state_dict().items()},
@@ -975,6 +1190,8 @@ def collector_process_modular(
                 episode_length_values=rolling_state["length"],
                 estop_episode_flags=rolling_state["estop"],
                 episode_return_values=rolling_state["return"],
+                episode_juggles_values=rolling_state["juggles"],
+                episode_contacts_values=rolling_state["contacts"],
             )
             update_stats_dict_rolling_windows(
                 stats,
@@ -984,6 +1201,8 @@ def collector_process_modular(
                 raw_episode_length_values=rolling_state["length"],
                 raw_estop_episode_flags=rolling_state["estop"],
                 raw_episode_return_values=rolling_state["return"],
+                raw_episode_juggles_values=rolling_state["juggles"],
+                raw_episode_contacts_values=rolling_state["contacts"],
             )
             write_rolling_windows_tensorboard_scalars(writer, rolling_multi, total_steps)
 
@@ -1032,6 +1251,53 @@ def collector_process_modular(
             elapsed_offset_s=elapsed_offset_s,
             collector_start_time=collector_start_time,
             rolling_state=rolling_state,
+            juggle_counts=episode_juggle_counts,
+        )
+
+        # Append one JSONL row covering this episode (kept *or* discarded)
+        # so the full episode-by-episode return / metric history is on
+        # disk for offline analysis. The trajectory itself is at
+        # ``artifact_path`` for kept episodes; discarded trajectories
+        # are unlinked by the validator and have ``artifact_path=None``.
+        append_episode_summary(
+            args,
+            {
+                "episode_id": int(saved_episode_id),
+                "run_episode_index": int(total_episodes),
+                "timestamp_iso": datetime.fromtimestamp(
+                    episode_end_wall_time, tz=timezone.utc
+                ).isoformat(),
+                "wall_time_s": float(episode_end_wall_time),
+                "kept": bool(episode_kept),
+                "clean_reason": clean_reason,
+                "artifact_path": str(artifact_path) if artifact_path is not None else None,
+                "n_steps": int(len(result.rows)),
+                "episode_length": float(result.metrics.episode_length),
+                "episode_return": float(result.metrics.episode_return),
+                "episode_task_reward": float(result.metrics.episode_task_reward),
+                "episode_motion_reward": float(result.metrics.episode_motion_reward),
+                "episode_success": bool(result.terminal.episode_success),
+                "episode_juggles": int(episode_juggle_counts.n_juggles),
+                "episode_contacts": int(episode_juggle_counts.n_contacts),
+                "episode_juggle_success": bool(episode_juggle_counts.juggle_success),
+                "episode_estop_flag": float(result.metrics.episode_estop_flag),
+                "had_protective_stop": bool(result.metrics.had_protective_stop),
+                "had_controller_disconnect": bool(result.metrics.had_controller_disconnect),
+                "readiness_fail_estop": bool(result.terminal.readiness_fail_estop),
+                "episode_end_type": result.terminal.episode_end_type,
+                "episode_end_reason": result.terminal.episode_end_reason,
+                "stop_state_artifact_label": result.terminal.stop_state_artifact_label,
+                "replay_partition": replay_partition,
+                "episode_return_success_threshold": replay_threshold_at_episode,
+                "total_steps": int(total_steps),
+                "actor_version": int(learner_state.total_actor_updates),
+                "run_elapsed_total_s": float(elapsed_s),
+                # Annealed exploration-primitive chance at the moment this
+                # episode ended — captures the runtime value that was
+                # actually applied during the episode, so future analysis
+                # doesn't need to recompute from start/end/horizon args.
+                "exploration_primitive_chance_runtime": float(primitive_selector.chance),
+            },
         )
 
         # 4. Pick reset kind and run reset to completion.
@@ -1093,6 +1359,8 @@ def collector_process_modular(
                 episodic_returns=episodic_returns,
                 episodic_lengths=episodic_lengths,
                 success_rates=success_rates,
+                episodic_juggles=episodic_juggles,
+                episodic_contacts=episodic_contacts,
                 interval_state=interval_state,
                 last_log_time=last_log_time,
                 episode_return_success_threshold=episode_return_success_threshold,
@@ -1126,6 +1394,25 @@ def main(args: Args, train_args: TrainArgs) -> None:
     ):
         raise ValueError(
             "checkpoint_every_successful_online_episodes must be > 0 when checkpointing is enabled."
+        )
+    # Loud, non-fatal warning: writing periodic checkpoints without the
+    # non-vital fields produces files that cannot be cleanly resumed
+    # (no optimizer state, no learner-update counters, no
+    # collector_total_steps / run_elapsed_total_s, no rolling-window
+    # deques). Resume from such a checkpoint loses Adam momentum,
+    # restarts the TB step axis at zero, and starts the rolling-50
+    # statistics cold. See notes/docs/training/real-world-resume.md.
+    if args.enable_periodic_checkpointing and not args.include_non_vital_training_state_fields:
+        print(
+            "[main] WARNING: enable_periodic_checkpointing=True but "
+            "include_non_vital_training_state_fields=False — checkpoints will OMIT "
+            "optimizer state, learner counters, collector_total_steps, "
+            "run_elapsed_total_s, and rolling-window deques. Resume from these "
+            "checkpoints will be lossy (Adam momentum reset, TB step axis "
+            "restarts at 0, rolling-50 stats start cold). Set "
+            "include_non_vital_training_state_fields=true in your args YAML "
+            "(or pass --include-non-vital-training-state-fields) for "
+            "fully-resumable checkpoints. See notes/docs/training/real-world-resume.md."
         )
     normalized_replay_priority = _normalize_replay_source_priority(args.replay_source_priority)
     if normalized_replay_priority != str(args.replay_source_priority).strip().lower():
@@ -1172,6 +1459,8 @@ def main(args: Args, train_args: TrainArgs) -> None:
     stats["rolling50_episode_length_values"] = []
     stats["rolling50_estop_episode_flags"] = []
     stats["rolling50_episode_return_values"] = []
+    stats["rolling50_episode_juggles_values"] = []
+    stats["rolling50_episode_contacts_values"] = []
     training_state_checkpoint: Dict[str, object] | None = None
     if args.model_path is not None:
         training_state_checkpoint = _load_training_state_checkpoint(args.model_path)
@@ -1199,6 +1488,17 @@ def main(args: Args, train_args: TrainArgs) -> None:
                 training_state_checkpoint.get("rolling50_episode_return_values", []),
                 max_items=ROLLING_PERF_WINDOW_EPISODES,
             )
+            # Same .get(...) treatment for juggle/contact rolling values:
+            # checkpoints written before this metric existed resume cleanly
+            # with empty windows that refill as new episodes arrive.
+            loaded_juggles_values = _coerce_float_list(
+                training_state_checkpoint.get("rolling50_episode_juggles_values", []),
+                max_items=ROLLING_PERF_WINDOW_EPISODES,
+            )
+            loaded_contacts_values = _coerce_float_list(
+                training_state_checkpoint.get("rolling50_episode_contacts_values", []),
+                max_items=ROLLING_PERF_WINDOW_EPISODES,
+            )
             stats["collector_total_steps"] = float(training_state_checkpoint["collector_total_steps"])
             stats["run_elapsed_total_s"] = float(training_state_checkpoint["run_elapsed_total_s"])
             stats["rolling50_task_reward_values"] = loaded_task_values
@@ -1206,6 +1506,8 @@ def main(args: Args, train_args: TrainArgs) -> None:
             stats["rolling50_episode_length_values"] = loaded_length_values
             stats["rolling50_estop_episode_flags"] = loaded_estop_flags
             stats["rolling50_episode_return_values"] = loaded_return_values
+            stats["rolling50_episode_juggles_values"] = loaded_juggles_values
+            stats["rolling50_episode_contacts_values"] = loaded_contacts_values
             stats["rolling50_window_count"] = float(
                 max(
                     len(loaded_task_values),
@@ -1219,6 +1521,8 @@ def main(args: Args, train_args: TrainArgs) -> None:
             stats["rolling50_motion_reward_avg"] = float(rolling_mean(loaded_motion_values))
             stats["rolling50_episode_length_avg"] = float(rolling_mean(loaded_length_values))
             stats["rolling50_episode_return_avg"] = float(rolling_mean(loaded_return_values))
+            stats["rolling50_episode_juggles_avg"] = float(rolling_mean(loaded_juggles_values))
+            stats["rolling50_episode_contacts_avg"] = float(rolling_mean(loaded_contacts_values))
             stats["rolling50_estop_episode_count"] = float(sum(loaded_estop_flags))
 
     warm_start_requested = len(args.warm_start_hdf5_dirs) > 0
@@ -1278,6 +1582,7 @@ def main(args: Args, train_args: TrainArgs) -> None:
         tb_log_dir=learner_tb_dir,
         resume_checkpoint=training_state_checkpoint,
     )
+    run_end_reason = "completed"
     try:
         collector_process_modular(
             args,
@@ -1293,6 +1598,10 @@ def main(args: Args, train_args: TrainArgs) -> None:
         )
     except KeyboardInterrupt:
         print("[main] interrupted by user; shutting down.")
+        run_end_reason = "keyboard_interrupt"
+    except BaseException:
+        run_end_reason = "exception"
+        raise
     finally:
         _finalize_sync_learner_state(
             args=args,
@@ -1300,6 +1609,38 @@ def main(args: Args, train_args: TrainArgs) -> None:
             replay=replay,
             stats=stats,
             state=learner_state,
+        )
+        # Emit run_end AFTER finalize so the post-finalize checkpoint
+        # request id (if any) is captured. The orchestrator already
+        # handles its own final-checkpoint event detection during the
+        # shutdown path, but if the finalize wrote a fresh "final_*"
+        # checkpoint we emit one more event here for symmetry.
+        final_request_id = int(stats.get("last_checkpoint_request_id", 0))
+        if final_request_id > 0 and stats.get("last_checkpoint_dir"):
+            append_run_event(
+                args,
+                "checkpoint_saved",
+                request_id=final_request_id,
+                checkpoint_dir=str(stats.get("last_checkpoint_dir", "")),
+                q_updates=int(float(stats.get("last_checkpoint_q_updates", 0.0))),
+                successful_episodes_kept=int(
+                    float(stats.get("last_checkpoint_success_episode_count", 0.0))
+                ),
+                trigger="final_on_shutdown",
+            )
+        append_run_event(
+            args,
+            "run_end",
+            reason=run_end_reason,
+            collector_total_steps=int(float(stats.get("collector_total_steps", 0.0))),
+            run_elapsed_total_s=float(stats.get("run_elapsed_total_s", 0.0)),
+            successful_online_episodes_kept=int(
+                float(stats.get("successful_online_episodes_kept", 0.0))
+            ),
+            episodes_saved=int(float(stats.get("episodes_saved", 0.0))),
+            episodes_removed_short=int(float(stats.get("episodes_removed_short", 0.0))),
+            episodes_removed_invalid=int(float(stats.get("episodes_removed_invalid", 0.0))),
+            last_checkpoint_dir=str(stats.get("last_checkpoint_dir", "")) or None,
         )
         print("Final stats:", dict(stats))
 
@@ -1335,7 +1676,9 @@ if __name__ == "__main__":
         f"agent_num_hidden_layers={train_args.agent_num_hidden_layers} "
         f"q_hidden_layer_size={train_args.q_hidden_layer_size} "
         f"q_num_hidden_layers={train_args.q_num_hidden_layers} "
-        f"use_last_action_in_policy_state={train_args.use_last_action_in_policy_state}"
+        f"use_last_action_in_policy_state={train_args.use_last_action_in_policy_state} "
+        f"num_critics={train_args.num_critics} "
+        f"target_critic_subset_size={train_args.target_critic_subset_size}"
     )
     print(f"[args_file] loaded defaults from: {args.args_file}")
     if applied_keys:

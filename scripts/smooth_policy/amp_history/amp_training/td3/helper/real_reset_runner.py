@@ -43,6 +43,10 @@ class PendingResetArtifact:
     rows: list
     images: list
     camera_null_frames: int
+    # Wall time (unix seconds) when the reset FSM finished. Populated by
+    # the reset runner; defaulted so older code paths that build this
+    # dataclass without timing info still construct cleanly.
+    wall_time_s_end: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -224,6 +228,7 @@ def run_reset_fsm(
     finally:
         fsm.close()
     done_reason = getattr(fsm, "done_reason", "unknown")
+    fsm_end_wall_time = time.time()
     artifact = None
     if reset_rows:
         artifact = PendingResetArtifact(
@@ -234,6 +239,7 @@ def run_reset_fsm(
             rows=reset_rows,
             images=reset_images,
             camera_null_frames=int(reset_camera_null_frames),
+            wall_time_s_end=float(fsm_end_wall_time),
         )
     print(
         f"[reset_fsm] done after {fsm.total_steps} steps "

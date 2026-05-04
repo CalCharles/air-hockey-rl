@@ -861,39 +861,265 @@ If you set `residual_ema_decay: 0.9999`, also use `bash scripts/smooth_policy/ev
 
 ---
 
-## Real-world residual
+## Real-world residual — v27 (canonical)
 
-The same recipe runs on the real-world async pipeline via
-`async_td3_real_modular.py` with `full_checkpoint_load: "residual"` in the
-config. Canonical config:
-[`scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml).
+The async real-world pipeline (`async_td3_real_modular.py`) supports the full
+v27 recipe as of 2026-05-04. The Maxmin-N / REDQ-N-M code paths in
+`async_td3_real.py` (`_init_sync_learner_state`, `_run_sync_learner_iteration`,
+`_save_async_checkpoint`) were generalised from the original twin-TD3 pair to
+an N-critic ensemble; everything else (replay, exploration, checkpointing) was
+already shared.
+
+Canonical configs:
+- args-file (online behaviour): [`td3_real_world/td3_residual.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml)
+- train-args (architecture + ensemble): [`td3_real_world/td3_residual_train_args.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml)
 
 ```bash
-.venv/bin/python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real_modular \
-  --train-args <source_ckpt>/args.yaml \
-  --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml
+python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real_modular \
+  --train-args scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml \
+  --args-file  scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml \
+  --model-path <path-to-source-checkpoint>/training_state.pth
 ```
 
-Wiring is identical to sim2sim:
-- The same `ResidualActor` wrapper from `scripts/smooth_policy/residual_agent.py`.
-- The same data-balance recipe (`success_top_fraction: 0.5`, `q_weight_decay: 0.001`,
-  `residual_scale: 0.15`, `q_lr: 0.0003`, `q_updates: 4`, PER on).
-- The same per-checkpoint-eval requirement: train with
-  `enable_periodic_checkpointing: true` and ship the best checkpoint, NOT
-  the final one.
+`--model-path` must point at a `training_state.pth`, NOT a bare `model.pth`.
+`_load_training_state_checkpoint` validates that the loaded dict has
+`actor`/`qf1..qfN`/`rng_states`/replay-buffer keys (i.e., it's the full
+state-dict file `td3_training.py` writes alongside `model.pth` in every
+checkpoint dir). Residual mode then extracts just `training_state["actor"]`
+as the frozen base; the source's critics, replay, and optimizer state are
+discarded — the new run starts with a fresh 5-critic Maxmin ensemble and
+fresh Adam momentum, as a residual fine-tune should.
 
-The one functional delta vs sim2sim:
+### Resuming a residual run
 
-- **Replay seed**: real residual MUST use `replay_source_priority: "warmstart_only"`
-  with HDF5 dirs in `warm_start_hdf5_dirs`. Loading a checkpoint replay (which
-  was collected under the source's dynamics) would teach the new critic to
-  value the obsolete dynamics — the canonical config keeps
-  `load_replay_from_checkpoint: false` for this reason.
+To continue an in-progress residual training run from a previous checkpoint
+(e.g. picking up after the 2000-step fresh-fill phase has already been
+crossed, or just continuing where the last session stopped), use the
+`residual_resume` mode added 2026-05-04:
 
-`model.pth` from a residual run contains the wrapped `ResidualActor` state_dict
-(base + residual + clamp buffers); rollout / eval scripts need to rebuild the
-same `ResidualActor` shell to load it. Standard sim2sim eval drivers already
-do this; verify your real-world rollout target supports it before deploying.
+```bash
+python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real_modular \
+  --train-args scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml \
+  --args-file  scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml \
+  --full-checkpoint-load residual_resume \
+  --learning-starts-fresh-steps 0 \
+  --load-replay-from-checkpoint \
+  --model-path <prev-run>/checkpoint_<tag>/training_state.pth
+```
+
+The four overrides do specific work:
+
+- **`--full-checkpoint-load residual_resume`** — new mode added 2026-05-04.
+  The default `residual` mode passes the saved actor through
+  `extract_deterministic_state_dict`, which strips all the keys a wrapped
+  `ResidualActor` state_dict has (`base.*`, `residual.*`, `action_low`,
+  `action_high`) — the load is silent and the base actor stays at fresh
+  init. `residual_resume` skips that filter and loads the wrapped state_dict
+  directly, restoring both the frozen base and the trained residual head.
+  Critics + targets are restored from `qf1..qfN` keys; optimizer state and
+  RNG are restored too.
+- **`--learning-starts-fresh-steps 0`** — disables the fresh-buffer-fill
+  gate. The prior run already crossed it; re-engaging would waste 2000 steps
+  of robot time before the critic moves. Set to a non-zero value if you
+  *want* to re-engage (e.g. resuming from very stale data).
+- **`--load-replay-from-checkpoint`** — restores the success/failure
+  replay buffers from the saved `training_state.pth`. Without this, the
+  replay starts empty and (combined with `learning-starts-fresh-steps 0`)
+  the critic samples from a near-empty buffer for the first few episodes.
+  This flag is the resume-time inverse of the `load_replay_from_checkpoint:
+  false` default in the args-file (which is correct for fresh starts to
+  block stale source-dynamics replay, but wrong for continuing your own run).
+- **`--model-path <prev>/training_state.pth`** — point at the **full
+  training_state.pth** from the prior checkpoint, NOT `model.pth`.
+  `residual_resume` requires the dict format with `actor`, `actor_target`,
+  `qf1..qfN`, `qf1_target..qfN_target`, `rng_states`, and (optionally)
+  `q_optimizer`, `actor_optimizer`, replay buffers, learner counters,
+  rolling stats. `model.pth` is just the actor's state_dict and would
+  fail the validation in `_load_training_state_checkpoint`.
+
+Robust resume requires the prior run to have been saved with
+`include_non_vital_training_state_fields: true` (the default in
+`td3_residual.yaml`). Without it, the training_state.pth lacks optimizer
+state, learner counters, `collector_total_steps`, `run_elapsed_total_s`,
+and the rolling-window deques — resume falls back to a "weights only"
+residual_resume: Adam momentum resets, TB step axis restarts at 0, and
+rolling-50 stats start cold. Functional but lossy. See
+[`notes/docs/training/checkpointing.md#resuming-real-world-async-training`](checkpointing.md#resuming-real-world-async-training)
+for the full resume contract.
+
+Architecture matching: the `--train-args` YAML's `agent_num_hidden_layers`,
+`q_num_hidden_layers`, `num_critics`, and `use_last_action_in_policy_state`
+must match the prior run's. Easiest source of truth: the prior run wrote
+its own `args.yaml` next to `training_state.pth` — pass that as
+`--train-args` if you're not sure.
+
+`num_critics` and `target_critic_subset_size` live in the train-args YAML
+(not the args-file) because they are architecture fields — the same fields
+`td3_training.py` writes to its `args.yaml`. A source actor's saved
+`args.yaml` from a `td3_training.py` run is itself a valid `--train-args`
+input (older args.yamls predate the ensemble keys and resolve to N=2 via
+the safe defaults in `_load_train_args`); the dedicated
+`td3_residual_train_args.yaml` adds `num_critics: 5` so the new run spins
+up the Maxmin-5 ensemble even when the source was twin-TD3.
+
+How v27 maps onto async-real:
+- `success_top_fraction: 0.15`, smaller buffers (6000/14000), 500-episode
+  recency window — already wired into `_add_episode_to_shared_replay`.
+- `q_updates: 1`, `q_lr: 3e-4`, `q_weight_decay: 1e-3`, `target_network_frequency: 2`,
+  `actor_updates_per_iteration: 1` — already wired.
+- `num_critics: 5`, `target_critic_subset_size: null` — generalised in the
+  learner step (Maxmin or REDQ-N-M, branchless on N=2 to stay bit-identical
+  with the legacy twin-critic kernel).
+- `residual_scale: 0.15`, `residual_weight_decay: 0.0`, `residual_action_l2: 0.0` — already wired.
+
+Difference vs sim2sim v27 (only one, intentional):
+- **No PER / `priority_age_decay`** in async-real. The real-world replay
+  uses a uniform success/failure mix (`SharedTD3Replay.sample`); PER and
+  age decay aren't ported. v27's primary lever (Maxmin-5) carries the
+  load-bearing Q-control regardless.
+
+Everything else mirrors sim2sim v27 verbatim, including:
+- **Fresh-buffer-fill phase**: `learning_starts_fresh_steps: 2000` mirrors
+  sim2sim v27's `learning_starts: 2000`. For the first 2000 FRESH
+  post-launch collector steps the agent rolls out (frozen base + zero-init
+  residual + `exploration_noise: 0.05`) and pushes transitions into replay,
+  but the critic does NOT update — its first gradient step lands on a
+  buffer that has seen pure on-policy data. Run-relative semantics (counts
+  only post-launch steps, ignores warm-start replay size and prior-run
+  totals); a resume re-engages the gate until 2000 *new* steps land. Set
+  to 0 to disable.
+- **Reward weights**: `task_reward_weight: 1.0`, `motion_reward_weight: 0.0`
+  (motion-Q head is still trained, but doesn't contribute to the actor
+  objective — preserves v27's task-reward-only residual posture).
+- **Exploration mirrored 1:1**: `exploration_primitive_chance: 0.0`,
+`exploration_noise: 0.05`, weights set so `same_direction` is the only
+non-zero one (moot at runtime when chance=0; mirrored verbatim for
+clarity). The recipe is explicit that "v27 with **zero adaptation-phase
+exploration** is the right default" and that any non-zero chance is
+"unhelpful at best, actively harmful at worst" — so the real-world config
+does the same. The earlier real-world residual config (predating v27) used
+a `0.025` hedge; the v27 update removed it.
+
+If you specifically need adaptation-phase exploration on the real robot,
+copy v30_explore_lite (chance 0.10→0.03 anneal) wholesale — do NOT leave
+the chance half-tuned between 0 and 0.03, which is uncharted territory.
+
+Operational requirements (same as sim2sim v27):
+1. `enable_periodic_checkpointing: true` — every N successful online
+   episodes, the learner snapshots `qf1.pth..qf5.pth`, `qf1_target.pth..qf5_target.pth`,
+   and `model.pth` into `<checkpoint_root_dir>/checkpoint_<tag>/`.
+2. Per-checkpoint deterministic eval (real-world: replay the saved
+   trajectories; sim2sim: rerun in sim).
+3. **Ship the best checkpoint, not the final one.** v27's 1M trace shows
+   84% of ckpts above zs but the per-ckpt return is still seed-dependent
+   in a ±10 band.
+
+Replay-source rule:
+- **Default (canonical v27 — mirrors sim2sim)**: `warm_start_hdf5_dirs: []`
+  + `load_replay_from_checkpoint: false`. Replay starts empty, exactly like
+  sim2sim v27. The `learning_starts_fresh_steps: 2000` gate then fills the
+  buffer with 2000 fresh on-policy transitions before the critic's first
+  gradient step. Same buffer-content semantics as sim2sim. `replay_source_priority: "warmstart_only"`
+  is kept as a defensive guard — if someone later flips `load_replay_from_checkpoint` on,
+  this priority forces the (empty) warm-start to win and keeps the buffer
+  clean of stale source-dynamics data.
+- **Optional warm-start mode**: if you want to seed the buffer with prior
+  HDF5 trajectories (for fire-and-forget runs without a fresh-fill phase),
+  point `warm_start_hdf5_dirs` at directories of HDF5 episodes collected
+  with the *same base policy on the same robot*, and set `learning_starts_fresh_steps: 0`.
+  NEVER load a checkpoint replay from a source policy run
+  (`load_replay_from_checkpoint: false` must stay false) — it was collected
+  under the source's dynamics and would teach the new critic to value the
+  obsolete dynamics.
+
+`model.pth` from a residual run is a wrapped `ResidualActor` state_dict
+(base + residual + clamp buffers). Rollout / eval scripts must rebuild the
+same `ResidualActor` shell to load it; standard sim2sim eval drivers
+already do this — verify your real-world rollout target supports it before
+deploying.
+
+### Data layout across resumes
+
+`_setup_run_data_dir` creates a **new** timestamped directory for **every
+launch** at `<data_root_dir>/<model_subdir>/data_<TIMESTAMP>/`. So a single
+training session that goes through `launch → checkpoint → kill → resume`
+produces two sibling directories:
+
+```
+runs/async_td3/data/
+└── runs/td3_training/.../checkpoint_975000/
+    └── data_20260504-100000/                  ← initial launch
+        ├── episode_hdf5/                      ← episode IDs 0..N
+        ├── reset_hdf5/
+        ├── episode_summaries.jsonl
+        ├── run_events.jsonl
+        ├── collector_tb/  learner_tb/
+        └── checkpoint_successeps_50_qupdates_3000/
+            ├── training_state.pth             ← <- you resume from this
+            ├── model.pth   args.yaml   config.yaml
+            └── qf1.pth ... qf5.pth
+└── runs/async_td3/data/<...>/data_20260504-100000/checkpoint_successeps_50_qupdates_3000/
+    └── data_20260504-150000/                  ← resume launch (nested under prev ckpt)
+        ├── episode_hdf5/                      ← episode IDs 0..M (RESTART)
+        ├── episode_summaries.jsonl            ← per-launch
+        ├── collector_tb/  learner_tb/         ← per-launch
+        └── checkpoint_*/
+```
+
+What CONTINUES across launches (load-bearing for training):
+
+- **Network weights** (actor, residual head, all 5 critics, all 5 targets) —
+  via `training_state.pth`.
+- **Optimizer state** (Adam momentum for both q_optimizer and actor_optimizer)
+  — gated on `include_non_vital_training_state_fields: true` in the saving
+  run's args-file (default in our v27 config) AND `--full-checkpoint-load
+  residual_resume`.
+- **Replay buffer** — gated on `--load-replay-from-checkpoint` flag.
+- **RNG state** — always restored.
+- **Step / time counters** (`collector_total_steps`, `run_elapsed_total_s`,
+  `learner_q_updates`, `learner_actor_updates`) — restored. TB step axis
+  continues from the resumed step count, not from 0.
+- **Rolling-50 episode statistics** (task/motion/length/return/estop/juggles
+  /contacts deques) — restored if the saving run had `include_non_vital_training_state_fields: true`.
+
+What FRAGMENTS across launches (per-launch artifacts):
+
+- **HDF5 trajectories** in `episode_hdf5/` — per-launch directory. Episode
+  IDs restart at 0 within each launch directory. `_next_available_episode_id`
+  scans the new (initially empty) folder.
+- **GIFs / camera videos** in `episode_gifs/` and `episode_camera_videos/`
+  — same per-launch story.
+- **`episode_summaries.jsonl`** and **`run_events.jsonl`** — append-only
+  files, one per launch. Each row in `episode_summaries.jsonl` records
+  `episode_id` (per-launch) plus `total_steps` (global) and `actor_version`
+  (global) — so episodes are uniquely identifiable across launches via
+  `(launch_dir, episode_id)` or via `total_steps`.
+- **TensorBoard logs** in `collector_tb/` and `learner_tb/` — per-launch
+  directories. Step axis continues from the resumed counter (so curves
+  visually continue if you point TB at the parent dir).
+- **Latency profiles** in `latency_profiles/` — per-launch.
+
+To view aggregated TB across all launches of a multi-launch session:
+
+```bash
+tensorboard --logdir runs/async_td3/data/<source_subdir>/
+```
+
+TB will discover `collector_tb/` and `learner_tb/` directories at any depth,
+and merge runs into a single chart per scalar (each launch becomes a
+separate run-line, but they overlap on the global step axis).
+
+To aggregate the per-launch JSONLs:
+
+```bash
+find runs/async_td3/data/<source_subdir>/ -name 'episode_summaries.jsonl' \
+  -exec cat {} \; | sort -k <by-total_steps>  # rough — use jq for real work
+```
+
+This means **your data is preserved across resumes** — no episode HDF5
+ever gets overwritten or deleted. The fragmentation is in the directory
+structure only, and the global step counter + `total_steps` field in each
+JSONL row gives you a unified timeline.
 
 ## Open follow-ups
 

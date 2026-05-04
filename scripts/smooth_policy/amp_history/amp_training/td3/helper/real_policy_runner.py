@@ -563,6 +563,11 @@ class PolicyRunner:
                 self._stop_penalty_applied = True
 
             # ----------------------------- Episode-row append (L1730–1746) ---
+            # `task_reward`, `motion_reward`, `done` (terminations_tensor) are
+            # the same values pushed into the replay buffer below — recording
+            # them on the HDF5 row makes the trajectory file self-sufficient
+            # for offline policy replay / re-evaluation without needing the
+            # runtime replay buffer.
             self._episode_rows.append(
                 self._build_split_episode_row(
                     env=env,
@@ -571,6 +576,9 @@ class PolicyRunner:
                     episode_step_idx=len(self._episode_rows),
                     protective_stop_active=stop_state.protective_stop,
                     controller_disconnected=stop_state.controller_disconnected,
+                    task_reward=float(task_reward),
+                    motion_reward=float(motion_reward),
+                    done=float(terminations_tensor.item()),
                 )
             )
             delta_interval_primitive_env_steps += int(primitive_step_stats["primitive_applied_count"])
