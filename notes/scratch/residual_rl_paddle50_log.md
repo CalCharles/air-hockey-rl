@@ -1607,3 +1607,412 @@ If a future agent wants to try harder beyond §7:
   domain randomization) — may close the residual-vs-full-FT gap.
 - Implement age-weighted PER (priority decays with sample age) —
   proposed open follow-up never implemented.
+
+---
+
+## 8.17 Phase 20: adaptation-phase exploration on top of v27 (2026-05-03 18:15 UTC, NEW WINNER v30_explore_lite)
+
+### Hypothesis
+
+User: v27 plateaus past its peak because residual rollouts stay narrow
+around the frozen base trajectory. The recipe that *trained* the base
+policy (`td3_recommended.yaml`) used non-trivial primitive exploration +
+2× higher Gaussian noise — both zeroed in v27. So during adaptation
+the residual head learns from a narrow, base-shaped distribution and
+cannot break out.
+
+Plan in [`notes/scratch/residual_exploration_plan.md`](residual_exploration_plan.md).
+
+### Three v30 variants × 2 seeds, 300k each
+
+All keep v27's winning knobs (Maxmin-5, q_updates=1, sf=0.15, age=1e-4,
+rs=0.15, buffer=20k). Only exploration knobs differ from v27:
+
+| variant | exploration_noise | primitive_chance | primitive weights |
+|---|---|---|---|
+| v27 (reference) | 0.05 | 0 / 0 | all 0 except same_direction (unused) |
+| **v30_explore_full** | 0.1 | 0.15 → 0.05 over 50k | stand_still=0.2, same_direction=1.0, y_aligned=1.0, target_position_directional=1.0 |
+| **v30_explore_lite** | 0.1 | 0.10 → 0.03 over 50k | same as full |
+| **v30_explore_directional_only** | 0.1 | 0.10 → 0.03 over 50k | same_direction=1.0, target_position_directional=1.0 (no stand_still, no y_aligned) |
+
+### Per-seed results (300k, n=50 deterministic eval per ckpt, zs=67.54)
+
+| variant / seed | peak | mean(29) | last5 | drift | >zs |
+|---|---:|---:|---:|---:|---:|
+| **v30_explore_lite/seed0** | 80.72 @ 220k | **73.63** | **72.58** | **+8.14** | **24/29 (83%)** |
+| **v30_explore_lite/seed1** | **94.44** @ 50k | **79.02** | 68.53 | +25.91 | **26/29 (90%)** |
+| v30_explore_full/seed0 | 72.98 @ 40k | 52.49 | 47.74 | +25.24 | 1/29 (3%) |
+| v30_explore_full/seed1 | 79.84 @ 80k | 61.47 | 54.66 | +25.18 | 10/29 (34%) |
+| v30_explore_directional_only/seed0 | 84.14 @ 40k | 60.06 | 36.42 | +47.72 | 17/29 (59%) |
+| v30_explore_directional_only/seed1 | 84.30 @ 20k | 55.74 | 45.70 | +38.60 | 10/29 (34%) |
+
+### 2-seed cross-seed comparison vs v27 5-seed reference
+
+| variant | n_seeds | peak | mean(29) | last5 | %>zs |
+|---|---:|---:|---:|---:|---:|
+| **v30_explore_lite** | 2 | **87.58** | **76.33** | **70.55** | **86.5%** |
+| v27_ensemble5 (5-seed) | 5 | 87.94 | 71.05 | 65.67 | 70% |
+| v30_explore_directional_only | 2 | 84.22 | 57.90 | 41.06 | 46.5% |
+| v30_explore_full | 2 | 76.41 | 56.98 | 51.20 | 19% |
+
+**v30_explore_lite ties v27 on peak and beats v27 on mean (+5.3),
+last5 (+4.9), and %>zs (+16.5pts).** Drift on best seed (+8.14) is the
+smallest of any residual recipe ever tested on paddle50.
+
+### Verdict
+
+1. **Moderate adaptation-phase exploration WINS.** v30_explore_lite is
+   the new canonical big-gap recipe. The user's hypothesis is confirmed:
+   broadening rollout distribution helps the residual head.
+
+2. **Too much exploration HURTS.** v30_explore_full (matching the chance
+   that base-policy training used: 0.15→0.05 over 50k) collapses %>zs
+   from v27's 70% to 19%. Primitive override too often disrupts the
+   residual learning signal — the residual is supposed to be a small
+   correction on top of the base, not be drowned out by primitives.
+   Base-policy-grade exploration is wrong for adaptation.
+
+3. **Directional-only exploration is no better than v27.** Comparable
+   peak (84 vs 88) but worst stability of all v30 variants (last5 41
+   vs lite's 71). Suggests stand_still + y_aligned add value beyond
+   simple direction perturbation; dropping them recovers the cliff.
+
+4. **The "right" amount of adaptation exploration is ~half of the
+   base-training amount.** chance 0.10→0.03 (lite) >> 0.15→0.05 (full).
+   Plausible because the base policy already provides good-enough
+   actions; the residual just needs *some* off-base data to debias the
+   critic, not a flood.
+
+### Limitations
+
+- **Only 2 seeds per variant.** v27's winning numbers are 5-seed; we
+  need 3-5 seeds of v30_explore_lite to confirm peak/mean/last5
+  reproducibility before declaring it canonical. **Next action**:
+  v30_explore_lite seeds 2-4.
+- 300k budget. v27 1M extension showed peak 98.3 / 84% > zs at full
+  budget; need to test v30_explore_lite at 1M.
+
+### Configs and run dirs
+
+- `scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v30_explore_*.yaml`
+- `runs/td3/sim2sim/hist2_motion0_to_paddle50/residual_v30_explore_*/seed{0,1}/`
+- Pipeline: `scripts/smooth_policy/run_partB_v30_pipeline.sh` (training, ~4h sequential)
+
+### Compute / wall-clock
+
+Part B sequential pipeline on GPU 3: launched 2026-05-03 14:05 UTC,
+all 6 variants done 18:15:53 UTC = 4h 10m. Each 300k variant ~41 min.
+Auto-eval handled by background watcher (`notes/scratch/rolling_eval_paddle50.sh`,
+running since 2026-04-29).
+
+---
+
+## 8.18 Phase 20 part 2: from-scratch 1M with full exploration on paddle50 (2026-05-03, in flight)
+
+Companion run to §8.17 — verifies what proper from-scratch training
+looks like *on this env* with the same exploration recipe that trained
+the base policy. The earlier `td3_from_scratch_1M_paddle50.yaml` was
+compute-matched to full_ft (q_updates=4, primitives=0) and plateaued at
+peak 30 — not a fair "from-scratch baseline". This run uses
+`q_updates=25, actor_updates_per_iteration=6, exploration_noise=0.1,
+exploration_primitive_chance 0.15→0.05 over 200k, full primitive set`,
+i.e., everything `td3_recommended.yaml` used to train the base.
+
+Config: `…/paddle50/td3_from_scratch_1M_paddle50_full_explore.yaml`
+Run dir: `runs/td3/sim2sim/hist2_motion0_to_paddle50/from_scratch_1M_full_explore/seed0/`
+Launched: 2026-05-03 14:05 UTC. Finished: ~18:50 UTC (4h45m for 1M, faster than estimated).
+
+### Final 1M results (n=49 deterministic ckpts)
+
+| metric | from_scratch_1M (q=4, no explore) | from_scratch_1M_full_explore (q=25, explore) | v27 residual (1M) |
+|---|---:|---:|---:|
+| peak | 30.4 | **63.28 @ 960k** | 98.3 |
+| mean(all) | 21.4 | **40.46** | 75.9 |
+| last5 | 27.6 | **58.69** | 69.8 |
+| %>zs | 0% | 0% | 84% |
+| drift | +4.9 | **+4.59** | +28.5 |
+| trajectory | flat plateau ~22 | clean monotonic climb | peak then gentle decline |
+
+### 100k-bucket trajectory (vs reference variants)
+
+| variant | 0-100k | 100-200k | 200-300k | 300-400k | 400-500k | 500-600k | 600-700k | 700-800k | 800-900k | 900-1M |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| from_scratch_1M_full_explore | 19.1 | 21.4 | 27.6 | 33.7 | 41.7 | 46.2 | 49.5 | 51.6 | 53.0 | 60.8 |
+| **v27 (residual+Maxmin-5)** | 82.0 | 82.8 | 80.1 | 78.2 | 78.8 | 72.4 | 73.9 | 71.1 | 69.7 | 69.4 |
+| from_scratch_1M (q=4) | 17.5 | 18.1 | 19.2 | 20.9 | 21.7 | 26.0 | 26.5 | killed | killed | killed |
+
+### Key takeaways
+
+1. **Proper exploration ≈ doubles from-scratch peak** vs. the
+   compute-matched q=4 version (63.28 vs 30.4 peak; 40.5 vs 21.4 mean).
+   Confirms the earlier from-scratch baseline was unfairly handicapped
+   for being aligned with full_ft compute.
+
+2. **Even with proper exploration, from-scratch ≤ zero-shot at 1M.** Peak
+   63.28 vs zs 67.54 — 0% of ckpts above zero-shot. The source policy
+   transfer is unambiguously valuable on this big-gap target.
+
+3. **No drift / no cliff.** Drift +4.59 — the lowest of any 1M run. No
+   overfitting because it never converged; trajectory still climbing
+   in the last 100k bucket (60.8). With more steps it might cross zs,
+   but residual+ensemble already does so by step 10k.
+
+4. **From-scratch needed q_updates=25 + full primitives; residual needs only
+   q_updates=1 + lite primitives.** Different exploration recipes for
+   different roles: cold-start needs aggressive sample efficiency
+   (many gradient updates, full primitive curriculum), warm-start
+   adaptation only needs a gentle nudge off the base trajectory.
+
+### Verdict on the user's hypothesis (combining §8.17 and §8.18)
+
+Hypothesis was **partially correct**:
+- (✓) Adding adaptation-phase exploration to v27 helps — but only at
+  ~half the base-training amount (lite, not full). Full-strength
+  exploration disrupts residual learning.
+- (✓) The base-policy training recipe IS roughly the right cold-start
+  recipe (Part A's full-exploration from-scratch genuinely learns).
+- (✗) The same recipe is NOT optimal for adaptation. Residual needs
+  a smaller dose of exploration than from-scratch, because it starts
+  near a working solution.
+
+**See §8.19 below: 2-seed signal was optimistic — at 5 seeds, v30_lite ties v27 on most metrics but has dramatically tighter cross-seed variance on the tail (last5).**
+
+---
+
+## 8.19 Phase 21: 5-seed v30_explore_lite + from-scratch ablations on paddle50 (2026-05-04 02:40 UTC, HONEST RE-EVAL)
+
+User: "run multiple seeds to validate v30_explore_lite, and try to make
+from-scratch on the new env better — original sim hits reward >100 at
+300k, paddle50 only ~30 at 300k."
+
+### Part A — v30_explore_lite seeds 2-4 (5-seed verification)
+
+Three additional seeds at 300k each (sequential on GPU 3, ~2h total).
+
+| seed | peak | mean(29) | last5 | %>zs | drift |
+|---|---:|---:|---:|---:|---:|
+| 0 | 80.72 @ 220k | 73.63 | 72.58 | 24/29 (83%) | +8.14 |
+| 1 | **94.44** @ 50k | **79.02** | 68.53 | 26/29 (90%) | +25.91 |
+| 2 | 72.30 @ 250k | 61.73 | 63.74 | 6/29 (21%) | +8.56 |
+| 3 | 86.34 @ 40k | 70.39 | 69.82 | 23/29 (79%) | +16.52 |
+| 4 | 83.36 @ 20k | 70.09 | 68.35 | 18/29 (67%) | +15.01 |
+
+5-seed cross-seed:
+
+| metric | v27 (5 seeds) | **v30_lite (5 seeds)** | delta |
+|---|---:|---:|---:|
+| peak | **87.94 ± 4.82** | 83.43 ± 8.08 | -4.51 (and ~2× wider std) |
+| mean(29) | 71.05 ± 8.62 | 70.90 ± 6.31 | TIE within noise |
+| **last5** | 65.67 ± **13.20** | **68.40 ± 3.25** | +2.73, std 4× tighter |
+| %>zs | 69.66 ± 22.80 | 67.59 ± 27.65 | TIE within noise |
+
+### Verdict on v30_explore_lite
+
+The 2-seed signal in §8.17 was **optimistic** (both early seeds happened
+to be good ones). At 5 seeds:
+- **v30_lite TIES v27 on peak / mean / %>zs** within seed noise.
+- **v30_lite WINS on last5 cross-seed std** (3.25 vs 13.20, ~4×
+  tighter). Late-stage policies are dramatically more consistent across
+  seeds.
+- v30_lite LOSES on peak (-4.5) with ~2× wider peak std.
+
+**Practical recommendation reversed from §8.17**: v30_lite is no longer
+"strictly better than v27". It's a **trade**:
+- Pick **v30_lite** when you want consistent late-stage policies and
+  can't afford per-checkpoint eval at deployment time.
+- Pick **v27** when you want highest expected peak and can do
+  per-checkpoint eval (then deploy peak ckpt).
+
+Cross-seed std on the **mean** is also tighter for v30_lite (6.31 vs
+8.62), which favors v30_lite's "expected returns are more
+predictable" pitch.
+
+### Part B — from-scratch ablations on paddle50 at 300k
+
+User asked: "what is achievable on scratch and compare it with the
+previous training recipe for the original sim environment (where 300k
+→ reward >100)."
+
+Three ablations on top of Part A's `td3_recommended.yaml`-style
+from-scratch recipe (full primitive exploration + q_updates=25 +
+exploration_noise=0.1) on paddle50:
+
+| variant | change vs Part A baseline |
+|---|---|
+| `bigger_net` | actor + critic 64×2 → 128×3 |
+| `maxmin5` | num_critics 2 → 5 (Maxmin-5 ensemble) |
+| `combined` | both above |
+
+300k each, single-seed, parallel GPUs 0/1/2 (~1h-1h45m wall clock).
+
+| variant | peak | mean(29) | last5 | %>zs |
+|---|---:|---:|---:|---:|
+| Part A (q=25, 64×2, full primitives) — 300k of 1M | ~30.4 | ~28-30 | ~30 | 0% |
+| **bigger_net (128×3)** | **36.34 @ 250k** | 23.50 | 32.66 | 0/29 |
+| maxmin5 (Maxmin-5) | 25.64 @ 270k | 19.54 | 22.02 | 0/29 |
+| combined (128×3 + Maxmin-5) | 29.42 @ 290k | 21.72 | 26.17 | 0/29 |
+
+### Per-checkpoint trajectory of bigger_net (best from-scratch ablation)
+
+```
+step | mean | tail10
+   10000 |  17.40 |  17.00      (initial random/exploration warmup)
+   20000–180000 | 17–22 | 17–22  (slow learning during primitive exploration anneal)
+  190000 |  33.36 |  32.70       (post-anneal: jump from 22 to 33!)
+  200000 |  32.84 |  31.40
+  210000 |  31.14 |  29.60
+  220000 |  27.58 |  26.90
+  230000 |  28.94 |  30.00
+  240000 |  25.42 |  29.20
+  250000 |  36.34 |  46.80      <-- PEAK
+  260000 |  32.40 |  38.30
+  270000 |  35.98 |  49.10
+  280000 |  26.48 |  31.10
+  290000 |  32.12 |  29.30
+```
+
+The trajectory shows learning kicks in at step ~190k after the primitive
+exploration anneal completes (chance 0.15 → 0.05 over 200k). With more
+training time bigger_net might keep climbing, but at 300k it's still in
+the early-learning regime.
+
+### Verdict on from-scratch ceiling at 300k
+
+**Best paddle50 from-scratch at 300k: peak 36.34** (bigger_net).
+Compare:
+- Original sim from-scratch at 300k = **>100** (reference recipe)
+- Paddle50 from-scratch at 300k = **~36** with best recipe (bigger_net)
+- Paddle50 from-scratch at 1M = peak 63.28 (Part A, full_explore)
+
+**The gap is structural — paddle50 (paddle -50% mass-preserved) is
+genuinely a much harder task than the original sim.** No 300k
+from-scratch recipe gets above zero-shot transfer (67.54). Even at 1M
+with full exploration, peak only just below zero-shot.
+
+### Key from-scratch findings
+
+1. **Bigger network helps slightly at 300k** (+6 over baseline). With a
+   wider/deeper network the policy starts learning sooner after the
+   primitive anneal completes (190k), giving more usable training time
+   in the budget. The ceiling is still bound by the env's difficulty.
+
+2. **Maxmin-5 ensemble HURTS from-scratch** (-5 vs baseline). This is the
+   inverse of residual where it helped. Confirms Maxmin-5 is a
+   residual-specific fix: the over-pessimism it introduces actively
+   prevents Q-learning from making fast progress when starting from
+   scratch.
+
+3. **Combined (bigger_net + Maxmin-5) loses bigger_net's gains.** The
+   ensemble pessimism dominates the capacity gain. Combined ≈ Part A
+   baseline. Don't combine.
+
+4. **Per-checkpoint eval is unnecessary for from-scratch on paddle50** —
+   no checkpoint reaches zero-shot. Just deploy the source policy
+   directly (better than any 1M from-scratch run on this target).
+
+### Configs and run dirs
+
+- v30_lite seeds 2-4: `…/paddle50/td3_residual_v30_explore_lite_seed{2,3,4}.yaml`,
+  runs at `…/residual_v30_explore_lite/seed{2,3,4}/`
+- From-scratch ablations: `…/paddle50/td3_from_scratch_300k_{bigger_net,maxmin5,combined}.yaml`,
+  runs at `…/from_scratch_300k_{bigger_net,maxmin5,combined}/seed0/`
+- Pipeline scripts: `scripts/smooth_policy/run_v30_lite_reseed_pipeline.sh`
+
+### Compute / wall-clock
+
+Parallel pipeline launched 2026-05-04 00:37 UTC, finished by 04:00 UTC = ~3h 23m total:
+- v30_lite reseeds (GPU 3, sequential): 3 × 41 min = 2h 3m
+- bigger_net (GPU 0): ~1h 50m
+- maxmin5 (GPU 1): ~2h 35m (Maxmin-5 has 5× critic compute)
+- combined (GPU 2): ~3h 5m (bigger net + Maxmin-5)
+
+---
+
+## 8.20 Phase 22: long-horizon from-scratch saturation + structural difficulty analysis (2026-05-04 04:21 UTC, IN FLIGHT)
+
+User: "train per-scratch for longer until it saturates. I want to see if
+there is an issue or the task is genuinely harder, and some reasons why
+it may be harder."
+
+### Why paddle50 is genuinely much harder than the original sim
+
+The name "paddle50" is misleading — it suggests a single perturbation
+(half-size paddle). In reality `sim2sim_combined.yaml` stacks **seven**
+independent difficulty additions on top of the source `sysid_best_params_hist4.yaml`:
+
+| key | original (hist4 source) | paddle50 (sim2sim_combined) | structural impact |
+|---|---|---|---|
+| `paddle_radius` | 0.0508 m | **0.02540 m (-50%)** | Contact window halved → ~4× harder geometric precision (area scales with r²) |
+| `pid_kp` | 9000 | **7200 (-20%)** | Slower paddle response to commanded targets — agent's actions take longer to reflect in paddle motion |
+| `enable_action_delay` | **false** | **true** | Actions arrive at the paddle ~30 ms after the policy commands them (didn't exist in source) |
+| `delay_seconds` | 0.025 | **0.030 (+20%)** | Longer obs delay too — policy decisions are based on staler info |
+| `delay_relative_range` | 0.25 | **0.35** | Delay jitter ±35% of base delay, vs ±25% — harder to anticipate timing |
+| `delay_jitter_distribution` | uniform | **normal-clipped** | Heavier tail than uniform → occasional unusually long lag spikes |
+| `wall_direction_cone_deg` | 10° | **25°** | Wall bounce angular variance ~6× larger (cone area scales with sin² of half-angle) — puck post-bounce velocity is 2.5× more random |
+
+These compose. Concretely:
+1. **Smaller paddle × delay × jitter**: agent must plan paddle position
+   based on stale, noisy puck data, then commit an action that takes
+   variable time to manifest as paddle motion, all to land a contact in
+   a 4× smaller window. Random failure rate of any individual hit goes
+   up dramatically.
+2. **Soft PID × delay**: the slower controller compounds with the
+   action delay — by the time the paddle reaches the commanded
+   position, the puck has moved further than predicted.
+3. **Wider wall cone**: any bank shot becomes a quasi-random reset of
+   the puck trajectory, requiring the policy to react to many more
+   distinct initial conditions per episode.
+
+**Net effect on from-scratch learning**: random exploration in the
+original sim catches ~enough successful contacts to bootstrap critic Q
+toward the upper-half juggle reward. On paddle50, random exploration
+**rarely lands a clean contact**, so for the first ~190k env steps the
+critic sees almost no positive returns and the actor wanders. Once the
+critic finally picks up signal (~step 190k for `bigger_net`, ~190-300k
+for Part A), it then has to learn precise motor control under all the
+above noise sources, while the small paddle keeps the false-negative
+rate high.
+
+### Long-horizon from-scratch saturation run (in flight)
+
+Launched 2026-05-04 04:21 UTC on GPU 0:
+- Config: `…/paddle50/td3_from_scratch_5M_bigger_net.yaml`
+  (= bigger_net 128×3 + full primitive exploration + q_updates=25)
+- Total budget: 5,000,000 env steps
+- Checkpoint every 50k → 100 checkpoints
+- ETA: ~31h wall clock (≈22.6 sec per 1k steps for 128×3)
+
+**Goal**: see whether bigger_net continues climbing past 1M-2M and
+where it saturates, vs. peak 36 at 300k and Part A's peak 63 at 1M.
+Auto-eval handled by `notes/scratch/rolling_eval_paddle50.sh`.
+
+### Reference points (300k buckets so far)
+
+| recipe | 0-100k | 100-200k | 200-300k | 700-1M |
+|---|---:|---:|---:|---:|
+| Part A (full_explore, q=25, 64×2) | 19 | 21 | 28 | 53-61 |
+| bigger_net (128×3) — single-seed | 17 | 18 | 31 | TBD |
+
+Both recipes still climbing in their last bucket — saturation
+genuinely beyond 1M for paddle50 from-scratch.
+
+### Hypothesis pre-result
+
+bigger_net's larger capacity should:
+1. Reach the 190k breakpoint sooner (more efficient credit assignment).
+2. Climb faster post-breakpoint (more representational capacity for
+   the noisy obs space).
+3. **Possibly cross zero-shot 67.54 around 2-3M** if the gap is
+   capacity-bound rather than fundamentally limited by the data
+   distribution random exploration produces.
+
+**If bigger_net plateaus below zs even at 5M**, the conclusion is that
+random + primitive exploration cannot generate enough successful
+contacts to teach precise motor control — and from-scratch on this env
+needs either curriculum (anneal paddle size, delays, etc.) or behavioral
+cloning from a teacher policy. This would explain why transfer
+(zero-shot 67.54) is structurally above pure RL on this target.
+
+To be filled in when the 5M run finishes.
+
+---

@@ -25,7 +25,7 @@ from airhockey import AirHockeyEnv
 # oriented with the robot at the bottom of the image in this MuJoCo build.
 NEEDS_VFLIP = {"sideview", "frontview", "backview"}
 
-CAMERAS = ["birdview", "agentview", "frontview", "sideview", "backview"]
+CAMERAS = ["birdview", "agentview", "frontview", "sideview", "backview", "puckview"]
 
 OUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "eval_gifs", "views")
 
@@ -75,7 +75,9 @@ def main():
                 img = np.flipud(img)
             per_cam_frames[cam].append(img)
 
-        action = np.zeros(2)
+        # Drive the paddle gently sideways for the first half of the rollout
+        # so it gets out of the way of the puck for visualization.
+        action = np.array([0.0, 0.3 * np.sin(step * 0.15)])
         obs, rew, terminated, truncated, info = env.step(action)
         step += 1
         done = terminated or truncated

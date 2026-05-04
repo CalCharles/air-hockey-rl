@@ -4,7 +4,7 @@ A *sim2sim* campaign trains a policy on one Box2D sim ("source") and tests how i
 
 This page documents the harness, the layout, the campaign run on the `hist2_motion0` checkpoint (2026-04-25), and what we learned about which perturbations actually move the needle.
 
-> **For residual RL recipes**, see [`training/residual-rl-recipe.md`](residual-rl-recipe.md) — that's the canonical doc, including the v27 (Maxmin-5) winner for big-gap targets. The "Drift study" / "400k extension" / "Drift-fix campaign" sections below trace the *small-gap* (OLD `sim2sim_combined`, paddle full-size) campaign through 2026-04-26. The harder paddle-50 (big-gap) campaign — and the v27 recipe that came out of it — lives at [`notes/scratch/residual_rl_paddle50_log.md`](../../scratch/residual_rl_paddle50_log.md) and is summarized in the recipe doc.
+> **For residual RL recipes**, see [`training/residual-rl-recipe.md`](residual-rl-recipe.md) — that's the canonical doc. **Big-gap recipes (5-seed verified):** `v27` (Maxmin-5, peak 87.94 ± 4.82, also 1M-verified) and `v30_explore_lite` (v27 + lite adaptation-phase exploration; ties on mean/peak but ~4× tighter cross-seed last5 std). Pick by deployment style: v27 for per-checkpoint peak deployment, v30_explore_lite for fire-and-forget. **From-scratch on paddle50 doesn't work** — best 300k recipe (bigger network) peaks at 36 vs zero-shot 67.54; even 1M peaks at 63 (§8.18–8.19). The "Drift study" / "400k extension" / "Drift-fix campaign" sections below trace the *small-gap* (OLD `sim2sim_combined`, paddle full-size) campaign through 2026-04-26. The harder paddle-50 (big-gap) campaign lives at [`notes/scratch/residual_rl_paddle50_log.md`](../../scratch/residual_rl_paddle50_log.md) (§8.17–§8.19) and is summarized in the recipe doc.
 
 Planning + open-questions doc: [`notes/scratch/sim2sim_infra_plan.md`](../../scratch/sim2sim_infra_plan.md). Residual-method details live in [`notes/scratch/residual_rl_plan.md`](../../scratch/residual_rl_plan.md).
 
@@ -25,7 +25,7 @@ All eval/comparison helpers reuse `scripts/smooth_policy/eval_utils.py` (factore
 
 - **Source sim**: any `configs/new_juggle/sysid_best_params*.yaml`. Currently the canonical source is `sysid_best_params_hist4.yaml`; ablations use the matching `_hist2.yaml` / `_hist3.yaml` / `_hist5.yaml`.
 - **Target sim**: lives next to source as `configs/new_juggle/sim2sim_<tag>.yaml`. Inherits structurally from one source — only physics keys differ. First line is `# Source: <source_yaml>` for provenance. Each modified key has an inline `# PERTURBED: ...` comment.
-- **Training configs**: under `configs/td3/sim2sim/`. Files for `zero_shot`, `full_ft`, `residual`, `from_scratch`; only `config:` / `model_path:` / `log_parent_dir:` change per campaign. The `residual` config carries the small-gap canonical recipe (`recency_top50`, `success_top_fraction: 0.5`); for big-gap targets use `paddle50/td3_residual_v27_ensemble5.yaml` (see [residual-rl-recipe.md](residual-rl-recipe.md)).
+- **Training configs**: under `configs/td3/sim2sim/`. Files for `zero_shot`, `full_ft`, `residual`, `from_scratch`; only `config:` / `model_path:` / `log_parent_dir:` change per campaign. The `residual` config carries the small-gap canonical recipe (`recency_top50`, `success_top_fraction: 0.5`); for big-gap targets use either `paddle50/td3_residual_v27_ensemble5.yaml` (peak deployment) or `paddle50/td3_residual_v30_explore_lite.yaml` (fire-and-forget deployment) — both 5-seed verified; pick by deployment style (see [residual-rl-recipe.md](residual-rl-recipe.md)).
 
 ### Results directory
 
@@ -533,9 +533,9 @@ For sim2sim where target dynamics are reachable from scratch given enough budget
 
 ### Open follow-ups
 
-- 5-seed re-run of `recency_top50` to tighten the variance estimate.
-- Test recipe on other sim2sim pairs (generalisation).
-- Combined `top50 + smaller_buf` — both target the museum from different angles; might compound.
+- ~~5-seed re-run of `recency_top50`.~~ Done; small-gap recipe is stable.
+- ~~Test recipe on other sim2sim pairs.~~ Done — `recency_top50` does NOT transfer to big-gap targets (paddle -50%); v27 (Maxmin-5) is the big-gap recipe. See [`residual-rl-recipe.md`](residual-rl-recipe.md) and [`paddle50_log.md`](../../scratch/residual_rl_paddle50_log.md).
+- Adaptation-phase exploration: see [`notes/scratch/residual_exploration_plan.md`](../../scratch/residual_exploration_plan.md) (queued, blocked on GPU 2026-05-01).
 
 ---
 
@@ -553,5 +553,5 @@ For sim2sim where target dynamics are reachable from scratch given enough budget
    ```
    Add `--save-gif --n-gifs 10` for qualitative rollouts.
 4. (Optional) Single-knob sweep — adapt `notes/scratch/sim2sim_perturbation_sweep.py` to the new target's knobs.
-5. Fine-tune: fill placeholders in `td3_sim2sim_{full_ft,residual,from_scratch}.yaml` (`config`, `model_path`, `log_parent_dir`, `run_name`, `seed`), launch ≥2 seeds each. The residual and full_ft yamls in repo carry the campaign-tested defaults (residual `scale=0.05` + `q_updates=1` + `q_lr=3e-4`, and full_ft `lr÷10`); revisit those if your source policy is much weaker / target gap is much wider. The residual combo defaults reach a higher peak but the trajectory is volatile — if your harness can't reliably per-checkpoint eval, swap to `q_lr=3e-4` *alone* (UTD=4) for a smoother trajectory at a slightly lower peak (see "Drift study" section). **Always evaluate intermediate checkpoints** — final-step eval is unsafe (see "Drift study" and "Fine-tune campaign" sections above).
+5. Fine-tune: fill placeholders in `td3_sim2sim_{full_ft,residual,from_scratch}.yaml` (`config`, `model_path`, `log_parent_dir`, `run_name`, `seed`), launch ≥2 seeds each. The repo yamls carry the campaign-tested defaults: residual = `recency_top50` (`success_top_fraction: 0.5`, `residual_scale: 0.15`, `q_updates: 4`, `q_lr: 3e-4`); full_ft = `lr÷10`. **For big-gap targets (zs drop >20%) use [`paddle50/td3_residual_v27_ensemble5.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v27_ensemble5.yaml) (peak-deployment, 5-seed + 1M-verified)** or [`paddle50/td3_residual_v30_explore_lite.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v30_explore_lite.yaml) (fire-and-forget; 5-seed @ 300k; ~4× tighter cross-seed last5 std). Both tie on mean — see [`residual-rl-recipe.md`](residual-rl-recipe.md). From-scratch isn't viable on paddle50-class targets. **Always evaluate intermediate checkpoints** — final-step eval is unsafe for every fine-tuning method on every gap size.
 6. `python scripts/smooth_policy/sim2sim_compare.py --campaign-dir runs/td3/sim2sim/<src_to_tgt>/`.

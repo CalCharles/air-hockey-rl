@@ -409,26 +409,102 @@ class AirHockeyRobosuite(AirHockeySim):
                     break
             self.xml_config['mujoco']['worldbody']['body']['body'][table_surface_idx]['geom']['@size'] = f"{self.table_full_size[0]} {self.table_full_size[1]} {self.table_full_size[2]}"
     
+    def _disable_problematic_collisions(self):
+        """Disable collisions that should never happen with the air-hockey
+        scene. Runs on every reset because robosuite hard_reset rebuilds the
+        model and resets contype/conaffinity to XML defaults.
+
+        - Pedestal/mount: the robot's own shoulder body sits inside the
+          pedestal collision volume by default, generating huge constraint
+          forces that explode qvel on the first sim.step.
+        - Default gripper fingers: a gripper is added even with
+          gripper_types=None, and its inner fingers self-collide with their
+          knuckles in the rest pose.
+        """
+        sim_model = self.robosuite_env.sim.model
+        for i in range(sim_model.ngeom):
+            name = sim_model.geom_id2name(i) or ''
+            if 'pedestal' in name or 'mount' in name:
+                sim_model.geom_contype[i] = 0
+                sim_model.geom_conaffinity[i] = 0
+            if 'gripper' in name and ('finger' in name or 'knuckle' in name) and 'collision' in name:
+                sim_model.geom_contype[i] = 0
+                sim_model.geom_conaffinity[i] = 0
+
     def set_obj_configs(self):
+        # Reset robot joint pose to a tabletop-reach config so the EEF starts
+        # ON the table (~5mm above the surface at the agent's intended paddle
+        # start position), not below it. The robosuite UR5e default
+        # init_qpos lands the EEF ~10cm under the table, which collapses
+        # OSC dynamics (NaN/Inf in QACC) and is physically wrong.
+        # Pose was solved via damped-least-squares IK on the position Jacobian,
+        # target = (0.333, 0.0, 0.795) in robosuite world coords (= env paddle
+        # start (0.79, 0) at table_top + 5mm).
+        if self.robosuite_env is not None and len(self.robosuite_env.robots) > 0:
+            # hard_reset rebuilds the mujoco model with the original XML on
+            # every reset; reapply our contype/conaffinity overrides first.
+            self._disable_problematic_collisions()
+            robot = self.robosuite_env.robots[0]
+            tabletop_qpos = np.array(getattr(self, 'tabletop_init_qpos',
+                [-0.3388, -1.553, 2.1471, -2.4853, -1.3923, -1.991]))
+            joint_idx = robot.joint_indexes
+            self.robosuite_env.sim.data.qpos[joint_idx] = tabletop_qpos
+            self.robosuite_env.sim.data.qvel[joint_idx] = 0
+            self.robosuite_env.sim.forward()
+            # Resync the OSC controller's references and goal to the new pose.
+            # Otherwise OSC's ref_pos / ref_ori_mat / goal_pos / goal_ori still
+            # point at the old sub-table home pose and the controller drags the
+            # EEF back there on the first env.step (huge ~0.4 m jumps).
+            #
+            # Three things have to be in sync, in order:
+            #   1. composite_controller.update_state() refreshes origin_pos /
+            #      origin_ori from the (post-qpos) sim.
+            #   2. each part controller's .update(force=True) refreshes
+            #      ref_pos / ref_ori_mat from the (post-qpos) sim.
+            #   3. goal_pos / goal_ori are then written in the controller's
+            #      input_ref_frame ("base") via world_to_origin_frame(ref_pos).
+            #      Robosuite's stock reset_goal writes ref_pos directly, but
+            #      ref_pos is in world frame and goal_pos is in base frame —
+            #      that mismatch is what caused the EEF to fly off.
+            cc = robot.composite_controller
+            if hasattr(cc, 'update_state'):
+                cc.update_state()
+            for pc in cc.part_controllers.values():
+                if hasattr(pc, 'update_initial_joints'):
+                    pc.update_initial_joints(tabletop_qpos)
+                if hasattr(pc, 'update'):
+                    pc.update(force=True)
+                if hasattr(pc, 'world_to_origin_frame') and hasattr(pc, 'ref_pos'):
+                    pc.goal_pos = pc.world_to_origin_frame(pc.ref_pos)
+                    pc.goal_ori = np.array(pc.ref_ori_mat)
+
         for name in self.initial_obj_configurations['pucks'].keys():
-            body_id = self.robosuite_env.sim.model.body_name2id(name)
-            
-            xpos = self.robosuite_env.sim.data.body_xpos[body_id]
+            # Free joint: qpos addr returns (start, end) where the slice is
+            # 7 elements long [x, y, z, qw, qx, qy, qz] (world position +
+            # orientation quaternion). qvel is 6 elements [vx, vy, vz, wx, wy, wz].
+            free_joint_name = name + "_free"
+            qpos_addr = self.robosuite_env.sim.model.get_joint_qpos_addr(free_joint_name)
+            qvel_addr = self.robosuite_env.sim.model.get_joint_qvel_addr(free_joint_name)
+            qpos_start, qpos_end = qpos_addr if isinstance(qpos_addr, tuple) else (qpos_addr, qpos_addr + 7)
+            qvel_start, qvel_end = qvel_addr if isinstance(qvel_addr, tuple) else (qvel_addr, qvel_addr + 6)
+
             pos = self.initial_obj_configurations['pucks'][name]['position']
-            desired_qpos = pos - xpos
-            
-            xvel = self.robosuite_env.sim.data.get_body_xvelp(name)[:2]
             vel = self.initial_obj_configurations['pucks'][name]['velocity']
-            desired_qvel = vel - xvel
-            
-            joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_x")
-            self.robosuite_env.sim.data.qpos[joint_key] = desired_qpos[0]
-            self.robosuite_env.sim.data.qvel[joint_key] = desired_qvel[0]
-            joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_y")
-            self.robosuite_env.sim.data.qpos[joint_key] = desired_qpos[1]
-            self.robosuite_env.sim.data.qvel[joint_key] = desired_qvel[1]
-            joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_yaw")
-            self.robosuite_env.sim.data.qpos[joint_key] = desired_qpos[2]
+            # Set world pose (free joint pose IS the world pose, so write
+            # directly without subtracting body_xpos).
+            self.robosuite_env.sim.data.qpos[qpos_start:qpos_start + 3] = pos
+            self.robosuite_env.sim.data.qpos[qpos_start + 3:qpos_end] = [1.0, 0.0, 0.0, 0.0]  # identity quat
+            # Velocity: vel is a 2-element [vx, vy] from the high-level frame.
+            # Write into linear vel; leave angular vel zero.
+            self.robosuite_env.sim.data.qvel[qvel_start:qvel_start + 2] = vel[:2]
+            self.robosuite_env.sim.data.qvel[qvel_start + 2:qvel_end] = 0
+
+            # Honor the per-puck affected_by_gravity flag by toggling the
+            # body's gravcomp (1.0 = full antigravity, 0.0 = normal gravity).
+            grav_flag = getattr(self, 'puck_gravity_flags', {}).get(name, True)
+            puck_body_id = self.robosuite_env.sim.model.body_name2id(name)
+            if hasattr(self.robosuite_env.sim.model, 'body_gravcomp'):
+                self.robosuite_env.sim.model.body_gravcomp[puck_body_id] = 0.0 if grav_flag else 1.0
         for name in self.initial_block_positions.keys():
             xpos = self.robosuite_env.sim.data.body_xpos[self.robosuite_env.sim.model.body_name2id(name)]
             
@@ -441,6 +517,12 @@ class AirHockeyRobosuite(AirHockeySim):
             self.robosuite_env.sim.data.qpos[joint_key] = desired_qpos[1]
             joint_key  = self.robosuite_env.sim.model.get_joint_qpos_addr(name + "_yaw")
             self.robosuite_env.sim.data.qpos[joint_key] = desired_qpos[2]
+        # Zero ctrl before settling so leftover torques from a prior episode
+        # don't yank the freshly-positioned EEF off the table on the first
+        # physics step. forward() refreshes derived quantities (xpos/xvel)
+        # without integrating, then a single sim.step() integrates with ctrl=0.
+        self.robosuite_env.sim.data.ctrl[:] = 0
+        self.robosuite_env.sim.forward()
         self.robosuite_env.sim.step()
 
     def set_object_links(self):
@@ -462,7 +544,7 @@ class AirHockeyRobosuite(AirHockeySim):
         # this is only for the first time
         with open(self.tmp_xml_fp, 'w') as file:
             file.write(xmltodict.unparse(self.xml_config, pretty=True))
-        self.robosuite_env = RobosuiteEnv(xml_fp=self.tmp_xml_fp, 
+        self.robosuite_env = RobosuiteEnv(xml_fp=self.tmp_xml_fp,
                                           table_full_size=self.table_full_size,
                                           table_friction=self.table_friction,
                                           table_offset=self.table_offset,
@@ -470,12 +552,9 @@ class AirHockeyRobosuite(AirHockeySim):
                                           block_names=self.block_names,
                                           robosuite_env_params=self.robosuite_env_cfg)
 
-        # Adjust base pose accordingly
-        # TODO: uncomment and use this code, it is currently done in the xml
-        # xpos = self.robosuite_env.robots[0].robot_model.base_xpos_offset["table"](self.table_full_size[0])
-        # xpos = (-0.48, 0, 0)
-        # self.robosuite_env.robots[0].robot_model.set_base_xpos(xpos)
-
+        # set_obj_configs (called below and on every subsequent reset)
+        # also re-applies the collision overrides — needed because hard_reset
+        # rebuilds the MuJoCo model.
         self.set_obj_configs()
         self.initialized_objects = True
         
@@ -616,16 +695,32 @@ class AirHockeyRobosuite(AirHockeySim):
                 }]
             }
 
-    def spawn_puck(self, pos, vel, name, affected_by_gravity=False, movable=True):
+    def spawn_puck(self, pos, vel, name, affected_by_gravity=True, movable=True):
         pos = self.high_level_to_robosuite_coords(pos, object_type='puck')
         assert pos[0] >= self.table_x_bot and pos[0] <= self.table_x_top, f"pos[0]: {pos[0]}, table_x_bot: {self.table_x_bot}, table_x_top: {self.table_x_top}"
         assert pos[1] <= self.table_y_left and pos[1] >= self.table_y_right, f"pos[1]: {pos[1]}, table_y_left: {self.table_y_left}, table_y_right: {self.table_y_right}"
         vel = self.high_level_to_robosuite_vel(vel, object_type='puck')
+        # Track gravity preference per-puck so set_obj_configs can re-apply it.
+        if not hasattr(self, 'puck_gravity_flags'):
+            self.puck_gravity_flags = {}
+        self.puck_gravity_flags[name] = bool(affected_by_gravity)
         
         puck_mass = self.puck_density * math.pi * (self.puck_radius ** 2) * self.puck_height
-        z_pos = self.table_elevation + self.puck_height/2
         x_pos = self.transform_x(pos[0])
         y_pos = pos[1]
+        # The table is tilted (axisangle "0 1 0 -table_tilt"), so its top
+        # surface z varies with x: it's HIGHER on the +x (puck-spawn) end and
+        # LOWER on the -x (agent) end. The previous z_pos = table_elevation +
+        # puck_height/2 used the table-center z and ignored tilt, which
+        # placed the puck UNDER the table at the +x end (where it spawns) —
+        # making the puck invisible from above and unable to move on the
+        # surface. Add the tilt-induced rise: dz = sin(table_tilt) * (x_pos -
+        # table_center_x), where table body is at world x = table_full_size[0].
+        table_top_z = (
+            self.table_elevation
+            + math.sin(self.table_tilt) * (x_pos - self.table_full_size[0])
+        )
+        z_pos = table_top_z + self.puck_height/2 + 0.001  # +1mm clearance
         pos = np.array([x_pos, y_pos, z_pos])
         self.initial_obj_configurations['pucks'][name] = {'position': pos, 'velocity': vel}
         self.initial_puck_vels[name] = vel
@@ -633,35 +728,23 @@ class AirHockeyRobosuite(AirHockeySim):
         if self.initialized_objects:
             return
         
+        # Use a SINGLE FREE joint instead of three constrained slides. The
+        # original (x-slide, y-slide, yaw-hinge) trio locked the puck at its
+        # spawn z, which made the puck juggle task impossible: the puck could
+        # never fall under gravity or bounce up off the paddle. With a free
+        # joint, MuJoCo gravity acts naturally on the puck and the paddle
+        # contact correctly propels it upward. Damping is set on the joint so
+        # the puck slides smoothly when it's resting on the table.
         puck_dict = {
             "@name": "base",
             "@pos": f"{x_pos} {y_pos} {z_pos}",
             "@axisangle": f"0 1 0 {-self.table_tilt}",
             "joint": [
                 {
-                    "@name": f"{name}_x",
-                    "@type": "slide",
-                    "@axis": "1 0 0",
-                    "@damping": f"{self.puck_damping}",
-                    # "@damping": "0.01",
-                    "@limited": "false",
-                    "@frictionloss": "0.00000000000001",
-                },
-                {
-                    "@name": f"{name}_y",
-                    "@type": "slide",
-                    "@axis": "0 1 0",
+                    "@name": f"{name}_free",
+                    "@type": "free",
                     "@damping": f"{self.puck_damping}",
                     "@limited": "false",
-                    "@frictionloss": "0.00000000000001",
-                },
-                {
-                    "@name": f"{name}_yaw",
-                    "@type": "hinge",
-                    "@axis": "0 0 1",
-                    "@damping": "2e-6",
-                    "@limited": "false",
-                    "@frictionloss": "0.00000000000001",
                 },
             ],
             "body": {
@@ -671,7 +754,11 @@ class AirHockeyRobosuite(AirHockeySim):
                         "@pos": f"0 0 -{self.puck_z_offset}",
                         "@name": f"{name}",
                         "@type": "cylinder",
-                        "@material": "green",
+                        # Set rgba directly instead of @material="green" — material
+                        # name lookup against the table XML's <asset> block was
+                        # silently falling back to MuJoCo's default gray (0.5 0.5
+                        # 0.5 1), making the puck invisible against the white table.
+                        "@rgba": "0.05 0.85 0.15 1",
                         "@size": f"{self.puck_radius} {self.puck_height}",
                         "@condim": "4",
                         "@priority": "0",
@@ -685,7 +772,7 @@ class AirHockeyRobosuite(AirHockeySim):
                 },
             }
         }
-        
+
         if isinstance(self.xml_config['mujoco']['worldbody']['body'], list):
             self.xml_config['mujoco']['worldbody']['body'].append(puck_dict)
         else:
@@ -745,7 +832,12 @@ class AirHockeyRobosuite(AirHockeySim):
         """
         delta_pos_x = -action[0] * self.x_to_x_prime_ratio * self.action_x_scaling
         delta_pos_y = - action[1] * self.action_y_scaling
-        delta_pos_z = self.transform_z(- action[0]  * self.action_x_scaling) #  * self.x_to_z_ratio
+        # BUGFIX: previously called self.transform_z(...) which returns an
+        # ABSOLUTE z position (≈ table_elevation - depth, ~0.69 m), not a delta.
+        # OSC then saw a constant z-input of ~0.69 every step regardless of
+        # action and pulled the EEF upward, causing run-away drift.
+        # Tilt-compensated z-delta should be sin(table_tilt) * x-delta.
+        delta_pos_z = -self.x_to_z_ratio * action[0] * self.action_x_scaling
         
         # For OSC controller, we need 6D actions: [x, y, z, roll, pitch, yaw]
         # Set orientation changes to 0 for now (no rotation)
@@ -933,7 +1025,16 @@ class RobosuiteEnv(SingleArmEnv):
         base_types = self.input2list(robosuite_env_params['base_types'], self.num_robots)
         initialization_noise = self.input2list(robosuite_env_params['initialization_noise'], self.num_robots)
         control_freq = self.input2list(robosuite_env_params['control_freq'], self.num_robots)
-        robot_configs = self.load_robots_configs(robot_names, controller_configs, base_types, initialization_noise, control_freq)
+        # Forward gripper_types from robosuite_env_params so each robot's
+        # load_model attaches the requested gripper (e.g. RoundGripper) instead
+        # of falling back to the robot's default (Robotiq85 for UR5e).
+        gripper_types = self.input2list(
+            robosuite_env_params.get('gripper_types', 'default'), self.num_robots
+        )
+        robot_configs = self.load_robots_configs(
+            robot_names, controller_configs, base_types, initialization_noise, control_freq,
+            gripper_types=gripper_types,
+        )
         self.robots = self.get_robots(robot_names, robot_configs)
 
         # task includes arena, robot, and objects of interest
@@ -957,23 +1058,31 @@ class RobosuiteEnv(SingleArmEnv):
         super()._load_model()
         self.model = self.task_model # Prevents the super call from making this None
             
-    def load_robots_configs(self, robot_names, controller_configs, base_types, initialization_noise, control_freq, robot_configs=None):
+    def load_robots_configs(self, robot_names, controller_configs, base_types, initialization_noise, control_freq,
+                            gripper_types=None, robot_configs=None):
         num_robots = len(robot_names)
         if robot_configs is None:
             robot_configs = [{} for _ in range(num_robots)]
+        if gripper_types is None:
+            gripper_types = ['default'] * num_robots
         self.robot_configs = [
             dict(
                 **{
-                    "controller_config": controller_configs[idx],
-                    "mount_type": base_types[idx],
+                    # Robosuite's Robot.__init__ takes `composite_controller_config`,
+                    # `gripper_type`, `base_type` (singular) — NOT `controller_config`,
+                    # `gripper_types`, or `mount_type`. Map to the right keys.
+                    "composite_controller_config": controller_configs[idx],
+                    "base_type": base_types[idx],
+                    "gripper_type": gripper_types[idx] if gripper_types[idx] is not None else "default",
                     "initialization_noise": initialization_noise[idx],
-                    "control_freq": control_freq,
+                    "control_freq": control_freq[idx] if isinstance(control_freq, list) else control_freq,
                 },
                 **robot_config,
             )
             for idx, robot_config in enumerate(robot_configs)
         ]
-        return robot_configs
+        # Return the populated configs — previous code returned the empty input list.
+        return self.robot_configs
     
     def _setup_observables(self):
         """

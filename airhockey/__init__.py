@@ -10,13 +10,25 @@ assets_root = None
 try:
     from robosuite.utils.mjcf_utils import xml_path_completion as robosuite_xml_path_completion
     from robosuite.models import assets_root
-    import airhockey.sims.controllers  # registers custom controllers
-    import airhockey.sims.robots
-    import airhockey.sims.grippers
-    import airhockey.sims.utils.RobosuiteTransforms
     ROBOSUITE_AVAILABLE = True
 except Exception:
     print("Robosuite not loaded. Robosuite-only components are unavailable.")
+
+# Register optional robosuite extras independently so a failure in one (e.g.
+# `controllers`/`robots` use the old robosuite 1.4 API and break on 1.5+)
+# doesn't prevent the others (notably `grippers`, which contains the round
+# paddle) from registering.
+if ROBOSUITE_AVAILABLE:
+    for _module in (
+        "airhockey.sims.controllers",
+        "airhockey.sims.robots",
+        "airhockey.sims.grippers",
+        "airhockey.sims.utils.RobosuiteTransforms",
+    ):
+        try:
+            __import__(_module)
+        except Exception as _e:
+            print(f"airhockey: optional component {_module} not loaded ({type(_e).__name__}: {_e})")
 
 from airhockey.airhockey_simple_tasks import (
     AirHockeyPuckVelEnv,
