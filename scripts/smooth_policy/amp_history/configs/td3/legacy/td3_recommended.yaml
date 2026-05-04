@@ -117,7 +117,7 @@ jerk_at_zero: 20.0
 # Simulator physics (real-world tuned — see environments/real-world/puck-system-id.md
 # and teleop-system-id.md). hist_len=4 variant applies a 4-timestep low-pass
 # filter on the PID target (see _filter_update in airhockey/sims/airhockey_box2d.py).
-config: "scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params_hist4.yaml"
+config: "scripts/smooth_policy/amp_history/configs/new_juggle/legacy/sysid_best_params_hist4.yaml"
 enable_puck_delay_interpolation: true
 
 # Paths

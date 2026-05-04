@@ -23,7 +23,7 @@ All eval/comparison helpers reuse `scripts/smooth_policy/eval_utils.py` (factore
 
 ### Config layout
 
-- **Source sim**: any `configs/new_juggle/sysid_best_params*.yaml`. Currently the canonical source is `sysid_best_params_hist4.yaml`; ablations use the matching `_hist2.yaml` / `_hist3.yaml` / `_hist5.yaml`.
+- **Source sim**: any `configs/new_juggle/sysid_best_params*.yaml`. The canonical source is now `sysid_best_params_hist2.yaml` (matches `latest_model/hist2_motion0/config.yaml`). The hist3 / hist4 / hist5 variants used for the original temporal-smoothing ablation are preserved at `configs/new_juggle/legacy/sysid_best_params_hist{3,4,5}.yaml`. The reference campaign below is the one that was actually run against `sysid_best_params_hist4.yaml` before the legacy move; new sim2sim work should source from `sysid_best_params_hist2.yaml`.
 - **Target sim**: lives next to source as `configs/new_juggle/sim2sim_<tag>.yaml`. Inherits structurally from one source — only physics keys differ. First line is `# Source: <source_yaml>` for provenance. Each modified key has an inline `# PERTURBED: ...` comment.
 - **Training configs**: under `configs/td3/sim2sim/`. Files for `zero_shot`, `full_ft`, `residual`, `from_scratch`; only `config:` / `model_path:` / `log_parent_dir:` change per campaign. The `residual` config carries the small-gap canonical recipe (`recency_top50`, `success_top_fraction: 0.5`); **for big-gap targets the canonical default is `paddle50/td3_residual_v27_ensemble5.yaml`** (Maxmin-5; 1M-verified; the standard for future residual sim2sim/sim2real work). Use `paddle50/td3_residual_v30_explore_lite.yaml` only as a fire-and-forget alternative when shipping final-step weights without per-ckpt eval. See [residual-rl-recipe.md](residual-rl-recipe.md).
 
@@ -50,7 +50,7 @@ runs/td3/sim2sim/<src_tag>_to_<tgt_tag>/
 |---|---|
 | Run dir | `runs/td3/hist_motion_collision/hist2_motion0/` |
 | Latest checkpoint | `checkpoint_975000/model.pth` |
-| Args file | `td3_recommended.yaml` |
+| Args file | `td3_recommended.yaml` (now at `td3/legacy/td3_recommended.yaml`; the active default is `td3_recommended_top50_hist2.yaml`) |
 | Source sim | `sysid_best_params_hist2.yaml` (sysid params + 2-timestep low-pass on PID target) |
 | Reward weights | `task_reward_weight: 1.0`, `motion_reward_weight: 0.0` |
 | Network | 2-layer, hidden=64 (actor + Q) |

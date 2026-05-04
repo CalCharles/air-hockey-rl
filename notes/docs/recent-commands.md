@@ -10,7 +10,7 @@ Runs the hist3 motion-collision-ablation checkpoint on hardware in eval-only mod
 
 Two prerequisites over the stock config:
 
-1. **Match training `hist_len`.** hist3_motion0 was trained with `hist_len: 3` (see its `sysid_best_params_hist3.yaml`). `configs/real_configs/rollout_td3_config.yaml` doesn't set `hist_len` and the real env defaults to 2, giving a wrong obs dim → state-dict load failure. Make a hist3 variant of the rollout config once:
+1. **Match training `hist_len`.** hist3_motion0 was trained with `hist_len: 3` (see its `sysid_best_params_hist3.yaml`, now under `configs/new_juggle/legacy/` — hist3/4/5 sim variants were moved there once `hist2` became the active default). `configs/real_configs/rollout_td3_config.yaml` doesn't set `hist_len` and the real env defaults to 2, giving a wrong obs dim → state-dict load failure. Make a hist3 variant of the rollout config once:
 
    ```bash
    cp configs/real_configs/rollout_td3_config.yaml configs/real_configs/rollout_td3_config_hist3.yaml
