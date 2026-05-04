@@ -701,9 +701,6 @@ class Args:
     # and populates `episode_artifact_dir`, `reset_artifact_dir`, `episode_gif_dir`,
     # and `episode_camera_video_dir` as runtime attributes pointing at subfolders.
     data_root_dir: str = "runs/async_td3/data"
-    # Kept for config compatibility; short-episode filtering is disabled.
-    episode_min_timesteps: int = 1
-    estop_episode_min_timesteps: int = 1
     enable_episode_gif: bool = True
     episode_gif_fps: int = 20
     episode_gif_subsample: int = 1

@@ -1,5 +1,14 @@
 # TD3 Exploration Ablations — Warm-start and Bootstrap
 
+> **2026-05-04 path note:** the `td3_recommended.yaml` referenced throughout this
+> doc is the original hist4 variant, which is now at
+> `scripts/smooth_policy/amp_history/configs/td3/legacy/td3_recommended.yaml`.
+> Likewise `sysid_best_params_hist4.yaml` lives in `new_juggle/legacy/`. The
+> sweeps were run against those exact files; the active default for **new** runs
+> is `td3_recommended_top50_hist2.yaml` ([`td3-configs.md`](td3-configs.md)). All
+> ablation conclusions below still apply (only `config:` and
+> `success_top_fraction` differ between active and legacy).
+
 Effect of exploration knobs on juggle-task learning. All Phase-1 runs use
 `td3_recommended.yaml` as the args file (2-layer, q=25/a=6,
 `sysid_best_params.yaml` sim) and vary a single exploration knob. Runs

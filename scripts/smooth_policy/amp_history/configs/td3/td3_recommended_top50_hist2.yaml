@@ -9,7 +9,11 @@
 # Key choices:
 #   - 2-layer actor/critic, 64 hidden (depth sweep: B/C cluster at peak, 2-layer fastest)
 #   - q_updates=25, actor_updates_per_iteration=6 (Phase-1/2 sweep: a:q≈0.24, N*=31)
-#   - hist_len=4 PID target filter via sysid_best_params_hist2.yaml sim config
+#   - hist_len=2 PID target filter via sysid_best_params_hist2.yaml sim config
+#     (default hist_len in airhockey/sims/airhockey_box2d.py; matches latest_model/hist2_motion0)
+#   - success_top_fraction=0.5 (the "top50" in the file name; vs 0.2 in the original
+#     td3_recommended.yaml — see notes/docs/training/residual-rl-recipe.md §"top50 ablation"
+#     for the from-scratch comparison)
 #   - No bootstrap forcing: exploration_primitive_chance_pre_learning_starts=null
 #     (E4 ablation, +15 pts ret@500k vs bootstrap=1.0 anchor)
 #   - No external-policy warmstart: policy_takeover weights = 0 (E2 ablation; avoids
@@ -115,7 +119,7 @@ jerk_at_one: 8.0
 jerk_at_zero: 20.0
 
 # Simulator physics (real-world tuned — see environments/real-world/puck-system-id.md
-# and teleop-system-id.md). hist_len=4 variant applies a 4-timestep low-pass
+# and teleop-system-id.md). hist_len=2 variant applies a 2-timestep low-pass
 # filter on the PID target (see _filter_update in airhockey/sims/airhockey_box2d.py).
 config: "scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params_hist2.yaml"
 enable_puck_delay_interpolation: true

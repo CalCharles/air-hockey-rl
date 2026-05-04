@@ -87,6 +87,21 @@ from scripts.smooth_policy.amp_history.amp_training.td3.helper.real_transition_h
 )
 from scripts.real.rollout_reset_policy_real import ResetPolicyFSM
 
+
+# Minimum timesteps required for a *policy* episode to be retained by
+# ``clean_episode_hdf5``. Episodes shorter than this — e.g. a 1-step puck-
+# hits-bottom or a quick puck_passed_paddle — are noisy and uninformative for
+# both critic learning and offline analysis, so we discard them at the
+# validator. Reset trajectories use a separate ``min_timesteps=1`` since a
+# clean reset can legitimately be a handful of steps.
+#
+# Owned exclusively by this run file (intentionally not surfaced via
+# ``Args`` / args-files / configs) so the contract is fixed across all
+# invocations: training (``async_td3_real_modular.py``) and eval
+# (``async_td3_real_eval.py``, which imports the shared helper from here)
+# share this threshold by construction.
+EPISODE_MIN_TIMESTEPS = 50
+
 # Shared init / teardown / learner / config helpers — imported, not
 # re-implemented. Anything here must remain identical to the current
 # `async_td3_real.py` behavior; this file is the orchestrator only.
@@ -202,7 +217,7 @@ def _save_episode_artifacts_and_pending_reset(
     )
     counters["episodes_saved"] += 1
 
-    clean_result = clean_episode_hdf5(artifact_path, min_timesteps=1)
+    clean_result = clean_episode_hdf5(artifact_path, min_timesteps=EPISODE_MIN_TIMESTEPS)
     episode_stop_artifact_label = result.terminal.stop_state_artifact_label
     if not clean_result.kept:
         print(

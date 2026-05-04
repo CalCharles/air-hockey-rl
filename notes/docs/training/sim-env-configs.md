@@ -10,8 +10,11 @@ Base system-ID physics tuned to match real-world dynamics. Used by the historica
 - **Paddle**: `pid_kp: 9000`, `pid_kd: 50`, `pid_ki: 0`, `paddle_density: 3000` (multi-round 3D grid search over 8 teleop categories; see [`real-world/teleop-system-id.md`](../environments/real-world/teleop-system-id.md))
 - Same sim-to-real gap features (noise, occlusions, obs delay, force attenuation, near-paddle spawn) as the legacy config.
 
-### `sysid_best_params_hist4.yaml` — Sysid + hist_len=4 (canonical)
-**Canonical sim config for new runs.** Identical to `sysid_best_params.yaml` except adds `simulator_params.hist_len: 4`, which enables a 4-timestep low-pass filter on the PID target (see `_filter_update` in `airhockey/sims/airhockey_box2d.py`; default is `hist_len=2`). This is the sim config wired into `td3_recommended.yaml`. Ablation showed hist_len=4 is preferred over the default.
+### `sysid_best_params_hist2.yaml` — Sysid + hist_len=2 (canonical, **active**)
+**Canonical sim config for new runs.** Identical to `sysid_best_params.yaml` except adds `simulator_params.hist_len: 2`, which enables a 2-timestep low-pass filter on the PID target (see `_filter_update` in `airhockey/sims/airhockey_box2d.py` — this matches the env's default `hist_len`). This is the sim config wired into the active `td3_recommended_top50_hist2.yaml` and matches the `latest_model/hist2_motion0/config.yaml` checkpoint at the high level (gravity / densities / PID gains / occlusion / delay all identical; minor restitution differences and added per-collision randomization documented at the bottom of the file).
+
+### `legacy/sysid_best_params_hist{3,4,5}.yaml` — Hist-length ablations (legacy)
+Variants with `hist_len` ∈ {3, 4, 5} for the temporal-smoothing ablation. The hist4 variant was the canonical sim config for the original `td3_recommended.yaml` (now also in `legacy/`). Preserved for reproducing past ablations; new runs should use `sysid_best_params_hist2.yaml`.
 
 ### `pid_noise_constant_upper_half_custom_sim_params.yaml` — Legacy (pre-sysid)
 Still referenced by existing TD3 args YAMLs (`td3_standard.yaml`, `td3_no_alignment.yaml`). Task: `puck_juggle_upper_half_reward`. Pre-sysid physics: `paddle_density: 1000`, `puck_density: 250`, `puck_restitution: 1.09145`. Sim-to-real gap features enabled:

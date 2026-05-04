@@ -3,9 +3,13 @@
 Config files live in `scripts/smooth_policy/amp_history/configs/td3/`.
 All are used with `scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py`.
 
-## Recommended default — `td3_recommended.yaml`
+## Recommended default — `td3_recommended_top50_hist2.yaml`
 
 **New training runs should start from this config.** Distilled from the update-count, network-depth, and actor:Q-ratio ablations in [`td3-ablations-updates-and-depth.md`](td3-ablations-updates-and-depth.md) and the exploration sweep in [`td3-exploration-ablations.md`](td3-exploration-ablations.md).
+
+> **Note (2026-05-04):** The original recommended default was `td3_recommended.yaml` (hist_len=4 via `sysid_best_params_hist4.yaml`, `success_top_fraction: 0.2`). It is preserved at `td3/legacy/td3_recommended.yaml` along with the `new_juggle/legacy/sysid_best_params_hist{3,4,5}.yaml` sim variants for reproducing past ablations. The new active default keeps every other knob the same and changes:
+> - `config:` → `sysid_best_params_hist2.yaml` (hist_len=2 PID-target filter — matches `latest_model/hist2_motion0/config.yaml` and the real-env default in `airhockey/sims/airhockey_box2d.py`)
+> - `success_top_fraction: 0.5` (the "top50" in the file name; from-scratch comparison written up in [`residual-rl-recipe.md`](residual-rl-recipe.md))
 
 Key choices and why:
 
@@ -16,7 +20,8 @@ Key choices and why:
 | `q_updates` | **25** | Halving updates from (50, 12) to (25, 6) preserves the peak (max ≈ 157) with +13% throughput. Below 15 total updates/episode, learning starves. |
 | `actor_updates_per_iteration` | **6** | Holds actor:Q ratio ≈ 0.24, which clearly beats 0.07 / 0.48 / 2.10 on peak return (156 vs 129–141). |
 | `total_timesteps` | **1_000_000** | 1M converges well; peaks typically land between 500k–700k. |
-| `config` | **`sysid_best_params_hist4.yaml`** | Real-world-tuned physics **with `hist_len=4`** 4-timestep low-pass filter on the PID target (see `_filter_update` in `airhockey/sims/airhockey_box2d.py`). Base sysid values documented in [`puck-system-id.md`](../environments/real-world/puck-system-id.md) and [`teleop-system-id.md`](../environments/real-world/teleop-system-id.md). |
+| `config` | **`sysid_best_params_hist2.yaml`** | Real-world-tuned physics **with `hist_len=2`** 2-timestep low-pass filter on the PID target (see `_filter_update` in `airhockey/sims/airhockey_box2d.py` — this is the env's default `hist_len`). Base sysid values documented in [`puck-system-id.md`](../environments/real-world/puck-system-id.md) and [`teleop-system-id.md`](../environments/real-world/teleop-system-id.md). |
+| `success_top_fraction` | **0.5** | "top50" PER mix; from-scratch comparison in [`residual-rl-recipe.md`](residual-rl-recipe.md#top50-from-scratch-ablation). |
 | `enable_puck_delay_interpolation` | `true` | Matches the real-world puck-delay behavior our sysid was done against. |
 | `exploration_primitive_chance_pre_learning_starts` | **`null`** | E4 ablation: bootstrap forcing (`=1.0`) was actively harmful. Leaving it `null` falls back to the annealing schedule (`chance_start=0.15`) during pre-learning, gaining +15 pts ret@500k. |
 | `exploration_primitive_weight_policy_takeover` | **`0.0`** | E2 ablation: no external warmstart policy. Removes dependence on a demo checkpoint; marginal steady-state improvement at the cost of some early-learning speed. |
@@ -30,7 +35,7 @@ Launch:
 
 ```bash
 python scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py \
-  --args-file scripts/smooth_policy/amp_history/configs/td3/td3_recommended.yaml \
+  --args-file scripts/smooth_policy/amp_history/configs/td3/td3_recommended_top50_hist2.yaml \
   --run-name my_run --device cuda:0
 ```
 
