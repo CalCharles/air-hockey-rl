@@ -123,7 +123,7 @@ class RealTrajectoryRenderer:
     uses the same rendering logic as the Box2D AirHockeyRenderer.
     """
     
-    def __init__(self, 
+    def __init__(self,
                  table_length=1.9304,
                  table_width=0.8636,
                  paddle_radius=0.0508,
@@ -131,10 +131,12 @@ class RealTrajectoryRenderer:
                  render_size=360,
                  robot_x_offset=1.2,
                  orientation='vertical',
-                 paddle_input_frame='robot'):
+                 paddle_input_frame='robot',
+                 assets_dir=None,
+                 quiet=False):
         """
         Initialize renderer with simulation-matching parameters.
-        
+
         Args:
             table_length: Length of air hockey table in meters (simulation default: 1.9304m)
             table_width: Width of air hockey table in meters (simulation default: 0.8636m)
@@ -146,6 +148,9 @@ class RealTrajectoryRenderer:
             paddle_input_frame: Coordinate frame for paddle x/y inputs.
                 - 'robot': inputs are robot-frame and require robot_x_offset transform.
                 - 'table': inputs are already in table/observation-centered frame.
+            assets_dir: Optional explicit path to assets folder. If None, computed
+                relative to this script file.
+            quiet: If True, suppress print output during initialization.
         """
         if paddle_input_frame not in ('robot', 'table'):
             raise ValueError(
@@ -159,36 +164,43 @@ class RealTrajectoryRenderer:
         self.robot_x_offset = robot_x_offset
         self.orientation = orientation
         self.paddle_input_frame = paddle_input_frame
-        
+        self.quiet = quiet
+        self._assets_dir = assets_dir
+
         # Calculate pixels per meter and render dimensions (matching render.py logic)
         self.ppm = render_size / self.width
         self.render_width = int(render_size)
         self.render_length = int(self.ppm * self.length)
-        
-        print(f"Renderer initialized:")
-        print(f"  Table dimensions: {self.length}m x {self.width}m")
-        print(f"  Render size: {self.render_length}px x {self.render_width}px")
-        print(f"  Pixels per meter: {self.ppm:.1f}")
-        print(f"  Paddle radius: {self.paddle_radius}m ({int(self.paddle_radius * self.ppm)}px)")
-        print(f"  Puck radius: {self.puck_radius}m ({int(self.puck_radius * self.ppm)}px)")
-        print(f"  Robot X offset: {self.robot_x_offset}m")
-        print(f"  Orientation: {self.orientation}")
-        print(f"  Paddle input frame: {self.paddle_input_frame}")
-        
+
+        if not self.quiet:
+            print(f"Renderer initialized:")
+            print(f"  Table dimensions: {self.length}m x {self.width}m")
+            print(f"  Render size: {self.render_length}px x {self.render_width}px")
+            print(f"  Pixels per meter: {self.ppm:.1f}")
+            print(f"  Paddle radius: {self.paddle_radius}m ({int(self.paddle_radius * self.ppm)}px)")
+            print(f"  Puck radius: {self.puck_radius}m ({int(self.puck_radius * self.ppm)}px)")
+            print(f"  Robot X offset: {self.robot_x_offset}m")
+            print(f"  Orientation: {self.orientation}")
+            print(f"  Paddle input frame: {self.paddle_input_frame}")
+
         # Load assets (matching render.py)
         self._load_assets()
         
     def _load_assets(self):
         """Load table and paddle images from assets folder."""
-        # Find assets folder relative to this script
-        script_dir = Path(__file__).parent
-        assets_folder = script_dir / '../../../assets'
-        assets_folder = assets_folder.resolve()
-        
+        if self._assets_dir is not None:
+            assets_folder = Path(self._assets_dir)
+        else:
+            # Find assets folder relative to this script
+            script_dir = Path(__file__).parent
+            assets_folder = script_dir / '../../../assets'
+            assets_folder = assets_folder.resolve()
+
         if not assets_folder.exists():
             raise FileNotFoundError(f"Assets folder not found at {assets_folder}")
-        
-        print(f"  Loading assets from: {assets_folder}")
+
+        if not self.quiet:
+            print(f"  Loading assets from: {assets_folder}")
         
         # Load table image
         table_path = assets_folder / 'air_hockey_table.png'
@@ -388,18 +400,55 @@ class RealTrajectoryRenderer:
 
     def draw_target(self, frame, target_x, target_y):
         """
-        Draw target position as a blue circle (puck-sized) at table-frame coordinates.
+        Draw the target paddle position as a cross + circle marker.
+
+        Mirrors ``AirHockeyRenderer.draw_target_marker`` (orange BGR (255,165,0)
+        cross+circle with a black outline) so real-trajectory GIFs follow the
+        same visual convention as the Box2D training renderer used by
+        ``td3_training.py``.
 
         Args:
             frame: Image to draw on (will be modified in place)
-            target_x: Target X position in table frame (meters)
-            target_y: Target Y position in table frame (meters)
+            target_x: Target X position in the configured ``paddle_input_frame``
+            target_y: Target Y position in the configured ``paddle_input_frame``
         """
-        center = self.table_position_to_pixel_coords(target_x, target_y)
-        radius = max(2, int(self.puck_radius * self.ppm))
-        color = (220, 120, 30)  # Blue in BGR
-        cv2.circle(frame, tuple(center), radius, color, -1)
-        cv2.circle(frame, tuple(center), radius, (20, 20, 20), 1)
+        center = self.position_to_pixel_coords(target_x, target_y)
+        center_int = (int(center[0]), int(center[1]))
+
+        marker_size = 15
+        thickness = 3
+        color = (255, 165, 0)  # Matches AirHockeyRenderer.draw_target_marker
+        outline = (0, 0, 0)
+
+        # Outer circle (black outline + colored inner)
+        cv2.circle(frame, center_int, marker_size, outline, thickness + 2)
+        cv2.circle(frame, center_int, marker_size, color, thickness)
+
+        # Cross lines (black outline + colored)
+        cv2.line(
+            frame,
+            (center_int[0] - marker_size, center_int[1]),
+            (center_int[0] + marker_size, center_int[1]),
+            outline, thickness + 2,
+        )
+        cv2.line(
+            frame,
+            (center_int[0], center_int[1] - marker_size),
+            (center_int[0], center_int[1] + marker_size),
+            outline, thickness + 2,
+        )
+        cv2.line(
+            frame,
+            (center_int[0] - marker_size, center_int[1]),
+            (center_int[0] + marker_size, center_int[1]),
+            color, thickness,
+        )
+        cv2.line(
+            frame,
+            (center_int[0], center_int[1] - marker_size),
+            (center_int[0], center_int[1] + marker_size),
+            color, thickness,
+        )
 
     def draw_puck(self, frame, puck_x, puck_y, puck_occluded=None):
         """
@@ -526,7 +575,7 @@ class RealTrajectoryRenderer:
 
         if target_x is not None and target_y is not None:
             text = f"Target: ({target_x:.3f}, {target_y:.3f})m"
-            cv2.putText(frame, text, (10, y_offset), font, font_scale, (220, 120, 30), line_type)
+            cv2.putText(frame, text, (10, y_offset), font, font_scale, (255, 165, 0), line_type)
         
         # Apply orientation rotation if vertical (matching render.py line 487)
         if self.orientation == 'vertical':
@@ -536,7 +585,8 @@ class RealTrajectoryRenderer:
 
 
 def create_trajectory_gif(paddle_data, renderer, output_path, 
-                         max_frames=None, subsample=1, fps=20):
+                         max_frames=None, subsample=1, fps=20,
+                         output_width=160):
     """
     Create GIF from trajectory data.
     
@@ -608,9 +658,8 @@ def create_trajectory_gif(paddle_data, renderer, output_path,
         # Convert BGR to RGB for imageio
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         
-        # Resize to match Box2D simulator output (160px width, maintaining aspect ratio)
         aspect_ratio = frame_rgb.shape[1] / frame_rgb.shape[0]
-        target_width = 160
+        target_width = output_width
         target_height = int(target_width / aspect_ratio)
         frame_rgb = cv2.resize(frame_rgb, (target_width, target_height))
         

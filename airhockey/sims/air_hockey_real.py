@@ -1,5 +1,6 @@
 import time
 from collections import deque
+from pathlib import Path
 import numpy as np
 from multiprocessing import shared_memory
 from .real.multiprocessing import ProtectedArray, NonBlockingConsole
@@ -55,12 +56,34 @@ def _async_render_worker(
     visual_downscale_constant,
     poll_sleep_s,
     debug,
+    sim_view_enabled=False,
+    sim_view_window_name="sim_view",
+    sim_view_size=360,
+    sim_view_orientation="vertical",
+    assets_dir=None,
+    table_length=1.9304,
+    table_width=0.8636,
 ):
     frame_shm = None
+    sim_renderer = None
     try:
         frame_shm = shared_memory.SharedMemory(name=frame_shm_name)
         shared_frame = np.ndarray(tuple(frame_shape), dtype=np.uint8, buffer=frame_shm.buf)
         poll_sleep_s = max(0.0005, float(poll_sleep_s))
+        if sim_view_enabled:
+            from scripts.smooth_policy.visualize_demo.visualize_real_trajectory import RealTrajectoryRenderer
+            sim_renderer = RealTrajectoryRenderer(
+                table_length=table_length,
+                table_width=table_width,
+                paddle_radius=paddle_radius,
+                puck_radius=puck_radius,
+                render_size=sim_view_size,
+                robot_x_offset=center_offset_constant,
+                orientation=sim_view_orientation,
+                paddle_input_frame='robot',
+                assets_dir=assets_dir,
+                quiet=True,
+            )
         last_seq = -1
         last_epoch = int(frame_epoch.value)
         while not stop_event.is_set():
@@ -106,6 +129,17 @@ def _async_render_worker(
                 color=(255, 0, 0),
             )
             cv2.imshow(window_name, frame)
+            if sim_renderer is not None:
+                sim_frame = sim_renderer.render_frame(
+                    pos_x=float(data[5]),
+                    pos_y=float(data[6]),
+                    puck_x=float(data[2]),
+                    puck_y=float(data[3]),
+                    puck_occluded=bool(data[4] > 0.5),
+                    target_x=float(data[0]) + center_offset_constant,
+                    target_y=float(data[1]),
+                )
+                cv2.imshow(sim_view_window_name, sim_frame)
             cv2.waitKey(1)
             last_seq = current_seq
     except Exception as exc:
@@ -116,6 +150,11 @@ def _async_render_worker(
             cv2.destroyWindow(window_name)
         except Exception:
             pass
+        if sim_renderer is not None:
+            try:
+                cv2.destroyWindow(sim_view_window_name)
+            except Exception:
+                pass
         if frame_shm is not None:
             frame_shm.close()
 
@@ -290,10 +329,15 @@ class AirHockeyReal:
             "async_render_window_name": "showdst",
             "async_render_frame_width": 960,
             "async_render_frame_height": 720,
+            "async_render_sim_view_enabled": False,
+            "async_render_sim_view_window_name": "sim_view",
+            "async_render_sim_view_size": 360,
+            "async_render_sim_view_orientation": "vertical",
             "async_z_force_enabled": True,
             "async_z_force_target_hz": 150.0,   # EDIT(known-issue-2): increased from 100 Hz for smoother contact
             "async_z_force_wrench_z": 1.0,
             "async_z_force_debug": False,
+            "mouse_action_scale": None,
         }
         kwargs = {**defaults, **kwargs}
         config = dict_to_namespace(kwargs)
@@ -412,6 +456,11 @@ class AirHockeyReal:
         self.async_render_poll_sleep_s = max(0.0005, float(config.async_render_poll_sleep_s))
         self.async_render_window_name = str(config.async_render_window_name)
         self._async_render_runtime_enabled = bool(self.async_render_enabled)
+        self.async_render_sim_view_enabled = bool(config.async_render_sim_view_enabled)
+        self.async_render_sim_view_window_name = str(config.async_render_sim_view_window_name)
+        self.async_render_sim_view_size = int(config.async_render_sim_view_size)
+        self.async_render_sim_view_orientation = str(config.async_render_sim_view_orientation)
+        self._assets_dir = str(Path(__file__).resolve().parent.parent.parent / 'assets')
         self._async_render_default_frame_shape = (
             int(config.async_render_frame_height),
             int(config.async_render_frame_width),
@@ -574,6 +623,8 @@ class AirHockeyReal:
         self.control_off = self.control_mode in ["observe"]
         self.lims = (self.x_min_lim, self.x_max_lim, self.y_min, self.y_max)
         self.move_lims = (self.rmax_x, self.rmax_y)
+        self.mouse_action_scale = getattr(config, "mouse_action_scale", None)
+        self._last_teleop_policy_action = np.zeros(2)
 
         # smooth_history
         self.hist_len = config.hist_len
@@ -982,7 +1033,41 @@ class AirHockeyReal:
             color=(255, 0, 0),
         )
         cv2.imshow(self.async_render_window_name, image)
+        if self.async_render_sim_view_enabled:
+            sim_renderer = self._get_inline_sim_renderer()
+            if sim_renderer is not None:
+                sim_frame = sim_renderer.render_frame(
+                    pos_x=float(paddle_xy[0]),
+                    pos_y=float(paddle_xy[1]),
+                    puck_x=float(puck_state[0]),
+                    puck_y=float(puck_state[1]),
+                    puck_occluded=bool(puck_state[2] > 0.5) if len(puck_state) > 2 else None,
+                    target_x=float(target_xy[0]) + self.center_offset_constant,
+                    target_y=float(target_xy[1]),
+                )
+                cv2.imshow(self.async_render_sim_view_window_name, sim_frame)
         cv2.waitKey(1)
+
+    def _get_inline_sim_renderer(self):
+        if hasattr(self, '_inline_sim_renderer'):
+            return self._inline_sim_renderer
+        try:
+            from scripts.smooth_policy.visualize_demo.visualize_real_trajectory import RealTrajectoryRenderer
+            self._inline_sim_renderer = RealTrajectoryRenderer(
+                table_length=self.length,
+                table_width=self.width,
+                paddle_radius=self.paddle_radius,
+                puck_radius=self.puck_radius,
+                render_size=self.async_render_sim_view_size,
+                robot_x_offset=self.center_offset_constant,
+                orientation=self.async_render_sim_view_orientation,
+                paddle_input_frame='robot',
+                assets_dir=self._assets_dir,
+                quiet=True,
+            )
+        except Exception:
+            self._inline_sim_renderer = None
+        return self._inline_sim_renderer
 
     def _stop_async_renderer(self):
         if self._render_stop_event is not None:
@@ -1056,6 +1141,13 @@ class AirHockeyReal:
                     self.visual_downscale_constant,
                     self.async_render_poll_sleep_s,
                     self.async_render_debug,
+                    self.async_render_sim_view_enabled,
+                    self.async_render_sim_view_window_name,
+                    self.async_render_sim_view_size,
+                    self.async_render_sim_view_orientation,
+                    self._assets_dir,
+                    self.length,
+                    self.width,
                 ),
                 daemon=True,
             )
@@ -1137,12 +1229,61 @@ class AirHockeyReal:
         state_info['paddles']['paddle_ego']['velocity'] = copy.deepcopy(self.speed[:2])
         state_info['paddles']['paddle_ego']['history'] = self.paddle_history[- self.paddle_history_len :]
         state_info["pucks"] = list()
-        state_info["pucks"].append({"history": self.puck_history[- self.puck_history_len:], 
-                                    "position": copy.deepcopy(self.puck), 
-                                    "velocity": np.array(self.puck_history[-1])[:2] - np.array(self.puck_history[-2])[:2], 
+        state_info["pucks"].append({"history": self.puck_history[- self.puck_history_len:],
+                                    "position": copy.deepcopy(self.puck),
+                                    "velocity": np.array(self.puck_history[-1])[:2] - np.array(self.puck_history[-2])[:2],
                                     "occluded": np.array(self.puck_history[-1])[-1:]})
         # print("state_info", state_info)
         return state_info
+
+
+    def poll_puck_detection(self):
+        # Detection-only tick used by the rollout startup gate. Refreshes
+        # both paddle_history (from current TCP telemetry) and puck_history
+        # (from a fresh camera frame run through the detector) so when the
+        # caller eventually un-gates and invokes step(), the policy's
+        # 5-entry history reflects reality instead of reset sentinels.
+        # Does NOT advance the env timestep, run termination checks, or
+        # command the robot — the env remains stationary.
+        if self.cap is None or self.puck_detector is None:
+            return False
+
+        # Refresh paddle telemetry → self.pose/self.speed → paddle_history.
+        tcp_target_pose, tcp_target_speed = self._safe_target_pose_speed()
+        state_pose, state_speed, _ = self._resolve_state_pose_speed(
+            tcp_target_pose, tcp_target_speed
+        )
+        self.pose = np.array(state_pose, dtype=float)
+        self.speed = np.array(state_speed, dtype=float)
+        paddle_xy = self._paddle_observation_xy_from_pose(self.pose[:2])
+        self.paddle_history.append(
+            [float(paddle_xy[0]), float(paddle_xy[1]), 0]
+        )
+
+        # Capture frame, run detector, append to puck_history.
+        image, save_img, _ = save_collect(
+            self.cap,
+            None,
+            None,
+            None,
+            show=False,
+            lims=None,
+            edge_lims=None,
+            region_x_offset=self.x_offset,
+        )
+        self.images.append(save_img)
+        puck = self.puck_detector(
+            image,
+            self.puck_history,
+            rotate=False,
+            **self.puck_detector_kwargs,
+        )
+        puck = np.array(puck)
+        if int(puck[2]) == 0:
+            puck[0] += self.center_offset_constant
+        self.puck_history.append(puck)
+        self.puck = puck[:2]
+        return int(puck[2]) == 0
 
 
     def take_action(self, action, pose, speed, force, acc, estop, image, images, puck_history, lims, move_lims):
@@ -1290,8 +1431,9 @@ class AirHockeyReal:
                     reset_success = False
                     print(f"[control_gate] reset:main_stage moveL skipped: {exc}")
                 # Keep force mode engaged so the tool remains biased toward table contact.
+                # Skip when async worker is configured to own the z-force loop.
                 readiness = self.robot_command_readiness()
-                if bool(readiness["command_ready"]):
+                if not self.async_z_force_enabled and bool(readiness["command_ready"]):
                     try:
                         apply_negative_z_force(self.ctrl, self.rcv)
                     except Exception as exc:
@@ -1325,7 +1467,12 @@ class AirHockeyReal:
                 print(f"[control_gate] reset:final_stage moveL skipped: {exc}")
             print("reset to initial pose:", reset_success)
         time.sleep(0.2)
-        if self.high_reset and not self.above_table and not self.control_off:
+        if (
+            self.high_reset
+            and not self.above_table
+            and not self.control_off
+            and not self.async_z_force_enabled
+        ):
             readiness = self.robot_command_readiness()
             if bool(readiness["command_ready"]):
                 try:
@@ -1425,8 +1572,14 @@ class AirHockeyReal:
         control_program_running = bool(readiness.get("control_program_running", True))
         protective_stop = bool(readiness["protective_stop"])
 
-        # force control, need it to keep it on the table
-        if not self.above_table and not self.control_off and bool(readiness["command_ready"]):
+        # force control, need it to keep it on the table.
+        # Skipped when async worker is configured to own the z-force loop (mutually exclusive).
+        if (
+            not self.above_table
+            and not self.control_off
+            and not self.async_z_force_enabled
+            and bool(readiness["command_ready"])
+        ):
             try:
                 apply_negative_z_force(self.ctrl, self.rcv)
             except Exception as exc:
@@ -1505,6 +1658,15 @@ class AirHockeyReal:
                 noise = np.random.normal(0.0, self.teleoperation_noise, 2)
                 x = x + noise[0] * self.rmax_x
                 y = y + noise[1] * self.rmax_y
+            delta = np.array([x - tcp_target_pose[0], y - tcp_target_pose[1]])
+            raw_action = delta / np.array(self.move_lims)
+            if self.mouse_action_scale is not None and self.mouse_action_scale > 0:
+                clipped = np.clip(raw_action, -self.mouse_action_scale, self.mouse_action_scale)
+                x = tcp_target_pose[0] + clipped[0] * self.move_lims[0]
+                y = tcp_target_pose[1] + clipped[1] * self.move_lims[1]
+                self._last_teleop_policy_action = clipped.copy()
+            else:
+                self._last_teleop_policy_action = raw_action.copy()
             puck = np.zeros(3)
             puck[0] = self.protected_puck_pos[0] + self.center_offset_constant
             puck[1] = self.protected_puck_pos[1]
@@ -1852,6 +2014,11 @@ class AirHockeyReal:
             cv2.destroyWindow(self.async_render_window_name)
         except Exception:
             pass
+        if self.async_render_sim_view_enabled:
+            try:
+                cv2.destroyWindow(self.async_render_sim_view_window_name)
+            except Exception:
+                pass
 
     def __del__(self):
         try:

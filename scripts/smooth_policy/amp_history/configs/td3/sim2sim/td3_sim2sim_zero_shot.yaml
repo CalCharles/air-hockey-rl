@@ -1,0 +1,40 @@
+# Zero-shot sim2sim evaluation — parameters file for sim2sim_eval.py.
+#
+# NOT a training config. Not consumed by td3_training.py. Fields here
+# document the intended invocation of scripts/smooth_policy/sim2sim_eval.py
+# for the zero-shot baseline of a sim2sim campaign.
+#
+# Typical usage (CLI args take precedence over these defaults):
+#
+#   python scripts/smooth_policy/sim2sim_eval.py \
+#     --checkpoint <source_checkpoint> \
+#     --target-config <target_sim_config> \
+#     --n-episodes 50 --seed 0 \
+#     --out-dir runs/td3/sim2sim/<src_to_tgt>/zero_shot/
+#
+# See notes/scratch/sim2sim_infra_plan.md §2.
+
+# --- Campaign identity -------------------------------------------------------
+# Short tag for the source policy (free-form; used to name the results dir).
+source_tag: "sysid_hist4"
+# Short tag for the target sim (free-form).
+target_tag: "TBD"
+
+# --- Paths (fill in per campaign) -------------------------------------------
+# Actor checkpoint to evaluate. This must match the policy architecture saved
+# in args.yaml next to the checkpoint.
+checkpoint: "runs/td3/<campaign>/source/checkpoint_<step>/model.pth"
+
+# Target sim YAML (must have a top-level `air_hockey` key). Author this
+# separately under configs/new_juggle/sim2sim_<tag>.yaml; see §1.1 of the
+# sim2sim infra plan.
+target_config: "scripts/smooth_policy/amp_history/configs/new_juggle/sim2sim_<tag>.yaml"
+
+# Where metrics.json is written. Convention: per-campaign parent + method dir.
+out_dir: "runs/td3/sim2sim/<src_to_tgt>/zero_shot/"
+
+# --- Eval knobs --------------------------------------------------------------
+n_episodes: 50
+seed: 0
+save_gif: false
+n_gifs: 1

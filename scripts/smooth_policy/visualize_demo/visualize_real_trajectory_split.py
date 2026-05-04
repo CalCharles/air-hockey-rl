@@ -55,6 +55,14 @@ OPTIONAL_SPLIT_DATASETS = (
     ("puck_meta", 2),
     ("stop_flags", 3),
     ("reset_stage_id", 1),
+    # Policy-only fields (present on policy-collection HDF5s, absent on
+    # reset-FSM HDF5s). Together with `desired_pose` + `puck` they make a
+    # policy episode's HDF5 self-sufficient for offline policy replay /
+    # comparison without needing the runtime replay buffer.
+    ("policy_action", 2),   # Raw normalized [-1, 1] action executed this step
+    ("task_reward", 1),     # Per-step env task reward
+    ("motion_reward", 1),   # Per-step motion-shaping reward (incl. stop penalty)
+    ("done", 1),            # Same no-bootstrap done flag stored in replay buffer
 )
 OPTIONAL_ALLOWED_WIDTHS = {
     "timing": (8, 9),

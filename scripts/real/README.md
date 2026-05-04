@@ -1,11 +1,39 @@
 ### Trajectory Saving for Real Rollouts
 
+### Sourced ROS env: avoiding the `scripts` package collision
+
+Real-world entry points (`rollout_new.py`, `teleoperate.py`, `run_primitive_exploration_real.py`, etc.) often run in a shell where `/opt/ros/iron/setup.bash` has been sourced. ROS prepends `/opt/ros/iron/lib/python3.10/site-packages` to `PYTHONPATH`, and that directory contains its own `scripts/` package. When you launch a script directly (`python scripts/real/foo.py`), Python's `sys.path` becomes:
+
+1. `…/scripts/real` (the script's own directory)
+2. ROS `PYTHONPATH` entries (including the conflicting `scripts/`)
+3. The repo root, *but only because* `easy-install.pth` added it from `pip install -e .` (so it lands later, behind ROS)
+
+A naive guard like `if str(REPO_ROOT) not in sys.path: sys.path.insert(0, ...)` is a no-op here — `REPO_ROOT` is already on `sys.path`, just in the wrong position — and `import scripts.smooth_policy.agent` resolves to the ROS package, which fails with `ModuleNotFoundError: No module named 'catkin_pkg'`.
+
+Two ways to avoid this:
+
+- Run with `python -m scripts.real.foo` from the repo root (matches how `async_td3_real_modular` is invoked); `-m` puts the cwd at `sys.path[0]`, so the local `scripts` package wins.
+- Or, at the very top of the script — **before any other imports** — force the repo root to position 0 unconditionally:
+
+  ```python
+  import sys
+  from pathlib import Path
+
+  REPO_ROOT = Path(__file__).resolve().parents[2]
+  _REPO_ROOT_STR = str(REPO_ROOT)
+  while _REPO_ROOT_STR in sys.path:
+      sys.path.remove(_REPO_ROOT_STR)
+  sys.path.insert(0, _REPO_ROOT_STR)
+  ```
+
+This is the pattern used by `rollout_new.py`, `teleoperate.py`, and `run_primitive_exploration_real.py`. Use it for any new entry point that imports `scripts.*`.
+
 ### Transition Hold Notes
 
 There are two different "slowdown/smoothing" mechanisms in the real stack:
 
 - Async TD3 transition holds
-  - configured in `scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py`
+  - configured in the shared library `scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py` (driven by the modular collector in `async_td3_real_modular.py`)
   - used for reset-to-policy handoff, actor sync, and genuine safety recovery
 - Rollout startup/cooldown logic in `rollout_reset_policy_real.py`
   - `--startup-hold-steps` forces zero action for the first few normal-mode steps
@@ -24,17 +52,19 @@ If you want to tune the real simulator holds directly in YAML, the relevant keys
 - `transition_hold_steps_on_safety_rearm`
 - `transition_hold_debug`
 
-When running `rollout_new.py`:
+When running `rollout_new.py` (requires `--train-args` pointing at the training run's `args.yaml` so the actor network is built with the exact architecture it was trained with):
 
 ```bash
-python scripts/real/rollout_new.py --config-path configs/real_configs/rollout_config.yaml --model <path_to_model>
+python scripts/real/rollout_new.py --config-path configs/real_configs/rollout_config.yaml --model <path_to_model> --train-args <train_run_dir>/args.yaml
 ```
 
 or with an explicit save path override:
 
 ```bash
-python scripts/real/rollout_new.py --config-path configs/real_configs/rollout_config.yaml --model <path_to_model> --save-path ./data/rollout/my_run
+python scripts/real/rollout_new.py --config-path configs/real_configs/rollout_config.yaml --model <path_to_model> --train-args <train_run_dir>/args.yaml --save-path ./data/rollout/my_run
 ```
+
+The `--train-args` file is read for architecture only — the four canonical `td3_training.py` fields `agent_hidden_layer_size`, `agent_num_hidden_layers`, `action_scale`, and `use_last_action_in_policy_state`. All other CLI flags control online rollout behavior (reset position, GIF capture, puck-absence gating, etc.).
 
 `rollout_constant.py` supports the same override:
 

@@ -97,12 +97,28 @@ class PIDController:
         
         return force
 
+_COLLISION_TIERS = ("low", "mid", "high")
+
+def _make_empty_tier_stats():
+    return {t: {"count": 0, "speed_in_sum": 0.0, "speed_out_sum": 0.0} for t in _COLLISION_TIERS}
+
+
 class CollisionForceListener(contactListener):
     def __init__(
         self,
         wall_tag="table_wall",
         puck_wall_restitution_threshold_speed=0.25,
         puck_wall_min_rebound_speed_below_threshold=0.1,
+        speed_breakpoints=(0.25, 0.75),
+        wall_scales=(1.0, 1.0, 1.0),
+        paddle_scales=(1.0, 1.0, 1.0),
+        enable_paddle_puck_strength_randomization=False,
+        paddle_puck_strength_range=(0.5, 1.0),
+        enable_paddle_puck_direction_randomization=False,
+        paddle_puck_direction_cone_deg=10.0,
+        enable_wall_direction_randomization=False,
+        wall_direction_cone_deg=10.0,
+        rng=None,
     ):
         contactListener.__init__(self)
         self.collision_forces = list()
@@ -115,12 +131,97 @@ class CollisionForceListener(contactListener):
         )
         self._pending_wall_restitution = {}
         self._pending_paddle_puck = {}
-    
+        self.speed_breakpoints = (float(speed_breakpoints[0]), float(speed_breakpoints[1]))
+        self.wall_scales = [float(s) for s in wall_scales]
+        self.paddle_scales = [float(s) for s in paddle_scales]
+        self.enable_paddle_puck_strength_randomization = bool(enable_paddle_puck_strength_randomization)
+        pp_lo, pp_hi = float(paddle_puck_strength_range[0]), float(paddle_puck_strength_range[1])
+        if pp_hi < pp_lo:
+            pp_lo, pp_hi = pp_hi, pp_lo
+        self.paddle_puck_strength_range = (pp_lo, pp_hi)
+        self.enable_paddle_puck_direction_randomization = bool(enable_paddle_puck_direction_randomization)
+        self.paddle_puck_direction_cone_deg = max(float(paddle_puck_direction_cone_deg), 0.0)
+        self.enable_wall_direction_randomization = bool(enable_wall_direction_randomization)
+        self.wall_direction_cone_deg = max(float(wall_direction_cone_deg), 0.0)
+        self.rng = rng if rng is not None else np.random.default_rng()
+        self._episode_stats = {"wall": _make_empty_tier_stats(), "paddle": _make_empty_tier_stats()}
+
+    def set_rng(self, rng):
+        """Replace the randomization RNG (call on sim reset for reproducibility)."""
+        if rng is not None:
+            self.rng = rng
+
+    def _sample_paddle_puck_perturbation(self):
+        """Return (strength_factor, theta_rad) for a single paddle-puck collision."""
+        strength_factor = 1.0
+        if self.enable_paddle_puck_strength_randomization:
+            lo, hi = self.paddle_puck_strength_range
+            strength_factor = float(self.rng.uniform(lo, hi))
+        theta_rad = 0.0
+        if self.enable_paddle_puck_direction_randomization and self.paddle_puck_direction_cone_deg > 0.0:
+            cone_rad = self.paddle_puck_direction_cone_deg * math.pi / 180.0
+            theta_rad = float(self.rng.uniform(-cone_rad, cone_rad))
+        return strength_factor, theta_rad
+
+    def _sample_wall_perturbation(self):
+        """Return theta_rad for a single puck-wall collision (no strength randomization)."""
+        theta_rad = 0.0
+        if self.enable_wall_direction_randomization and self.wall_direction_cone_deg > 0.0:
+            cone_rad = self.wall_direction_cone_deg * math.pi / 180.0
+            theta_rad = float(self.rng.uniform(-cone_rad, cone_rad))
+        return theta_rad
+
+    @staticmethod
+    def _rotate_2d(vec, theta_rad):
+        if theta_rad == 0.0:
+            return vec
+        cos_t = math.cos(theta_rad)
+        sin_t = math.sin(theta_rad)
+        return np.array(
+            [cos_t * vec[0] - sin_t * vec[1], sin_t * vec[0] + cos_t * vec[1]],
+            dtype=float,
+        )
+
+    def set_scales(self, wall_scales, paddle_scales, speed_breakpoints=None):
+        """Update per-tier restitution multipliers. Safe to call between episodes."""
+        self.wall_scales = [float(s) for s in wall_scales]
+        self.paddle_scales = [float(s) for s in paddle_scales]
+        if speed_breakpoints is not None:
+            self.speed_breakpoints = (float(speed_breakpoints[0]), float(speed_breakpoints[1]))
+
+    def _speed_tier(self, speed):
+        low_thresh, high_thresh = self.speed_breakpoints
+        if speed < low_thresh:
+            return "low"
+        if speed < high_thresh:
+            return "mid"
+        return "high"
+
+    def _tier_index(self, tier):
+        return _COLLISION_TIERS.index(tier)
+
+    def get_and_reset_episode_stats(self):
+        """Return accumulated collision stats for this episode and reset counters."""
+        stats = {}
+        for surface in ("wall", "paddle"):
+            stats[surface] = {}
+            for tier in _COLLISION_TIERS:
+                bucket = self._episode_stats[surface][tier]
+                count = bucket["count"]
+                stats[surface][tier] = {
+                    "count": count,
+                    "mean_speed_in": bucket["speed_in_sum"] / count if count > 0 else 0.0,
+                    "mean_speed_out": bucket["speed_out_sum"] / count if count > 0 else 0.0,
+                }
+        self._episode_stats = {"wall": _make_empty_tier_stats(), "paddle": _make_empty_tier_stats()}
+        return stats
+
     def reset(self):
         del self.collision_forces
         self.collision_forces = list()
         self._pending_wall_restitution = {}
         self._pending_paddle_puck = {}
+        self._episode_stats = {"wall": _make_empty_tier_stats(), "paddle": _make_empty_tier_stats()}
 
     @staticmethod
     def _is_puck(body):
@@ -287,12 +388,22 @@ class CollisionForceListener(contactListener):
                         if n_norm > 1e-8:
                             normal_unit = normal_unit / n_norm
                             restitution = max(float(pending.get("restitution", 0.0)), 0.0)
+                            tier = self._speed_tier(incoming_speed)
+                            scale = self.wall_scales[self._tier_index(tier)]
                             if incoming_speed >= self.puck_wall_restitution_threshold_speed:
-                                target_outgoing = incoming_speed * restitution
+                                target_outgoing = incoming_speed * restitution * scale
                             else:
                                 # For low-speed incoming wall impacts, enforce a deterministic
                                 # minimum rebound speed (applies to all wall orientations).
                                 target_outgoing = self.puck_wall_min_rebound_speed_below_threshold
+
+                            theta_rad = self._sample_wall_perturbation()
+
+                            # Record stat
+                            bucket = self._episode_stats["wall"][tier]
+                            bucket["count"] += 1
+                            bucket["speed_in_sum"] += incoming_speed
+                            bucket["speed_out_sum"] += target_outgoing
 
                             post_vel = np.array(
                                 [puck_body.linearVelocity[0], puck_body.linearVelocity[1]],
@@ -302,7 +413,8 @@ class CollisionForceListener(contactListener):
                             if target_outgoing > current_outgoing + 1e-8:
                                 delta_outgoing = target_outgoing - current_outgoing
                                 impulse_mag = float(puck_body.mass) * delta_outgoing
-                                impulse_vec = normal_unit * impulse_mag
+                                impulse_dir = self._rotate_2d(normal_unit, theta_rad)
+                                impulse_vec = impulse_dir * impulse_mag
                                 puck_body.ApplyLinearImpulse(
                                     b2Vec2(float(impulse_vec[0]), float(impulse_vec[1])),
                                     puck_body.worldCenter,
@@ -326,6 +438,9 @@ class CollisionForceListener(contactListener):
                         normal_pp = pending["normal"]
                         e = float(pending["restitution"])
 
+                        tier = self._speed_tier(approach_speed)
+                        scale = self.paddle_scales[self._tier_index(tier)]
+
                         v_paddle_post = np.array(
                             [paddle_body.linearVelocity[0], paddle_body.linearVelocity[1]],
                             dtype=float,
@@ -335,13 +450,21 @@ class CollisionForceListener(contactListener):
                             dtype=float,
                         )
                         v_rel_n_post = float(np.dot(v_puck_post - v_paddle_post, normal_pp))
-                        v_rel_n_desired = e * approach_speed
+                        strength_factor, theta_rad = self._sample_paddle_puck_perturbation()
+                        v_rel_n_desired = e * approach_speed * scale * strength_factor
+
+                        # Record stat
+                        bucket = self._episode_stats["paddle"][tier]
+                        bucket["count"] += 1
+                        bucket["speed_in_sum"] += approach_speed
+                        bucket["speed_out_sum"] += v_rel_n_desired
                         delta = v_rel_n_desired - v_rel_n_post
                         if abs(delta) > 1e-8:
                             m_paddle = float(paddle_body.mass)
                             m_puck = float(puck_body.mass)
                             j = delta * m_paddle * m_puck / (m_paddle + m_puck)
-                            j_vec = normal_pp * j
+                            j_dir = self._rotate_2d(normal_pp, theta_rad)
+                            j_vec = j_dir * j
                             puck_body.ApplyLinearImpulse(
                                 b2Vec2(float(j_vec[0]), float(j_vec[1])),
                                 puck_body.worldCenter,
@@ -374,10 +497,10 @@ class AirHockeyBox2D:
             'rmax_x': 0.26,
             'rmax_y': 0.12,
             # Real-equivalent workspace and edge shaping limits (base frame).
-            'x_min_lim': -0.8,
-            'x_max_lim': -0.35,
-            'y_min': -0.35,
-            'y_max': 0.35,
+            'x_min_lim': -0.85,
+            'x_max_lim': -0.45, # a lot more narrow
+            'y_min': -0.37,
+            'y_max': 0.37,
             'top_abs': 0.8,
             'bot_abs': 0.1,
             'max_bias_p': -0.15,
@@ -386,6 +509,12 @@ class AirHockeyBox2D:
             'render_masks': False,
             'gravity': -5,
             'paddle_density': 1000,
+            # When non-None, the effective paddle density is scaled at init so
+            # mass = paddle_density * pi * paddle_mass_reference_radius**2 is
+            # preserved regardless of the actual paddle_radius. Use this to
+            # perturb paddle_radius without changing paddle mass. Default None
+            # leaves behavior unchanged from the prior implementation.
+            'paddle_mass_reference_radius': None,
             'enable_paddle_density_fluctuation': False,
             'paddle_density_fluctuation_relative_range': 0.25,
             'paddle_density_fluctuation_hold_steps': 5,
@@ -394,6 +523,11 @@ class AirHockeyBox2D:
             'action_force_attenuation_min': 0.25,
             'action_force_attenuation_max': 0.75,
             'puck_density': 250,
+            # Same mass-preservation knob for the puck. When non-None,
+            # effective puck density is scaled to keep
+            # mass = puck_density * pi * puck_mass_reference_radius**2 fixed
+            # as puck_radius is varied.
+            'puck_mass_reference_radius': None,
             'block_density': 1000,
             'max_paddle_vel': 2,
             'time_frequency': 20,
@@ -415,11 +549,28 @@ class AirHockeyBox2D:
             'puck_wall_restitution_threshold_speed': 0.25,
             # For low-speed incoming wall impacts, enforce this minimum rebound speed (m/s).
             'puck_wall_min_rebound_speed_below_threshold': 0.1,
+            # Optional per-collision randomization. All disabled by default.
+            # Paddle-puck: strength (magnitude factor) and direction (impulse rotation).
+            'enable_paddle_puck_strength_randomization': False,
+            'paddle_puck_strength_range': [0.5, 1.0],
+            'enable_paddle_puck_direction_randomization': False,
+            'paddle_puck_direction_cone_deg': 10.0,
+            # Puck-wall: direction only (no wall strength knob by design).
+            'enable_wall_direction_randomization': False,
+            'wall_direction_cone_deg': 10.0,
             'enable_action_delay': False,
             'enable_observation_delay': False,
             'delay_seconds': 0.025,
             'randomize_delay': False,
             'delay_relative_range': 0.25,
+            # Jitter distribution. "uniform" (default) preserves existing
+            # behavior. "normal" samples a zero-mean Gaussian scaled by
+            # delay_jitter_normal_std_fraction, then clips to
+            # ±delay_relative_range. When std is None and distribution is
+            # "normal", std defaults to delay_relative_range / 2 (so the
+            # clip occurs at ±2σ → ~95% coverage pre-clip).
+            'delay_jitter_distribution': 'uniform',
+            'delay_jitter_normal_std_fraction': None,
             'action_lag': 0.0,
             'puck_noise': False,
             'puck_noise_std': 0.005,
@@ -538,13 +689,39 @@ class AirHockeyBox2D:
         self.puck_wall_min_rebound_speed_below_threshold = max(
             float(config.puck_wall_min_rebound_speed_below_threshold), 0.0
         )
+        self.enable_paddle_puck_strength_randomization = bool(config.enable_paddle_puck_strength_randomization)
+        pp_strength_range = list(config.paddle_puck_strength_range)
+        if len(pp_strength_range) != 2:
+            raise ValueError("paddle_puck_strength_range must have exactly 2 elements [min, max]")
+        pp_lo = float(pp_strength_range[0])
+        pp_hi = float(pp_strength_range[1])
+        if pp_hi < pp_lo:
+            pp_lo, pp_hi = pp_hi, pp_lo
+        self.paddle_puck_strength_range = (pp_lo, pp_hi)
+        self.enable_paddle_puck_direction_randomization = bool(config.enable_paddle_puck_direction_randomization)
+        self.paddle_puck_direction_cone_deg = max(float(config.paddle_puck_direction_cone_deg), 0.0)
+        self.enable_wall_direction_randomization = bool(config.enable_wall_direction_randomization)
+        self.wall_direction_cone_deg = max(float(config.wall_direction_cone_deg), 0.0)
         self.puck_min_height = (-config.length / 2) + (config.length / 3)
         self.paddle_max_height = 0
         self.block_min_height = 0
         self.max_speed_start = config.width
         self.min_speed_start = -config.width
         self.paddle_density = float(config.paddle_density)
-        self._paddle_density_base = float(config.paddle_density)
+        # Optional mass preservation: if a reference radius is supplied, scale
+        # the effective paddle density so mass stays at
+        # paddle_density_input * pi * reference**2 regardless of paddle_radius.
+        # Density fluctuations (if enabled) act multiplicatively on this
+        # mass-preserving baseline.
+        self.paddle_mass_reference_radius = config.paddle_mass_reference_radius
+        if (
+            self.paddle_mass_reference_radius is not None
+            and float(self.paddle_mass_reference_radius) > 0.0
+            and self.paddle_radius > 0.0
+        ):
+            ref = float(self.paddle_mass_reference_radius)
+            self.paddle_density *= (ref / self.paddle_radius) ** 2
+        self._paddle_density_base = self.paddle_density
         self.enable_paddle_density_fluctuation = bool(config.enable_paddle_density_fluctuation)
         self.paddle_density_fluctuation_relative_range = max(
             float(config.paddle_density_fluctuation_relative_range), 0.0
@@ -558,7 +735,15 @@ class AirHockeyBox2D:
         self.action_force_attenuation_prob = float(config.action_force_attenuation_prob)
         self.action_force_attenuation_min = float(config.action_force_attenuation_min)
         self.action_force_attenuation_max = float(config.action_force_attenuation_max)
-        self.puck_density = config.puck_density
+        self.puck_density = float(config.puck_density)
+        self.puck_mass_reference_radius = config.puck_mass_reference_radius
+        if (
+            self.puck_mass_reference_radius is not None
+            and float(self.puck_mass_reference_radius) > 0.0
+            and self.puck_radius > 0.0
+        ):
+            ref = float(self.puck_mass_reference_radius)
+            self.puck_density *= (ref / self.puck_radius) ** 2
         self.block_density = config.block_density
         self.action_x_scaling = config.action_x_scaling
         self.action_y_scaling = config.action_y_scaling
@@ -582,6 +767,19 @@ class AirHockeyBox2D:
         self.enable_observation_delay = bool(config.enable_observation_delay)
         self.randomize_delay = bool(config.randomize_delay)
         self.delay_relative_range = max(float(config.delay_relative_range), 0.0)
+        delay_jitter_distribution = str(config.delay_jitter_distribution).lower()
+        if delay_jitter_distribution not in ("uniform", "normal"):
+            raise ValueError(
+                f"delay_jitter_distribution must be 'uniform' or 'normal', "
+                f"got {config.delay_jitter_distribution!r}"
+            )
+        self.delay_jitter_distribution = delay_jitter_distribution
+        if config.delay_jitter_normal_std_fraction is None:
+            self.delay_jitter_normal_std_fraction = self.delay_relative_range / 2.0
+        else:
+            self.delay_jitter_normal_std_fraction = max(
+                float(config.delay_jitter_normal_std_fraction), 0.0
+            )
         self.action_lag = float(config.action_lag)
         assert self.action_lag >= 0 and self.action_lag <= 1, "Action lag must be between 0 and 1"
         base_delay_seconds = float(config.delay_seconds)
@@ -731,6 +929,16 @@ class AirHockeyBox2D:
             wall_tag="table_wall",
             puck_wall_restitution_threshold_speed=self.puck_wall_restitution_threshold_speed,
             puck_wall_min_rebound_speed_below_threshold=self.puck_wall_min_rebound_speed_below_threshold,
+            speed_breakpoints=(0.25, 0.75),
+            wall_scales=(1.0, 1.0, 1.0),
+            paddle_scales=(1.0, 1.0, 1.0),
+            enable_paddle_puck_strength_randomization=self.enable_paddle_puck_strength_randomization,
+            paddle_puck_strength_range=self.paddle_puck_strength_range,
+            enable_paddle_puck_direction_randomization=self.enable_paddle_puck_direction_randomization,
+            paddle_puck_direction_cone_deg=self.paddle_puck_direction_cone_deg,
+            enable_wall_direction_randomization=self.enable_wall_direction_randomization,
+            wall_direction_cone_deg=self.wall_direction_cone_deg,
+            rng=np.random.default_rng(config.seed),
         )
         self.world.contactListener = self.collision_listener
         self.total_timesteps = 0
@@ -759,7 +967,9 @@ class AirHockeyBox2D:
         if type(self.gravity) == list:
             self.world.gravity = (0, self.rng.uniform(low=self.gravity[0], high=self.gravity[1]))
         
-        if hasattr(self, "collision_listener"): self.collision_listener.reset()
+        if hasattr(self, "collision_listener"):
+            self.collision_listener.reset()
+            self.collision_listener.set_rng(np.random.default_rng(seed))
 
         self.paddles = dict()
         self.pucks = dict()
@@ -1448,10 +1658,23 @@ class AirHockeyBox2D:
                 self._jerk_estop_latched = True
                 self._jerk_estop_reason = "jerk_avg"
 
+    def _sample_delay_jitter_scale(self):
+        # Returns a multiplicative scale ~1.0 to apply to delay_seconds.
+        # Uniform path is numerically identical to the prior implementation,
+        # so existing seeded runs with distribution="uniform" do not shift.
+        if self.delay_jitter_distribution == "normal":
+            std = self.delay_jitter_normal_std_fraction
+            if std <= 0.0:
+                return 1.0
+            sample = float(self.rng.normal(0.0, std))
+            sample = float(np.clip(sample, -self.delay_relative_range, self.delay_relative_range))
+            return 1.0 + sample
+        return 1.0 + self.rng.uniform(-self.delay_relative_range, self.delay_relative_range)
+
     def _resolve_delay_seconds_for_step(self):
         delay_seconds = max(float(self.delay_seconds), 0.0)
         if self.randomize_delay and self.delay_relative_range > 0.0:
-            random_scale = 1.0 + self.rng.uniform(-self.delay_relative_range, self.delay_relative_range)
+            random_scale = self._sample_delay_jitter_scale()
             delay_seconds *= random_scale
         return float(np.clip(delay_seconds, 0.0, self.time_per_step))
 
@@ -1723,3 +1946,27 @@ class AirHockeyBox2D:
     def get_collision_forces(self):
         # Extract forces from the collision listener
         return self.collision_listener.collision_forces
+
+    def set_collision_scales(self, wall_scales, paddle_scales, speed_breakpoints=None):
+        """Update per-tier restitution multipliers. Call at episode boundaries.
+
+        Args:
+            wall_scales: sequence of 3 floats [low, mid, high] multiplied onto
+                wall restitution for each speed tier.
+            paddle_scales: sequence of 3 floats [low, mid, high] multiplied onto
+                paddle restitution for each speed tier.
+            speed_breakpoints: optional (low_thresh, high_thresh) in m/s.
+                Defaults to (0.25, 0.75) if not provided.
+        """
+        self.collision_listener.set_scales(wall_scales, paddle_scales, speed_breakpoints)
+
+    def get_episode_collision_stats(self):
+        """Return per-tier collision stats accumulated since last call and reset counters.
+
+        Returns a dict:
+            {
+              "wall":   {"low": {"count", "mean_speed_in", "mean_speed_out"}, "mid": ..., "high": ...},
+              "paddle": {"low": ..., "mid": ..., "high": ...},
+            }
+        """
+        return self.collision_listener.get_and_reset_episode_stats()

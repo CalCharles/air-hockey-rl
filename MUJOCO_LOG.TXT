@@ -7,3 +7,9 @@ WARNING: Nan, Inf or huge value in QACC at DOF 4. The simulation is unstable. Ti
 Mon May  6 15:38:16 2024
 WARNING: Linesearch objective is not convex
 
+Fri May  1 03:38:14 2026
+WARNING: Nan, Inf or huge value in QACC at DOF 6. The simulation is unstable. Time = 0.8100.
+
+Fri May  1 14:03:56 2026
+WARNING: Nan, Inf or huge value in QACC at DOF 5. The simulation is unstable. Time = 0.9220.
+

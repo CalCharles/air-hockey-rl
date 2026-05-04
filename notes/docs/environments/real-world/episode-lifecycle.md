@@ -2,7 +2,7 @@
 
 End-to-end flow of a single policy episode on the real UR5, from collection through replay ingestion and artifact output.
 
-Primary code: [`async_td3_real.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py) (`collector_process`).
+Primary code: [`async_td3_real_modular.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real_modular.py) (`collector_process_modular`); shared dataclasses, learner, and reset helpers live in [`async_td3_real.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py).
 Helpers: [`real_episode_buffers.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_episode_buffers.py), [`real_stop_state.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_stop_state.py), [`real_motion_rewards.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_motion_rewards.py), [`episode_artifacts.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/episode_artifacts.py), [`real_warm_start.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_warm_start.py).
 
 ## Overview
@@ -107,13 +107,19 @@ Four artifact types are written per episode:
 
 Optional datasets (timing breakdown, stop_flags) are included when all rows contain them.
 
-### GIF
+### GIF (joint side-by-side)
 
-`generate_episode_gif` renders the paddle/puck trajectory using `RealTrajectoryRenderer` and `create_trajectory_gif` from the split HDF5 data.
+`generate_episode_gif` renders one GIF per episode where each frame is the **Box2D projection of the HDF5 trajectory on the left** and the matching **real-world camera frame (`train_img`) on the right**. Building blocks are pre-existing:
+
+- Box2D projection: `RealTrajectoryRenderer.render_frame` ([`visualize_real_trajectory.py`](../../../../scripts/smooth_policy/visualize_demo/visualize_real_trajectory.py))
+- Real-world camera frames: `train_img` dataset stored in the split HDF5
+- Side-by-side stitcher: `_side_by_side` ([`replay_real_in_sim.py`](../../../../scripts/smooth_policy/visualize_demo/replay_real_in_sim.py))
+
+The actual stitching loop lives in `_create_joint_trajectory_gif` inside [`episode_artifacts.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/episode_artifacts.py). When `train_img` is absent, the function falls back to the Box2D-only `create_trajectory_gif` path.
 
 ### Camera video
 
-`generate_episode_camera_video` writes the collected camera frames as an MP4 (with codec fallback from H.264 to MJPEG).
+`generate_episode_camera_video` writes the collected camera frames as a standalone MP4 (with codec fallback from H.264 to MJPEG). This is redundant with the right panel of the joint GIF but kept as a separate full-resolution artifact.
 
 ### Latency profile
 

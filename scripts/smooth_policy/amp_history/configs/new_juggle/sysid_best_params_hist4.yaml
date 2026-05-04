@@ -1,0 +1,108 @@
+# Derived from sysid_best_params.yaml — only simulator_params.hist_len differs.
+# Temporal-smoothing ablation (4-timestep low-pass on PID target).
+# See _filter_update() in airhockey/sims/airhockey_box2d.py.
+
+air_hockey:
+  diagonal_motion_rew: 0.0
+  direction_change_rew: 0.0
+  goal_max_x_velocity: 1
+  goal_max_y_velocity: 5
+  goal_min_y_velocity: 1
+  horizontal_vel_rew: 0.0
+  max_timesteps: 250
+  n_training_steps: 1000000
+  num_blocks: 0
+  num_obstacles: 0
+  num_paddles: 1
+  num_pucks: 1
+  num_targets: 0
+  obs_type: history
+  return_goal_obs: false
+  seed: 0
+
+  puck_spawn_near_paddle_prob: 0.15
+  puck_near_paddle_offset_min_m: 0.025
+  puck_near_paddle_offset_max_m: 0.05
+  puck_near_paddle_horizontal_std_m: 0.015
+  puck_near_paddle_speed_min_m_s: 0.0
+  puck_near_paddle_speed_max_m_s: 0.2
+
+  puck_linear_top_spawn_goal_cutoff_x: null
+  puck_linear_top_spawn_center_cutoff_x: 0.2
+  puck_linear_top_spawn_speed_min: 0.0
+  puck_linear_top_spawn_speed_max: 0.5
+
+  simulator: box2d
+  simulator_params:
+    absorb_target: false
+    block_density: 1000
+    block_width: 0.0254
+    length: 1.9304
+    max_force_timestep: 10000
+    paddle_radius: 0.0508
+    force_scaling: 0.99
+    paddle_damping: 17
+    paddle_density: 3000
+    gravity: -0.661
+    puck_damping: 0.178
+    puck_density: 3000
+    puck_restitution: 0.87316
+    paddle_restitution: 0.8
+    side_wall_restitution: 0.925
+    end_wall_restitution: 0.7
+    puck_radius: 0.03175
+    render_size: 360
+    seed: 0
+    width: 0.8636
+    use_pid: true
+    pid_kp: 9000
+    pid_kd: 50
+    pid_ki: 0.0
+
+    hist_len: 4
+
+    puck_noise: true
+    puck_noise_std: 0.01
+    enable_random_occlusions: true
+    random_occlusion_target_rate: 0.025
+    random_occlusion_other_region_rate: 0.025
+    random_occlusion_length_weights: [75, 39, 18, 9, 4, 2, 1]
+    random_occlusion_bad_region_box_x: [-0.4, -0.35]
+    random_occlusion_bad_region_box_y: [-0.3, 0.0]
+    random_occlusion_bad_region_right_x: [0.35, 0.8]
+    random_occlusion_near_paddle_boost: true
+    random_occlusion_near_paddle_distance_m: 0.05
+    random_occlusion_near_paddle_rate_multiplier: 3.0
+    enable_action_delay: false
+    enable_observation_delay: true
+    delay_seconds: 0.025
+    randomize_delay: true
+    delay_relative_range: 0.25
+    enable_action_force_attenuation: true
+    action_force_attenuation_prob: 0.30
+    action_force_attenuation_min: 0.25
+    action_force_attenuation_max: 0.75
+
+    # Per-collision randomization enabled for the hist×motion sweep.
+    # Paddle-puck: strength (magnitude multiplier) + direction (impulse rotation).
+    enable_paddle_puck_strength_randomization: true
+    paddle_puck_strength_range: [0.5, 1.0]
+    enable_paddle_puck_direction_randomization: true
+    paddle_puck_direction_cone_deg: 10.0
+    # Puck-wall: direction only (no wall strength knob by design).
+    enable_wall_direction_randomization: true
+    wall_direction_cone_deg: 10.0
+
+  stand_still_rew: 0.0
+  task: puck_juggle_upper_half_reward
+  terminate_on_enemy_goal: true
+  terminate_on_out_of_bounds: false
+  terminate_on_puck_hit_bottom: true
+  terminate_on_puck_hit_paddle: false
+  terminate_on_puck_pass_paddle: true
+  terminate_on_puck_stop: false
+  truncate_rew: 0
+  wall_bumping_rew: 0
+  use_reward_shaping: true
+  use_smooth_penalty: false
+  base_reward_scaling: 1

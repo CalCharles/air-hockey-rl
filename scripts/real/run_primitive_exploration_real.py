@@ -14,10 +14,11 @@ from airhockey.sims.real.multiprocessing import NonBlockingConsole
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_ROOT = REPO_ROOT / "scripts"
-for candidate in (REPO_ROOT, SCRIPTS_ROOT):
+for candidate in (SCRIPTS_ROOT, REPO_ROOT):
     candidate_str = str(candidate)
-    if candidate_str not in sys.path:
-        sys.path.insert(0, candidate_str)
+    while candidate_str in sys.path:
+        sys.path.remove(candidate_str)
+    sys.path.insert(0, candidate_str)
 
 scripts_init = SCRIPTS_ROOT / "__init__.py"
 scripts_spec = importlib.util.spec_from_file_location(

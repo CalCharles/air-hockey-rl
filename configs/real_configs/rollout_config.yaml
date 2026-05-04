@@ -44,6 +44,10 @@ air_hockey:
     transition_hold_steps_on_safety_rearm: 3
     transition_hold_debug: false
     # async_render_enabled: true
+    # Async z-force worker is broken (RTDE register conflict); force the sync
+    # clamp path until the threads+lock redesign lands. See
+    # notes/docs/environments/real-world/async-z-force-future-steps.md
+    async_z_force_enabled: false
   stand_still_rew: 0.01
   task: puck_velocity
   terminate_on_enemy_goal: true

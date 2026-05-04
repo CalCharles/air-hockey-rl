@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import random
 from collections import deque
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
@@ -209,6 +209,64 @@ def load_fine_tune_optimizer_state(
     actor_optimizer.load_state_dict(checkpoint["actor_optimizer"])
 
 
+def seed_fine_tune_replay_from_source(
+    *,
+    success_rb,
+    failure_rb,
+    source_success: Dict[str, Any] | None,
+    source_failure: Dict[str, Any] | None,
+    keep_total: int,
+    seed: int = 0,
+) -> Dict[str, int]:
+    """Seed fresh target replay buffers with up to ``keep_total`` source samples.
+
+    Subsamples uniformly within each source buffer, splitting the keep budget
+    proportionally to how full each source buffer is. Source samples are added
+    via the buffers' ``add()`` API so positions/sizes stay consistent.
+    """
+    keep_total = int(keep_total)
+    if keep_total <= 0:
+        return {"success_kept": 0, "failure_kept": 0}
+
+    success_size = int(source_success["size"]) if source_success is not None else 0
+    failure_size = int(source_failure["size"]) if source_failure is not None else 0
+    total_source = success_size + failure_size
+    if total_source == 0:
+        return {"success_kept": 0, "failure_kept": 0}
+
+    keep_total = min(keep_total, total_source)
+    success_keep = int(round(keep_total * success_size / total_source))
+    failure_keep = keep_total - success_keep
+    success_keep = min(success_keep, success_size)
+    failure_keep = min(failure_keep, failure_size)
+
+    rng = torch.Generator(device="cpu")
+    rng.manual_seed(int(seed))
+
+    def _seed_one(target_rb, source: Dict[str, Any], n_keep: int) -> int:
+        if n_keep <= 0 or source is None:
+            return 0
+        size = int(source["size"])
+        if size == 0:
+            return 0
+        n_keep = min(n_keep, size)
+        idx = torch.randperm(size, generator=rng)[:n_keep]
+        target_rb.add(
+            obs=source["observations"][idx],
+            next_obs=source["next_observations"][idx],
+            actions=source["actions"][idx],
+            task_rewards=source["task_rewards"][idx],
+            motion_rewards=source["motion_rewards"][idx],
+            dones=source["dones"][idx],
+            prev_action=source["prev_actions"][idx],
+        )
+        return n_keep
+
+    kept_success = _seed_one(success_rb, source_success, success_keep)
+    kept_failure = _seed_one(failure_rb, source_failure, failure_keep)
+    return {"success_kept": kept_success, "failure_kept": kept_failure}
+
+
 def build_training_state(
     *,
     global_step: int,
@@ -250,6 +308,8 @@ def build_training_state(
     rolling_step_stats_window,
     rolling_episode_stats_window,
     args_dict: Dict[str, Any],
+    extra_qfs: Optional[List[Any]] = None,
+    extra_qfs_target: Optional[List[Any]] = None,
 ) -> Dict[str, Any]:
     state: Dict[str, Any] = {
         "checkpoint_version": 2,
@@ -310,4 +370,12 @@ def build_training_state(
     if include_replay_buffer:
         state["success_replay_buffer"] = success_rb.state_dict()
         state["failure_replay_buffer"] = failure_rb.state_dict()
+    # Critics 3+ (only present for ensemble runs; backwards compat for N=2 ckpts).
+    if extra_qfs is not None and extra_qfs_target is not None:
+        if len(extra_qfs) != len(extra_qfs_target):
+            raise ValueError("extra_qfs and extra_qfs_target must have same length")
+        for offset, (q, qt) in enumerate(zip(extra_qfs, extra_qfs_target)):
+            ci = offset + 3  # qf3, qf4, ...
+            state[f"qf{ci}"] = q.state_dict()
+            state[f"qf{ci}_target"] = qt.state_dict()
     return state

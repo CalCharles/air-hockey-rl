@@ -1,0 +1,19 @@
+\begin{thebibliography}{2}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Gauss(1857)]{Gauss1857}
+C.~F. Gauss.
+\newblock Theoria motus corporum coelestium in sectionibus conicis solem
+  ambientium.
+\newblock \emph{Placeholder Journal}, 1857.
+
+\bibitem[Lagrange(1788)]{Lagrange1788}
+J.-L. Lagrange.
+\newblock M{\'e}canique analytique.
+\newblock \emph{Placeholder Journal}, 1788.
+
+\end{thebibliography}

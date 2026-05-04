@@ -33,7 +33,7 @@ You can reference the config from the args YAML or pass paths on the command lin
 
 The async real collector has two hold layers during sensitive transitions:
 
-- Collector hold in [`amp_history/amp_training/td3/extras/async_td3_real.py`](amp_history/amp_training/td3/extras/async_td3_real.py)
+- Collector hold driven from [`amp_history/amp_training/td3/extras/async_td3_real_modular.py`](amp_history/amp_training/td3/extras/async_td3_real_modular.py) using the `TransitionHoldState` helper in [`real_transition_hold.py`](amp_history/amp_training/td3/helper/real_transition_hold.py)
   - zeros policy actions for a few steps
   - can disable exploration noise during the hold
   - can reset or preserve the policy's last-action state

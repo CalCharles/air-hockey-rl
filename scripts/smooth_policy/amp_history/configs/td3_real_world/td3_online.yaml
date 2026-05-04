@@ -7,7 +7,7 @@ task_gamma: 0.985
 motion_gamma: 0.85
 tau: 0.005
 batch_size: 512
-learning_starts: 0
+min_replay_size_before_learning: 0
 policy_lr: 0.00005 # lower learning rate for online training
 q_lr: 0.0001
 q_weight_decay: 0.0001
@@ -20,7 +20,7 @@ noise_clip: 0.5
 
 
 # TODO: Initial replay buffer directories
-warm_start_hdf5_dirs: ['real_runs/warm_start_trajectories'] # e.g. ["real_runs/async_td3_explore/episode_hdf5/>200"]
+warm_start_hdf5_dirs: ['real_runs/warm_start_trajectories'] # e.g. ["real_runs/online_run"] (recursive walk picks up data_<ts>/episode_hdf5/<bucket>/*.hdf5)
 warm_start_hdf5_recursive: true
 # Replay bootstrap source policy:
 # - warmstart_only: use only warm_start_hdf5_dirs
@@ -29,7 +29,7 @@ warm_start_hdf5_recursive: true
 replay_source_priority: "checkpoint_only"
 load_replay_from_checkpoint: false # if model_path points to a checkpoint with replay
 checkpoint_root_dir: 'real_runs/checkpoints/default' # optional override for periodic checkpoint location
-include_non_vital_training_state_fields: false # lean checkpoint by default; set true for full training-state metadata
+include_non_vital_training_state_fields: true # required to resume training cleanly: includes optimizer state, learner-update counters, collector_total_steps, run_elapsed_total_s, and rolling-window deques. Set to false ONLY if you do not intend to resume from these checkpoints. See notes/docs/training/real-world-resume.md.
 enable_periodic_checkpointing: true
 checkpoint_every_successful_online_episodes: 20 # this still takes a good amount of time
 
@@ -105,7 +105,7 @@ log_parent_dir: "runs/td3_training/pid/standard"
 run_name: "td3_standard"
 
 # Runtime
-device: "cuda:0"
+learner_device: "cuda:0"
 seed: 0
 action_scale: 1.0
 h_transform_eps: 0.001
