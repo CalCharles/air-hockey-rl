@@ -1,121 +1,47 @@
 # Residual RL recipe — by gap size
 
-## Canonical recipe: **v27 is the standard.** Build everything off it.
+**Status (2026-05-04):**
 
-> **For any future sim2sim or sim2real residual work, start with v27
-> ([`paddle50/td3_residual_v27_ensemble5.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v27_ensemble5.yaml)).**
-> It is the default. Other variants (v30_explore_lite, v29) are alternatives
-> with documented tradeoffs — do not pick them unless your deployment
-> constraints specifically require what they trade for. v27 is the only recipe
-> that has been **verified at 1M steps and at 5 seeds × 300k**, hits the
-> highest peak of any recipe across 30+ tested variants, and produces the
-> single most stable 1M-step trajectory we've ever observed
-> (1M peak 98.3, 84% of ckpts above zs across the full 1M).
+Two recipes for big-gap; pick by deployment style.
 
-### Headline experimental conclusions (2026-05-04, 30+ variants tested)
+| Gap size | Recipes (5-seed verified) | Canonical configs |
+|---|---|---|
+| **Small (<10% zs drop)** — e.g. paddle full-size variants | `recency_top50` (`success_top_fraction: 0.5`) | [`td3_sim2sim_residual.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3/sim2sim/td3_sim2sim_residual.yaml) (3-seed @ 100k) |
+| **Big (~30% zs drop)** — paddle -50% mass-preserved | **v27** (Maxmin-5, 1M-verified) for highest peak; **v30_explore_lite** (v27 + lite adaptation exploration) for tighter cross-seed last5 | [`paddle50/td3_residual_v27_ensemble5.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v27_ensemble5.yaml) ⋅ [`paddle50/td3_residual_v30_explore_lite.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v30_explore_lite.yaml) |
 
 These are the structural lessons from the residual-RL drift-fix campaign
 (both small-gap OLD env and big-gap paddle50). They should govern recipe
 choices in any future residual / sim2real fine-tuning work in this repo.
 
-1. **Q-overestimation control is the load-bearing knob.** Every recipe
-   that lacks an explicit mechanism to bound Q-estimates collapses into
-   bad performance over training (typically a peak around 50–150k steps,
-   then catastrophic post-200k drift). This is residual-specific: the
-   small action subspace (`residual_scale` × frozen base) gives the
-   critic limited grounding, so Q over-extrapolates, the actor pushes the
-   residual head norm 5–10× higher chasing phantom Q, and real returns
-   degrade. See [§ Big-gap (NEW env) drift fix](#big-gap-new-env-drift-fix-2026-04-30-root-cause-identified)
-   for the diagnostic.
-2. **Every Q-control mechanism we tested works reasonably well.** Reduced
-   `q_updates` (v25), Maxmin-N ensembling (v27), REDQ-N-K ensembling (v29),
-   and stronger `q_weight_decay` all materially reduce drift. This is
-   strong evidence the diagnosis is correct: any constraint that prevents
-   Q-runaway is enough to keep the residual head bounded.
-3. **v27 is the best of these.** Maxmin-5 (5 critics, min over all 5
-   target Qs) on top of `q_updates: 1` produces the highest peak
-   (5-seed 87.94 ± 4.82, 1M single-seed 98.3), the fastest rise (most
-   seeds above zero-shot by step 10k ≈ 80 sec wall clock), and the most
-   stable 1M trajectory of any recipe. Build off this.
-4. **Ensemble size matters a lot — N=5 is dramatically better than N=3.**
-   Maxmin-3 single-seed peak/mean/last5 = 84/61/52. Maxmin-5 single-seed
-   peak/mean/last5 = 88/71/66. The +14 last5 jump from 3→5 critics is
-   not incremental — N=5 hits a sweet spot where the min-of-5 bound is
-   tight enough to suppress runaway without becoming so pessimistic
-   that learning slows. Don't drop below 5; pushing further (REDQ-10-2)
-   gives diminishing peak and a delayed cliff past 300k (v29).
-5. **Exploration is unhelpful at best, actively harmful at worst.**
-   Adding base-strength primitive exploration during residual adaptation
-   (v30_explore_full) drops `%>zs` from 70% → 19% — exploration *collapses
-   policies faster* and stops them reaching the same peaks. Lite
-   exploration (v30_explore_lite, ~3% chance) ties v27 within noise on
-   peak/mean and is only meaningfully better on cross-seed last5 std
-   (3.25 vs 13.20 — `last5` only matters if you're shipping the final
-   step). v27 with **zero adaptation-phase exploration** is the right
-   default. The residual head not seeing much off-base data is fine.
-6. **Conservative is the right policy posture for residual fine-tuning.**
-   Low or zero exploration, small `residual_scale: 0.15`, low
-   `q_updates: 1`, `q_lr: 3e-4`, Maxmin-5 — every knob points the same
-   direction: keep the residual close to the base, keep the critic
-   close to the data, let the ensemble suppress optimism. This is the
-   shape of v27. Future work should preserve this posture and only add
-   capacity (bigger head, layer-norm critic) if the structural ceiling
-   (`mean +8` over zs at 1M) becomes the bottleneck — not by adding
-   exploration or loosening Q-control.
+### Big-gap recipe choice (5-seed cross-seed @ 300k)
 
-The remaining detail in this doc explains *why* each of the above is
-true, with per-seed numbers. If you only read one section, read this one.
-
----
-
-## Recipe table (by gap size)
-
-| Gap size | Canonical recipe | Config |
-|---|---|---|
-| **Small (<10% zs drop)** — e.g. paddle full-size variants | `recency_top50` (`success_top_fraction: 0.5`) | [`td3_sim2sim_residual.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3/sim2sim/td3_sim2sim_residual.yaml) (3-seed @ 100k) |
-| **Big (~30% zs drop)** — paddle -50% mass-preserved | **v27** (Maxmin-5) — the default for big-gap | [`paddle50/td3_residual_v27_ensemble5.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v27_ensemble5.yaml) (5-seed @ 300k + 1M-verified) |
-
-**Alternatives** (only pick if you specifically need what they trade for):
-- `v30_explore_lite` (v27 + lite adaptation exploration) — ~4× tighter
-  cross-seed last5 std at the cost of ~5 peak. Use only for fire-and-forget
-  deployment where you ship final-step weights instead of doing per-checkpoint
-  eval. Verified 5-seed @ 300k only (no 1M data). See [§ v30_explore_lite](#how-to-use-the-v30_explore_lite-recipe-alternative-big-gap-recipe-2026-05-04-5-seed-verified).
-- `v29` (REDQ-10-2) — flatter mid-training trajectory but a delayed cliff
-  past 300k that 5-seed-300k results hid. Single-seed 1M run dropped to
-  34% above zs. **Do not use past 300k.** See [§ v29](#v29-alternative-redq-10-2-the-tail-stability-variant).
-
-All recipes need per-checkpoint deterministic eval — final-step weights are unsafe for any of them. See `eval_all_ckpts_residual.sh`.
-
-### Big-gap numbers (5-seed cross-seed @ 300k)
-
-| metric | **v27 5-seed (DEFAULT)** | v30_explore_lite 5-seed (alternative) |
+| metric | v27 5-seed | v30_explore_lite 5-seed |
 |---|---:|---:|
 | peak | **87.94 ± 4.82** | 83.43 ± 8.08 |
-| mean(29) | **71.05 ± 8.62** | 70.90 ± 6.31 |
-| last5 | 65.67 ± 13.20 | 68.40 ± 3.25 (~4× tighter std) |
-| %>zs | **69.66 ± 22.80** | 67.59 ± 27.65 |
+| mean(29) | 71.05 ± 8.62 | 70.90 ± 6.31 |
+| **last5** | 65.67 ± 13.20 | **68.40 ± 3.25** ← ~4× tighter std |
+| %>zs | 69.66 ± 22.80 | 67.59 ± 27.65 |
 
-v27 wins on peak; v30_explore_lite wins on cross-seed last5 std (the
-single metric measuring fire-and-forget reproducibility of the
-final-step policy). They tie within seed noise on mean and %>zs.
+The two recipes **tie within seed noise on peak / mean / %>zs**. The
+real difference is **cross-seed last5 variance**: v30_explore_lite's
+late-stage policies are dramatically more consistent across seeds (std
+3.25 vs v27's 13.20). When deploying *without* per-checkpoint eval —
+i.e. shipping the final-step or last-5 average policy — v30_explore_lite
+is the safer choice. When deploying *with* per-checkpoint eval — picking
+the highest-eval ckpt — v27's slightly higher peak makes it the better
+choice.
 
-**v27 is 1M-verified** (peak 98.3 single-seed at 1M, highest single-seed
-peak across 30+ residual variants tested; 84% of ckpts above zs across
-the full 1M run). v30_explore_lite is only verified through 300k —
-its 1M behavior is unknown. **For 1M+ runs, use v27.** For 300k runs,
-use v27 unless you have a specific deployment reason to prefer
-v30_explore_lite.
+**v27 is also 1M-verified** (peak 98.3 single-seed at 1M, highest of any
+recipe across 30+ variants tested). v30_explore_lite is only verified
+through 300k.
 
 ### Big-gap pick rule
 
-The default is v27. Only override if a deployment constraint forces it.
-
-| Situation | Use |
+| Deployment style | Use |
 |---|---|
-| **Default — almost all cases** (per-checkpoint eval available, any budget) | **v27** |
-| 1M+ training budget | **v27** (only recipe with 1M verification) |
-| Highest-peak deployment (with per-ckpt eval) | **v27** (5-seed peak 87.94 vs v30_lite 83.43) |
-| Fire-and-forget @ 300k only — ship final-step weights, no per-ckpt eval | v30_explore_lite (last5 std 3.25 vs v27 13.20) |
+| Per-checkpoint eval, deploy peak ckpt | **v27** (peak 87.94 vs v30_lite 83.43 mean over 5 seeds) |
+| Final-step or last-5 deployment, no per-ckpt eval | **v30_explore_lite** (last5 std 3.25 vs v27 13.20) |
+| 1M+ training budget | **v27** (only recipe with 1M verification; peak 98.3 / 84% above zs at 1M) |
 
 ### Time-to-peak (paddle50, RTX 6000, residual mode q_updates=1)
 
@@ -159,18 +85,9 @@ Full chronological logs:
 
 **TL;DR:**
 - Small gap → `td3_sim2sim_residual.yaml` (recency_top50, sf=0.5).
-- **Big gap → `paddle50/td3_residual_v27_ensemble5.yaml`** is the
-  default and the standard for any future residual sim2sim/sim2real
-  work (5-seed peak 87.94 ± 4.82, 1M-verified at peak 98.3 / 84% above zs).
-- Big-gap fire-and-forget alternative (300k only) →
-  `paddle50/td3_residual_v30_explore_lite.yaml`. Only use if you ship
-  the final-step weights and can't run per-checkpoint eval. v27 is the
-  better choice in every other situation.
+- Big gap, peak deployment → **`paddle50/td3_residual_v27_ensemble5.yaml`** (5-seed peak 87.94 ± 4.82, 1M-verified).
+- Big gap, fire-and-forget deployment → **`paddle50/td3_residual_v30_explore_lite.yaml`** (5-seed last5 68.40 ± 3.25, ~4× tighter cross-seed tail std).
 - Both decisively beat full_ft on stability and tie on peak.
-- The structural reason all of this works: **bounding Q-overestimation
-  via Maxmin-5 critics**. Recipes without Q-control collapse; recipes
-  with any Q-control mechanism (Maxmin-N, REDQ, low `q_updates`, or
-  `q_weight_decay`) work reasonably well. v27 is the best of these.
 - From-scratch on paddle50 doesn't work — even 1M with bigger net plateaus below zero-shot. Use residual.
 
 ---
@@ -413,10 +330,8 @@ Decay shape (cross-seed): peaks at ~80 around 100k, holds 63-65 through end of
 300k. Two of five seeds end with last5 ≥ 76 — strictly above every full_ft seed.
 
 vs full_ft (3-seed): v27 effectively ties on peak (87.9 vs 88.6) and dominates
-on every stability metric. **For big-gap residual sim2sim/sim2real, v27 is
-THE default — adopt it as the standard and build subsequent work on top of
-it.** Use the v30_explore_lite alternative below only if you specifically
-need the tighter cross-seed last5 std for fire-and-forget deployment.
+on every stability metric. **For big-gap residual sim2sim/sim2real, v27 is the
+fallback default** (preferred is v30_explore_lite, see next section).
 
 Per-checkpoint eval still recommended for picking the best ckpt.
 
@@ -445,6 +360,155 @@ The pattern is: **more exploration → faster collapse and lower peaks**.
 Future sim2sim/sim2real work should default to v27 (no exploration) and
 treat any reintroduction of adaptation-phase exploration as a deliberate
 last-resort experiment, not a starting point.
+
+**v30_explore_lite = v27 (Maxmin-5) + moderate adaptation-phase primitive exploration.**
+v27 zeros all primitive exploration during residual fine-tuning, so the rollout
+distribution stays narrow around the frozen base policy and the critic only sees
+near-base data. v30_explore_lite re-enables the same primitive exploration the
+base policy was trained with, but at **half** the strength (chance 0.10→0.03
+over 50k steps, vs. base training's 0.15→0.05). This broadens the data
+distribution the residual head learns from without disrupting it.
+
+Copy `td3_residual_v27_ensemble5.yaml` and apply these edits:
+
+```yaml
+# Adaptation-phase exploration — the v30_explore_lite addition
+exploration_noise: 0.1                 # was 0.05; matches base-policy training
+exploration_primitive_chance: 0.03                       # steady-state primitive override rate (lite)
+exploration_primitive_chance_start: 0.10                 # start higher; anneal in
+exploration_primitive_chance_pre_learning_starts: 0.10
+exploration_primitive_chance_anneal_steps: 50000
+
+# Full primitive weight set — same as base-policy training
+exploration_primitive_weight_stand_still: 0.2
+exploration_primitive_weight_same_direction: 1.0
+exploration_primitive_weight_y_aligned: 1.0
+exploration_primitive_weight_target_position_directional: 1.0
+# (anneal-phase weights identical)
+
+# Everything else stays at v27 settings (num_critics=5, q_updates=1, sf=0.15,
+# priority_age_decay=1e-4, residual_scale=0.15, q_weight_decay=1e-3, q_lr=3e-4).
+```
+
+Verified config (5-seed): `scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v30_explore_lite.yaml`
+(seed1-4 variants: `…_seed{1,2,3,4}.yaml`).
+
+Expected performance (5-seed @ 300k, n=50 deterministic eval per ckpt, zs=67.54):
+- Peak: **83.43 ± 8.08** — slightly below v27's 87.94 ± 4.82 (-4.5 mean)
+- Mean(29): **70.90 ± 6.31** — ties v27's 71.05 ± 8.62
+- **Last5: 68.40 ± 3.25** — beats v27's 65.67 ± 13.20; **cross-seed std ~4× tighter**
+- %>zs: 67.59 ± 27.65 — ties v27's 69.66 ± 22.80
+
+Per-seed:
+
+| seed | peak | mean(29) | last5 | %>zs |
+|---|---:|---:|---:|---:|
+| 0 | 80.72 | 73.63 | 72.58 | 83% |
+| 1 | 94.44 | 79.02 | 68.53 | 90% |
+| 2 | 72.30 | 61.73 | 63.74 | 21% |
+| 3 | 86.34 | 70.39 | 69.82 | 79% |
+| 4 | 83.36 | 70.09 | 68.35 | 67% |
+
+The 2-seed signal in the original §8.17 writeup (which suggested v30_lite
+strictly dominated v27) was an optimistic sample — both early seeds
+landed in the high quartile. The full 5-seed picture is more honest:
+**v30_lite trades v27's slightly higher peak for dramatically more
+consistent late-stage policies.**
+
+#### When to choose v30_explore_lite over v27
+
+- **Fire-and-forget deployment** (no per-ckpt eval at deployment time):
+  v30_lite's last5 std 3.25 vs v27's 13.20 means you're getting a much
+  more predictable late-stage policy. With per-ckpt eval, v27's higher
+  peak is more valuable.
+- **Predictable expected returns** matter more than max returns: v30_lite
+  has tighter mean std (6.31 vs 8.62) and last5 std (3.25 vs 13.20).
+- **You only have 300k budget**: v27 has been verified at 1M (peak 98.3,
+  84% > zs); v30_lite has not. If you can spend 1M, v27 has the edge.
+
+#### When to choose v27 over v30_explore_lite
+
+- **Per-ckpt eval is part of the deployment pipeline**: v27's higher peak
+  (87.94 vs 83.43 mean) wins; per-ckpt eval recovers the gap.
+- **Highest single-seed peak chance**: v27 max-seed-peak 95.74 vs
+  v30_lite's 94.44. Marginal but real.
+- **1M training budget**: only v27 is 1M-verified.
+
+#### Tested but inferior variants (2026-05-03)
+
+| variant | exploration knob | peak (2-seed) | mean | last5 | %>zs |
+|---|---|---:|---:|---:|---:|
+| **v30_explore_lite** | chance 0.10→0.03, full primitive set | 87.58 | 76.33 | 70.55 | 86.5% |
+| v30_explore_directional_only | chance 0.10→0.03, only same_direction + target_position_directional | 84.22 | 57.90 | 41.06 | 46.5% |
+| v30_explore_full | chance 0.15→0.05, full primitive set (=base-training strength) | 76.41 | 56.98 | 51.20 | 19% |
+
+**Two clear "wrong" directions:**
+1. **Too much exploration (v30_explore_full) HURTS.** Matching base-policy
+   exploration strength (chance 0.15→0.05) drops %>zs from 70% to 19%. The
+   primitive override drowns out the residual head's learning signal.
+2. **Stripping out diversity primitives HURTS.** v30_explore_directional_only
+   keeps only `same_direction` and `target_position_directional`. Cliff
+   returns (last5 41 vs lite's 71).
+
+The diversity primitives (`stand_still`, `y_aligned`) matter even though the
+base already handles vertical alignment — they widen the off-base data
+distribution the critic sees.
+
+#### Mechanism (why lite exploration helps the residual but full exploration hurts)
+
+In residual RL, the critic over-extrapolates Q-values to OOD actions because
+the action subspace it explores is small (residual head produces tiny
+corrections × frozen base → narrow rollout distribution). Maxmin-5 ensembling
+(v27) tightens the target-Q bound but doesn't change the data distribution.
+
+Lite primitive exploration replaces ~3-10% of env steps with raw primitive
+actions — broadening rollout coverage AWAY from the base policy's narrow
+behavior basin. The residual head's critic now grounds its Q-estimates against
+genuinely diverse data, reducing OOD extrapolation drift.
+
+Full primitive exploration goes too far: when ~5-15% of env steps are primitive
+overrides, the residual head's learning signal is dominated by primitive
+trajectories rather than its own (base + residual) trajectories. The residual
+head can no longer "find" its corrective signal because the data doesn't
+reflect the residual's actual contribution.
+
+#### Caveat: 300k only (1M behavior unknown)
+
+v30_explore_lite is verified at 5 seeds × 300k. v27 is verified at 5 seeds ×
+300k + 1 seed × 1M. v30_lite's 1M behavior is unknown — until tested,
+prefer v27 for 1M-scale runs.
+
+### Time to peak and budget guidance
+
+Both recipes are extremely fast on a Quadro RTX 6000 (paddle50 sim, residual
+mode with q_updates=1):
+- **300k env steps**: ≈41 min wall clock (≈8.2 sec per 1k steps)
+- **1M env steps**: ≈2h45m wall clock (v27 1M extension reference)
+
+Time-to-checkpoint-above-zs (n=50 deterministic eval, per-ckpt):
+- v30_explore_lite: 4/5 seeds above zs at step 10k = **≈80 sec wall clock**
+  (first checkpoint logged with `checkpoint_interval: 10000`)
+- v27: about 4/5 seeds above zs by step 10k
+
+Time-to-absolute-peak (highest single ckpt across the run; *which* ckpt is
+peak is seed-dependent):
+- v30_explore_lite 5-seed peaks: 20k, 40k, 50k, 220k, 250k (mean ~116k) ≈ 3–35 min
+- v27 5-seed peaks: 30k, 90k, 100k, 120k, 250k (mean ~118k) ≈ 7–35 min
+
+Both recipes give roughly the same time-to-peak distribution. Some seeds
+peak as early as 20-40k (≈3-7 min), others as late as 220-250k (≈30-35 min).
+You don't know which seed you got until you eval all checkpoints.
+
+**Practical implication**: don't budget the full 300k just to "wait for the
+peak". With per-checkpoint eval, a useful checkpoint arrives within minutes.
+The reason to run 300k+ is to collect more candidate ckpts for eval (more
+ckpts = better best-of-eval). Diminishing returns past 200k for residual.
+
+For a sim2real fine-tune where eval is expensive, run 100k (≈14 min) and eval
+all 9 checkpoints. For a research comparison run 300k; for a 1M definitive
+result, run 1M.
+
+### How to use the v30_explore_lite recipe (alternative big-gap recipe, 2026-05-04 5-seed verified)
 
 **v30_explore_lite = v27 (Maxmin-5) + moderate adaptation-phase primitive exploration.**
 v27 zeros all primitive exploration during residual fine-tuning, so the rollout
