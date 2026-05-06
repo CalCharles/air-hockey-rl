@@ -1,6 +1,6 @@
 # TD3 training algorithm
 
-Core training loop for both simulation ([`td3_training.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py)) and real-world ([`async_td3_real_modular.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real_modular.py); shared library [`async_td3_real.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py)).
+Core training loop for both simulation ([`td3_training.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py)) and real-world ([`extras/async_td3_real.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py); shared runtime library [`helper/real_td3_runtime.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_td3_runtime.py)).
 
 ## Transformed Bellman targets (h / h-inverse)
 
@@ -13,7 +13,7 @@ h_inv(x)  = sign(x) * ( ((sqrt(1 + 4*eps*(|x| + 1 + eps)) - 1) / (2*eps))^2 - 1 
 
 `eps` (default `1e-3`) adds a small linear term that keeps `h` invertible everywhere. Both critics output values in the transformed space; Bellman targets are computed in original space, then mapped back through `h`.
 
-**Code:** `h_transform` / `h_inverse` in `td3_training.py` (lines 72-81) and duplicated in `async_td3_real.py`.
+**Code:** `h_transform` / `h_inverse` in `td3_training.py` (lines 72-81) and duplicated in `helper/real_td3_runtime.py`.
 
 ## Dual-head critics
 

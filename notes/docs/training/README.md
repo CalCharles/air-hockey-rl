@@ -1,0 +1,54 @@
+# Training docs
+
+TD3 is the active training algorithm. PPO/SAC paths exist as legacy (see `architecture.md` for the boundary). Real-robot training uses the async pipeline; sim training uses the synchronous vec-env script.
+
+## Overview / reference
+
+| Doc | What it covers |
+|-----|----------------|
+| [`architecture.md`](architecture.md) | Active code paths, legacy folders, where each topic lives |
+| [`td3-algorithm.md`](td3-algorithm.md) | h-transform, dual-head critics, actor objective |
+| [`network-architecture.md`](network-architecture.md) | `ResidualMLPTrunk`, `DualHeadQ`, `DeterministicAgent` shapes |
+
+## Runtime behavior
+
+| Doc | What it covers |
+|-----|----------------|
+| [`reward-shaping.md`](reward-shaping.md) | Task + motion reward composition (5 components, weights) |
+| [`replay-and-episodes.md`](replay-and-episodes.md) | PER, success/failure partitions, episode staging |
+| [`checkpointing.md`](checkpointing.md) | Schema, resume vs fine-tune, migrations, real-world async resume |
+| [`monitoring.md`](monitoring.md) | TensorBoard scalar reference, console layout, rolling windows |
+
+## Configs
+
+A reader picking which YAML to use should start with the doc closest to their goal:
+
+| Doc | Scope |
+|-----|-------|
+| [`td3-configs.md`](td3-configs.md) | Sim TD3 args YAMLs (`configs/td3/`) |
+| [`td3-real-world-configs.md`](td3-real-world-configs.md) | Real-robot async configs (`configs/td3_real_world/`) |
+| [`sim-env-configs.md`](sim-env-configs.md) | Box2D sim env YAMLs (`configs/new_juggle/`) |
+| [`ppo-configs.md`](ppo-configs.md) | Legacy PPO+AMP configs |
+| [`legacy-configs.md`](legacy-configs.md) | Older/abandoned config directories — not for new runs |
+
+## Recipes (end-to-end procedures)
+
+| Doc | When to use |
+|-----|-------------|
+| [`residual-rl-recipe.md`](residual-rl-recipe.md) | Residual fine-tune for sim2sim or sim2real (must read before launching) |
+| [`sim2sim.md`](sim2sim.md) | Cross-sim transfer testing protocol |
+| [`teleop-eval-baseline.md`](teleop-eval-baseline.md) | Human-baseline mouse-paddle eval for the paper user study |
+
+## Ablation reports
+
+| Doc | Findings |
+|-----|----------|
+| [`td3-ablations-updates-and-depth.md`](td3-ablations-updates-and-depth.md) | Update count and network depth — the basis for `td3_recommended.yaml` defaults |
+| [`td3-exploration-ablations.md`](td3-exploration-ablations.md) | Warm-start and bootstrap-forcing exploration variants |
+
+## Other
+
+| Doc | Use |
+|-----|-----|
+| [`box2d-env-usage.md`](box2d-env-usage.md) | External-user guide: bring your own RL algo, use the Box2D env directly |
+| [`ppo-amp-discriminator.md`](ppo-amp-discriminator.md) | Legacy PPO+AMP discriminator details (not active training path) |

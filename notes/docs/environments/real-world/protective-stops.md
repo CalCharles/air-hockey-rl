@@ -41,11 +41,14 @@ per millisecond the planner generated for the current `moveL` / `moveJ` /
      commanded z keeps descending — shoulder torque saturates, position
      gap opens, trip.
    - *Mitigation in this repo*: `apply_negative_z_force(self.ctrl, self.rcv)`
-     is called at three sync sites
-     (`airhockey/sims/air_hockey_real.py:1448`,
-     `airhockey/sims/air_hockey_real.py:1490`,
-     `airhockey/sims/air_hockey_real.py:1595`) and/or by the async z-force
-     worker (`_async_z_force_worker`, currently broken — see below).
+     is called synchronously at three sites in `AirHockeyReal` —
+     `reset()` main_stage, `reset()` post_stage (high-reset only), and once
+     per `get_transition()`. There is **no** background loop reapplying force
+     between env steps; UR's `forceMode` has a ~2 s controller-side timeout,
+     so any phase where the main loop pauses for longer (long blocking
+     `moveL`s inside reset, inter-episode waits, transition holds) drops
+     clamping. See
+     [`paddle-clamping-coverage-gap.md`](paddle-clamping-coverage-gap.md).
 
 2. **Physical obstruction / collision.** External object pushes on the tool
    or an arm link.
@@ -96,21 +99,15 @@ before any sideways policy motion.
 
 ### Root cause
 
-Interaction of two unrelated facts:
+Interaction of two unrelated facts (state at the time of incident):
 
-1. `async_z_force_enabled` defaults to `True` in
-   `airhockey/sims/air_hockey_real.py:336`.
-2. The async z-force worker **always fails to spawn** with
-   `One of the RTDE input registers are already in use!` — see
-   [`known-issues.md`](../../known-issues.md) entry #2 and
-   [`async-z-force-future-steps.md`](async-z-force-future-steps.md) for
-   the full diagnosis.
-3. A mutual-exclusion gate added 2026-04-17 skips every sync
-   `apply_negative_z_force(...)` call site when
-   `async_z_force_enabled=True` (see diff:
-   `airhockey/sims/air_hockey_real.py:1448`,
-   `airhockey/sims/air_hockey_real.py:1486`,
-   `airhockey/sims/air_hockey_real.py:1592`).
+1. `async_z_force_enabled` defaulted to `True` in `AirHockeyReal`.
+2. The async z-force worker **always failed to spawn** with `One of the RTDE
+   input registers are already in use!` — only one
+   `RTDEControl(FLAG_USE_EXT_UR_CAP)` connection is allowed per robot, and the
+   main process already held it.
+3. A mutual-exclusion gate skipped every sync `apply_negative_z_force(...)`
+   call site when `async_z_force_enabled=True`.
 
 Net result with the default config: **no force-mode compliance was being
 engaged at all** — neither async (worker dead) nor sync (gated off). The
@@ -122,22 +119,15 @@ This is cause #1 in the list above.
 
 ### Fix applied
 
-Set `async_z_force_enabled: false` under `simulator_params:` in every
-real-sim config. This re-enables the three sync clamp sites and restores
-force-mode compliance during reset and each env step. Files updated
-2026-04-17:
-
-- `configs/real_configs/rollout_td3_config.yaml`
-- `configs/real_configs/rollout_config.yaml`
-- `configs/real_configs/mouse_config.yaml`
-- `configs/real_configs/primitive_exploration_config.yaml`
-- `configs/baseline_configs/random_configs/puck_vel_real.yaml`
-- `configs/baseline_configs/random_configs/paddle_pos_neg_regions_real_preset.yaml`
-- `configs/baseline_configs/random_configs/puck_height_real.yaml`
-
-Each entry is commented pointing to
-[`async-z-force-future-steps.md`](async-z-force-future-steps.md) so the
-override can be removed cleanly once the threads+lock redesign lands.
+The immediate 2026-04-17 fix was to set `async_z_force_enabled: false` under
+`simulator_params:` in every real-sim config so the three sync clamp sites
+fired again. On 2026-05-05 the async path was removed entirely — the worker
+function, multiprocessing flags, the `_sync_async_z_force_flags` helper, and
+the `not self.async_z_force_enabled` gates on the three sync sites are all
+gone, and the per-config `async_z_force_enabled: false` overrides were
+stripped along with them. Sync clamping is now the only path; its limits
+(>2 s gaps during reset / inter-episode phases break clamping) are documented
+in [`paddle-clamping-coverage-gap.md`](paddle-clamping-coverage-gap.md).
 
 ## Diagnostic checklist
 
@@ -147,7 +137,9 @@ before assuming it's a mechanical collision:
 1. **Is the tool on/near the table surface at trip time?** If yes, suspect
    cause #1. Confirm by checking whether any `apply_negative_z_force` call
    ran in the rollout log — grep stdout for `[control_gate] ... forceMode`.
-   If none fired, check `async_z_force_enabled` in the loaded sim config.
+   If none fired in the seconds leading up to the trip, the wrench had
+   probably timed out (UR `forceMode` ~2 s timeout); read
+   [`paddle-clamping-coverage-gap.md`](paddle-clamping-coverage-gap.md).
 2. **Was `forceModeStop` called before the offending `moveL`?** Grep log
    for `[control_gate] reset:start forceModeStop done`. If absent, suspect
    cause #3.
@@ -161,14 +153,10 @@ before assuming it's a mechanical collision:
 
 ## References
 
-- `airhockey/sims/air_hockey_real.py:336` — `async_z_force_enabled`
-  default.
-- `airhockey/sims/air_hockey_real.py:1349` — `forceModeStop` at reset
-  start.
-- `airhockey/sims/air_hockey_real.py:1448,1486,1592` — sync z-force call
-  sites (gated on `not self.async_z_force_enabled`).
+- `airhockey/sims/air_hockey_real.py` — `forceModeStop` at the start of
+  `reset()`, plus the three `apply_negative_z_force` sync call sites
+  (grep for `apply_negative_z_force`).
 - `airhockey/sims/real/robot_control.py` — `apply_negative_z_force` helper.
-- `notes/docs/known-issues.md` #2 — async z-force worker RTDE register
-  conflict.
-- `notes/docs/environments/real-world/async-z-force-future-steps.md` —
-  threads+lock redesign plan.
+- [`paddle-clamping-coverage-gap.md`](paddle-clamping-coverage-gap.md) — the
+  >2 s coverage gap left by the sync-only path, stopgaps, and the
+  threaded-worker fix sketch.

@@ -1,8 +1,8 @@
 """Transition-hold state machine for the real-world TD3 collector.
 
 Splits the ``begin_transition_hold`` closure (formerly inlined in the
-deleted monolithic ``async_td3_real.collector_process``) and its five
-mutable nonlocals into two sibling dataclasses:
+deleted monolithic ``collector_process`` of the original async-real script)
+and its five mutable nonlocals into two sibling dataclasses:
 
 - ``RolloutContext`` — per-rollout state that crosses the PolicyRunner /
   orchestrator boundary (last actions + previous puck position used by the
@@ -13,7 +13,7 @@ mutable nonlocals into two sibling dataclasses:
 - ``TransitionHoldState`` — the hold counters and the ``begin``/``tick``
   methods.
 
-Used by ``collector_process_modular`` in ``async_td3_real_modular.py``.
+Used by ``collector_process_modular`` in ``extras/async_td3_real.py``.
 """
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ class TransitionHoldState:
     """Counters and trigger logic for the transition-hold state machine.
 
     The five fields mirror the original locals in the old monolithic
-    ``async_td3_real.collector_process``:
+    ``collector_process``:
         transition_hold_steps_remaining → ``steps_remaining``
         transition_hold_reason          → ``reason``
         transition_hold_events_total    → ``events_total``

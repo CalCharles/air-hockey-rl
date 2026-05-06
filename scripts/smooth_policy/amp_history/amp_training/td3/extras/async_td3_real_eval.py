@@ -98,7 +98,7 @@ from scripts.smooth_policy.amp_history.amp_training.td3.helper.run_event_log imp
 )
 from scripts.real.rollout_reset_policy_real import ResetPolicyFSM
 
-from scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real import (
+from scripts.smooth_policy.amp_history.amp_training.td3.helper.real_td3_runtime import (
     Args,
     TrainArgs,
     _build_args_file_defaults,
@@ -117,9 +117,10 @@ from scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real im
     _simulator_step_readiness,
     augment_policy_observation,
     deterministic_actor_action,
+    install_quiet_print_filter,
     primitive_exploration_chance_for_step,
 )
-from scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real_modular import (
+from scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real import (
     _save_episode_artifacts_and_pending_reset,
 )
 
@@ -154,6 +155,11 @@ class EvalSpecificArgs:
     eval_summary_filename: str = "eval_summary.json"
     eval_per_episode_filename: str = "eval_per_episode.jsonl"
 
+    # When True (default), suppress noisy per-step / per-reset debug
+    # prints that come from the training-side helpers we reuse here.
+    # See ``_install_quiet_print_filter`` for the exact prefix list.
+    quiet: bool = True
+
 
 def _parse_eval_specific_args() -> EvalSpecificArgs:
     """Strip eval-specific flags from ``sys.argv`` before tyro sees it.
@@ -169,6 +175,11 @@ def _parse_eval_specific_args() -> EvalSpecificArgs:
     parser.add_argument(
         "--eval-per-episode-filename", type=str, default="eval_per_episode.jsonl"
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Restore noisy per-step/per-reset debug prints from training-side helpers.",
+    )
     parsed, remaining = parser.parse_known_args(sys.argv[1:])
     sys.argv = [sys.argv[0]] + remaining
     return EvalSpecificArgs(
@@ -176,6 +187,7 @@ def _parse_eval_specific_args() -> EvalSpecificArgs:
         eval_max_attempts=int(parsed.eval_max_attempts),
         eval_summary_filename=str(parsed.eval_summary_filename),
         eval_per_episode_filename=str(parsed.eval_per_episode_filename),
+        quiet=not bool(parsed.verbose),
     )
 
 
@@ -707,6 +719,13 @@ def main(args: Args, train_args: TrainArgs, eval_args: EvalSpecificArgs) -> None
         sys.stdout.reconfigure(line_buffering=True)
     except Exception:
         pass
+    if eval_args.quiet:
+        prefixes, substrs = install_quiet_print_filter()
+        print(
+            "[eval_quiet] suppressing per-step/per-reset debug prints "
+            "(pass --verbose to restore). "
+            f"prefixes={list(prefixes)} substrings={list(substrs)}"
+        )
     _force_eval_mode(args)
     if eval_args.eval_episodes <= 0:
         raise ValueError(f"eval_episodes must be > 0, got {eval_args.eval_episodes}")

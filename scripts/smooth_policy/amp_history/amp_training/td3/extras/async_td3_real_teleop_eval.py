@@ -76,7 +76,7 @@ from scripts.smooth_policy.amp_history.amp_training.td3.helper.run_event_log imp
     run_events_path,
 )
 
-from scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real import (
+from scripts.smooth_policy.amp_history.amp_training.td3.helper.real_td3_runtime import (
     Args,
     _build_args_file_defaults,
     _build_split_episode_row,

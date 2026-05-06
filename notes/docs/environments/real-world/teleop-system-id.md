@@ -88,8 +88,8 @@ trajectory_dataN_segments/
 | `puck` | 3 | Puck position (x, y, occluded) |
 
 These are the same fields used by the online TD3 real-world pipeline
-(entrypoint `async_td3_real_modular.py`; row format defined by
-`_build_split_episode_row` in the shared library `async_td3_real.py`),
+(entrypoint `extras/async_td3_real.py`; row format defined by
+`_build_split_episode_row` in the runtime library `helper/real_td3_runtime.py`),
 so downstream tools (visualization, replay-in-sim) work identically.
 
 ## Named category splitting

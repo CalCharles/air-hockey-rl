@@ -1,3 +1,11 @@
+# Real-world rollout config for residual TD3 training.
+#
+# Same as rollout_config.yaml, but the env-level reward shaping coefficients
+# are zeroed so the per-step reward is the puck_velocity base reward only —
+# matching the canonical sim config (`new_juggle/sysid_best_params.yaml`)
+# which is what the frozen base actor was trained against.
+#
+# Pointed at by: scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml
 air_hockey:
   diagonal_motion_rew: 0.0
   direction_change_rew: 0.0
@@ -43,22 +51,17 @@ air_hockey:
     transition_hold_steps_on_estop_clear: 8
     transition_hold_steps_on_safety_rearm: 3
     transition_hold_debug: false
-    async_render_enabled: true
-    async_render_sim_view_enabled: true
-  stand_still_rew: 0.01
-  task: puck_juggle_upper_half_reward
+    # async_render_enabled: true
+  stand_still_rew: 0.0
+  task: puck_velocity
   terminate_on_enemy_goal: true
-  terminate_on_out_of_bounds: false
+  terminate_on_out_of_bounds: true
   terminate_on_puck_hit_bottom: true
   terminate_on_puck_hit_paddle: false
   terminate_on_puck_pass_paddle: true
   terminate_on_puck_stop: true
   truncate_rew: 0
   wall_bumping_rew: 0
-
-
-
-# NOT USED
 algorithm: ppo
 eval_freq: 5000
 gamma: 0.99

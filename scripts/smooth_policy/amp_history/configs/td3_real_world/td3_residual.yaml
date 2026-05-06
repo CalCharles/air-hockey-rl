@@ -41,7 +41,7 @@
 #
 # Launch (fresh start — empty warm-start, mirrors sim2sim):
 #
-#   python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real_modular \
+#   python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
 #     --train-args scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml \
 #     --args-file  scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml \
 #     --model-path <path-to-source-checkpoint>/training_state.pth
@@ -53,7 +53,7 @@
 # Resuming a residual run from a previous checkpoint (skip fresh-fill, restore
 # the trained residual head + critics + optimizer + replay):
 #
-#   python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real_modular \
+#   python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
 #     --train-args scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml \
 #     --args-file  scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml \
 #     --full-checkpoint-load residual_resume \
@@ -133,7 +133,8 @@ load_replay_from_checkpoint: false
 checkpoint_root_dir: 'real_runs/checkpoints/residual_v27'
 include_non_vital_training_state_fields: true   # required to resume residual training cleanly (optimizer state, learner counters, rolling stats). See notes/docs/training/checkpointing.md#resuming-real-world-async-training.
 enable_periodic_checkpointing: true
-checkpoint_every_successful_online_episodes: 10
+checkpoint_every_collector_steps: 5000
+total_timesteps: 100000  # 0 disables the cap (run until Ctrl-C). On resume `collector_total_steps` carries across, so a 50k checkpoint resumed with cap=100k runs for 50k more.
 
 # --- Data balance — v27 (top-15% + smaller buffers) -------------------------
 # Smaller buffers than the OLD-env median-split recipe: top-15% means only
@@ -209,7 +210,12 @@ jerk_at_one: 8.0
 jerk_at_zero: 20.0
 
 # --- Paths ------------------------------------------------------------------
-config: "configs/real_configs/rollout_config.yaml"
+# Residual-specific rollout config: zeroes the env-level reward shaping
+# coefficients (`diagonal_motion_rew`, `direction_change_rew`, `horizontal_vel_rew`,
+# `stand_still_rew`, `wall_bumping_rew`, `truncate_rew`) so per-step task reward
+# is the puck_velocity base reward only — matching the canonical sim
+# (`new_juggle/sysid_best_params.yaml`) the frozen base actor was trained on.
+config: "configs/real_configs/rollout_config_residual.yaml"
 args_file: null
 log_parent_dir: "runs/async_td3/residual_v27"
 run_name: "async_td3_real_residual_v27"

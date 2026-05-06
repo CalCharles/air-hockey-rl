@@ -31,7 +31,8 @@ load_replay_from_checkpoint: false # if model_path points to a checkpoint with r
 checkpoint_root_dir: 'real_runs/checkpoints/default' # optional override for periodic checkpoint location
 include_non_vital_training_state_fields: true # required to resume training cleanly: includes optimizer state, learner-update counters, collector_total_steps, run_elapsed_total_s, and rolling-window deques. Set to false ONLY if you do not intend to resume from these checkpoints. See notes/docs/training/real-world-resume.md.
 enable_periodic_checkpointing: true
-checkpoint_every_successful_online_episodes: 20 # this still takes a good amount of time
+checkpoint_every_collector_steps: 5000
+total_timesteps: 100000  # 0 disables the cap (run until Ctrl-C). On resume `collector_total_steps` carries across, so a 50k checkpoint resumed with cap=100k runs for 50k more.
 
 
 # experience replay

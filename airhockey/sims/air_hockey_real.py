@@ -159,91 +159,6 @@ def _async_render_worker(
             frame_shm.close()
 
 
-def _async_z_force_worker(
-    stop_event,
-    hold_active_flag,
-    control_off_flag,
-    above_table_flag,
-    target_hz,
-    wrench_z,
-    robot_host,
-    debug,
-):
-    ctrl = None
-    rcv = None
-    loop_hz = max(1.0, float(target_hz))
-    loop_period_s = 1.0 / loop_hz
-    try:
-        rtde_control_module = __import__("rtde_control", fromlist=["RTDEControlInterface"])
-        rtde_receive_module = __import__("rtde_receive", fromlist=["RTDEReceiveInterface"])
-        RTDEControl = getattr(rtde_control_module, "RTDEControlInterface")
-        RTDEReceive = getattr(rtde_receive_module, "RTDEReceiveInterface")
-
-        ctrl = RTDEControl(str(robot_host), 500.0, RTDEControl.FLAG_USE_EXT_UR_CAP)
-        rcv = RTDEReceive(str(robot_host))
-    except Exception as exc:
-        print(f"[async_z_force] worker startup failed: {exc}")
-        return
-
-    loop_count = 0
-    while not stop_event.is_set():
-        loop_start = time.time()
-        try:
-            ctrl_connected = True
-            rcv_connected = True
-            ctrl_is_connected = getattr(ctrl, "isConnected", None)
-            if callable(ctrl_is_connected):
-                ctrl_connected = bool(ctrl_is_connected())
-            rcv_is_connected = getattr(rcv, "isConnected", None)
-            if callable(rcv_is_connected):
-                rcv_connected = bool(rcv_is_connected())
-
-            control_program_running = True
-            ctrl_is_program_running = getattr(ctrl, "isProgramRunning", None)
-            if callable(ctrl_is_program_running):
-                control_program_running = bool(ctrl_is_program_running())
-
-            protective_stop = bool(rcv.isProtectiveStopped())
-            transition_hold_active = bool(int(hold_active_flag.value) > 0)
-            control_off = bool(int(control_off_flag.value) > 0)
-            above_table = bool(int(above_table_flag.value) > 0)
-            command_ready = bool(
-                ctrl_connected
-                and rcv_connected
-                and control_program_running
-                and (not protective_stop)
-                and (not transition_hold_active)
-                and (not control_off)
-                and (not above_table)
-            )
-            if command_ready:
-                apply_negative_z_force(ctrl, rcv, wrench_z=wrench_z)
-        except Exception as exc:
-            if debug:
-                print(f"[async_z_force] worker loop exception: {exc}")
-
-        loop_count += 1
-        if debug and loop_count % 500 == 0:
-            print(
-                "[async_z_force] "
-                f"alive loops={loop_count} hz_target={loop_hz:.1f} "
-                f"hold_active={int(hold_active_flag.value)}"
-            )
-        sleep_s = loop_period_s - (time.time() - loop_start)
-        if sleep_s > 0:
-            time.sleep(sleep_s)
-
-    for client in (ctrl, rcv):
-        if client is None:
-            continue
-        disconnect_fn = getattr(client, "disconnect", None)
-        if callable(disconnect_fn):
-            try:
-                disconnect_fn()
-            except Exception:
-                pass
-
-
 class AirHockeyReal:
     def __init__(self, **kwargs):
         defaults = {
@@ -333,10 +248,6 @@ class AirHockeyReal:
             "async_render_sim_view_window_name": "sim_view",
             "async_render_sim_view_size": 360,
             "async_render_sim_view_orientation": "vertical",
-            "async_z_force_enabled": True,
-            "async_z_force_target_hz": 150.0,   # EDIT(known-issue-2): increased from 100 Hz for smoother contact
-            "async_z_force_wrench_z": 1.0,
-            "async_z_force_debug": False,
             "mouse_action_scale": None,
         }
         kwargs = {**defaults, **kwargs}
@@ -474,23 +385,7 @@ class AirHockeyReal:
         self._render_epoch = None
         self._render_stop_event = None
         self._render_process = None
-        self.async_z_force_enabled = bool(config.async_z_force_enabled)
-        self.async_z_force_target_hz = max(1.0, float(config.async_z_force_target_hz))
-        self.async_z_force_wrench_z = float(config.async_z_force_wrench_z)
-        self.async_z_force_debug = bool(config.async_z_force_debug)
-        self._async_z_force_stop_event = None
-        self._async_z_force_process = None
-        self._async_z_force_started = False
-        self._async_z_force_hold_active_flag = multiprocessing.Value("i", 0)
-        self._async_z_force_control_off_flag = multiprocessing.Value(
-            "i",
-            1 if self.control_mode in ["observe"] else 0,
-        )
         self.above_table = False
-        self._async_z_force_above_table_flag = multiprocessing.Value(
-            "i",
-            1 if self.above_table else 0,
-        )
         if self.control_type == "prim":
             self.motion_primitive = MotionPrimitive()
 
@@ -685,76 +580,8 @@ class AirHockeyReal:
         except Exception:
             return fallback_pose, fallback_speed
 
-    def _sync_async_z_force_flags(self):
-        if self._async_z_force_hold_active_flag is not None:
-            transition_hold_active = bool(
-                self._transition_hold_steps_remaining > 0 or self._hold_current_target_after_estop
-            )
-            self._async_z_force_hold_active_flag.value = 1 if transition_hold_active else 0
-        if self._async_z_force_control_off_flag is not None:
-            self._async_z_force_control_off_flag.value = 1 if bool(self.control_off) else 0
-        if self._async_z_force_above_table_flag is not None:
-            self._async_z_force_above_table_flag.value = 1 if bool(self.above_table) else 0
-
-    def _start_async_z_force_worker_if_needed(self):
-        if not self.async_z_force_enabled or self.control_off:
-            return
-        if self._async_z_force_started and self._async_z_force_process is not None:
-            try:
-                if self._async_z_force_process.is_alive():
-                    return
-            except Exception:
-                pass
-        self._stop_async_z_force_worker()
-        self._sync_async_z_force_flags()
-        self._async_z_force_stop_event = multiprocessing.Event()
-        self._async_z_force_process = multiprocessing.Process(
-            target=_async_z_force_worker,
-            args=(
-                self._async_z_force_stop_event,
-                self._async_z_force_hold_active_flag,
-                self._async_z_force_control_off_flag,
-                self._async_z_force_above_table_flag,
-                self.async_z_force_target_hz,
-                self.async_z_force_wrench_z,
-                self.robot_host,
-                self.async_z_force_debug,
-            ),
-            daemon=True,
-        )
-        self._async_z_force_process.start()
-        self._async_z_force_started = True
-        print(
-            "[async_z_force] started "
-            f"pid={self._async_z_force_process.pid} "
-            f"hz={self.async_z_force_target_hz:.1f} "
-            f"wrench_z={self.async_z_force_wrench_z:.3f}"
-        )
-
-    def _stop_async_z_force_worker(self):
-        process = self._async_z_force_process
-        stop_event = self._async_z_force_stop_event
-        self._async_z_force_process = None
-        self._async_z_force_stop_event = None
-        self._async_z_force_started = False
-        if stop_event is not None:
-            try:
-                stop_event.set()
-            except Exception:
-                pass
-        if process is not None:
-            try:
-                if process.is_alive():
-                    process.join(timeout=1.0)
-                if process.is_alive():
-                    process.terminate()
-                    process.join(timeout=0.5)
-            except Exception:
-                pass
-
     def robot_command_readiness(self):
         """Return current robot command/step readiness for safety gating."""
-        self._sync_async_z_force_flags()
         ctrl_connected = True
         rcv_connected = True
         control_program_running = True
@@ -956,7 +783,6 @@ class AirHockeyReal:
         self._transition_hold_steps_remaining = max(int(self._transition_hold_steps_remaining), steps_i)
         self._transition_hold_reason = str(reason)
         self._hold_current_target_after_estop = True
-        self._sync_async_z_force_flags()
         try:
             tcp_target_pose = self.rcv.getTargetTCPPose()
             tcp_target_speed = self.rcv.getTargetTCPSpeed()
@@ -1431,9 +1257,8 @@ class AirHockeyReal:
                     reset_success = False
                     print(f"[control_gate] reset:main_stage moveL skipped: {exc}")
                 # Keep force mode engaged so the tool remains biased toward table contact.
-                # Skip when async worker is configured to own the z-force loop.
                 readiness = self.robot_command_readiness()
-                if not self.async_z_force_enabled and bool(readiness["command_ready"]):
+                if bool(readiness["command_ready"]):
                     try:
                         apply_negative_z_force(self.ctrl, self.rcv)
                     except Exception as exc:
@@ -1471,7 +1296,6 @@ class AirHockeyReal:
             self.high_reset
             and not self.above_table
             and not self.control_off
-            and not self.async_z_force_enabled
         ):
             readiness = self.robot_command_readiness()
             if bool(readiness["command_ready"]):
@@ -1496,8 +1320,6 @@ class AirHockeyReal:
         self._command_rearm_event = False
         self._rearm_pending = False
         self._rearm_pending_reason = "none"
-        self._sync_async_z_force_flags()
-        self._start_async_z_force_worker_if_needed()
         state_info = self._compute_state(state_pose, state_speed, -1, self.puck_history)
 
         print("To exit press 'q'") # TODO: make this actually usable
@@ -1537,7 +1359,6 @@ class AirHockeyReal:
         self._command_rearm_event = False
         self._rearm_pending = False
         self._rearm_pending_reason = "none"
-        self._sync_async_z_force_flags()
         state_info = self._compute_state(state_pose, state_speed, -1, self.puck_history)
         return state_info
 
@@ -1573,11 +1394,13 @@ class AirHockeyReal:
         protective_stop = bool(readiness["protective_stop"])
 
         # force control, need it to keep it on the table.
-        # Skipped when async worker is configured to own the z-force loop (mutually exclusive).
+        # NOTE: forceMode has a ~2 s controller-side timeout. This per-step
+        # call refreshes it at ~20 Hz while we're stepping; long pauses
+        # (blocking moveLs in reset, inter-episode waits) drop clamping.
+        # See notes/docs/environments/real-world/paddle-clamping-coverage-gap.md.
         if (
             not self.above_table
             and not self.control_off
-            and not self.async_z_force_enabled
             and bool(readiness["command_ready"])
         ):
             try:
@@ -1614,7 +1437,6 @@ class AirHockeyReal:
                 reason="estop_clear",
             )
         transition_hold_active = bool(self._transition_hold_steps_remaining > 0)
-        self._sync_async_z_force_flags()
         hold_target_to_current = bool(
             (not controller_connected)
             or (not control_program_running)
@@ -1918,7 +1740,6 @@ class AirHockeyReal:
                 self._transition_hold_steps_remaining = 0
                 self._transition_hold_reason = "none"
                 self._hold_current_target_after_estop = False
-        self._sync_async_z_force_flags()
 
         puck_occluded = bool(np.asarray(puck).reshape(-1)[2] > 0.5) if np.asarray(puck).size >= 3 else False
         puck_used_fallback = bool(puck_occluded)
@@ -1992,7 +1813,6 @@ class AirHockeyReal:
 
     def close(self):
         self._stop_async_renderer()
-        self._stop_async_z_force_worker()
         if self.cap is not None:
             try:
                 self.cap.release()

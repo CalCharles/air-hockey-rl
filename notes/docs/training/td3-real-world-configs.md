@@ -14,7 +14,7 @@ Identical to `td3_no_alignment` except exploration primitives are active (`primi
 ### `td3_online.yaml` — Real-world online training (async TD3)
 The primary config for live on-robot training via the async TD3 pipeline. Key differences from sim configs:
 - Very low learning rates: `policy_lr: 0.00005`, `q_lr: 0.0001` (5–10x lower)
-- `learning_starts: 0` — begins updating immediately
+- `min_replay_size_before_learning: 0` — begins updating as soon as replay has any data (the legacy `learning_starts` alias is no longer remapped; use `learning_starts_fresh_steps` for the residual fresh-rollout fill phase)
 - Minimal update budget: `q_updates: 20`, `actor_updates_per_iteration: 5`
 - Warm-start HDF5 replay loading from `real_runs/warm_start_trajectories`
 - Periodic checkpointing every 20 successful online episodes
@@ -26,7 +26,7 @@ The primary config for live on-robot training via the async TD3 pipeline. Key di
 ### `td3_reset_online.yaml` — Online reset policy training
 Used by `extras/async_td3_real_reset_policy.py` — a separate policy trained to reset the puck to a valid state. Structurally simpler: single-stream TD3 (no PER, no success/failure buffer split), `buffer_size: 300000`, `q_updates: 10`, `actor_updates_per_iteration: 2`, `target_network_frequency: 2`. Loads reset episodes from `real_runs/online_run/reset_hdf5` (legacy flat layout). Adds reset-specific knobs: `max_reset_window_steps: 120`, margin/failure-count thresholds for detecting a bad reset. No motion reward or exploration primitives.
 
-> **Note on warm-start path layout.** `async_td3_real_modular.py` now writes per-episode artifacts under `<data_root_dir>/<model_path_parent_dir>/data_<YYYYMMDD-HHMMSS>/{episode_hdf5,reset_hdf5,episode_gifs,episode_camera_videos}/` (see [`td3-async-replay.md`](../environments/real-world/td3-async-replay.md#launch-commands)). The flat `real_runs/online_run/reset_hdf5` path above refers to a previously collected dataset; for fresh runs you'll want to point `warm_start_hdf5_dirs` at the new nested location (the loader is recursive when `warm_start_hdf5_recursive: true`, so pointing at `real_runs/online_run/` and letting it walk works).
+> **Note on warm-start path layout.** `extras/async_td3_real.py` now writes per-episode artifacts under `<data_root_dir>/<model_path_parent_dir>/data_<YYYYMMDD-HHMMSS>/{episode_hdf5,reset_hdf5,episode_gifs,episode_camera_videos}/` (see [`td3-async-replay.md`](../environments/real-world/td3-async-replay.md#launch-commands)). The flat `real_runs/online_run/reset_hdf5` path above refers to a previously collected dataset; for fresh runs you'll want to point `warm_start_hdf5_dirs` at the new nested location (the loader is recursive when `warm_start_hdf5_recursive: true`, so pointing at `real_runs/online_run/` and letting it walk works).
 
 ## Key axes
 - **Exploration on/off**: `td3_no_alignment` (off) vs. `td3_no_alignment_explore` (on)

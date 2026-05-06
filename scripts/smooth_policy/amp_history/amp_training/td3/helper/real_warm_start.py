@@ -205,8 +205,7 @@ def _recompute_warm_start_rewards(
     step_index: int,
     stop_state: Any,
     is_last_transition: bool,
-    stop_penalty_applied: bool,
-) -> tuple[float, float, float, bool]:
+) -> tuple[float, float, float]:
     env.current_timestep = int(max(step_index, 0))
     env.old_state = prev_state
     env.current_state = next_state
@@ -236,12 +235,13 @@ def _recompute_warm_start_rewards(
         jerk_mag=jerk_mag,
     )
     motion_reward = float(motion_components["motion_reward_total"])
-    if stop_state.active and not stop_penalty_applied:
-        motion_reward -= 5.0
-        stop_penalty_applied = True
 
-    terminations_only = float(1.0 if (terminations or stop_state.active or is_last_transition) else 0.0)
-    return float(task_reward), float(motion_reward), terminations_only, stop_penalty_applied
+    # E-stops (`stop_state.active`) are stored as truncations: `done=0` so the
+    # learner bootstraps from V(s'). Only true env terminations or the final
+    # warm-start transition mark the trajectory boundary. See
+    # notes/docs/environments/real-world/episode-lifecycle.md.
+    terminations_only = float(1.0 if (terminations or is_last_transition) else 0.0)
+    return float(task_reward), float(motion_reward), terminations_only
 
 
 def _load_warm_start_episode(
@@ -340,7 +340,6 @@ def _load_warm_start_episode(
         anchor_puck_xy=initial_puck_xy,
     )
     episode_trajectory = EpisodeTrajectory.empty()
-    stop_penalty_applied = False
     for row_idx in range(1, train_vals.shape[0]):
         prev_state = state_infos[row_idx - 1]
         next_state = state_infos[row_idx]
@@ -357,7 +356,7 @@ def _load_warm_start_episode(
             paddle_history=padded_paddle_histories[row_idx],
         )
         stop_state = _stop_state_from_saved_row(train_vals, optional_data, row_idx)
-        task_reward, motion_reward, terminations_only, stop_penalty_applied = _recompute_warm_start_rewards(
+        task_reward, motion_reward, terminations_only = _recompute_warm_start_rewards(
             args,
             env,
             prev_state=prev_state,
@@ -366,7 +365,6 @@ def _load_warm_start_episode(
             step_index=int(step_indices[row_idx]),
             stop_state=stop_state,
             is_last_transition=bool(row_idx == (train_vals.shape[0] - 1)),
-            stop_penalty_applied=stop_penalty_applied,
         )
         episode_trajectory.append_step(
             obs=torch.as_tensor(prev_obs, dtype=torch.float32),

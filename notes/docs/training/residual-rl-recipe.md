@@ -927,19 +927,19 @@ If you set `residual_ema_decay: 0.9999`, also use `bash scripts/smooth_policy/ev
 
 ## Real-world residual — v27 (canonical)
 
-The async real-world pipeline (`async_td3_real_modular.py`) supports the full
+The async real-world pipeline (`extras/async_td3_real.py`) supports the full
 v27 recipe as of 2026-05-04. The Maxmin-N / REDQ-N-M code paths in
-`async_td3_real.py` (`_init_sync_learner_state`, `_run_sync_learner_iteration`,
-`_save_async_checkpoint`) were generalised from the original twin-TD3 pair to
-an N-critic ensemble; everything else (replay, exploration, checkpointing) was
-already shared.
+`helper/real_td3_runtime.py` (`_init_sync_learner_state`,
+`_run_sync_learner_iteration`, `_save_async_checkpoint`) were generalised from
+the original twin-TD3 pair to an N-critic ensemble; everything else (replay,
+exploration, checkpointing) was already shared.
 
 Canonical configs:
 - args-file (online behaviour): [`td3_real_world/td3_residual.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml)
 - train-args (architecture + ensemble): [`td3_real_world/td3_residual_train_args.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml)
 
 ```bash
-python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real_modular \
+python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
   --train-args scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml \
   --args-file  scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml \
   --model-path <path-to-source-checkpoint>/training_state.pth
@@ -962,7 +962,7 @@ crossed, or just continuing where the last session stopped), use the
 `residual_resume` mode added 2026-05-04:
 
 ```bash
-python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real_modular \
+python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
   --train-args scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml \
   --args-file  scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml \
   --full-checkpoint-load residual_resume \
@@ -1118,11 +1118,11 @@ runs/async_td3/data/
         ├── episode_summaries.jsonl
         ├── run_events.jsonl
         ├── collector_tb/  learner_tb/
-        └── checkpoint_successeps_50_qupdates_3000/
+        └── checkpoint_step_50000/
             ├── training_state.pth             ← <- you resume from this
             ├── model.pth   args.yaml   config.yaml
             └── qf1.pth ... qf5.pth
-└── runs/async_td3/data/<...>/data_20260504-100000/checkpoint_successeps_50_qupdates_3000/
+└── runs/async_td3/data/<...>/data_20260504-100000/checkpoint_step_50000/
     └── data_20260504-150000/                  ← resume launch (nested under prev ckpt)
         ├── episode_hdf5/                      ← episode IDs 0..M (RESTART)
         ├── episode_summaries.jsonl            ← per-launch

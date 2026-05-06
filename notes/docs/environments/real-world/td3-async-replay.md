@@ -4,12 +4,12 @@ Training on hardware uses the async TD3 collector/learner path (shared-memory re
 
 | Piece | Location |
 |-------|----------|
-| Async real TD3 (collector + learner) — entrypoint | [`scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real_modular.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real_modular.py) |
-| Shared library (Args, learner step, helpers) | [`scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py) |
+| Async real TD3 (collector + learner) — entrypoint | [`scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py) |
+| Shared runtime library (Args, learner step, helpers) | [`scripts/smooth_policy/amp_history/amp_training/td3/helper/real_td3_runtime.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_td3_runtime.py) |
 | Shared replay (success/failure partitions) | [`scripts/smooth_policy/amp_history/amp_training/td3/helper/shared_replay.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/shared_replay.py) |
 | Sim TD3 reference (naming and bootstrap) | [`td3_training.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py) |
 
-## High-level training flow (`async_td3_real_modular.py`)
+## High-level training flow (`async_td3_real.py`)
 
 At a high level, the real-world async TD3 script runs one process that alternates between hardware data collection and learner updates against a shared replay:
 
@@ -45,7 +45,7 @@ After modularization, most heavy logic is grouped in helper modules:
 
 - **`terminations` / `truncations`**: flags from `env.step`, same idea as the vec-env arrays in `td3_training.py`.
 - **`dones` (episode boundary):** `terminations | truncations | collector_stop` — ends the episode for resets, logging, and primitives.
-- **`dones` (replay / critic):** stored in shared replay and used as **`sampled_dones`** in the learner Bellman update. Semantics match the synchronous buffer: **env termination (and collector stop), not time-limit truncation alone** — so truncated-but-not-terminated steps still bootstrap from \(Q(s')\), consistent with Gymnasium-style TD(0).
+- **`dones` (replay / critic):** stored in shared replay and used as **`sampled_dones`** in the learner Bellman update. Semantics: **env termination only** — collector stops (protective stop, controller disconnect, readiness-fail) and time-limit truncations are stored with `done=0` and bootstrap from \(Q(s')\), consistent with Gymnasium-style TD(0). See [episode-lifecycle.md](episode-lifecycle.md#e-stop-transitions-are-stored-as-truncations).
 
 ## Legacy replay checkpoints (two columns)
 
@@ -72,7 +72,7 @@ Mirrored in the top-level [README](../../../../README.md) under "TD3 Real-World 
 ### Eval only (run policy, no training, no checkpointing)
 
 ```bash
-python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real_modular \
+python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
   --config configs/real_configs/rollout_td3_config.yaml \
   --model-path ex_model/new_td3_model/checkpoint_325000/training_state.pth \
   --train-args ex_model/new_td3_model/checkpoint_325000/args.yaml \
@@ -86,14 +86,14 @@ python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_re
   --warm-start-hdf5-dirs
 ```
 
-`--min-replay-size-before-learning 999999999` gates out learner updates (the gate is checked in the modular orchestrator's learner-step path in `async_td3_real_modular.py`). `--warm-start-hdf5-dirs` with no value disables replay warm-start from HDF5.
+`--min-replay-size-before-learning 999999999` gates out learner updates (the gate is checked in the orchestrator's learner-step path in `async_td3_real.py`). `--warm-start-hdf5-dirs` with no value disables replay warm-start from HDF5.
 
 `--data-root-dir` is the single root for all collected per-episode artifacts (HDF5s, GIFs, camera videos). At startup, `_setup_run_data_dir` creates `<data_root_dir>/<model_path_parent_dir>/data_<YYYYMMDD-HHMMSS>/` and writes `episode_hdf5/`, `reset_hdf5/`, `episode_gifs/`, and `episode_camera_videos/` inside it. The `<model_path_parent_dir>` mirrors the directory portion of `--model-path` (e.g. `ex_model/new_td3_model/checkpoint_325000/`) so multiple runs against the same checkpoint share a parent.
 
 ### Online training from a pretrained checkpoint (collect + train)
 
 ```bash
-python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real_modular \
+python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
   --config configs/real_configs/rollout_td3_config.yaml \
   --model-path ex_model/td3_model/checkpoint_1515000/training_state.pth \
   --train-args ex_model/td3_model/checkpoint_1515000/args.yaml \
@@ -108,10 +108,10 @@ Learning behaviour comes from `td3_online.yaml`: `learning_starts: 0`, `q_update
 ### Resume training from a previous online run
 
 ```bash
-python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real_modular \
+python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
   --config configs/real_configs/rollout_td3_config.yaml \
-  --model-path real_runs/checkpoints/default/checkpoint_successeps_100_qupdates_1517000/training_state.pth \
-  --train-args real_runs/checkpoints/default/checkpoint_successeps_100_qupdates_1517000/args.yaml \
+  --model-path real_runs/checkpoints/default/checkpoint_step_100000/training_state.pth \
+  --train-args real_runs/checkpoints/default/checkpoint_step_100000/args.yaml \
   --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml \
   --collector-device cpu \
   --learner-device cuda:0 \

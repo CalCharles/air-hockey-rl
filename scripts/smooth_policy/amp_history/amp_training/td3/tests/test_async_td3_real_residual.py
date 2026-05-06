@@ -1,4 +1,4 @@
-"""Tests for residual RL wiring in async_td3_real and async_td3_real_modular.
+"""Tests for residual RL wiring in the real-world TD3 runtime library.
 
 Covers:
 - Relaxed `_load_training_state_checkpoint` defaults missing non-vital keys.
@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real import (
+from scripts.smooth_policy.amp_history.amp_training.td3.helper.real_td3_runtime import (
     Args,
     TrainArgs,
     _build_args_file_defaults,
