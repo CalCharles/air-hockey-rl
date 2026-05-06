@@ -98,6 +98,7 @@ Key docs:
 - **Default Box2D config** for one-off scripts: `scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_constant_upper_half_custom_sim_params.yaml`.
 - **Virtual env**: check for `venv/`, `.venv/`, or `pyproject.toml` before running code.
 - Prefer editing existing files over creating new ones.
+- **Shell commands shown to the user**: write them on a single line — no `\` line-continuations, no embedded newlines. The user copy-pastes commands directly and multi-line versions break.
 
 ---
 

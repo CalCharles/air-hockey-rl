@@ -15,7 +15,7 @@ tensorboard --logdir <log_parent_dir> --port 6006 --bind_all
 # Async real-world (async_td3_real.py):
 # every artifact (TB logs, episode HDF5/GIFs/camera videos, checkpoints,
 # latency profiles) lands in ONE folder per run:
-#   <data_root_dir>/<model_path_parent_dir>/data_<TIMESTAMP>/
+#   <data_root_dir>/data_<TIMESTAMP>/
 # Point TensorBoard at <data_root_dir> and it discovers collector_tb/
 # and learner_tb/ inside each run folder automatically.
 tensorboard --logdir <data_root_dir> --port 6006 --bind_all
@@ -26,7 +26,7 @@ tensorboard --logdir <data_root_dir> --port 6006 --bind_all
 Every async-real run produces this single folder, created by `_setup_run_data_dir` (defined in `helper/real_td3_runtime.py`, called from the entrypoint's `main()`):
 
 ```
-<data_root_dir>/<model_path_parent_dir>/data_<TIMESTAMP>/
+<data_root_dir>/data_<TIMESTAMP>/
     episode_hdf5/             # per-step trajectories
     reset_hdf5/               # reset-FSM trajectories
     episode_gifs/             # side-by-side Box2D + camera GIFs
@@ -190,7 +190,7 @@ For rollout-only collection (large `--min-replay-size-before-learning`), the `[c
   *.pth                           # actor / critic / training_state checkpoints
 
 # async_td3_real.py — single unified run folder:
-<data_root_dir>/<model_subdir>/data_<TS>/
+<data_root_dir>/data_<TS>/
   episode_hdf5/  reset_hdf5/      # per-step + reset-FSM trajectories
   episode_gifs/                   # side-by-side Box2D + camera GIFs
   episode_camera_videos/          # raw camera MP4s

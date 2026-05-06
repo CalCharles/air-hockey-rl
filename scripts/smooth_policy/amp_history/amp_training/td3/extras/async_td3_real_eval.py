@@ -279,7 +279,7 @@ def _load_actor_for_eval(
     actor.eval()
     print(
         f"[eval_actor] loaded actor from {args.model_path} "
-        f"residual_mode={args.full_checkpoint_load == 'residual'} "
+        f"residual_mode={args.full_checkpoint_load in ('residual', 'residual_resume')} "
         f"loaded_keys={n_loaded}/{n_actor_keys} "
         f"missing={len(load_result.missing_keys)} "
         f"unexpected={len(load_result.unexpected_keys)} "

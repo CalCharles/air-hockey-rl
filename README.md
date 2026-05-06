@@ -100,7 +100,7 @@ python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_re
   --warm-start-hdf5-dirs
 ```
 
-`--data-root-dir` is the single root for collected per-episode artifacts. The script creates `<data_root_dir>/<model_path_parent_dir>/data_<YYYYMMDD-HHMMSS>/{episode_hdf5,reset_hdf5,episode_gifs,episode_camera_videos}/` at startup; the `<model_path_parent_dir>` mirrors the directory part of `--model-path`.
+`--data-root-dir` is the single root for collected per-episode artifacts. The script creates `<data_root_dir>/data_<YYYYMMDD-HHMMSS>/{episode_hdf5,reset_hdf5,episode_gifs,episode_camera_videos}/` at startup.
 
 #### Online training from a pretrained checkpoint
 ```bash

@@ -135,7 +135,7 @@ class ResetPolicyFSM:
         self._window_height_count = 0
         self._window_shared_gate_count = 0
         self._window_kind = "none"
-        self._window_target_offset_x_m = 0.15
+        self._window_target_offset_x_m = 0.075
         self._window_start_tcp = None
         self._window_target_tcp = None
         self._pending_window_finalize = None

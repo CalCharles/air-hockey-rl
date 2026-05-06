@@ -35,7 +35,7 @@ python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_re
   --warm-start-hdf5-dirs
 ```
 
-`--data-root-dir` replaces the older `--episode-artifact-dir`/`--episode-gif-dir`/`--reset-artifact-dir` triple. The script writes per-run data to `<data_root_dir>/<model_path_parent_dir>/data_<YYYYMMDD-HHMMSS>/{episode_hdf5,reset_hdf5,episode_gifs,episode_camera_videos}/` — for this command that resolves to `real_runs/online_run/latest_model/hist3_motion0/data_<timestamp>/...`.
+`--data-root-dir` replaces the older `--episode-artifact-dir`/`--episode-gif-dir`/`--reset-artifact-dir` triple. The script writes per-run data to `<data_root_dir>/data_<YYYYMMDD-HHMMSS>/{episode_hdf5,reset_hdf5,episode_gifs,episode_camera_videos}/` — for this command that resolves to `real_runs/online_run/data_<timestamp>/...`.
 
 Expect `[args_file] ignored unsupported keys: ...` to list td3_training-only fields from `td3_online.yaml` that aren't part of the async `Args` schema — this is the canonical-names-only behavior from the refactor and is expected. The `[train_args]` line above it confirms the architecture that got wired into the actor/critic.
 
@@ -45,7 +45,7 @@ For other checkpoints, swap the three `latest_model/hist3_motion0/...` paths (an
 
 ## 2026-04-04 — Real robot online learning (no learning, data collection only)
 
-Runs `async_td3_real` on the physical robot in data-collection-only mode (`--min-replay-size-before-learning 999999999` effectively disables gradient updates). Artifacts (HDF5 episodes, GIFs, reset data, camera videos) are saved under `<data-root-dir>/<model_path_parent_dir>/data_<timestamp>/` (here, beneath `real_runs/online_run/`).
+Runs `async_td3_real` on the physical robot in data-collection-only mode (`--min-replay-size-before-learning 999999999` effectively disables gradient updates). Artifacts (HDF5 episodes, GIFs, reset data, camera videos) are saved under `<data-root-dir>/data_<timestamp>/` (here, beneath `real_runs/online_run/`).
 
 > For the **collect + train** and **resume training** variants, see [td3-async-replay → Launch commands](environments/real-world/td3-async-replay.md#launch-commands).
 

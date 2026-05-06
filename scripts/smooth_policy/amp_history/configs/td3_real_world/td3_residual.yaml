@@ -7,7 +7,7 @@
 #
 # v27 = vanilla TD3 residual + the four load-bearing changes:
 #   - success_top_fraction: 0.15      ← top-15% (was 0.5 median in OLD-env recipe)
-#   - q_updates: 1                    ← critic capacity cap (was 4)
+#   - q_updates: 4                    ← real-world override (sim2sim v27 used 1; async-real invokes the learner once per episode so this is per-episode critic steps)
 #   - num_critics: 5 (Maxmin)         ← Q-overestimation control (the load-bearing knob)
 #   - target_critic_subset_size: null ← Maxmin (min over all 5); set to 2 for REDQ-5-2
 #
@@ -92,7 +92,7 @@ min_replay_size_before_learning: 0
 policy_lr: 0.0003                    # v27 default
 q_lr: 0.0003                         # v27 default
 q_weight_decay: 0.001                # 10x baseline; secondary Q-runaway bound
-q_updates: 1                         # v27 critic capacity cap (was 4 in OLD-env recipe)
+q_updates: 4                         # real-world default: 4 critic updates per episode boundary (overrides v27's 1; the async-real learner is invoked once per episode, so q_updates here = critic gradient steps per episode)
 target_network_frequency: 2          # v27 default
 actor_updates_per_iteration: 1
 exploration_noise: 0.05              # v27 default (low for residual)
@@ -210,11 +210,12 @@ jerk_at_one: 8.0
 jerk_at_zero: 20.0
 
 # --- Paths ------------------------------------------------------------------
-# Residual-specific rollout config: zeroes the env-level reward shaping
+# Residual-specific rollout config: uses task `puck_juggle_upper_half_reward`
+# (+1/step while puck in upper half) and zeroes the env-level reward shaping
 # coefficients (`diagonal_motion_rew`, `direction_change_rew`, `horizontal_vel_rew`,
-# `stand_still_rew`, `wall_bumping_rew`, `truncate_rew`) so per-step task reward
-# is the puck_velocity base reward only — matching the canonical sim
-# (`new_juggle/sysid_best_params.yaml`) the frozen base actor was trained on.
+# `stand_still_rew`, `wall_bumping_rew`, `truncate_rew`) — matching both the
+# canonical sim (`new_juggle/sysid_best_params.yaml`) the frozen base actor was
+# trained on AND the sim2sim residual config (`new_juggle/sim2sim_combined.yaml`).
 config: "configs/real_configs/rollout_config_residual.yaml"
 args_file: null
 log_parent_dir: "runs/async_td3/residual_v27"

@@ -134,7 +134,7 @@ Both [`td3_online.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_
 `_setup_run_data_dir` ([`helper/real_td3_runtime.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_td3_runtime.py)) creates a unified per-run folder:
 
 ```
-<data_root_dir>/<model_subdir>/data_<TIMESTAMP>/
+<data_root_dir>/data_<TIMESTAMP>/
     episode_hdf5/                    ← per-episode trajectories (ground truth)
     reset_hdf5/                      ← reset-FSM trajectories
     episode_gifs/, episode_camera_videos/

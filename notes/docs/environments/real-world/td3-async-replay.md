@@ -88,7 +88,7 @@ python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_re
 
 `--min-replay-size-before-learning 999999999` gates out learner updates (the gate is checked in the orchestrator's learner-step path in `async_td3_real.py`). `--warm-start-hdf5-dirs` with no value disables replay warm-start from HDF5.
 
-`--data-root-dir` is the single root for all collected per-episode artifacts (HDF5s, GIFs, camera videos). At startup, `_setup_run_data_dir` creates `<data_root_dir>/<model_path_parent_dir>/data_<YYYYMMDD-HHMMSS>/` and writes `episode_hdf5/`, `reset_hdf5/`, `episode_gifs/`, and `episode_camera_videos/` inside it. The `<model_path_parent_dir>` mirrors the directory portion of `--model-path` (e.g. `ex_model/new_td3_model/checkpoint_325000/`) so multiple runs against the same checkpoint share a parent.
+`--data-root-dir` is the single root for all collected per-episode artifacts (HDF5s, GIFs, camera videos). At startup, `_setup_run_data_dir` creates `<data_root_dir>/data_<YYYYMMDD-HHMMSS>/` and writes `episode_hdf5/`, `reset_hdf5/`, `episode_gifs/`, and `episode_camera_videos/` inside it. Each launch (fresh or resume) gets its own timestamped sibling directory directly under `data_root_dir`.
 
 ### Online training from a pretrained checkpoint (collect + train)
 

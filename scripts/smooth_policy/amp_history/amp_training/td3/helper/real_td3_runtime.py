@@ -251,7 +251,7 @@ def _build_collector_actor(
         hidden_layer_size=train_args.agent_hidden_layer_size,
         num_hidden_layers=train_args.agent_num_hidden_layers,
     ).to(device)
-    if args.full_checkpoint_load != "residual":
+    if args.full_checkpoint_load not in ("residual", "residual_resume"):
         base.eval()
         return base
     residual_head = DeterministicAgent(
@@ -773,7 +773,7 @@ class Args:
     learner_log_interval_sec: float = 60.0
     # Single root for all collected per-episode data (HDF5s, GIFs, camera videos).
     # `_setup_run_data_dir` creates the actual run folder at:
-    #   <data_root_dir>/<model_path_parent_dir>/data_<YYYYMMDD-HHMMSS>/
+    #   <data_root_dir>/data_<YYYYMMDD-HHMMSS>/
     # and populates `episode_artifact_dir`, `reset_artifact_dir`, `episode_gif_dir`,
     # and `episode_camera_video_dir` as runtime attributes pointing at subfolders.
     data_root_dir: str = "runs/async_td3/data"
@@ -2037,7 +2037,7 @@ def _run_sync_learner_iteration(
         actor_loss = -actor_objective.mean()
         residual_action_l2_loss: float | None = None
         if (
-            args.full_checkpoint_load == "residual"
+            args.full_checkpoint_load in ("residual", "residual_resume")
             and args.residual_action_l2 > 0.0
         ):
             residual_action = state.actor.residual.get_action(actor_policy_obs)
@@ -2049,7 +2049,7 @@ def _run_sync_learner_iteration(
         state.actor_optimizer.step()
         state.total_actor_updates += 1
         actor_updated = True
-        if state.actor_ema is not None and args.full_checkpoint_load == "residual":
+        if state.actor_ema is not None and args.full_checkpoint_load in ("residual", "residual_resume"):
             decay = float(args.residual_ema_decay)
             with torch.no_grad():
                 for ema_param, online_param in zip(
@@ -2104,34 +2104,10 @@ def _prompt_optional_run_note() -> str:
     return note
 
 
-def _model_path_subdir(model_path: str | None) -> Path:
-    """Return the per-model subdirectory used to scope collected data.
-
-    Mirrors the directory portion of `model_path` (i.e. everything except the
-    final `training_state.pth` / `model.pth` filename) so that runs collected
-    against the same checkpoint folder share a parent directory. Absolute model
-    paths are converted to a relative chain so they nest cleanly under
-    `data_root_dir` instead of escaping it.
-
-    Falls back to `no_model/` when no model is provided.
-    """
-    if model_path is None or not str(model_path).strip():
-        return Path("no_model")
-    model_dir = Path(str(model_path)).expanduser().parent
-    if model_dir.is_absolute():
-        # Drop the leading anchor (e.g. "/" on POSIX) so the path can be joined
-        # under data_root_dir without escaping it.
-        parts = model_dir.parts[1:]
-        return Path(*parts) if parts else Path("no_model")
-    if str(model_dir) in ("", "."):
-        return Path("no_model")
-    return model_dir
-
-
 def _setup_run_data_dir(args: Args, run_note: str) -> Path:
     """Create the unified per-run folder and route every artifact into it.
 
-    Layout (all under `<data_root_dir>/<model_subdir>/data_<TIMESTAMP>/`):
+    Layout (all under `<data_root_dir>/data_<TIMESTAMP>/`):
 
         episode_hdf5/             ← per-step trajectories
         reset_hdf5/               ← reset-FSM trajectories
@@ -2155,10 +2131,9 @@ def _setup_run_data_dir(args: Args, run_note: str) -> Path:
     To direct artifacts to a different location, change `--data-root-dir`.
     """
     data_root_base = Path(args.data_root_dir).expanduser().resolve()
-    model_subdir = _model_path_subdir(args.model_path)
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_data_dir = data_root_base / model_subdir / f"data_{timestamp}"
+    run_data_dir = data_root_base / f"data_{timestamp}"
     run_data_dir.mkdir(parents=True, exist_ok=True)
 
     # Episode/reset artifact subdirs are populated dynamically (not declared
@@ -2181,7 +2156,6 @@ def _setup_run_data_dir(args: Args, run_note: str) -> Path:
         note_path.write_text(run_note + "\n", encoding="utf-8")
 
     print(f"[run_data] all artifacts unified under: {run_data_dir}")
-    print(f"[run_data] model subdir: {model_subdir}")
     if (prior_checkpoint_root and str(prior_checkpoint_root).strip()) or (
         prior_log_parent and str(prior_log_parent).strip()
     ):

@@ -1105,29 +1105,27 @@ deploying.
 ### Data layout across resumes
 
 `_setup_run_data_dir` creates a **new** timestamped directory for **every
-launch** at `<data_root_dir>/<model_subdir>/data_<TIMESTAMP>/`. So a single
-training session that goes through `launch → checkpoint → kill → resume`
-produces two sibling directories:
+launch** at `<data_root_dir>/data_<TIMESTAMP>/`. So a single training
+session that goes through `launch → checkpoint → kill → resume` produces
+two sibling directories directly under `data_root_dir`:
 
 ```
 runs/async_td3/data/
-└── runs/td3_training/.../checkpoint_975000/
-    └── data_20260504-100000/                  ← initial launch
-        ├── episode_hdf5/                      ← episode IDs 0..N
-        ├── reset_hdf5/
-        ├── episode_summaries.jsonl
-        ├── run_events.jsonl
-        ├── collector_tb/  learner_tb/
-        └── checkpoint_step_50000/
-            ├── training_state.pth             ← <- you resume from this
-            ├── model.pth   args.yaml   config.yaml
-            └── qf1.pth ... qf5.pth
-└── runs/async_td3/data/<...>/data_20260504-100000/checkpoint_step_50000/
-    └── data_20260504-150000/                  ← resume launch (nested under prev ckpt)
-        ├── episode_hdf5/                      ← episode IDs 0..M (RESTART)
-        ├── episode_summaries.jsonl            ← per-launch
-        ├── collector_tb/  learner_tb/         ← per-launch
-        └── checkpoint_*/
+├── data_20260504-100000/                      ← initial launch
+│   ├── episode_hdf5/                          ← episode IDs 0..N
+│   ├── reset_hdf5/
+│   ├── episode_summaries.jsonl
+│   ├── run_events.jsonl
+│   ├── collector_tb/  learner_tb/
+│   └── checkpoint_step_50000/
+│       ├── training_state.pth                 ← <- you resume from this
+│       ├── model.pth   args.yaml   config.yaml
+│       └── qf1.pth ... qf5.pth
+└── data_20260504-150000/                      ← resume launch (sibling)
+    ├── episode_hdf5/                          ← episode IDs 0..M (RESTART)
+    ├── episode_summaries.jsonl                ← per-launch
+    ├── collector_tb/  learner_tb/             ← per-launch
+    └── checkpoint_*/
 ```
 
 What CONTINUES across launches (load-bearing for training):
