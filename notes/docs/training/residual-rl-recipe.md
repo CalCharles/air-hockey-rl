@@ -1,6 +1,33 @@
 # Residual RL recipe — by gap size
 
-**Status (2026-05-04):**
+> ## ✅ Canonical big-gap recipe (2026-05-08): `redesign_cql` on `warp075_p30`.
+>
+> **Target**: `configs/new_juggle/sim2sim_warp075_p30.yaml` (paddle −30% mass-preserved
+> + sine-y puck-obs warp 0.075; zs=48; from-scratch peak 112 at 400k).
+>
+> **Recipe**: CQL α=20, no BC anchor, no primitive exploration, num_critics=5,
+> residual_scale=0.15, q_updates=1, target_network_frequency=2 (Polyak fix from
+> 2026-05-06 active). Config: [`scripts/smooth_policy/amp_history/configs/td3/sim2sim/warp075_p30_residual/redesign_cql_1M.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3/sim2sim/warp075_p30_residual/redesign_cql_1M.yaml).
+>
+> **1M result, single seed**: trajectory rises through 600k, plateaus at mean **95**
+> with band [74, 116] in 600k–1M. Peak 154.8 @ 492k (3.2× zs, 1.4× from-scratch peak).
+> Acceptance: band lower edge sustained at zs+26, mean +47 above zs. See
+> [`notes/scratch/experiments/2026-05-07_21-30_residual-on-warp075-p30.md`](../../scratch/experiments/2026-05-07_21-30_residual-on-warp075-p30.md).
+>
+> **The previous big-gap target (`sim2sim_combined.yaml`, paddle50) is deprecated** —
+> structurally untrainable from-scratch (3.85M peak 84, mean 47), making any
+> "improvement over zs" claim on it unfalsifiable. All v25–v30 paddle50 recipes
+> (`v27_ensemble5`, `v29_redq10`, `v30_explore_lite`, …) were also confounded by
+> the silent Polyak-averaging bug discovered 2026-05-06. Sections below covering
+> v27 / v30_explore_lite are historical record only; **do not use them as
+> recipe-level guidance**. Small-gap recipe (`td3_sim2sim_residual.yaml`,
+> `recency_top50`) is unaffected and still applies for <10% zs drops.
+>
+> **Round-2 ablations on the new target (all hurt vs CQL alone at 300k):**
+> BC λ=0.5 (−10), BC λ=1.0 (−13), N=10 (−11 in back-half), CQL+exploration (−19 to −31).
+> Lesson: CQL alone is sufficient; stacking additional anchoring or exploration suppresses learning.
+
+**Status (2026-05-04, superseded as of 2026-05-07):**
 
 Two recipes for big-gap; pick by deployment style.
 

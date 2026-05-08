@@ -58,6 +58,30 @@ If configured bounds exceed these, reachable motion is still capped by table wal
   - `delay_relative_range` controls multiplicative half-width (for example `0.25` means `delay_seconds * [0.75, 1.25]` before clamping).
 - Observation-delay snapshots can show stale paddle `acceleration`/`jerk` fields because those derivatives are refreshed after the full step; positions/velocities remain mid-step consistent.
 
+### ⚠ Subtle side effect: `enable_observation_delay` changes `puck_history` sampling rate
+
+`get_singleagent_transition` (`airhockey_box2d.py:1681`) splits each 20 Hz
+env step into one or more sub-steps based on the breakpoints
+`{0, t_obs, t_action, time_per_step}`. The paddle/puck history lists
+are appended **inside** that sub-step loop (line 1830 / 1837), so the
+number of history entries per env step depends on which delay toggles
+are on:
+
+| Config | Sub-steps / env step | Appends / env step | Effective sampling rate |
+|---|---:|---:|---:|
+| `enable_observation_delay: true`  (canonical baseline) | 2 | 2 | ~40 Hz |
+| `enable_observation_delay: false` (e.g. zero-shot ablation) | 1 | 1 | 20 Hz |
+
+The 20 Hz **env / control step** is unchanged by either setting (every
+`step()` advances sim time by exactly `time_per_step = 1/20 s`). What
+changes is the temporal *density* of the puck/paddle history that the
+policy reads via `puck_history[-5:]` / `paddle_history[-5:]` (see
+[`obs construction`](../observation-action-spaces.md#temporal-density-caveat)).
+The real-world simulator (`air_hockey_real.py:1549`) does not have a
+sub-step loop and appends exactly once per 20 Hz env step — so it
+matches the `enable_observation_delay: false` density, **not** the
+canonical training density.
+
 ## Paddle-puck contact caveat (important)
 
 Empirically in this Box2D setup, paddle-puck outcomes are often less stable than expected from ideal rigid-body intuition:
@@ -337,7 +361,7 @@ Outputs `runs/collision_adaptation/adaptation_history.json` with per-iteration s
 #### How it works
 
 1. During each episode, paddle-puck collision steps are detected by monitoring `get_collision_forces()` incrementally (checks `bodyA`/`bodyB` for `"paddle"` and `"puck"`).
-2. After the episode ends, `env.simulator.puck_history` (a `[x, y, occluded]` list at 20 Hz, with observation noise and delay applied) is retrieved. The first 5 entries are spawn-time padding; episode step k maps to index `5+k`.
+2. After the episode ends, `env.simulator.puck_history` (a `[x, y, occluded]` list with observation noise and delay applied) is retrieved. The first 5 entries are spawn-time padding. **The step→index mapping depends on `enable_observation_delay`** (see [delay toggles side-effect](#-subtle-side-effect-enable_observation_delay-changes-puck_history-sampling-rate) above): with delay on (canonical baseline), each env step appends 2 entries, so step `k` maps to index `5 + 2*k` (and `puck_history` ends up at ~40 Hz density). With delay off, step `k` maps to `5 + k` (20 Hz). The position-based collision-window code below was originally written assuming the `5 + k` mapping; if you run it against the canonical baseline, double-check the windowing.
 3. For each detected collision at step `col_idx`:
    - **Pre-collision window**: `positions[col_idx − W : col_idx]` — excludes `col_idx` itself because the position at that index is post-impact (physics runs before position is appended).
    - **Post-collision window**: `positions[col_idx : col_idx + W]` — the first entry is the first free-flight frame after impact.
@@ -403,14 +427,31 @@ The [0.5, 1.0, 2.0] case avoids this because oracle mid = 1.0 keeps the mid-tier
 - **Low tier is always hard**: juggling generates very few slow collisions (9–23/iter at 100 episodes). Low-tier estimates are noisy regardless of the velocity estimation method.
 - **Distribution shift**: any oracle configuration that substantially changes the puck speed distribution (by boosting or damping high-speed bounces) will contaminate the mid and high tier estimates through tier-boundary crossovers. This is a fundamental limitation of single-level bucketing.
 
-## Observation homography (sim-to-real)
+## Puck observation sine y-warp (sim2sim perception error)
 
-When `obs_position_homography` is enabled in the simulator config, observations are warped through a perspective homography matrix before reaching the policy. This simulates camera-like positional distortion for sim-to-real transfer training.
+Edge-preserving sine warp on the puck's `y` (sideways) observation only. Models a partially-calibrated overhead tracker — corners anchored to the table side walls, interior reads bow off-true. Lives in `airhockey/observation_homography.py:apply_sine_y_warp_xy` and is plumbed through `airhockey/utils.py` via the `puck_obs_warp_fn` kwarg.
 
-- The homography matrix can be overridden via training args.
-- [`validate_obs_homography_gif.py`](../../../../scripts/smooth_policy/validate_obs_homography_gif.py) renders world-space frames with the homography warp applied, for visual verification.
+```
+y_obs = y_true + A · sin(π · (y_true − y_left) / (y_right − y_left))
+x_obs = x_true                                    # x is unchanged
+```
 
-This is a separate feature from the real camera homography documented in [`../real-world/homography.md`](../real-world/homography.md).
+- Edges preserved: `y_obs == y_true` at both side walls.
+- Peak deviation `+A` at the midline (`y = 0`).
+- Monotonic iff `|A| < (y_right − y_left) / π ≈ 0.275 m` at full table width. Enforced by `make_sine_y_warp_fn`.
+- Paddle observations untouched. Physics untouched (collisions still resolve at the *true* puck position; only what gets written into the puck-history slots of the obs vector is warped).
+
+**Config keys** (in `air_hockey.simulator_params`):
+
+| Key | Default | Meaning |
+|---|---:|---|
+| `puck_obs_sine_warp_amplitude` | `0.0` | `A` in meters. `0.0` = warp disabled (no-op, `puck_obs_warp_fn` is `None`). |
+| `puck_obs_sine_warp_y_left`  | `null` | Left edge of the warp domain. `null` defaults to `−width/2`. |
+| `puck_obs_sine_warp_y_right` | `null` | Right edge. `null` defaults to `+width/2`. |
+
+**Canonical sim2sim target using this warp**: `scripts/smooth_policy/amp_history/configs/new_juggle/sim2sim_combined_warp.yaml` (paddle50 + dynamics deltas + `A = 0.05 m`). See [`notes/scratch/experiments/2026-05-07_02-05_sim2sim-puck-obs-warp.md`](../../../scratch/experiments/2026-05-07_02-05_sim2sim-puck-obs-warp.md) for the rationale and the visualization at `/tmp/sine_warp_viz.png`.
+
+The older `obs_position_homography` (3×3 perspective matrix applied to both paddle and puck) was removed in favor of this puck-only mechanism. See the experiment writeup for what was removed.
 
 ## Paddle boundary visualization utility
 

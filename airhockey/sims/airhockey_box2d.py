@@ -9,7 +9,7 @@ import yaml
 import inspect
 from types import SimpleNamespace
 from ..utils import dict_to_namespace
-from ..observation_homography import sample_near_identity_homography
+from ..observation_homography import make_sine_y_warp_fn
 
 from matplotlib import pyplot as plt
 
@@ -606,13 +606,13 @@ class AirHockeyBox2D:
             'jerk_estop_consecutive_threshold': 18.0,
             'jerk_estop_avg_window_steps': 50,
             'jerk_estop_avg_threshold': 15.0,
-            # Optional observation-only position mismatch using a shared
-            # world-plane homography for paddle and puck positions.
-            'enable_obs_position_homography': False,
-            # If provided, must be a 3x3 matrix (or flat length-9 array).
-            'obs_position_homography_matrix': None,
-            # Used only when enabled and matrix is None.
-            'obs_position_homography_seed': 0,
+            # Edge-preserving sine warp on the puck-y observation only
+            # (paddle obs untouched). Models a systematic perception error
+            # in the lateral axis. Disabled when amplitude == 0.
+            # Defaults for y_left / y_right are the table side walls.
+            'puck_obs_sine_warp_amplitude': 0.0,
+            'puck_obs_sine_warp_y_left': None,
+            'puck_obs_sine_warp_y_right': None,
             # Optionally replace returned state-info motion values to mimic
             # unavailable real-world velocity/jerk sensing.
             'enable_fixed_state_velocity_jerk': False,
@@ -636,24 +636,16 @@ class AirHockeyBox2D:
 
         kwargs = {**defaults, **kwargs}
         config = dict_to_namespace(kwargs)
-        self.enable_obs_position_homography = bool(config.enable_obs_position_homography)
-        self.obs_position_homography = None
-        if self.enable_obs_position_homography:
-            matrix_cfg = config.obs_position_homography_matrix
-            if matrix_cfg is not None:
-                matrix = np.asarray(matrix_cfg, dtype=np.float64)
-                if matrix.size != 9:
-                    raise ValueError(
-                        "obs_position_homography_matrix must have exactly 9 values."
-                    )
-                matrix = matrix.reshape(3, 3)
-                if abs(matrix[2, 2]) < 1e-8:
-                    raise ValueError("obs_position_homography_matrix[2, 2] must be non-zero.")
-                self.obs_position_homography = matrix / matrix[2, 2]
-            else:
-                homography_seed = int(config.obs_position_homography_seed)
-                rng = np.random.default_rng(homography_seed)
-                self.obs_position_homography = sample_near_identity_homography(rng)
+        warp_amp = float(config.puck_obs_sine_warp_amplitude)
+        warp_y_left = config.puck_obs_sine_warp_y_left
+        warp_y_right = config.puck_obs_sine_warp_y_right
+        if warp_y_left is None:
+            warp_y_left = -float(config.width) / 2.0
+        if warp_y_right is None:
+            warp_y_right = float(config.width) / 2.0
+        self.puck_obs_warp_fn = make_sine_y_warp_fn(
+            warp_amp, float(warp_y_left), float(warp_y_right)
+        )
         self.enable_fixed_state_velocity_jerk = bool(config.enable_fixed_state_velocity_jerk)
         self.mask_puck_velocity = bool(config.mask_puck_velocity)
         self.fixed_state_paddle_velocity = self._coerce_fixed_xy_pair(

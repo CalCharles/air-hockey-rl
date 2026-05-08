@@ -19,14 +19,49 @@ Each triplet is `[x_pos, y_pos, valid_flag]`:
 - `x_pos`, `y_pos` — position in metres in the table coordinate frame
 - `valid_flag` — `1.0` = valid reading, `0.0` = occluded / missing (Box2D random-occlusion or real-world detection gap)
 
-Named slice indices used by training code:
+Named slice indices used by **training code** (reward shaping; not part of the policy network input):
 
 | Slice | Content | Source |
 |-------|---------|--------|
 | `[12:14]` | current paddle position (x, y) | `extract_current_paddle_position` |
 | `[15:17]` | oldest puck position (t-4) | velocity estimate denominator |
 | `[27:29]` | current puck position (x, y) | `extract_current_puck_position` |
-| `[27:29] − [15:17]` | estimated puck velocity (proxy) | `extract_current_puck_velocity` |
+| `[27:29] − [15:17]` | estimated puck velocity (proxy) — **used by reward shaping (`velocity_reward_from_magnitude`, `jerk_reward_from_magnitude`); NOT inserted into the obs vector seen by the actor/critic.** The policy reads only the raw 30 (or 32) dims and is expected to learn its own velocity sense from the position history. | `extract_current_puck_velocity` (`td3_training.py:333`) |
+
+### Temporal density caveat
+
+The "oldest t-4 … newest t" labelling above is index-based, not
+real-time-based. The **time between consecutive history entries
+depends on the simulator and on `enable_observation_delay`**:
+
+| Source | Spacing | 5-entry window |
+|---|---:|---:|
+| Box2D `enable_observation_delay: true` (canonical baseline) | ~25 ms | ~125 ms |
+| Box2D `enable_observation_delay: false` | ~50 ms | ~250 ms |
+| Real-world (`air_hockey_real.py`) | ~50 ms (20 Hz, no sub-step loop) | ~250 ms |
+
+This is a side effect of `puck_history.append` living inside the
+breakpoints sub-step loop in `airhockey_box2d.py:1830` — see
+[`box2d/simulator-essentials.md`](box2d/simulator-essentials.md#-subtle-side-effect-enable_observation_delay-changes-puck_history-sampling-rate)
+for the mechanism.
+
+Implications:
+
+- The "puck velocity proxy" magnitude (`obs[27:29] − obs[15:17]`) is
+  computed as a **raw position delta** with no time-normalisation. The
+  same physical puck velocity produces a 2× larger raw delta when the
+  history density is 20 Hz (delay-off / real-world) than when it is
+  40 Hz (canonical training).
+- The reward-shaping thresholds `velocity_at_one`, `velocity_at_zero`,
+  `jerk_at_one`, `jerk_at_zero` (set in TD3 args) are calibrated for
+  the canonical 40 Hz training density. They are **not** valid as-is
+  for any other density.
+- The canonical `hist2_motion0_v2`-style training therefore uses a
+  history density that does **not** match real-world deployment — a
+  silent sim-to-real obs distribution gap independent of any explicit
+  domain-randomization knob. See
+  [`scratch/experiments/2026-05-05_17-38_zero-shot-sim2real-ablations.md`](../../scratch/experiments/2026-05-05_17-38_zero-shot-sim2real-ablations.md)
+  for the failed `no_obs_delay` ablation that surfaced this.
 
 ### Policy observation (with last action)
 
