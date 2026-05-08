@@ -9,6 +9,7 @@ Compared to SAC+AMP:
 """
 
 import copy
+import math
 import os
 import random
 import time
@@ -588,6 +589,14 @@ class Args:
     #     direct counter to drift: pulls residual outputs toward zero so the
     #     wrapped policy stays close to the frozen base.
     residual_action_l2: float = 0.0
+    # CQL (Kumar et al. 2020): conservative-Q penalty on critic loss.
+    # If cql_alpha > 0, add `cql_alpha * (logsumexp_a Q(s,a) - Q(s, pi(s)))` to
+    # each critic's task-head loss. logsumexp is approximated by sampling
+    # `cql_n_random` uniform actions in [-1,1]^act_dim per state. Pushes Q down
+    # for OOD actions while keeping Q up for the policy's action — the canonical
+    # fix for the Q-overestimation drift mechanism §8.13 documented.
+    cql_alpha: float = 0.0
+    cql_n_random: int = 10
     # Fine-tune replay seeding: when full_checkpoint_load=="fine_tune", how many
     # samples (total, split proportionally between success/failure) to subsample
     # from the source replay buffer into the fresh target buffers. None or 0
@@ -717,6 +726,15 @@ if __name__ == "__main__":
         raise ValueError("target_network_frequency must be > 0.")
     if args.actor_updates_per_iteration <= 0:
         raise ValueError("actor_updates_per_iteration must be > 0.")
+    if args.target_network_frequency > args.q_updates:
+        # The Polyak gate counts completed critic updates globally (see
+        # total_critic_updates), so this still fires — just less often than once
+        # per cycle. Loud warning anyway since it's almost always a config typo.
+        print(
+            f"[warn] target_network_frequency ({args.target_network_frequency}) "
+            f"> q_updates ({args.q_updates}); target nets will update less than "
+            f"once per training cycle."
+        )
     validate_optional_exploration_range(
         primitive_name="same_direction",
         min_angle_deg=args.exploration_same_direction_min_angle_deg,
@@ -1179,6 +1197,11 @@ if __name__ == "__main__":
     start_time = time.time()
     global_step = 0
     iteration = 0
+    # Counts completed critic updates across all training cycles. Used to gate
+    # Polyak averaging by `target_network_frequency` so the schedule survives
+    # cycles where q_updates < target_network_frequency or where a critic step
+    # is skipped (empty replay batch).
+    total_critic_updates = 0
 
     train_metrics = initialize_train_metrics()
 
@@ -1302,6 +1325,7 @@ if __name__ == "__main__":
         )
         global_step = restored_state["global_step"]
         iteration = restored_state["iteration"]
+        total_critic_updates = restored_state["total_critic_updates"]
         obs = restored_state["obs"]
         previous_puck_position_for_trigger = extract_current_puck_position(
             torch.tensor(obs, dtype=torch.float32, device=args.device)
@@ -1867,6 +1891,29 @@ if __name__ == "__main__":
                 qi_motion_err_list = []
                 qi_task_loss_list = []
                 qi_motion_loss_list = []
+                # Pre-compute CQL random actions and policy action once per minibatch
+                # (shared across critics — random sampling and policy forward are
+                # independent of which critic we're scoring).
+                if args.cql_alpha > 0.0:
+                    bsz = sampled_observations.shape[0]
+                    n_rand = int(args.cql_n_random)
+                    # Uniform random actions in [-1, 1]^act_dim. Action space is
+                    # symmetric ([-1,1]) for this env so this is the full support.
+                    cql_random_actions = torch.empty(
+                        n_rand * bsz, act_dim, device=args.device
+                    ).uniform_(-1.0, 1.0)
+                    cql_obs_repeat = sampled_observations.unsqueeze(0).expand(
+                        n_rand, -1, -1
+                    ).reshape(n_rand * bsz, -1)
+                    cql_policy_obs = augment_policy_observation(
+                        sampled_observations,
+                        sampled_prev_actions,
+                        args.use_last_action_in_policy_state,
+                    )
+                    with torch.no_grad():
+                        cql_policy_action = deterministic_actor_action(
+                            actor, cql_policy_obs
+                        )
                 for q in qfs:
                     qi_task_h, qi_motion_h = q(sampled_observations, sampled_actions)
                     qi_task_err = qi_task_h.view(-1) - next_q_task_value_h
@@ -1875,7 +1922,21 @@ if __name__ == "__main__":
                     qi_motion_h_list.append(qi_motion_h)
                     qi_task_err_list.append(qi_task_err)
                     qi_motion_err_list.append(qi_motion_err)
-                    qi_task_loss_list.append((sampled_weights * qi_task_err.pow(2)).mean())
+                    task_loss_i = (sampled_weights * qi_task_err.pow(2)).mean()
+                    if args.cql_alpha > 0.0:
+                        # Q for random actions: shape (n_rand, bsz, 1) after reshape.
+                        q_rand_task_h, _ = q(cql_obs_repeat, cql_random_actions)
+                        q_rand_task_h = q_rand_task_h.view(n_rand, bsz)
+                        # Q for current policy action (no actor gradient).
+                        q_pi_task_h, _ = q(sampled_observations, cql_policy_action)
+                        q_pi_task_h = q_pi_task_h.view(-1)
+                        # log(1/n_rand * sum exp Q) = logsumexp - log(n_rand)
+                        cql_logsumexp = (
+                            torch.logsumexp(q_rand_task_h, dim=0) - math.log(float(n_rand))
+                        )
+                        cql_penalty = (cql_logsumexp - q_pi_task_h).mean()
+                        task_loss_i = task_loss_i + args.cql_alpha * cql_penalty
+                    qi_task_loss_list.append(task_loss_i)
                     qi_motion_loss_list.append((sampled_weights * qi_motion_err.pow(2)).mean())
                 # Legacy aliases — used by debug logs and PER on N=2.
                 q1_task_h, q1_motion_h = qi_task_h_list[0], qi_motion_h_list[0]
@@ -1989,7 +2050,8 @@ if __name__ == "__main__":
                         train_metrics["losses/q_min_motion_mean"] = all_motion_h.min(dim=0).values.mean().item()
                         train_metrics["losses/q_mean_task_mean"] = all_task_h.mean().item()
 
-                if (q_update_idx + 1) % args.target_network_frequency == 0:
+                total_critic_updates += 1
+                if total_critic_updates % args.target_network_frequency == 0:
                     for param, target_param in zip(actor.parameters(), actor_target.parameters()):
                         target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
                     for q, qt in zip(qfs, qfs_target):
@@ -2269,6 +2331,7 @@ if __name__ == "__main__":
             training_state = build_training_state(
                 global_step=global_step,
                 iteration=iteration,
+                total_critic_updates=total_critic_updates,
                 actor=actor,
                 actor_target=actor_target,
                 qf1=qf1,
@@ -2359,6 +2422,7 @@ if __name__ == "__main__":
         final_training_state = build_training_state(
             global_step=global_step,
             iteration=iteration,
+            total_critic_updates=total_critic_updates,
             actor=actor,
             actor_target=actor_target,
             qf1=qf1,

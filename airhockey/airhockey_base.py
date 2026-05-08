@@ -240,7 +240,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.goal_set = None
 
         self._base_get_observation_by_type = get_observation_by_type
-        self.get_observation_by_type = self._get_observation_by_type_with_position_homography
+        self.get_observation_by_type = self._get_observation_by_type_with_puck_warp
         self.obs_type = config.obs_type
         
         self.num_pucks = config.num_pucks
@@ -352,11 +352,11 @@ class AirHockeyBaseEnv(ABC, Env):
         obs = self.get_observation(state_info, obs_type=self.obs_type, puck_history=self.simulator.puck_history, paddle_history=self.simulator.paddle_history)
         return obs, state_info
 
-    def _get_observation_by_type_with_position_homography(self, state_info, obs_type='vel', **kwargs):
+    def _get_observation_by_type_with_puck_warp(self, state_info, obs_type='vel', **kwargs):
         return self._base_get_observation_by_type(
             state_info,
             obs_type=obs_type,
-            position_homography=getattr(self.simulator, "obs_position_homography", None),
+            puck_obs_warp_fn=getattr(self.simulator, "puck_obs_warp_fn", None),
             **kwargs,
         )
 

@@ -93,10 +93,12 @@ air_hockey:
     delay_relative_range: 0.3
     randomize_delay: true
 
-    # ADDITIONAL OBSERVATION POSITION HOMOGRAPHY (fixed seed)
-    enable_obs_position_homography: true
-    obs_position_homography_matrix: null
-    obs_position_homography_seed: 0
+    # NOTE 2026-05-07: the obs_position_homography mechanism was removed
+    # from box2d (it warped both paddle and puck via a 3x3 perspective
+    # matrix). Replacement for sim2sim perception-error testing is the
+    # puck-only sine y-warp; see notes/docs/environments/box2d/simulator-essentials.md.
+    # This config doesn't enable the new warp because it's already labeled
+    # legacy (superseded by td3_real_world/td3_online.yaml).
 
     # ADDITIONAL RANDOM OCCLUSION NEAR PADDLE
     random_occlusion_near_paddle_boost: true

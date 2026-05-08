@@ -107,6 +107,7 @@ def load_resume_training_state(
     return {
         "global_step": int(resume_checkpoint["global_step"]),
         "iteration": int(resume_checkpoint["iteration"]),
+        "total_critic_updates": int(resume_checkpoint.get("total_critic_updates", 0)),
         "obs": np.asarray(resume_checkpoint["obs"], dtype=np.float32),
         "last_action_for_policy": resume_checkpoint["last_action_for_policy"].to(device),
         "warm_policy_last_action": resume_checkpoint.get(
@@ -271,6 +272,7 @@ def build_training_state(
     *,
     global_step: int,
     iteration: int,
+    total_critic_updates: int = 0,
     actor,
     actor_target,
     qf1,
@@ -315,6 +317,7 @@ def build_training_state(
         "checkpoint_version": 2,
         "global_step": global_step,
         "iteration": iteration,
+        "total_critic_updates": int(total_critic_updates),
         "actor": actor.state_dict(),
         "actor_target": actor_target.state_dict(),
         "qf1": qf1.state_dict(),

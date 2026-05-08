@@ -87,7 +87,7 @@ Heavily modified config for sim-to-real gap adaptation, used by `td3_no_alignmen
 - Lighter, more sensitive paddle: `paddle_density: 800`
 - Lower damping: `puck_damping: 0.1`
 - Lower restitution: `puck_restitution: 0.9`, `side_wall_restitution: 0.8`, `end_wall_restitution: 0.9`
-- Observation position homography: fixed random homographic distortion of observed positions
+- ~~Observation position homography~~ — **removed 2026-05-07** when the box2d homography mechanism was deprecated in favor of the puck-only sine y-warp (see [`environments/box2d/simulator-essentials.md`](../environments/box2d/simulator-essentials.md#puck-observation-sine-y-warp-sim2sim-perception-error)). The 3 `obs_position_homography*` keys were stripped from this yaml; the rest of the config is unchanged.
 - Fixed state velocity/jerk initialization: paddle spawns with nonzero velocity/jerk; puck velocity masked
 - Jerk e-stop simulation: terminates episode if jerk exceeds thresholds over a rolling window
 - Longer observation delay: 30ms ± 30%

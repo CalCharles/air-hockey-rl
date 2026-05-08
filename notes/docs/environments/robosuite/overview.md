@@ -656,9 +656,11 @@ changes.** All gaps live in env/sim code or the YAML you point `--config` at.
    silent at the default coeff of 0.0 — but turning the coeff on with a
    robosuite sim would silently stop firing the penalty.
 
-8. **`obs_position_homography`** is not exposed (`getattr(..., None)` → no-op).
-   Acceptable; just means real-world homography augmentation has no robosuite
-   counterpart.
+8. **`puck_obs_warp_fn`** (the puck-only sine y-warp introduced 2026-05-07,
+   replacing the older `obs_position_homography` mechanism) is not exposed
+   on the robosuite sim — `getattr(simulator, "puck_obs_warp_fn", None)`
+   returns `None` and the obs builder short-circuits. Acceptable; the
+   sim2sim perception-error mechanism is box2d-only by design.
 
 9. **No `soft_reset`.** The real-world adapter has it; Box2D and robosuite
    don't. Only used by some real-world flows, not by `td3_training.py`.
