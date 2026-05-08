@@ -936,8 +936,9 @@ def enter_reset_mode(
     capture_second_hit_frame: bool,
     async_second_hit_write: bool,
     show_second_hit_window: bool,
+    fsm_cls=ResetPolicyFSM,
 ) -> tuple[str, ResetPolicyFSM]:
-    reset_fsm = ResetPolicyFSM(
+    reset_fsm = fsm_cls(
         eval_env,
         rng,
         post_window_debug_log=post_window_debug_log,
@@ -1175,8 +1176,34 @@ if __name__ == "__main__":
         default=0,
         help="Print average control-loop time every N steps (0 disables).",
     )
+    parser.add_argument(
+        "--use-hybrid-fsm",
+        action="store_true",
+        help="Use ResetPolicyHybridFSM (programmatic edge-loop + first burst, then frozen juggle policy for the second hit) instead of the legacy ResetPolicyFSM. For isolated testing of the hybrid reset path.",
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Minimal-output mode for watching the FSM: silences simulator [control_debug] prints and the FSM normal-force log, suppresses per-step verbose loop output, and prints one line per (mode, phase) transition instead. Overrides --verbose.",
+    )
+    parser.add_argument(
+        "--force-end-side",
+        choices=("left", "right", "random"),
+        default="random",
+        help="Force the edge-loop FSM such that the paddle ENDS at this side (sweeping from the opposite side toward this one). Useful for reproducing side-specific bugs. Default 'random' uses the FSM's normal coin-flip.",
+    )
+    parser.add_argument(
+        "--continuous",
+        action="store_true",
+        help="Continuous reset testing: immediately start a new reset cycle after each FSM completion (success or hard_reset_required), instead of returning to normal mode and risking the episode_done hard-reset loop. Pauses 1s between cycles.",
+    )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
+    if args.use_hybrid_fsm:
+        from scripts.real.rollout_reset_policy_hybrid import ResetPolicyHybridFSM
+        reset_fsm_cls = ResetPolicyHybridFSM
+    else:
+        reset_fsm_cls = ResetPolicyFSM
     if not (0.0 <= float(args.shared_success_threshold_proportion_from_bottom) <= 1.0):
         parser.error("--shared-success-threshold-proportion-from-bottom must be in [0.0, 1.0].")
     if int(args.timing_log_every) < 0:
@@ -1188,6 +1215,14 @@ if __name__ == "__main__":
     sim_params = params.get("simulator_params", {})
     if isinstance(sim_params, dict):
         sim_params["wait_for_space_to_start"] = False
+        if args.quiet:
+            # Silence the simulator's per-step [control_debug] firehose so
+            # the FSM phase transitions are visible. Overrides whatever the
+            # YAML config sets.
+            sim_params["debug_control"] = False
+    if args.quiet and args.verbose:
+        print("[quiet_mode] --quiet supersedes --verbose; suppressing per-step output.")
+        args.verbose = False
     params["max_timesteps"] = max(400, int(params.get("max_timesteps", 300)))
     eval_env = AirHockeyEnv(params)
     model, use_last_action, last_action_for_policy = build_model_if_requested(args, eval_env)
@@ -1197,6 +1232,29 @@ if __name__ == "__main__":
     obs_type = params.get("obs_type", "history")
     obs = build_obs_from_state(state, obs_type=obs_type)
     rng = np.random.default_rng(int(params.get("seed", 0)))
+    if args.force_end_side != "random":
+        # Wrap the rng so .random() always forces the desired end-side in
+        # ResetPolicyFSM._build_edge_loop_path. The FSM's `start_side`
+        # names where the paddle BEGINS the sweep; the paddle ENDS at the
+        # opposite side. So end='right' wants start_side='left' (rng.random()
+        # < 0.5 → return 0.0); end='left' wants start_side='right' (return
+        # 0.999). All non-random rng methods pass through unchanged so
+        # rng.uniform(...) for strike_mag / puck_proximity_m keep stochasticity.
+        class _ForcedSideRng:
+            def __init__(self, base, forced_value):
+                object.__setattr__(self, "_base", base)
+                object.__setattr__(self, "_forced_random", forced_value)
+            def random(self):
+                return self._forced_random
+            def __getattr__(self, name):
+                return getattr(self._base, name)
+        forced_value = 0.0 if args.force_end_side == "right" else 0.999
+        forced_start = "left" if args.force_end_side == "right" else "right"
+        rng = _ForcedSideRng(rng, forced_value)
+        print(
+            f"[force_end_side] every reset will end at side='{args.force_end_side}' "
+            f"(FSM start_side='{forced_start}')."
+        )
     reset_fsm = None
     mode = "normal"
     fail_counters = {"bottom": 0, "occ": 0}
@@ -1215,6 +1273,9 @@ if __name__ == "__main__":
     step_counter = 0
     timing_accum_s = 0.0
     timing_count = 0
+    prev_quiet_state = ("normal", "-") if args.quiet else None
+    if args.quiet:
+        print("[quiet_mode] tracking FSM (mode, phase) transitions; one line per change.")
     with NonBlockingConsole() as nbc:
         while True:
             loop_t0 = time.perf_counter()
@@ -1268,8 +1329,12 @@ if __name__ == "__main__":
                     capture_second_hit_frame=timing_flags["capture_second_hit_frame"],
                     async_second_hit_write=timing_flags["async_second_hit_write"],
                     show_second_hit_window=timing_flags["show_second_hit_window"],
+                    fsm_cls=reset_fsm_cls,
                 )
+                if args.quiet and reset_fsm is not None:
+                    reset_fsm.force_log_interval_steps = 0
 
+            mode_before_handle = mode
             if mode == "reset":
                 (
                     action,
@@ -1314,6 +1379,50 @@ if __name__ == "__main__":
                     f"occ={int(np.asarray(puck.get('occluded', 0)).reshape(-1)[0])} "
                     f"rew={float(reward):+.3f} done={terminated or truncated}"
                 )
+            if args.quiet:
+                # One-line print on (mode, phase) change: shows the FSM
+                # state machine moving through phases without per-step noise.
+                curr_phase = reset_fsm.phase if reset_fsm is not None else "-"
+                curr_state = (mode, curr_phase)
+                if curr_state != prev_quiet_state:
+                    puck = state["pucks"][0]
+                    paddle = state["paddles"]["paddle_ego"]
+                    prev_label = f"{prev_quiet_state[0]}/{prev_quiet_state[1]}"
+                    curr_label = f"{curr_state[0]}/{curr_state[1]}"
+                    print(
+                        f"[phase] step={step_counter:5d} {prev_label:>32s} -> {curr_label:<32s} "
+                        f"puck=({float(puck['position'][0]):+.3f},{float(puck['position'][1]):+.3f}) "
+                        f"paddle_x={float(paddle['position'][0]):+.3f} "
+                        f"occ={int(np.asarray(puck.get('occluded', 0)).reshape(-1)[0])}"
+                    )
+                    prev_quiet_state = curr_state
+
+            fsm_just_completed = (mode_before_handle == "reset" and mode == "normal")
+            if args.continuous and fsm_just_completed:
+                # FSM just finished (success or hard_reset_required). Skip the
+                # episode_done hard-reset path entirely and immediately stage
+                # another reset cycle. This is what the test harness exists for.
+                print("[continuous] FSM cycle done; pausing 1s then starting next cycle.")
+                time.sleep(1.0)
+                state, obs = refresh_state_obs(eval_env, obs_type=obs_type)
+                mode, reset_fsm = enter_reset_mode(
+                    eval_env,
+                    rng,
+                    post_window_debug_log=args.post_window_debug_log,
+                    shared_success_threshold_proportion_from_bottom=(
+                        args.shared_success_threshold_proportion_from_bottom
+                    ),
+                    reason="continuous_test_cycle",
+                    show_reset_path_overlay=timing_flags["show_reset_path_overlay"],
+                    capture_second_hit_frame=timing_flags["capture_second_hit_frame"],
+                    async_second_hit_write=timing_flags["async_second_hit_write"],
+                    show_second_hit_window=timing_flags["show_second_hit_window"],
+                    fsm_cls=reset_fsm_cls,
+                )
+                if args.quiet and reset_fsm is not None:
+                    reset_fsm.force_log_interval_steps = 0
+                fail_counters = {"bottom": 0, "occ": 0}
+                continue
 
             if mode == "normal" and bool(terminated or truncated):
                 hard_reset_with_pause(
@@ -1379,7 +1488,10 @@ if __name__ == "__main__":
                     capture_second_hit_frame=timing_flags["capture_second_hit_frame"],
                     async_second_hit_write=timing_flags["async_second_hit_write"],
                     show_second_hit_window=timing_flags["show_second_hit_window"],
+                    fsm_cls=reset_fsm_cls,
                 )
+                if args.quiet and reset_fsm is not None:
+                    reset_fsm.force_log_interval_steps = 0
                 fail_counters = {"bottom": 0, "occ": 0}
             elif key == "x":
                 print("Exiting...")

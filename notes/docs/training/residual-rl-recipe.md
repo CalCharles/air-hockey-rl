@@ -952,7 +952,105 @@ If you set `residual_ema_decay: 0.9999`, also use `bash scripts/smooth_policy/ev
 
 ---
 
-## Real-world residual — v27 (canonical)
+## Real-world residual — overview
+
+Two recipes available, both wired into [`extras/async_td3_real.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py):
+
+| Recipe | Args-file | When to use |
+|---|---|---|
+| **CQL (canonical, 2026-05-08)** | [`td3_real_world/td3_residual_cql.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_cql.yaml) | **Default for sim2real big-gap fine-tuning.** v27 base + `cql_alpha: 20.0` + `actor_updates_per_iteration: 2`. Sim2sim 1M-verified on warp075_p30 (paddle -30% + sine-y warp). |
+| **No-CQL baseline (v27 Maxmin-5)** | [`td3_real_world/td3_residual.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml) | Pre-2026-05-08 canonical. Kept on disk as a regression baseline (CQL = v27 with `cql_alpha = 0`, bit-identical) and for small-gap fine-tunes where CQL would over-conservatize. |
+
+Both share the **same** train-args file ([`td3_residual_train_args.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml) — Maxmin-5 ensemble, 2-layer/64-wide), the **same** orchestrator + plumbing, and the **same** resume mechanics. Only the args-file path differs at the CLI.
+
+If you're not sure which to pick: **start with CQL**. It's the current canonical recipe; switch to v27 only if you have a specific reason (regression test, small-gap target, or known critic over-conservatism).
+
+The CQL recipe is documented first (canonical) immediately below. The shared mechanics — `--model-path` semantics, `residual_resume`, architecture matching, replay-source rule, what carries across resumes — live under the [no-CQL section](#real-world-residual--no-cql-baseline-v27-maxmin-5) further down; they apply identically to CQL launches.
+
+## Real-world residual — CQL recipe (canonical, 2026-05-08)
+
+Mirrors the sim2sim `redesign_cql` / phaseC winner
+(`scripts/smooth_policy/amp_history/configs/td3/sim2sim/warp075_p30_residual/phaseC_actor2_1M.yaml`).
+Reuses the v27 real-world plumbing — same Maxmin-5 ensemble, same data
+balance, same fresh-fill posture — and adds the two load-bearing knobs from
+the 2026-05-08 hyperparameter campaign:
+
+- **`cql_alpha: 20.0`** — Conservative-Q penalty on the task-Q head.
+  Penalty = `alpha * (logsumexp_a Q_task(s, a_random) - Q_task(s, pi(s)))`,
+  with `cql_n_random: 10` uniform actions per state. Pushes Q down on
+  out-of-distribution residual actions and up on the current policy action,
+  preventing the critic from extrapolating optimistically as the residual
+  drifts off the frozen base. The α=20 setting comes from the sim2sim α
+  sweet-zone (5–20).
+- **`actor_updates_per_iteration: 2`** — strongest single knob in the
+  2026-05-08 campaign (+10 vs v27 at 300k, +2 mean / +14 peak at 1M on the
+  canonical paddle-30% target). v27's value was 1.
+
+Wired into the async-real critic loop (`real_td3_runtime.py:_run_learner_iteration`)
+as a default-off branch gated on `args.cql_alpha > 0`. When `cql_alpha = 0`
+the critic kernel is bit-identical to v27, so existing v27 launches
+(`td3_residual.yaml`) are unaffected.
+
+Canonical configs:
+- args-file (online behaviour): [`td3_real_world/td3_residual_cql.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_cql.yaml)
+- train-args (architecture + ensemble): [`td3_real_world/td3_residual_train_args.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml) — **shared with v27** (architecture is identical: 2-layer/64-wide, num_critics=5, target_critic_subset_size=null Maxmin-5).
+
+### Launch a CQL run
+
+**Fresh start, empty replay** (mirrors sim2sim — fills the buffer with 2000 fresh on-policy transitions before the critic's first gradient step):
+
+```bash
+python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real --train-args scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_cql.yaml --model-path <source>/training_state.pth
+```
+
+**Fresh start, warm-started from a prior real-robot HDF5 dataset** (typical when continuing a campaign whose previous launch already collected episodes — `--learning-starts-fresh-steps 0` skips the 2000-step fresh-fill since replay is already populated; `--data-root-dir` separates the new run's artifacts from the prior one's):
+
+```bash
+python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real --train-args scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_cql.yaml --model-path <source>/training_state.pth --warm-start-hdf5-dirs <prior-run>/episode_hdf5 --learning-starts-fresh-steps 0 --data-root-dir runs/residual_training_cql/v1
+```
+
+`--warm-start-hdf5-dirs` accepts a list (space-separated) of directories of HDF5 episodes; the loader walks them recursively (`warm_start_hdf5_recursive: true` is the YAML default). Only point it at episodes collected with the **same base policy on the same robot** — mismatched dynamics teach the critic stale Q values. `replay_source_priority: "warmstart_only"` (the YAML default) ensures the warm-start replay wins; do NOT also pass `--load-replay-from-checkpoint` on a fresh start (that's for resuming, see below).
+
+### Resume a CQL run
+
+To continue from a previous checkpoint (next session, after kill/Ctrl-C, or after the 2000-step fresh-fill phase has already crossed) — restores trained residual head + critics + optimizer + replay + step counters:
+
+```bash
+python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real --train-args scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_cql.yaml --full-checkpoint-load residual_resume --learning-starts-fresh-steps 0 --load-replay-from-checkpoint --model-path <prev-run>/checkpoint_<tag>/training_state.pth
+```
+
+The four resume-specific overrides (each is necessary):
+- **`--full-checkpoint-load residual_resume`** — load the wrapped `ResidualActor` state_dict (frozen base + trained residual head) instead of stripping it back to a fresh-init base. Restores critics + targets + optimizer + RNG too.
+- **`--learning-starts-fresh-steps 0`** — disables re-engaging the 2000-step fresh-fill gate (which is run-relative; without this override the next launch would burn 2000 robot steps before the critic moves again).
+- **`--load-replay-from-checkpoint`** — restores success/failure replay from `training_state.pth`. Without this, replay starts empty and the critic samples a near-empty buffer for the first few episodes.
+- **`--model-path <prev>/training_state.pth`** — point at the **full** training_state.pth from the previous checkpoint dir, NOT `model.pth` (which is just the actor's state_dict and would fail validation). `<tag>` looks like `step_25000` (periodic) or `final_step_27430` (graceful exit).
+
+The full plumbing for these four flags — what each restores, what fragments across launches, the saved-checkpoint pre-flight — is under [§ no-CQL baseline (v27)](#real-world-residual--no-cql-baseline-v27-maxmin-5) below. It applies identically to CQL launches.
+
+### What to watch on a CQL run
+
+CQL adds two scalars to the standard async-real TB set (`losses/q_task`, `losses/q_motion`, `losses/policy`, `rolling50/episode_return_avg`, etc. — see [`monitoring.md`](monitoring.md) for the base set):
+
+- **`losses/cql_penalty`** — raw penalty in h-transformed units, mean over the 5 critics (`logsumexp_a Q_task(s, a_random) - Q_task(s, pi(s))`).
+- **`losses/cql_penalty_weighted`** — `cql_alpha * cql_penalty`, the actual contribution to the critic loss.
+
+If `cql_penalty_weighted` overwhelms `q_task_loss` (say, > 5–10×), the critic is being pushed too conservatively — drop `cql_alpha` toward the lower end of the sweet zone (5).
+
+Otherwise the standard real-world watch list applies:
+- `[collector_rolling50]` console summaries every ~60 s — return / juggles / episode length / e-stop count.
+- `rolling50/episode_return_avg` should rise above the source policy's zero-shot real-robot baseline within a few thousand steps; a multi-thousand-step plateau at zero-shot is the signal to inspect critic loss + Q traces.
+- `runtime/elapsed_total_s` — confirms the resume actually carried the prior run's clock.
+- E-stop / protective-stop count — if it climbs, the residual head is producing aggressive corrections; consider lowering `residual_scale` or stopping early.
+
+### Tuning notes
+
+- Recipe boundary (sim2sim verified): works on paddle-30% with `actor_updates_per_iteration: 2` through warp 0.10 (with `actor_updates_per_iteration: 4`); fails at warp 0.125. The real-world config defaults to 2 (the canonical paddle-30% setting); bump to 4 only if you observe the equivalent of warp ≥ 0.10 dynamics mismatch (a sustained zero-shot gap > 30%).
+- Stacking caveat: in the 2026-05-08 sim2sim campaign, stacking `actor_updates=2` with `q_updates_per_step=4` BACKFIRED. The real-world config keeps `q_updates: 4` (these are *per-episode* critic gradient steps in the async-real schedule, not per-env-step — different semantics from sim, where `q_updates: 1` per env step is the canonical CQL recipe). If you observe critic divergence on the real robot, drop `q_updates` first; do not also bump `actor_updates_per_iteration` past 2.
+- α sweet zone is 5–20. `α = 20` (the YAML default) is the sim2sim winner. Lower to 5 if conservatism is too aggressive.
+
+## Real-world residual — no-CQL baseline (v27 Maxmin-5)
+
+> **Was canonical until 2026-05-08; now a regression baseline / small-gap fallback.** Use the [CQL recipe](#real-world-residual--cql-recipe-canonical-2026-05-08) above by default. The CQL launch is bit-identical to a v27 launch when `cql_alpha = 0`, so anything in this section about plumbing (model-path semantics, `residual_resume`, replay-source rule, architecture matching, what carries across resumes) applies to CQL launches too.
 
 The async real-world pipeline (`extras/async_td3_real.py`) supports the full
 v27 recipe as of 2026-05-04. The Maxmin-N / REDQ-N-M code paths in
@@ -961,16 +1059,15 @@ v27 recipe as of 2026-05-04. The Maxmin-N / REDQ-N-M code paths in
 the original twin-TD3 pair to an N-critic ensemble; everything else (replay,
 exploration, checkpointing) was already shared.
 
-Canonical configs:
+Configs:
 - args-file (online behaviour): [`td3_real_world/td3_residual.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml)
 - train-args (architecture + ensemble): [`td3_real_world/td3_residual_train_args.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml)
 
 ```bash
-python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
-  --train-args scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml \
-  --args-file  scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml \
-  --model-path <path-to-source-checkpoint>/training_state.pth
+python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real --train-args scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml --model-path <path-to-source-checkpoint>/training_state.pth
 ```
+
+The warm-start variant (`--warm-start-hdf5-dirs <prior-run>/episode_hdf5 --learning-starts-fresh-steps 0 --data-root-dir <new-root>`) and the resume command are identical to the [CQL flow](#launch-a-cql-run) — only the `--args-file` path differs.
 
 `--model-path` must point at a `training_state.pth`, NOT a bare `model.pth`.
 `_load_training_state_checkpoint` validates that the loaded dict has
@@ -981,61 +1078,43 @@ as the frozen base; the source's critics, replay, and optimizer state are
 discarded — the new run starts with a fresh 5-critic Maxmin ensemble and
 fresh Adam momentum, as a residual fine-tune should.
 
-### Resuming a residual run
+### Shared plumbing (applies to both CQL and v27 launches)
 
-To continue an in-progress residual training run from a previous checkpoint
-(e.g. picking up after the 2000-step fresh-fill phase has already been
-crossed, or just continuing where the last session stopped), use the
-`residual_resume` mode added 2026-05-04:
+The resume command is the same as the CQL flow at [§ Resume a CQL run](#resume-a-cql-run) — only the `--args-file` differs (point it at `td3_residual.yaml` instead of `td3_residual_cql.yaml`). What follows are the contractual details behind the four resume overrides; they apply identically to a CQL resume.
 
-```bash
-python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
-  --train-args scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml \
-  --args-file  scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml \
-  --full-checkpoint-load residual_resume \
-  --learning-starts-fresh-steps 0 \
-  --load-replay-from-checkpoint \
-  --model-path <prev-run>/checkpoint_<tag>/training_state.pth
-```
+What `--full-checkpoint-load residual_resume` actually does (added 2026-05-04):
+the default `residual` mode passes the saved actor through `extract_deterministic_state_dict`,
+which strips the keys a wrapped `ResidualActor` state_dict has (`base.*`,
+`residual.*`, `action_low`, `action_high`) — the load is silent and the base
+actor stays at fresh init. `residual_resume` skips that filter and loads the
+wrapped state_dict directly, restoring both the frozen base and the trained
+residual head. Critics + targets are restored from `qf1..qfN` keys;
+optimizer state and RNG are restored too.
 
-The four overrides do specific work:
+`--load-replay-from-checkpoint` restores success/failure replay from the
+saved `training_state.pth`. Without it, replay starts empty and (combined
+with `learning-starts-fresh-steps 0`) the critic samples a near-empty
+buffer for the first few episodes. This flag is the resume-time inverse of
+the `load_replay_from_checkpoint: false` default in the args-file (correct
+for fresh starts to block stale source-dynamics replay; wrong for continuing
+your own run).
 
-- **`--full-checkpoint-load residual_resume`** — new mode added 2026-05-04.
-  The default `residual` mode passes the saved actor through
-  `extract_deterministic_state_dict`, which strips all the keys a wrapped
-  `ResidualActor` state_dict has (`base.*`, `residual.*`, `action_low`,
-  `action_high`) — the load is silent and the base actor stays at fresh
-  init. `residual_resume` skips that filter and loads the wrapped state_dict
-  directly, restoring both the frozen base and the trained residual head.
-  Critics + targets are restored from `qf1..qfN` keys; optimizer state and
-  RNG are restored too.
-- **`--learning-starts-fresh-steps 0`** — disables the fresh-buffer-fill
-  gate. The prior run already crossed it; re-engaging would waste 2000 steps
-  of robot time before the critic moves. Set to a non-zero value if you
-  *want* to re-engage (e.g. resuming from very stale data).
-- **`--load-replay-from-checkpoint`** — restores the success/failure
-  replay buffers from the saved `training_state.pth`. Without this, the
-  replay starts empty and (combined with `learning-starts-fresh-steps 0`)
-  the critic samples from a near-empty buffer for the first few episodes.
-  This flag is the resume-time inverse of the `load_replay_from_checkpoint:
-  false` default in the args-file (which is correct for fresh starts to
-  block stale source-dynamics replay, but wrong for continuing your own run).
-- **`--model-path <prev>/training_state.pth`** — point at the **full
-  training_state.pth** from the prior checkpoint, NOT `model.pth`.
-  `residual_resume` requires the dict format with `actor`, `actor_target`,
-  `qf1..qfN`, `qf1_target..qfN_target`, `rng_states`, and (optionally)
-  `q_optimizer`, `actor_optimizer`, replay buffers, learner counters,
-  rolling stats. `model.pth` is just the actor's state_dict and would
-  fail the validation in `_load_training_state_checkpoint`.
+`--model-path` for resume must point at the **full** `training_state.pth`
+from the prior checkpoint, NOT `model.pth`. `residual_resume` requires the
+dict format with `actor`, `actor_target`, `qf1..qfN`, `qf1_target..qfN_target`,
+`rng_states`, and (optionally) `q_optimizer`, `actor_optimizer`, replay
+buffers, learner counters, rolling stats. `model.pth` is just the actor's
+state_dict and would fail validation in `_load_training_state_checkpoint`.
 
 Robust resume requires the prior run to have been saved with
-`include_non_vital_training_state_fields: true` (the default in
-`td3_residual.yaml`). Without it, the training_state.pth lacks optimizer
-state, learner counters, `collector_total_steps`, `run_elapsed_total_s`,
-and the rolling-window deques — resume falls back to a "weights only"
-residual_resume: Adam momentum resets, TB step axis restarts at 0, and
-rolling-50 stats start cold. Functional but lossy. See
-[`notes/docs/training/checkpointing.md#resuming-real-world-async-training`](checkpointing.md#resuming-real-world-async-training)
+`include_non_vital_training_state_fields: true` (the default in both
+`td3_residual.yaml` and `td3_residual_cql.yaml`). Without it, the
+training_state.pth lacks optimizer state, learner counters,
+`collector_total_steps`, `run_elapsed_total_s`, and the rolling-window
+deques — resume falls back to a "weights only" residual_resume: Adam
+momentum resets, TB step axis restarts at 0, and rolling-50 stats start
+cold. Functional but lossy. See
+[`checkpointing.md#resuming-real-world-async-training`](checkpointing.md#resuming-real-world-async-training)
 for the full resume contract.
 
 Architecture matching: the `--train-args` YAML's `agent_num_hidden_layers`,
@@ -1129,75 +1208,7 @@ same `ResidualActor` shell to load it; standard sim2sim eval drivers
 already do this — verify your real-world rollout target supports it before
 deploying.
 
-## Real-world residual — CQL recipe (canonical big-gap, 2026-05-08)
-
-Mirrors the sim2sim `redesign_cql` / phaseC winner
-(`scripts/smooth_policy/amp_history/configs/td3/sim2sim/warp075_p30_residual/phaseC_actor2_1M.yaml`).
-Reuses the v27 real-world plumbing — same Maxmin-5 ensemble, same data
-balance, same fresh-fill posture — and adds the two load-bearing knobs from
-the 2026-05-08 hyperparameter campaign:
-
-- **`cql_alpha: 20.0`** — Conservative-Q penalty on the task-Q head.
-  Penalty = `alpha * (logsumexp_a Q_task(s, a_random) - Q_task(s, pi(s)))`,
-  with `cql_n_random: 10` uniform actions per state. Pushes Q down on
-  out-of-distribution residual actions and up on the current policy action,
-  preventing the critic from extrapolating optimistically as the residual
-  drifts off the frozen base. The α=20 setting comes from the sim2sim α
-  sweet-zone (5–20 — see notes/scratch/experiments).
-- **`actor_updates_per_iteration: 2`** — strongest single knob in the
-  2026-05-08 campaign (+10 vs v27 at 300k, +2 mean / +14 peak at 1M on the
-  canonical paddle-30% target). v27's value was 1.
-
-Wired into the async-real critic loop (`real_td3_runtime.py:_run_learner_iteration`)
-as a default-off branch gated on `args.cql_alpha > 0`. When `cql_alpha = 0`
-the critic kernel is bit-identical to v27, so existing v27 launches
-(`td3_residual.yaml`) are unaffected.
-
-Canonical configs:
-- args-file (online behaviour): [`td3_real_world/td3_residual_cql.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_cql.yaml)
-- train-args (architecture + ensemble): [`td3_real_world/td3_residual_train_args.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml) — **shared with v27** (architecture is identical: 2-layer/64-wide, num_critics=5, target_critic_subset_size=null Maxmin-5).
-
-```bash
-python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
-  --train-args scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml \
-  --args-file  scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_cql.yaml \
-  --model-path <path-to-source-checkpoint>/training_state.pth
-```
-
-Resume (same flag set as v27 — only the `--args-file` differs):
-
-```bash
-python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
-  --train-args scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml \
-  --args-file  scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_cql.yaml \
-  --full-checkpoint-load residual_resume \
-  --learning-starts-fresh-steps 0 \
-  --load-replay-from-checkpoint \
-  --model-path <prev-run>/checkpoint_<tag>/training_state.pth
-```
-
-Recipe boundary (sim2sim verified): works on paddle-30% with `actor_updates=2`
-through warp 0.10 (with `actor_updates=4`); fails at warp 0.125. The real-world
-config defaults to `actor_updates_per_iteration: 2` (the canonical paddle-30%
-setting); bump to 4 only if you observe the equivalent of warp ≥ 0.10 dynamics
-mismatch.
-
-Stacking caveat: in the 2026-05-08 sim2sim campaign, stacking
-`actor_updates=2` with `q_updates_per_step=4` BACKFIRED. The real-world
-config keeps `q_updates: 4` (these are *per-episode* critic gradient steps in
-the async-real schedule, not per-env-step — different semantics from sim, where
-`q_updates: 1` per env step is the canonical CQL recipe). If you observe
-critic divergence on the real robot, drop `q_updates` first; do not also bump
-`actor_updates_per_iteration` past 2.
-
-Logged metrics (in addition to the v27 set): `losses/cql_penalty` (raw
-penalty in h-transformed units, mean over the 5 critics) and
-`losses/cql_penalty_weighted` (= `cql_alpha * cql_penalty` — the actual
-contribution to the critic loss). Watch these — if `cql_penalty_weighted`
-overwhelms `q_task_loss`, the critic is being pushed too conservatively;
-lower `cql_alpha` to the lower end of the sweet zone (5).
-
-### Data layout across resumes
+## Real-world residual — data layout across resumes
 
 `_setup_run_data_dir` creates a **new** timestamped directory for **every
 launch** at `<data_root_dir>/data_<TIMESTAMP>/`. So a single training

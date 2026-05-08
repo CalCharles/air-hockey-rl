@@ -1,4 +1,15 @@
-# Real-world residual RL fine-tuning — v27 Maxmin-5 recipe (canonical default).
+# Real-world residual RL fine-tuning — v27 Maxmin-5 recipe (no-CQL baseline).
+#
+# NOTE (2026-05-08): The canonical big-gap real-world default is now the CQL
+# recipe in `td3_residual_cql.yaml` (v27 base + cql_alpha=20 + actor_updates=2;
+# +10 vs v27 at 300k on the sim2sim paddle-30% benchmark). This file (v27,
+# no-CQL) is kept as:
+#   - regression baseline for CQL-vs-no-CQL comparisons (CQL is bit-identical
+#     to v27 when cql_alpha=0, so launches with this file are reproducible
+#     pre-CQL behavior),
+#   - small-gap fallback (where CQL would over-conservatize the critic).
+# For new sim2real fine-tunes, prefer `td3_residual_cql.yaml` unless you have
+# a specific reason. See notes/docs/training/residual-rl-recipe.md.
 #
 # Mirrors the sim2sim winner
 #   scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v27_ensemble5.yaml
