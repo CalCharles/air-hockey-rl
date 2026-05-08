@@ -2,7 +2,7 @@
 
 End-to-end flow of a single policy episode on the real UR5, from collection through replay ingestion and artifact output.
 
-Primary code: [`async_td3_real_modular.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real_modular.py) (`collector_process_modular`); shared dataclasses, learner, and reset helpers live in [`async_td3_real.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py).
+Primary code: [`extras/async_td3_real.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py) (`collector_process_modular`); shared dataclasses, learner, and runtime helpers live in [`helper/real_td3_runtime.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_td3_runtime.py).
 Helpers: [`real_episode_buffers.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_episode_buffers.py), [`real_stop_state.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_stop_state.py), [`real_motion_rewards.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_motion_rewards.py), [`episode_artifacts.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/episode_artifacts.py), [`real_warm_start.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_warm_start.py).
 
 ## Overview
@@ -75,11 +75,16 @@ Returns a `StopEventState` frozen dataclass with:
 If the robot's command readiness fails mid-episode (e.g., brief communication drop that recovers), the episode is truncated at the first failure step:
 
 1. `_truncate_episode_trajectory_inplace` keeps only transitions up to `readiness_first_fail_step_idx + 1`.
-2. The final transition's `dones` and `bootstrap_terminals` are set to 1.0 (terminal).
-3. `episode_rows`, images, and latency lists are truncated to match.
-4. The cutoff row's `stop_flags` are updated to mark the readiness-fail.
+2. `episode_rows`, images, and latency lists are truncated to match.
+3. The cutoff row's `stop_flags` are updated to mark the readiness-fail (HDF5/recording only — the kept transition's `dones` / `bootstrap_terminals` stay at their original values, so the learner treats the cutoff as a truncation and bootstraps from V(s')).
 
 This prevents post-failure garbage transitions from entering the replay buffer.
+
+## E-stop transitions are stored as truncations
+
+**Code:** [`real_policy_runner.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_policy_runner.py) (live), [`real_episode_buffers.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_episode_buffers.py) (readiness-fail), [`real_warm_start.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_warm_start.py) (HDF5 replay).
+
+When a stop event (protective stop, controller disconnect, readiness-fail) ends an episode, the rollout loop exits but the e-stop transition is stored with `done=0` — semantically a **truncation**, not a termination. The learner's Bellman target therefore continues to bootstrap from V(s') at the cutoff. No motion-reward penalty is applied at the stop event. Recording (HDF5 `estop` column, `stop_flags`, episode summaries, rolling-50 e-stop counters, TensorBoard `safety/estop_*`) is unchanged — the e-stop is fully observable in the data, just not special-cased in value updates.
 
 ## Replay routing
 
@@ -117,6 +122,17 @@ Optional datasets (timing breakdown, stop_flags) are included when all rows cont
 
 The actual stitching loop lives in `_create_joint_trajectory_gif` inside [`episode_artifacts.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/episode_artifacts.py). When `train_img` is absent, the function falls back to the Box2D-only `create_trajectory_gif` path.
 
+#### Batch-rendering side-by-side GIFs from existing reset HDF5s
+
+To render side-by-side Box2D + camera GIFs from a directory of already-saved **reset** trajectory HDF5s (e.g., `…/reset_hdf5/`), use [`trim_reset_hdf5_post_first_upward.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/trim_reset_hdf5_post_first_upward.py). It trims each file at the final first-upward-motion completion *and* renders a side-by-side GIF (default on, fps=20) by calling the same `generate_episode_gif` path documented above:
+
+```bash
+python scripts/smooth_policy/amp_history/amp_training/td3/extras/trim_reset_hdf5_post_first_upward.py \
+  <input_reset_hdf5_dir> --output-dir <out_dir> --recursive
+```
+
+Outputs land at `<out_dir>/gifs/<trajectory_stem>/trajectory_visualization.gif`. Use `--no-render-gif` if you only want the trimmed HDF5s, and `--gif-fps` / `--gif-subsample` / `--gif-max-frames` to tune playback. Requires the conda env that has `torch`, `Box2D`, `h5py` (e.g., `air`).
+
 ### Camera video
 
 `generate_episode_camera_video` writes the collected camera frames as a standalone MP4 (with codec fallback from H.264 to MJPEG). This is redundant with the right panel of the joint GIF but kept as a separate full-resolution artifact.
@@ -133,9 +149,8 @@ Before live collection begins, the replay buffer can be seeded from previously s
 
 1. `_list_warm_start_hdf5_files` discovers files across configured input directories, interleaving from multiple sources.
 2. For each file, `_load_warm_start_episode` reads the split HDF5 data, reconstructs `state_info` dicts from the stored arrays, and rebuilds transitions.
-3. `_recompute_warm_start_rewards` replays the environment reward and motion reward logic on the reconstructed states, ensuring rewards match the current reward configuration (not the original training run's).
-4. An e-stop penalty of `-5.0` is applied to the motion reward at the first stop event in each episode.
-5. Episodes are routed to success/failure partitions using the same quantile threshold logic as live episodes.
+3. `_recompute_warm_start_rewards` replays the environment reward and motion reward logic on the reconstructed states, ensuring rewards match the current reward configuration (not the original training run's). E-stop transitions in the saved HDF5 are replayed as truncations (`done=0`) with no special motion-reward penalty — same semantics as live collection.
+4. Episodes are routed to success/failure partitions using the same quantile threshold logic as live episodes.
 
 This allows training to start with meaningful replay data from prior real-world sessions, even if the reward function has changed.
 

@@ -18,7 +18,7 @@ Entrypoint:
 |---------|--------|-------------------------|
 | Task / reward | `args.config` (e.g. `configs/real_configs/rollout_td3_config_hist4.yaml`) | yes — same YAML |
 | Termination conditions | `terminate_on_puck_*`, `max_timesteps` from the config | yes — env decides episode end |
-| Per-step HDF5 row format | `_build_split_episode_row` in `async_td3_real.py` | yes — same helper, same fields |
+| Per-step HDF5 row format | `_build_split_episode_row` in `helper/real_td3_runtime.py` | yes — same helper, same fields |
 | Juggle counter | `count_juggles_from_rows` (`helper/juggle_counter.py`) | yes |
 | Eval aggregate stats | `compute_eval_aggregate` (`helper/real_eval_stats.py`) | yes |
 | `eval_per_episode.jsonl` / `eval_summary.json` | `helper/real_eval_stats.py` | yes — identical schemas |

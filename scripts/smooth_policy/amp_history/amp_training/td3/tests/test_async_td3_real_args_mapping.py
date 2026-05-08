@@ -9,7 +9,7 @@ import yaml
 
 
 def _load_mapping_fn():
-    source_path = Path(__file__).resolve().parent.parent / "extras" / "async_td3_real.py"
+    source_path = Path(__file__).resolve().parent.parent / "helper" / "real_td3_runtime.py"
     source = source_path.read_text(encoding="utf-8")
     module = ast.parse(source)
     args_node = None
@@ -20,7 +20,7 @@ def _load_mapping_fn():
         elif isinstance(node, ast.FunctionDef) and node.name == "_build_args_file_defaults":
             mapping_node = node
     if args_node is None or mapping_node is None:
-        raise RuntimeError("Failed to locate Args and _build_args_file_defaults in async_td3_real.py")
+        raise RuntimeError("Failed to locate Args and _build_args_file_defaults in real_td3_runtime.py")
 
     future_annotations = ast.ImportFrom(
         module="__future__",

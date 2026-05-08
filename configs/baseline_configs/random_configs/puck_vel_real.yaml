@@ -25,10 +25,6 @@ air_hockey:
     block_density: 500
     render_size: 360
     width: 0.8636
-    # Async z-force worker is broken (RTDE register conflict); force the sync
-    # clamp path until the threads+lock redesign lands. See
-    # notes/docs/environments/real-world/async-z-force-future-steps.md
-    async_z_force_enabled: false
   stand_still_rew: 0.01
   task: puck_velocity
   num_blocks: 0

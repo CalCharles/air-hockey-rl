@@ -17,17 +17,18 @@ except Exception:
 # `controllers`/`robots` use the old robosuite 1.4 API and break on 1.5+)
 # doesn't prevent the others (notably `grippers`, which contains the round
 # paddle) from registering.
-for _module in (
-    "airhockey.sims.controllers",
-    "airhockey.sims.robots",
-    "airhockey.sims.grippers",
-    "airhockey.sims.utils.RobosuiteTransforms",
-):
-    try:
-        __import__(_module)
-    except Exception as _e:
-        print(f"airhockey: optional component {_module} not loaded ({type(_e).__name__}: {_e})")
-from airhockey.airhockey_simple_tasks import AirHockeyPuckVelEnv, AirHockeyPuckHeightEnv, AirHockeyPuckCatchEnv 
+if ROBOSUITE_AVAILABLE:
+    for _module in (
+        "airhockey.sims.controllers",
+        "airhockey.sims.robots",
+        "airhockey.sims.grippers",
+        "airhockey.sims.utils.RobosuiteTransforms",
+    ):
+        try:
+            __import__(_module)
+        except Exception as _e:
+            print(f"airhockey: optional component {_module} not loaded ({type(_e).__name__}: {_e})")
+from airhockey.airhockey_simple_tasks import AirHockeyPuckVelEnv, AirHockeyPuckHeightEnv, AirHockeyPuckCatchEnv
 from airhockey.airhockey_simple_tasks import AirHockeyPuckJuggleEnv, AirHockeyPuckJuggleLinearTopEnv, AirHockeyPuckJuggleNoBaseRewardEnv, AirHockeyPuckJuggleUpperHalfRewardEnv, AirHockeyPuckJuggleUpperHalfMidBandRewardEnv, AirHockeyPuckStrikeEnv, AirHockeyPuckTouchEnv, AirHockeyPaddleFreeMovementEnv
 from airhockey.airhockey_hierarchical_tasks  import AirHockeyMoveBlockEnv, AirHockeyStrikeCrowdEnv
 # from airhockey.airhockey_goal_tasks import AirHockeyPuckGoalPositionEnv, AirHockeyPuckGoalPositionVelocityEnv, AirHockeyPuckReachPositionDynamicNegRegionsEnv

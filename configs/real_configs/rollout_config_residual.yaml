@@ -1,3 +1,20 @@
+# Real-world rollout config for residual TD3 training.
+#
+# Reward MUST match what the frozen base actor was trained against and what
+# sim2sim residual fine-tuning uses, so train-time and fine-tune-time task
+# rewards are the same signal:
+#   - Canonical sim:   scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params.yaml
+#                      → task: puck_juggle_upper_half_reward
+#   - Sim2sim residual: scripts/smooth_policy/amp_history/configs/new_juggle/sim2sim_combined.yaml
+#                      → task: puck_juggle_upper_half_reward
+# Hence `task: puck_juggle_upper_half_reward` below (+1 per step while puck is
+# in the upper half of the table; see AirHockeyPuckJuggleUpperHalfReward).
+#
+# Env-level shaping coefficients (diagonal_motion_rew, direction_change_rew,
+# horizontal_vel_rew, stand_still_rew, wall_bumping_rew, truncate_rew) are
+# zeroed to match the sim configs above.
+#
+# Pointed at by: scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml
 air_hockey:
   diagonal_motion_rew: 0.0
   direction_change_rew: 0.0
@@ -43,22 +60,17 @@ air_hockey:
     transition_hold_steps_on_estop_clear: 8
     transition_hold_steps_on_safety_rearm: 3
     transition_hold_debug: false
-    async_render_enabled: true
-    async_render_sim_view_enabled: true
-  stand_still_rew: 0.01
+    # async_render_enabled: true
+  stand_still_rew: 0.0
   task: puck_juggle_upper_half_reward
   terminate_on_enemy_goal: true
-  terminate_on_out_of_bounds: false
+  terminate_on_out_of_bounds: true
   terminate_on_puck_hit_bottom: true
   terminate_on_puck_hit_paddle: false
   terminate_on_puck_pass_paddle: true
   terminate_on_puck_stop: true
   truncate_rew: 0
   wall_bumping_rew: 0
-
-
-
-# NOT USED
 algorithm: ppo
 eval_freq: 5000
 gamma: 0.99

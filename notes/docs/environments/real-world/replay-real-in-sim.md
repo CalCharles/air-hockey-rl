@@ -81,8 +81,8 @@ Key flags:
 
 5. **Replay loop** — with a subtle timing fix. Row `i` in the HDF5 is written
    *after* `env.step()` (confirmed in `collector_process_modular` /
-   `_build_split_episode_row` in `async_td3_real_modular.py` and
-   `async_td3_real.py`, plus `airhockey_base.py:784`), so `pose[i] = T_{i+1}` (post-step) and
+   `_build_split_episode_row` in `extras/async_td3_real.py` and
+   `helper/real_td3_runtime.py`, plus `airhockey_base.py:784`), so `pose[i] = T_{i+1}` (post-step) and
    `actions[i] = a_{i+1}` (the action that produced `pose[i]`). After resetting
    sim to `pose[0] = T_1`, the *next* action in the real timeline is `actions[1]`
    — **not** `actions[0]`, which already happened. Loop:

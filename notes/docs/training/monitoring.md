@@ -12,10 +12,10 @@ Both active TD3 entrypoints log to **TensorBoard** (no wandb). There is no wandb
 # Sim training (td3_training.py): everything under <log_parent_dir>.
 tensorboard --logdir <log_parent_dir> --port 6006 --bind_all
 
-# Async real-world (async_td3_real_modular.py):
+# Async real-world (async_td3_real.py):
 # every artifact (TB logs, episode HDF5/GIFs/camera videos, checkpoints,
 # latency profiles) lands in ONE folder per run:
-#   <data_root_dir>/<model_path_parent_dir>/data_<TIMESTAMP>/
+#   <data_root_dir>/data_<TIMESTAMP>/
 # Point TensorBoard at <data_root_dir> and it discovers collector_tb/
 # and learner_tb/ inside each run folder automatically.
 tensorboard --logdir <data_root_dir> --port 6006 --bind_all
@@ -23,10 +23,10 @@ tensorboard --logdir <data_root_dir> --port 6006 --bind_all
 
 ### Async unified-run layout
 
-Every async-real run produces this single folder, created by `_setup_run_data_dir` (defined in `async_td3_real.py`, called from the modular entrypoint's `main()`):
+Every async-real run produces this single folder, created by `_setup_run_data_dir` (defined in `helper/real_td3_runtime.py`, called from the entrypoint's `main()`):
 
 ```
-<data_root_dir>/<model_path_parent_dir>/data_<TIMESTAMP>/
+<data_root_dir>/data_<TIMESTAMP>/
     episode_hdf5/             # per-step trajectories
     reset_hdf5/               # reset-FSM trajectories
     episode_gifs/             # side-by-side Box2D + camera GIFs
@@ -102,9 +102,9 @@ Final eval at script end: `td3_training.py:2291–2299`.
 
 ---
 
-## Async real: `async_td3_real_modular.py`
+## Async real: `async_td3_real.py`
 
-Two TB writers, one per process (collector writer is created in `async_td3_real_modular.py`, learner writer in `_init_sync_learner_state` in `async_td3_real.py`). Cadence is **wall-clock**, default 60 s on each side (`collector_log_interval_sec`, `learner_log_interval_sec`, defaults defined on the `Args` dataclass in `async_td3_real.py`).
+Two TB writers, one per process (collector writer is created in `extras/async_td3_real.py`, learner writer in `_init_sync_learner_state` in `helper/real_td3_runtime.py`). Cadence is **wall-clock**, default 60 s on each side (`collector_log_interval_sec`, `learner_log_interval_sec`, defaults defined on the `Args` dataclass in `helper/real_td3_runtime.py`).
 
 ### Collector TB (`collector_tb/`)
 
@@ -132,7 +132,7 @@ Console megaprint (`:472–503`) prints the same set on one `[collector] …` li
 
 ### Learner TB (`learner_tb/`)
 
-Only meaningful when the learner is actually updating (i.e. the replay has more than `--min-replay-size-before-learning` transitions). Every `learner_log_interval_sec` (logging branch in `_run_sync_learner_iteration`, `async_td3_real.py`):
+Only meaningful when the learner is actually updating (i.e. the replay has more than `--min-replay-size-before-learning` transitions). Every `learner_log_interval_sec` (logging branch in `_run_sync_learner_iteration`, `helper/real_td3_runtime.py`):
 
 - Each key in `state.latest_train_metrics` (mirrors the sim `losses/…` and `sampled_*` set, plus `losses/residual_action_l2` when residual RL is on)
 - `charts/SPS` (gradient-step rate)
@@ -189,8 +189,8 @@ For rollout-only collection (large `--min-replay-size-before-learning`), the `[c
   rollout_data_like_0.gif         # in-training snapshot
   *.pth                           # actor / critic / training_state checkpoints
 
-# async_td3_real_modular.py — single unified run folder:
-<data_root_dir>/<model_subdir>/data_<TS>/
+# async_td3_real.py — single unified run folder:
+<data_root_dir>/data_<TS>/
   episode_hdf5/  reset_hdf5/      # per-step + reset-FSM trajectories
   episode_gifs/                   # side-by-side Box2D + camera GIFs
   episode_camera_videos/          # raw camera MP4s

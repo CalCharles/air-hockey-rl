@@ -1,10 +1,10 @@
 """PolicyRunner — runs one TD3 policy episode against the real (or sim) env.
 
 Lifts the per-step body and episode-end finalization out of the old
-monolithic ``async_td3_real.collector_process``. Returns a
-``PolicyEpisodeResult`` that the orchestrator (``collector_process_modular``
-in ``async_td3_real_modular.py``) pushes to replay, runs the learner
-against, and saves to disk — none of those concerns leak into the runner.
+monolithic ``collector_process``. Returns a ``PolicyEpisodeResult`` that
+the orchestrator (``collector_process_modular`` in
+``extras/async_td3_real.py``) pushes to replay, runs the learner against,
+and saves to disk — none of those concerns leak into the runner.
 
 The runner ticks ``TransitionHoldState`` internally, truncates the trajectory
 on readiness-fail e-stops, and exposes all delta counters the orchestrator
@@ -200,7 +200,6 @@ class PolicyRunner:
         self._episode_camera_null_frames: int = 0
 
         # Stop / readiness flags (per-episode).
-        self._stop_penalty_applied: bool = False
         self._stop_flags = StopFlagsSnapshot()
         self._episode_readiness_first_fail_step_idx: int | None = None
         self._episode_readiness_first_fail_reason: str | None = None
@@ -232,6 +231,15 @@ class PolicyRunner:
     def set_total_steps(self, total_steps: int) -> None:
         """Seed the runner's running step counter from a checkpoint resume."""
         self._total_steps = int(total_steps)
+
+    def rollback_invalid_episode_steps(self, n: int) -> None:
+        """Roll back the running step counter for an episode whose trajectory
+        was rejected by validation. The physical steps happened in the world,
+        but they don't represent valid policy data — replay/learner/metrics
+        already skip them, and the cap/checkpoint cadence should too."""
+        if n <= 0:
+            return
+        self._total_steps = max(0, self._total_steps - int(n))
 
     @property
     def total_steps(self) -> int:
@@ -282,7 +290,6 @@ class PolicyRunner:
         self._episode_camera_null_frames = 0
 
         # Stop / end flags.
-        self._stop_penalty_applied = False
         self._stop_flags = StopFlagsSnapshot()
 
         # Readiness trackers (per-episode).
@@ -522,8 +529,12 @@ class PolicyRunner:
             if readiness_fail_stop_now:
                 stop_now = True
             dones = bool(np.logical_or(terminations, truncations) or stop_now)
+            # E-stops (`stop_now`) end the rollout loop but are stored as
+            # truncations for the learner: `done=0` so bootstrapping continues
+            # at the e-stop transition. See
+            # notes/docs/environments/real-world/episode-lifecycle.md.
             terminations_tensor = torch.tensor(
-                float(bool(terminations or stop_now)),
+                float(bool(terminations)),
                 dtype=torch.float32,
                 device=device,
             )
@@ -558,9 +569,6 @@ class PolicyRunner:
                     motion_components[metric_name]
                 )
             self._episode_motion_metric_count += 1
-            if stop_now and not self._stop_penalty_applied:
-                motion_reward += -5.0
-                self._stop_penalty_applied = True
 
             # ----------------------------- Episode-row append (L1730–1746) ---
             # `task_reward`, `motion_reward`, `done` (terminations_tensor) are
@@ -641,7 +649,6 @@ class PolicyRunner:
                             self._episode_block_sleep_latency_ms,
                         episode_other_latency_ms=self._episode_other_latency_ms,
                         episode_camera_null_frames=self._episode_camera_null_frames,
-                        device=device,
                     )
                     print(
                         "[collector_safety] "

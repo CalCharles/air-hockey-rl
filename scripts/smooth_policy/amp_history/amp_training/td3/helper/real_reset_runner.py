@@ -1,9 +1,9 @@
 """Reset orchestration for the real-world TD3 collector.
 
 Collapses the four reset-FSM call-sites that the old monolithic
-``async_td3_real.collector_process`` had (startup, soft post-episode,
-hard-with-FSM, hard-skip-FSM) into a single ``ResetRunner.run(kind=...)``
-method, called from ``collector_process_modular`` in ``async_td3_real_modular.py``.
+``collector_process`` had (startup, soft post-episode, hard-with-FSM,
+hard-skip-FSM) into a single ``ResetRunner.run(kind=...)`` method, called
+from ``collector_process_modular`` in ``extras/async_td3_real.py``.
 
 Also lifts ``run_reset_fsm``, ``_hard_reset_with_pause``, and
 ``_should_run_reset_policy_at_episode_start`` out of the orchestrator
@@ -463,21 +463,33 @@ class ResetRunner:
                 pause_s=self.MIN_RESET_DELAY_S,
             )
             hard_reset_state = self._env.simulator.get_current_state()
-            run_reset_policy = _should_run_reset_policy_at_episode_start(
-                state_info=hard_reset_state,
-                table_x_bot=getattr(self._env, "table_x_bot", None),
-                bottom_margin=self._bottom_margin,
-                bottom_fail_count=self._bottom_fail_count,
-                occluded_fail_count=self._occluded_fail_count,
-                counters=self._counters,
-            )
+            # Stop-driven hard resets always run the FSM. After a protective
+            # stop / controller disconnect the puck is in an arbitrary
+            # position and the operator-pause heuristic
+            # (bottom/occluded counters) needs 2-6 consecutive hits before it
+            # would trigger — too slow for stop recovery. Falling through to
+            # HARD_SKIP_FSM here also returns the dummy-history obs from
+            # env.reset() to the policy, which is what produced the
+            # "policy jitters as if continuing the previous episode" symptom.
+            if episode_had_stop_flags.had_stop:
+                run_reset_policy = True
+            else:
+                run_reset_policy = _should_run_reset_policy_at_episode_start(
+                    state_info=hard_reset_state,
+                    table_x_bot=getattr(self._env, "table_x_bot", None),
+                    bottom_margin=self._bottom_margin,
+                    bottom_fail_count=self._bottom_fail_count,
+                    occluded_fail_count=self._occluded_fail_count,
+                    counters=self._counters,
+                )
             decision = "reset_policy" if run_reset_policy else "policy"
             print(
                 "[collector] "
                 f"episode_id={int(artifact_episode_id) - 1} "
                 f"hard_reset_start_decision={decision} "
                 f"bottom_counter={self._counters['bottom']} "
-                f"occ_counter={self._counters['occ']}"
+                f"occ_counter={self._counters['occ']} "
+                f"forced_by_stop={int(bool(episode_had_stop_flags.had_stop))}"
             )
             if run_reset_policy:
                 kind_actual = ResetKind.HARD_WITH_FSM

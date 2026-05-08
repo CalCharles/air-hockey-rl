@@ -525,7 +525,6 @@ class Args:
     # Dual-head reward decomposition
     task_reward_weight: float = 1.0
     motion_reward_weight: float = 1.0
-    estop_motion_reward_penalty: float = -5.0
 
     # Motion reward component weights
     stand_still_reward_weight: float = 0.5
@@ -1607,9 +1606,6 @@ if __name__ == "__main__":
             + velocity_reward_weighted
             + jerk_reward_weighted
         )
-        if np.any(estop_event_mask):
-            estop_event_mask_tensor = torch.as_tensor(estop_event_mask, dtype=torch.float32, device=args.device)
-            motion_rewards = motion_rewards + args.estop_motion_reward_penalty * estop_event_mask_tensor
 
         if recording_episode:
             recording_last_rew = float(task_rewards[0].item())

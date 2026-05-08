@@ -76,9 +76,7 @@ reward = clamp_max(reward, 1.0)
 
 Same linear ramp formula as velocity, using `jerk_at_one` and `jerk_at_zero` thresholds. Unlike velocity, jerk reward is **not** clamped at 1.0, so very low jerk can score above 1.
 
-### E-stop penalty (real-world only)
-
-When a protective stop or controller disconnect is detected, a flat penalty of `-5.0` is applied to the motion reward for that transition. Applied once per stop event.
+E-stop / protective-stop events do not contribute any special reward term: the e-stop transition is stored as a truncation with `done=0` and no motion-reward penalty. See [episode-lifecycle.md](../environments/real-world/episode-lifecycle.md#e-stop-transitions-are-stored-as-truncations).
 
 ## Component weights
 

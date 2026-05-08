@@ -60,6 +60,10 @@ After the reset FSM completes:
 | `min_off_wall_window_steps` | 5 | Minimum steps in off-wall segment |
 | `max_stage2_cycles` | 5 | Maximum edge loop repetitions |
 
+## Visualizing saved reset trajectories
+
+Each reset rollout is saved as a split-schema HDF5 (under `…/reset_hdf5/<bucket>/trajectory_data*.hdf5`). To render side-by-side Box2D + real-camera GIFs from a directory of reset HDF5s, use [`trim_reset_hdf5_post_first_upward.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/trim_reset_hdf5_post_first_upward.py) with `--recursive`. See [Episode lifecycle → Batch-rendering side-by-side GIFs from existing reset HDF5s](episode-lifecycle.md#batch-rendering-side-by-side-gifs-from-existing-reset-hdf5s) for the exact invocation.
+
 ## Related docs
 
 - [Episode lifecycle](episode-lifecycle.md) -- where reset fits in the collection loop

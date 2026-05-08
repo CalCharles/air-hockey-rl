@@ -79,14 +79,14 @@ Legacy:
 
 ### TD3 Real-World Commands
 
-All commands below use `async_td3_real_modular`, which handles collection, resets, and (optionally) training. Two YAML files are required:
+All commands below use `async_td3_real`, which handles collection, resets, and (optionally) training. Two YAML files are required:
 
 - `--train-args <train_run>/args.yaml` — the **training** run's args.yaml. Supplies architecture only (`agent_hidden_layer_size`, `agent_num_hidden_layers`, `q_hidden_layer_size`, `q_num_hidden_layers`, `action_scale`, `use_last_action_in_policy_state`) so the rebuilt actor/critic layers match the saved checkpoint exactly. Architecture is not CLI-overridable.
 - `--args-file <td3_online.yaml>` — **online-behavior** defaults (replay, exploration, reward weights, checkpointing, etc.). CLI flags override values from this file. Legacy alias fields (`agent_hidden_size`, `q_hidden_size`, `learning_starts`, `device`) are no longer remapped — use the canonical names. Architecture fields in this file are ignored.
 
 #### Eval only (run policy, no training)
 ```bash
-python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real_modular \
+python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
   --config configs/real_configs/rollout_td3_config.yaml \
   --model-path ex_model/new_td3_model/checkpoint_325000/training_state.pth \
   --train-args ex_model/new_td3_model/checkpoint_325000/args.yaml \
@@ -100,11 +100,11 @@ python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_re
   --warm-start-hdf5-dirs
 ```
 
-`--data-root-dir` is the single root for collected per-episode artifacts. The script creates `<data_root_dir>/<model_path_parent_dir>/data_<YYYYMMDD-HHMMSS>/{episode_hdf5,reset_hdf5,episode_gifs,episode_camera_videos}/` at startup; the `<model_path_parent_dir>` mirrors the directory part of `--model-path`.
+`--data-root-dir` is the single root for collected per-episode artifacts. The script creates `<data_root_dir>/data_<YYYYMMDD-HHMMSS>/{episode_hdf5,reset_hdf5,episode_gifs,episode_camera_videos}/` at startup.
 
 #### Online training from a pretrained checkpoint
 ```bash
-python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real_modular \
+python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
   --config configs/real_configs/rollout_td3_config.yaml \
   --model-path ex_model/td3_model/checkpoint_1515000/training_state.pth \
   --train-args ex_model/td3_model/checkpoint_1515000/args.yaml \
@@ -116,10 +116,10 @@ python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_re
 
 #### Resume training from a previous online run
 ```bash
-python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real_modular \
+python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
   --config configs/real_configs/rollout_td3_config.yaml \
-  --model-path real_runs/checkpoints/default/checkpoint_successeps_100_qupdates_1517000/training_state.pth \
-  --train-args real_runs/checkpoints/default/checkpoint_successeps_100_qupdates_1517000/args.yaml \
+  --model-path real_runs/checkpoints/default/checkpoint_step_100000/training_state.pth \
+  --train-args real_runs/checkpoints/default/checkpoint_step_100000/args.yaml \
   --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml \
   --collector-device cpu \
   --learner-device cuda:0 \

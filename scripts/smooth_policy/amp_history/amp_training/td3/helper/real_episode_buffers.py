@@ -55,7 +55,6 @@ def truncate_collector_episode_for_readiness_fail(
     episode_block_sleep_latency_ms: List[float],
     episode_other_latency_ms: List[float],
     episode_camera_null_frames: int,
-    device: torch.device,
 ) -> tuple[
     int,
     List[Any],
@@ -74,18 +73,11 @@ def truncate_collector_episode_for_readiness_fail(
         episode_trajectory,
         keep_count=keep_count,
     )
-    if keep_count > 0 and len(episode_trajectory.dones) >= keep_count:
-        episode_trajectory.dones[keep_count - 1] = torch.tensor(
-            1.0,
-            dtype=torch.float32,
-            device=device,
-        )
-    if keep_count > 0 and len(episode_trajectory.bootstrap_terminals) >= keep_count:
-        episode_trajectory.bootstrap_terminals[keep_count - 1] = torch.tensor(
-            1.0,
-            dtype=torch.float32,
-            device=device,
-        )
+    # Readiness-fail truncation drops trailing steps but does NOT mark the
+    # kept final step as terminal: the e-stop event is treated as a
+    # truncation, so `dones` / `bootstrap_terminals` stay 0 and the learner
+    # bootstraps from V(s') at the cutoff. See
+    # notes/docs/environments/real-world/episode-lifecycle.md.
     if len(episode_rows) > keep_count:
         episode_rows = episode_rows[:keep_count]
     if len(episode_images) > keep_count:

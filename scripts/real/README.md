@@ -12,7 +12,7 @@ A naive guard like `if str(REPO_ROOT) not in sys.path: sys.path.insert(0, ...)` 
 
 Two ways to avoid this:
 
-- Run with `python -m scripts.real.foo` from the repo root (matches how `async_td3_real_modular` is invoked); `-m` puts the cwd at `sys.path[0]`, so the local `scripts` package wins.
+- Run with `python -m scripts.real.foo` from the repo root (matches how `async_td3_real` is invoked); `-m` puts the cwd at `sys.path[0]`, so the local `scripts` package wins.
 - Or, at the very top of the script — **before any other imports** — force the repo root to position 0 unconditionally:
 
   ```python
@@ -33,7 +33,7 @@ This is the pattern used by `rollout_new.py`, `teleoperate.py`, and `run_primiti
 There are two different "slowdown/smoothing" mechanisms in the real stack:
 
 - Async TD3 transition holds
-  - configured in the shared library `scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py` (driven by the modular collector in `async_td3_real_modular.py`)
+  - shared runtime library `scripts/smooth_policy/amp_history/amp_training/td3/helper/real_td3_runtime.py` defines the `Args` knobs; the collector entrypoint `scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py` drives the holds via `helper/real_transition_hold.py`
   - used for reset-to-policy handoff, actor sync, and genuine safety recovery
 - Rollout startup/cooldown logic in `rollout_reset_policy_real.py`
   - `--startup-hold-steps` forces zero action for the first few normal-mode steps

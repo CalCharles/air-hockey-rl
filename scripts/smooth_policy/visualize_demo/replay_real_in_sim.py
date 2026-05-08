@@ -513,8 +513,8 @@ def replay_episode(
     )
 
     # --- replay loop -----------------------------------------------------------
-    # Indexing model (verified against async_td3_real_modular.collector_process_modular +
-    # _build_split_episode_row in async_td3_real.py + airhockey_base.py:784):
+    # Indexing model (verified against extras/async_td3_real.collector_process_modular +
+    # _build_split_episode_row in helper/real_td3_runtime.py + airhockey_base.py:784):
     #   row i in HDF5 stores the POST-step paddle state `pose[i] = T_{i+1}` and the action
     #   `actions[i] = a_{i+1}` that was applied in the step producing `pose[i]`.
     #   desired_pose[i] = pose[i] + actions[i] * move_lims (synthetic, from post-step pose).

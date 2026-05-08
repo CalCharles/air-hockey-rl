@@ -1,6 +1,6 @@
 # --train-args spec for the v27 real-world residual recipe.
 #
-# Loaded by `_load_train_args` in async_td3_real.py. Carries:
+# Loaded by `_load_train_args` in helper/real_td3_runtime.py. Carries:
 #   - actor/critic architecture (must match the source actor in `model_path`)
 #   - `use_last_action_in_policy_state` (must match the source's policy-state contract)
 #   - `num_critics` and `target_critic_subset_size` (the v27 ensemble settings)
