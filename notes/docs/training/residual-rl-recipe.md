@@ -1129,6 +1129,74 @@ same `ResidualActor` shell to load it; standard sim2sim eval drivers
 already do this — verify your real-world rollout target supports it before
 deploying.
 
+## Real-world residual — CQL recipe (canonical big-gap, 2026-05-08)
+
+Mirrors the sim2sim `redesign_cql` / phaseC winner
+(`scripts/smooth_policy/amp_history/configs/td3/sim2sim/warp075_p30_residual/phaseC_actor2_1M.yaml`).
+Reuses the v27 real-world plumbing — same Maxmin-5 ensemble, same data
+balance, same fresh-fill posture — and adds the two load-bearing knobs from
+the 2026-05-08 hyperparameter campaign:
+
+- **`cql_alpha: 20.0`** — Conservative-Q penalty on the task-Q head.
+  Penalty = `alpha * (logsumexp_a Q_task(s, a_random) - Q_task(s, pi(s)))`,
+  with `cql_n_random: 10` uniform actions per state. Pushes Q down on
+  out-of-distribution residual actions and up on the current policy action,
+  preventing the critic from extrapolating optimistically as the residual
+  drifts off the frozen base. The α=20 setting comes from the sim2sim α
+  sweet-zone (5–20 — see notes/scratch/experiments).
+- **`actor_updates_per_iteration: 2`** — strongest single knob in the
+  2026-05-08 campaign (+10 vs v27 at 300k, +2 mean / +14 peak at 1M on the
+  canonical paddle-30% target). v27's value was 1.
+
+Wired into the async-real critic loop (`real_td3_runtime.py:_run_learner_iteration`)
+as a default-off branch gated on `args.cql_alpha > 0`. When `cql_alpha = 0`
+the critic kernel is bit-identical to v27, so existing v27 launches
+(`td3_residual.yaml`) are unaffected.
+
+Canonical configs:
+- args-file (online behaviour): [`td3_real_world/td3_residual_cql.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_cql.yaml)
+- train-args (architecture + ensemble): [`td3_real_world/td3_residual_train_args.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml) — **shared with v27** (architecture is identical: 2-layer/64-wide, num_critics=5, target_critic_subset_size=null Maxmin-5).
+
+```bash
+python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
+  --train-args scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml \
+  --args-file  scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_cql.yaml \
+  --model-path <path-to-source-checkpoint>/training_state.pth
+```
+
+Resume (same flag set as v27 — only the `--args-file` differs):
+
+```bash
+python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
+  --train-args scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml \
+  --args-file  scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_cql.yaml \
+  --full-checkpoint-load residual_resume \
+  --learning-starts-fresh-steps 0 \
+  --load-replay-from-checkpoint \
+  --model-path <prev-run>/checkpoint_<tag>/training_state.pth
+```
+
+Recipe boundary (sim2sim verified): works on paddle-30% with `actor_updates=2`
+through warp 0.10 (with `actor_updates=4`); fails at warp 0.125. The real-world
+config defaults to `actor_updates_per_iteration: 2` (the canonical paddle-30%
+setting); bump to 4 only if you observe the equivalent of warp ≥ 0.10 dynamics
+mismatch.
+
+Stacking caveat: in the 2026-05-08 sim2sim campaign, stacking
+`actor_updates=2` with `q_updates_per_step=4` BACKFIRED. The real-world
+config keeps `q_updates: 4` (these are *per-episode* critic gradient steps in
+the async-real schedule, not per-env-step — different semantics from sim, where
+`q_updates: 1` per env step is the canonical CQL recipe). If you observe
+critic divergence on the real robot, drop `q_updates` first; do not also bump
+`actor_updates_per_iteration` past 2.
+
+Logged metrics (in addition to the v27 set): `losses/cql_penalty` (raw
+penalty in h-transformed units, mean over the 5 critics) and
+`losses/cql_penalty_weighted` (= `cql_alpha * cql_penalty` — the actual
+contribution to the critic loss). Watch these — if `cql_penalty_weighted`
+overwhelms `q_task_loss`, the critic is being pushed too conservatively;
+lower `cql_alpha` to the lower end of the sweet zone (5).
+
 ### Data layout across resumes
 
 `_setup_run_data_dir` creates a **new** timestamped directory for **every

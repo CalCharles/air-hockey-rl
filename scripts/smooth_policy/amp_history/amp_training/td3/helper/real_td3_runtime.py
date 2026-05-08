@@ -13,6 +13,7 @@ residual/args-mapping tests, but is not itself executable.
 from __future__ import annotations
 
 import copy
+import math
 import os
 import re
 import json
@@ -713,6 +714,13 @@ class Args:
     policy_noise: float = 0.2
     noise_clip: float = 0.5
     h_transform_eps: float = 1e-3
+    # CQL (Conservative Q-Learning) penalty on the task-Q head. Mirrors
+    # td3_training.py:Args.cql_alpha / cql_n_random. Default 0.0 → no penalty,
+    # critic loss is identical to pre-CQL behavior. The canonical big-gap
+    # residual recipe (sim2sim winner, 2026-05-08) sets cql_alpha=20.0.
+    # See notes/docs/training/residual-rl-recipe.md.
+    cql_alpha: float = 0.0
+    cql_n_random: int = 10
     task_reward_weight: float = 1.0
     motion_reward_weight: float = 1.0
     stand_still_reward_weight: float = 0.5
@@ -1925,20 +1933,63 @@ def _run_sync_learner_iteration(
             )
             target_task_h = h_transform(bellman_task, eps=float(args.h_transform_eps))
             target_motion_h = h_transform(bellman_motion, eps=float(args.h_transform_eps))
+        # Pre-compute CQL random actions and policy action once per minibatch
+        # (shared across critics — random sampling and policy forward are
+        # independent of which critic we're scoring). Mirrors td3_training.py.
+        cql_enabled = float(args.cql_alpha) > 0.0
+        cql_penalty_value: float | None = None
+        if cql_enabled:
+            bsz = sampled_observations.shape[0]
+            n_rand = int(args.cql_n_random)
+            act_dim = sampled_actions.shape[-1]
+            cql_random_actions = torch.empty(
+                n_rand * bsz, act_dim, device=args.learner_device
+            ).uniform_(-1.0, 1.0)
+            cql_obs_repeat = sampled_observations.unsqueeze(0).expand(
+                n_rand, -1, -1
+            ).reshape(n_rand * bsz, -1)
+            sampled_prev_actions = batch.get("prev_actions")
+            if sampled_prev_actions is None:
+                sampled_prev_actions = sampled_actions
+            cql_policy_obs = augment_policy_observation(
+                sampled_observations,
+                sampled_prev_actions,
+                train_args.use_last_action_in_policy_state,
+            )
+            with torch.no_grad():
+                cql_policy_action = deterministic_actor_action(
+                    state.actor, cql_policy_obs
+                )
         # Forward pass over all N critics; train each against the shared target.
         qi_task_h_list = []
         qi_motion_h_list = []
         qi_task_loss_list = []
         qi_motion_loss_list = []
+        cql_penalty_per_critic: list[torch.Tensor] = []
         for q in state.qfs:
             qi_task_h, qi_motion_h = q(sampled_observations, sampled_actions)
             qi_task_h_list.append(qi_task_h)
             qi_motion_h_list.append(qi_motion_h)
-            qi_task_loss_list.append(
-                torch.nn.functional.mse_loss(qi_task_h.view(-1), target_task_h)
-            )
+            task_loss_i = torch.nn.functional.mse_loss(qi_task_h.view(-1), target_task_h)
+            if cql_enabled:
+                # log(1/n_rand * sum exp Q) = logsumexp - log(n_rand)
+                q_rand_task_h, _ = q(cql_obs_repeat, cql_random_actions)
+                q_rand_task_h = q_rand_task_h.view(n_rand, bsz)
+                q_pi_task_h, _ = q(sampled_observations, cql_policy_action)
+                q_pi_task_h = q_pi_task_h.view(-1)
+                cql_logsumexp = (
+                    torch.logsumexp(q_rand_task_h, dim=0) - math.log(float(n_rand))
+                )
+                cql_penalty = (cql_logsumexp - q_pi_task_h).mean()
+                task_loss_i = task_loss_i + float(args.cql_alpha) * cql_penalty
+                cql_penalty_per_critic.append(cql_penalty.detach())
+            qi_task_loss_list.append(task_loss_i)
             qi_motion_loss_list.append(
                 torch.nn.functional.mse_loss(qi_motion_h.view(-1), target_motion_h)
+            )
+        if cql_enabled and cql_penalty_per_critic:
+            cql_penalty_value = float(
+                torch.stack(cql_penalty_per_critic).mean().item()
             )
         # Legacy aliases for the metrics block below; behavior matches td3_training.py:1881.
         q1_task_h, q1_motion_h = qi_task_h_list[0], qi_motion_h_list[0]
@@ -1997,6 +2048,11 @@ def _run_sync_learner_iteration(
                 ),
             }
         )
+        if cql_penalty_value is not None:
+            state.latest_train_metrics["losses/cql_penalty"] = cql_penalty_value
+            state.latest_train_metrics["losses/cql_penalty_weighted"] = (
+                cql_penalty_value * float(args.cql_alpha)
+            )
         if (q_update_idx + 1) % int(args.target_network_frequency) == 0:
             with torch.no_grad():
                 # Polyak-average all N critic-target pairs + the actor target.
