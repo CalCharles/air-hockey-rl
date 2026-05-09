@@ -171,7 +171,13 @@ class AirHockeyBaseEnv(ABC, Env):
         
         # reward function
         self.compute_online_rewards = config.compute_online_rewards
-        self.goal_conditioned = True if 'goal' in config.task or 'reach' in config.task else False
+        # Some tasks (e.g., puck_score) expose explicit goal geometry for rendering/reward
+        # even if their names do not include "goal" or "reach".
+        self.goal_conditioned = True if (
+            'goal' in config.task
+            or 'reach' in config.task
+            or 'score' in config.task
+        ) else False
         self.goal_min_x_velocity = -config.goal_max_x_velocity
         self.goal_max_x_velocity = config.goal_max_x_velocity
         self.goal_min_y_velocity = config.goal_min_y_velocity

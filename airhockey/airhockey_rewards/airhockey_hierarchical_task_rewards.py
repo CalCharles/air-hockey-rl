@@ -88,3 +88,23 @@ class AirHockeyTopEdgeSlotGoalReward(AirHockeyRewardBase):
         if self.task_env.puck_scored_top_edge_goal(state_info):
             return self._bonus, True
         return 0.0, False
+
+
+class AirHockeyTopEdgeVelocityScaledGoalReward(AirHockeyRewardBase):
+    """
+    Sparse success reward at the top-edge goal slot, scaled by entry speed toward goal.
+    Reward = scale * max(0, -puck_vx) when the puck scores; otherwise 0.
+    """
+
+    def __init__(self, task_env):
+        super().__init__(task_env)
+        self._velocity_scale = float(
+            getattr(task_env, "top_edge_goal_velocity_reward_scale", 100.0)
+        )
+
+    def get_base_reward(self, state_info):
+        goal_entry_vx = self.task_env.get_top_edge_goal_entry_vx(state_info)
+        if goal_entry_vx is None:
+            return 0.0, False
+        reward = self._velocity_scale * max(0.0, -float(goal_entry_vx))
+        return reward, True
