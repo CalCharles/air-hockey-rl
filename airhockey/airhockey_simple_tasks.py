@@ -3,7 +3,7 @@ import math
 import numpy as np
 from gymnasium.spaces import Box
 from .airhockey_base import AirHockeyBaseEnv
-from .airhockey_rewards import AirHockeyPuckCatchReward, AirHockeyPuckVelReward, AirHockeyPuckTouchReward, AirHockeyPuckHeightReward, AirHockeyPuckJuggleReward, AirHockeyPuckJuggleLinearTopReward, AirHockeyPuckJuggleNoBaseReward, AirHockeyPuckJuggleUpperHalfReward, AirHockeyPuckJuggleUpperHalfMidBandReward, AirHockeyPuckStrikeReward, AirHockeyStrikeCrowdReward, AirHockeyPaddleFreeMovementReward, AirHockeyPinballTriangleSideReward, AirHockeyTopEdgeSlotGoalReward
+from .airhockey_rewards import AirHockeyPuckCatchReward, AirHockeyPuckVelReward, AirHockeyPuckTouchReward, AirHockeyPuckHeightReward, AirHockeyPuckJuggleReward, AirHockeyPuckJuggleLinearTopReward, AirHockeyPuckJuggleNoBaseReward, AirHockeyPuckJuggleUpperHalfReward, AirHockeyPuckJuggleUpperHalfMidBandReward, AirHockeyPuckStrikeReward, AirHockeyStrikeCrowdReward, AirHockeyPaddleFreeMovementReward, AirHockeyPinballTriangleSideReward, AirHockeyTopEdgeSlotGoalReward, AirHockeyTopEdgeVelocityScaledGoalReward
 
 class AirHockeyPuckVelEnv(AirHockeyBaseEnv):
     def initialize_spaces(self, obs_type):
@@ -603,6 +603,187 @@ class AirHockeyPuckTopEdgeGoalTrianglesEnv(AirHockeyPuckJuggleEnv):
         return terminated, truncated, a, b, c, d
 
 
+class AirHockeyPuckScoreEnv(AirHockeyPuckJuggleLinearTopEnv):
+    """
+    Score in a band along the goal-side (top) edge; episode terminates on success.
+    By default the band is the middle third in ``y`` (half-width ``width/6``).
+    Override with ``top_edge_goal_slot_half_width_y_m``. No obstacles. Success
+    reward scales with puck x-velocity into the top edge.
+
+    Puck spawn uses the same randomization parameters as juggle linear-top
+    (``puck_spawn_near_paddle_prob``, ``puck_linear_top_spawn_*``,
+    ``puck_spawn_fixed_x_from_goal_frac``, etc.) when ``puck_spawn_mode`` is
+    ``linear_top`` or when those overrides apply. Default ``puck_spawn_mode`` is
+    ``score_default`` (legacy paddle-side low-speed spawn).
+    """
+
+    def __init__(self, **kwargs):
+        self.top_edge_goal_line_tolerance_m = float(kwargs.get("top_edge_goal_line_tolerance_m", 0.025))
+        self.top_edge_goal_velocity_reward_scale = float(
+            kwargs.get("top_edge_goal_velocity_reward_scale", 10.0)
+        )
+        self.top_edge_goal_visual_offset_m = float(kwargs.get("top_edge_goal_visual_offset_m", 0.012))
+        self.top_edge_goal_visual_half_depth_m = float(
+            kwargs.get("top_edge_goal_visual_half_depth_m", 0.018)
+        )
+        # None => after ``width`` is known, use middle third: half-width ``width / 6``.
+        self._user_top_edge_goal_slot_half_width_y_m = kwargs.pop(
+            "top_edge_goal_slot_half_width_y_m", None
+        )
+        self.puck_spawn_mode = str(kwargs.get("puck_spawn_mode", "score_default")).strip().lower()
+        self.puck_spawn_affected_by_gravity = bool(
+            kwargs.get("puck_spawn_affected_by_gravity", True)
+        )
+        if self.puck_spawn_mode not in ("score_default", "linear_top"):
+            raise ValueError(
+                f"Unknown puck_spawn_mode={self.puck_spawn_mode!r} for puck_score. "
+                "Expected one of: score_default, linear_top."
+            )
+        super().__init__(**kwargs)
+
+    def initialize_spaces(self, obs_type):
+        low, high = self.init_observation(obs_type)
+        self.action_space = self.single_action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32)
+        self.reward_range = Box(low=-1, high=1)
+        self.count_hit = False
+        self.hits = 0
+        self.reward = AirHockeyTopEdgeVelocityScaledGoalReward(self)
+        if self._user_top_edge_goal_slot_half_width_y_m is None:
+            self.top_edge_goal_slot_half_width_y_m = float(self.width) / 6.0
+        else:
+            self.top_edge_goal_slot_half_width_y_m = float(
+                self._user_top_edge_goal_slot_half_width_y_m
+            )
+            if self.top_edge_goal_slot_half_width_y_m <= 0.0:
+                raise ValueError("top_edge_goal_slot_half_width_y_m must be positive.")
+        gx = float(self.table_x_top) + self.top_edge_goal_visual_offset_m
+        self.goal_pos = (gx, 0.0)
+        self.goal_radius = (
+            self.top_edge_goal_visual_half_depth_m,
+            float(self.top_edge_goal_slot_half_width_y_m),
+        )
+        self.goal_draw_shape = "rect"
+
+    @staticmethod
+    def from_dict(state_dict):
+        return AirHockeyPuckScoreEnv(**state_dict)
+
+    def validate_configuration(self):
+        assert self.num_pucks == 1
+        assert self.num_blocks == 0
+        assert self.num_obstacles == 0
+        assert self.num_targets == 0
+        assert self.num_paddles == 1
+        if len(self.obstacle_positions) > self.num_obstacles:
+            raise ValueError("obstacle_positions has more entries than num_obstacles.")
+
+    def create_world_objects(self):
+        """Same ordering as juggle/linear-top, but honor ``puck_spawn_affected_by_gravity``."""
+        g = self.puck_spawn_affected_by_gravity
+        if self.num_pucks != 1 or self.puck_spawn_near_paddle_prob <= 0.0:
+            for i in range(self.num_pucks):
+                name = "puck_{}".format(i)
+                pos, vel = self.get_puck_configuration()
+                self.simulator.spawn_puck(pos, vel, name, affected_by_gravity=g)
+            name = "paddle_ego"
+            pos, vel = self.get_paddle_configuration(name)
+            self.simulator.spawn_paddle(pos, vel, name)
+            self._spawn_triangle_obstacles()
+            return
+
+        spawn_near_paddle = (
+            self.rng.uniform(low=0.0, high=1.0) < self.puck_spawn_near_paddle_prob
+        )
+        if not spawn_near_paddle:
+            for i in range(self.num_pucks):
+                name = "puck_{}".format(i)
+                pos, vel = self.get_puck_configuration()
+                self.simulator.spawn_puck(pos, vel, name, affected_by_gravity=g)
+            name = "paddle_ego"
+            pos, vel = self.get_paddle_configuration(name)
+            self.simulator.spawn_paddle(pos, vel, name)
+            self._spawn_triangle_obstacles()
+            return
+
+        paddle_name = "paddle_ego"
+        paddle_pos, paddle_vel = self.get_paddle_configuration(paddle_name)
+        puck_pos, puck_vel = self.get_puck_configuration(
+            paddle_pos=paddle_pos,
+            spawn_near_paddle=True,
+        )
+        self.simulator.spawn_puck(
+            puck_pos, puck_vel, "puck_0", affected_by_gravity=g
+        )
+        self.simulator.spawn_paddle(paddle_pos, paddle_vel, paddle_name)
+        self._spawn_triangle_obstacles()
+
+    def _sample_puck_score_default(self):
+        """Legacy score spawn: paddle side, low random speed."""
+        x_lo = self.table_x_top + 0.28 * float(self.length)
+        x_hi = self.table_x_bot * 0.82
+        x_pos = float(self.rng.uniform(x_lo, x_hi))
+        y_pos = float(self.rng.uniform(-self.width / 3.0, self.width / 3.0))
+        speed = float(self.rng.uniform(0.0, 0.35))
+        angle = float(self.rng.uniform(-math.pi, math.pi))
+        vx = speed * math.cos(angle)
+        vy = speed * math.sin(angle)
+        return (x_pos, y_pos), (vx, vy)
+
+    def get_puck_configuration(
+        self,
+        bad_regions=None,
+        paddle_pos=None,
+        spawn_near_paddle=False,
+    ):
+        """Juggle-compatible spawn: fixed-x / near-paddle / linear-top / score default."""
+        if self.puck_spawn_fixed_x_from_goal_frac is not None:
+            return super().get_puck_configuration(
+                bad_regions=bad_regions,
+                paddle_pos=paddle_pos,
+                spawn_near_paddle=spawn_near_paddle,
+            )
+        if spawn_near_paddle and paddle_pos is not None:
+            return super().get_puck_configuration(
+                bad_regions=bad_regions,
+                paddle_pos=paddle_pos,
+                spawn_near_paddle=True,
+            )
+        if self.puck_spawn_mode == "linear_top":
+            return super().get_puck_configuration(
+                bad_regions=bad_regions,
+                paddle_pos=paddle_pos,
+                spawn_near_paddle=False,
+            )
+        del bad_regions, paddle_pos, spawn_near_paddle
+        return self._sample_puck_score_default()
+
+    def get_top_edge_goal_entry_vx(self, state_info):
+        if "pucks" not in state_info or len(state_info["pucks"]) == 0:
+            return None
+        px, py = state_info["pucks"][0]["position"]
+        vx = float(state_info["pucks"][0]["velocity"][0])
+        if vx >= 0.0:
+            return None
+        if px > self.table_x_top + self.puck_radius + self.top_edge_goal_line_tolerance_m:
+            return None
+        half_slot_y = float(self.top_edge_goal_slot_half_width_y_m)
+        if abs(float(py)) > half_slot_y + 1e-9:
+            return None
+        return vx
+
+    def puck_scored_top_edge_goal(self, state_info):
+        return self.get_top_edge_goal_entry_vx(state_info) is not None
+
+    def has_finished(self, state_info, multiagent=False):
+        terminated, truncated, a, b, c, d = super().has_finished(state_info, multiagent)
+        if self.puck_scored_top_edge_goal(state_info):
+            terminated = True
+            self._last_done_reasons["terminated"] = list(
+                dict.fromkeys(self._last_done_reasons.get("terminated", []) + ["top_edge_goal"])
+            )
+        return terminated, truncated, a, b, c, d
+
+
 class AirHockeyPuckJuggleUpperHalfMidBandRewardEnv(AirHockeyPuckJuggleLinearTopEnv):
     def __init__(self, **kwargs):
         kwargs.setdefault("puck_linear_top_spawn_speed_max", 0.5)
@@ -656,6 +837,68 @@ class AirHockeyPuckJuggleUpperHalfMidBandRewardEnv(AirHockeyPuckJuggleLinearTopE
         return self._sample_puck_upper_half_linear_top(bad_regions=None)
 
 class AirHockeyPuckStrikeEnv(AirHockeyBaseEnv):
+    def __init__(self, **kwargs):
+        self.puck_spawn_mode = str(
+            kwargs.get("puck_spawn_mode", "strike_default")
+        ).strip().lower()
+        self.puck_spawn_affected_by_gravity = bool(
+            kwargs.get("puck_spawn_affected_by_gravity", False)
+        )
+        self.puck_spawn_near_paddle_prob = float(
+            np.clip(kwargs.get("puck_spawn_near_paddle_prob", 0.0), 0.0, 1.0)
+        )
+        self.puck_near_paddle_offset_min_m = float(
+            max(0.0, kwargs.get("puck_near_paddle_offset_min_m", 0.025))
+        )
+        self.puck_near_paddle_offset_max_m = float(
+            max(0.0, kwargs.get("puck_near_paddle_offset_max_m", 0.05))
+        )
+        if self.puck_near_paddle_offset_max_m < self.puck_near_paddle_offset_min_m:
+            self.puck_near_paddle_offset_min_m, self.puck_near_paddle_offset_max_m = (
+                self.puck_near_paddle_offset_max_m,
+                self.puck_near_paddle_offset_min_m,
+            )
+        self.puck_near_paddle_horizontal_std_m = float(
+            max(0.0, kwargs.get("puck_near_paddle_horizontal_std_m", 0.015))
+        )
+        self.puck_near_paddle_speed_min_m_s = float(
+            max(0.0, kwargs.get("puck_near_paddle_speed_min_m_s", 0.0))
+        )
+        self.puck_near_paddle_speed_max_m_s = float(
+            max(0.0, kwargs.get("puck_near_paddle_speed_max_m_s", 0.2))
+        )
+        if self.puck_near_paddle_speed_max_m_s < self.puck_near_paddle_speed_min_m_s:
+            raise ValueError(
+                "puck_near_paddle_speed_max_m_s must be >= puck_near_paddle_speed_min_m_s"
+            )
+        self.puck_linear_top_spawn_center_cutoff_x = float(
+            kwargs.get("puck_linear_top_spawn_center_cutoff_x", 0.2)
+        )
+        linear_goal_cutoff_x = kwargs.get("puck_linear_top_spawn_goal_cutoff_x", None)
+        self.puck_linear_top_spawn_goal_cutoff_x = (
+            None if linear_goal_cutoff_x is None else float(linear_goal_cutoff_x)
+        )
+        self.puck_linear_top_spawn_speed_min = float(
+            max(0.0, kwargs.get("puck_linear_top_spawn_speed_min", 0.0))
+        )
+        self.puck_linear_top_spawn_speed_max = float(
+            max(0.0, kwargs.get("puck_linear_top_spawn_speed_max", 0.5))
+        )
+        if self.puck_linear_top_spawn_speed_max < self.puck_linear_top_spawn_speed_min:
+            raise ValueError(
+                "puck_linear_top_spawn_speed_max must be >= puck_linear_top_spawn_speed_min"
+            )
+        frac = kwargs.get("puck_spawn_fixed_x_from_goal_frac", None)
+        self.puck_spawn_fixed_x_from_goal_frac = (
+            None if frac is None else float(np.clip(float(frac), 0.0, 1.0))
+        )
+        if self.puck_spawn_mode not in ("strike_default", "linear_top"):
+            raise ValueError(
+                f"Unknown puck_spawn_mode={self.puck_spawn_mode!r}. "
+                "Expected one of: strike_default, linear_top."
+            )
+        super().__init__(**kwargs)
+
     def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
         low, high = self.init_observation(obs_type)
@@ -667,23 +910,118 @@ class AirHockeyPuckStrikeEnv(AirHockeyBaseEnv):
     def from_dict(state_dict):
         return AirHockeyPuckStrikeEnv(**state_dict)
 
-    def create_world_objects(self):
+    def _sample_puck_speed_velocity(self, min_speed, max_speed):
+        speed = self.rng.uniform(low=min_speed, high=max_speed)
+        heading = self.rng.uniform(low=0.0, high=2 * math.pi)
+        return (speed * math.cos(heading), speed * math.sin(heading))
+
+    def _sample_puck_strike_default(self):
         puck_x_low = self.length / 5
         puck_x_high = self.length / 3
         puck_y_low = -self.width / 2 + self.puck_radius
         puck_y_high = self.width / 2 - self.puck_radius
-        # puck_y_low = -self.width / 2 + self.simulator.table_y_offset + self.simulator.puck_radius
-        # puck_y_high = self.width / 2 - self.simulator.table_y_offset - self.simulator.puck_radius
         puck_x = self.rng.uniform(low=puck_x_low, high=puck_x_high)
         puck_y = self.rng.uniform(low=puck_y_low, high=puck_y_high)
-        name = 'puck_{}'.format(0)
-        pos = (puck_x, puck_y)
-        vel = (0, 0)
-        self.simulator.spawn_puck(pos, vel, name, affected_by_gravity=False)
-        
-        name = 'paddle_ego'
-        pos, vel = self.get_paddle_configuration(name)
-        self.simulator.spawn_paddle(pos, vel, name)
+        return (puck_x, puck_y), (0.0, 0.0)
+
+    def _sample_puck_upper_half_linear_top(self):
+        x_table_low = self.table_x_top + self.puck_radius
+        x_table_high = self.table_x_bot - self.puck_radius
+        x_low = x_table_low
+        if self.puck_linear_top_spawn_goal_cutoff_x is not None:
+            x_low = max(x_low, self.puck_linear_top_spawn_goal_cutoff_x)
+        x_high = self.puck_linear_top_spawn_center_cutoff_x - self.puck_radius
+        x_low = float(np.clip(x_low, x_table_low, x_table_high))
+        x_high = float(np.clip(x_high, x_table_low, x_table_high))
+        if x_low >= x_high:
+            raise ValueError(
+                "Invalid linear-top puck spawn x-range after cutoffs: "
+                f"x_low={x_low}, x_high={x_high}, "
+                f"goal_cutoff={self.puck_linear_top_spawn_goal_cutoff_x}, "
+                f"center_cutoff={self.puck_linear_top_spawn_center_cutoff_x}"
+            )
+        y_low = self.table_y_left + self.puck_radius
+        y_high = self.table_y_right - self.puck_radius
+        y_pos = self.rng.uniform(low=y_low, high=y_high)
+        x_pos = self.rng.uniform(low=x_low, high=x_high)
+        vel = self._sample_puck_speed_velocity(
+            min_speed=self.puck_linear_top_spawn_speed_min,
+            max_speed=self.puck_linear_top_spawn_speed_max,
+        )
+        return (x_pos, y_pos), vel
+
+    def _sample_puck_near_paddle(self, paddle_pos):
+        paddle_x, paddle_y = paddle_pos
+        offset = self.rng.uniform(
+            low=self.puck_near_paddle_offset_min_m,
+            high=self.puck_near_paddle_offset_max_m,
+        )
+        x_pos = paddle_x - offset
+        y_pos = paddle_y + self.rng.normal(
+            loc=0.0,
+            scale=self.puck_near_paddle_horizontal_std_m,
+        )
+        x_pos = float(
+            np.clip(
+                x_pos,
+                self.table_x_top + self.puck_radius,
+                self.table_x_bot - self.puck_radius,
+            )
+        )
+        y_pos = float(
+            np.clip(
+                y_pos,
+                self.table_y_left + self.puck_radius,
+                self.table_y_right - self.puck_radius,
+            )
+        )
+        vel = self._sample_puck_speed_velocity(
+            min_speed=self.puck_near_paddle_speed_min_m_s,
+            max_speed=self.puck_near_paddle_speed_max_m_s,
+        )
+        return (x_pos, y_pos), vel
+
+    def _sample_puck_fixed_x_from_goal_frac_zero_vel(self):
+        frac = float(self.puck_spawn_fixed_x_from_goal_frac)
+        x_pos = self.table_x_top + frac * float(self.length)
+        x_pos = float(
+            np.clip(
+                x_pos,
+                self.table_x_top + self.puck_radius,
+                self.table_x_bot - self.puck_radius,
+            )
+        )
+        y_low = self.table_y_left + self.puck_radius
+        y_high = self.table_y_right - self.puck_radius
+        y_pos = float(self.rng.uniform(low=y_low, high=y_high))
+        return (x_pos, y_pos), (0.0, 0.0)
+
+    def _sample_puck_with_mode(self, paddle_pos=None, spawn_near_paddle=False):
+        if self.puck_spawn_fixed_x_from_goal_frac is not None:
+            return self._sample_puck_fixed_x_from_goal_frac_zero_vel()
+        if spawn_near_paddle and paddle_pos is not None:
+            return self._sample_puck_near_paddle(paddle_pos)
+        if self.puck_spawn_mode == "linear_top":
+            return self._sample_puck_upper_half_linear_top()
+        return self._sample_puck_strike_default()
+
+    def create_world_objects(self):
+        paddle_pos, paddle_vel = self.get_paddle_configuration("paddle_ego")
+        spawn_near_paddle = (
+            self.rng.uniform(low=0.0, high=1.0) < self.puck_spawn_near_paddle_prob
+        )
+        puck_pos, puck_vel = self._sample_puck_with_mode(
+            paddle_pos=paddle_pos,
+            spawn_near_paddle=spawn_near_paddle,
+        )
+
+        self.simulator.spawn_puck(
+            puck_pos,
+            puck_vel,
+            "puck_0",
+            affected_by_gravity=self.puck_spawn_affected_by_gravity,
+        )
+        self.simulator.spawn_paddle(paddle_pos, paddle_vel, "paddle_ego")
     
     def validate_configuration(self):
         assert self.num_pucks == 1
@@ -708,7 +1046,6 @@ class AirHockeyPuckStrikeEnv(AirHockeyBaseEnv):
 
     #     obs = np.array([ego_paddle_x_pos, ego_paddle_y_pos, ego_paddle_x_vel, ego_paddle_y_vel, puck_x_pos, puck_y_pos, puck_x_vel, puck_y_vel])
     #     return obs
-
 class AirHockeyPuckTouchEnv(AirHockeyBaseEnv):
     def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
