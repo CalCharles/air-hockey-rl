@@ -144,6 +144,19 @@ ABLATIONS: list[Ablation] = [
         ],
     ),
     Ablation(
+        name="no_obs_delay_randomization",
+        description=(
+            "observation-delay JITTER OFF (delay itself stays on at fixed delay_seconds=0.025). "
+            "Replaces the broken `no_obs_delay` ablation: keeps `enable_observation_delay: true` so "
+            "the breakpoints sub-stepping (and therefore puck_history temporal density) is unchanged, "
+            "and only flips `randomize_delay: true -> false` to remove ±25% per-step jitter. "
+            "This isolates the delay-jitter randomization from the env-level density coupling."
+        ),
+        patches=[
+            Patch(old="    randomize_delay: true\n", new="    randomize_delay: false\n"),
+        ],
+    ),
+    Ablation(
         name="all_sysid_no_rand",
         description=(
             "all sysid params kept at best-fit values, but ALL randomization disabled: "
@@ -166,6 +179,93 @@ ABLATIONS: list[Ablation] = [
                 old="    enable_action_force_attenuation: true\n",
                 new="    enable_action_force_attenuation: false\n",
             ),
+            Patch(
+                old="    enable_paddle_puck_strength_randomization: true\n",
+                new="    enable_paddle_puck_strength_randomization: false\n",
+            ),
+            Patch(
+                old="    enable_paddle_puck_direction_randomization: true\n",
+                new="    enable_paddle_puck_direction_randomization: false\n",
+            ),
+            Patch(
+                old="    enable_wall_direction_randomization: true\n",
+                new="    enable_wall_direction_randomization: false\n",
+            ),
+        ],
+    ),
+    # ----- Isolation studies ("include only X") -----
+    # All three start from canonical hist2 sysid sim and turn OFF every
+    # collision/action/noise/occlusion/jitter knob NOT specifically named.
+    # `enable_observation_delay: true` is KEPT ON per the project default
+    # (see feedback_obs_delay_default_on memory): flipping it false collapses
+    # puck_history density and breaks training. Only `randomize_delay` is
+    # flipped to remove the per-step jitter randomization. Starting-state
+    # mixture (puck_spawn_near_paddle_prob=0.15) and sysid params stay on.
+    Ablation(
+        name="only_obs_noise_occlusion",
+        description=(
+            "ISOLATION: only `puck_noise` and `enable_random_occlusions` ON. "
+            "All collision randomization (paddle-puck strength + direction, wall direction), "
+            "action force-attenuation, and delay-jitter are OFF. Observation delay mechanism "
+            "stays on (default) but without per-step jitter."
+        ),
+        patches=[
+            Patch(old="    randomize_delay: true\n", new="    randomize_delay: false\n"),
+            Patch(
+                old="    enable_action_force_attenuation: true\n",
+                new="    enable_action_force_attenuation: false\n",
+            ),
+            Patch(
+                old="    enable_paddle_puck_strength_randomization: true\n",
+                new="    enable_paddle_puck_strength_randomization: false\n",
+            ),
+            Patch(
+                old="    enable_paddle_puck_direction_randomization: true\n",
+                new="    enable_paddle_puck_direction_randomization: false\n",
+            ),
+            Patch(
+                old="    enable_wall_direction_randomization: true\n",
+                new="    enable_wall_direction_randomization: false\n",
+            ),
+        ],
+    ),
+    Ablation(
+        name="only_action_attenuation",
+        description=(
+            "ISOLATION: only `enable_action_force_attenuation` ON. "
+            "Puck noise, random occlusions, all collision randomization, and delay-jitter "
+            "are OFF. Observation delay mechanism stays on (default) but without per-step jitter."
+        ),
+        patches=[
+            Patch(old="    puck_noise: true\n", new="    puck_noise: false\n"),
+            Patch(
+                old="    enable_random_occlusions: true\n",
+                new="    enable_random_occlusions: false\n",
+            ),
+            Patch(old="    randomize_delay: true\n", new="    randomize_delay: false\n"),
+            Patch(
+                old="    enable_paddle_puck_strength_randomization: true\n",
+                new="    enable_paddle_puck_strength_randomization: false\n",
+            ),
+            Patch(
+                old="    enable_paddle_puck_direction_randomization: true\n",
+                new="    enable_paddle_puck_direction_randomization: false\n",
+            ),
+            Patch(
+                old="    enable_wall_direction_randomization: true\n",
+                new="    enable_wall_direction_randomization: false\n",
+            ),
+        ],
+    ),
+    Ablation(
+        name="only_action_attenuation_obs_noise_occlusion",
+        description=(
+            "ISOLATION: only `enable_action_force_attenuation`, `puck_noise`, and "
+            "`enable_random_occlusions` ON. All collision randomization and delay-jitter are OFF. "
+            "Observation delay mechanism stays on (default) but without per-step jitter."
+        ),
+        patches=[
+            Patch(old="    randomize_delay: true\n", new="    randomize_delay: false\n"),
             Patch(
                 old="    enable_paddle_puck_strength_randomization: true\n",
                 new="    enable_paddle_puck_strength_randomization: false\n",

@@ -647,6 +647,15 @@ class Args:
     sample_gif_interval: int = 10000
     sample_gif_max_storage_mb: float = 50.0
 
+    # Multi-env evaluation (used by td3_training_dr.py wrapper).
+    # When eval_param_seed is None (default), behavior is unchanged.
+    # When set, the wrapper monkey-patches `evaluate_agent` to roll N
+    # episodes through each of `eval_n_envs` fixed seed-sampled environments
+    # and aggregate; per-env stats are dumped to <ckpt_dir>/multi_env_eval.json.
+    eval_param_seed: int | None = None
+    eval_n_envs: int = 1
+    eval_eps_per_env: int = 4
+
 
 def make_env(env_id):
     def _thunk():
@@ -671,7 +680,12 @@ def enforce_sample_storage_cap(samples_dir: str, max_mb: float) -> None:
         os.remove(oldest)
 
 
-if __name__ == "__main__":
+def _entrypoint():
+    """Entry point exposed so wrapper scripts (e.g. td3_training_dr.py)
+    can monkey-patch module-level callables (notably `evaluate_agent`) and
+    then invoke the full training loop. Behavior is identical to running
+    `python -m scripts.smooth_policy.amp_history.amp_training.td3.td3_training`
+    directly."""
     temp_args = tyro.cli(Args)
     if temp_args.args_file is not None:
         with open(temp_args.args_file, "r") as f:
@@ -756,6 +770,12 @@ if __name__ == "__main__":
         max_magnitude=args.exploration_target_position_directional_max_magnitude,
     )
 
+    # `config` must be a MODULE-LEVEL name because the module-level
+    # `make_env(env_id)._thunk` closure (line ~661) reads it as a free
+    # variable. Before the _entrypoint() refactor, `config` lived at top
+    # level naturally; now we have to declare it global so the assignment
+    # below writes to the module namespace where _thunk can find it.
+    global config
     with open(args.config, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
 
@@ -2500,3 +2520,7 @@ if __name__ == "__main__":
     save_tensorboard_plots(log_parent_dir, config, metrics=metrics)
     writer.close()
 
+
+
+if __name__ == "__main__":
+    _entrypoint()
