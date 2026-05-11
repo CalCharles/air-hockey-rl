@@ -79,35 +79,15 @@ air_hockey:
 
     puck_noise: true
     puck_noise_std: 0.01
+    # Plain spatially-uniform puck occlusion: 5% per-step probability to start
+    # a new occlusion run anywhere on the table; run length sampled from the
+    # weights below (max 7 consecutive occluded frames).
     enable_random_occlusions: true
-    random_occlusion_target_rate: 0.025
-    random_occlusion_other_region_rate: 0.025
+    random_occlusion_rate: 0.05
     random_occlusion_length_weights: [75, 39, 18, 9, 4, 2, 1]
-    random_occlusion_bad_region_box_x: [-0.4, -0.35]
-    random_occlusion_bad_region_box_y: [-0.3, 0.0]
-    random_occlusion_bad_region_right_x: [0.35, 0.8]
-    random_occlusion_near_paddle_boost: true
-    random_occlusion_near_paddle_distance_m: 0.05
-    random_occlusion_near_paddle_rate_multiplier: 3.0
     enable_action_delay: false
     enable_observation_delay: true
     delay_seconds: 0.025
-    randomize_delay: true
-    delay_relative_range: 0.25
-    enable_action_force_attenuation: true
-    action_force_attenuation_prob: 0.30
-    action_force_attenuation_min: 0.25
-    action_force_attenuation_max: 0.75
-
-    # Optional per-collision randomization (all off by default).
-    # Paddle-puck: strength (magnitude multiplier) + direction (impulse rotation).
-    enable_paddle_puck_strength_randomization: false
-    paddle_puck_strength_range: [0.5, 1.0]
-    enable_paddle_puck_direction_randomization: false
-    paddle_puck_direction_cone_deg: 10.0
-    # Puck-wall: direction only (no wall strength knob by design).
-    enable_wall_direction_randomization: false
-    wall_direction_cone_deg: 10.0
 
   stand_still_rew: 0.0
   task: puck_juggle_upper_half_reward

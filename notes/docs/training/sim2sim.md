@@ -2,6 +2,8 @@
 
 A *sim2sim* campaign trains a policy on one Box2D sim ("source") and tests how it transfers to a perturbed Box2D sim ("target"). It is the rehearsal step before sim2real and the home for fine-tuning experiments.
 
+> **Canonical training approach for sim2sim / sim2real (2026-05-11 onward).** Source policies that need to transfer should be trained with **environment-parameter domain randomization** — paddle_density / puck_damping / gravity drawn uniform per-reset (±25 % of sysid). Launch via `scripts/td3/td3_training_dr.py` with sim config [`configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25.yaml`](../../../configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25.yaml) and args [`configs/td3/zeroshot_paramrand/td3_paramrand_pm25.yaml`](../../../configs/td3/zeroshot_paramrand/td3_paramrand_pm25.yaml). The earlier "engineered randomization" strategy (per-collision strength/direction jitter, action-force attenuation, delay jitter, paddle-density fluctuation) was deprecated and the mechanisms physically removed from the env. The residual fine-tune recipes below are still useful for adapting a source policy to a *specific* perturbed target, but the source they consume should now be a paramrand-trained policy, not an engineered-DR one.
+
 ## Canonical big-gap target
 
 [`configs/new_juggle/sim2sim_warp075_p30.yaml`](../../../configs/new_juggle/sim2sim_warp075_p30.yaml) — paddle −30% (mass-preserved) + sine-y puck-obs warp 0.075, all delays / hist_len / restitutions matched to source. Zero-shot return ≈ 48; from-scratch peak ≈ 112 at 400k.
@@ -20,7 +22,9 @@ Sim2sim configs use the same sim env schema as training; the file has a `# Sourc
 
 ## Source policy
 
-The canonical source policy for residual fine-tuning is [`latest_models/canonical/hist2_motion0_v2/`](../../../latest_models/canonical/hist2_motion0_v2/) (trained on `sysid_best_params_hist2.yaml` with the latest collision randomization; eval mean 169.72 on the source sim). The earlier `hist2_motion0/` predecessor is also kept on disk for reproducibility but should not be referenced in new work.
+The historical source policy used by the residual recipes below is [`latest_models/canonical/hist2_motion0_v2/`](../../../latest_models/canonical/hist2_motion0_v2/) (trained on `sysid_best_params_hist2.yaml` with the now-deprecated engineered randomization; eval mean 169.72 on the source sim). The earlier `hist2_motion0/` predecessor is also kept on disk for reproducibility but should not be referenced in new work.
+
+**For new work**, train a fresh source policy with env-parameter randomization (see the banner at the top of this doc). The hist2_motion0_v2 checkpoint remains loadable — the env silently ignores its now-unknown config keys — but it represents the deprecated regime.
 
 ## Fine-tuning recipes
 
@@ -39,14 +43,14 @@ Recipe boundary: works through warp 0.10 (with actor=4); warp 0.125 is intractab
 
 ### Zero-shot evaluation
 
-Use the standard trainer in eval mode:
+Use the standard trainer in eval mode. (Eval works the same way regardless of how the source was trained; the `--args-file` only needs to match the architecture used at training time.)
 
 ```bash
 .venv/bin/python -m scripts.td3.td3_training \
-  --args-file configs/td3/td3_recommended_top50_hist2.yaml \
+  --args-file configs/td3/zeroshot_paramrand/td3_paramrand_pm25.yaml \
   --eval-mode \
   --config configs/new_juggle/sim2sim_warp075_p30.yaml \
-  --model-path runs/td3/<src_run>/checkpoint_<step>/model.pth \
+  --model-path runs/td3/<paramrand_src_run>/checkpoint_<step>/model.pth \
   --total-timesteps 12500 \
   --num-envs 1
 ```

@@ -40,7 +40,18 @@ uv sync --extra train
 
 ## Quickstart
 
-### Train a TD3 policy in sim
+### Train a TD3 policy in sim (for sim2sim / sim2real transfer)
+
+The canonical source-policy training command uses **environment-parameter domain randomization** (paddle_density / puck_damping / gravity drawn uniform per-reset, ±25 % of sysid):
+
+```bash
+.venv/bin/python -m scripts.td3.td3_training_dr \
+  --args-file configs/td3/zeroshot_paramrand/td3_paramrand_pm25.yaml
+```
+
+This is the recommended path for any new policy that will need to transfer to a perturbed sim or to the real robot — the older "engineered randomization" approach (per-collision strength/direction jitter, action-force attenuation, delay jitter) was deprecated and its mechanisms removed from the env on 2026-05-11. See [`notes/docs/training/sim2sim.md`](notes/docs/training/sim2sim.md) for the strategy overview.
+
+For a source-sim-only policy (no transfer involved), the vanilla trainer still works:
 
 ```bash
 .venv/bin/python -m scripts.td3.td3_training \

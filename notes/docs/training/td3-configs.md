@@ -1,8 +1,19 @@
 # TD3 Training Args (`configs/td3/`)
 
-TD3 args YAMLs at [`configs/td3/`](../../../configs/td3/). All are passed to `scripts/td3/td3_training.py` via `--args-file`.
+TD3 args YAMLs at [`configs/td3/`](../../../configs/td3/). Source-only training is launched via `scripts/td3/td3_training.py`; for **sim2sim / sim2real transfer**, the canonical training command is `scripts/td3/td3_training_dr.py` with the env-parameter-randomization config in [`configs/td3/zeroshot_paramrand/`](../../../configs/td3/zeroshot_paramrand/) (see [`sim2sim.md`](sim2sim.md) for the strategy overview).
 
-## Canonical sim training — `td3_recommended_top50_hist2.yaml`
+## Canonical env-randomization training (sim2real source) — `zeroshot_paramrand/td3_paramrand_pm25.yaml`
+
+The recommended source-policy training for any policy that will transfer to a perturbed sim or the real robot. Wraps `td3_training` via `td3_training_dr.py` to add per-reset randomization of paddle_density / puck_damping / gravity (±25 % of sysid) plus a 5-env eval overlay at every checkpoint. Sim config: [`configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25.yaml`](../../../configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25.yaml).
+
+```bash
+.venv/bin/python -m scripts.td3.td3_training_dr \
+  --args-file configs/td3/zeroshot_paramrand/td3_paramrand_pm25.yaml
+```
+
+This replaces the earlier "engineered randomization" source-training recipe (`td3_recommended_top50_hist2.yaml` is still kept for source-only sim runs and ablations, but should not be used for new sim2sim / sim2real source policies).
+
+## Canonical source-sim-only training — `td3_recommended_top50_hist2.yaml`
 
 The canonical config for new sim TD3 runs. Distilled from the update-count, network-depth, and actor:Q-ratio ablations in [`td3-ablations-updates-and-depth.md`](td3-ablations-updates-and-depth.md) and the exploration sweep in [`td3-exploration-ablations.md`](td3-exploration-ablations.md).
 

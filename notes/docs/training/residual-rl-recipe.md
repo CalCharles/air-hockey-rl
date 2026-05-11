@@ -2,6 +2,8 @@
 
 The canonical recipe for fine-tuning a sim-pretrained TD3 policy onto a target with a meaningful sim-to-sim or sim-to-real gap. Three configs ship under [`configs/td3/sim2sim/warp075_p30_residual/`](../../../configs/td3/sim2sim/warp075_p30_residual/), each verified at 1M env steps. Pick by target severity.
 
+> **Source-policy training (2026-05-11 onward).** This residual recipe is a *fine-tuning* step that runs on top of an already-trained source policy. For new work, the source policy itself should be trained with **environment-parameter randomization** — paddle_density / puck_damping / gravity DR'd per-reset — not the deprecated engineered-randomization stack. See [`sim2sim.md`](sim2sim.md) for the canonical training command (`scripts/td3/td3_training_dr.py` with `configs/td3/zeroshot_paramrand/td3_paramrand_pm25.yaml`). The 1M-step results below were collected with the older engineered-DR source policy (`latest_models/canonical/hist2_motion0_v2/`); paramrand-trained sources may or may not need residual fine-tuning, depending on how much gap remains after env-param DR alone.
+
 ## Canonical recipe
 
 | Parameter | Value | Notes |

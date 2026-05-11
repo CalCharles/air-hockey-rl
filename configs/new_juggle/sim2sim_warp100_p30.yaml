@@ -57,9 +57,9 @@ air_hockey:
     hist_len: 2
     puck_noise: true
     puck_noise_std: 0.01
+    # Plain spatially-uniform puck occlusion (5% per-step start probability).
     enable_random_occlusions: true
-    random_occlusion_target_rate: 0.025
-    random_occlusion_other_region_rate: 0.025
+    random_occlusion_rate: 0.05
     random_occlusion_length_weights:
     - 75
     - 39
@@ -68,35 +68,9 @@ air_hockey:
     - 4
     - 2
     - 1
-    random_occlusion_bad_region_box_x:
-    - -0.4
-    - -0.35
-    random_occlusion_bad_region_box_y:
-    - -0.3
-    - 0.0
-    random_occlusion_bad_region_right_x:
-    - 0.35
-    - 0.8
-    random_occlusion_near_paddle_boost: true
-    random_occlusion_near_paddle_distance_m: 0.05
-    random_occlusion_near_paddle_rate_multiplier: 3.0
     enable_action_delay: false
     enable_observation_delay: true
     delay_seconds: 0.025
-    randomize_delay: true
-    delay_relative_range: 0.25
-    enable_action_force_attenuation: true
-    action_force_attenuation_prob: 0.3
-    action_force_attenuation_min: 0.25
-    action_force_attenuation_max: 0.75
-    enable_paddle_puck_strength_randomization: true
-    paddle_puck_strength_range:
-    - 0.5
-    - 1.0
-    enable_paddle_puck_direction_randomization: true
-    paddle_puck_direction_cone_deg: 10.0
-    enable_wall_direction_randomization: true
-    wall_direction_cone_deg: 10.0
     paddle_mass_reference_radius: 0.0508
     puck_obs_sine_warp_amplitude: 0.1
   stand_still_rew: 0.0

@@ -11,23 +11,24 @@
 # canonical target: paddle -50% with mass preserved, plus the v2-style normal
 # delay jitter. Verified zero-shot mean ~67.5 on hist2_motion0 (n=50).
 #
-# Perturbations:
+# Perturbations (after the engineered-randomization deprecation):
 #   1. Movement: pid_kp 9000 -> 7200 (-20%) — softer position controller, slower
 #      paddle response to commanded targets.
-#   2. Delay: action delay enabled, base delay 0.025 -> 0.030s (+20%);
-#      jitter switched from uniform/0.25 to normal-clipped/0.35 (carried over
-#      from sim2sim_combined_v2 — heavier-tailed inconsistent delay).
-#   3. Wall collisions: wall_direction_cone_deg 10 -> 25 (random angular
-#      perturbation widens). Note: this widens variance only; the mean bounce
-#      direction is still the wall normal. A deterministic angular bias would
-#      need a new sim param.
-#   4. Puck-paddle collisions: paddle_radius 0.0508 -> 0.02540 (-50%) with
+#   2. Delay: action delay enabled, base delay 0.025 -> 0.030s (+20%).
+#      (Note: the older delay-jitter / normal-clipped distribution perturbation
+#      is no longer part of the env; the residual gap is now just the base
+#      delay shift.)
+#   3. Puck-paddle collisions: paddle_radius 0.0508 -> 0.02540 (-50%) with
 #      paddle_mass_reference_radius=0.0508 so paddle MASS is preserved against
 #      source (effective density auto-scales 3000 -> 12000). Smaller paddle
 #      shrinks the contact window without confounding the perturbation with
 #      mass loss; recommended residual-RL target per the sweep doc.
 #
-# See notes/scratch/sim2sim_delay_puck_perturbation_sweep.md and
+# Earlier versions of this config also widened the wall-direction cone
+# (10 -> 25 deg) as a 4th perturbation; that mechanism has been removed
+# from the env, so the perturbation no longer applies. The historical
+# context is preserved in
+# notes/scratch/sim2sim_delay_puck_perturbation_sweep.md and
 # notes/scratch/sim2sim_infra_plan.md.
 
 air_hockey:
@@ -92,36 +93,13 @@ air_hockey:
 
     puck_noise: true
     puck_noise_std: 0.01
+    # Plain spatially-uniform puck occlusion (5% per-step start probability).
     enable_random_occlusions: true
-    random_occlusion_target_rate: 0.025
-    random_occlusion_other_region_rate: 0.025
+    random_occlusion_rate: 0.05
     random_occlusion_length_weights: [75, 39, 18, 9, 4, 2, 1]
-    random_occlusion_bad_region_box_x: [-0.4, -0.35]
-    random_occlusion_bad_region_box_y: [-0.3, 0.0]
-    random_occlusion_bad_region_right_x: [0.35, 0.8]
-    random_occlusion_near_paddle_boost: true
-    random_occlusion_near_paddle_distance_m: 0.05
-    random_occlusion_near_paddle_rate_multiplier: 3.0
     enable_action_delay: true       # PERTURBED: false -> true
     enable_observation_delay: true
     delay_seconds: 0.030            # PERTURBED: 0.025 * 1.2 (+20%)
-    randomize_delay: true
-    delay_relative_range: 0.35      # PERTURBED: 0.25 -> 0.35 (carried over from v2, clipped)
-    delay_jitter_distribution: "normal"  # PERTURBED: uniform -> normal-clipped (carried over from v2)
-    enable_action_force_attenuation: true
-    action_force_attenuation_prob: 0.30
-    action_force_attenuation_min: 0.25
-    action_force_attenuation_max: 0.75
-
-    # Per-collision randomization.
-    # Paddle-puck: strength (magnitude multiplier) + direction (impulse rotation).
-    enable_paddle_puck_strength_randomization: true
-    paddle_puck_strength_range: [0.5, 1.0]
-    enable_paddle_puck_direction_randomization: true
-    paddle_puck_direction_cone_deg: 10.0
-    # Puck-wall: direction only (no wall strength knob by design).
-    enable_wall_direction_randomization: true
-    wall_direction_cone_deg: 25.0   # PERTURBED: 10.0 -> 25.0 (wider angular cone)
 
   stand_still_rew: 0.0
   task: puck_juggle_upper_half_reward

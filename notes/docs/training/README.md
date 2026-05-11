@@ -2,6 +2,8 @@
 
 TD3 is the active training algorithm. PPO/SAC paths exist as legacy (see `architecture.md` for the boundary). Real-robot training uses the async pipeline; sim training uses the synchronous vec-env script.
 
+> **Sim2sim / sim2real training strategy (2026-05-11 onward):** new source policies that need to transfer are trained with **environment-parameter randomization** via `scripts/td3/td3_training_dr.py` ([`configs/td3/zeroshot_paramrand/td3_paramrand_pm25.yaml`](../../../configs/td3/zeroshot_paramrand/td3_paramrand_pm25.yaml)). The earlier engineered-randomization stack has been deprecated and removed from the env. See [`sim2sim.md`](sim2sim.md) for the strategy overview. The residual fine-tune recipe ([`residual-rl-recipe.md`](residual-rl-recipe.md)) remains valid as a complementary adaptation step on top of a paramrand-trained source.
+
 ## Overview / reference
 
 | Doc | What it covers |

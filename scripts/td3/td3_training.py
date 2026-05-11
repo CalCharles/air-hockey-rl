@@ -635,12 +635,6 @@ class Args:
     puck_delay_interpolation_min: float | None = None
     puck_delay_interpolation_max: float | None = None
 
-    # Stochastic force attenuation
-    enable_action_force_attenuation: bool = False
-    action_force_attenuation_prob: float | None = None
-    action_force_attenuation_min: float | None = None
-    action_force_attenuation_max: float | None = None
-
     # Live episode GIF recording
     watch_ring_size: int = 10
     watch_episode_interval: int = 50
@@ -790,10 +784,6 @@ def _entrypoint():
         "enable_puck_delay_interpolation": True if args.enable_puck_delay_interpolation else None,
         "puck_delay_interpolation_min": args.puck_delay_interpolation_min,
         "puck_delay_interpolation_max": args.puck_delay_interpolation_max,
-        "enable_action_force_attenuation": True if args.enable_action_force_attenuation else None,
-        "action_force_attenuation_prob": args.action_force_attenuation_prob,
-        "action_force_attenuation_min": args.action_force_attenuation_min,
-        "action_force_attenuation_max": args.action_force_attenuation_max,
     }
     for key, value in sim_params_overrides.items():
         if value is not None:

@@ -45,8 +45,7 @@ Key flags:
 3. **Build the sim env** from the YAML. Unless `--enable-noise`, the script
    overrides these keys to make replay deterministic:
    - `simulator_params`: `puck_noise`, `enable_random_occlusions`,
-     `enable_observation_delay`, `enable_action_delay`,
-     `enable_action_force_attenuation` → `False`
+     `enable_observation_delay`, `enable_action_delay` → `False`
    - `air_hockey`: all `terminate_on_*` flags → `False` (so the replay runs the
      full recorded length regardless of goal/out-of-bounds events)
 

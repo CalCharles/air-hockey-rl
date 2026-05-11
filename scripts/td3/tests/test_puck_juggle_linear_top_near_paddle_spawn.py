@@ -26,6 +26,10 @@ class NearPaddleSpawnTests(unittest.TestCase):
         cfg["seed"] = 123
         cfg["num_pucks"] = 1
         cfg["obs_type"] = "vel"
+        # current_state['pucks'][i]['position'] is the *observed* (occlusion-aware)
+        # position; disable occlusion so spawn-bounds assertions read the true puck
+        # position rather than the (-0.8, 0.0) fallback used when occluded.
+        cfg.setdefault("simulator_params", {})["enable_random_occlusions"] = False
         cfg.update(overrides)
         return AirHockeyEnv(cfg), cfg
 

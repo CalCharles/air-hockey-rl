@@ -39,9 +39,9 @@ All YAMLs at the repo root under `configs/`:
 
 | Path | Role |
 |------|------|
-| [`configs/new_juggle/`](../../../configs/new_juggle/) | Sim env configs (sysid_best_params*, sim2sim warp targets). |
-| [`configs/td3/`](../../../configs/td3/) | TD3 sim training args (canonical: `td3_recommended_top50_hist2.yaml`). |
-| [`configs/td3/sim2sim/`](../../../configs/td3/sim2sim/) | Sim2sim residual recipes (canonical: `warp075_p30_residual/phaseC_actor2_1M.yaml` + phaseD variants; small-gap: `td3_sim2sim_residual.yaml`). |
+| [`configs/new_juggle/`](../../../configs/new_juggle/) | Sim env configs. **For sim2sim / sim2real transfer**: `zeroshot_ablations/sim_paramrand_pm25.yaml` (env-param DR, canonical). For source-sim-only training / ablations: `sysid_best_params{,_hist2}.yaml`. Sim2sim warp targets: `sim2sim_*.yaml`. |
+| [`configs/td3/`](../../../configs/td3/) | TD3 sim training args. **Canonical sim2sim / sim2real source-policy training**: `zeroshot_paramrand/td3_paramrand_pm25.yaml` (launched via `scripts/td3/td3_training_dr.py`). Source-sim-only / ablations: `td3_recommended_top50_hist2.yaml`. |
+| [`configs/td3/sim2sim/`](../../../configs/td3/sim2sim/) | Sim2sim residual fine-tune recipes (used on top of a trained source policy: canonical: `warp075_p30_residual/phaseC_actor2_1M.yaml` + phaseD variants; small-gap: `td3_sim2sim_residual.yaml`). |
 | [`configs/td3_real_world/`](../../../configs/td3_real_world/) | Real-robot residual fine-tune args (`td3_residual.yaml`). |
 | [`configs/real_configs/`](../../../configs/real_configs/) | Real-robot rollout / mouse-teleop configs. |
 
@@ -49,7 +49,7 @@ All YAMLs at the repo root under `configs/`:
 
 | Path | Role |
 |------|------|
-| [`latest_models/canonical/hist2_motion0_v2/`](../../../latest_models/canonical/hist2_motion0_v2/) | Canonical sim-pretrained source policy. |
+| [`latest_models/canonical/hist2_motion0_v2/`](../../../latest_models/canonical/hist2_motion0_v2/) | Historical sim-pretrained source policy (trained with the deprecated engineered-randomization stack pre-2026-05-11). Loadable but **not the canonical source for new sim2sim / sim2real work** — retrain via the paramrand path. |
 | [`latest_models/canonical/hist2_motion0/`](../../../latest_models/canonical/hist2_motion0/) | Deprecated predecessor; on disk for reproducibility. |
 | [`latest_models/ablations/`](../../../latest_models/ablations/) | 16 CoRL 2026 deployment-ready ablation checkpoints. |
 

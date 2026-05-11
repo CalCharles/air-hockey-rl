@@ -66,9 +66,10 @@ You don't need to set any of these yourself — they're already in the YAML — 
 
 - **System-ID physics** (matches the real robot): `gravity: -0.661`, `puck_damping: 0.178`, `paddle_density: 3000`, `pid_kp: 9000`, `pid_kd: 50`. See [`environments/real-world/puck-system-id.md`](../environments/real-world/puck-system-id.md) and [`teleop-system-id.md`](../environments/real-world/teleop-system-id.md).
 - **`hist_len: 2`** — the PID target is low-pass-filtered over 2 timesteps inside `_filter_update` ([`airhockey/sims/airhockey_box2d.py`](../../../airhockey/sims/airhockey_box2d.py)). This is also the env default.
-- **Sim-to-real-gap features (on)**: puck position noise (σ=0.01 m), random occlusions (with near-paddle boost), observation delay (25 ms ± 25%), action force attenuation (30% chance of 25–75% scaling).
-- **Per-collision randomization (on)**: paddle-puck strength + direction jitter, wall direction jitter — see the config's `enable_paddle_puck_*` and `enable_wall_direction_*` blocks.
+- **Sim-to-real-gap features (on)**: puck position noise (σ=0.01 m), plain spatially-uniform random occlusions (5% per-step start probability, run length ≤7 frames), observation delay (fixed 25 ms).
 - **Episode**: `max_timesteps: 250`, `puck_juggle_upper_half_reward` task, near-paddle puck spawn 15% of resets.
+
+The engineered per-collision and per-step randomizations that earlier versions of this env supported (paddle-puck strength / direction jitter, wall direction jitter, action force attenuation, delay jitter, paddle density fluctuation, spatially-varying occlusion rates) were removed in the 2026-05-11 cleanup. **The canonical sim2sim / sim2real training strategy is now environment-parameter randomization** (paddle_density / puck_damping / gravity drawn uniform per-reset, ±25 % of sysid), layered on top of this minimal baseline. Use `sim_paramrand_pm25.yaml` (not `sysid_best_params_hist2.yaml`) as the sim env and launch via `scripts/td3/td3_training_dr.py`. See [`sim2sim.md`](sim2sim.md) and [`sim-env-configs.md`](sim-env-configs.md). `sysid_best_params_hist2.yaml` remains the right choice for source-sim-only training (e.g. ablations that don't need to transfer).
 
 If you want to remove a feature for a controlled comparison, edit a copy of the YAML — don't add overrides scattered through your training code.
 

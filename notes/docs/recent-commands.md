@@ -2,7 +2,18 @@
 
 Quick reference for the current canonical workflows. The trainer accepts CLI overrides for any field in the args YAML; the snippets below show the minimum required flags.
 
-## Sim TD3 training
+## Sim TD3 training — for sim2sim / sim2real transfer (canonical)
+
+Source-policy training with **environment-parameter randomization** (paddle_density / puck_damping / gravity DR'd per-reset). Use this for any policy that will need to transfer to a perturbed sim or the real robot.
+
+```bash
+.venv/bin/python -m scripts.td3.td3_training_dr \
+  --args-file configs/td3/zeroshot_paramrand/td3_paramrand_pm25.yaml
+```
+
+See [`training/sim2sim.md`](training/sim2sim.md) for the strategy overview. The earlier "engineered randomization" approach was deprecated and its mechanisms removed from the env on 2026-05-11.
+
+## Sim TD3 training — source-sim only (ablations, no transfer)
 
 ```bash
 .venv/bin/python -m scripts.td3.td3_training \
@@ -11,7 +22,7 @@ Quick reference for the current canonical workflows. The trainer accepts CLI ove
   --num-envs 1
 ```
 
-`--num-envs 1` is required (the trainer is single-env-collection only).
+`--num-envs 1` is required (the trainer is single-env-collection only). Use this for source-sim ablations or any run that does not need to transfer.
 
 ## Sim2sim residual fine-tune
 

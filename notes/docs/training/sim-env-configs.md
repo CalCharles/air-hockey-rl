@@ -8,10 +8,14 @@ These files define the Box2D simulator parameters, task, and spawn settings for 
 Base system-ID physics tuned to match real-world dynamics. Defaults to `hist_len: 1` (no PID-target smoothing).
 - **Puck**: `gravity: -0.661`, `puck_damping: 0.178`, `puck_density: 3000` (grid search over 10 real-world puck trajectory segments; see [`real-world/puck-system-id.md`](../environments/real-world/puck-system-id.md)).
 - **Paddle**: `pid_kp: 9000`, `pid_kd: 50`, `pid_ki: 0`, `paddle_density: 3000` (multi-round 3D grid search over 8 teleop categories; see [`real-world/teleop-system-id.md`](../environments/real-world/teleop-system-id.md)).
-- Sim-to-real gap features enabled: puck position noise, random occlusions, 25 ms observation delay with jitter, action force attenuation, near-paddle puck spawn, plus the three collision-randomization knobs (paddle-puck strength, paddle-puck direction, wall direction).
+- Sim-to-real gap features enabled: puck position noise (σ = 0.01 m), plain spatially-uniform random occlusions (5 % per-step start probability, run length ≤ 7 frames), fixed 25 ms observation delay, near-paddle puck spawn 15 % of resets.
+- **The older engineered randomization stack** (per-collision strength/direction jitter, wall-direction jitter, action force attenuation, delay jitter, paddle-density fluctuation, spatially-varying occlusion zones) was removed from the env on 2026-05-11. For sim2sim / sim2real transfer, layer environment-parameter randomization on top of this baseline — see `sim_paramrand_pm25.yaml` below.
 
-### `sysid_best_params_hist2.yaml` — Sysid + hist_len=2 (canonical, **active**)
-Identical to `sysid_best_params.yaml` except `simulator_params.hist_len: 2`, which enables a 2-timestep low-pass filter on the PID target (see `_filter_update` in `airhockey/sims/airhockey_box2d.py`). This is the sim config wired into the active [`configs/td3/td3_recommended_top50_hist2.yaml`](../../../configs/td3/td3_recommended_top50_hist2.yaml).
+### `sysid_best_params_hist2.yaml` — Sysid + hist_len=2 (canonical source-sim, **active**)
+Identical to `sysid_best_params.yaml` except `simulator_params.hist_len: 2`, which enables a 2-timestep low-pass filter on the PID target (see `_filter_update` in `airhockey/sims/airhockey_box2d.py`). This is the sim config wired into the active [`configs/td3/td3_recommended_top50_hist2.yaml`](../../../configs/td3/td3_recommended_top50_hist2.yaml) for source-sim-only training.
+
+### `zeroshot_ablations/sim_paramrand_pm25.yaml` — Canonical sim2sim / sim2real training env (**active**)
+Same baseline as `sysid_best_params_hist2.yaml` plus per-reset environment-parameter randomization: `paddle_density`, `puck_damping`, `gravity` each drawn uniform within ±25 % of their sysid values. Paired with [`configs/td3/zeroshot_paramrand/td3_paramrand_pm25.yaml`](../../../configs/td3/zeroshot_paramrand/td3_paramrand_pm25.yaml) and launched via `scripts/td3/td3_training_dr.py`. **This is the recommended training env for any new source policy that needs to transfer** (see [`sim2sim.md`](sim2sim.md)).
 
 ## Sim2sim targets
 
@@ -27,7 +31,7 @@ Sine y-warp 0.10, paddle −30%. Used by `phaseD_actor4_w10_1M`.
 ### `sim2sim_combined.yaml` — Small-gap target
 Paddle and dynamics deltas without the sine warp. Used by the small-gap recipe (`td3_sim2sim_residual.yaml`).
 
-See [`sim2sim.md`](sim2sim.md) for how sim2sim targets compose with the residual recipes.
+See [`sim2sim.md`](sim2sim.md) for how sim2sim targets compose with the residual recipes — and for the broader strategy of training the source policy with environment-parameter randomization (`sim_paramrand_pm25.yaml`) rather than the deprecated engineered-DR stack.
 
 ## Conventions for new sim configs
 

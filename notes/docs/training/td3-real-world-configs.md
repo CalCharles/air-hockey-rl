@@ -8,6 +8,8 @@ Config files live in `configs/td3_real_world/`. Used for training, evaluation, t
 
 These are the live training configs for sim2real residual fine-tuning. Read [`residual-rl-recipe.md`](residual-rl-recipe.md) before launching either.
 
+> **Source-policy training note (2026-05-11 onward).** The sim source policy fed into these real-world residual configs should be trained with **environment-parameter randomization** (paddle_density / puck_damping / gravity DR'd per-reset) — see [`sim2sim.md`](sim2sim.md). The previous engineered-randomization stack has been removed from the env, so old source policies (e.g. `latest_models/canonical/hist2_motion0_v2/`) reflect a deprecated regime and should be retrained for new real-world deployments.
+
 Real-world entrypoints all accept `--args-file <this yaml>`:
 - Training: `scripts/td3/extras/async_td3_real.py`
 - Frozen-policy evaluation: `scripts/td3/extras/async_td3_real_eval.py`

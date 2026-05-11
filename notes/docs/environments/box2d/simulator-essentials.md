@@ -49,13 +49,11 @@ If configured bounds exceed these, reachable motion is still capped by table wal
 
 ## Delay toggles and shared delay value
 
-- Box2D now supports independent toggles for:
+- Box2D supports independent toggles for:
   - `enable_action_delay`
   - `enable_observation_delay`
 - Both features use the same `delay_seconds` value (clamped per step to `[0, time_per_step]`).
-- Optional fluctuation:
-  - `randomize_delay` enables per-step randomization of the realized delay.
-  - `delay_relative_range` controls multiplicative half-width (for example `0.25` means `delay_seconds * [0.75, 1.25]` before clamping).
+- The delay value is fixed — the older `randomize_delay` / `delay_relative_range` per-step jitter mechanism was removed in the 2026-05-11 randomization cleanup.
 - Observation-delay snapshots can show stale paddle `acceleration`/`jerk` fields because those derivatives are refreshed after the full step; positions/velocities remain mid-step consistent.
 
 ### ⚠ Subtle side effect: `enable_observation_delay` changes `puck_history` sampling rate
