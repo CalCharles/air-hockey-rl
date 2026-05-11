@@ -35,29 +35,29 @@ coverage.xml
 pyrightconfig.json
 
 # Run artifacts and outputs (kept locally, cleaned up out-of-band)
-runs/
-results/
-trained_models/
-trained_models_*/
-baseline_models/
-latest_model/                # singular — superseded by latest_models/
-eval_gifs/
-real_runs/
-shared/
-sysid/
-dataset_management/
-tests/                       # local pytest scratch dir
-wandb/
-gifs/
-plots/
-datasets/
-new_data/
-demo/
-traj_videos/
-testt/
-gat_log/
-temp/
-data/
+/runs/
+/results/
+/trained_models/
+/trained_models_*/
+/baseline_models/
+/latest_model/               # singular — superseded by latest_models/
+/eval_gifs/
+/real_runs/
+/shared/
+/sysid/
+/dataset_management/
+/tests/                      # local pytest scratch dir (not airhockey/.../tests/)
+/wandb/
+/gifs/
+/plots/
+/datasets/
+/new_data/
+/demo/
+/traj_videos/
+/testt/
+/gat_log/
+/temp/
+/data/
 
 # Stray outputs
 *.out

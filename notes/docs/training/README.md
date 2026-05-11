@@ -28,8 +28,6 @@ A reader picking which YAML to use should start with the doc closest to their go
 | [`td3-configs.md`](td3-configs.md) | Sim TD3 args YAMLs (`configs/td3/`) |
 | [`td3-real-world-configs.md`](td3-real-world-configs.md) | Real-robot async configs (`configs/td3_real_world/`) |
 | [`sim-env-configs.md`](sim-env-configs.md) | Box2D sim env YAMLs (`configs/new_juggle/`) |
-| [`ppo-configs.md`](ppo-configs.md) | Legacy PPO+AMP configs |
-| [`legacy-configs.md`](legacy-configs.md) | Older/abandoned config directories — not for new runs |
 
 ## Recipes (end-to-end procedures)
 

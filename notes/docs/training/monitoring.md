@@ -165,7 +165,7 @@ Created per episode by the orchestrator via `helper/episode_artifacts.py` into t
 - `episode_gifs/` — side-by-side Box2D-replay + real-camera GIFs
 - `episode_camera_videos/` — raw camera MP4s
 
-Example: `--data-root-dir real_runs/online_run_modular --model-path latest_model/hist2_motion0/training_state.pth` produces `real_runs/online_run_modular/latest_model/hist2_motion0/data_<TIMESTAMP>/` containing all of the above plus `collector_tb/`, `learner_tb/`, and (when enabled) checkpoints.
+Example: `--data-root-dir real_runs/online_run_modular --model-path latest_models/canonical/hist2_motion0/training_state.pth` produces `real_runs/online_run_modular/latest_models/canonical/hist2_motion0/data_<TIMESTAMP>/` containing all of the above plus `collector_tb/`, `learner_tb/`, and (when enabled) checkpoints.
 
 ### Practical: scalars to watch first
 

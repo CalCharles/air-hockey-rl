@@ -27,7 +27,6 @@ The [`airhockey`](../../../airhockey) package provides environment/task wrappers
 - Simulator adapters live in [`airhockey/sims`](../../../airhockey/sims)
 - Real-world adapter: [`airhockey/sims/air_hockey_real.py`](../../../airhockey/sims/air_hockey_real.py) — details in [`real-world/overview.md`](real-world/overview.md)
 - Box2D adapter: [`airhockey/sims/airhockey_box2d.py`](../../../airhockey/sims/airhockey_box2d.py) — details in [`box2d/simulator-essentials.md`](box2d/simulator-essentials.md)
-- Robosuite/MuJoCo adapter: [`airhockey/sims/airhockey_robosuite.py`](../../../airhockey/sims/airhockey_robosuite.py) — details in [`robosuite/overview.md`](robosuite/overview.md). Legacy, basic functionality restored 2026-05-01 (robot on table, controllable, puck visible); not used for active TD3 training.
 - Shared simulator abstractions/utilities: [`airhockey/sims/airhockey_sim.py`](../../../airhockey/sims/airhockey_sim.py)
 
 ## Guidance for edits

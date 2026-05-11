@@ -1,0 +1,8 @@
+Source: runs/td3/hist_motion_collision/hist2_motion0_v2/seed0/checkpoint_850000/
+Eval mean (n=50, sysid_best_params_hist2.yaml, seed=0): 169.72
+Selected as best of 39 checkpoints (range 17-170; mean 145; final-step 152.50).
+Sim used: sysid_best_params_hist2.yaml — includes the latest collision randomization
+  (paddle-puck strength + direction; wall direction) which the earlier
+  latest_models/canonical/hist2_motion0/ was NOT trained against.
+Recipe: scripts/smooth_policy/amp_history/configs/td3/td3_hist2_motion0_v2.yaml (= td3_recommended.yaml + config swap to hist2)
+Trained: 2026-05-05 02:55-06:26 UTC (~3h33m for 1M steps on 1 RTX 6000).

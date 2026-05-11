@@ -14,7 +14,7 @@ This page is for someone bringing their **own RL algorithm** and wanting to trai
 
 `sysid_best_params_hist2.yaml` is the **only file your training loop needs to load.** It contains the env, task, physics, sim-to-real-gap features (occlusion / observation delay / force attenuation), spawn distribution, and reward weights — everything the env constructor reads. The TD3 args YAML next to it is algorithm-specific and is not consumed by the env.
 
-This config matches `latest_model/hist2_motion0/config.yaml` at the high level (see [`sim-env-configs.md`](sim-env-configs.md) for the small restitution / per-collision-randomization deltas).
+This config matches `latest_models/canonical/hist2_motion0/config.yaml` at the high level (see [`sim-env-configs.md`](sim-env-configs.md) for the small restitution / per-collision-randomization deltas).
 
 > Older hist3 / hist4 / hist5 variants used by historical ablations have been moved to `configs/new_juggle/legacy/`. Don't use them for new work.
 

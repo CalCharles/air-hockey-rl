@@ -4,7 +4,7 @@ Commands used recently for launching training runs. Add new entries at the top.
 
 ---
 
-## 2026-04-20 — Real robot eval-only run of `latest_model/hist3_motion0`
+## 2026-04-20 — Real robot eval-only run of `latest_models/canonical/hist3_motion0`
 
 Runs the hist3 motion-collision-ablation checkpoint on hardware in eval-only mode (no gradient updates, no replay warm-start, no checkpoint writes). Exercises the new two-args-file convention introduced by the rollout refactor: `--train-args` for architecture, `--args-file` for online-behavior defaults.
 
@@ -18,13 +18,13 @@ Two prerequisites over the stock config:
    #     hist_len: 3
    ```
 
-2. **Use the training run's args.yaml as `--train-args`.** `latest_model/hist3_motion0/args.yaml` encodes the architecture (`agent_hidden_layer_size: 64`, `agent_num_hidden_layers: 2`, `action_scale: 1.0`, `use_last_action_in_policy_state: true`, Q-head sizes). `--args-file` still points at the online-behavior YAML.
+2. **Use the training run's args.yaml as `--train-args`.** `latest_models/canonical/hist3_motion0/args.yaml` encodes the architecture (`agent_hidden_layer_size: 64`, `agent_num_hidden_layers: 2`, `action_scale: 1.0`, `use_last_action_in_policy_state: true`, Q-head sizes). `--args-file` still points at the online-behavior YAML.
 
 ```bash
 python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
   --config configs/real_configs/rollout_td3_config_hist3.yaml \
-  --model-path latest_model/hist3_motion0/training_state.pth \
-  --train-args latest_model/hist3_motion0/args.yaml \
+  --model-path latest_models/canonical/hist3_motion0/training_state.pth \
+  --train-args latest_models/canonical/hist3_motion0/args.yaml \
   --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml \
   --collector-device cpu \
   --learner-device cuda:0 \
@@ -39,7 +39,7 @@ python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_re
 
 Expect `[args_file] ignored unsupported keys: ...` to list td3_training-only fields from `td3_online.yaml` that aren't part of the async `Args` schema — this is the canonical-names-only behavior from the refactor and is expected. The `[train_args]` line above it confirms the architecture that got wired into the actor/critic.
 
-For other checkpoints, swap the three `latest_model/hist3_motion0/...` paths (and the matching hist_len in the rollout config if the checkpoint was trained with a different history length).
+For other checkpoints, swap the three `latest_models/canonical/hist3_motion0/...` paths (and the matching hist_len in the rollout config if the checkpoint was trained with a different history length).
 
 ---
 

@@ -8,7 +8,7 @@ All are used with `scripts/smooth_policy/amp_history/amp_training/td3/td3_traini
 **New training runs should start from this config.** Distilled from the update-count, network-depth, and actor:Q-ratio ablations in [`td3-ablations-updates-and-depth.md`](td3-ablations-updates-and-depth.md) and the exploration sweep in [`td3-exploration-ablations.md`](td3-exploration-ablations.md).
 
 > **Note (2026-05-04):** The original recommended default was `td3_recommended.yaml` (hist_len=4 via `sysid_best_params_hist4.yaml`, `success_top_fraction: 0.2`). It is preserved at `td3/legacy/td3_recommended.yaml` along with the `new_juggle/legacy/sysid_best_params_hist{3,4,5}.yaml` sim variants for reproducing past ablations. The new active default keeps every other knob the same and changes:
-> - `config:` → `sysid_best_params_hist2.yaml` (hist_len=2 PID-target filter — matches `latest_model/hist2_motion0/config.yaml` and the real-env default in `airhockey/sims/airhockey_box2d.py`)
+> - `config:` → `sysid_best_params_hist2.yaml` (hist_len=2 PID-target filter — matches `latest_models/canonical/hist2_motion0/config.yaml` and the real-env default in `airhockey/sims/airhockey_box2d.py`)
 > - `success_top_fraction: 0.5` (the "top50" in the file name; from-scratch comparison written up in [`residual-rl-recipe.md`](residual-rl-recipe.md))
 
 Key choices and why:
