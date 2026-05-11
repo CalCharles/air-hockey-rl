@@ -8,7 +8,7 @@ Real-world entry points (`rollout_new.py`, `teleoperate.py`, `run_primitive_expl
 2. ROS `PYTHONPATH` entries (including the conflicting `scripts/`)
 3. The repo root, *but only because* `easy-install.pth` added it from `pip install -e .` (so it lands later, behind ROS)
 
-A naive guard like `if str(REPO_ROOT) not in sys.path: sys.path.insert(0, ...)` is a no-op here — `REPO_ROOT` is already on `sys.path`, just in the wrong position — and `import scripts.smooth_policy.agent` resolves to the ROS package, which fails with `ModuleNotFoundError: No module named 'catkin_pkg'`.
+A naive guard like `if str(REPO_ROOT) not in sys.path: sys.path.insert(0, ...)` is a no-op here — `REPO_ROOT` is already on `sys.path`, just in the wrong position — and `import scripts.td3.agent` resolves to the ROS package, which fails with `ModuleNotFoundError: No module named 'catkin_pkg'`.
 
 Two ways to avoid this:
 
@@ -33,7 +33,7 @@ This is the pattern used by `rollout_new.py`, `teleoperate.py`, and `run_primiti
 There are two different "slowdown/smoothing" mechanisms in the real stack:
 
 - Async TD3 transition holds
-  - shared runtime library `scripts/smooth_policy/amp_history/amp_training/td3/helper/real_td3_runtime.py` defines the `Args` knobs; the collector entrypoint `scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py` drives the holds via `helper/real_transition_hold.py`
+  - shared runtime library `scripts/td3/helper/real_td3_runtime.py` defines the `Args` knobs; the collector entrypoint `scripts/td3/extras/async_td3_real.py` drives the holds via `helper/real_transition_hold.py`
   - used for reset-to-policy handoff, actor sync, and genuine safety recovery
 - Rollout startup/cooldown logic in `rollout_reset_policy_real.py`
   - `--startup-hold-steps` forces zero action for the first few normal-mode steps

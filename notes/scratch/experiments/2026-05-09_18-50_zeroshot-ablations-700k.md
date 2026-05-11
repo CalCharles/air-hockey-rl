@@ -4,8 +4,8 @@
 - **Status**: 12/12 trained at 700k (exit 0). Ready for sim2real handoff.
 - **Run dirs**: `runs/td3/zeroshot_ablations_700k/<name>/seed0/` (500k originals at `runs/td3/zeroshot_ablations/...` left untouched)
 - **Configs**:
-  - sim YAMLs: `scripts/smooth_policy/amp_history/configs/new_juggle/zeroshot_ablations/sim_<name>.yaml` (existing) + new `sim_no_obs_delay_randomization.yaml`
-  - TD3 args YAMLs: `scripts/smooth_policy/amp_history/configs/td3/zeroshot_ablations_700k/td3_zeroshot_<name>{_extend}.yaml`
+  - sim YAMLs: `configs/new_juggle/zeroshot_ablations/sim_<name>.yaml` (existing) + new `sim_no_obs_delay_randomization.yaml`
+  - TD3 args YAMLs: `configs/td3/zeroshot_ablations_700k/td3_zeroshot_<name>{_extend}.yaml`
   - Generators: `_generate.py` in each of the two dirs above (sim generator was extended; td3 700k generator is new)
   - Launcher: `scripts/smooth_policy/run_zeroshot_ablations_700k.sh <gpu_id>`
 

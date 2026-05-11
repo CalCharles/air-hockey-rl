@@ -2,7 +2,7 @@
 
 > **2026-05-04 path note:** the `td3_recommended.yaml` referenced throughout this
 > doc is the original hist4 variant, which is now at
-> `scripts/smooth_policy/amp_history/configs/td3/legacy/td3_recommended.yaml`.
+> `configs/td3/legacy/td3_recommended.yaml`.
 > Likewise `sysid_best_params_hist4.yaml` lives in `new_juggle/legacy/`. The
 > sweeps were run against those exact files; the active default for **new** runs
 > is `td3_recommended_top50_hist2.yaml` ([`td3-configs.md`](td3-configs.md)). All
@@ -159,8 +159,8 @@ Start there for "continue optimizing exploration" prompts.
 
 ```bash
 # All Phase-1 runs share:
-BASE="python scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py \
-  --args-file scripts/smooth_policy/amp_history/configs/td3/td3_recommended.yaml \
+BASE="python scripts/td3/td3_training.py \
+  --args-file configs/td3/td3_recommended.yaml \
   --total-timesteps 500000"
 
 # E2: no warm-start (cuda:1)

@@ -8,9 +8,9 @@ This page is for someone bringing their **own RL algorithm** and wanting to trai
 
 | Item | Path |
 |---|---|
-| **Box2D sim config** (canonical) | `scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params_hist2.yaml` |
-| Active TD3 args (reference only) | `scripts/smooth_policy/amp_history/configs/td3/td3_recommended_top50_hist2.yaml` |
-| Reference training script | `scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py` (look at `make_env` and the `__main__` block) |
+| **Box2D sim config** (canonical) | `configs/new_juggle/sysid_best_params_hist2.yaml` |
+| Active TD3 args (reference only) | `configs/td3/td3_recommended_top50_hist2.yaml` |
+| Reference training script | `scripts/td3/td3_training.py` (look at `make_env` and the `__main__` block) |
 
 `sysid_best_params_hist2.yaml` is the **only file your training loop needs to load.** It contains the env, task, physics, sim-to-real-gap features (occlusion / observation delay / force attenuation), spawn distribution, and reward weights — everything the env constructor reads. The TD3 args YAML next to it is algorithm-specific and is not consumed by the env.
 
@@ -28,7 +28,7 @@ Two lines of setup:
 import yaml
 from airhockey import AirHockeyEnv
 
-with open("scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params_hist2.yaml") as f:
+with open("configs/new_juggle/sysid_best_params_hist2.yaml") as f:
     cfg = yaml.safe_load(f)
 
 env = AirHockeyEnv(cfg["air_hockey"])
@@ -80,4 +80,4 @@ If you want to remove a feature for a controlled comparison, edit a copy of the 
 - Box2D internals (workspace clipping, delay model, coordinate frames): [`environments/box2d/simulator-essentials.md`](../environments/box2d/simulator-essentials.md)
 - Reward shaping: [`reward-shaping.md`](reward-shaping.md)
 - Sim config field reference: [`sim-env-configs.md`](sim-env-configs.md)
-- Reference training loop end-to-end: `scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py`
+- Reference training loop end-to-end: `scripts/td3/td3_training.py`

@@ -100,9 +100,9 @@ Fixed total updates at N*=31 per episode, varied the actor:Q ratio.
 
 ```bash
 # Part 1: Baseline (killed at 400k)
-python scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py \
-  --args-file scripts/smooth_policy/amp_history/configs/td3/td3_no_alignment.yaml \
-  --config   scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params.yaml \
+python scripts/td3/td3_training.py \
+  --args-file configs/td3/td3_no_alignment.yaml \
+  --config   configs/new_juggle/sysid_best_params.yaml \
   --total-timesteps 1000000 --q-updates 200 --actor-updates-per-iteration 50 \
   --agent-num-hidden-layers 5 --q-num-hidden-layers 5 --enable-puck-delay-interpolation
 

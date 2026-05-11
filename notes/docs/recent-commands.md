@@ -21,11 +21,11 @@ Two prerequisites over the stock config:
 2. **Use the training run's args.yaml as `--train-args`.** `latest_models/canonical/hist3_motion0/args.yaml` encodes the architecture (`agent_hidden_layer_size: 64`, `agent_num_hidden_layers: 2`, `action_scale: 1.0`, `use_last_action_in_policy_state: true`, Q-head sizes). `--args-file` still points at the online-behavior YAML.
 
 ```bash
-python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
+python -m scripts.td3.extras.async_td3_real \
   --config configs/real_configs/rollout_td3_config_hist3.yaml \
   --model-path latest_models/canonical/hist3_motion0/training_state.pth \
   --train-args latest_models/canonical/hist3_motion0/args.yaml \
-  --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml \
+  --args-file configs/td3_real_world/td3_online.yaml \
   --collector-device cpu \
   --learner-device cuda:0 \
   --data-root-dir real_runs/online_run \
@@ -52,11 +52,11 @@ Runs `async_td3_real` on the physical robot in data-collection-only mode (`--min
 **Heavy model (checkpoint 100k) — no latency profiling:**
 
 ```bash
-python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
+python -m scripts.td3.extras.async_td3_real \
   --config configs/real_configs/rollout_td3_config.yaml \
   --model-path ex_model/heavy_td3_model/checkpoint_100000/training_state.pth \
   --train-args ex_model/heavy_td3_model/checkpoint_100000/args.yaml \
-  --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml \
+  --args-file configs/td3_real_world/td3_online.yaml \
   --collector-device cpu \
   --learner-device cuda:0 \
   --data-root-dir real_runs/online_run \
@@ -70,11 +70,11 @@ python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_re
 Same as above but uses the newer model and enables per-step latency measurement, writing profiles to `real_runs/online_run/latency/`.
 
 ```bash
-python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
+python -m scripts.td3.extras.async_td3_real \
   --config configs/real_configs/rollout_td3_config.yaml \
   --model-path ex_model/new_td3_model/checkpoint_325000/training_state.pth \
   --train-args ex_model/new_td3_model/checkpoint_325000/args.yaml \
-  --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml \
+  --args-file configs/td3_real_world/td3_online.yaml \
   --collector-device cpu \
   --learner-device cuda:0 \
   --data-root-dir real_runs/online_run \

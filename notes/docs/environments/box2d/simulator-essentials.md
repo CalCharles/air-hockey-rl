@@ -320,7 +320,7 @@ Outgoing puck speed is approximately linear in the restitution scale (doubling t
 
 ```bash
 python scripts/collision_adaptation/render_scenarios.py \
-    --config scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params.yaml \
+    --config configs/new_juggle/sysid_best_params.yaml \
     --oracle-paddle-scales 0.7 1.0 1.2 \
     --output-dir runs/collision_adaptation \
     --fps 20
@@ -336,7 +336,7 @@ Noise, occlusions, and action/observation delays are disabled for clean determin
 
 ```bash
 python scripts/collision_adaptation/run_adaptation.py \
-    --config scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params.yaml \
+    --config configs/new_juggle/sysid_best_params.yaml \
     --model-path runs/td3/final/task_only/checkpoint_345000/model.pth \
     --oracle-paddle-scales 0.7 1.0 1.2 \
     --n-iterations 20 \
@@ -372,7 +372,7 @@ Outputs `runs/collision_adaptation/adaptation_history.json` with per-iteration s
 
 ```bash
 python scripts/collision_adaptation/run_adaptation_position_based.py \
-    --config scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params.yaml \
+    --config configs/new_juggle/sysid_best_params.yaml \
     --model-path runs/td3/final/task_only/checkpoint_350000/model.pth \
     --oracle-paddle-scales 0.7 1.0 1.2 \
     --n-iterations 50 \
@@ -449,7 +449,7 @@ x_obs = x_true                                    # x is unchanged
 | `puck_obs_sine_warp_y_left`  | `null` | Left edge of the warp domain. `null` defaults to `−width/2`. |
 | `puck_obs_sine_warp_y_right` | `null` | Right edge. `null` defaults to `+width/2`. |
 
-**Canonical sim2sim target using this warp**: `scripts/smooth_policy/amp_history/configs/new_juggle/sim2sim_combined_warp.yaml` (paddle50 + dynamics deltas + `A = 0.05 m`). See [`notes/scratch/experiments/2026-05-07_02-05_sim2sim-puck-obs-warp.md`](../../../scratch/experiments/2026-05-07_02-05_sim2sim-puck-obs-warp.md) for the rationale and the visualization at `/tmp/sine_warp_viz.png`.
+**Canonical sim2sim target using this warp**: `configs/new_juggle/sim2sim_combined_warp.yaml` (paddle50 + dynamics deltas + `A = 0.05 m`). See [`notes/scratch/experiments/2026-05-07_02-05_sim2sim-puck-obs-warp.md`](../../../scratch/experiments/2026-05-07_02-05_sim2sim-puck-obs-warp.md) for the rationale and the visualization at `/tmp/sine_warp_viz.png`.
 
 The older `obs_position_homography` (3×3 perspective matrix applied to both paddle and puck) was removed in favor of this puck-only mechanism. See the experiment writeup for what was removed.
 

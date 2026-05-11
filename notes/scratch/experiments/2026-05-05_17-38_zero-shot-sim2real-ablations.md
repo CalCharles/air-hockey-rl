@@ -4,8 +4,8 @@
 - **Status**: training done (12/12, exit 0); awaiting sim2real transfer on user's other machine. **`no_obs_delay` flatlined — see results.**
 - **Run dirs**: `runs/td3/zeroshot_ablations/<name>/seed0/`
 - **Configs**:
-  - sim YAMLs: `scripts/smooth_policy/amp_history/configs/new_juggle/zeroshot_ablations/sim_<name>.yaml`
-  - TD3 args YAMLs: `scripts/smooth_policy/amp_history/configs/td3/zeroshot_ablations/td3_zeroshot_<name>.yaml`
+  - sim YAMLs: `configs/new_juggle/zeroshot_ablations/sim_<name>.yaml`
+  - TD3 args YAMLs: `configs/td3/zeroshot_ablations/td3_zeroshot_<name>.yaml`
   - Generators: `_generate.py` in each of the two dirs above
   - Launcher: `scripts/smooth_policy/run_zeroshot_ablations.sh <gpu_id>`
 
@@ -45,7 +45,7 @@ apples-to-apples reference point.
 
 ### Ablation matrix (12 runs total)
 
-Sim YAMLs in `scripts/smooth_policy/amp_history/configs/new_juggle/zeroshot_ablations/`:
+Sim YAMLs in `configs/new_juggle/zeroshot_ablations/`:
 
 | # | name | knob flipped vs `sysid_best_params_hist2.yaml` | GPU |
 |---|---|---|---|
@@ -247,7 +247,7 @@ for name in baseline sysid_off no_paddle_puck_strength \
            all_sysid_no_rand; do
   bash scripts/smooth_policy/eval_all_ckpts_residual.sh \
     runs/td3/zeroshot_ablations/$name/seed0 \
-    scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params_hist2.yaml \
+    configs/new_juggle/sysid_best_params_hist2.yaml \
     cuda:0
 done
 ```
@@ -267,7 +267,7 @@ Recommended eval command per run (after training completes):
 ```bash
 bash scripts/smooth_policy/eval_all_ckpts_residual.sh \
   runs/td3/zeroshot_ablations/<name>/seed0 \
-  scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params_hist2.yaml \
+  configs/new_juggle/sysid_best_params_hist2.yaml \
   cuda:0
 ```
 

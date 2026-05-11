@@ -19,17 +19,17 @@ import yaml
 
 from airhockey import AirHockeyEnv
 from airhockey.sims.real.multiprocessing import NonBlockingConsole
-from scripts.smooth_policy.amp_history.amp_training.td3.helper.episode_artifacts import (
+from scripts.td3.helper.episode_artifacts import (
     save_split_episode_hdf5,
 )
-from scripts.smooth_policy.visualize_demo.render_teleop_segments import (
+from scripts.visualization.render_teleop_segments import (
     render_segment_gif,
     slice_hdf5,
 )
-from scripts.smooth_policy.visualize_demo.visualize_real_trajectory import (
+from scripts.visualization.visualize_real_trajectory import (
     RealTrajectoryRenderer,
 )
-from scripts.smooth_policy.visualize_demo.visualize_real_trajectory_split import (
+from scripts.visualization.visualize_real_trajectory_split import (
     load_split_trajectory_data,
 )
 

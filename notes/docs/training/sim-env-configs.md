@@ -1,6 +1,6 @@
 # Sim Environment Configs (`new_juggle/`)
 
-These files define the Box2D simulator parameters, task, and spawn settings for the juggling environment. They live in `scripts/smooth_policy/amp_history/configs/new_juggle/` and are referenced by TD3/PPO training configs via their `config:` field.
+These files define the Box2D simulator parameters, task, and spawn settings for the juggling environment. They live in `configs/new_juggle/` and are referenced by TD3/PPO training configs via their `config:` field.
 
 ## Current configs
 

@@ -86,11 +86,11 @@ All commands below use `async_td3_real`, which handles collection, resets, and (
 
 #### Eval only (run policy, no training)
 ```bash
-python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
+python -m scripts.td3.extras.async_td3_real \
   --config configs/real_configs/rollout_td3_config.yaml \
   --model-path ex_model/new_td3_model/checkpoint_325000/training_state.pth \
   --train-args ex_model/new_td3_model/checkpoint_325000/args.yaml \
-  --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml \
+  --args-file configs/td3_real_world/td3_online.yaml \
   --collector-device cpu \
   --learner-device cuda:0 \
   --data-root-dir real_runs/online_run \
@@ -104,11 +104,11 @@ python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_re
 
 #### Online training from a pretrained checkpoint
 ```bash
-python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
+python -m scripts.td3.extras.async_td3_real \
   --config configs/real_configs/rollout_td3_config.yaml \
   --model-path ex_model/td3_model/checkpoint_1515000/training_state.pth \
   --train-args ex_model/td3_model/checkpoint_1515000/args.yaml \
-  --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml \
+  --args-file configs/td3_real_world/td3_online.yaml \
   --collector-device cpu \
   --learner-device cuda:0 \
   --data-root-dir real_runs/online_run
@@ -116,11 +116,11 @@ python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_re
 
 #### Resume training from a previous online run
 ```bash
-python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real \
+python -m scripts.td3.extras.async_td3_real \
   --config configs/real_configs/rollout_td3_config.yaml \
   --model-path real_runs/checkpoints/default/checkpoint_step_100000/training_state.pth \
   --train-args real_runs/checkpoints/default/checkpoint_step_100000/args.yaml \
-  --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml \
+  --args-file configs/td3_real_world/td3_online.yaml \
   --collector-device cpu \
   --learner-device cuda:0 \
   --data-root-dir real_runs/online_run \

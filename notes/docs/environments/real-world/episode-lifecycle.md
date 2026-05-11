@@ -2,8 +2,8 @@
 
 End-to-end flow of a single policy episode on the real UR5, from collection through replay ingestion and artifact output.
 
-Primary code: [`extras/async_td3_real.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py) (`collector_process_modular`); shared dataclasses, learner, and runtime helpers live in [`helper/real_td3_runtime.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_td3_runtime.py).
-Helpers: [`real_episode_buffers.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_episode_buffers.py), [`real_stop_state.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_stop_state.py), [`real_motion_rewards.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_motion_rewards.py), [`episode_artifacts.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/episode_artifacts.py), [`real_warm_start.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_warm_start.py).
+Primary code: [`extras/async_td3_real.py`](../../../../scripts/td3/extras/async_td3_real.py) (`collector_process_modular`); shared dataclasses, learner, and runtime helpers live in [`helper/real_td3_runtime.py`](../../../../scripts/td3/helper/real_td3_runtime.py).
+Helpers: [`real_episode_buffers.py`](../../../../scripts/td3/helper/real_episode_buffers.py), [`real_stop_state.py`](../../../../scripts/td3/helper/real_stop_state.py), [`real_motion_rewards.py`](../../../../scripts/td3/helper/real_motion_rewards.py), [`episode_artifacts.py`](../../../../scripts/td3/helper/episode_artifacts.py), [`real_warm_start.py`](../../../../scripts/td3/helper/real_warm_start.py).
 
 ## Overview
 
@@ -52,7 +52,7 @@ Each step:
 
 ## Stop event classification
 
-**Code:** [`real_stop_state.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_stop_state.py)
+**Code:** [`real_stop_state.py`](../../../../scripts/td3/helper/real_stop_state.py)
 
 `_classify_stop_event` probes multiple sources in priority order:
 
@@ -70,7 +70,7 @@ Returns a `StopEventState` frozen dataclass with:
 
 ## Episode truncation for readiness-fail
 
-**Code:** [`real_episode_buffers.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_episode_buffers.py)
+**Code:** [`real_episode_buffers.py`](../../../../scripts/td3/helper/real_episode_buffers.py)
 
 If the robot's command readiness fails mid-episode (e.g., brief communication drop that recovers), the episode is truncated at the first failure step:
 
@@ -82,7 +82,7 @@ This prevents post-failure garbage transitions from entering the replay buffer.
 
 ## E-stop transitions are stored as truncations
 
-**Code:** [`real_policy_runner.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_policy_runner.py) (live), [`real_episode_buffers.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_episode_buffers.py) (readiness-fail), [`real_warm_start.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_warm_start.py) (HDF5 replay).
+**Code:** [`real_policy_runner.py`](../../../../scripts/td3/helper/real_policy_runner.py) (live), [`real_episode_buffers.py`](../../../../scripts/td3/helper/real_episode_buffers.py) (readiness-fail), [`real_warm_start.py`](../../../../scripts/td3/helper/real_warm_start.py) (HDF5 replay).
 
 When a stop event (protective stop, controller disconnect, readiness-fail) ends an episode, the rollout loop exits but the e-stop transition is stored with `done=0` — semantically a **truncation**, not a termination. The learner's Bellman target therefore continues to bootstrap from V(s') at the cutoff. No motion-reward penalty is applied at the stop event. Recording (HDF5 `estop` column, `stop_flags`, episode summaries, rolling-50 e-stop counters, TensorBoard `safety/estop_*`) is unchanged — the e-stop is fully observable in the data, just not special-cased in value updates.
 
@@ -96,7 +96,7 @@ After each collected episode, the learner runs one or more critic + actor update
 
 ## Episode artifacts
 
-**Code:** [`episode_artifacts.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/episode_artifacts.py)
+**Code:** [`episode_artifacts.py`](../../../../scripts/td3/helper/episode_artifacts.py)
 
 Four artifact types are written per episode:
 
@@ -116,18 +116,18 @@ Optional datasets (timing breakdown, stop_flags) are included when all rows cont
 
 `generate_episode_gif` renders one GIF per episode where each frame is the **Box2D projection of the HDF5 trajectory on the left** and the matching **real-world camera frame (`train_img`) on the right**. Building blocks are pre-existing:
 
-- Box2D projection: `RealTrajectoryRenderer.render_frame` ([`visualize_real_trajectory.py`](../../../../scripts/smooth_policy/visualize_demo/visualize_real_trajectory.py))
+- Box2D projection: `RealTrajectoryRenderer.render_frame` ([`visualize_real_trajectory.py`](../../../../scripts/visualization/visualize_real_trajectory.py))
 - Real-world camera frames: `train_img` dataset stored in the split HDF5
-- Side-by-side stitcher: `_side_by_side` ([`replay_real_in_sim.py`](../../../../scripts/smooth_policy/visualize_demo/replay_real_in_sim.py))
+- Side-by-side stitcher: `_side_by_side` ([`replay_real_in_sim.py`](../../../../scripts/visualization/replay_real_in_sim.py))
 
-The actual stitching loop lives in `_create_joint_trajectory_gif` inside [`episode_artifacts.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/episode_artifacts.py). When `train_img` is absent, the function falls back to the Box2D-only `create_trajectory_gif` path.
+The actual stitching loop lives in `_create_joint_trajectory_gif` inside [`episode_artifacts.py`](../../../../scripts/td3/helper/episode_artifacts.py). When `train_img` is absent, the function falls back to the Box2D-only `create_trajectory_gif` path.
 
 #### Batch-rendering side-by-side GIFs from existing reset HDF5s
 
-To render side-by-side Box2D + camera GIFs from a directory of already-saved **reset** trajectory HDF5s (e.g., `…/reset_hdf5/`), use [`trim_reset_hdf5_post_first_upward.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/trim_reset_hdf5_post_first_upward.py). It trims each file at the final first-upward-motion completion *and* renders a side-by-side GIF (default on, fps=20) by calling the same `generate_episode_gif` path documented above:
+To render side-by-side Box2D + camera GIFs from a directory of already-saved **reset** trajectory HDF5s (e.g., `…/reset_hdf5/`), use [`trim_reset_hdf5_post_first_upward.py`](../../../../scripts/td3/extras/trim_reset_hdf5_post_first_upward.py). It trims each file at the final first-upward-motion completion *and* renders a side-by-side GIF (default on, fps=20) by calling the same `generate_episode_gif` path documented above:
 
 ```bash
-python scripts/smooth_policy/amp_history/amp_training/td3/extras/trim_reset_hdf5_post_first_upward.py \
+python scripts/td3/extras/trim_reset_hdf5_post_first_upward.py \
   <input_reset_hdf5_dir> --output-dir <out_dir> --recursive
 ```
 
@@ -143,7 +143,7 @@ Outputs land at `<out_dir>/gifs/<trajectory_stem>/trajectory_visualization.gif`.
 
 ## Warm start
 
-**Code:** [`real_warm_start.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_warm_start.py)
+**Code:** [`real_warm_start.py`](../../../../scripts/td3/helper/real_warm_start.py)
 
 Before live collection begins, the replay buffer can be seeded from previously saved HDF5 episodes:
 
@@ -156,7 +156,7 @@ This allows training to start with meaningful replay data from prior real-world 
 
 ## Rolling metrics
 
-**Code:** [`real_collector_metrics.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_collector_metrics.py)
+**Code:** [`real_collector_metrics.py`](../../../../scripts/td3/helper/real_collector_metrics.py)
 
 A rolling window of the last 50 episodes tracks:
 - Average task reward

@@ -5,7 +5,7 @@ post-peak policy degradation in residual fine-tuning on the
 `hist2_motion0 → sim2sim_combined` pair.
 
 Source policy: `runs/td3/hist_motion_collision/hist2_motion0/checkpoint_975000/model.pth`
-Target sim:    `scripts/smooth_policy/amp_history/configs/new_juggle/sim2sim_combined.yaml`
+Target sim:    `configs/new_juggle/sim2sim_combined.yaml`
 Zero-shot ref: **mean 95.78** (n=50 deterministic eval, seed=0)
 
 All training runs use `cuda:1` per user directive. All runs are single-seed
@@ -30,10 +30,10 @@ unsolved (4/6 seeds collapse second half).
   `residual_action_l2`. All wired up.
 
 **Where things are:**
-- Configs: `scripts/smooth_policy/amp_history/configs/td3/sim2sim/diagnose/long/driftfix/`
+- Configs: `configs/td3/sim2sim/diagnose/long/driftfix/`
 - Run dirs: `runs/td3/sim2sim/hist2_motion0_to_combined/residual_diagnose/long/driftfix/<variant>/seed{N}/`
 - Aggregator: `.venv/bin/python notes/scratch/aggregate_driftfix_results.py`
-- Canonical config: `scripts/smooth_policy/amp_history/configs/td3/sim2sim/td3_sim2sim_residual.yaml`
+- Canonical config: `configs/td3/sim2sim/td3_sim2sim_residual.yaml`
   (already updated with the best recipe found).
 
 **Next experiments to try** (priority order):
@@ -52,14 +52,14 @@ unsolved (4/6 seeds collapse second half).
 3. Update `seed`, `log_parent_dir`, `run_name` (don't overwrite a prior run).
 4. Launch:
    ```bash
-   .venv/bin/python -m scripts.smooth_policy.amp_history.amp_training.td3.td3_training \
+   .venv/bin/python -m scripts.td3.td3_training \
      --args-file <new-config>.yaml > <log-path> 2>&1 &
    ```
 5. Per-checkpoint eval after training:
    ```bash
    bash scripts/smooth_policy/eval_all_ckpts_residual.sh \
      <run_dir> \
-     scripts/smooth_policy/amp_history/configs/new_juggle/sim2sim_combined.yaml \
+     configs/new_juggle/sim2sim_combined.yaml \
      cuda:1
    ```
 6. Aggregate: `.venv/bin/python notes/scratch/aggregate_driftfix_results.py`

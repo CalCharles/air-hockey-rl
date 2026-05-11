@@ -3,7 +3,7 @@
 - **Date**: 2026-05-07 02:05 UTC
 - **Status**: implementation landed; awaiting first rollout (zero-shot eval + residual fine-tune)
 - **Configs**:
-  - Target sim: `scripts/smooth_policy/amp_history/configs/new_juggle/sim2sim_combined_warp.yaml`
+  - Target sim: `configs/new_juggle/sim2sim_combined_warp.yaml`
   - Source policy: `latest_model/hist2_motion0_v2/`
 
 ## Question
@@ -63,7 +63,7 @@ All changes are gated by `puck_obs_sine_warp_amplitude` (default `0.0` = no-op).
 
 | File | Purpose |
 |---|---|
-| `scripts/smooth_policy/amp_history/configs/new_juggle/sim2sim_combined_warp.yaml` | Clone of `sim2sim_combined.yaml` + `puck_obs_sine_warp_amplitude: 0.05`. The full three-perturbation sim2sim target. |
+| `configs/new_juggle/sim2sim_combined_warp.yaml` | Clone of `sim2sim_combined.yaml` + `puck_obs_sine_warp_amplitude: 0.05`. The full three-perturbation sim2sim target. |
 
 ### Removed — observation homography (deprecated as part of this change)
 
@@ -74,8 +74,8 @@ The older `obs_position_homography` mechanism in box2d was a more complex, less-
 - `airhockey/utils.py`: `_maybe_warp_xy`, `_warp_history_xy`, all paddle/puck homography call sites.
 - `airhockey/observation_homography.py`: `apply_plane_homography_xy`, `sample_near_identity_homography`, `pixel_homography_from_world_homography`.
 - `scripts/smooth_policy/validate_obs_homography_gif.py`: deleted (purpose-specific renderer).
-- `scripts/smooth_policy/amp_history/amp_training/td3/tests/test_observation_homography.py`: replaced with `test_sine_y_warp.py` covering the new helper.
-- `scripts/smooth_policy/amp_history/configs/new_juggle/sim_real_world_adaptation.yaml`: removed the 3 homography keys (other physics keys preserved; this config is already labeled legacy).
+- `scripts/td3/tests/test_observation_homography.py`: replaced with `test_sine_y_warp.py` covering the new helper.
+- `configs/new_juggle/sim_real_world_adaptation.yaml`: removed the 3 homography keys (other physics keys preserved; this config is already labeled legacy).
 
 ## Verification (math + env wiring only — no rollouts yet)
 

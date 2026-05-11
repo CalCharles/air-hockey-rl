@@ -18,7 +18,7 @@ infrastructure" (or similar), start here.
 - `scripts/smooth_policy/sim2sim_compare.py` — aggregator. Walks
   `runs/td3/sim2sim/<src_to_tgt>/`, pulls zero-shot JSON + per-seed TB
   scalars, writes `comparison.md`.
-- `scripts/smooth_policy/amp_history/configs/td3/sim2sim/` — four YAML
+- `configs/td3/sim2sim/` — four YAML
   stubs (`zero_shot`, `full_ft`, `from_scratch`, `residual`). The
   `residual` stub is **not runnable** until `ResidualActor` and the
   `load_mode: residual` branch land (see `residual_rl_plan.md`).
@@ -104,7 +104,7 @@ additive.
 ### 1.1 Sim configs
 
 Target sim configs live alongside source configs under
-`scripts/smooth_policy/amp_history/configs/new_juggle/`, with a `sim2sim_`
+`configs/new_juggle/`, with a `sim2sim_`
 prefix so they group together in `ls`:
 
 ```
@@ -124,7 +124,7 @@ so provenance is explicit.
 ### 1.2 Training configs
 
 Four TD3 config files live under
-`scripts/smooth_policy/amp_history/configs/td3/sim2sim/`:
+`configs/td3/sim2sim/`:
 
 ```
 configs/td3/sim2sim/
@@ -318,13 +318,13 @@ Infra is in place (see Status). The remaining ordered steps:
 
 - This plan: `notes/scratch/sim2sim_infra_plan.md`
 - Residual RL plan: `notes/scratch/residual_rl_plan.md`
-- Source sim config (canonical): `scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params_hist4.yaml`
-- Target sim configs (future): `scripts/smooth_policy/amp_history/configs/new_juggle/sim2sim_*.yaml`
-- Training configs (future): `scripts/smooth_policy/amp_history/configs/td3/sim2sim/td3_sim2sim_*.yaml`
+- Source sim config (canonical): `configs/new_juggle/sysid_best_params_hist4.yaml`
+- Target sim configs (future): `configs/new_juggle/sim2sim_*.yaml`
+- Training configs (future): `configs/td3/sim2sim/td3_sim2sim_*.yaml`
 - Eval harness (future): `scripts/smooth_policy/sim2sim_eval.py`
 - Aggregator (future): `scripts/smooth_policy/sim2sim_compare.py`
 - Existing single-env eval (reference): `scripts/smooth_policy/evaluate.py`
-- Training entrypoint: `scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py`
-- Recommended TD3 config: `scripts/smooth_policy/amp_history/configs/td3/td3_recommended.yaml`
+- Training entrypoint: `scripts/td3/td3_training.py`
+- Recommended TD3 config: `configs/td3/td3_recommended.yaml`
 - Metric extractor (pattern to mirror): `notes/scratch/extract_expl_metrics.py`
 - Formal doc target (future): `notes/docs/training/sim2sim.md`

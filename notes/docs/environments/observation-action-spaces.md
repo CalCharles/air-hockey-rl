@@ -1,6 +1,6 @@
 # Observation and Action Spaces
 
-Grounded in `airhockey/utils.py` (`get_observation_by_type`), `airhockey/airhockey_base.py` (`init_observation`), and `scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py` (extract helpers).
+Grounded in `airhockey/utils.py` (`get_observation_by_type`), `airhockey/airhockey_base.py` (`init_observation`), and `scripts/td3/td3_training.py` (extract helpers).
 
 ---
 

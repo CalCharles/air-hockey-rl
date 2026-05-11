@@ -4,13 +4,13 @@ Tool for sim-to-real system identification: take a recorded real-robot episode,
 replay the exact actions inside the Box2D simulator, and render the two
 trajectories side-by-side so the dynamics gap is visible frame-by-frame.
 
-**Script:** `scripts/smooth_policy/visualize_demo/replay_real_in_sim.py`
+**Script:** `scripts/visualization/replay_real_in_sim.py`
 
 ## Quick start
 
 ```bash
 /home/pearl/miniconda3/envs/air/bin/python \
-    scripts/smooth_policy/visualize_demo/replay_real_in_sim.py
+    scripts/visualization/replay_real_in_sim.py
 # → writes ./sim_vs_real_trajectory_data451.gif
 ```
 

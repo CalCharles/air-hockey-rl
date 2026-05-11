@@ -6,7 +6,7 @@ but with a human moving the paddle via the mouse. So policy and human
 numbers go side-by-side in the paper from a single shared protocol.
 
 **Entrypoint:**
-[`scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real_teleop_eval.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real_teleop_eval.py)
+[`scripts/td3/extras/async_td3_real_teleop_eval.py`](../../../scripts/td3/extras/async_td3_real_teleop_eval.py)
 
 **Run command (always identical across sessions):**
 
@@ -84,7 +84,52 @@ runs/teleop_user_study/<participant_id>/data_<TIMESTAMP>/
 ```
 
 `run_meta` carries `control_mode: mouse`, `operator: human`, and
-`participant_id` for downstream analysis.
+`participant_id` for downstream analysis. `per_episode` rows carry
+`reset_phase_reason` so a downstream reader can distinguish "puck was
+ready" from "max-wait fired" resets.
+
+## Running
+
+The two YAML files needed are the same ones the policy eval consumes —
+the `--config` (env config) and the `--args-file` (online-behavior args).
+Architecture is irrelevant here, so `--train-args` is optional and
+`--model-path` is ignored.
+
+Minimum-arg launch (20 episodes, `puck_juggle_upper_half_reward`):
+
+```bash
+python -m scripts.td3.extras.async_td3_real_teleop_eval \
+    --config     configs/real_configs/rollout_td3_config.yaml \
+    --args-file  configs/td3_real_world/td3_online.yaml \
+    --eval-episodes 20
+```
+
+Long-form launch with explicit reset / handoff timing (matches what we
+used in the paper user study):
+
+```bash
+python -m scripts.td3.extras.async_td3_real_teleop_eval \
+    --config     configs/real_configs/rollout_td3_config.yaml \
+    --args-file  configs/td3_real_world/td3_online.yaml \
+    --eval-episodes              20 \
+    --eval-max-attempts          40 \
+    --reset-min-wait-s           2.5 \
+    --reset-max-wait-s           30.0 \
+    --reset-puck-upper-half-frames 20 \
+    --reset-upper-half-margin-m  0.05 \
+    --handoff-countdown-s        3.0 \
+    --post-episode-pause-s       1.5 \
+    --data-root-dir              data/teleop_eval/<participant_id>
+```
+
+Notes:
+* Per-participant `--data-root-dir` keeps each user-study session in its
+  own folder (otherwise `no_model/data_<TIMESTAMP>/` collides on a busy
+  rig).
+* Set `--eval-max-attempts` slightly higher than `--eval-episodes` so a
+  few short / discarded episodes do not exhaust the cap.
+* For a lower-stakes warm-up before the timed run, override
+  `--eval-episodes 5` and `--reset-max-wait-s 60`.
 
 ## Comparing human vs. policy
 

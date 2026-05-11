@@ -7,7 +7,7 @@
 >
 > **Recipe**: CQL α=20, no BC anchor, no primitive exploration, num_critics=5,
 > residual_scale=0.15, q_updates=1, target_network_frequency=2 (Polyak fix from
-> 2026-05-06 active). Config: [`scripts/smooth_policy/amp_history/configs/td3/sim2sim/warp075_p30_residual/redesign_cql_1M.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3/sim2sim/warp075_p30_residual/redesign_cql_1M.yaml).
+> 2026-05-06 active). Config: [`configs/td3/sim2sim/warp075_p30_residual/redesign_cql_1M.yaml`](../../../configs/td3/sim2sim/warp075_p30_residual/redesign_cql_1M.yaml).
 >
 > **1M result, single seed**: trajectory rises through 600k, plateaus at mean **95**
 > with band [74, 116] in 600k–1M. Peak 154.8 @ 492k (3.2× zs, 1.4× from-scratch peak).
@@ -33,8 +33,8 @@ Two recipes for big-gap; pick by deployment style.
 
 | Gap size | Recipes (5-seed verified) | Canonical configs |
 |---|---|---|
-| **Small (<10% zs drop)** — e.g. paddle full-size variants | `recency_top50` (`success_top_fraction: 0.5`) | [`td3_sim2sim_residual.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3/sim2sim/td3_sim2sim_residual.yaml) (3-seed @ 100k) |
-| **Big (~30% zs drop)** — paddle -50% mass-preserved | **v27** (Maxmin-5, 1M-verified) for highest peak; **v30_explore_lite** (v27 + lite adaptation exploration) for tighter cross-seed last5 | [`paddle50/td3_residual_v27_ensemble5.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v27_ensemble5.yaml) ⋅ [`paddle50/td3_residual_v30_explore_lite.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v30_explore_lite.yaml) |
+| **Small (<10% zs drop)** — e.g. paddle full-size variants | `recency_top50` (`success_top_fraction: 0.5`) | [`td3_sim2sim_residual.yaml`](../../../configs/td3/sim2sim/td3_sim2sim_residual.yaml) (3-seed @ 100k) |
+| **Big (~30% zs drop)** — paddle -50% mass-preserved | **v27** (Maxmin-5, 1M-verified) for highest peak; **v30_explore_lite** (v27 + lite adaptation exploration) for tighter cross-seed last5 | [`paddle50/td3_residual_v27_ensemble5.yaml`](../../../configs/td3/sim2sim/paddle50/td3_residual_v27_ensemble5.yaml) ⋅ [`paddle50/td3_residual_v30_explore_lite.yaml`](../../../configs/td3/sim2sim/paddle50/td3_residual_v30_explore_lite.yaml) |
 
 These are the structural lessons from the residual-RL drift-fix campaign
 (both small-gap OLD env and big-gap paddle50). They should govern recipe
@@ -163,7 +163,7 @@ The above is what `td3_sim2sim_residual.yaml` already contains.
 
 ### 1. Edit the config to point at your source/target
 
-In `scripts/smooth_policy/amp_history/configs/td3/sim2sim/td3_sim2sim_residual.yaml`, fill in:
+In `configs/td3/sim2sim/td3_sim2sim_residual.yaml`, fill in:
 
 ```yaml
 config: "<path to target sim YAML>"           # e.g. configs/new_juggle/sim2sim_combined.yaml
@@ -180,8 +180,8 @@ device: "cuda:N"
 
 ```bash
 # Seed 0
-.venv/bin/python -m scripts.smooth_policy.amp_history.amp_training.td3.td3_training \
-  --args-file scripts/smooth_policy/amp_history/configs/td3/sim2sim/td3_sim2sim_residual.yaml
+.venv/bin/python -m scripts.td3.td3_training \
+  --args-file configs/td3/sim2sim/td3_sim2sim_residual.yaml
 
 # Seed 1, 2: copy the config, change `seed:` and `log_parent_dir:` (must be unique per seed)
 ```
@@ -193,7 +193,7 @@ A 100k run takes ~30 min on one Quadro RTX 6000.
 After each seed finishes, evaluate every saved checkpoint:
 
 ```bash
-bash scripts/smooth_policy/eval_all_ckpts_residual.sh \
+bash scripts/td3/eval_all_ckpts_residual.sh \
   <log_parent_dir> \
   <target_sim_config> \
   cuda:N
@@ -345,7 +345,7 @@ num_critics: 5                       # was 2 — Maxmin-5 ensemble (2026-04-30 P
 # Everything else (q_weight_decay 1e-3, residual_scale 0.15, q_lr 3e-4) stays the same.
 ```
 
-Verified config (5-seed): `scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v27_ensemble5.yaml`.
+Verified config (5-seed): `configs/td3/sim2sim/paddle50/td3_residual_v27_ensemble5.yaml`.
 
 Expected performance (5-seed mean):
 - Peak: **87.9 ± 4.8** (range 82.8–95.7 across seeds — best mean and tighter than v25)
@@ -417,7 +417,7 @@ exploration_primitive_weight_target_position_directional: 1.0
 # priority_age_decay=1e-4, residual_scale=0.15, q_weight_decay=1e-3, q_lr=3e-4).
 ```
 
-Verified config (5-seed): `scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v30_explore_lite.yaml`
+Verified config (5-seed): `configs/td3/sim2sim/paddle50/td3_residual_v30_explore_lite.yaml`
 (seed1-4 variants: `…_seed{1,2,3,4}.yaml`).
 
 Expected performance (5-seed @ 300k, n=50 deterministic eval per ckpt, zs=67.54):
@@ -566,7 +566,7 @@ exploration_primitive_weight_target_position_directional: 1.0
 # priority_age_decay=1e-4, residual_scale=0.15, q_weight_decay=1e-3, q_lr=3e-4).
 ```
 
-Verified config (5-seed): `scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v30_explore_lite.yaml`
+Verified config (5-seed): `configs/td3/sim2sim/paddle50/td3_residual_v30_explore_lite.yaml`
 (seed1-4 variants: `…_seed{1,2,3,4}.yaml`).
 
 Expected performance (5-seed @ 300k, n=50 deterministic eval per ckpt, zs=67.54):
@@ -758,7 +758,7 @@ When to choose v27 over v29:
 - Compute-constrained (v27 N=5 vs v29 N=10 — about 2× faster)
 - Want highest single-seed peak chance (v27 best 95.7 vs v29 89.6)
 
-Verified config: `scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v29_redq10.yaml`.
+Verified config: `configs/td3/sim2sim/paddle50/td3_residual_v29_redq10.yaml`.
 
 ```yaml
 # v29 = v25 + REDQ-10-2 ensemble:
@@ -948,7 +948,7 @@ These were added during the campaign for ablations. The default values keep them
 | `residual_ema_decay: float \| None` | EMA copy of residual head, saves `model_ema.pth` | None | Operational tool |
 | `residual_action_l2: float` | L2 penalty on residual *output* | 0.0 | Rejected |
 
-If you set `residual_ema_decay: 0.9999`, also use `bash scripts/smooth_policy/eval_all_ckpts_residual_ema.sh` to evaluate the EMA actor copy (saved as `model_ema.pth` per ckpt).
+If you set `residual_ema_decay: 0.9999`, also use `bash scripts/td3/eval_all_ckpts_residual_ema.sh` to evaluate the EMA actor copy (saved as `model_ema.pth` per ckpt).
 
 ---
 
@@ -1059,12 +1059,15 @@ v27 recipe as of 2026-05-04. The Maxmin-N / REDQ-N-M code paths in
 the original twin-TD3 pair to an N-critic ensemble; everything else (replay,
 exploration, checkpointing) was already shared.
 
-Configs:
-- args-file (online behaviour): [`td3_real_world/td3_residual.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml)
-- train-args (architecture + ensemble): [`td3_real_world/td3_residual_train_args.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml)
+Canonical configs:
+- args-file (online behaviour): [`td3_real_world/td3_residual.yaml`](../../../configs/td3_real_world/td3_residual.yaml)
+- train-args (architecture + ensemble): [`td3_real_world/td3_residual_train_args.yaml`](../../../configs/td3_real_world/td3_residual_train_args.yaml)
 
 ```bash
-python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real --train-args scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_train_args.yaml --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml --model-path <path-to-source-checkpoint>/training_state.pth
+python -m scripts.td3.extras.async_td3_real \
+  --train-args configs/td3_real_world/td3_residual_train_args.yaml \
+  --args-file  configs/td3_real_world/td3_residual.yaml \
+  --model-path <path-to-source-checkpoint>/training_state.pth
 ```
 
 The warm-start variant (`--warm-start-hdf5-dirs <prior-run>/episode_hdf5 --learning-starts-fresh-steps 0 --data-root-dir <new-root>`) and the resume command are identical to the [CQL flow](#launch-a-cql-run) — only the `--args-file` path differs.
@@ -1090,6 +1093,16 @@ actor stays at fresh init. `residual_resume` skips that filter and loads the
 wrapped state_dict directly, restoring both the frozen base and the trained
 residual head. Critics + targets are restored from `qf1..qfN` keys;
 optimizer state and RNG are restored too.
+
+```bash
+python -m scripts.td3.extras.async_td3_real \
+  --train-args configs/td3_real_world/td3_residual_train_args.yaml \
+  --args-file  configs/td3_real_world/td3_residual.yaml \
+  --full-checkpoint-load residual_resume \
+  --learning-starts-fresh-steps 0 \
+  --load-replay-from-checkpoint \
+  --model-path <prev-run>/checkpoint_<tag>/training_state.pth
+```
 
 `--load-replay-from-checkpoint` restores success/failure replay from the
 saved `training_state.pth`. Without it, replay starts empty and (combined

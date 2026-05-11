@@ -4,18 +4,18 @@
 
 Adversarial Motion Prior (AMP) discriminator used by PPO training to encourage expert-like motion style.
 
-Entrypoint: [`amp_training.py`](../../../scripts/smooth_policy/amp_history/amp_training/amp_training.py).
+Entrypoint: [`amp_training.py`](../../../scripts/amp_training/amp_training.py).
 
 ## Discriminator network
 
-**Code:** [`discriminator.py`](../../../scripts/smooth_policy/amp_history/amp_training/discriminator.py)
+**Code:** [`discriminator.py`](../../../scripts/amp_training/discriminator.py)
 
 MLP that scores consecutive state pairs `[s_t, s_{t+1}]`. Configurable depth/width and activation (LeakyReLU default, slope 0.2).
 
 - **Loss:** least-squares GAN (MSE on `[-1, 1]` targets: +1 expert, -1 agent) rather than binary cross-entropy.
 - **Gradient penalty:** `compute_grad_penalty` provides Lipschitz regularization on the discriminator inputs.
-- **Input normalizer:** [`normalizer.py`](../../../scripts/smooth_policy/amp_history/amp_training/normalizer.py) maintains running mean/std with clipping (default 10.0) to prevent scale drift.
-- **Agent replay buffer:** [`replay_buffer.py`](../../../scripts/smooth_policy/amp_history/amp_training/replay_buffer.py) stores agent-generated observations to prevent catastrophic forgetting during discriminator updates.
+- **Input normalizer:** [`normalizer.py`](../../../scripts/amp_training/normalizer.py) maintains running mean/std with clipping (default 10.0) to prevent scale drift.
+- **Agent replay buffer:** [`replay_buffer.py`](../../../scripts/amp_training/replay_buffer.py) stores agent-generated observations to prevent catastrophic forgetting during discriminator updates.
 
 ## Discriminator modes
 
@@ -31,7 +31,7 @@ Modes are combinable. Dimension is computed dynamically via the demo loader's `g
 
 ## Feature processing
 
-**Code:** [`feature_processing.py`](../../../scripts/smooth_policy/amp_history/amp_training/feature_processing.py)
+**Code:** [`feature_processing.py`](../../../scripts/amp_training/feature_processing.py)
 
 Discriminator inputs are normalized before scoring:
 
@@ -43,7 +43,7 @@ Supports **bucketed temporal sampling** for long trajectory windows via `sample_
 
 ## Demo loader
 
-**Code:** [`demo_loader_position_history.py`](../../../scripts/smooth_policy/amp_history/amp_training/demo_loader_position_history.py)
+**Code:** [`demo_loader_position_history.py`](../../../scripts/amp_training/demo_loader_position_history.py)
 
 Loads `.pt` tensor datasets built by the `amp_data/` pipeline. Provides windowed position history (default 5-step) with optional action and puck features. Supports bucketed sampling for long temporal windows (`bucket_window_len`, `bucket_num_bins`, `bucket_samples_per_bin`).
 

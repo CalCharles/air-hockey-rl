@@ -4,7 +4,7 @@ Drop-in replacement for ``ResetPolicyFSM``. Reuses phases 1–3 of the legacy
 FSM (``goto_start`` → ``edge_loop`` → ``upward_burst`` →
 ``post_first_upward_check``), then — instead of running the legacy
 ``wait_for_puck`` / programmatic ``strike`` retry loop — hands control to a
-frozen juggle policy (default: ``latest_model/hist2_motion0_v2/model.pth``)
+frozen juggle policy (default: ``latest_models/canonical/hist2_motion0_v2/model.pth``)
 for the second hit. Success = puck rises above the midline AFTER first
 descending (proves the policy actually struck it). Failure = puck stays
 below the paddle for ``_RESET_BELOW_PADDLE_MAX_STEPS`` consecutive frames,
@@ -29,19 +29,19 @@ import torch
 
 from airhockey import AirHockeyEnv
 from scripts.real.rollout_reset_policy_real import ResetPolicyFSM
-from scripts.smooth_policy.amp_history.amp_training.td3.helper.real_td3_runtime import (
+from scripts.td3.helper.real_td3_runtime import (
     _load_train_args,
     augment_policy_observation,
     build_policy_env_view,
     deterministic_actor_action,
 )
-from scripts.smooth_policy.deterministic_agent import DeterministicAgent
+from scripts.td3.deterministic_agent import DeterministicAgent
 
 
 # Tunables for the hybrid reset. Kept as module-level constants (not Args /
 # YAML) so the canonical recipe is the only thing checked into git; if you
 # need to retune, edit here.
-_RESET_JUGGLE_ACTOR_PATH: str = "latest_model/hist2_motion0_v2/model.pth"
+_RESET_JUGGLE_ACTOR_PATH: str = "latest_models/canonical/hist2_motion0_v2/model.pth"
 _RESET_BELOW_PADDLE_MAX_STEPS: int = 15   # ~0.5 s @ 30 Hz before declaring failure
 _RESET_HANDOFF_MAX_STEPS: int = 90        # ~3 s @ 30 Hz absolute cap on handoff duration
 _RESET_MAX_RESTART_ATTEMPTS: int = 3      # restart cycles before falling through to hard reset
@@ -84,7 +84,7 @@ def build_juggle_actor(device: torch.device | None = None) -> tuple[Deterministi
     # not a training_state container — the orchestrator's
     # ``_load_training_state_checkpoint`` is the wrong loader here. Use
     # ``torch.load`` directly. The actor uses ``ResidualMLPTrunk`` (see
-    # ``scripts/smooth_policy/deterministic_agent.py``), so the first
+    # ``scripts/td3/deterministic_agent.py``), so the first
     # Linear layer lives at ``actor.blocks.0.units.0.0.weight``.
     actor_state = torch.load(_RESET_JUGGLE_ACTOR_PATH, map_location="cpu", weights_only=False)
     if not isinstance(actor_state, dict):

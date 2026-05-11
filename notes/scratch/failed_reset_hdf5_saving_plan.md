@@ -23,13 +23,13 @@ That said, there are **three real gaps** worth fixing while we're here, in rough
 **Files involved:**
 
 - FSM that produces the trajectory: `scripts/real/rollout_reset_policy_real.py` (`ResetPolicyFSM`)
-- Per-run wrapper that builds the artifact: `scripts/smooth_policy/amp_history/amp_training/td3/helper/real_reset_runner.py`
+- Per-run wrapper that builds the artifact: `scripts/td3/helper/real_reset_runner.py`
   - `_run_fsm_once` — drives the FSM, accumulates rows, builds `PendingResetArtifact` (lines 200–254)
   - `_reset_artifact_partition` — `"success" if done_reason=="success" else "failure"` (lines 68–69)
   - `ResetRunner.run` — orchestrates startup / soft / hard-with-fsm / hard-skip-fsm (lines 381–515)
-- Buffer merge: `scripts/smooth_policy/amp_history/amp_training/td3/helper/real_collector_reset.py` — `merge_reset_fsm_artifact_into_pending` (lines 17–55)
-- Disk write & summary append: `scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real_modular.py` — `_save_episode_artifacts_and_pending_reset`, reset-flush block at lines 319–382 (called from both modular at line 1085 and eval at line 500)
-- Bucketing: `scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py` — `_episode_length_bucket_name` (1134–1142), `_reset_output_dir` (1155–1158)
+- Buffer merge: `scripts/td3/helper/real_collector_reset.py` — `merge_reset_fsm_artifact_into_pending` (lines 17–55)
+- Disk write & summary append: `scripts/td3/extras/async_td3_real_modular.py` — `_save_episode_artifacts_and_pending_reset`, reset-flush block at lines 319–382 (called from both modular at line 1085 and eval at line 500)
+- Bucketing: `scripts/td3/extras/async_td3_real.py` — `_episode_length_bucket_name` (1134–1142), `_reset_output_dir` (1155–1158)
 - Output layout: `<reset_artifact_dir>/{success|failure}/{<50|50-100|100-200|>200}/trajectory_data{N}.hdf5`
 
 **Loop shape (eval; modular is the same):**

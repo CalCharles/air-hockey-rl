@@ -3,7 +3,7 @@
 Finite state machine that resets the puck from the bottom of the table between policy episodes on the real UR5.
 
 Primary code: [`ResetPolicyFSM`](../../../../scripts/real/rollout_reset_policy_real.py) class.
-Collector integration: [`real_collector_reset.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_collector_reset.py).
+Collector integration: [`real_collector_reset.py`](../../../../scripts/td3/helper/real_collector_reset.py).
 
 ## Five phases
 
@@ -36,7 +36,7 @@ The collector decides between two reset paths at episode end:
 
 ## Collector integration
 
-**Code:** [`real_collector_reset.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_collector_reset.py)
+**Code:** [`real_collector_reset.py`](../../../../scripts/td3/helper/real_collector_reset.py)
 
 After the reset FSM completes:
 
@@ -62,7 +62,7 @@ After the reset FSM completes:
 
 ## Visualizing saved reset trajectories
 
-Each reset rollout is saved as a split-schema HDF5 (under `…/reset_hdf5/<bucket>/trajectory_data*.hdf5`). To render side-by-side Box2D + real-camera GIFs from a directory of reset HDF5s, use [`trim_reset_hdf5_post_first_upward.py`](../../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/trim_reset_hdf5_post_first_upward.py) with `--recursive`. See [Episode lifecycle → Batch-rendering side-by-side GIFs from existing reset HDF5s](episode-lifecycle.md#batch-rendering-side-by-side-gifs-from-existing-reset-hdf5s) for the exact invocation.
+Each reset rollout is saved as a split-schema HDF5 (under `…/reset_hdf5/<bucket>/trajectory_data*.hdf5`). To render side-by-side Box2D + real-camera GIFs from a directory of reset HDF5s, use [`trim_reset_hdf5_post_first_upward.py`](../../../../scripts/td3/extras/trim_reset_hdf5_post_first_upward.py) with `--recursive`. See [Episode lifecycle → Batch-rendering side-by-side GIFs from existing reset HDF5s](episode-lifecycle.md#batch-rendering-side-by-side-gifs-from-existing-reset-hdf5s) for the exact invocation.
 
 ## Related docs
 

@@ -4,7 +4,7 @@ Policy and critic network designs used by TD3 training.
 
 ## Shared backbone: `ResidualMLPTrunk`
 
-**Code:** [`scripts/smooth_policy/agent.py`](../../../scripts/smooth_policy/agent.py)
+**Code:** [`scripts/td3/agent.py`](../../../scripts/td3/agent.py)
 
 All networks use `ResidualMLPTrunk` as their core feature extractor. It stacks `num_residual_blocks` instances of `ResidualDenseNormSwishBlock`:
 
@@ -21,7 +21,7 @@ The total network depth (linear layers) is `num_residual_blocks * units_per_bloc
 
 ## Deterministic actor: `DeterministicAgent`
 
-**Code:** [`scripts/smooth_policy/deterministic_agent.py`](../../../scripts/smooth_policy/deterministic_agent.py)
+**Code:** [`scripts/td3/deterministic_agent.py`](../../../scripts/td3/deterministic_agent.py)
 
 ```
 obs -> ResidualMLPTrunk -> Linear (actor_mean_head) -> tanh -> scale + bias -> action
@@ -38,13 +38,13 @@ obs -> ResidualMLPTrunk -> Linear (actor_mean_head) -> tanh -> scale + bias -> a
 
 ## Stochastic actor: `Agent`
 
-**Code:** [`scripts/smooth_policy/agent.py`](../../../scripts/smooth_policy/agent.py)
+**Code:** [`scripts/td3/agent.py`](../../../scripts/td3/agent.py)
 
 Used by PPO training; shares the same `ResidualMLPTrunk` backbone. Adds a log-std parameter head for Gaussian exploration. Not used during TD3 training but weight-compatible with `DeterministicAgent` for warm-starting.
 
 ## Dual-head critic: `TD3DualHeadQNetwork`
 
-**Code:** [`scripts/smooth_policy/amp_history/amp_training/td3/helper/dual_head_q.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/dual_head_q.py)
+**Code:** [`scripts/td3/helper/dual_head_q.py`](../../../scripts/td3/helper/dual_head_q.py)
 
 ```
 cat(obs, action) -> ResidualMLPTrunk -> task_head (Linear -> scalar)
@@ -63,7 +63,7 @@ cat(obs, action) -> ResidualMLPTrunk -> task_head (Linear -> scalar)
 
 ## Environment encoder: `EnvEncoder`
 
-**Code:** [`scripts/smooth_policy/encoder.py`](../../../scripts/smooth_policy/encoder.py)
+**Code:** [`scripts/td3/encoder.py`](../../../scripts/td3/encoder.py)
 
 Compact MLP (Dense -> Tanh layers) that maps environment variable vectors to a latent conditioning code. Used by the RMA adaptation stack (`amp_training/rma/`) for domain randomization.
 

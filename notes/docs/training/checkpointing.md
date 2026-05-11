@@ -2,8 +2,8 @@
 
 Save/resume system for TD3 training state.
 
-Simulation code: [`helper/td3_checkpointing.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/td3_checkpointing.py).
-Real-world code: `_build_async_training_state` / `_save_async_checkpoint` in [`helper/real_td3_runtime.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_td3_runtime.py) (shared runtime library; entrypoint is [`extras/async_td3_real.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py)).
+Simulation code: [`helper/td3_checkpointing.py`](../../../scripts/td3/helper/td3_checkpointing.py).
+Real-world code: `_build_async_training_state` / `_save_async_checkpoint` in [`helper/real_td3_runtime.py`](../../../scripts/td3/helper/real_td3_runtime.py) (shared runtime library; entrypoint is [`extras/async_td3_real.py`](../../../scripts/td3/extras/async_td3_real.py)).
 
 ## Checkpoint schema
 
@@ -96,14 +96,14 @@ The checkpoint loader handles several schema changes from older versions:
 
 ## Resuming real-world async training
 
-This is the canonical procedure for resuming an interrupted real-world TD3 run with [`async_td3_real.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py). It picks up training where the previous run left off — model weights, optimizer momentum, replay buffer, learner step counters, run-elapsed timer, and rolling-window deques.
+This is the canonical procedure for resuming an interrupted real-world TD3 run with [`async_td3_real.py`](../../../scripts/td3/extras/async_td3_real.py). It picks up training where the previous run left off — model weights, optimizer momentum, replay buffer, learner step counters, run-elapsed timer, and rolling-window deques.
 
 ### TL;DR — resume command
 
 ```bash
-python scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py \
+python scripts/td3/extras/async_td3_real.py \
     --train-args <previous-run>/args.yaml \
-    --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml \
+    --args-file configs/td3_real_world/td3_online.yaml \
     --model-path <previous-run>/checkpoint_<TAG>/training_state.pth \
     --load-replay-from-checkpoint \
     --replay-source-priority checkpoint_only
@@ -121,17 +121,17 @@ Both `collector_total_steps` (the TB x-axis, the cap target, and the checkpoint 
 
 ### Pre-flight checklist (on the run you want to be able to resume)
 
-The serializer is `_serialize_training_state_payload` ([`helper/real_td3_runtime.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_td3_runtime.py) — `include_non_vital_training_state_fields` gates everything below).
+The serializer is `_serialize_training_state_payload` ([`helper/real_td3_runtime.py`](../../../scripts/td3/helper/real_td3_runtime.py) — `include_non_vital_training_state_fields` gates everything below).
 
 - [ ] `enable_periodic_checkpointing: true` — without this no checkpoints are written.
 - [ ] `include_non_vital_training_state_fields: true` — **required** for clean resume. Without this the checkpoint omits optimizer state, learner counters, `collector_total_steps`, `last_checkpoint_collector_steps`, `run_elapsed_total_s`, and the rolling-window deques. Resuming loses Adam momentum, restarts the TB step axis at 0, and starts rolling-50 stats cold. The orchestrator prints a loud `[main] WARNING` at startup if this combination drifts.
 - [ ] `checkpoint_every_collector_steps` — cadence in valid (kept-episode) collector steps. Default 5000.
 
-[`td3_online.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml), [`td3_residual.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml) (no-CQL baseline) and [`td3_residual_cql.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_cql.yaml) (canonical CQL recipe) all ship with `include_non_vital_training_state_fields: true` already.
+[`td3_online.yaml`](../../../configs/td3_real_world/td3_online.yaml), [`td3_residual.yaml`](../../../configs/td3_real_world/td3_residual.yaml) (no-CQL baseline) and [`td3_residual_cql.yaml`](../../../configs/td3_real_world/td3_residual_cql.yaml) (canonical CQL recipe) all ship with `include_non_vital_training_state_fields: true` already.
 
 ### Where checkpoints live
 
-`_setup_run_data_dir` ([`helper/real_td3_runtime.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_td3_runtime.py)) creates a unified per-run folder:
+`_setup_run_data_dir` ([`helper/real_td3_runtime.py`](../../../scripts/td3/helper/real_td3_runtime.py)) creates a unified per-run folder:
 
 ```
 <data_root_dir>/data_<TIMESTAMP>/
@@ -148,11 +148,11 @@ The serializer is `_serialize_training_state_payload` ([`helper/real_td3_runtime
     run_note.txt
 ```
 
-Periodic checkpoints fire from `_run_sync_learner_iteration` ([`helper/real_td3_runtime.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_td3_runtime.py)) when the orchestrator increments `stats["checkpoint_save_request_id"]`. The graceful-exit checkpoint is written by `_finalize_sync_learner_state` (same file) inside the orchestrator's `finally` block, so it covers normal exit AND `KeyboardInterrupt`.
+Periodic checkpoints fire from `_run_sync_learner_iteration` ([`helper/real_td3_runtime.py`](../../../scripts/td3/helper/real_td3_runtime.py)) when the orchestrator increments `stats["checkpoint_save_request_id"]`. The graceful-exit checkpoint is written by `_finalize_sync_learner_state` (same file) inside the orchestrator's `finally` block, so it covers normal exit AND `KeyboardInterrupt`.
 
 ### What gets restored on resume
 
-Loaded by `_load_training_state_checkpoint` and `_init_sync_learner_state` ([`helper/real_td3_runtime.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_td3_runtime.py)), then consumed by [`extras/async_td3_real.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py).
+Loaded by `_load_training_state_checkpoint` and `_init_sync_learner_state` ([`helper/real_td3_runtime.py`](../../../scripts/td3/helper/real_td3_runtime.py)), then consumed by [`extras/async_td3_real.py`](../../../scripts/td3/extras/async_td3_real.py).
 
 | Restored | Source field |
 |---|---|

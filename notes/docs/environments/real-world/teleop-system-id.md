@@ -36,7 +36,7 @@ renders a GIF per interval, with frame numbers and timestamps overlaid.
 
 ```bash
 PYTHONPATH=/home/pearl/air-hockey-rl \
-python scripts/smooth_policy/visualize_demo/render_teleop_segments.py \
+python scripts/visualization/render_teleop_segments.py \
     sysid/teleop/trajectory_dataN.hdf5 \
     -o sysid/teleop/trajectory_dataN_segments \
     --interval 100
@@ -101,11 +101,11 @@ each containing a trajectory GIF and a side-by-side sim-vs-real replay GIF.
 
 ### trajectory_data1 categories
 
-Script: `scripts/smooth_policy/visualize_demo/split_teleop_categories.py`
+Script: `scripts/visualization/split_teleop_categories.py`
 
 ```bash
 PYTHONPATH=/home/pearl/air-hockey-rl \
-python scripts/smooth_policy/visualize_demo/split_teleop_categories.py \
+python scripts/visualization/split_teleop_categories.py \
     sysid/teleop/trajectory_data1.hdf5 \
     -o sysid/teleop/system_id
 ```
@@ -117,11 +117,11 @@ Categories: `side_to_side_fast` (120–300), `side_to_side_slow` (310–650),
 
 ### trajectory_data3 categories (with sim-vs-real replay)
 
-Script: `scripts/smooth_policy/visualize_demo/split_teleop_categories_data3.py`
+Script: `scripts/visualization/split_teleop_categories_data3.py`
 
 ```bash
 PYTHONPATH=/home/pearl/air-hockey-rl \
-python scripts/smooth_policy/visualize_demo/split_teleop_categories_data3.py
+python scripts/visualization/split_teleop_categories_data3.py
 ```
 
 Output: `sysid/teleop/system_id3/`
@@ -244,7 +244,7 @@ Best: **Ki=500** (paddle err 0.023), but improvement over Ki=0 is marginal.
 
 The **chosen practical best** (Kp=9000, Kd=50, Ki=0, density=3000) is used by
 `render_best_config_all.py` for visualization and is captured in the sysid
-config: `scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params.yaml`.
+config: `configs/new_juggle/sysid_best_params.yaml`.
 
 ### Key findings
 
@@ -270,9 +270,9 @@ sim-vs-real GIFs for all segments using the chosen best config. Output:
 | Script | Purpose |
 |--------|---------|
 | `scripts/real/teleoperate.py` | Record teleop trajectories |
-| `scripts/smooth_policy/visualize_demo/render_teleop_segments.py` | Split + render segment GIFs (fixed interval) |
-| `scripts/smooth_policy/visualize_demo/split_teleop_categories.py` | Named category split for data1 |
-| `scripts/smooth_policy/visualize_demo/split_teleop_categories_data3.py` | Named category split + replay for data3 |
-| `scripts/smooth_policy/visualize_demo/visualize_real_trajectory_split.py` | Render a full split-schema HDF5 as one GIF |
-| `scripts/smooth_policy/visualize_demo/replay_real_in_sim.py` | Side-by-side real vs sim replay |
+| `scripts/visualization/render_teleop_segments.py` | Split + render segment GIFs (fixed interval) |
+| `scripts/visualization/split_teleop_categories.py` | Named category split for data1 |
+| `scripts/visualization/split_teleop_categories_data3.py` | Named category split + replay for data3 |
+| `scripts/visualization/visualize_real_trajectory_split.py` | Render a full split-schema HDF5 as one GIF |
+| `scripts/visualization/replay_real_in_sim.py` | Side-by-side real vs sim replay |
 | `scripts/test_pid_controller.py` | PID vs legacy controller comparison |

@@ -12,7 +12,7 @@ High-level map of the repository. Paths are relative to the repo root.
 
 | Path | Role |
 |------|------|
-| [`scripts/`](../../../scripts) | Active training code (e.g. [`scripts/smooth_policy`](../../../scripts/smooth_policy)), real-robot scripts, utilities. |
+| [`scripts/`](../../../scripts) | Active training code (e.g. [`scripts/td3`](../../../scripts/td3)), real-robot scripts, utilities. |
 | [`configs/`](../../../configs) | YAML configs for scripts and environments. |
 | [`agents/`](../../../agents) | Agent-related assets or helpers (project-specific). |
 | [`offline_rl_algorithms/`](../../../offline_rl_algorithms) | Offline RL code used by some experiment paths. |

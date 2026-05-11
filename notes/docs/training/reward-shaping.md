@@ -2,8 +2,8 @@
 
 How task and motion rewards are composed for the dual-head TD3 critics.
 
-Simulation code: [`td3_training.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py).
-Real-world code: [`real_motion_rewards.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_motion_rewards.py).
+Simulation code: [`td3_training.py`](../../../scripts/td3/td3_training.py).
+Real-world code: [`real_motion_rewards.py`](../../../scripts/td3/helper/real_motion_rewards.py).
 
 ## Two reward streams
 

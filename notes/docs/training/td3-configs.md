@@ -1,7 +1,7 @@
 # TD3 Simulator Config Files
 
-Config files live in `scripts/smooth_policy/amp_history/configs/td3/`.
-All are used with `scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py`.
+Config files live in `configs/td3/`.
+All are used with `scripts/td3/td3_training.py`.
 
 ## Recommended default — `td3_recommended_top50_hist2.yaml`
 
@@ -34,8 +34,8 @@ All other fields (reward weights, PER, non-warmstart exploration primitives) are
 Launch:
 
 ```bash
-python scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py \
-  --args-file scripts/smooth_policy/amp_history/configs/td3/td3_recommended_top50_hist2.yaml \
+python scripts/td3/td3_training.py \
+  --args-file configs/td3/td3_recommended_top50_hist2.yaml \
   --run-name my_run --device cuda:0
 ```
 

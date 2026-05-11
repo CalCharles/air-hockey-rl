@@ -98,6 +98,6 @@ Eval: `eval_all_ckpts_residual.sh` against `sim2sim_combined.yaml`
 - Recipe doc: `notes/docs/training/residual-rl-recipe.md`
 - Earlier exploration ablations: `notes/docs/training/td3-exploration-ablations.md`
 - Paddle50 log (current results, v1–v29): `notes/scratch/residual_rl_paddle50_log.md`
-- Recommended base config: `scripts/smooth_policy/amp_history/configs/td3/td3_recommended.yaml`
+- Recommended base config: `configs/td3/td3_recommended.yaml`
 - v27 winning residual: `…/td3/sim2sim/paddle50/td3_residual_v27_ensemble5.yaml`
 - Old (non-explore) from-scratch: `…/paddle50/td3_from_scratch_1M_paddle50.yaml`

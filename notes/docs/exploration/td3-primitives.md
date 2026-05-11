@@ -1,7 +1,7 @@
 # TD3 Exploration Primitives (High Level)
 
 This note summarizes the exploration primitives used by TD3 in
-`scripts/smooth_policy/amp_history/amp_training/td3/helper/exploration_selector.py`.
+`scripts/td3/helper/exploration_selector.py`.
 
 ## How primitive takeover works
 

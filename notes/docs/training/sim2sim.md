@@ -18,12 +18,12 @@ Planning + open-questions doc: [`notes/scratch/sim2sim_infra_plan.md`](../../scr
 
 | Step | Artifact |
 |---|---|
-| 1. Author target sim config | `scripts/smooth_policy/amp_history/configs/new_juggle/sim2sim_<tag>.yaml` |
-| 2. Zero-shot eval | `scripts/smooth_policy/sim2sim_eval.py` → `runs/td3/sim2sim/<src_to_tgt>/zero_shot/metrics.json` |
-| 3. Fine-tune (full / residual / from-scratch) | `scripts/smooth_policy/amp_history/configs/td3/sim2sim/td3_sim2sim_*.yaml` |
-| 4. Aggregate | `scripts/smooth_policy/sim2sim_compare.py` → `comparison.md` |
+| 1. Author target sim config | `configs/new_juggle/sim2sim_<tag>.yaml` |
+| 2. Zero-shot eval | `scripts/td3/sim2sim_eval.py` → `runs/td3/sim2sim/<src_to_tgt>/zero_shot/metrics.json` |
+| 3. Fine-tune (full / residual / from-scratch) | `configs/td3/sim2sim/td3_sim2sim_*.yaml` |
+| 4. Aggregate | `scripts/td3/sim2sim_compare.py` → `comparison.md` |
 
-All eval/comparison helpers reuse `scripts/smooth_policy/eval_utils.py` (factored from `evaluate.py`) so policy loading is identical to the standard eval path.
+All eval/comparison helpers reuse `scripts/td3/eval_utils.py` (factored from `evaluate.py`) so policy loading is identical to the standard eval path.
 
 ### Config layout
 
@@ -194,10 +194,10 @@ Lessons:
 
 | File | Change |
 |---|---|
-| `scripts/smooth_policy/residual_agent.py` | new `ResidualActor` (frozen base + trainable residual, zero-init head, action clip) |
+| `scripts/td3/residual_agent.py` | new `ResidualActor` (frozen base + trainable residual, zero-init head, action clip) |
 | `…/td3/td3_training.py` | `Args.full_checkpoint_load` Literal extended with `"residual"`; new residual loader branch (shared base across online/target); `Args.residual_scale`; `Args.fine_tune_replay_keep`; **lr-reset after `load_fine_tune_optimizer_state`** so config knobs aren't silently overridden by source-restored optimizer state |
 | `…/td3/helper/td3_checkpointing.py` | `seed_fine_tune_replay_from_source` — proportional subsample from source success/failure buffers, added via `add()` so position/size stay consistent |
-| `scripts/smooth_policy/eval_utils.py` | `"residual_actor"` policy class; `infer_policy_class_from_state_dict` recognizes `base.*`+`residual.*`; `build_policy` constructs `ResidualActor` placeholder, state_dict restore fills buffers |
+| `scripts/td3/eval_utils.py` | `"residual_actor"` policy class; `infer_policy_class_from_state_dict` recognizes `base.*`+`residual.*`; `build_policy` constructs `ResidualActor` placeholder, state_dict restore fills buffers |
 | `…/configs/td3/sim2sim/td3_sim2sim_residual.yaml` | initial post-drift-study defaults: `residual_scale=0.05`, `q_updates=1`, `q_lr=3e-4`, `actor_updates_per_iteration=1`, primitives off. **Superseded by the drift-fix campaign defaults below (`residual_scale=0.15`, `q_updates=4`, `success_top_fraction=0.5`)** — that's what the YAML actually contains today. |
 | `…/configs/td3/sim2sim/td3_sim2sim_full_ft.yaml` | tested defaults: `policy_lr=3e-5`, `q_lr=1e-4`, `q_updates=4`, `actor_updates_per_iteration=1`, primitives off, `fine_tune_replay_keep=10000` |
 
@@ -300,7 +300,7 @@ If your harness can't early-stop and you must trust `model.pth` at end of traini
 
 ### Reproducibility
 
-Diagnostic configs at `scripts/smooth_policy/amp_history/configs/td3/sim2sim/diagnose/{bigger_buffer,lower_qlr,lower_utd,low_success_frac,combo_utd_qlr}.yaml`. Run dirs at `runs/td3/sim2sim/hist2_motion0_to_combined/residual_diagnose/<variant>/seed0[r1]/`. Per-checkpoint deterministic eval results in `eval_combined_ckpt_*/metrics.json` and `eval_combined_final/metrics.json` under each.
+Diagnostic configs at `configs/td3/sim2sim/diagnose/{bigger_buffer,lower_qlr,lower_utd,low_success_frac,combo_utd_qlr}.yaml`. Run dirs at `runs/td3/sim2sim/hist2_motion0_to_combined/residual_diagnose/<variant>/seed0[r1]/`. Per-checkpoint deterministic eval results in `eval_combined_ckpt_*/metrics.json` and `eval_combined_final/metrics.json` under each.
 
 ### Open follow-ups (specific to this study)
 
@@ -359,11 +359,11 @@ Confirms the 100k insight that 0.05 (residual ±5% around base action) is too ti
 
 ### Reproducibility — 400k extension
 
-Configs at `scripts/smooth_policy/amp_history/configs/td3/sim2sim/diagnose/long/{combo_400k,combo_400k_rs015,lower_qlr_400k,lower_qlr_400k_rs015}.yaml`. Run dirs at `runs/td3/sim2sim/hist2_motion0_to_combined/residual_diagnose/long/<variant>/seed0/`. Per-checkpoint eval JSONs under `eval_combined_ckpt_*/metrics.json` (39 each + `eval_combined_final/`). Eval driver: `bash scripts/smooth_policy/eval_all_ckpts_residual.sh <run_dir> scripts/smooth_policy/amp_history/configs/new_juggle/sim2sim_combined.yaml cuda:N`.
+Configs at `configs/td3/sim2sim/diagnose/long/{combo_400k,combo_400k_rs015,lower_qlr_400k,lower_qlr_400k_rs015}.yaml`. Run dirs at `runs/td3/sim2sim/hist2_motion0_to_combined/residual_diagnose/long/<variant>/seed0/`. Per-checkpoint eval JSONs under `eval_combined_ckpt_*/metrics.json` (39 each + `eval_combined_final/`). Eval driver: `bash scripts/td3/eval_all_ckpts_residual.sh <run_dir> configs/new_juggle/sim2sim_combined.yaml cuda:N`.
 
 ### From-scratch baseline (done 2026-04-26)
 
-`scripts/smooth_policy/amp_history/configs/td3/sim2sim/diagnose/long/from_scratch_400k.yaml` runs the canonical recommended-default TD3 hyperparams (q_updates=25, actor_updates=6, primitives ON, learning_starts=20k, buffer 100k) on `sim2sim_combined.yaml` for 400k steps. **Result: peak 82.86 @ step 370k, mean(all 39 ckpts) 43.02, no checkpoint > zero-shot 95.78.** 400k from-scratch is monotonically improving but well below the zero-shot warm-start. **Confirms the residual underperformance is NOT a method failure — the env is too hard for 400k from-scratch**, and any fine-tuning approach (residual or full_ft) has a real opportunity to do much better than starting from zero.
+`configs/td3/sim2sim/diagnose/long/from_scratch_400k.yaml` runs the canonical recommended-default TD3 hyperparams (q_updates=25, actor_updates=6, primitives ON, learning_starts=20k, buffer 100k) on `sim2sim_combined.yaml` for 400k steps. **Result: peak 82.86 @ step 370k, mean(all 39 ckpts) 43.02, no checkpoint > zero-shot 95.78.** 400k from-scratch is monotonically improving but well below the zero-shot warm-start. **Confirms the residual underperformance is NOT a method failure — the env is too hard for 400k from-scratch**, and any fine-tuning approach (residual or full_ft) has a real opportunity to do much better than starting from zero.
 
 ---
 
@@ -433,7 +433,7 @@ total_timesteps: 200000     # was 100000
 
 ### Reproducibility — drift-fix campaign
 
-Configs under `scripts/smooth_policy/amp_history/configs/td3/sim2sim/diagnose/long/driftfix/`. Run dirs at `runs/td3/sim2sim/hist2_motion0_to_combined/residual_diagnose/long/driftfix/<variant>/seed0/`. Per-checkpoint eval JSONs in `eval_combined_ckpt_*/metrics.json`. Aggregator: `.venv/bin/python notes/scratch/aggregate_driftfix_results.py`.
+Configs under `configs/td3/sim2sim/diagnose/long/driftfix/`. Run dirs at `runs/td3/sim2sim/hist2_motion0_to_combined/residual_diagnose/long/driftfix/<variant>/seed0/`. Per-checkpoint eval JSONs in `eval_combined_ckpt_*/metrics.json`. Aggregator: `.venv/bin/python notes/scratch/aggregate_driftfix_results.py`.
 
 ### Code knobs landed in `td3_training.py`
 
@@ -553,13 +553,13 @@ For sim2sim where target dynamics are reachable from scratch given enough budget
 2. Pick a source checkpoint and tag (e.g., `hist2_motion0`).
 3. Zero-shot:
    ```bash
-   python scripts/smooth_policy/sim2sim_eval.py \
+   python scripts/td3/sim2sim_eval.py \
      --checkpoint runs/td3/<run>/checkpoint_<step>/model.pth \
-     --target-config scripts/smooth_policy/amp_history/configs/new_juggle/sim2sim_<tag>.yaml \
+     --target-config configs/new_juggle/sim2sim_<tag>.yaml \
      --n-episodes 50 --seed 0 \
      --out-dir runs/td3/sim2sim/<src_to_tgt>/zero_shot/
    ```
    Add `--save-gif --n-gifs 10` for qualitative rollouts.
 4. (Optional) Single-knob sweep — adapt `notes/scratch/sim2sim_perturbation_sweep.py` to the new target's knobs.
-5. Fine-tune: fill placeholders in `td3_sim2sim_{full_ft,residual,from_scratch}.yaml` (`config`, `model_path`, `log_parent_dir`, `run_name`, `seed`), launch ≥2 seeds each. The repo yamls carry the campaign-tested defaults: residual = `recency_top50` (`success_top_fraction: 0.5`, `residual_scale: 0.15`, `q_updates: 4`, `q_lr: 3e-4`); full_ft = `lr÷10`. **For big-gap targets (zs drop >20%) use [`paddle50/td3_residual_v27_ensemble5.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v27_ensemble5.yaml) (peak-deployment, 5-seed + 1M-verified)** or [`paddle50/td3_residual_v30_explore_lite.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v30_explore_lite.yaml) (fire-and-forget; 5-seed @ 300k; ~4× tighter cross-seed last5 std). Both tie on mean — see [`residual-rl-recipe.md`](residual-rl-recipe.md). From-scratch isn't viable on paddle50-class targets. **Always evaluate intermediate checkpoints** — final-step eval is unsafe for every fine-tuning method on every gap size.
-6. `python scripts/smooth_policy/sim2sim_compare.py --campaign-dir runs/td3/sim2sim/<src_to_tgt>/`.
+5. Fine-tune: fill placeholders in `td3_sim2sim_{full_ft,residual,from_scratch}.yaml` (`config`, `model_path`, `log_parent_dir`, `run_name`, `seed`), launch ≥2 seeds each. The repo yamls carry the campaign-tested defaults: residual = `recency_top50` (`success_top_fraction: 0.5`, `residual_scale: 0.15`, `q_updates: 4`, `q_lr: 3e-4`); full_ft = `lr÷10`. **For big-gap targets (zs drop >20%) use [`paddle50/td3_residual_v27_ensemble5.yaml`](../../../configs/td3/sim2sim/paddle50/td3_residual_v27_ensemble5.yaml) (peak-deployment, 5-seed + 1M-verified)** or [`paddle50/td3_residual_v30_explore_lite.yaml`](../../../configs/td3/sim2sim/paddle50/td3_residual_v30_explore_lite.yaml) (fire-and-forget; 5-seed @ 300k; ~4× tighter cross-seed last5 std). Both tie on mean — see [`residual-rl-recipe.md`](residual-rl-recipe.md). From-scratch isn't viable on paddle50-class targets. **Always evaluate intermediate checkpoints** — final-step eval is unsafe for every fine-tuning method on every gap size.
+6. `python scripts/td3/sim2sim_compare.py --campaign-dir runs/td3/sim2sim/<src_to_tgt>/`.
