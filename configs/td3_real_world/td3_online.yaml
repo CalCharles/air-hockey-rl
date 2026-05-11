@@ -1,5 +1,5 @@
 # Standard TD3 config for:
-# scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py
+# scripts/td3/td3_training.py
 #
 # Modeled after ppo/amp_larger.yaml structure, but aligned to TD3 args.
 

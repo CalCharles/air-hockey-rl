@@ -11,7 +11,7 @@ numbers go side-by-side in the paper from a single shared protocol.
 **Run command (always identical across sessions):**
 
 ```bash
-/home/pearl/miniconda3/envs/air/bin/python -m scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real_teleop_eval --args-file scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml --data-root-dir runs/teleop_user_study --eval-episodes 20
+/home/pearl/miniconda3/envs/air/bin/python -m scripts.td3.extras.async_td3_real_teleop_eval --args-file configs/td3_real_world/td3_online.yaml --data-root-dir runs/teleop_user_study --eval-episodes 20
 ```
 
 The script prompts for the participant id at runtime, so the launch
