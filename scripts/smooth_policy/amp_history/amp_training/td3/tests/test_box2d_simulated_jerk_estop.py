@@ -37,7 +37,7 @@ class SimulatedJerkEstopTests(unittest.TestCase):
             / "amp_history"
             / "configs"
             / "new_juggle"
-            / "pid_noise_constant_upper_half_custom_sim_params.yaml"
+            / "sysid_best_params.yaml"
         )
         with config_path.open("r", encoding="utf-8") as f:
             loaded = yaml.safe_load(f)
