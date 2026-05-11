@@ -4,7 +4,7 @@ Mirror the sim2sim residual recipe (`recency_top50`) inside the real-world async
 TD3 pipeline. Source of truth for the recipe:
 [`notes/docs/training/residual-rl-recipe.md`](../docs/training/residual-rl-recipe.md).
 The sim implementation is the `full_checkpoint_load == "residual"` branch in
-`scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py`.
+`scripts/td3/td3_training.py`.
 
 ## Goal
 
@@ -85,7 +85,7 @@ general:
 
 ## Change list (file by file)
 
-### 1. `scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py`
+### 1. `scripts/td3/extras/async_td3_real.py`
 
 This is where the shared infra lives — the modular entrypoint just imports.
 
@@ -165,7 +165,7 @@ g. **`_build_collector_actor` helper** — extract the actor-construction block
    residual head; the existing `state_dict()` copy from `learner_state.actor`
    then populates both base and residual weights identically.
 
-### 2. `scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real_modular.py`
+### 2. `scripts/td3/extras/async_td3_real_modular.py`
 
 The collector instantiates an actor at L649. One change:
 
@@ -176,7 +176,7 @@ The collector instantiates an actor at L649. One change:
   works for `ResidualActor` because `nn.Module.state_dict` handles nested
   submodules transparently).
 
-### 3. New config: `scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml`
+### 3. New config: `configs/td3_real_world/td3_residual.yaml`
 
 Modeled on `td3_sim2sim_residual.yaml` but with real-world flavoring from
 `td3_online.yaml`:
@@ -201,7 +201,7 @@ Modeled on `td3_sim2sim_residual.yaml` but with real-world flavoring from
 ### 4. Tests
 
 Mirror the existing test pattern at
-`scripts/smooth_policy/amp_history/amp_training/td3/tests/test_async_td3_real_args_mapping.py`:
+`scripts/td3/tests/test_async_td3_real_args_mapping.py`:
 
 - `test_residual_mode_init_builds_residual_actor`: stub `torch.load`, call
   `_init_sync_learner_state` with `full_checkpoint_load="residual"`, assert

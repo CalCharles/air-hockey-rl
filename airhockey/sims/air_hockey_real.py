@@ -71,7 +71,7 @@ def _async_render_worker(
         shared_frame = np.ndarray(tuple(frame_shape), dtype=np.uint8, buffer=frame_shm.buf)
         poll_sleep_s = max(0.0005, float(poll_sleep_s))
         if sim_view_enabled:
-            from scripts.smooth_policy.visualize_demo.visualize_real_trajectory import RealTrajectoryRenderer
+            from scripts.visualization.visualize_real_trajectory import RealTrajectoryRenderer
             sim_renderer = RealTrajectoryRenderer(
                 table_length=table_length,
                 table_width=table_width,
@@ -911,7 +911,7 @@ class AirHockeyReal:
         if hasattr(self, '_inline_sim_renderer'):
             return self._inline_sim_renderer
         try:
-            from scripts.smooth_policy.visualize_demo.visualize_real_trajectory import RealTrajectoryRenderer
+            from scripts.visualization.visualize_real_trajectory import RealTrajectoryRenderer
             self._inline_sim_renderer = RealTrajectoryRenderer(
                 table_length=self.length,
                 table_width=self.width,

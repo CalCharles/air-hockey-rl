@@ -34,7 +34,7 @@ remove the line) to `td3_recommended.yaml`.
 
 **If E4-seed1 reproduces the win** (ret@500k ≳ 100, tail50 ≳ 105): commit
 the config change. Drop the `exploration_primitive_chance_pre_learning_starts`
-line from `scripts/smooth_policy/amp_history/configs/td3/td3_recommended.yaml`.
+line from `configs/td3/td3_recommended.yaml`.
 Also update the "Recommended config change" section in
 `td3-exploration-ablations.md` to "confirmed".
 
@@ -79,8 +79,8 @@ Template (fill in `RUN_NAME`, `GPU`, `OVERRIDES`, `SEED`):
 ```bash
 cd /home/air-hockey/daliu/air-hockey-rl
 source .venv/bin/activate
-nohup python scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py \
-  --args-file scripts/smooth_policy/amp_history/configs/td3/td3_recommended.yaml \
+nohup python scripts/td3/td3_training.py \
+  --args-file configs/td3/td3_recommended.yaml \
   --total-timesteps 500000 \
   --device cuda:${GPU} \
   --log-parent-dir runs/td3/sysid_params/${RUN_NAME} \
@@ -167,8 +167,8 @@ Wall times in the results table are not apples-to-apples across runs
 - Results writeup: `notes/docs/training/td3-exploration-ablations.md`
 - This plan: `notes/scratch/exploration_optimization_plan.md`
 - Metric extractor: `notes/scratch/extract_expl_metrics.py`
-- Recommended config: `scripts/smooth_policy/amp_history/configs/td3/td3_recommended.yaml`
+- Recommended config: `configs/td3/td3_recommended.yaml`
 - Exploration primitives doc: `notes/docs/exploration/td3-primitives.md`
-- Exploration selector code: `scripts/smooth_policy/amp_history/amp_training/td3/helper/exploration_selector.py`
+- Exploration selector code: `scripts/td3/helper/exploration_selector.py`
 - Update/depth ablations (preceding study): `notes/docs/training/td3-ablations-updates-and-depth.md`
 - Run dirs for Phase 1: `runs/td3/sysid_params/{upd_sweep,expl_no_warmstart,expl_warmstart_heavy,expl_no_bootstrap}/`

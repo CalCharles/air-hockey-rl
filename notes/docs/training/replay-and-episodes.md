@@ -6,7 +6,7 @@ How transitions are stored, partitioned, and sampled for TD3 training.
 
 ### `TD3ReplayBuffer` (simulation)
 
-**Code:** [`helper/replay_buffer.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/replay_buffer.py)
+**Code:** [`helper/replay_buffer.py`](../../../scripts/td3/helper/replay_buffer.py)
 
 Fixed-capacity ring buffer on GPU. Stores per-transition:
 
@@ -24,7 +24,7 @@ Fixed-capacity ring buffer on GPU. Stores per-transition:
 
 ### `TD3PrioritizedReplayBuffer` (simulation, PER)
 
-**Code:** [`helper/prioritized_replay_buffer.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/prioritized_replay_buffer.py)
+**Code:** [`helper/prioritized_replay_buffer.py`](../../../scripts/td3/helper/prioritized_replay_buffer.py)
 
 Same ring layout as `TD3ReplayBuffer`, plus a `priorities` vector. Implements proportional PER:
 
@@ -36,7 +36,7 @@ Same ring layout as `TD3ReplayBuffer`, plus a `priorities` vector. Implements pr
 
 ### `SharedTD3Replay` (real-world)
 
-**Code:** [`helper/shared_replay.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/shared_replay.py)
+**Code:** [`helper/shared_replay.py`](../../../scripts/td3/helper/shared_replay.py)
 
 Two `SharedReplayPartition` instances (success and failure) backed by `torch.Tensor.share_memory_()` for cross-process access. Each partition is a ring buffer with the same field layout as the simulation buffers, protected by a `multiprocessing.Lock`.
 
@@ -57,11 +57,11 @@ Episodes are routed to the success or failure replay buffer based on a rolling q
 
 This adaptive threshold ensures roughly `success_top_fraction` of recent episodes are labeled "success" regardless of absolute reward scale.
 
-**Code:** `finalize_episode_if_done` in [`helper/td3_episode_collection.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/td3_episode_collection.py).
+**Code:** `finalize_episode_if_done` in [`helper/td3_episode_collection.py`](../../../scripts/td3/helper/td3_episode_collection.py).
 
 ## Episode trajectory staging
 
-**Code:** `EpisodeTrajectory` in [`helper/td3_episode_collection.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/td3_episode_collection.py)
+**Code:** `EpisodeTrajectory` in [`helper/td3_episode_collection.py`](../../../scripts/td3/helper/td3_episode_collection.py)
 
 Transitions are accumulated in an `EpisodeTrajectory` dataclass during collection (list of tensors per field). At episode end:
 
@@ -73,7 +73,7 @@ Transitions are accumulated in an `EpisodeTrajectory` dataclass during collectio
 
 ## Critic sampling strategy
 
-**Code:** [`helper/td3_replay_sampling.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/td3_replay_sampling.py)
+**Code:** [`helper/td3_replay_sampling.py`](../../../scripts/td3/helper/td3_replay_sampling.py)
 
 ### Success/failure split
 

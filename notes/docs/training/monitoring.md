@@ -40,7 +40,7 @@ Every async-real run produces this single folder, created by `_setup_run_data_di
 
 `_setup_run_data_dir` is the single source of truth: it creates the timestamped run folder and **forces** `args.checkpoint_root_dir = run_data_dir` and `args.log_parent_dir = None`, regardless of what the args-file or CLI set those to. This intentionally overrides the legacy `checkpoint_root_dir` / `log_parent_dir` flags so a run cannot end up split across multiple folders.
 
-If the args-file (e.g. `td3_online.yaml`, which sets both keys) had non-empty values, you'll see this at startup:
+If the args-file (e.g. `td3_residual.yaml`, which sets both keys) had non-empty values, you'll see this at startup:
 
 ```
 [run_data] all artifacts unified under: <run_data_dir>
@@ -165,7 +165,7 @@ Created per episode by the orchestrator via `helper/episode_artifacts.py` into t
 - `episode_gifs/` — side-by-side Box2D-replay + real-camera GIFs
 - `episode_camera_videos/` — raw camera MP4s
 
-Example: `--data-root-dir real_runs/online_run_modular --model-path latest_model/hist2_motion0/training_state.pth` produces `real_runs/online_run_modular/latest_model/hist2_motion0/data_<TIMESTAMP>/` containing all of the above plus `collector_tb/`, `learner_tb/`, and (when enabled) checkpoints.
+Example: `--data-root-dir real_runs/online_run_modular --model-path latest_models/canonical/hist2_motion0/training_state.pth` produces `real_runs/online_run_modular/latest_models/canonical/hist2_motion0/data_<TIMESTAMP>/` containing all of the above plus `collector_tb/`, `learner_tb/`, and (when enabled) checkpoints.
 
 ### Practical: scalars to watch first
 

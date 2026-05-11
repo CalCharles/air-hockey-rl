@@ -24,8 +24,8 @@ It is implemented as a **hand-coded, closed-loop, five-phase finite state machin
 
 - Reference doc with the parameter table and integration overview: [`notes/docs/environments/real-world/reset-fsm.md`](../docs/environments/real-world/reset-fsm.md).
 - FSM implementation: `scripts/real/rollout_reset_policy_real.py` — `ResetPolicyFSM` class (lines 57–156 init, `step()` at 729–815, edge-loop path builder `_build_edge_loop_path` at 239–266, post-upward success check `_step_post_upward_window` at 554–622).
-- Collector integration / hard-vs-soft routing: `scripts/smooth_policy/amp_history/amp_training/td3/helper/real_reset_runner.py` — `run_reset_fsm` (lines 173–254), `ResetRunner.run` (lines 381–515).
-- Post-FSM soft re-init / paddle-history priming: `scripts/smooth_policy/amp_history/amp_training/td3/helper/real_collector_reset.py`.
+- Collector integration / hard-vs-soft routing: `scripts/td3/helper/real_reset_runner.py` — `run_reset_fsm` (lines 173–254), `ResetRunner.run` (lines 381–515).
+- Post-FSM soft re-init / paddle-history priming: `scripts/td3/helper/real_collector_reset.py`.
 - Where reset sits in the episode loop: [`notes/docs/environments/real-world/episode-lifecycle.md`](../docs/environments/real-world/episode-lifecycle.md).
 
 ---

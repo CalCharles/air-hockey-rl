@@ -69,7 +69,7 @@ New file, e.g. `scripts/smooth_policy/residual_agent.py`:
 ```python
 import torch
 import torch.nn as nn
-from scripts.smooth_policy.deterministic_agent import DeterministicAgent
+from scripts.td3.deterministic_agent import DeterministicAgent
 
 class ResidualActor(nn.Module):
     """π(s) = clip(base(s) + residual(s), -1, 1). Base frozen."""
@@ -115,7 +115,7 @@ Note: the `DeterministicAgent` output head is `actor_mean_head` (see
 ### 3.2 Wiring into `td3_training.py`
 
 Touch points in
-`scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py`:
+`scripts/td3/td3_training.py`:
 
 | Location | Change |
 |---|---|
@@ -129,7 +129,7 @@ Touch points in
 
 ### 3.3 Config changes
 
-New file `scripts/smooth_policy/amp_history/configs/td3/td3_residual.yaml`,
+New file `configs/td3/td3_residual.yaml`,
 based on `td3_recommended.yaml` with:
 
 - `model_path: <path to sim-trained checkpoint>`  # frozen base
@@ -148,7 +148,7 @@ based on `td3_recommended.yaml` with:
 
 ### 3.4 Real-world rollout
 
-`scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py:122`
+`scripts/td3/extras/async_td3_real.py:122`
 calls `actor.get_action(policy_obs)`. Drop in a `ResidualActor` at load and it
 works unchanged.
 

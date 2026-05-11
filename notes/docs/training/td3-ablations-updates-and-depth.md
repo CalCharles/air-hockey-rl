@@ -1,6 +1,6 @@
 # TD3 Ablations — Update Count and Network Depth
 
-Wall-clock vs sample efficiency trade-offs for TD3 on the juggle task. All runs use `sysid_best_params.yaml` sim config and `td3_no_alignment.yaml` as the args file. Run dates: 2026-04-16 (Part 1) and 2026-04-17 (Parts 2–3).
+Wall-clock vs sample efficiency trade-offs for TD3 on the juggle task. All runs use `sysid_best_params.yaml` sim config and `td3_recommended_top50_hist2.yaml` as the args file. Run dates: 2026-04-16 (Part 1) and 2026-04-17 (Parts 2–3).
 
 The study has three parts:
 1. **Part 1** — cut a very expensive baseline (q=200/a=50, 5-layer) down by 4× updates, and sweep network depth.
@@ -100,15 +100,15 @@ Fixed total updates at N*=31 per episode, varied the actor:Q ratio.
 
 ```bash
 # Part 1: Baseline (killed at 400k)
-python scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py \
-  --args-file scripts/smooth_policy/amp_history/configs/td3/td3_no_alignment.yaml \
-  --config   scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params.yaml \
+python scripts/td3/td3_training.py \
+  --args-file configs/td3/td3_recommended_top50_hist2.yaml \
+  --config   configs/new_juggle/sysid_best_params.yaml \
   --total-timesteps 1000000 --q-updates 200 --actor-updates-per-iteration 50 \
   --agent-num-hidden-layers 5 --q-num-hidden-layers 5 --enable-puck-delay-interpolation
 
 # Part 1: Reduced-update + depth sweep (A/B/C differ only in --agent/q-num-hidden-layers = 5/2/3)
 python .../td3_training.py \
-  --args-file .../td3_no_alignment.yaml --config .../sysid_best_params.yaml \
+  --args-file .../td3_recommended_top50_hist2.yaml --config .../sysid_best_params.yaml \
   --total-timesteps 1000000 --q-updates 50 --actor-updates-per-iteration 12 \
   --agent-num-hidden-layers {2,3,5} --q-num-hidden-layers {2,3,5} \
   --enable-puck-delay-interpolation

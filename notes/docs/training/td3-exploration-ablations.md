@@ -1,16 +1,9 @@
 # TD3 Exploration Ablations — Warm-start and Bootstrap
 
-> **2026-05-04 path note:** the `td3_recommended.yaml` referenced throughout this
-> doc is the original hist4 variant, which is now at
-> `scripts/smooth_policy/amp_history/configs/td3/legacy/td3_recommended.yaml`.
-> Likewise `sysid_best_params_hist4.yaml` lives in `new_juggle/legacy/`. The
-> sweeps were run against those exact files; the active default for **new** runs
-> is `td3_recommended_top50_hist2.yaml` ([`td3-configs.md`](td3-configs.md)). All
-> ablation conclusions below still apply (only `config:` and
-> `success_top_fraction` differ between active and legacy).
+> **Path note:** these sweeps were originally run against the hist4 variant of `td3_recommended.yaml` and the matching `sysid_best_params_hist4.yaml` sim config. Both have since been removed from the tree. The active canonical args YAML is now [`configs/td3/td3_recommended_top50_hist2.yaml`](../../../configs/td3/td3_recommended_top50_hist2.yaml) ([`td3-configs.md`](td3-configs.md)); the ablation conclusions below still apply (only `config:` and `success_top_fraction` differ between the historical and active configs).
 
 Effect of exploration knobs on juggle-task learning. All Phase-1 runs use
-`td3_recommended.yaml` as the args file (2-layer, q=25/a=6,
+`td3_recommended_top50_hist2.yaml` as the args file (2-layer, q=25/a=6,
 `sysid_best_params.yaml` sim) and vary a single exploration knob. Runs
 launched 2026-04-17, 1 seed each, 500k timesteps. Anchor is the existing
 `upd_sweep` run (P1a), truncated to 500k.
@@ -42,7 +35,7 @@ absolute: `/home/air-hockey/daliu/air-hockey-rl/runs/td3/sysid_params/`).
 ### Upstream sweep run locations
 
 The layer-size and update-ratio sweeps that produced the anchor config
-(`td3_recommended.yaml`, 2-layer, q=25/a=6) also live under
+(`td3_recommended_top50_hist2.yaml`, 2-layer, q=25/a=6) also live under
 `runs/td3/sysid_params/`. Full write-up in
 [`td3-ablations-updates-and-depth.md`](td3-ablations-updates-and-depth.md).
 
@@ -131,7 +124,7 @@ exploration choices in this sweep.
 
 ## Recommended config (committed 2026-04-19)
 
-`td3_recommended.yaml` now bakes in the following defaults based on this
+`td3_recommended_top50_hist2.yaml` now bakes in the following defaults based on this
 sweep plus the depth/update-volume study:
 
 - `exploration_primitive_chance_pre_learning_starts: null` (E4 — no bootstrap forcing)
@@ -159,8 +152,8 @@ Start there for "continue optimizing exploration" prompts.
 
 ```bash
 # All Phase-1 runs share:
-BASE="python scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py \
-  --args-file scripts/smooth_policy/amp_history/configs/td3/td3_recommended.yaml \
+BASE="python scripts/td3/td3_training.py \
+  --args-file configs/td3/td3_recommended_top50_hist2.yaml \
   --total-timesteps 500000"
 
 # E2: no warm-start (cuda:1)

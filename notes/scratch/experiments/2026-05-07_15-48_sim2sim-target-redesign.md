@@ -3,8 +3,8 @@
 - **Date**: 2026-05-07 15:48 UTC start
 - **Status**: done. All 4 Phase-2 trainability cells passed (peak ≥ 100). Recommended canonical target: **`warp075_p30`** (paddle −30% + warp 0.075, zs=48, peak 112.6, end-window mean 70).
 - **Source policy** (untouched): `latest_model/hist2_motion0_v2/model.pth`
-- **Sim configs**: `scripts/smooth_policy/amp_history/configs/new_juggle/sim2sim_warp075_p{00,10,20,30}.yaml`
-- **Training configs**: `scripts/smooth_policy/amp_history/configs/td3/sim2sim/warp075_trainability/td3_warp075_p{00,10,20,30}.yaml`
+- **Sim configs**: `configs/new_juggle/sim2sim_warp075_p{00,10,20,30}.yaml`
+- **Training configs**: `configs/td3/sim2sim/warp075_trainability/td3_warp075_p{00,10,20,30}.yaml`
 - **Run dirs**: `runs/td3/sim2sim_redesign/warp075_p{00,10,20,30}/seed0/`
 - **Logs**: `notes/scratch/sim2sim_redesign_logs/p{00,10,20,30}.log`
 - **Sweep harness**: `notes/scratch/sim2sim_warp_paddle_zs_sweep.py`

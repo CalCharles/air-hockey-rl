@@ -1,50 +1,80 @@
 # Training architecture
 
-Primary training code lives under [`scripts/smooth_policy`](../../../scripts/smooth_policy). See [`scripts/smooth_policy/README.md`](../../../scripts/smooth_policy/README.md) for run configs, examples, and real-robot TD3 notes.
+The training stack lives entirely under [`scripts/td3/`](../../../scripts/td3). TD3 with dual-head critics and transformed Bellman targets is the only active algorithm; SAC, PPO, AMP, RMA, and SSL variants have been removed.
 
-## Active paths
+## Entrypoints
 
-### TD3 (current development)
+| Mode | Entrypoint |
+|------|------------|
+| Sim training | [`scripts/td3/td3_training.py`](../../../scripts/td3/td3_training.py) |
+| Real-world async training | [`scripts/td3/extras/async_td3_real.py`](../../../scripts/td3/extras/async_td3_real.py) |
+| Real-world frozen-policy eval | [`scripts/td3/extras/async_td3_real_eval.py`](../../../scripts/td3/extras/async_td3_real_eval.py) |
+| Human-baseline teleop eval (user study) | [`scripts/td3/extras/async_td3_real_teleop_eval.py`](../../../scripts/td3/extras/async_td3_real_teleop_eval.py) |
+| Real-world reset-policy training | [`scripts/td3/extras/async_td3_real_reset_policy.py`](../../../scripts/td3/extras/async_td3_real_reset_policy.py) |
 
-- Entrypoint: [`scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py)
-- **Does not use AMP** — no discriminator, no demo tensor for style matching; twin critics with task/motion heads and transformed Bellman targets (see module docstring in that file).
-- Implementation helpers: [`scripts/smooth_policy/amp_history/amp_training/td3/helper/`](../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/) (replay, dual-head Q, checkpointing, exploration primitives, metrics, etc.).
-- Extras (staged runs, async real collector, visualization): [`scripts/smooth_policy/amp_history/amp_training/td3/extras/`](../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/)
-- Args YAML examples: [`scripts/smooth_policy/amp_history/configs/td3/`](../../../scripts/smooth_policy/amp_history/configs/td3/), real/async: [`configs/td3_real_world/`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/)
+## Code layout
 
-## Legacy / low-use training folders
+```
+scripts/td3/
+├── td3_training.py        # sim TD3 trainer (single-env collection + learner loop)
+├── agent.py               # TD3 actor network (stochastic head, ResidualMLPTrunk)
+├── deterministic_agent.py # frozen / deployment actor
+├── residual_agent.py      # residual-head actor wrapping a frozen base
+├── encoder.py             # actor encoder used by agent.py
+├── evaluate.py            # evaluate_agent() — sync episode rollouts for logging
+├── eval_utils.py          # eval helpers (load / unroll a checkpoint)
+├── helper/                # runtime support
+│   ├── real_td3_runtime.py             # Args, LearnerRuntimeState, learner step
+│   ├── real_policy_runner.py           # collector-side rollout loop
+│   ├── real_reset_runner.py            # reset-FSM execution loop
+│   ├── real_collector_factories.py     # episode boundaries / artifacts
+│   ├── real_collector_metrics.py       # per-episode metric capture
+│   ├── real_collector_reset.py
+│   ├── real_episode_buffers.py
+│   ├── real_eval_stats.py
+│   ├── real_motion_rewards.py
+│   ├── real_stop_state.py
+│   ├── real_transition_hold.py
+│   ├── real_warm_start.py              # HDF5 replay seeding for real runs
+│   ├── replay_buffer.py                # uniform replay
+│   ├── prioritized_replay_buffer.py    # PER
+│   ├── shared_replay.py
+│   ├── td3_replay_sampling.py
+│   ├── td3_episode_collection.py
+│   ├── td3_checkpointing.py            # save / load training_state.pth
+│   ├── td3_metrics.py
+│   ├── dual_head_q.py                  # task + motion Q heads
+│   ├── exploration_primitives.py
+│   ├── exploration_selector.py
+│   ├── motion_magnitudes.py            # paddle vel/accel/jerk parsing
+│   ├── juggle_counter.py
+│   ├── episode_artifacts.py
+│   └── run_event_log.py
+├── extras/                # CLI entrypoints (real-world)
+└── tests/                 # pytest suite
+```
 
-These remain in the tree for older experiments but are **not** the current workflow. TD3 above is the active path; everything below is preserved for reference.
+## Configs
 
-### PPO + AMP (legacy)
+All canonical YAMLs are at the repo root under [`configs/`](../../../configs/):
 
-- Entrypoint: [`scripts/smooth_policy/amp_history/amp_training/amp_training.py`](../../../scripts/smooth_policy/amp_history/amp_training/amp_training.py) — PPO with optional least-squares AMP discriminator (position / position+action / puck-augmented features).
-- Shared AMP building blocks in [`amp_training/`](../../../scripts/smooth_policy/amp_history/amp_training): [`discriminator.py`](../../../scripts/smooth_policy/amp_history/amp_training/discriminator.py), [`feature_processing.py`](../../../scripts/smooth_policy/amp_history/amp_training/feature_processing.py), [`demo_loader_position_history.py`](../../../scripts/smooth_policy/amp_history/amp_training/demo_loader_position_history.py), [`replay_buffer.py`](../../../scripts/smooth_policy/amp_history/amp_training/replay_buffer.py), [`normalizer.py`](../../../scripts/smooth_policy/amp_history/amp_training/normalizer.py), [`running_stats.py`](../../../scripts/smooth_policy/amp_history/amp_training/running_stats.py).
-- Typical env/args configs: [`scripts/smooth_policy/amp_history/configs/pid/`](../../../scripts/smooth_policy/amp_history/configs/pid/) (e.g. AMP vs no-AMP args YAML).
-- Discriminator data pipeline: [`amp_data/`](../../../scripts/smooth_policy/amp_history/amp_training/amp_data/) prepares windowed paddle/action/puck tensors as `.pt` for `--demo_data_path`.
+| Dir | What |
+|-----|------|
+| [`configs/new_juggle/`](../../../configs/new_juggle/) | Sim env configs (sysid_best_params*, sim2sim warp targets) |
+| [`configs/td3/`](../../../configs/td3/) | TD3 sim training args + residual recipes |
+| [`configs/td3_real_world/`](../../../configs/td3_real_world/) | Real-robot residual fine-tune args |
+| [`configs/real_configs/`](../../../configs/real_configs/) | Real-robot rollout / mouse-teleop configs |
 
-### Other legacy folders
-
-| Folder | Role |
-|--------|------|
-| [`amp_training/sac/`](../../../scripts/smooth_policy/amp_history/amp_training/sac/) | SAC + optional AMP (`amp_training_sac.py`) |
-| [`amp_training/rma/`](../../../scripts/smooth_policy/amp_history/amp_training/rma/) | RMA-style AMP and adaptation scripts |
-| [`amp_training/self_supervised/`](../../../scripts/smooth_policy/amp_history/amp_training/self_supervised/) | Self-supervised / SSL AMP variant |
-
-Prefer extending **TD3** unless a task explicitly revives one of these paths.
+See [`td3-configs.md`](td3-configs.md) and [`sim-env-configs.md`](sim-env-configs.md) for per-file details.
 
 ## Detailed topics
 
 | Topic | Doc |
 |-------|-----|
 | TD3 algorithm (h-transform, dual-head critics, actor objective) | [`td3-algorithm.md`](td3-algorithm.md) |
-| PPO+AMP discriminator (modes, features, demo loader, auxiliary rewards) | [`ppo-amp-discriminator.md`](ppo-amp-discriminator.md) |
-| Reward shaping (task + motion reward composition) | [`reward-shaping.md`](reward-shaping.md) |
 | Network architecture (ResidualMLPTrunk, DualHeadQ, DeterministicAgent) | [`network-architecture.md`](network-architecture.md) |
+| Reward shaping (task + motion reward composition) | [`reward-shaping.md`](reward-shaping.md) |
 | Replay buffers and episode handling (PER, success/failure, staging) | [`replay-and-episodes.md`](replay-and-episodes.md) |
 | Checkpoint system (schema, resume vs fine-tune, migrations) | [`checkpointing.md`](checkpointing.md) |
-
-## Guidance for edits
-
-- Keep **AMP-specific** logic (discriminator, demo loading, feature windows) coherent with `amp_training.py` and `amp_data/`.
-- Keep **TD3** concerns inside `td3/` (helpers, extras, tests) so the non-AMP stack stays isolated from discriminator code paths.
+| Residual RL fine-tuning recipe | [`residual-rl-recipe.md`](residual-rl-recipe.md) |
+| Sim-to-sim transfer testing | [`sim2sim.md`](sim2sim.md) |

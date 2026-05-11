@@ -1,0 +1,254 @@
+<<<<<<< HEAD
+# Real-world residual RL fine-tuning — v27 Maxmin-5 recipe (no-CQL baseline).
+#
+# NOTE (2026-05-08): The canonical big-gap real-world default is now the CQL
+# recipe in `td3_residual_cql.yaml` (v27 base + cql_alpha=20 + actor_updates=2;
+# +10 vs v27 at 300k on the sim2sim paddle-30% benchmark). This file (v27,
+# no-CQL) is kept as:
+#   - regression baseline for CQL-vs-no-CQL comparisons (CQL is bit-identical
+#     to v27 when cql_alpha=0, so launches with this file are reproducible
+#     pre-CQL behavior),
+#   - small-gap fallback (where CQL would over-conservatize the critic).
+# For new sim2real fine-tunes, prefer `td3_residual_cql.yaml` unless you have
+# a specific reason. See notes/docs/training/residual-rl-recipe.md.
+=======
+# Real-world residual RL fine-tuning — canonical Maxmin-5 recipe.
+>>>>>>> 5be189f (docs: second-pass audit — fix stale refs the first sweep missed)
+#
+# Adapts the sim2sim big-gap recipe (see notes/docs/training/residual-rl-recipe.md)
+# for the async real-world pipeline: HDF5 warm-start replay, real-robot
+# exploration tradeoffs, periodic checkpointing.
+#
+# Load-bearing knobs:
+#   - success_top_fraction: 0.15      ← top-15%
+#   - q_updates: 4                    ← real-world override (per-episode critic steps via the async learner)
+#   - num_critics: 5 (Maxmin)         ← Q-overestimation control
+#   - target_critic_subset_size: null ← Maxmin (min over all 5); set to 2 for REDQ-5-2
+#
+# `num_critics` and `target_critic_subset_size` are architecture fields that
+# live in the --train-args YAML, not here. The companion file
+#   configs/td3_real_world/td3_residual_train_args.yaml
+# carries the v27 ensemble defaults; pass it via --train-args. Passing this
+# args-file on its own is not enough.
+#
+# Read `notes/docs/training/residual-rl-recipe.md` (and §"How to use the v27
+# recipe" inside it) before launching. v27 is 5-seed verified at 300k and
+# 1M-verified single-seed (peak 98.3, 84% of ckpts above zero-shot across 1M).
+#
+# Method (frozen base + clipped trainable residual + critic from scratch):
+#   - full_checkpoint_load: "residual"
+#   - actor.base loads from `model_path` and is frozen
+#   - actor.residual head is zero-init, trained from scratch, output bound by
+#     residual_scale and clipped to env action bounds
+#   - critic + critic-target are fresh (5 of them when num_critics=5)
+#   - replay is warm-started from `warm_start_hdf5_dirs` (NOT from a stale
+#     source replay buffer); residual must NEVER inherit a checkpoint replay
+#
+# OPERATIONAL — REQUIRED for reliable deployment:
+#   1. Train with `enable_periodic_checkpointing: true`
+#   2. Per-checkpoint deterministic eval
+#   3. Ship the BEST checkpoint, NOT the final one
+#
+# Optional: set `residual_ema_decay: 0.9999` to also save model_ema.pth (an
+# EMA-averaged copy of the residual head). EMA is more stable across the
+# training trajectory; useful as a "safe deploy" fallback.
+#
+# Launch (fresh start — empty warm-start, mirrors sim2sim):
+#
+#   python -m scripts.td3.extras.async_td3_real \
+#     --train-args configs/td3_real_world/td3_residual_train_args.yaml \
+#     --args-file  configs/td3_real_world/td3_residual.yaml \
+#     --model-path <path-to-source-checkpoint>/training_state.pth
+#
+# (Note: `--model-path` must point at a `training_state.pth`, NOT a `model.pth`.
+# The loader needs the full state dict; the residual mode then extracts just
+# the `actor` key as the frozen base and discards everything else.)
+#
+# Resuming a residual run from a previous checkpoint (skip fresh-fill, restore
+# the trained residual head + critics + optimizer + replay):
+#
+#   python -m scripts.td3.extras.async_td3_real \
+#     --train-args configs/td3_real_world/td3_residual_train_args.yaml \
+#     --args-file  configs/td3_real_world/td3_residual.yaml \
+#     --full-checkpoint-load residual_resume \
+#     --learning-starts-fresh-steps 0 \
+#     --load-replay-from-checkpoint \
+#     --model-path <prev-run>/checkpoint_<tag>/training_state.pth
+#
+# The resume command requires the prior run to have been saved with
+# `include_non_vital_training_state_fields: true` (the default in this YAML).
+# Without it, the training_state.pth lacks the optimizer state, learner counters,
+# and replay buffer, and the resume falls back to a clean residual_resume of
+# weights only — Adam momentum is reset and TB step axis restarts at 0.
+
+# --- Residual mode ----------------------------------------------------------
+full_checkpoint_load: "residual"
+# Source actor checkpoint (frozen base). Must be a `training_state.pth`
+# (not a bare `model.pth`) — `_load_training_state_checkpoint` requires the
+# loaded file to be a dict with `actor`, `qf1..qfN`, `*_target`, `rng_states`,
+# `success_replay_buffer`, `failure_replay_buffer` keys. `td3_training.py`
+# writes this file alongside `model.pth` in every checkpoint directory.
+# In residual mode we only consume `training_state["actor"]` (the frozen
+# base) — qfs, replay, and optimizer state from the source are intentionally
+# discarded. Replace with a real path before launching.
+model_path: "runs/td3_training/pid/standard/checkpoint_975000/training_state.pth"
+residual_scale: 0.15                 # v27 default; head needs corrections > +-5%
+residual_weight_decay: 0.0           # no actor L2 by default; Maxmin-5 carries drift control
+residual_ema_decay: null             # set to 0.9999 to also save model_ema.pth
+residual_action_l2: 0.0              # alternative drift control; default off
+
+# --- TD3 core (v27 settings) ------------------------------------------------
+task_gamma: 0.985
+motion_gamma: 0.85
+tau: 0.005
+batch_size: 512
+min_replay_size_before_learning: 0
+policy_lr: 0.0003                    # v27 default
+q_lr: 0.0003                         # v27 default
+q_weight_decay: 0.001                # 10x baseline; secondary Q-runaway bound
+q_updates: 4                         # real-world default: 4 critic updates per episode boundary (overrides v27's 1; the async-real learner is invoked once per episode, so q_updates here = critic gradient steps per episode)
+target_network_frequency: 2          # v27 default
+actor_updates_per_iteration: 1
+exploration_noise: 0.05              # v27 default (low for residual)
+policy_noise: 0.2
+noise_clip: 0.5
+
+# Fresh-buffer-fill phase — mirrors sim2sim v27's `learning_starts: 2000`.
+# Gates learner updates until 2000 FRESH (post-launch) collector steps have
+# been pushed into replay. Run-relative: counts only steps from this run's
+# start, ignoring warm-start replay size. Resume-friendly: if a prior run
+# already crossed the threshold, the next launch's `fresh_collector_steps_this_run`
+# resets to 0 and the gate re-engages until 2000 NEW steps land — which is
+# usually fine but worth knowing if you do many short resumes.
+# Set to 0 to disable.
+learning_starts_fresh_steps: 2000
+
+# --- Replay sources — empty start, mirrors sim2sim v27 ----------------------
+# Sim2sim v27 starts with an empty replay buffer and fills it during the
+# `learning_starts: 2000` fresh-rollout phase. We mirror that here:
+#   warm_start_hdf5_dirs: []  → skip the HDF5 warm-start load entirely
+#   load_replay_from_checkpoint: false → never inherit a stale checkpoint replay
+# Combined with `learning_starts_fresh_steps: 2000` below, the critic's first
+# gradient lands on a buffer of pure post-launch on-policy transitions, exactly
+# like sim2sim. `replay_source_priority: warmstart_only` is kept as a defensive
+# guard — even if someone enables checkpoint replay later, this priority forces
+# warm-start (currently empty) to win and keeps the buffer clean.
+#
+# If you DO want warm-start (e.g. fire-and-forget run with no fresh-fill),
+# point `warm_start_hdf5_dirs` at a list of dirs containing prior HDF5
+# trajectories collected with the same base policy on the same robot, and
+# either set `learning_starts_fresh_steps: 0` (no fresh-fill, learn from
+# warm-start immediately) or keep it at 2000 (fresh-fill on TOP of warm-start
+# — buffer at first learner step ≈ warm-start + 2000 fresh transitions).
+warm_start_hdf5_dirs: []
+warm_start_hdf5_recursive: true
+replay_source_priority: "warmstart_only"
+load_replay_from_checkpoint: false
+checkpoint_root_dir: 'real_runs/checkpoints/residual_v27'
+include_non_vital_training_state_fields: true   # required to resume residual training cleanly (optimizer state, learner counters, rolling stats). See notes/docs/training/checkpointing.md#resuming-real-world-async-training.
+enable_periodic_checkpointing: true
+checkpoint_every_collector_steps: 5000
+total_timesteps: 100000  # 0 disables the cap (run until Ctrl-C). On resume `collector_total_steps` carries across, so a 50k checkpoint resumed with cap=100k runs for 50k more.
+
+# --- Data balance — v27 (top-15% + smaller buffers) -------------------------
+# Smaller buffers than the OLD-env median-split recipe: top-15% means only
+# ~15% of episodes go to success_rb, so 6000/14000 keeps the buffer turning
+# over fast enough to track current policy quality. Larger buffers became
+# stale "museums" in the OLD recipe.
+success_buffer_size: 6000
+failure_buffer_size: 14000
+success_top_fraction: 0.15           # v27 (was 0.5 in OLD-env recipe; 0.2 in legacy td3_online)
+recent_episode_window_size: 500      # v27 default
+critic_success_sample_fraction: 0.3
+critic_failure_sample_fraction: 0.7
+
+# --- Exploration primitives — mirrors sim2sim v27 ---------------------------
+# v27 disables adaptation-phase primitive exploration entirely. The recipe
+# doc is explicit on this:
+#   "Exploration is unhelpful at best, actively harmful at worst."
+#   "v27 with zero adaptation-phase exploration is the right default."
+#   v30_explore_full (chance ~0.05–0.15) drops %>zs from 70% → 19%.
+#   v30_explore_lite (chance ~0.03 anneal) only ties v27 within noise on peak.
+# So the load-bearing setting is `exploration_primitive_chance: 0.0` — every
+# other primitive knob below is moot at runtime (chance=0 means no primitive
+# action is ever sampled), and we mirror sim2sim v27's values verbatim only
+# for clarity and so a future "turn exploration back on" experiment starts
+# from the v27-shaped distribution.
+#
+# If you specifically want the v30_explore_lite alternative (only useful for
+# fire-and-forget 300k deployments with no per-ckpt eval — see recipe doc),
+# replace this whole block with the v30_lite settings; do NOT leave it half-
+# tuned at 0.025. Anything between 0 and 0.03 is uncharted territory.
+exploration_primitive_chance: 0.0
+exploration_primitive_chance_start: 0.0
+exploration_primitive_chance_anneal_steps: 50000
+exploration_primitive_steps: 5
+
+exploration_primitive_weight_stand_still: 0.0
+exploration_primitive_weight_same_direction: 1.0
+exploration_primitive_weight_y_aligned: 0.0
+exploration_primitive_weight_target_position_directional: 0.0
+
+# v27 sim2sim leaves the per-primitive direction/magnitude sub-knobs (e.g.
+# `_min_angle_deg`, `_min_magnitude`) at their td3_training.py defaults. We
+# do the same here — async-real's `Args` defaults are different from the sim
+# side but it doesn't matter because no primitive ever fires (chance=0). If
+# you do enable primitives later, add the sub-knobs explicitly.
+exploration_direction_y_component_weight: 2
+exploration_target_position_min_distance: 0.2
+exploration_target_position_max_distance: 0.5
+exploration_target_position_delta_x: 0.26
+exploration_target_position_delta_y: 0.12
+exploration_target_position_steps: 5
+
+# --- Reward weights — mirrors sim2sim v27 -----------------------------------
+# v27 zeroes motion shaping (`motion_reward_weight: 0.0`). The motion-head
+# Q-value is still trained against the motion reward stream, but it doesn't
+# contribute to the actor objective — preserves v27's "task reward only"
+# residual posture. Per-component weights below shape the motion reward
+# (used to train the motion-Q head) and stay at v27 defaults.
+task_reward_weight: 1.0
+motion_reward_weight: 0.0
+
+stand_still_reward_weight: 0.1
+temporal_alignment_reward_weight: 0.0
+axis_alignment_reward_weight: 0.0
+velocity_reward_weight: 0.5
+jerk_reward_weight: 0.5
+
+stand_still_threshold: 0.015
+temporal_alignment_horizon: 4
+velocity_at_one: 0.2
+velocity_at_zero: 0.6
+jerk_at_one: 8.0
+jerk_at_zero: 20.0
+
+# --- Paths ------------------------------------------------------------------
+# Residual-specific rollout config: uses task `puck_juggle_upper_half_reward`
+# (+1/step while puck in upper half) and zeroes the env-level reward shaping
+# coefficients (`diagonal_motion_rew`, `direction_change_rew`, `horizontal_vel_rew`,
+# `stand_still_rew`, `wall_bumping_rew`, `truncate_rew`) — matching both the
+# canonical sim (`new_juggle/sysid_best_params.yaml`) the frozen base actor was
+# trained on AND the sim2sim residual config (`new_juggle/sim2sim_combined.yaml`).
+config: "configs/real_configs/rollout_config_residual.yaml"
+args_file: null
+log_parent_dir: "runs/async_td3/residual_v27"
+run_name: "async_td3_real_residual_v27"
+
+# --- Runtime ----------------------------------------------------------------
+learner_device: "cuda:0"
+seed: 0
+action_scale: 1.0
+h_transform_eps: 0.001
+
+# --- Architecture (informational; effective values come from --train-args) --
+# Architecture is loaded at runtime from the --train-args YAML (TrainArgs).
+# These keys are duplicated here so the args-file is self-describing — keep
+# them in sync with td3_residual_train_args.yaml. Defaults to v27 standard
+# (2-layer); flip BOTH files to 5 if your source is the legacy 5-layer base.
+agent_hidden_layer_size: 64
+agent_num_hidden_layers: 2
+q_hidden_layer_size: 64
+q_num_hidden_layers: 2
+
+use_last_action_in_policy_state: true

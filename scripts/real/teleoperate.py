@@ -19,17 +19,17 @@ import yaml
 
 from airhockey import AirHockeyEnv
 from airhockey.sims.real.multiprocessing import NonBlockingConsole
-from scripts.smooth_policy.amp_history.amp_training.td3.helper.episode_artifacts import (
+from scripts.td3.helper.episode_artifacts import (
     save_split_episode_hdf5,
 )
-from scripts.smooth_policy.visualize_demo.render_teleop_segments import (
+from scripts.visualization.render_teleop_segments import (
     render_segment_gif,
     slice_hdf5,
 )
-from scripts.smooth_policy.visualize_demo.visualize_real_trajectory import (
+from scripts.visualization.visualize_real_trajectory import (
     RealTrajectoryRenderer,
 )
-from scripts.smooth_policy.visualize_demo.visualize_real_trajectory_split import (
+from scripts.visualization.visualize_real_trajectory_split import (
     load_split_trajectory_data,
 )
 
@@ -307,7 +307,7 @@ if __name__ == "__main__":
     parser.add_argument(
         '--action-scale', type=float, default=1.0,
         help='Action scale used to clamp the per-step displacement '
-             '(default 1.0, matching td3_online.yaml). Only effective with --policy-limits.',
+             '(default 1.0, matching td3_residual.yaml). Only effective with --policy-limits.',
     )
     parser.add_argument(
         '--render-gifs', action='store_true',
@@ -323,7 +323,7 @@ if __name__ == "__main__":
 
     if args.cfg is None:
         dir_path = os.path.dirname(os.path.realpath(__file__))
-        air_hockey_cfg_fp = os.path.join(dir_path, '../configs', 'configs/baseline_configs/paddle_pos_neg_regions_real_preset.yaml')
+        air_hockey_cfg_fp = os.path.join(dir_path, '..', '..', 'configs', 'real_configs', 'mouse_config.yaml')
     else:
         air_hockey_cfg_fp = args.cfg
 

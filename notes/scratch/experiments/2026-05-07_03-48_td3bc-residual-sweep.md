@@ -6,7 +6,7 @@
   [`2026-05-06_18-29_post-polyak-fix-rerun.md`](2026-05-06_18-29_post-polyak-fix-rerun.md)
   per its "If 1M is unsatisfactory" protocol.
 - **Run dirs**: `runs/td3/sim2sim/post_polyak_fix_1M/fix_td3bc_lam{05,1,2}/seed0/`
-- **Configs**: `scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/post_polyak_fix/fix_td3bc_lam{05,1,2}.yaml`
+- **Configs**: `configs/td3/sim2sim/paddle50/post_polyak_fix/fix_td3bc_lam{05,1,2}.yaml`
 - **Launcher**: `bash scripts/smooth_policy/run_post_polyak_fix.sh <gpu_id> _bc`
 
 ## Question

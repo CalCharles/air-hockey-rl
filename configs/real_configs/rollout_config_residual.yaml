@@ -3,9 +3,9 @@
 # Reward MUST match what the frozen base actor was trained against and what
 # sim2sim residual fine-tuning uses, so train-time and fine-tune-time task
 # rewards are the same signal:
-#   - Canonical sim:   scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params.yaml
+#   - Canonical sim:   configs/new_juggle/sysid_best_params.yaml
 #                      → task: puck_juggle_upper_half_reward
-#   - Sim2sim residual: scripts/smooth_policy/amp_history/configs/new_juggle/sim2sim_combined.yaml
+#   - Sim2sim residual: configs/new_juggle/sim2sim_combined.yaml
 #                      → task: puck_juggle_upper_half_reward
 # Hence `task: puck_juggle_upper_half_reward` below (+1 per step while puck is
 # in the upper half of the table; see AirHockeyPuckJuggleUpperHalfReward).
@@ -14,7 +14,7 @@
 # horizontal_vel_rew, stand_still_rew, wall_bumping_rew, truncate_rew) are
 # zeroed to match the sim configs above.
 #
-# Pointed at by: scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml
+# Pointed at by: configs/td3_real_world/td3_residual.yaml
 air_hockey:
   diagonal_motion_rew: 0.0
   direction_change_rew: 0.0

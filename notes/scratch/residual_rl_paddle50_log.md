@@ -8,7 +8,7 @@ source 0.0508). This is a separate campaign from
 ran on the OLD (much easier) `sim2sim_combined` env.
 
 Source policy: `runs/td3/hist_motion_collision/hist2_motion0/checkpoint_975000/{model,training_state}.pth`
-Target sim:    `scripts/smooth_policy/amp_history/configs/new_juggle/sim2sim_combined.yaml`
+Target sim:    `configs/new_juggle/sim2sim_combined.yaml`
 Zero-shot:     **mean 67.54** (n=50 deterministic eval, seed=0)
                 vs old env zero-shot 95.78 — much bigger gap to close.
 
@@ -32,20 +32,20 @@ seed verify (3 seeds) and write the recommendation back into
 
 **To run a new iteration:**
 1. Copy a config from
-   `scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/`,
+   `configs/td3/sim2sim/paddle50/`,
    change the relevant knob, and bump the version tag (`v2`, `v3`, ...).
 2. Update `seed`, `log_parent_dir`, `run_name`. The run dir convention is
    `runs/td3/sim2sim/hist2_motion0_to_paddle50/<variant>/seed<N>/`.
 3. Launch:
    ```bash
-   .venv/bin/python -m scripts.smooth_policy.amp_history.amp_training.td3.td3_training \
+   .venv/bin/python -m scripts.td3.td3_training \
      --args-file <new-config>.yaml > <log-path> 2>&1 &
    ```
 4. Per-checkpoint eval after training:
    ```bash
    bash scripts/smooth_policy/eval_all_ckpts_residual.sh \
      <run_dir> \
-     scripts/smooth_policy/amp_history/configs/new_juggle/sim2sim_combined.yaml \
+     configs/new_juggle/sim2sim_combined.yaml \
      cuda:3
    ```
 5. Aggregate: `.venv/bin/python notes/scratch/aggregate_paddle50_results.py`
@@ -82,7 +82,7 @@ This log answers all four.
 ## 1. v1 — canonical recipe at 300k (in flight)
 
 **Variant:** `residual_v1_canonical` —
-`scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v1_canonical.yaml`.
+`configs/td3/sim2sim/paddle50/td3_residual_v1_canonical.yaml`.
 
 **Hypothesis:** the recency_top50 recipe transfers cleanly to the
 harder env. Peak might appear later than on the easy env (>40k) but
@@ -148,7 +148,7 @@ sustainable performance is much larger here (15 pts vs ~3 pts on old).
 ## 2. full_ft — full fine-tune comparison at 300k (in flight)
 
 **Variant:** `full_ft` —
-`scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_full_ft.yaml`.
+`configs/td3/sim2sim/paddle50/td3_full_ft.yaml`.
 
 **Knobs vs canonical full_ft:**
 - `total_timesteps: 100000 → 300000` (match residual budget for fair comparison)
@@ -196,7 +196,7 @@ gap is too big for ±15% corrections to bridge.
 ## 3. v2 — rs=0.25 (in flight, launched 13:40 UTC)
 
 **Variant:** `residual_v2_rs025` —
-`scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v2_rs025.yaml`.
+`configs/td3/sim2sim/paddle50/td3_residual_v2_rs025.yaml`.
 
 **Hypothesis:** v1's catastrophic drift was driven by rs=0.15 being too tight
 to bridge a 30% gap. With more head room (rs=0.25), the residual can sustain
@@ -212,7 +212,7 @@ a higher policy without forcing the critic to learn impossible Q values.
 ## 4. v3 — no_per + q_wd combo (in flight, launched 13:37 UTC)
 
 **Variant:** `residual_v3_no_per_qwd` —
-`scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v3_no_per_qwd.yaml`.
+`configs/td3/sim2sim/paddle50/td3_residual_v3_no_per_qwd.yaml`.
 
 **Hypothesis:** v1's drift was museum-driven. With `per_enabled: false` and
 `critic_success_sample_fraction: 0`, the success_rb is bypassed entirely
@@ -290,7 +290,7 @@ Multi-seed verify v3 + full_ft (3 seeds each) before committing.
 ## 6. Multi-seed verification (3 seeds × 300k complete @ 15:53 UTC)
 
 Per-checkpoint deterministic eval (n=50, seed=0) on every 10k checkpoint
-+ final. Scripts: `scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v3_no_per_qwd_seed{1,2}.yaml`
++ final. Scripts: `configs/td3/sim2sim/paddle50/td3_residual_v3_no_per_qwd_seed{1,2}.yaml`
 and `td3_full_ft_seed{1,2}.yaml`.
 
 ### Per-seed table
@@ -462,7 +462,7 @@ exponentially down-weighted in the sampling distribution while still
 remaining in the buffer (available for sampling, just less likely).
 
 **Implemented 2026-04-29 17:55 UTC** in
-`scripts/smooth_policy/amp_history/amp_training/td3/helper/prioritized_replay_buffer.py`
+`scripts/td3/helper/prioritized_replay_buffer.py`
 (new `age_decay` arg, default 0.0 = off) and
 `td3_training.py` (new `priority_age_decay: float = 0.0` Args field passed
 through to both success_rb and failure_rb constructors).
@@ -1150,7 +1150,7 @@ num_critics: 5                       # Maxmin-5 (5 critics, min over all 5 targe
 # target_critic_subset_size: None    # default = use all 5 critics (Maxmin)
 ```
 
-Config: `scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v27_ensemble5{,_seed1..4}.yaml`
+Config: `configs/td3/sim2sim/paddle50/td3_residual_v27_ensemble5{,_seed1..4}.yaml`
 
 ### v29 (REDQ-10-2) 5-seed verification (2026-04-30 ~16:21 UTC)
 
@@ -1694,7 +1694,7 @@ smallest of any residual recipe ever tested on paddle50.
 
 ### Configs and run dirs
 
-- `scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/td3_residual_v30_explore_*.yaml`
+- `configs/td3/sim2sim/paddle50/td3_residual_v30_explore_*.yaml`
 - `runs/td3/sim2sim/hist2_motion0_to_paddle50/residual_v30_explore_*/seed{0,1}/`
 - Pipeline: `scripts/smooth_policy/run_partB_v30_pipeline.sh` (training, ~4h sequential)
 

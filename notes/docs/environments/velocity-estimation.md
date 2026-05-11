@@ -190,5 +190,5 @@ real HDF5 trajectory  /  Box2D episode
         │
   compare v_before / v_after              ← restitution = |v_after_n| / |v_before_n|
         │
-  nudge params via CollisionParamManager  ← airhockey/sims/collision_param_manager.py
+  nudge params via external optimizer       ← bridge module no longer in tree
 ```

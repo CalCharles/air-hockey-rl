@@ -7,7 +7,7 @@
   — the BC sweep concluded that no λ in {0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0} gives
   improved + maintained performance.
 - **Run dirs**: `runs/td3/sim2sim/post_polyak_fix_1M/fix_cql_alpha{01,1,5}/seed0/`
-- **Configs**: `scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/post_polyak_fix/fix_cql_alpha{01,1,5}.yaml`
+- **Configs**: `configs/td3/sim2sim/paddle50/post_polyak_fix/fix_cql_alpha{01,1,5}.yaml`
 - **Launcher**: `bash scripts/smooth_policy/run_post_polyak_fix.sh <gpu> _cql`
 
 ## Question

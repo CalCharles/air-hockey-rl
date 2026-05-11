@@ -4,7 +4,7 @@
 - **Status**: done
 - **Supersedes**: prior `latest_model/hist2_motion0/` (trained on a sim that did NOT have paddle-puck strength/direction or wall-direction randomization). `runs/td3/hist_motion_collision/hist2_motion0/checkpoint_975000/` was a closer match (same sim) but weaker peak (148.08 vs new 169.72).
 - **Run dir**: `runs/td3/hist_motion_collision/hist2_motion0_v2/seed0/`
-- **Config**: `scripts/smooth_policy/amp_history/configs/td3/td3_hist2_motion0_v2.yaml`
+- **Config**: `configs/td3/td3_hist2_motion0_v2.yaml`
 - **Promoted to**: `latest_model/hist2_motion0_v2/`
 
 ## Question

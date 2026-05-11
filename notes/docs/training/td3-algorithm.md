@@ -1,6 +1,6 @@
 # TD3 training algorithm
 
-Core training loop for both simulation ([`td3_training.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py)) and real-world ([`extras/async_td3_real.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py); shared runtime library [`helper/real_td3_runtime.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_td3_runtime.py)).
+Core training loop for both simulation ([`td3_training.py`](../../../scripts/td3/td3_training.py)) and real-world ([`extras/async_td3_real.py`](../../../scripts/td3/extras/async_td3_real.py); shared runtime library [`helper/real_td3_runtime.py`](../../../scripts/td3/helper/real_td3_runtime.py)).
 
 ## Transformed Bellman targets (h / h-inverse)
 
@@ -17,7 +17,7 @@ h_inv(x)  = sign(x) * ( ((sqrt(1 + 4*eps*(|x| + 1 + eps)) - 1) / (2*eps))^2 - 1 
 
 ## Dual-head critics
 
-Each of the two critic networks ([`TD3DualHeadQNetwork`](../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/dual_head_q.py)) has a shared residual trunk and two independent scalar output heads:
+Each of the two critic networks ([`TD3DualHeadQNetwork`](../../../scripts/td3/helper/dual_head_q.py)) has a shared residual trunk and two independent scalar output heads:
 
 - **Task head** -- predicts transformed Q for the environment/task reward stream
 - **Motion head** -- predicts transformed Q for the auxiliary motion reward stream

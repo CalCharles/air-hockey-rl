@@ -11,7 +11,7 @@ the changes. First step on resume is implementation (§4), not more design.
 
 ## 1. Goal
 
-Take `scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py`
+Take `scripts/td3/extras/async_td3_real.py`
 (3156 lines) and split the **online real-world training loop** into three
 self-contained components with explicit contracts:
 
@@ -49,7 +49,7 @@ lines.
 ## 3. Module breakdown
 
 All three new modules live in
-`scripts/smooth_policy/amp_history/amp_training/td3/helper/` (next to the
+`scripts/td3/helper/` (next to the
 existing helpers; this is already the home for extracted real-world
 logic).
 
@@ -556,7 +556,7 @@ don't move on.
 ## 5. Test surface
 
 There is a `tests/` dir under
-`scripts/smooth_policy/amp_history/amp_training/td3/`. Add unit-style
+`scripts/td3/`. Add unit-style
 checks for the new classes where it's cheap:
 - `TransitionHoldState`: `tick`/`active`/`begin` arithmetic, no env.
 - `PolicyEpisodeResult` / `ResetResult`: round-trip dataclass equality.
@@ -635,16 +635,16 @@ regression:
 
 ## 7. Files / locations (quick reference)
 
-- Current entrypoint: `scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py`
+- Current entrypoint: `scripts/td3/extras/async_td3_real.py`
 - Reset-only entrypoint (out of scope but informative):
-  `scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real_reset_policy.py`
+  `scripts/td3/extras/async_td3_real_reset_policy.py`
 - ResetPolicyFSM: `scripts/real/rollout_reset_policy_real.py` (imported by both)
-- Existing helpers (do not modify): `scripts/smooth_policy/amp_history/amp_training/td3/helper/real_*.py`, `td3_*.py`
+- Existing helpers (do not modify): `scripts/td3/helper/real_*.py`, `td3_*.py`
 - New modules (to be created):
   - `…/helper/real_transition_hold.py`
   - `…/helper/real_reset_runner.py`
   - `…/helper/real_policy_runner.py`
-- Tests: `scripts/smooth_policy/amp_history/amp_training/td3/tests/`
+- Tests: `scripts/td3/tests/`
 - Smoke-test invocation: as currently used to validate
   `async_td3_real.py` in sim — reuse the same command.
 

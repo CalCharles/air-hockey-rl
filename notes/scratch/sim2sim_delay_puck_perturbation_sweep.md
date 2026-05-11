@@ -37,7 +37,7 @@ Bug surfaced in passing: **`sim2sim_combined.yaml`** (the canonical residual-RL 
 - Checkpoint: `latest_model/hist2_motion0/model.pth`
 - Eval driver: `scripts/smooth_policy/sim2sim_eval.py`, n=50 deterministic episodes, seed=0
 - Sweep driver: `notes/scratch/radius_sweeps_mass_preserved.py`
-- Base config: `scripts/smooth_policy/amp_history/configs/new_juggle/sim2sim_combined_v2.yaml` — provides the fixed perturbations (pid_kp 7200, wall_cone 25, action_delay enabled, normal jitter at ±0.35) and `delay_seconds: 0.030` (+20% from source)
+- Base config: `configs/new_juggle/sim2sim_combined_v2.yaml` — provides the fixed perturbations (pid_kp 7200, wall_cone 25, action_delay enabled, normal jitter at ±0.35) and `delay_seconds: 0.030` (+20% from source)
 - Each sweep varies one radius, holds the other at source, sets the matching mass-preservation flag.
 
 ## Puck-radius decay (mass preserved)

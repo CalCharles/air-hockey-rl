@@ -123,5 +123,5 @@ These three replace **all** of the following legacy keys (which become deprecate
 - `airhockey/airhockey_base.py:899-906` — replace snapshot-fallback branch with single `get_delayed_obs_state` call.
 - `notes/docs/environments/box2d/simulator-essentials.md` — rewrite the "Delay toggles" section, fix the `puck_history` indexing claims (now unambiguously 20 Hz).
 - `notes/docs/environments/observation-action-spaces.md` — remove the "temporal density caveat" section (no longer applicable; sim and real both 20 Hz).
-- `scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params*.yaml` — replace legacy delay keys with the three new ones.
+- `configs/new_juggle/sysid_best_params*.yaml` — replace legacy delay keys with the three new ones.
 - Optional: `notes/docs/training/td3-configs.md` — note the v3 retrain.

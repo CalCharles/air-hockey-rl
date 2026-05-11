@@ -18,7 +18,7 @@ Our Python side sees this as:
 - `self.rcv.isProtectiveStopped()` → `True`
 - The reward-side teardown path reports
   `terminated (protective_stop)` from
-  `scripts/real/rollout_new.py` and the reset FSM
+  the async real-world entrypoint (`scripts/td3/extras/async_td3_real.py`) and the reset FSM
   (`airhockey/sims/air_hockey_real.py:robot_command_readiness`).
 
 ## "Position deviates from path (SHOULDER)" — what it means
@@ -85,9 +85,10 @@ per millisecond the planner generated for the current `moveL` / `moveJ` /
 Running
 
 ```
-python scripts/real/rollout_new.py \
-    --config-path configs/real_configs/rollout_td3_config.yaml \
-    --model <ckpt>/training_state.pth \
+python -m scripts.td3.extras.async_td3_real_eval \
+    --config configs/real_configs/rollout_config.yaml \
+    --args-file configs/td3_real_world/td3_residual.yaml \
+    --model-path <ckpt>/training_state.pth \
     --train-args <train_run_dir>/args.yaml \
     ...
 ```

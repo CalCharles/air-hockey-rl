@@ -1,6 +1,6 @@
 # Project goal and safety
 
-Mirror of [`.cursor/rules/project-goal.mdc`](../../../.cursor/rules/project-goal.mdc).
+
 
 ## Project goal
 

@@ -2,8 +2,8 @@
 
 How task and motion rewards are composed for the dual-head TD3 critics.
 
-Simulation code: [`td3_training.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py).
-Real-world code: [`real_motion_rewards.py`](../../../scripts/smooth_policy/amp_history/amp_training/td3/helper/real_motion_rewards.py).
+Simulation code: [`td3_training.py`](../../../scripts/td3/td3_training.py).
+Real-world code: [`real_motion_rewards.py`](../../../scripts/td3/helper/real_motion_rewards.py).
 
 ## Two reward streams
 
@@ -105,17 +105,7 @@ The reward formulas are identical, but the code paths differ:
 
 All alignment-based rewards (stand-still, temporal, axis) require at least `temporal_horizon` steps since the last episode reset before they become active. Before that, `temporal_valid = 0.0` and those components contribute nothing. This prevents noisy initial-step kinematics from producing misleading rewards.
 
-## PPO auxiliary reward terms
-
-PPO+AMP training (`amp_training.py`) has two additional optional reward shaping terms, independent of the discriminator and the TD3 motion reward system above:
-
-- `--temporal_alignment_reward_scale` -- encourages policy action timing to match demonstration timing.
-- `--action_magnitude_reward_scale` -- encourages policy action magnitudes to match demonstrations.
-
-These are added directly to the PPO reward signal. See [ppo-amp-discriminator.md](ppo-amp-discriminator.md) for full PPO+AMP details.
-
 ## Related docs
 
 - [TD3 algorithm](td3-algorithm.md) -- how rewards feed into dual-head Bellman targets
-- [PPO+AMP discriminator](ppo-amp-discriminator.md) -- PPO reward shaping and AMP
 - [Episode lifecycle (real)](../environments/real-world/episode-lifecycle.md) -- where motion rewards are computed during collection

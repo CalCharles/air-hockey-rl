@@ -6,29 +6,46 @@ Shared context for AI agents (Claude Code, Cursor, etc.). Read this before makin
 
 ## What this project is
 
-Reinforcement learning for a physical air-hockey robot (UR5 arm + paddle). The agent learns to juggle/hit a puck in a Box2D simulator, then transfers the policy to the real robot. The active training algorithm is **TD3 with dual-head critics and transformed Bellman targets**. PPO/SAC code exists but is legacy.
+Reinforcement learning for a physical air-hockey robot (UR5 arm + paddle). The agent learns to juggle a puck in a Box2D simulator, then transfers the policy to the real robot. The training algorithm is **TD3 with dual-head critics and transformed Bellman targets**.
 
 See [`notes/docs/repo/project-goal-and-safety.md`](notes/docs/repo/project-goal-and-safety.md) for safety policy (real-robot e-stops, protective stops).
 
 ---
 
+## Repo layout
+
+```
+airhockey/         — Box2D + real-UR5 env package; tasks registered in __init__.py
+scripts/
+├── td3/           — TD3 training, helpers, real-world entrypoints, tests
+├── real/          — real-robot rollout / teleop / calibration helpers
+├── visualization/ — trajectory rendering / teleop-segment helpers
+├── analysis/      — standalone analysis tools (occlusion patterns, etc.)
+└── utils.py       — small shared helpers (e.g., save_tensorboard_plots)
+configs/           — all YAMLs
+├── new_juggle/    — sim env configs (sysid_best_params*, sim2sim targets)
+├── td3/           — TD3 training args (canonical: td3_recommended_top50_hist2.yaml)
+├── td3_real_world/— real-robot residual fine-tune args
+└── real_configs/  — real-robot rollout / mouse-teleop configs
+latest_models/canonical/ — sim-pretrained source policies (hist2_motion0_v2/, hist2_motion0/)
+latest_models/ablations/ — CoRL-2026 deployment-ready ablation checkpoints
+```
+
 ## Active code paths
 
 | What | Where |
 |------|-------|
-| **Training entrypoint** | `scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py` |
-| **Canonical sim config (sysid ground truth)** | `scripts/smooth_policy/amp_history/configs/new_juggle/sysid_best_params.yaml` |
-| **Sim-to-real ground truth source policy** | `latest_model/hist2_motion0_v2/` (trained on `sysid_best_params_hist2.yaml` with the latest collision randomization; eval mean 169.72 on the source sim; promoted 2026-05-05 — see [`notes/scratch/experiments/2026-05-05_02-55_hist2-motion0-v2-retrain.md`](notes/scratch/experiments/2026-05-05_02-55_hist2-motion0-v2-retrain.md)). Future sim2sim and sim2real residual configs should set `model_path: latest_model/hist2_motion0_v2/model.pth`. The earlier `latest_model/hist2_motion0/` is **deprecated** (trained without paddle-puck strength/direction or wall-direction randomization) — keep it on disk for reproducing past experiments, but don't reference it in new work. |
-| **Legacy sim config** | `…/pid_noise_constant_upper_half_custom_sim_params.yaml` (pre-sysid; still used by some TD3 args YAMLs) |
-| **TD3 training configs** | `scripts/smooth_policy/amp_history/configs/td3/` |
-| **Recommended TD3 default** | `…/td3/td3_recommended.yaml` (2-layer, q=25/a=6, hist_len=4 via `sysid_best_params_hist4.yaml`, no bootstrap forcing, no external warmstart — see [depth/update ablations](notes/docs/training/td3-ablations-updates-and-depth.md) and [exploration ablations](notes/docs/training/td3-exploration-ablations.md)) |
-| **Residual RL recipe (sim2sim/sim2real fine-tune)** | **Canonical big-gap recipe (2026-05-08, refined): CQL α=20 + `actor_updates_per_iteration=2`** (or =4 for warp ≥ 0.10). No BC, no exploration, N=5, residual_scale=0.15. Target: `configs/new_juggle/sim2sim_warp075_p30.yaml` (paddle −30% + sine-y warp 0.075, zs=48). Best 1M single-seed result on `env_mild_p10` (paddle -10%): back-half mean **117 [94, 142]** (zs+68 sustained), peak 177 (3.6× zs). On canonical p30: 800k-1M mean **97 [77, 121]**, peak 170. Hyperparameter campaign 2026-05-08 found `actor_updates_per_iteration=2` is the strongest single knob (+10 vs canonical at 300k, +2 mean / +14 peak at 1M); stacking with q_updates=4 BACKFIRES; α sweet zone 5–20. Configs: `scripts/smooth_policy/amp_history/configs/td3/sim2sim/warp075_p30_residual/{phaseC_actor2_1M,phaseD_actor2_p10_1M,phaseD_actor4_w10_1M}.yaml`. Recipe boundary: works through warp 0.10 (with actor=4); fails at warp 0.125. Previous `paddle50/td3_residual_v27_ensemble5.yaml` and `v30_explore_lite` are **deprecated** (untrainable paddle50 + silent Polyak bug). Small-gap (<10% zs drop) recipe still applies: `…/td3/sim2sim/td3_sim2sim_residual.yaml`. Real-world (canonical big-gap CQL recipe, 2026-05-08): **`…/td3_real_world/td3_residual_cql.yaml`** (cql_alpha=20, actor_updates_per_iteration=2; reuses the shared `td3_residual_train_args.yaml`). Real-world v27 baseline (no CQL, kept for comparison/regression): `…/td3_real_world/td3_residual.yaml`. CQL is wired into `helper/real_td3_runtime.py` as a default-off branch (gated on `cql_alpha > 0`), so v27 launches are bit-identical to before. **Read [`notes/docs/training/residual-rl-recipe.md`](notes/docs/training/residual-rl-recipe.md) before running.** |
+| **Training entrypoint** | `scripts/td3/td3_training.py` |
+| **Canonical sim config (sysid ground truth)** | `configs/new_juggle/sysid_best_params.yaml` (or `sysid_best_params_hist2.yaml` for hist_len=2) |
+| **Canonical TD3 args** | `configs/td3/td3_recommended_top50_hist2.yaml` — 2-layer, q=25/a=6, references `sysid_best_params_hist2.yaml` |
+| **Sim-to-real ground truth source policy** | `latest_models/canonical/hist2_motion0_v2/` (predecessor `hist2_motion0/` kept on disk for reproducibility; don't reference in new work) |
+| **Residual RL recipe (sim2sim/sim2real fine-tune)** | Canonical big-gap recipe: CQL α=20 + `actor_updates_per_iteration=2` (=4 for warp ≥ 0.10), no BC, no exploration, N=5, residual_scale=0.15. Configs: `configs/td3/sim2sim/warp075_p30_residual/{phaseC_actor2_1M,phaseD_actor2_p10_1M,phaseD_actor4_w10_1M}.yaml` (sim targets in `configs/new_juggle/sim2sim_warp075_p30.yaml`, `sim2sim_warp075_p10.yaml`, `sim2sim_warp100_p30.yaml`). Small-gap recipe: `configs/td3/sim2sim/td3_sim2sim_residual.yaml` (sim target `configs/new_juggle/sim2sim_combined.yaml`). Real-world canonical big-gap CQL recipe: `configs/td3_real_world/td3_residual_cql.yaml` (cql_alpha=20, actor_updates_per_iteration=2; reuses `td3_residual_train_args.yaml`). v27 baseline (no CQL, kept for regression / non-residual eval comparison): `configs/td3_real_world/td3_residual.yaml`. CQL is wired into `scripts/td3/helper/real_td3_runtime.py` as a default-off branch (gated on `cql_alpha > 0`) so v27 launches are bit-identical to before. **Read [`notes/docs/training/residual-rl-recipe.md`](notes/docs/training/residual-rl-recipe.md) before running.** |
 | **Env entrypoint** | `airhockey/` (`AirHockeyEnv`) |
-| **Real-world rollout entrypoint** | `scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real.py` (orchestrator + `__main__`; thin file driving the per-concern runners). The shared runtime library — `Args`, `TrainArgs`, `LearnerRuntimeState`, args-file parsing, checkpoint helpers, the synchronous learner step — lives at `scripts/smooth_policy/amp_history/amp_training/td3/helper/real_td3_runtime.py` alongside the other modular helpers (`real_policy_runner`, `real_reset_runner`, `real_transition_hold`, …). Plus `scripts/real/` for non-training rollout helpers. |
-| **Real-world fixed-policy eval** | `scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real_eval.py` (frozen actor, no learner / replay / checkpointing — emits `eval_summary.json` + `eval_per_episode.jsonl`). |
-| **Human-baseline teleop eval (paper user study)** | `scripts/smooth_policy/amp_history/amp_training/td3/extras/async_td3_real_teleop_eval.py` (mouse-controlled paddle running the same task / termination / juggle counter / output schema as the policy eval; auto-detects puck-in-upper-half between episodes; phase banner window with colored borders for RESET / HANDOFF / USER CONTROL / EPISODE OVER). Read [`notes/docs/training/teleop-eval-baseline.md`](notes/docs/training/teleop-eval-baseline.md) before running. |
+| **Real-world rollout entrypoint** | `scripts/td3/extras/async_td3_real.py` (orchestrator + `__main__`; thin file driving the per-concern runners). The shared runtime library — `Args`, `TrainArgs`, `LearnerRuntimeState`, args-file parsing, checkpoint helpers, the synchronous learner step — lives at `scripts/td3/helper/real_td3_runtime.py` alongside the other modular helpers (`real_policy_runner`, `real_reset_runner`, `real_transition_hold`, …). Plus `scripts/real/` for non-training rollout helpers. |
+| **Real-world fixed-policy eval** | `scripts/td3/extras/async_td3_real_eval.py` (frozen actor, no learner / replay / checkpointing — emits `eval_summary.json` + `eval_per_episode.jsonl`). |
+| **Human-baseline teleop eval (paper user study)** | `scripts/td3/extras/async_td3_real_teleop_eval.py` (mouse-controlled paddle running the same task / termination / juggle counter / output schema as the policy eval; auto-detects puck-in-upper-half between episodes; phase banner window with colored borders for RESET / HANDOFF / USER CONTROL / EPISODE OVER). Read [`notes/docs/training/teleop-eval-baseline.md`](notes/docs/training/teleop-eval-baseline.md) before running. |
 
-The config file passed to `td3_training.py` (e.g., `td3_no_alignment.yaml`) has a `config:` key pointing to the sim config and a `model_path:` key for resuming.
+The config file passed to `td3_training.py` has a `config:` key pointing to the sim config and a `model_path:` key for resuming.
 
 ---
 
@@ -69,6 +86,12 @@ Full details: [`environments/real-world/puck-system-id.md`](notes/docs/environme
 
 ---
 
+## Tasks
+
+The canonical task is `puck_juggle_upper_half_reward` — keep this name. Other tasks (`puck_juggle`, `puck_touch`, `puck_strike`, `puck_score`, `puck_goal_position*`, `paddle_reach_position*`, `move_block`, `strike_crowd`, etc.) remain registered in `airhockey/__init__.py` and are callable from Python, but no config files target them. Add a sim config under `configs/new_juggle/` if you want to train on a non-juggle task.
+
+---
+
 ## Documentation
 
 Formal docs live in `notes/docs/`. Start at [`notes/docs/index.md`](notes/docs/index.md).
@@ -97,15 +120,12 @@ Key docs:
 - **New docs** → `notes/docs/*.md`. **Scratch/plans** → `notes/scratch/`.
 - **Experiment writeups** → `notes/scratch/experiments/YYYY-MM-DD_HH-MM_<topic-slug>.md` — one new file per experiment, never edit prior ones. **Read [`notes/scratch/experiments/README.md`](notes/scratch/experiments/README.md) before writing experiment notes.** This convention exists to avoid git merge conflicts when multiple agents append to the same long-lived log file. The long-form logs (`notes/scratch/residual_rl_paddle50_log.md`, `notes/scratch/residual_rl_drift_fix_log.md`, etc.) are now **read-only history** — historical context only, do not append. New experiments go in dated files; cross-link instead of merging; update [`notes/scratch/experiments/INDEX.md`](notes/scratch/experiments/INDEX.md) (additive only) when each experiment lands. Stable conclusions from a finished experiment can still be reflected in the canonical docs (`notes/docs/training/residual-rl-recipe.md`, this file) — but reference the experiment file as the source of truth, don't restate the data.
 - **GIFs for qualitative changes** to Box2D env: use `AirHockeyRenderer`, BGR→RGB, resize width to 160, fps 20. See `.cursor/rules/box2d-environment.mdc`.
-- **Default Box2D config** for one-off scripts: `scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_constant_upper_half_custom_sim_params.yaml`.
-- **Virtual env**: check for `venv/`, `.venv/`, or `pyproject.toml` before running code.
+- **Default Box2D config** for one-off scripts: `configs/new_juggle/sysid_best_params_hist2.yaml`.
+- **Virtual env**: check for `.venv/` or `pyproject.toml` before running code.
 - Prefer editing existing files over creating new ones — **except for experiment writeups, which always go in new dated files** (see above).
 
 ---
 
-## What is legacy / undocumented
+## Run-artifact directories (gitignored)
 
-- `scripts/domain_adaptation/`, `scripts/gat/`, `scripts/curriculum/`, `scripts/rl/` — older research paths, not part of active TD3 pipeline.
-- `scripts/trainers/` — structured trainer abstraction (SAC, PPO), not used by current TD3 training.
-- `offline_rl_algorithms/` — offline RL experiments, not active.
-- `airhockey/sims/airhockey_robosuite.py` — MuJoCo/robosuite backend, **legacy** (not used for training). Basic functionality restored 2026-05-01 (ten interlocking bugs fixed across two passes: paddle_history, IK pose, OSC frame mismatch, pedestal/gripper collisions, translate_action z-bug, puck-under-tilted-table, RoundGripper registration, robot config keys + return value, puck free joint, gravity flag honored). Yellow round paddle (`RoundGripper`) is attached when `simulator_params.gripper_types: 'RoundGripper'` is set. Puck juggle init now spawns puck on tilted table and slides under gravity. Documented in [`notes/docs/environments/robosuite/overview.md`](notes/docs/environments/robosuite/overview.md). Diagnostic renders: `scripts/render_robosuite_views.py` (multi-camera) and `scripts/render_puck_juggle.py` (puck-juggle init).
+These directories live on disk for local use but are not tracked: `runs/`, `results/`, `trained_models/`, `eval_gifs/`, `real_runs/`, `shared/`, `sysid/`, `dataset_management/`, `tests/`, `wandb/`, `gifs/`, `plots/`, `datasets/`. Clean them up locally as needed; don't add them to git.

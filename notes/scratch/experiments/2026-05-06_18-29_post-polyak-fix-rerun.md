@@ -3,7 +3,7 @@
 - **Date**: 2026-05-06 18:29 UTC start
 - **Status**: 300k pass done; 1M extension done for 4/5 (`fix_v30_lite_1M` still running ~67k of 1M). All four finished cells **fail** every acceptance criterion — back-half collapses to 30–45 vs zs ≈ 67.5. Follow-up TD3+BC sweep launched 2026-05-07 03:48 UTC: see [`2026-05-07_03-48_td3bc-residual-sweep.md`](2026-05-07_03-48_td3bc-residual-sweep.md).
 - **Run dirs**: `runs/td3/sim2sim/post_polyak_fix/<name>/seed0/`
-- **Configs**: `scripts/smooth_policy/amp_history/configs/td3/sim2sim/paddle50/post_polyak_fix/`
+- **Configs**: `configs/td3/sim2sim/paddle50/post_polyak_fix/`
 - **Launcher**: `scripts/smooth_policy/run_post_polyak_fix.sh <gpu_id>`
 - **Logs**: `notes/scratch/post_polyak_fix_logs/`
 

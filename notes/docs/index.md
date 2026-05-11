@@ -15,7 +15,7 @@ Formal docs for the air-hockey TD3 stack — sim and real robot. Active code pat
 | Area | Path | What lives here |
 |------|------|-----------------|
 | **Repo** | [`repo/`](repo/) | Project goal, real-robot safety, top-level layout |
-| **Environments** | [`environments/`](environments/) | Env/task layers, obs/action spaces, Box2D + real UR5 + Robosuite (legacy) |
+| **Environments** | [`environments/`](environments/) | Env/task layers, obs/action spaces, Box2D + real UR5 |
 | **Training** | [`training/`](training/) | TD3 architecture, configs, runtime behavior, recipes, ablations |
 | **Exploration** | [`exploration/`](exploration/) | TD3 primitive exploration knobs |
 

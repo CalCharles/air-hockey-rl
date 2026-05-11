@@ -1,22 +1,6 @@
 import airhockey.renderers as renderers
 import airhockey.sims as sims
 import os
-import shutil
-
-ROBOSUITE_AVAILABLE = False
-robosuite_xml_path_completion = None
-assets_root = None
-
-try:
-    from robosuite.utils.mjcf_utils import xml_path_completion as robosuite_xml_path_completion
-    from robosuite.models import assets_root
-    import airhockey.sims.controllers  # registers custom controllers
-    import airhockey.sims.robots
-    import airhockey.sims.grippers
-    import airhockey.sims.utils.RobosuiteTransforms
-    ROBOSUITE_AVAILABLE = True
-except Exception:
-    print("Robosuite not loaded. Robosuite-only components are unavailable.")
 
 from airhockey.airhockey_simple_tasks import (
     AirHockeyPuckVelEnv,
@@ -78,13 +62,6 @@ def custom_xml_path_completion(xml_path):
     return full_path
 
 
-if ROBOSUITE_AVAILABLE:
-    arena_fp = custom_xml_path_completion("arenas/air_hockey_table.xml")
-    arena_fp_dst = os.path.join(assets_root, "arenas/air_hockey_table.xml")
-    os.makedirs(os.path.dirname(arena_fp_dst), exist_ok=True)
-    shutil.copyfile(arena_fp, arena_fp_dst)
-
-
 def AirHockeyEnv(cfg):
     task = cfg["task"]
     if task == "puck_velocity":
@@ -136,13 +113,3 @@ def AirHockeyEnv(cfg):
     else:
         raise ValueError("Task {} not recognized".format(task))
     return task_env.from_dict(cfg)
-
-
-if ROBOSUITE_AVAILABLE:
-    robosuite_robot_assets_fp = robosuite_xml_path_completion(os.path.join("robots", "ur5e"))
-    robot_xml_fp = custom_xml_path_completion(os.path.join("robots", "ur5e", "robot.xml"))
-    new_folder_fp = robosuite_xml_path_completion(os.path.join("robots", "custom_ur5e"))
-    out_robot_xml_fp = robosuite_xml_path_completion(os.path.join(new_folder_fp, "custom_robot.xml"))
-    if not os.path.exists(new_folder_fp):
-        shutil.copytree(robosuite_robot_assets_fp, new_folder_fp)
-    shutil.copy(robot_xml_fp, out_robot_xml_fp)
