@@ -62,6 +62,12 @@ def _reset_stage_id_from_phase(phase: str) -> int:
         return 0
     if phase_name in ("wait_for_puck", "strike", "post_second_upward_check"):
         return 1
+    if phase_name == "policy_handoff":
+        # Hybrid FSM: stage 2 is the frozen juggle policy taking over for
+        # the second hit. Same id as the legacy stage-2 strike loop so
+        # downstream artifact filters that group "second-hit attempts"
+        # don't need to know about the swap.
+        return 1
     return -1
 
 
@@ -204,6 +210,23 @@ def run_reset_fsm(
     print(f"[reset_fsm] starting (side={fsm.start_side})")
     try:
         while not fsm.done:
+            # Operator interrupt mid-FSM: abort and re-enter the wait-for-clear
+            # loop above by re-raising back through the outer caller. We close
+            # the FSM in the `finally` and let the orchestrator's hard-reset
+            # path re-run (the post-stop hard-reset already routes through this
+            # function on the next episode boundary).
+            mid_fsm_stop = _classify_stop_event(env)
+            if mid_fsm_stop.human_interrupt:
+                print(
+                    "[reset_fsm] human_interrupt asserted mid-FSM; aborting reset "
+                    "and waiting for operator clear."
+                )
+                while _classify_stop_event(env).active:
+                    time.sleep(0.25)
+                print("[reset_fsm] human_interrupt cleared; restarting reset FSM.")
+                fsm.close()
+                fsm = reset_policy_fsm_cls(env, rng)
+                continue
             state = env.simulator.get_current_state()
             action = fsm.step(state)
             reset_stage_id = _reset_stage_id_from_phase(getattr(fsm, "phase", "unknown"))
@@ -289,6 +312,7 @@ class StopFlags:
     had_stop: bool = False
     had_protective_stop: bool = False
     had_controller_disconnect: bool = False
+    had_human_interrupt: bool = False
 
 
 @dataclass
@@ -446,7 +470,9 @@ class ResetRunner:
 
         elif kind == ResetKind.HARD_WITH_FSM or kind == ResetKind.HARD_SKIP_FSM:
             # Source: L2195–L2264 (periodic-3 OR stop-driven).
-            if episode_had_stop_flags.had_protective_stop:
+            if episode_had_stop_flags.had_human_interrupt:
+                hard_reset_reason = "collector_human_interrupt_next_step"
+            elif episode_had_stop_flags.had_protective_stop:
                 hard_reset_reason = "collector_estop_next_step"
             elif episode_had_stop_flags.had_controller_disconnect:
                 hard_reset_reason = "collector_controller_disconnected_next_step"

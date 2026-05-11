@@ -127,7 +127,7 @@ The serializer is `_serialize_training_state_payload` ([`helper/real_td3_runtime
 - [ ] `include_non_vital_training_state_fields: true` — **required** for clean resume. Without this the checkpoint omits optimizer state, learner counters, `collector_total_steps`, `last_checkpoint_collector_steps`, `run_elapsed_total_s`, and the rolling-window deques. Resuming loses Adam momentum, restarts the TB step axis at 0, and starts rolling-50 stats cold. The orchestrator prints a loud `[main] WARNING` at startup if this combination drifts.
 - [ ] `checkpoint_every_collector_steps` — cadence in valid (kept-episode) collector steps. Default 5000.
 
-Both [`td3_online.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml) and [`td3_residual.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml) ship with `include_non_vital_training_state_fields: true` already.
+[`td3_online.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_online.yaml), [`td3_residual.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual.yaml) (no-CQL baseline) and [`td3_residual_cql.yaml`](../../../scripts/smooth_policy/amp_history/configs/td3_real_world/td3_residual_cql.yaml) (canonical CQL recipe) all ship with `include_non_vital_training_state_fields: true` already.
 
 ### Where checkpoints live
 

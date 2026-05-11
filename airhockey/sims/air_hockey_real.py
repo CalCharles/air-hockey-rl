@@ -457,7 +457,13 @@ class AirHockeyReal:
         self.x_min_lim = -0.79
         self.x_max_lim = -0.375
         self.y_min = -0.370 # temporary for right now
-        self.y_max = 0.350 
+        # Right edge extended +0.02 m (was 0.350) to make the reachable
+        # workspace symmetric with y_min and give the reset policy's edge
+        # loop the same range on both sides. The FSM picks this up via
+        # `simulator.lims` (set below) → ResetPolicyFSM._lims, and the
+        # simulator's clip_limits uses the same source so commands at
+        # y=+0.370 are no longer clipped back to +0.350.
+        self.y_max = 0.370
 
         self.bot_abs = config.bot_abs
         self.top_abs = config.top_abs
@@ -520,6 +526,14 @@ class AirHockeyReal:
         self.move_lims = (self.rmax_x, self.rmax_y)
         self.mouse_action_scale = getattr(config, "mouse_action_scale", None)
         self._last_teleop_policy_action = np.zeros(2)
+        # Runtime toggle for control_mode='mouse'. When True (default for
+        # mouse mode), get_transition reads the cursor as the action source.
+        # When False, get_transition uses the action argument instead — the
+        # camera+mouse subprocess keeps running so the puck position still
+        # comes from protected_puck_pos. ``set_human_control`` flips this at
+        # runtime, letting the teleop eval use an autonomous reset FSM
+        # between human-controlled episodes without rebuilding the env.
+        self._human_control_active = self.control_mode == "mouse"
 
         # smooth_history
         self.hist_len = config.hist_len
@@ -774,6 +788,25 @@ class AirHockeyReal:
         self.protected_target_pos[1] = hold_cmd_pose[1]
         self.protected_target_pos[2] = 1
         return hold_cmd_pose
+
+    def set_human_control(self, active: bool) -> None:
+        """Toggle whether get_transition uses the cursor (True) or the action argument (False).
+
+        Only meaningful when ``control_mode='mouse'`` was set at construction
+        — that's the case where the camera+mouse subprocess is running, so
+        either source is available without rebuilding the env. The teleop
+        eval flips this around the autonomous reset (False) and the human
+        episode (True). Other ``control_mode`` values keep their existing
+        per-step branching unchanged.
+        """
+        prev = bool(self._human_control_active)
+        new = bool(active)
+        self._human_control_active = new
+        if prev != new:
+            print(
+                f"[set_human_control] {prev} -> {new} "
+                f"(control_mode={self.control_mode})"
+            )
 
     def begin_transition_hold(self, steps: int, reason: str = "external_transition"):
         """Force temporary no-motion command behavior during control transitions."""
@@ -1381,10 +1414,22 @@ class AirHockeyReal:
         # cv2.imshow('image',image)
         # cv2.setMouseCallback('image', move_event)
         # cv2.waitKey(1)
+        use_cursor_control = (
+            self.control_mode == "mimic"
+            or (self.control_mode == "mouse" and self._human_control_active)
+        )
         pixel_coord = np.array([0, 0])
-        if self.control_mode == "mouse":
+        if self.control_mode == "mouse" and self._human_control_active:
             pixel_coord[0] = self.protected_mouse_pos[0]
             pixel_coord[1] = self.protected_mouse_pos[1]
+            if int(self.timestep) % 20 == 0:
+                print(
+                    "[teleop_dbg] "
+                    f"step={self.timestep} human_active={self._human_control_active} "
+                    f"pixel_coord=({int(pixel_coord[0])},{int(pixel_coord[1])}) "
+                    f"shared_mouse=({self.protected_mouse_pos[0]:.1f},"
+                    f"{self.protected_mouse_pos[1]:.1f},{self.protected_mouse_pos[2]:.1f})"
+                )
         # pixel_coord[2] = protected_mouse_pos[2]
         # print("Consumer Side Pixel Coord: ", pixel_coord)
 
@@ -1473,7 +1518,7 @@ class AirHockeyReal:
             self.images.append(save_img)
 
         
-        if self.control_mode in ["mouse", "mimic"]:
+        if use_cursor_control:
             x, y = (pixel_coord - self.offset_constants) * 0.001
             y= -y
             if self.teleoperation_noise > 0: # add some random normal noise
@@ -1493,11 +1538,32 @@ class AirHockeyReal:
             puck[0] = self.protected_puck_pos[0] + self.center_offset_constant
             puck[1] = self.protected_puck_pos[1]
             puck[2] = self.protected_puck_pos[2]
-            if self.protected_puck_pos[2] == 1: 
+            if self.protected_puck_pos[2] == 1:
                 puck[0] = self.puck_history[-1][0]
                 puck[1] = self.puck_history[-1][1]
                 puck[2] = 1
             # print("puck", puck, self.protected_puck_pos)
+            self.puck_history.append(puck)
+        elif self.control_mode == "mouse":
+            # control_mode='mouse' with _human_control_active=False — the
+            # camera+mouse subprocess is still running, so the puck position
+            # is read from protected_puck_pos (no main-process cv2 capture),
+            # but the target comes from the action argument instead of the
+            # cursor. Used by the autonomous reset FSM and by future policy
+            # rollouts that share the env with a teleop runner.
+            delta_x, delta_y = float(action[0]), float(action[1])
+            move_vector = np.array([delta_x, delta_y]) * np.array(self.move_lims)
+            x = tcp_target_pose[0] + move_vector[0]
+            y = tcp_target_pose[1] + move_vector[1]
+            self._last_teleop_policy_action = np.array([delta_x, delta_y], dtype=np.float64)
+            puck = np.zeros(3)
+            puck[0] = self.protected_puck_pos[0] + self.center_offset_constant
+            puck[1] = self.protected_puck_pos[1]
+            puck[2] = self.protected_puck_pos[2]
+            if self.protected_puck_pos[2] == 1:
+                puck[0] = self.puck_history[-1][0]
+                puck[1] = self.puck_history[-1][1]
+                puck[2] = 1
             self.puck_history.append(puck)
         elif self.control_mode in ["observe"]:
             x,y, occluded = observe_collect(
@@ -1588,7 +1654,7 @@ class AirHockeyReal:
                 controller_connected = False
                 safety_check = False
         if self._should_debug_control():
-            if self.control_mode in ["mouse", "mimic"]:
+            if use_cursor_control:
                 action_repr = "mouse/mimic_absolute_target"
             else:
                 action_repr = np.array(action).tolist() if action is not None else None

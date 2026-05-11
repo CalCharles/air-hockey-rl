@@ -56,6 +56,7 @@ class StopFlagsSnapshot:
     had_protective_stop: bool = False
     had_controller_disconnect: bool = False
     had_readiness_fail_estop: bool = False
+    had_human_interrupt: bool = False
 
 
 @dataclass
@@ -111,8 +112,10 @@ class EpisodeMetrics:
     delta_interval_primitive_env_steps: int
     delta_interval_primitive_horizontal_env_steps: int
     delta_interval_target_position_directional_env_steps: int
+    delta_human_interrupt_steps: int
     had_protective_stop: bool
     had_controller_disconnect: bool
+    had_human_interrupt: bool
 
 
 @dataclass
@@ -352,6 +355,7 @@ class PolicyRunner:
         delta_protective_stop_steps = 0
         delta_controller_disconnect_steps = 0
         delta_readiness_fail_steps = 0
+        delta_human_interrupt_steps = 0
         delta_transition_hold_steps_at_start = transition_hold.steps_total
         delta_interval_primitive_env_steps = 0
         delta_interval_primitive_horizontal_env_steps = 0
@@ -544,6 +548,9 @@ class PolicyRunner:
             if stop_state.controller_disconnected:
                 delta_controller_disconnect_steps += 1
                 self._stop_flags.had_controller_disconnect = True
+            if stop_state.human_interrupt:
+                delta_human_interrupt_steps += 1
+                self._stop_flags.had_human_interrupt = True
             if readiness_fail_stop_now:
                 self._stop_flags.had_readiness_fail_estop = True
             if stop_now:
@@ -766,8 +773,10 @@ class PolicyRunner:
             delta_interval_target_position_directional_env_steps=int(
                 delta_interval_target_position_directional_env_steps
             ),
+            delta_human_interrupt_steps=int(delta_human_interrupt_steps),
             had_protective_stop=self._stop_flags.had_protective_stop,
             had_controller_disconnect=self._stop_flags.had_controller_disconnect,
+            had_human_interrupt=self._stop_flags.had_human_interrupt,
         )
 
         # The trajectory and rows are already truncated; orchestrator pushes

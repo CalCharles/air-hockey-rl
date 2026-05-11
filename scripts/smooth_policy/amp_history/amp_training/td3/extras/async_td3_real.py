@@ -88,7 +88,21 @@ from scripts.smooth_policy.amp_history.amp_training.td3.helper.real_transition_h
     TransitionHoldState,
     normalize_transition_last_action_mode,
 )
+from scripts.smooth_policy.amp_history.amp_training.td3.helper.human_interrupt import (
+    HumanInterruptListener,
+    human_interrupt_state,
+)
 from scripts.real.rollout_reset_policy_real import ResetPolicyFSM
+from scripts.real.rollout_reset_policy_hybrid import (
+    ResetPolicyHybridFSM,
+    build_juggle_actor,
+)
+
+# Single-symbol toggle for the reset FSM. The legacy programmatic-strike
+# ``ResetPolicyFSM`` is the canonical default; the policy-handoff hybrid is
+# kept available for opt-in but is currently less reliable in practice. To
+# enable the hybrid path, change this to ``ResetPolicyHybridFSM``.
+_DEFAULT_RESET_FSM_CLS = ResetPolicyFSM
 
 
 # Minimum timesteps required for a *policy* episode to be retained by
@@ -451,6 +465,8 @@ def _periodic_log(
     stats["estop_episodes"] = float(counters["protective_stop_episodes"])
     stats["controller_disconnect_steps"] = float(counters["controller_disconnect_steps"])
     stats["controller_disconnect_episodes"] = float(counters["controller_disconnect_episodes"])
+    stats["human_interrupt_steps"] = float(counters["human_interrupt_steps"])
+    stats["human_interrupt_episodes"] = float(counters["human_interrupt_episodes"])
     stats["reset_fsm_steps"] = float(counters["reset_fsm_steps_total"])
     stats["transition_hold_steps"] = float(transition_hold.steps_total)
     stats["primitive_chance"] = float(primitive_selector.chance)
@@ -525,6 +541,16 @@ def _periodic_log(
     writer.add_scalar(
         "safety/controller_disconnect_episodes",
         float(counters["controller_disconnect_episodes"]),
+        total_steps,
+    )
+    writer.add_scalar(
+        "operator/human_interrupt_steps",
+        float(counters["human_interrupt_steps"]),
+        total_steps,
+    )
+    writer.add_scalar(
+        "operator/human_interrupt_episodes",
+        float(counters["human_interrupt_episodes"]),
         total_steps,
     )
     writer.add_scalar(
@@ -706,6 +732,7 @@ def _print_episode_progress(
         f"protective_stop={int(result.terminal.protective_stop)} "
         f"controller_disconnected={int(result.terminal.controller_disconnect)} "
         f"readiness_fail_estop={int(result.terminal.readiness_fail_estop)} "
+        f"human_interrupt={int(result.terminal.stop_flags.had_human_interrupt)} "
         f"end_reasons={result.terminal.episode_end_reasons}"
     )
     print(
@@ -858,16 +885,42 @@ def collector_process_modular(
             f"(existing data found in {args.reset_artifact_dir})"
         )
     reset_rng = np.random.default_rng(args.seed)
+    if _DEFAULT_RESET_FSM_CLS is ResetPolicyHybridFSM:
+        # Build the frozen juggle actor once on the collector process and
+        # close over it in the FSM factory. The ``ResetRunner`` factory
+        # contract is ``(env, rng) -> fsm``, so any extra dependencies (the
+        # actor + device + use-last-action flag) ride in via the closure.
+        juggle_actor, juggle_device, juggle_uses_last_action = build_juggle_actor(device)
+
+        def _hybrid_reset_fsm_factory(env, rng):
+            return ResetPolicyHybridFSM(
+                env,
+                rng,
+                juggle_actor=juggle_actor,
+                juggle_device=juggle_device,
+                use_last_action_in_policy_state=juggle_uses_last_action,
+            )
+
+        reset_fsm_factory = _hybrid_reset_fsm_factory
+    else:
+        reset_fsm_factory = _DEFAULT_RESET_FSM_CLS
     reset_runner = ResetRunner(
         env,
         device=device,
         reset_rng=reset_rng,
-        reset_policy_fsm_cls=ResetPolicyFSM,
+        reset_policy_fsm_cls=reset_fsm_factory,
         build_split_episode_row=_build_split_episode_row,
         latest_camera_frame=_latest_camera_frame,
         extract_primitive_state_tensors=_extract_primitive_state_tensors,
     )
     pending_reset_artifact = None
+
+    # ----------------------------- Human interrupt listener ---------------
+    # Start before the startup reset so the operator can interrupt during
+    # init / first FSM run too. Always-on; stopped after the main loop.
+    # See helper/human_interrupt.py.
+    human_interrupt_listener = HumanInterruptListener()
+    human_interrupt_listener.start()
 
     # ----------------------------- Startup reset --------------------------
     startup_result = reset_runner.run(
@@ -889,6 +942,8 @@ def collector_process_modular(
         "readiness_fail_steps_total": 0,
         "readiness_fail_estop_episodes": 0,
         "readiness_fail_estop_dropped_steps_total": 0,
+        "human_interrupt_episodes": 0,
+        "human_interrupt_steps": 0,
         "episodes_saved": 0,
         "episodes_removed_short": 0,
         "episodes_removed_invalid": 0,
@@ -1087,12 +1142,15 @@ def collector_process_modular(
         counters["readiness_fail_estop_dropped_steps_total"] += (
             result.metrics.delta_readiness_fail_estop_dropped_steps
         )
+        counters["human_interrupt_steps"] += result.metrics.delta_human_interrupt_steps
         if result.metrics.had_protective_stop:
             counters["protective_stop_episodes"] += 1
         if result.metrics.had_controller_disconnect:
             counters["controller_disconnect_episodes"] += 1
         if result.terminal.readiness_fail_estop:
             counters["readiness_fail_estop_episodes"] += 1
+        if result.metrics.had_human_interrupt:
+            counters["human_interrupt_episodes"] += 1
 
         # 2. Save artifacts + flush pending reset FIRST so we know whether
         # the trajectory passed validation. Trajectories rejected by
@@ -1330,6 +1388,7 @@ def collector_process_modular(
                 "episode_estop_flag": float(result.metrics.episode_estop_flag),
                 "had_protective_stop": bool(result.metrics.had_protective_stop),
                 "had_controller_disconnect": bool(result.metrics.had_controller_disconnect),
+                "had_human_interrupt": bool(result.metrics.had_human_interrupt),
                 "readiness_fail_estop": bool(result.terminal.readiness_fail_estop),
                 "episode_end_type": result.terminal.episode_end_type,
                 "episode_end_reason": result.terminal.episode_end_reason,
@@ -1348,21 +1407,34 @@ def collector_process_modular(
         )
 
         # 4. Pick reset kind and run reset to completion.
+        # OR in the live singleton state so a human_interrupt that lands
+        # *during* bookkeeping (artifact save / replay push / learner step
+        # / JSONL append) — i.e., after the previous episode's terminal
+        # info was frozen — still routes to HARD_WITH_FSM. This guarantees
+        # the operator gets a safe-pose handover (via _hard_reset_with_pause)
+        # regardless of when between-episodes the press lands.
+        live_human_interrupt = bool(human_interrupt_state.is_active())
+        had_human_interrupt_now = bool(
+            result.terminal.stop_flags.had_human_interrupt or live_human_interrupt
+        )
+        had_stop_now = bool(result.terminal.stop_flags.had_stop or live_human_interrupt)
         kind = pick_reset_kind(
             total_episodes,
             StopFlags(
-                had_stop=result.terminal.stop_flags.had_stop,
+                had_stop=had_stop_now,
                 had_protective_stop=result.terminal.stop_flags.had_protective_stop,
                 had_controller_disconnect=result.terminal.stop_flags.had_controller_disconnect,
+                had_human_interrupt=had_human_interrupt_now,
             ),
         )
         reset_result = reset_runner.run(
             kind=kind,
             artifact_episode_id=next_reset_file_id,
             episode_had_stop_flags=StopFlags(
-                had_stop=result.terminal.stop_flags.had_stop,
+                had_stop=had_stop_now,
                 had_protective_stop=result.terminal.stop_flags.had_protective_stop,
                 had_controller_disconnect=result.terminal.stop_flags.had_controller_disconnect,
+                had_human_interrupt=had_human_interrupt_now,
             ),
             episode_end_wall_time=episode_end_wall_time,
             pending_reset_artifact=pending_reset_artifact,
@@ -1413,6 +1485,7 @@ def collector_process_modular(
                 episode_return_success_threshold=episode_return_success_threshold,
             )
 
+    human_interrupt_listener.stop()
     env.close()
     writer.close()
 

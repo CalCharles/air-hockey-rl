@@ -11,11 +11,14 @@ import numpy as np
 
 from airhockey import AirHockeyEnv
 
+from .human_interrupt import human_interrupt_state
+
 
 @dataclass(frozen=True)
 class StopEventState:
     protective_stop: bool = False
     controller_disconnected: bool = False
+    human_interrupt: bool = False
     active: bool = False
     reason: str = "none"
     episode_end_type: str | None = None
@@ -28,8 +31,21 @@ def _build_stop_event_state(
     protective_stop: bool = False,
     controller_connected: bool | None = None,
     legacy_estop_signal: bool = False,
+    human_interrupt: bool = False,
+    human_interrupt_reason: str = "human_interrupt",
 ) -> StopEventState:
     controller_disconnected = bool(controller_connected is False)
+    if bool(human_interrupt):
+        return StopEventState(
+            protective_stop=False,
+            controller_disconnected=controller_disconnected,
+            human_interrupt=True,
+            active=True,
+            reason=str(human_interrupt_reason),
+            episode_end_type="human_interrupt",
+            episode_end_reason=str(human_interrupt_reason),
+            artifact_label="human_interrupt",
+        )
     if bool(protective_stop):
         return StopEventState(
             protective_stop=True,
@@ -88,6 +104,15 @@ def _classify_stop_event(
     step_info: dict | None = None,
 ) -> StopEventState:
     """Classify collector stop conditions without conflating them with readiness summaries."""
+    # Operator interrupt short-circuit. The same flag is checked by both the
+    # PolicyRunner per-step loop (truncates the episode) and the ResetRunner
+    # FSM-wait loop (blocks until the operator clears it). Treated as a
+    # distinct category — never lumped into protective_stop.
+    if human_interrupt_state.is_active():
+        return _build_stop_event_state(
+            human_interrupt=True,
+            human_interrupt_reason=human_interrupt_state.reason(),
+        )
     if isinstance(step_info, dict):
         protective_stop_present = "protective_stop" in step_info
         controller_connected_present = "controller_connected" in step_info
