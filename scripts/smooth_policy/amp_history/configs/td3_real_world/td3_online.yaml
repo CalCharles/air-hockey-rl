@@ -99,7 +99,7 @@ jerk_at_one: 8.0
 jerk_at_zero: 20.0
 
 # Paths
-config: "scripts/smooth_policy/amp_history/configs/new_juggle/pid_noise_constant_upper_half_custom_sim_params.yaml"
+config: "configs/real_configs/rollout_td3_config.yaml"
 args_file: null
 model_path: null
 log_parent_dir: "runs/td3_training/pid/standard"
