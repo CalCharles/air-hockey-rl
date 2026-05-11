@@ -118,20 +118,9 @@ Optional datasets (timing breakdown, stop_flags) are included when all rows cont
 
 - Box2D projection: `RealTrajectoryRenderer.render_frame` ([`visualize_real_trajectory.py`](../../../../scripts/visualization/visualize_real_trajectory.py))
 - Real-world camera frames: `train_img` dataset stored in the split HDF5
-- Side-by-side stitcher: `_side_by_side` ([`replay_real_in_sim.py`](../../../../scripts/visualization/replay_real_in_sim.py))
+- Side-by-side stitching loop: `_create_joint_trajectory_gif` inside [`episode_artifacts.py`](../../../../scripts/td3/helper/episode_artifacts.py).
 
-The actual stitching loop lives in `_create_joint_trajectory_gif` inside [`episode_artifacts.py`](../../../../scripts/td3/helper/episode_artifacts.py). When `train_img` is absent, the function falls back to the Box2D-only `create_trajectory_gif` path.
-
-#### Batch-rendering side-by-side GIFs from existing reset HDF5s
-
-To render side-by-side Box2D + camera GIFs from a directory of already-saved **reset** trajectory HDF5s (e.g., `…/reset_hdf5/`), use [`trim_reset_hdf5_post_first_upward.py`](../../../../scripts/td3/extras/trim_reset_hdf5_post_first_upward.py). It trims each file at the final first-upward-motion completion *and* renders a side-by-side GIF (default on, fps=20) by calling the same `generate_episode_gif` path documented above:
-
-```bash
-python scripts/td3/extras/trim_reset_hdf5_post_first_upward.py \
-  <input_reset_hdf5_dir> --output-dir <out_dir> --recursive
-```
-
-Outputs land at `<out_dir>/gifs/<trajectory_stem>/trajectory_visualization.gif`. Use `--no-render-gif` if you only want the trimmed HDF5s, and `--gif-fps` / `--gif-subsample` / `--gif-max-frames` to tune playback. Requires the conda env that has `torch`, `Box2D`, `h5py` (e.g., `air`).
+When `train_img` is absent, the function falls back to the Box2D-only `create_trajectory_gif` path.
 
 ### Camera video
 

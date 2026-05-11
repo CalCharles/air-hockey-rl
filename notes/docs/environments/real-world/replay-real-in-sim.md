@@ -19,7 +19,7 @@ Key flags:
 | Flag | Default | Purpose |
 |------|---------|---------|
 | `--episode` | `real_runs/online_run/episode_hdf5/100-200/trajectory_data451.hdf5` | Real HDF5 episode (split schema) |
-| `--config` | `…/new_juggle/pid_noise_constant_upper_half_custom_sim_params.yaml` | Sim YAML |
+| `--config` | `…/new_juggle/sysid_best_params_hist2.yaml` | Sim YAML |
 | `--output` | `./sim_vs_real_<stem>.gif` | GIF destination |
 | `--enable-noise` | off | Use config noise/delay/termination verbatim; default is clean deterministic replay |
 | `--start-frame` | `0` | Index in the real episode where the comparison begins. Sim is reset to this frame's state and the replay starts here (use to skip episode warm-up). |

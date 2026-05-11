@@ -1,129 +1,100 @@
-# Air Hockey Reinforcement Learning Environment
+# Air Hockey RL
 
-This contains an air hockey simulation environment powered by Box2D. It is fast (C++ back-end), capable of self-play, 1v1 play, and easy goal-conditioned reinforcement learning, resulting in a rich testbed for various algorithms.
+Reinforcement learning for a physical air-hockey robot (UR5 arm + paddle). The agent learns to juggle a puck in a Box2D simulator, then transfers the policy to the real robot. Active algorithm: TD3 with dual-head critics and transformed Bellman targets.
 
+Project context for agents and humans: [`CLAUDE.md`](CLAUDE.md). Formal documentation: [`notes/docs/index.md`](notes/docs/index.md).
 
-Policy Trained for Upward Puck Velocity |  Goal-Conditioned RL
-:-------------------------:|:-------------------------:
-![](assets/puck_vel.gif)  |  ![](assets/puck_goal_pos.gif)
+## Repo layout
+
+```
+airhockey/             — Box2D + real-UR5 env package; tasks registered in __init__.py
+scripts/
+├── td3/               — TD3 training, helpers, real-world entrypoints, tests
+├── real/              — real-robot rollout / teleop / calibration helpers
+├── visualization/     — trajectory rendering / teleop-segment helpers
+├── analysis/          — standalone analysis tools (occlusion patterns, etc.)
+└── utils.py           — small shared helpers
+configs/               — all YAMLs
+├── new_juggle/        — sim env configs
+├── td3/               — TD3 training args
+├── td3_real_world/    — real-robot residual fine-tune args
+└── real_configs/      — real-robot rollout / mouse-teleop configs
+latest_models/canonical/ — sim-pretrained source policies
+latest_models/ablations/ — CoRL-2026 deployment-ready ablation checkpoints
+notes/docs/            — formal docs
+notes/scratch/         — experiment log files
+paper/                 — CoRL 2026 LaTeX
+```
 
 ## Installation
 
-### Using uv
 ```bash
-# Install uv if you haven't already
+# Install uv if you don't have it
 curl -LsSf https://astral.sh/uv/install.sh | sh
-```
 
-#### Option A: sync with lock file
-```bash
-# Create virtual environment and sync dependencies from lock file
-uv sync
-# For training dependencies
+# Create the venv and install deps (base + training)
 uv sync --extra train
 ```
 
-#### Option B: Install directly
+`pyproject.toml` declares the dependencies; `uv.lock` pins versions.
+
+## Quickstart
+
+### Train a TD3 policy in sim
+
 ```bash
-# create uv virtual environment and activate
-uv venv
-source .venv/bin/activate
-
-# Install the package in development mode
-uv pip install -e .
-
-# Or if you need training too:
-uv pip install -e ".[train]"
+.venv/bin/python -m scripts.td3.td3_training \
+  --args-file configs/td3/td3_recommended_top50_hist2.yaml \
+  --run-name my_run \
+  --num-envs 1
 ```
 
-### Using pip (legacy)
-```bash
-# Install with training dependencies
-pip install -e .[train]
+The trainer is single-env-collection only — pass `--num-envs 1`. Output lands under `runs/td3/<run-name>/` (gitignored).
 
-# Or just the base package
-pip install -e .
+See [`notes/docs/training/td3-configs.md`](notes/docs/training/td3-configs.md) for what's in the recommended config, and [`notes/docs/training/architecture.md`](notes/docs/training/architecture.md) for the code layout.
+
+### Residual sim2sim fine-tune
+
+```bash
+.venv/bin/python -m scripts.td3.td3_training \
+  --args-file configs/td3/sim2sim/warp075_p30_residual/phaseC_actor2_1M.yaml \
+  --num-envs 1
 ```
 
+Set `config:`, `model_path:`, `log_parent_dir:`, `run_name:`, and `seed:` in the recipe YAML before launching. See [`notes/docs/training/residual-rl-recipe.md`](notes/docs/training/residual-rl-recipe.md) for the recipe selection guide.
 
-## Other
+### Real-robot residual training
 
-- Project notes and formal docs (architecture, Cursor rule mirrors): [`notes/docs/index.md`](notes/docs/index.md)
+See [`notes/docs/recent-commands.md`](notes/docs/recent-commands.md) for the canonical `async_td3_real` invocation, and [`notes/docs/environments/real-world/overview.md`](notes/docs/environments/real-world/overview.md) for the real-robot stack.
 
-#### Having this issue?
-AttributeError: 'MjRenderContextOffscreen' object has no attribute 'con'
-`echo 'export MUJOCO_GL="glx"' >> ~/.bashrc`
-`source ~/.bashrc`
+Boot the UR5 through the touchpad (power → external_control.urp) before launching any real-robot script. Hold `q` to terminate trajectories.
 
-## How to Run
-Most of the files use a configuration file (--cfg cmd argument), but is defaulted to one from `configs/`. Please see there to tune parameters for various scripts.
-#### What the files do
-- `airhockey2d.py`: base gym environment for air hockey
-- `render.py`: renders the air hockey environment
-- `train.py`: trains an agent via stable-baselines3 PPO.
+### Real-robot frozen-policy eval
 
-Legacy:
-- `demonstrate.py`: user plays a self-play air hockey environment using keyboard
-- `play_trained_agent`: run after training, you can play against the trained agent
-
-## Running on the Physical UR5
-- Boot up the robot through the touchpad
-    - Press physical power button
-    - Press red power on touchpad in bottom left corner
-    - power on the robot with touch button in the middle
-    - open program "external_control.urp"
-- run desired script in scripts/real
-    - ex: python scripts/real/teleoperate.py --cfg configs/baseline_configs/puck_vel_real.yaml
-- When prompted in the terminal, run the program using the play button in the bottom middle of the touchpad
-- follow prompts on the terminal. Hold 'q' to end trajectories
-
-### TD3 Real-World Commands
-
-All commands below use `async_td3_real`, which handles collection, resets, and (optionally) training. Two YAML files are required:
-
-- `--train-args <train_run>/args.yaml` — the **training** run's args.yaml. Supplies architecture only (`agent_hidden_layer_size`, `agent_num_hidden_layers`, `q_hidden_layer_size`, `q_num_hidden_layers`, `action_scale`, `use_last_action_in_policy_state`) so the rebuilt actor/critic layers match the saved checkpoint exactly. Architecture is not CLI-overridable.
-- `--args-file <td3_online.yaml>` — **online-behavior** defaults (replay, exploration, reward weights, checkpointing, etc.). CLI flags override values from this file. Legacy alias fields (`agent_hidden_size`, `q_hidden_size`, `learning_starts`, `device`) are no longer remapped — use the canonical names. Architecture fields in this file are ignored.
-
-#### Eval only (run policy, no training)
 ```bash
-python -m scripts.td3.extras.async_td3_real \
-  --config configs/real_configs/rollout_td3_config.yaml \
-  --model-path ex_model/new_td3_model/checkpoint_325000/training_state.pth \
-  --train-args ex_model/new_td3_model/checkpoint_325000/args.yaml \
-  --args-file configs/td3_real_world/td3_online.yaml \
+python -m scripts.td3.extras.async_td3_real_eval \
+  --config configs/real_configs/rollout_config_residual.yaml \
+  --args-file configs/td3_real_world/td3_residual.yaml \
+  --model-path <path_to_training_state.pth> \
+  --train-args <path_to_args.yaml> \
   --collector-device cpu \
   --learner-device cuda:0 \
-  --data-root-dir real_runs/online_run \
-  --min-replay-size-before-learning 999999999 \
-  --no-enable-periodic-checkpointing \
-  --no-load-replay-from-checkpoint \
-  --warm-start-hdf5-dirs
+  --data-root-dir real_runs/eval_run
 ```
 
-`--data-root-dir` is the single root for collected per-episode artifacts. The script creates `<data_root_dir>/data_<YYYYMMDD-HHMMSS>/{episode_hdf5,reset_hdf5,episode_gifs,episode_camera_videos}/` at startup.
+### Human-baseline teleop eval (user study)
 
-#### Online training from a pretrained checkpoint
 ```bash
-python -m scripts.td3.extras.async_td3_real \
-  --config configs/real_configs/rollout_td3_config.yaml \
-  --model-path ex_model/td3_model/checkpoint_1515000/training_state.pth \
-  --train-args ex_model/td3_model/checkpoint_1515000/args.yaml \
-  --args-file configs/td3_real_world/td3_online.yaml \
-  --collector-device cpu \
-  --learner-device cuda:0 \
-  --data-root-dir real_runs/online_run
+python -m scripts.td3.extras.async_td3_real_teleop_eval \
+  --config configs/real_configs/mouse_config.yaml \
+  --args-file configs/td3_real_world/td3_residual.yaml \
+  --data-root-dir real_runs/teleop_eval
 ```
 
-#### Resume training from a previous online run
+See [`notes/docs/training/teleop-eval-baseline.md`](notes/docs/training/teleop-eval-baseline.md) for protocol.
+
+## Testing
+
 ```bash
-python -m scripts.td3.extras.async_td3_real \
-  --config configs/real_configs/rollout_td3_config.yaml \
-  --model-path real_runs/checkpoints/default/checkpoint_step_100000/training_state.pth \
-  --train-args real_runs/checkpoints/default/checkpoint_step_100000/args.yaml \
-  --args-file configs/td3_real_world/td3_online.yaml \
-  --collector-device cpu \
-  --learner-device cuda:0 \
-  --data-root-dir real_runs/online_run \
-  --load-replay-from-checkpoint \
-  --include-non-vital-training-state-fields
+.venv/bin/python -m pytest scripts/td3/tests/
 ```

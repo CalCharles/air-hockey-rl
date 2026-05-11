@@ -103,7 +103,7 @@ This is the canonical procedure for resuming an interrupted real-world TD3 run w
 ```bash
 python scripts/td3/extras/async_td3_real.py \
     --train-args <previous-run>/args.yaml \
-    --args-file configs/td3_real_world/td3_online.yaml \
+    --args-file configs/td3_real_world/td3_residual.yaml \
     --model-path <previous-run>/checkpoint_<TAG>/training_state.pth \
     --load-replay-from-checkpoint \
     --replay-source-priority checkpoint_only

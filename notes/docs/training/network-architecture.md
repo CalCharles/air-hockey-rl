@@ -65,7 +65,7 @@ cat(obs, action) -> ResidualMLPTrunk -> task_head (Linear -> scalar)
 
 **Code:** [`scripts/td3/encoder.py`](../../../scripts/td3/encoder.py)
 
-Compact MLP (Dense -> Tanh layers) that maps environment variable vectors to a latent conditioning code. Used by the RMA adaptation stack (`amp_training/rma/`) for domain randomization.
+Compact MLP (Dense -> Tanh layers) that maps environment variable vectors to a latent conditioning code. Present in the codebase for domain-randomization experiments; not used by the canonical TD3 training path.
 
 | Parameter | Default | Role |
 |-----------|---------|------|

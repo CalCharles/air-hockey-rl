@@ -41,7 +41,7 @@ A reader picking which YAML to use should start with the doc closest to their go
 
 | Doc | Findings |
 |-----|----------|
-| [`td3-ablations-updates-and-depth.md`](td3-ablations-updates-and-depth.md) | Update count and network depth — the basis for `td3_recommended.yaml` defaults |
+| [`td3-ablations-updates-and-depth.md`](td3-ablations-updates-and-depth.md) | Update count and network depth — the basis for `td3_recommended_top50_hist2.yaml` defaults |
 | [`td3-exploration-ablations.md`](td3-exploration-ablations.md) | Warm-start and bootstrap-forcing exploration variants |
 
 ## Other
@@ -49,4 +49,3 @@ A reader picking which YAML to use should start with the doc closest to their go
 | Doc | Use |
 |-----|-----|
 | [`box2d-env-usage.md`](box2d-env-usage.md) | External-user guide: bring your own RL algo, use the Box2D env directly |
-| [`ppo-amp-discriminator.md`](ppo-amp-discriminator.md) | Legacy PPO+AMP discriminator details (not active training path) |

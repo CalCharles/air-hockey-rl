@@ -1,86 +1,84 @@
-# Recent Training Commands
+# Canonical training commands
 
-Commands used recently for launching training runs. Add new entries at the top.
+Quick reference for the current canonical workflows. The trainer accepts CLI overrides for any field in the args YAML; the snippets below show the minimum required flags.
 
----
+## Sim TD3 training
 
-## 2026-04-20 — Real robot eval-only run of `latest_models/canonical/hist3_motion0`
+```bash
+.venv/bin/python -m scripts.td3.td3_training \
+  --args-file configs/td3/td3_recommended_top50_hist2.yaml \
+  --run-name my_run \
+  --num-envs 1
+```
 
-Runs the hist3 motion-collision-ablation checkpoint on hardware in eval-only mode (no gradient updates, no replay warm-start, no checkpoint writes). Exercises the new two-args-file convention introduced by the rollout refactor: `--train-args` for architecture, `--args-file` for online-behavior defaults.
+`--num-envs 1` is required (the trainer is single-env-collection only).
 
-Two prerequisites over the stock config:
+## Sim2sim residual fine-tune
 
-1. **Match training `hist_len`.** hist3_motion0 was trained with `hist_len: 3` (see its `sysid_best_params_hist3.yaml`, now under `configs/new_juggle/legacy/` — hist3/4/5 sim variants were moved there once `hist2` became the active default). `configs/real_configs/rollout_td3_config.yaml` doesn't set `hist_len` and the real env defaults to 2, giving a wrong obs dim → state-dict load failure. Make a hist3 variant of the rollout config once:
+```bash
+.venv/bin/python -m scripts.td3.td3_training \
+  --args-file configs/td3/sim2sim/warp075_p30_residual/phaseC_actor2_1M.yaml \
+  --num-envs 1
+```
 
-   ```bash
-   cp configs/real_configs/rollout_td3_config.yaml configs/real_configs/rollout_td3_config_hist3.yaml
-   # then add the following single line under `simulator_params:` in the copy:
-   #     hist_len: 3
-   ```
+Before launching, edit the recipe YAML's `config:`, `model_path:`, `log_parent_dir:`, `run_name:`, and `seed:`. See [`training/residual-rl-recipe.md`](training/residual-rl-recipe.md) for recipe selection.
 
-2. **Use the training run's args.yaml as `--train-args`.** `latest_models/canonical/hist3_motion0/args.yaml` encodes the architecture (`agent_hidden_layer_size: 64`, `agent_num_hidden_layers: 2`, `action_scale: 1.0`, `use_last_action_in_policy_state: true`, Q-head sizes). `--args-file` still points at the online-behavior YAML.
+## Real-robot residual fine-tune
 
 ```bash
 python -m scripts.td3.extras.async_td3_real \
-  --config configs/real_configs/rollout_td3_config_hist3.yaml \
-  --model-path latest_models/canonical/hist3_motion0/training_state.pth \
-  --train-args latest_models/canonical/hist3_motion0/args.yaml \
-  --args-file configs/td3_real_world/td3_online.yaml \
+  --config configs/real_configs/rollout_config_residual.yaml \
+  --args-file configs/td3_real_world/td3_residual.yaml \
+  --model-path <path_to_training_state.pth> \
+  --train-args <path_to_args.yaml> \
   --collector-device cpu \
   --learner-device cuda:0 \
-  --data-root-dir real_runs/online_run \
-  --min-replay-size-before-learning 999999999 \
-  --no-enable-periodic-checkpointing \
-  --no-load-replay-from-checkpoint \
-  --warm-start-hdf5-dirs
+  --data-root-dir real_runs/online_run
 ```
 
-`--data-root-dir` replaces the older `--episode-artifact-dir`/`--episode-gif-dir`/`--reset-artifact-dir` triple. The script writes per-run data to `<data_root_dir>/data_<YYYYMMDD-HHMMSS>/{episode_hdf5,reset_hdf5,episode_gifs,episode_camera_videos}/` — for this command that resolves to `real_runs/online_run/data_<timestamp>/...`.
+`--data-root-dir` is the single root for collected per-episode artifacts. The script creates `<data_root_dir>/data_<YYYYMMDD-HHMMSS>/{episode_hdf5,reset_hdf5,episode_gifs,episode_camera_videos}/` at startup.
 
-Expect `[args_file] ignored unsupported keys: ...` to list td3_training-only fields from `td3_online.yaml` that aren't part of the async `Args` schema — this is the canonical-names-only behavior from the refactor and is expected. The `[train_args]` line above it confirms the architecture that got wired into the actor/critic.
+## Real-robot frozen-policy eval
 
-For other checkpoints, swap the three `latest_models/canonical/hist3_motion0/...` paths (and the matching hist_len in the rollout config if the checkpoint was trained with a different history length).
+Same as the residual command but with the eval entrypoint and no gradient updates:
 
----
+```bash
+python -m scripts.td3.extras.async_td3_real_eval \
+  --config configs/real_configs/rollout_config_residual.yaml \
+  --args-file configs/td3_real_world/td3_residual.yaml \
+  --model-path <path_to_training_state.pth> \
+  --train-args <path_to_args.yaml> \
+  --collector-device cpu \
+  --learner-device cuda:0 \
+  --data-root-dir real_runs/eval_run
+```
 
-## 2026-04-04 — Real robot online learning (no learning, data collection only)
+Emits `eval_summary.json` + `eval_per_episode.jsonl`.
 
-Runs `async_td3_real` on the physical robot in data-collection-only mode (`--min-replay-size-before-learning 999999999` effectively disables gradient updates). Artifacts (HDF5 episodes, GIFs, reset data, camera videos) are saved under `<data-root-dir>/data_<timestamp>/` (here, beneath `real_runs/online_run/`).
+## Human-baseline teleop eval (user study)
 
-> For the **collect + train** and **resume training** variants, see [td3-async-replay → Launch commands](environments/real-world/td3-async-replay.md#launch-commands).
+```bash
+python -m scripts.td3.extras.async_td3_real_teleop_eval \
+  --config configs/real_configs/mouse_config.yaml \
+  --args-file configs/td3_real_world/td3_residual.yaml \
+  --data-root-dir real_runs/teleop_eval
+```
 
-**Heavy model (checkpoint 100k) — no latency profiling:**
+Mouse-controlled paddle with the same task / termination / juggle counter / output schema as the frozen-policy eval. See [`training/teleop-eval-baseline.md`](training/teleop-eval-baseline.md).
+
+## Resume a real-world run from a checkpoint
 
 ```bash
 python -m scripts.td3.extras.async_td3_real \
-  --config configs/real_configs/rollout_td3_config.yaml \
-  --model-path ex_model/heavy_td3_model/checkpoint_100000/training_state.pth \
-  --train-args ex_model/heavy_td3_model/checkpoint_100000/args.yaml \
-  --args-file configs/td3_real_world/td3_online.yaml \
+  --config configs/real_configs/rollout_config_residual.yaml \
+  --args-file configs/td3_real_world/td3_residual.yaml \
+  --model-path real_runs/checkpoints/default/checkpoint_step_<step>/training_state.pth \
+  --train-args real_runs/checkpoints/default/checkpoint_step_<step>/args.yaml \
   --collector-device cpu \
   --learner-device cuda:0 \
   --data-root-dir real_runs/online_run \
-  --min-replay-size-before-learning 999999999 \
-  --no-enable-periodic-checkpointing \
-  --no-load-replay-from-checkpoint
+  --load-replay-from-checkpoint \
+  --include-non-vital-training-state-fields
 ```
 
-**New model (checkpoint 325k) — with latency profiling:**
-
-Same as above but uses the newer model and enables per-step latency measurement, writing profiles to `real_runs/online_run/latency/`.
-
-```bash
-python -m scripts.td3.extras.async_td3_real \
-  --config configs/real_configs/rollout_td3_config.yaml \
-  --model-path ex_model/new_td3_model/checkpoint_325000/training_state.pth \
-  --train-args ex_model/new_td3_model/checkpoint_325000/args.yaml \
-  --args-file configs/td3_real_world/td3_online.yaml \
-  --collector-device cpu \
-  --learner-device cuda:0 \
-  --data-root-dir real_runs/online_run \
-  --enable-latency-profiling \
-  --latency-profile-output-dir real_runs/online_run/latency \
-  --min-replay-size-before-learning 999999999 \
-  --no-enable-periodic-checkpointing \
-  --no-load-replay-from-checkpoint
-```
+`include_non_vital_training_state_fields: true` is needed to preserve RNG / optimizer state across the resume.

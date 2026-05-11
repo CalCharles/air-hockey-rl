@@ -65,7 +65,7 @@ Current code stores **only** `dones`, with the **critic** semantics above (same 
 All three variants invoke the same entrypoint and require two YAML files:
 
 - `--train-args <train_run>/args.yaml` — training-run args.yaml. Supplies architecture only (`agent_hidden_layer_size`, `agent_num_hidden_layers`, `q_hidden_layer_size`, `q_num_hidden_layers`, `action_scale`, `use_last_action_in_policy_state`). Not CLI-overridable.
-- `--args-file` — online-behavior defaults (typically [`td3_online.yaml`](../../../../configs/td3_real_world/td3_online.yaml)). CLI flags override. Only canonical field names are accepted (legacy aliases `agent_hidden_size`, `q_hidden_size`, `learning_starts`, `device` are no longer remapped). Architecture fields in this file are ignored.
+- `--args-file` — online-behavior defaults (typically [`td3_residual.yaml`](../../../../configs/td3_real_world/td3_residual.yaml)). CLI flags override. Only canonical field names are accepted (legacy aliases `agent_hidden_size`, `q_hidden_size`, `learning_starts`, `device` are no longer remapped). Architecture fields in this file are ignored.
 
 Mirrored in the top-level [README](../../../../README.md) under "TD3 Real-World Commands".
 
@@ -76,7 +76,7 @@ python -m scripts.td3.extras.async_td3_real \
   --config configs/real_configs/rollout_td3_config.yaml \
   --model-path ex_model/new_td3_model/checkpoint_325000/training_state.pth \
   --train-args ex_model/new_td3_model/checkpoint_325000/args.yaml \
-  --args-file configs/td3_real_world/td3_online.yaml \
+  --args-file configs/td3_real_world/td3_residual.yaml \
   --collector-device cpu \
   --learner-device cuda:0 \
   --data-root-dir real_runs/online_run \
@@ -97,13 +97,13 @@ python -m scripts.td3.extras.async_td3_real \
   --config configs/real_configs/rollout_td3_config.yaml \
   --model-path ex_model/td3_model/checkpoint_1515000/training_state.pth \
   --train-args ex_model/td3_model/checkpoint_1515000/args.yaml \
-  --args-file configs/td3_real_world/td3_online.yaml \
+  --args-file configs/td3_real_world/td3_residual.yaml \
   --collector-device cpu \
   --learner-device cuda:0 \
   --data-root-dir real_runs/online_run
 ```
 
-Learning behaviour comes from `td3_online.yaml`: `learning_starts: 0`, `q_updates: 20`, low LRs (`policy_lr: 5e-5`, `q_lr: 1e-4`), warm-start replay from `real_runs/warm_start_trajectories`, periodic checkpointing every 20 successful episodes. See [td3-real-world-configs](../../training/td3-real-world-configs.md).
+Learning behaviour comes from `td3_residual.yaml`: `learning_starts: 0`, `q_updates: 20`, low LRs (`policy_lr: 5e-5`, `q_lr: 1e-4`), warm-start replay from `real_runs/warm_start_trajectories`, periodic checkpointing every 20 successful episodes. See [td3-real-world-configs](../../training/td3-real-world-configs.md).
 
 ### Resume training from a previous online run
 
@@ -112,7 +112,7 @@ python -m scripts.td3.extras.async_td3_real \
   --config configs/real_configs/rollout_td3_config.yaml \
   --model-path real_runs/checkpoints/default/checkpoint_step_100000/training_state.pth \
   --train-args real_runs/checkpoints/default/checkpoint_step_100000/args.yaml \
-  --args-file configs/td3_real_world/td3_online.yaml \
+  --args-file configs/td3_real_world/td3_residual.yaml \
   --collector-device cpu \
   --learner-device cuda:0 \
   --data-root-dir real_runs/online_run \
@@ -126,7 +126,5 @@ python -m scripts.td3.extras.async_td3_real \
 
 Two wrapper scripts under `td3/extras/` launch `td3_training.py` with scheduled hyperparameter changes (sim-side, despite the name):
 
-- [`run_td3_motion_weight_staged.py`](../../../../scripts/td3/extras/run_td3_motion_weight_staged.py) -- schedules motion reward weight changes across training stages.
-- [`run_td3_env_transfer_staged.py`](../../../../scripts/td3/extras/run_td3_env_transfer_staged.py) -- schedules environment parameter changes for sim-to-real transfer curriculum.
 
 Related reset-policy helper (single-process buffer, same `dones`-only convention): [`async_td3_real_reset_policy.py`](../../../../scripts/td3/extras/async_td3_real_reset_policy.py).

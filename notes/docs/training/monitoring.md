@@ -40,7 +40,7 @@ Every async-real run produces this single folder, created by `_setup_run_data_di
 
 `_setup_run_data_dir` is the single source of truth: it creates the timestamped run folder and **forces** `args.checkpoint_root_dir = run_data_dir` and `args.log_parent_dir = None`, regardless of what the args-file or CLI set those to. This intentionally overrides the legacy `checkpoint_root_dir` / `log_parent_dir` flags so a run cannot end up split across multiple folders.
 
-If the args-file (e.g. `td3_online.yaml`, which sets both keys) had non-empty values, you'll see this at startup:
+If the args-file (e.g. `td3_residual.yaml`, which sets both keys) had non-empty values, you'll see this at startup:
 
 ```
 [run_data] all artifacts unified under: <run_data_dir>

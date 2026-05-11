@@ -6,7 +6,7 @@ Grounded in `airhockey/utils.py` (`get_observation_by_type`), `airhockey/airhock
 
 ## Active training obs type: `history` (30-dim)
 
-Set via `obs_type: history` in the sim config (e.g., `configs/new_juggle/pid_noise_constant_upper_half_custom_sim_params.yaml`).
+Set via `obs_type: history` in the sim config (e.g., `configs/new_juggle/sysid_best_params_hist2.yaml`).
 
 ### Layout
 

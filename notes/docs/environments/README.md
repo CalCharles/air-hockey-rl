@@ -4,12 +4,11 @@ Task wrappers and simulator backends for air hockey: shared env APIs, Box2D, and
 
 - **Architecture (layers and adapters):** this page below.
 - **Box2D:** [`box2d/simulator-essentials.md`](box2d/simulator-essentials.md)
-- **Robosuite (legacy, basic functionality restored 2026-05-01):** [`robosuite/overview.md`](robosuite/overview.md)
-- **Real world:** [`real-world/overview.md`](real-world/overview.md) · [`real-world/homography.md`](real-world/homography.md) · [`real-world/td3-async-replay.md`](real-world/td3-async-replay.md) (async TD3 replay semantics and legacy buffers)
+- **Real world:** [`real-world/overview.md`](real-world/overview.md) · [`real-world/homography.md`](real-world/homography.md) · [`real-world/td3-async-replay.md`](real-world/td3-async-replay.md) (async TD3 replay semantics)
 
 ---
 
-Mirror of [`.cursor/rules/project-environment-architecture.mdc`](../../../.cursor/rules/project-environment-architecture.mdc).
+
 
 The [`airhockey`](../../../airhockey) package provides environment/task wrappers around lower-level simulators.
 

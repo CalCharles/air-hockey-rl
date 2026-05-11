@@ -40,9 +40,9 @@ A plane-to-plane homography is **fully determined by four point correspondences*
 6. **`Mimg = cv2.getPerspectiveTransform(pts1, robot_reference_ordered)`** — maps the upscaled camera image into the rectified frame whose pixel origin is tied to that offset convention.
 7. With `--save-homographies`, the script writes `Mimg.npy` and `Mrob.npy` to the **current working directory** (copy into `assets/real/` for runtime use).
 
-### Manual / legacy scripts
+### Manual script
 
-[`scripts/real/generate_homography.py`](../../../../scripts/real/generate_homography.py), [`scripts/overhead_homography.py`](../../../../scripts/overhead_homography.py), and [`scripts/mimic_homography.py`](../../../../scripts/mimic_homography.py) build `Mimg` from **hand-chosen** `pts1` / `pts2` and offsets, then save `Mimg.npy` / `Mrob.npy` under a chosen target path (e.g. robosuite assets). These follow the same OpenCV pattern; resolution and corner values may differ from the live UR5 calibration.
+[`scripts/real/generate_homography.py`](../../../../scripts/real/generate_homography.py) builds `Mimg` from **hand-chosen** `pts1` / `pts2` and offsets, then saves `Mimg.npy` / `Mrob.npy`. Uses the same OpenCV pattern as the live UR5 calibration; resolution and corner values may differ.
 
 ## Runtime: `homography_transform` (main camera path)
 
@@ -80,7 +80,7 @@ Homography itself is **not** inverted in Python for puck position; the image is 
 
 ## Single-point homography (teleop helper)
 
-[`single_point_homography(matrix, point)`](../../../../airhockey/sims/real/control_parameters.py) applies the full **projective** map (with division by the homogeneous third component) to one \((x, y)\) pair. It is used where a point must be transformed **without** warping the whole image (for example mouse mapping in [`scripts/teleop.py`](../../../../scripts/teleop.py)).
+[`single_point_homography(matrix, point)`](../../../../airhockey/sims/real/control_parameters.py) applies the full **projective** map (with division by the homogeneous third component) to one \((x, y)\) pair. It is used where a point must be transformed **without** warping the whole image.
 
 ## Related reading
 
