@@ -307,7 +307,7 @@ if __name__ == "__main__":
     parser.add_argument(
         '--action-scale', type=float, default=1.0,
         help='Action scale used to clamp the per-step displacement '
-             '(default 1.0, matching td3_online.yaml). Only effective with --policy-limits.',
+             '(default 1.0, matching td3_residual.yaml). Only effective with --policy-limits.',
     )
     parser.add_argument(
         '--render-gifs', action='store_true',
@@ -323,7 +323,7 @@ if __name__ == "__main__":
 
     if args.cfg is None:
         dir_path = os.path.dirname(os.path.realpath(__file__))
-        air_hockey_cfg_fp = os.path.join(dir_path, '../configs', 'configs/baseline_configs/paddle_pos_neg_regions_real_preset.yaml')
+        air_hockey_cfg_fp = os.path.join(dir_path, '..', '..', 'configs', 'real_configs', 'mouse_config.yaml')
     else:
         air_hockey_cfg_fp = args.cfg
 

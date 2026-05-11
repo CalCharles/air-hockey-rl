@@ -50,7 +50,7 @@ _TRAIN_VALS_PUCK = slice(32, 35)
 @dataclass
 class Args:
     args_file: str | None = None
-    config: str = "configs/new_juggle/pid_noise_constant_upper_half_custom_sim_params.yaml"
+    config: str = "configs/new_juggle/sysid_best_params.yaml"
     model_path: str | None = None
     device: str = "cuda:0"
     seed: int = 0

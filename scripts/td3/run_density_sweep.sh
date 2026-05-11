@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ARGS_FILE="scripts/smooth_policy/amp_history/configs/td3/td3_no_alignment.yaml"
+ARGS_FILE="configs/td3/td3_recommended_top50_hist2.yaml"
 MOTION_WEIGHT=0.01
 BASE_LOG_DIR="runs/td3/updated_training/density_sweep"
 
@@ -29,7 +29,7 @@ for i in "${!DENSITIES[@]}"; do
   run_name="mw001_${label}"
 
   echo "Launching density=${density} on ${device} -> ${log_dir}"
-  python scripts/smooth_policy/amp_history/amp_training/td3/td3_training.py \
+  python -m scripts.td3.td3_training \
     --args-file "${ARGS_FILE}" \
     --motion-reward-weight ${MOTION_WEIGHT} \
     --paddle-density ${density} \

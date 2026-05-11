@@ -640,7 +640,7 @@ def _load_train_args(train_args_path: str) -> TrainArgs:
 class Args:
     # Required: training args.yaml (architecture source; see TrainArgs).
     train_args: str | None = None
-    # Optional: online-behavior defaults YAML (e.g. td3_online.yaml).
+    # Optional: online-behavior defaults YAML (e.g. td3_residual.yaml).
     args_file: str | None = None
     config: str = "configs/real_configs/rollout_config.yaml"
     model_path: str | None = None

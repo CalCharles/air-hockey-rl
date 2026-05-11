@@ -823,7 +823,7 @@ if __name__ == "__main__":
     if temp_args.args_file is None:
         raise SystemExit(
             "async_td3_real_eval.py requires --args-file pointing to an "
-            "online-behavior YAML (e.g. td3_online.yaml). Same args-file the "
+            "online-behavior YAML (e.g. td3_residual.yaml). Same args-file the "
             "training run used is fine — exploration knobs are forced to zero "
             "regardless of what the file specifies."
         )

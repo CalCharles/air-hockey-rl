@@ -1826,7 +1826,7 @@ if __name__ == "__main__":
     if temp_args.args_file is None:
         raise SystemExit(
             "async_td3_real.py requires --args-file pointing to an "
-            "online-behavior YAML (e.g. td3_online.yaml). Architecture comes "
+            "online-behavior YAML (e.g. td3_residual.yaml). Architecture comes "
             "from --train-args; this file supplies online training/collection "
             "defaults only."
         )

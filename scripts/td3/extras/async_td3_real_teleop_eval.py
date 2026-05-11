@@ -113,7 +113,7 @@ from scripts.td3.helper.real_td3_runtime import (
     _simulator_step_readiness,
     install_quiet_print_filter,
 )
-from scripts.smooth_policy.amp_history.amp_training.td3.extras.async_td3_real import (
+from scripts.td3.extras.async_td3_real import (
     _save_episode_artifacts_and_pending_reset,
 )
 
@@ -1154,7 +1154,7 @@ if __name__ == "__main__":
     if temp_args.args_file is None:
         raise SystemExit(
             "async_td3_real_teleop_eval.py requires --args-file pointing to an "
-            "online-behavior YAML (e.g. td3_online.yaml). The same args-file the "
+            "online-behavior YAML (e.g. td3_residual.yaml). The same args-file the "
             "policy eval uses is fine — exploration knobs and learner toggles are "
             "all forced off regardless."
         )

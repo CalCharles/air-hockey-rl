@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Real-world residual RL fine-tuning — v27 Maxmin-5 recipe (no-CQL baseline).
 #
 # NOTE (2026-05-08): The canonical big-gap real-world default is now the CQL
@@ -10,16 +11,18 @@
 #   - small-gap fallback (where CQL would over-conservatize the critic).
 # For new sim2real fine-tunes, prefer `td3_residual_cql.yaml` unless you have
 # a specific reason. See notes/docs/training/residual-rl-recipe.md.
+=======
+# Real-world residual RL fine-tuning — canonical Maxmin-5 recipe.
+>>>>>>> 5be189f (docs: second-pass audit — fix stale refs the first sweep missed)
 #
-# Mirrors the sim2sim winner
-#   configs/td3/sim2sim/paddle50/td3_residual_v27_ensemble5.yaml
-# but adapted for the async real-world pipeline (HDF5 warm-start replay,
-# real-robot exploration tradeoffs, periodic checkpointing).
+# Adapts the sim2sim big-gap recipe (see notes/docs/training/residual-rl-recipe.md)
+# for the async real-world pipeline: HDF5 warm-start replay, real-robot
+# exploration tradeoffs, periodic checkpointing.
 #
-# v27 = vanilla TD3 residual + the four load-bearing changes:
-#   - success_top_fraction: 0.15      ← top-15% (was 0.5 median in OLD-env recipe)
-#   - q_updates: 4                    ← real-world override (sim2sim v27 used 1; async-real invokes the learner once per episode so this is per-episode critic steps)
-#   - num_critics: 5 (Maxmin)         ← Q-overestimation control (the load-bearing knob)
+# Load-bearing knobs:
+#   - success_top_fraction: 0.15      ← top-15%
+#   - q_updates: 4                    ← real-world override (per-episode critic steps via the async learner)
+#   - num_critics: 5 (Maxmin)         ← Q-overestimation control
 #   - target_critic_subset_size: null ← Maxmin (min over all 5); set to 2 for REDQ-5-2
 #
 # `num_critics` and `target_critic_subset_size` are architecture fields that

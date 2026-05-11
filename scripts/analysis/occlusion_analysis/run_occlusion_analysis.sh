@@ -9,9 +9,9 @@ NUM_TRAJ="${4:-40}"
 
 cd "${REPO_ROOT}"
 
-ANALYZER="scripts/smooth_policy/occlusion_analysis/analyze_occlusion_patterns.py"
-PLOTTER="scripts/smooth_policy/occlusion_analysis/plot_occlusion_results.py"
-OUTPUT_ROOT="scripts/smooth_policy/occlusion_analysis/output"
+ANALYZER="scripts/analysis/occlusion_analysis/analyze_occlusion_patterns.py"
+PLOTTER="scripts/analysis/occlusion_analysis/plot_occlusion_results.py"
+OUTPUT_ROOT="scripts/analysis/occlusion_analysis/output"
 
 RUN_ARGS=(
   --data-dir "${DATA_DIR}"

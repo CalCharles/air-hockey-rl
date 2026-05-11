@@ -2,7 +2,7 @@
 """
 Create GIF visualization(s) from real-robot trajectory HDF5 files.
 
-This script reads `train_vals` from files saved by `rollout_new.py` and renders
+This script reads `train_vals` from files saved by the real-world rollout entrypoints and renders
 an approximate simulator-style top-down table view with:
 - paddle position (`pose`)
 - target/action position (`desired_pose`)
