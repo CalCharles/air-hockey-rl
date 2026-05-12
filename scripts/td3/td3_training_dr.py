@@ -401,6 +401,12 @@ def _entrypoint_dr():
     _EVAL_N_ENVS = int(args_dict.get("eval_n_envs", 1))
     _EVAL_EPS_PER_ENV = int(args_dict.get("eval_eps_per_env", 4))
     _LOG_PARENT_DIR = args_dict.get("log_parent_dir", None)
+    # Honor a CLI override of --log-parent-dir so eval_envs.json lands next
+    # to the actual trainer outputs rather than the YAML default.
+    if "--log-parent-dir" in sys.argv:
+        idx = sys.argv.index("--log-parent-dir")
+        if idx + 1 < len(sys.argv):
+            _LOG_PARENT_DIR = sys.argv[idx + 1]
 
     print(
         f"[td3_training_dr] eval_param_seed={_EVAL_PARAM_SEED}, "
