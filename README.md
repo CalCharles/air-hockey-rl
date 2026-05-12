@@ -40,31 +40,40 @@ uv sync --extra train
 
 ## Quickstart
 
-### Train a TD3 policy in sim (for sim2sim / sim2real transfer)
+Every TD3 run takes two YAMLs:
 
-The canonical source-policy training command uses **environment-parameter domain randomization** (paddle_density / puck_damping / gravity drawn uniform per-reset, ±25 % of sysid):
+- **TD3 args file** (`configs/td3/...`) — algorithm hyperparameters (learning rates, replay buffer, network size, training schedule). Passed via `--args-file`. References a sim env config via its `config:` field.
+- **Sim env config** (`configs/new_juggle/...`) — Box2D environment definition (task, physics, sim-to-real-gap features, per-reset randomization, reward weights). Loaded indirectly via the args file.
+
+You edit the args file; the env config is loaded for you.
+
+### Sim TD3 training (juggling source policy — for sim2sim / sim2real transfer)
+
+| Role | Path |
+|---|---|
+| Trainer entrypoint | `scripts/td3/td3_training_dr.py` |
+| TD3 args | `configs/td3/zeroshot_paramrand/td3_paramrand_pm25.yaml` |
+| Sim env config (referenced by args) | `configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25.yaml` |
 
 ```bash
 .venv/bin/python -m scripts.td3.td3_training_dr \
   --args-file configs/td3/zeroshot_paramrand/td3_paramrand_pm25.yaml
 ```
 
-This is the recommended path for any new policy that will need to transfer to a perturbed sim or to the real robot — the older "engineered randomization" approach (per-collision strength/direction jitter, action-force attenuation, delay jitter) was deprecated and its mechanisms removed from the env on 2026-05-11. See [`notes/docs/training/sim2sim.md`](notes/docs/training/sim2sim.md) for the strategy overview.
+For a source-sim-only policy (ablations, no transfer): `scripts/td3/td3_training.py --args-file configs/td3/td3_recommended_top50_hist2.yaml --num-envs 1`.
 
-For a source-sim-only policy (no transfer involved), the vanilla trainer still works:
+See [`notes/docs/training/sim2sim.md`](notes/docs/training/sim2sim.md) for the strategy overview.
 
-```bash
-.venv/bin/python -m scripts.td3.td3_training \
-  --args-file configs/td3/td3_recommended_top50_hist2.yaml \
-  --run-name my_run \
-  --num-envs 1
-```
+### Sim2sim residual fine-tune
 
-The trainer is single-env-collection only — pass `--num-envs 1`. Output lands under `runs/td3/<run-name>/` (gitignored).
+A residual recipe takes a trained source policy (above) and fine-tunes it on a perturbed target sim. Pick the recipe whose target matches your gap; before launching, edit the recipe YAML's `config:`, `model_path:` (source ckpt), `log_parent_dir:`, `run_name:`, and `seed:`.
 
-See [`notes/docs/training/td3-configs.md`](notes/docs/training/td3-configs.md) for what's in the recommended config, and [`notes/docs/training/architecture.md`](notes/docs/training/architecture.md) for the code layout.
-
-### Residual sim2sim fine-tune
+| Target | TD3 args | Sim env config |
+|---|---|---|
+| **warp 0.075 · paddle −30% — canonical sim2sim** | **`configs/td3/sim2sim/warp075_p30_residual/phaseC_actor2_1M.yaml`** | **`configs/new_juggle/sim2sim_warp075_p30.yaml`** |
+| warp 0.075 · paddle −10% | `configs/td3/sim2sim/warp075_p30_residual/phaseD_actor2_p10_1M.yaml` | `configs/new_juggle/sim2sim_warp075_p10.yaml` |
+| warp 0.10 · paddle −30% | `configs/td3/sim2sim/warp075_p30_residual/phaseD_actor4_w10_1M.yaml` | `configs/new_juggle/sim2sim_warp100_p30.yaml` |
+| paddle / dynamics only, no warp (small gap) | `configs/td3/sim2sim/td3_sim2sim_residual.yaml` | `configs/new_juggle/sim2sim_combined.yaml` |
 
 ```bash
 .venv/bin/python -m scripts.td3.td3_training \
@@ -72,7 +81,7 @@ See [`notes/docs/training/td3-configs.md`](notes/docs/training/td3-configs.md) f
   --num-envs 1
 ```
 
-Set `config:`, `model_path:`, `log_parent_dir:`, `run_name:`, and `seed:` in the recipe YAML before launching. See [`notes/docs/training/residual-rl-recipe.md`](notes/docs/training/residual-rl-recipe.md) for the recipe selection guide.
+Recipe selection guide: [`notes/docs/training/residual-rl-recipe.md`](notes/docs/training/residual-rl-recipe.md). Run ≥ 3 seeds.
 
 ### Real-robot residual training
 
