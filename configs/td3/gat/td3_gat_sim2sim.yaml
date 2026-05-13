@@ -1,0 +1,45 @@
+# GAT grounding config — consumed exclusively by scripts/td3/td3_training_gat.py.
+#
+# Source sim  : sysid_best_params_hist2.yaml (nominal sysid, no DR).
+#               Used to train the source dynamics model f_S and to wrap
+#               the training env with GATEnvWrapper(τ) during fine-tuning.
+#
+# Target sim  : sim2sim_warp075_p30.yaml (canonical big-gap benchmark:
+#               paddle −30% mass-preserved + sine-y puck-obs warp 0.075).
+#               Used for grounding-data collection and checkpoint evaluation.
+#
+# Grounding policy : pretrained paramrand (±25% sysid) source checkpoint.
+#               Must match agent_hidden_layer_size / agent_num_hidden_layers
+#               of the checkpoint.  Update model_path before running.
+
+# ----- Environments -----
+source_config:  "configs/new_juggle/sysid_best_params_hist2.yaml"
+target_config:  "configs/new_juggle/sim2sim_warp075_p30.yaml"
+
+# ----- Source policy (for grounding data collection) -----
+# Update this path to the desired paramrand checkpoint before running.
+grounding_model_path:          "latest_models/canonical/hist2_motion0_v2/model.pth"
+use_last_action_in_policy_state: true
+agent_hidden_layer_size:        64
+agent_num_hidden_layers:        2
+
+# ----- Source dynamics model -----
+dynamics_collect_steps: 20000   # env steps in source for f_S training data
+dynamics_epochs:        100
+dynamics_lr:            0.001
+
+# ----- Action transformer -----
+grounding_collect_steps: 10000  # env steps in target for τ training data
+transformer_epochs:      100
+transformer_lr:          0.001
+
+# ----- Shared network / optimiser -----
+hidden_size: 256
+batch_size:  256
+
+# ----- Compute -----
+device: "cuda:0"
+
+# ----- Optional: where to save the trained GAT models -----
+# Set to null to skip saving.
+gat_save_dir: null
