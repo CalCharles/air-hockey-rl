@@ -191,9 +191,10 @@ class RealTrajectoryRenderer:
         if self._assets_dir is not None:
             assets_folder = Path(self._assets_dir)
         else:
-            # Find assets folder relative to this script
+            # Find assets folder relative to this script. The script lives at
+            # `scripts/visualization/`, so the repo root is two levels up.
             script_dir = Path(__file__).parent
-            assets_folder = script_dir / '../../../assets'
+            assets_folder = script_dir / '../../assets'
             assets_folder = assets_folder.resolve()
 
         if not assets_folder.exists():

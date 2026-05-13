@@ -105,10 +105,7 @@ python -m scripts.td3.extras.async_td3_real_eval \
 ### Human-baseline teleop eval (user study)
 
 ```bash
-python -m scripts.td3.extras.async_td3_real_teleop_eval \
-  --config configs/real_configs/mouse_config.yaml \
-  --args-file configs/td3_real_world/td3_residual.yaml \
-  --data-root-dir real_runs/teleop_eval
+python -m scripts.td3.extras.async_td3_real_teleop_eval --config configs/real_configs/mouse_config.yaml --args-file configs/td3_real_world/td3_residual.yaml --data-root-dir runs/teleop_user_study
 ```
 
 See [`notes/docs/training/teleop-eval-baseline.md`](notes/docs/training/teleop-eval-baseline.md) for protocol.

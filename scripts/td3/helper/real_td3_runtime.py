@@ -977,20 +977,45 @@ def _finite_or_default(value: float, default: float = -1.0) -> float:
 
 
 def _latest_camera_frame(env: AirHockeyEnv) -> np.ndarray | None:
-    """Fetch the latest raw camera frame if available."""
+    """Fetch the latest raw camera frame if available.
+
+    Two sources are supported:
+
+    1. ``simulator.images`` — populated by the main-process ``save_collect()``
+       branch in ``AirHockeyReal.step()`` (gated on ``self.cap is not None``,
+       i.e. ``control_mode in {'RL', 'BC', 'IQL', 'observe', ...}``).
+    2. ``simulator.shared_camera_frame`` — published by the camera subprocess
+       when ``control_mode in {'mouse', 'mimic'}`` and the main process has no
+       ``self.cap`` of its own. Read once per call; the subprocess overwrites
+       the buffer on every camera tick (~20 Hz), so this gives the latest
+       available frame.
+    """
     simulator = getattr(env, "simulator", None)
     if simulator is None:
         return None
+
     images = getattr(simulator, "images", None)
-    if not isinstance(images, list) or len(images) == 0:
+    if isinstance(images, list) and len(images) > 0 and images[-1] is not None:
+        frame = np.asarray(images[-1])
+        if frame.ndim == 3:
+            return np.array(frame, copy=True)
+
+    shared = getattr(simulator, "shared_camera_frame", None)
+    ready = getattr(simulator, "shared_camera_frame_ready", None)
+    shape = getattr(simulator, "_shared_camera_frame_shape", None)
+    if shared is None or shape is None:
         return None
-    latest = images[-1]
-    if latest is None:
+    if ready is not None and not bool(ready.value):
         return None
-    frame = np.asarray(latest)
-    if frame.ndim != 3:
+    try:
+        with shared.get_lock():
+            buf = np.frombuffer(shared.get_obj(), dtype=np.uint8).copy()
+    except Exception:
         return None
-    return np.array(frame, copy=True)
+    expected = int(np.prod(shape))
+    if buf.size != expected:
+        return None
+    return buf.reshape(shape)
 
 
 def _next_available_episode_id(output_dir: str | Path) -> int:

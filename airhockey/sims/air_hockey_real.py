@@ -11,6 +11,7 @@ from .real.control_parameters import (
     save_collect,
     observe_collect,
     visual_downscale_constant,
+    SHARED_CAMERA_FRAME_SHAPE,
 )
 from .real.trajectory_merging import merge_trajectory, clear_images, write_trajectory, get_trajectory_idx
 from .real.robot_control import MotionPrimitive, apply_negative_z_force, filter_update
@@ -361,6 +362,18 @@ class AirHockeyReal:
         self.protected_img_check = ProtectedArray(shared_image_check)
         self.protected_paddle_pos = ProtectedArray(shared_paddle_pos)
         self.protected_target_pos = ProtectedArray(shared_target_pos)
+        # Shared camera-frame buffer for control_mode='mouse'/'mimic'. In those
+        # modes the camera subprocess owns /dev/video1 and self.cap is None, so
+        # the main-process self.images.append() branch in step() (gated on
+        # self.cap is not None) never runs. Without this buffer, downstream
+        # consumers like _latest_camera_frame() get an empty list and the
+        # saved episode HDF5 has no train_img. control_mode='RL' is unaffected
+        # — it still uses self.cap directly and ignores this buffer.
+        self._shared_camera_frame_shape = tuple(SHARED_CAMERA_FRAME_SHAPE)
+        self.shared_camera_frame = multiprocessing.Array(
+            "B", int(np.prod(self._shared_camera_frame_shape))
+        )
+        self.shared_camera_frame_ready = multiprocessing.Value("i", 0)
         self.cap, self.camera_process, self.mimic_process = None, None, None
         self.async_render_enabled = bool(config.async_render_enabled)
         self.async_render_debug = bool(config.async_render_debug)
@@ -850,13 +863,22 @@ class AirHockeyReal:
                     self.puck_detector_kwargs,
                     self.puck_radius,
                     self.x_offset,
+                    self.shared_camera_frame,
+                    self.shared_camera_frame_ready,
                 ),
             )
             self.camera_process.start()
         elif self.control_mode == 'mimic':
             self.mimic_process = multiprocessing.Process(target=mimic_control, args=(self.protected_mouse_pos,))
             self.mimic_process.start()
-            self.camera_process = multiprocessing.Process(target=save_callback, args=(self.protected_img_check,))
+            self.camera_process = multiprocessing.Process(
+                target=save_callback,
+                args=(
+                    self.protected_img_check,
+                    self.shared_camera_frame,
+                    self.shared_camera_frame_ready,
+                ),
+            )
             self.camera_process.start()
         else:
             self.cap = cv2.VideoCapture(1, cv2.CAP_V4L2)
