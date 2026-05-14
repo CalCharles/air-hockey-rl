@@ -85,6 +85,45 @@ def homography_transform(image, get_save=True, rotate=False):
                 interpolation = cv2.INTER_LINEAR)
     return showdst, save_image
 
+# Fixed shape of the BGR uint8 frame returned by ``homography_transform`` when
+# ``get_save=True`` (``cv2.resize`` of the rotated raw camera frame to
+# ``(640/save_downscale_constant, 480/save_downscale_constant)``). Kept here so
+# main-process consumers can allocate a matching shared buffer without having to
+# reproduce the resize math.
+SHARED_CAMERA_FRAME_SHAPE = (
+    int(480 / save_downscale_constant),
+    int(640 / save_downscale_constant),
+    3,
+)
+
+
+def publish_shared_camera_frame(
+    save_image,
+    shared_camera_frame,
+    shared_camera_frame_ready,
+):
+    """Copy ``save_image`` into ``shared_camera_frame`` for the main process.
+
+    No-op when the buffer isn't wired (e.g. ``control_mode='RL'`` path that
+    already has ``self.cap`` and writes ``simulator.images`` directly) or when
+    the subprocess didn't actually produce a ``save_image`` this tick. Shape
+    mismatches and stale buffers fail closed without crashing the camera loop.
+    """
+    if shared_camera_frame is None or save_image is None:
+        return
+    try:
+        flat = np.ascontiguousarray(save_image, dtype=np.uint8).reshape(-1)
+        with shared_camera_frame.get_lock():
+            view = np.frombuffer(shared_camera_frame.get_obj(), dtype=np.uint8)
+            if view.size != flat.size:
+                return
+            view[:] = flat
+        if shared_camera_frame_ready is not None:
+            shared_camera_frame_ready.value = 1
+    except Exception:
+        return
+
+
 def camera_callback(
     shared_array,
     save_image_check,
@@ -99,17 +138,30 @@ def camera_callback(
     puck_detector_kwargs=None,
     puck_radius=0.03175,
     region_x_offset=1.0,
+    shared_camera_frame=None,
+    shared_camera_frame_ready=None,
 ):
     cap = cv2.VideoCapture(1, cv2.CAP_V4L2)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     detector_kwargs = puck_detector_kwargs if puck_detector_kwargs is not None else {}
+    publish_frames = shared_camera_frame is not None
     while True:
         start = time.time()
         ret, image = cap.read()
         save_image_id = save_image_check[0] == 1
-        showdst, save_image = homography_transform(image, get_save=save_image_id)
-        if save_image_id: 
+        # Force get_save=True when a main-process consumer is reading frames
+        # via shared memory (e.g. control_mode='mouse' for teleop eval) so
+        # ``save_image`` is always populated. Cost: one extra cv2.resize per
+        # camera tick (~0.1 ms on the 640x480 frame).
+        showdst, save_image = homography_transform(
+            image, get_save=(save_image_id or publish_frames)
+        )
+        if save_image_id:
             imageio.imsave("./temp/images/img" + str(time.time()) + ".jpg", save_image)
+        if publish_frames:
+            publish_shared_camera_frame(
+                save_image, shared_camera_frame, shared_camera_frame_ready
+            )
         # image = cv2.rotate(image, cv2.ROTATE_180)
         # if save_image_check[0] == 1: imageio.imsave("./temp/images/img" + str(time.time()) + ".jpg", cv2.resize(image, (int(640/save_downscale_constant), int(480/save_downscale_constant))))
         # # shared_image[:] = image.flatten()
@@ -217,7 +269,11 @@ def mimic_control(shared_array):
         shared_array[1] = x * visual_downscale_constant
         cv2.waitKey(1)
 
-def save_callback(save_image_check):
+def save_callback(
+    save_image_check,
+    shared_camera_frame=None,
+    shared_camera_frame_ready=None,
+):
     # TODO: changed to 0 for now
     cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -227,6 +283,10 @@ def save_callback(save_image_check):
         ret, image = cap.read()
         showdst, save_image = homography_transform(image, get_save=True, rotate=True)
         if save_image_check[0] == 1: imageio.imsave("./temp/images/img" + str(time.time()) + ".jpg", save_image)
+        if shared_camera_frame is not None:
+            publish_shared_camera_frame(
+                save_image, shared_camera_frame, shared_camera_frame_ready
+            )
         # image = cv2.rotate(image, cv2.ROTATE_180)
         # if save_image_check[0] == 1: imageio.imsave("./temp/images/img" + str(time.time()) + ".jpg", cv2.resize(image, (int(640/save_downscale_constant), int(480/save_downscale_constant))))
         # image = cv2.resize(image, (int(640*upscale_constant), int(480*upscale_constant)), 

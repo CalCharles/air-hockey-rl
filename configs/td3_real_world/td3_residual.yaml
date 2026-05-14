@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Real-world residual RL fine-tuning — v27 Maxmin-5 recipe (no-CQL baseline).
 #
 # NOTE (2026-05-08): The canonical big-gap real-world default is now the CQL
@@ -11,9 +10,6 @@
 #   - small-gap fallback (where CQL would over-conservatize the critic).
 # For new sim2real fine-tunes, prefer `td3_residual_cql.yaml` unless you have
 # a specific reason. See notes/docs/training/residual-rl-recipe.md.
-=======
-# Real-world residual RL fine-tuning — canonical Maxmin-5 recipe.
->>>>>>> 5be189f (docs: second-pass audit — fix stale refs the first sweep missed)
 #
 # Adapts the sim2sim big-gap recipe (see notes/docs/training/residual-rl-recipe.md)
 # for the async real-world pipeline: HDF5 warm-start replay, real-robot

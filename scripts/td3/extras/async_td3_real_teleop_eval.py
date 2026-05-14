@@ -316,6 +316,8 @@ def _make_teleop_camera_callback(phase_state):
         puck_detector_kwargs=None,
         puck_radius=0.03175,
         region_x_offset=1.0,
+        shared_camera_frame=None,
+        shared_camera_frame_ready=None,
     ):
         import imageio
 
@@ -325,6 +327,7 @@ def _make_teleop_camera_callback(phase_state):
         if puck_detector is None:
             puck_detector = find_red_hockey_puck
         detector_kwargs = puck_detector_kwargs if puck_detector_kwargs is not None else {}
+        publish_frames = shared_camera_frame is not None
 
         # Realize the cv2 window once up-front so the very first
         # ``setMouseCallback`` succeeds. Without this, on some cv2
@@ -348,9 +351,18 @@ def _make_teleop_camera_callback(phase_state):
         while True:
             ret, image = cap.read()
             save_image_id = save_image_check[0] == 1
-            showdst, save_image = _cp.homography_transform(image, get_save=save_image_id)
+            # Force get_save=True when the main process is reading via shared
+            # memory so the publish branch below always has a fresh save_image
+            # (mirrors the upstream camera_callback behaviour).
+            showdst, save_image = _cp.homography_transform(
+                image, get_save=(save_image_id or publish_frames)
+            )
             if save_image_id:
                 imageio.imsave("./temp/images/img" + str(time.time()) + ".jpg", save_image)
+            if publish_frames:
+                _cp.publish_shared_camera_frame(
+                    save_image, shared_camera_frame, shared_camera_frame_ready
+                )
             puck = puck_detector(showdst, rotate=False, **detector_kwargs)
 
             _draw_phase_overlay(showdst, phase_state)
