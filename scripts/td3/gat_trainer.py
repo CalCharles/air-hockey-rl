@@ -63,13 +63,27 @@ class SourceDynamicsModel(nn.Module):
 class ActionTransformer(nn.Module):
     """Action transformer τ: (obs, action) → transformed_action in [−1, 1]².
 
-    Parameterised as a residual: a' = clip(a + net(obs ‖ a), −1, 1).
-    Initialising net to zero output gives τ = identity at the start of
-    training, making early fine-tuning identical to zero-shot transfer.
+    Parameterised as a bounded residual:
+        a' = clip(a + delta_scale * tanh(net(obs ‖ a)), −1, 1)
+
+    ``delta_scale`` hard-caps the per-dimension action shift regardless of
+    how long training runs or how large the learning rate is.  Setting it
+    to 0.2 means τ can move any action component by at most ±0.2 (20% of
+    the action range), preventing runaway mappings.
+
+    Zero-init on the output layer makes τ the identity at initialisation,
+    so early fine-tuning is identical to zero-shot transfer.
     """
 
-    def __init__(self, obs_dim: int = _OBS_DIM, act_dim: int = _ACT_DIM, hidden: int = 256):
+    def __init__(
+        self,
+        obs_dim: int = _OBS_DIM,
+        act_dim: int = _ACT_DIM,
+        hidden: int = 256,
+        delta_scale: float = 0.2,
+    ):
         super().__init__()
+        self.delta_scale = delta_scale
         self.net = nn.Sequential(
             nn.Linear(obs_dim + act_dim, hidden),
             nn.ReLU(),
@@ -83,7 +97,8 @@ class ActionTransformer(nn.Module):
 
     def forward(self, obs: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
         x = torch.cat([obs, action], dim=-1)
-        delta = self.net(x)
+        # tanh bounds delta to (−1, 1); delta_scale shrinks the window further.
+        delta = self.delta_scale * torch.tanh(self.net(x))
         return torch.clamp(action + delta, -1.0, 1.0)
 
 

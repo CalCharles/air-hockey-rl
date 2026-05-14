@@ -31,7 +31,10 @@ dynamics_lr:            0.001
 # ----- Action transformer -----
 grounding_collect_steps: 10000  # env steps in target for τ training data
 transformer_epochs:      100
-transformer_lr:          0.001
+transformer_lr:          0.0001  # small LR; delta_scale already caps the shift
+# Hard cap on per-dimension action shift: a' = clip(a + delta_scale*tanh(net), -1, 1).
+# 0.2 allows at most ±0.2 correction regardless of training duration.
+delta_scale:             0.05
 
 # ----- Shared network / optimiser -----
 hidden_size: 256

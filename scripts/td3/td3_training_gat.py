@@ -122,6 +122,7 @@ def run_gat_setup(gat_cfg: dict) -> ActionTransformer:
     """
     device = gat_cfg.get("device", "cpu")
     hidden = int(gat_cfg.get("hidden_size", 256))
+    delta_scale = float(gat_cfg.get("delta_scale", 0.2))
     batch_size = int(gat_cfg.get("batch_size", 256))
 
     source_cfg_path = gat_cfg["source_config"]
@@ -171,7 +172,7 @@ def run_gat_setup(gat_cfg: dict) -> ActionTransformer:
     )
     target_env.close()
 
-    transformer = ActionTransformer(hidden=hidden).to(device)
+    transformer = ActionTransformer(hidden=hidden, delta_scale=delta_scale).to(device)
     trf_opt = torch.optim.Adam(
         transformer.parameters(), lr=float(gat_cfg.get("transformer_lr", 1e-3))
     )
