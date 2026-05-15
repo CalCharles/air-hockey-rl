@@ -333,6 +333,16 @@ class AirHockeyBaseEnv(ABC, Env):
         elif obs_type == "many_blocks_history":
             low = paddle_obs_low + [block_obs_low[0], block_obs_low[1]] * self.num_blocks + puck_hist_low
             high = paddle_obs_high + [block_obs_high[0], block_obs_high[1]] * self.num_blocks + puck_hist_high
+        elif obs_type == "multipuck_vel":
+            n = max(1, int(self.num_pucks))
+            low = paddle_obs_low + puck_obs_low * n
+            high = paddle_obs_high + puck_obs_high * n
+        elif obs_type == "multipuck_history":
+            n = max(1, int(self.num_pucks))
+            puck_hist_low_n = [self.table_x_top, self.table_y_left, 0] * (5 * n)
+            puck_hist_high_n = [self.table_x_bot, self.table_y_right, 0] * (5 * n)
+            low = paddle_obs_low + puck_hist_low_n
+            high = paddle_obs_high + puck_hist_high_n
 
         self.observation_space = self.single_observation_space = self.get_obs_space(low, high)
         return low, high
