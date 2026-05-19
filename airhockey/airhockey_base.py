@@ -85,11 +85,13 @@ class AirHockeyBaseEnv(ABC, Env):
             'puck_goal_success_bonus': 0.0,
             'paddle_puck_success_bonus': 0.0,
 
-            'use_smooth_penalty': False,
-            'use_reward_shaping': True,
             'base_reward_scaling': 1.0,
-            'jerk_penalty_coeff': 0.0,
-            'velocity_penalty_coeff': 0.0,
+            'truncate_rew': 0.0,
+            'n_training_steps': 1_000_000,
+            'return_goal_obs': False,
+            'goal_max_x_velocity': 1,
+            'goal_max_y_velocity': 5,
+            'goal_min_y_velocity': 1,
             'enable_survival_bonus': False,
             'survival_bonus_per_step': 0.25,
             # Optional list of [x, y] centers (base frame) for triangle obstacles.
@@ -187,15 +189,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.task = config.task
         self.multiagent = config.num_paddles == 2
         self.truncate_rew = config.truncate_rew
-        self.wall_bumping_rew = config.wall_bumping_rew
-        self.direction_change_rew = config.direction_change_rew
-        self.horizontal_vel_rew = config.horizontal_vel_rew
-        self.diagonal_motion_rew = config.diagonal_motion_rew
-        self.stand_still_rew = config.stand_still_rew
-        self.use_reward_shaping = config.use_reward_shaping
         self.base_reward_scaling = config.base_reward_scaling
-        self.jerk_penalty_coeff = config.jerk_penalty_coeff
-        self.velocity_penalty_coeff = config.velocity_penalty_coeff
         self.enable_survival_bonus = bool(config.enable_survival_bonus)
         self.survival_bonus_per_step = float(config.survival_bonus_per_step)
         self.simulator_params = simulator_params
@@ -433,7 +427,6 @@ class AirHockeyBaseEnv(ABC, Env):
         self.min_reward_in_single_step = np.inf
         self.episode_return = 0.0
         self.episode_length = 0
-        self.episode_motion_data = {'velocity_mags': [], 'acceleration_mags': [], 'jerk_mags': []}
         self._last_done_reasons = {"terminated": [], "truncated": []}
         self._puck_pass_paddle_score = 0
 
@@ -466,7 +459,6 @@ class AirHockeyBaseEnv(ABC, Env):
         self.min_reward_in_single_step = np.inf
         self.episode_return = 0.0
         self.episode_length = 0
-        self.episode_motion_data = {'velocity_mags': [], 'acceleration_mags': [], 'jerk_mags': []}
         self._last_done_reasons = {"terminated": [], "truncated": []}
         self._puck_pass_paddle_score = 0
         return obs, {**{'success': False}, **vars(self.simulator_params)}
@@ -708,78 +700,6 @@ class AirHockeyBaseEnv(ABC, Env):
         return terminated, truncated, puck_within_home, puck_within_alt_home, puck_within_ego_goal, puck_within_alt_goal
 
 
-    def get_smooth_penalty(self, state_info, action=None):
-        pass
-
-    def get_reward_shaping(self, state_info, action=None):
-        additional_rew = 0.0
-        
-        # small negative reward for changing direction
-        if self.current_timestep > 0:
-            old_vel = self.old_state['paddles']['paddle_ego']['velocity']
-            new_vel = state_info['paddles']['paddle_ego']['velocity']
-            vel_unit = old_vel / (np.linalg.norm(old_vel) + 1e-8)
-            new_vel_unit = new_vel / (np.linalg.norm(new_vel) + 1e-8)
-            cosine_sim = np.dot(vel_unit, new_vel_unit) / (np.linalg.norm(vel_unit) * np.linalg.norm(new_vel_unit) + 1e-8)
-            norm_cosine_sim = (cosine_sim + 1) / 2
-            max_change_dir_rew = self.direction_change_rew
-            direction_rew = max_change_dir_rew * (1 - norm_cosine_sim)
-
-            additional_rew += direction_rew
-
-
-        # small negative reward for moving too fast in horizontal direction
-        max_vel = self.max_paddle_vel
-        max_vel_rew = self.horizontal_vel_rew
-        normalized_y_vel = np.abs(state_info['paddles']['paddle_ego']['velocity'][1]) / max_vel
-        additional_rew += max_vel_rew * normalized_y_vel
-        
-        # negative penalty for diagonal motion
-        # angle of vector will be close to % 45 degrees if moving diagonally
-        angle = np.arctan2(state_info['paddles']['paddle_ego']['velocity'][1], state_info['paddles']['paddle_ego']['velocity'][0])
-        angle = np.abs(angle)
-        # check if sufficiently close to pi/4, 3pi/4, 5pi/4, 7pi/4
-        threshold = np.pi / 12
-        # check if between (pi/4 - pi/12, pi/4 + pi/12), ...
-        if np.abs(angle - -np.pi / 4) < threshold or np.abs(angle - 3 * -np.pi / 4) < threshold or \
-            np.abs(angle - np.pi / 4) < threshold or np.abs(angle - 3 * np.pi / 4) < threshold:
-            additional_rew += self.diagonal_motion_rew
-        
-        # small positive reward for keeping still
-        if np.linalg.norm(state_info['paddles']['paddle_ego']['velocity']) < 0.01:
-            additional_rew += self.stand_still_rew
-
-        # TODO: small negative reward for acceleration with sign change significantly
-        # sign_change = (state_info['paddles']['paddle_ego']['velocity'] * action)
-        # sign_change[sign_change > 0] = 0
-        # sign_change[sign_change < 0] = 1
-        # velocity_change = np.abs(state_info['paddles']['paddle_ego']['velocity'] - action) * sign_change
-        # additional_rew += self.aceleration_penalty * velocity_change
-
-        # determine if close to walls
-        if self.wall_bumping_rew != 0:
-            bump_right = state_info['paddles']['paddle_ego']['position'][1] > self.table_y_right - 2 * self.paddle_radius
-            bump_left = state_info['paddles']['paddle_ego']['position'][1] < self.table_y_left + 2 * self.paddle_radius
-            bump_top = state_info['paddles']['paddle_ego']['position'][0] < 0 + 4 * self.paddle_radius
-            bump_bottom = state_info['paddles']['paddle_ego']['position'][0] > self.table_x_bot - 4 * self.paddle_radius
-            if bump_left or bump_right or bump_top or bump_bottom:
-                additional_rew += self.wall_bumping_rew
-        
-        # jerk penalty - negative reward for high jerk (if jerk data is available)
-        if self.jerk_penalty_coeff != 0.0 and 'jerk' in state_info['paddles']['paddle_ego']:
-            jerk_magnitude = np.linalg.norm(state_info['paddles']['paddle_ego']['jerk'])
-            jerk_penalty = -self.jerk_penalty_coeff * jerk_magnitude
-            additional_rew += jerk_penalty
-        
-        # velocity penalty - negative reward for high velocity
-        if self.velocity_penalty_coeff != 0.0 and 'velocity' in state_info['paddles']['paddle_ego']:
-            velocity_magnitude = np.linalg.norm(state_info['paddles']['paddle_ego']['velocity'])
-            velocity_penalty = -self.velocity_penalty_coeff * velocity_magnitude
-            additional_rew += velocity_penalty
-        
-        # TODO: require simulators to send contact info in state
-        return additional_rew
-
     def step(self, action):
         if not self.multiagent:
             obs, reward, is_finished, truncated, info = self.single_agent_step(action)
@@ -816,29 +736,10 @@ class AirHockeyBaseEnv(ABC, Env):
         if self.current_timestep > 0:
             self.old_state = self.current_state
         self.current_state = next_state
-        
-        vel_mag = 0.0
-        acc_mag = 0.0
-        jerk_mag = 0.0
-
-        # Collect motion data
-        if 'paddles' in next_state and 'paddle_ego' in next_state['paddles']:
-            paddle_data = next_state['paddles']['paddle_ego']
-            
-            vel_mag = np.linalg.norm(paddle_data['velocity'])
-            acc_mag = np.linalg.norm(paddle_data['acceleration']) if 'acceleration' in paddle_data else 0
-            jerk_mag = np.linalg.norm(paddle_data['jerk']) if 'jerk' in paddle_data else 0
-            
-            self.episode_motion_data['velocity_mags'].append(vel_mag)
-            self.episode_motion_data['acceleration_mags'].append(acc_mag)
-            self.episode_motion_data['jerk_mags'].append(jerk_mag)
-        success = self.success_in_ep 
+        success = self.success_in_ep
 
         info = {}
         info['success'] = success
-        info['paddle_velocity_mag'] = float(vel_mag)
-        info['paddle_acceleration_mag'] = float(acc_mag)
-        info['paddle_jerk_mag'] = float(jerk_mag)
         info['paddle_puck_collision_count'] = int(next_state.get('paddle_puck_collision_count', 0))
         info['protective_stop'] = bool(next_state.get('protective_stop', False))
         info['transition_hold_active'] = bool(next_state.get('transition_hold_active', False))
@@ -879,9 +780,7 @@ class AirHockeyBaseEnv(ABC, Env):
                 self.success_in_ep = success
         else:
             reward = self.truncate_rew
-        
-        if self.use_reward_shaping:
-            reward += self.get_reward_shaping(next_state)
+
         survival_bonus = 0.0
         if self.enable_survival_bonus and (not is_finished) and (not truncated):
             survival_bonus = self.survival_bonus_per_step
@@ -899,9 +798,6 @@ class AirHockeyBaseEnv(ABC, Env):
         if truncated or is_finished:
             info['episode_return'] = self.episode_return
             info['episode_length'] = self.episode_length
-            info['motion_data'] = self.episode_motion_data.copy()
-            # Reset for next episode
-            self.episode_motion_data = {'velocity_mags': [], 'acceleration_mags': [], 'jerk_mags': []}
 
         self.current_timestep += 1
         

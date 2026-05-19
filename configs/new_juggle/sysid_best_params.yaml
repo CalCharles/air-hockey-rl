@@ -20,21 +20,13 @@
 #         Decision: 2026-05-05 zero-shot-ablations setup.
 
 air_hockey:
-  diagonal_motion_rew: 0.0
-  direction_change_rew: 0.0
-  goal_max_x_velocity: 1
-  goal_max_y_velocity: 5
-  goal_min_y_velocity: 1
-  horizontal_vel_rew: 0.0
   max_timesteps: 250
-  n_training_steps: 1000000
   num_blocks: 0
   num_obstacles: 0
   num_paddles: 1
   num_pucks: 1
   num_targets: 0
   obs_type: history
-  return_goal_obs: false
   seed: 0
 
   puck_spawn_near_paddle_prob: 0.15
@@ -89,7 +81,6 @@ air_hockey:
     enable_observation_delay: true
     delay_seconds: 0.025
 
-  stand_still_rew: 0.0
   task: puck_juggle_upper_half_reward
   terminate_on_enemy_goal: true
   terminate_on_out_of_bounds: false
@@ -97,8 +88,3 @@ air_hockey:
   terminate_on_puck_hit_paddle: false
   terminate_on_puck_pass_paddle: true
   terminate_on_puck_stop: false
-  truncate_rew: 0
-  wall_bumping_rew: 0
-  use_reward_shaping: true
-  use_smooth_penalty: false
-  base_reward_scaling: 1

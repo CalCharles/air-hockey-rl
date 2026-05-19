@@ -27,7 +27,7 @@ Aggregate captures (see ``helper/real_eval_stats.py``):
 
   * ``series.<field>``: count / mean / std / min / max / median / p25 / p75
     over ``episode_return``, ``episode_juggles``, ``episode_contacts``,
-    ``episode_task_reward``, ``episode_motion_reward``, ``episode_length``.
+    ``episode_reward``, ``episode_length``.
   * ``rates.<field>``: count / total / rate over ``episode_juggle_success``,
     ``episode_success``, ``had_protective_stop``,
     ``had_controller_disconnect``, ``readiness_fail_estop``.
@@ -69,9 +69,6 @@ from scripts.td3.helper.real_eval_stats import (
     compute_eval_aggregate,
     format_eval_summary_console,
     write_eval_summary_json,
-)
-from scripts.td3.helper.real_motion_rewards import (
-    _init_motion_reward_state,
 )
 from scripts.td3.helper.real_policy_runner import (
     PolicyRunner,
@@ -428,12 +425,9 @@ def run_eval(
         env_timing_info=_env_timing_info,
         safe_nonnegative_ms=_safe_nonnegative_ms,
         build_split_episode_row=_build_split_episode_row,
-        init_motion_reward_state=_init_motion_reward_state,
         readiness_fn=_simulator_step_readiness,
     )
-    policy_runner.seed_initial(
-        startup_result.obs, motion_reward_horizon=int(args.temporal_alignment_horizon)
-    )
+    policy_runner.seed_initial(startup_result.obs)
     transition_hold.begin(
         reason=startup_result.transition_reason,
         hold_steps=int(args.transition_hold_steps_post_reset),
@@ -522,8 +516,7 @@ def run_eval(
                 "n_steps": int(len(result.rows)),
                 "episode_length": float(result.metrics.episode_length),
                 "episode_return": float(result.metrics.episode_return),
-                "episode_task_reward": float(result.metrics.episode_task_reward),
-                "episode_motion_reward": float(result.metrics.episode_motion_reward),
+                "episode_reward": float(result.metrics.episode_reward),
                 "episode_juggles": int(episode_juggle_counts.n_juggles),
                 "episode_contacts": int(episode_juggle_counts.n_contacts),
                 "episode_juggle_success": bool(episode_juggle_counts.juggle_success),
@@ -574,8 +567,7 @@ def run_eval(
                 "n_steps": int(len(result.rows)),
                 "episode_length": float(result.metrics.episode_length),
                 "episode_return": float(result.metrics.episode_return),
-                "episode_task_reward": float(result.metrics.episode_task_reward),
-                "episode_motion_reward": float(result.metrics.episode_motion_reward),
+                "episode_reward": float(result.metrics.episode_reward),
                 "episode_success": bool(result.terminal.episode_success),
                 "episode_juggles": int(episode_juggle_counts.n_juggles),
                 "episode_contacts": int(episode_juggle_counts.n_contacts),

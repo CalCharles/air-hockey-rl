@@ -22,30 +22,9 @@ import torch
 from airhockey import AirHockeyEnv
 
 from .real_episode_buffers import truncate_collector_episode_for_readiness_fail
-from .real_motion_rewards import (
-    _compute_motion_reward_components,
-    _extract_motion_magnitudes_from_step_info,
-    _extract_motion_positions_from_state_info,
-    _reset_motion_reward_state,
-)
 from .real_stop_state import _classify_stop_event
 from .real_transition_hold import RolloutContext, TransitionHoldState
 from .td3_episode_collection import EpisodeTrajectory
-
-
-MOTION_METRIC_NAMES = (
-    "temporal_valid_fraction",
-    "stand_still_reward_raw",
-    "temporal_alignment_reward_raw",
-    "axis_alignment_reward_raw",
-    "velocity_reward_raw",
-    "jerk_reward_raw",
-    "stand_still_reward_weighted",
-    "temporal_alignment_reward_weighted",
-    "axis_alignment_reward_weighted",
-    "velocity_reward_weighted",
-    "jerk_reward_weighted",
-)
 
 
 @dataclass
@@ -90,11 +69,8 @@ class EpisodeMetrics:
 
     episode_return: float
     episode_length: float
-    episode_task_reward: float
-    episode_motion_reward: float
+    episode_reward: float
     episode_estop_flag: float
-    motion_metric_means: dict
-    motion_metric_count: int
     # Latency arrays (already trimmed for readiness-fail).
     puck_detection_latency_ms: list
     model_inference_latency_ms: list
@@ -162,7 +138,6 @@ class PolicyRunner:
         env_timing_info: Callable,
         safe_nonnegative_ms: Callable,
         build_split_episode_row: Callable,
-        init_motion_reward_state: Callable,
         readiness_fn: Callable,
     ) -> None:
         self._env = env
@@ -184,13 +159,11 @@ class PolicyRunner:
         self._env_timing_info = env_timing_info
         self._safe_nonnegative_ms = safe_nonnegative_ms
         self._build_split_episode_row = build_split_episode_row
-        self._init_motion_reward_state = init_motion_reward_state
         self._readiness_fn = readiness_fn
 
-        # Initial seed for obs / motion-reward state. Set by orchestrator
-        # via `seed_after_initial_reset` before the main loop starts.
+        # Initial seed for obs. Set by orchestrator via
+        # `seed_after_initial_reset` before the main loop starts.
         self._obs: np.ndarray | None = None
-        self._motion_reward_state = None
 
         # Per-episode buffers. Cleared inside `seed_after_reset`.
         self._episode_trajectory = EpisodeTrajectory.empty()
@@ -214,10 +187,6 @@ class PolicyRunner:
         self._readiness_fail_prev: bool = False
         self._readiness_fail_prev_reason: str = "none"
         self._readiness_fail_window: int = 5
-
-        # Motion-metric accumulators (per-episode).
-        self._episode_motion_metric_sums = {name: 0.0 for name in MOTION_METRIC_NAMES}
-        self._episode_motion_metric_count = 0
 
         # Cumulative counter the orchestrator reads via metrics deltas.
         # We track it internally for the orchestrator's primitive chance
@@ -248,42 +217,13 @@ class PolicyRunner:
     def total_steps(self) -> int:
         return int(self._total_steps)
 
-    def seed_initial(self, obs: np.ndarray, *, motion_reward_horizon: int) -> None:
-        """Initial seeding from startup reset (before main loop).
-
-        Sets ``self._obs`` and constructs the initial ``motion_reward_state``
-        from current env paddle/puck (matches L1496–1509).
-        """
+    def seed_initial(self, obs: np.ndarray) -> None:
+        """Initial seeding from startup reset (before main loop)."""
         self._obs = obs
-        env = self._env
-        initial_state_info = getattr(env, "current_state", None)
-        if not isinstance(initial_state_info, dict):
-            simulator = getattr(env, "simulator", None)
-            if simulator is not None and hasattr(simulator, "get_current_state"):
-                try:
-                    initial_state_info = simulator.get_current_state()
-                except Exception:
-                    initial_state_info = None
-        initial_paddle_xy, initial_puck_xy = _extract_motion_positions_from_state_info(
-            initial_state_info
-        )
-        self._motion_reward_state = self._init_motion_reward_state(
-            int(motion_reward_horizon),
-            anchor_paddle_xy=initial_paddle_xy,
-            anchor_puck_xy=initial_puck_xy,
-        )
 
     def seed_after_reset(self, obs: np.ndarray) -> None:
-        """Reset all per-episode state for the next episode.
-
-        Source L2147–L2153 (trajectory buffers) + L2265–L2292
-        (stop flags / readiness trackers / motion-metric accumulators
-        + ``_reset_motion_reward_state`` re-anchor). Order: clear flags
-        first, re-anchor last.
-        """
+        """Reset all per-episode state for the next episode."""
         self._obs = obs
-        # Trajectory buffers (currently cleared at HDF5-save time;
-        # consolidated here per plan §6.2).
         self._episode_rows = []
         self._episode_puck_detection_latency_ms = []
         self._episode_model_inference_latency_ms = []
@@ -305,30 +245,6 @@ class PolicyRunner:
         self._readiness_fail_first_total_step = None
         self._readiness_fail_prev = False
         self._readiness_fail_prev_reason = "none"
-
-        # Motion metric accumulators.
-        self._episode_motion_metric_sums = {name: 0.0 for name in MOTION_METRIC_NAMES}
-        self._episode_motion_metric_count = 0
-
-        # Re-anchor motion_reward_state from current post-reset env state
-        # (must run last; depends on env state being settled).
-        env = self._env
-        current_state_info = getattr(env, "current_state", None)
-        if not isinstance(current_state_info, dict):
-            simulator = getattr(env, "simulator", None)
-            if simulator is not None and hasattr(simulator, "get_current_state"):
-                try:
-                    current_state_info = simulator.get_current_state()
-                except Exception:
-                    current_state_info = None
-        current_paddle_xy, current_puck_xy = _extract_motion_positions_from_state_info(
-            current_state_info
-        )
-        _reset_motion_reward_state(
-            self._motion_reward_state,
-            anchor_paddle_xy=current_paddle_xy,
-            anchor_puck_xy=current_puck_xy,
-        )
 
     # ------------------------------------------------------------------
     # Episode loop.
@@ -556,33 +472,10 @@ class PolicyRunner:
             if stop_now:
                 self._stop_flags.had_stop = True
 
-            # ----------------------------- Motion reward (L1711–1729) ---
-            next_state_info = getattr(env, "current_state", None)
-            next_paddle_xy, next_puck_xy = _extract_motion_positions_from_state_info(next_state_info)
-            velocity_mag, _, jerk_mag = _extract_motion_magnitudes_from_step_info(
-                step_info, self._motion_reward_state
-            )
-            motion_components = _compute_motion_reward_components(
-                args=args,
-                motion_state=self._motion_reward_state,
-                paddle_xy=next_paddle_xy,
-                puck_xy=next_puck_xy,
-                velocity_mag=velocity_mag,
-                jerk_mag=jerk_mag,
-            )
-            motion_reward = float(motion_components["motion_reward_total"])
-            for metric_name in MOTION_METRIC_NAMES:
-                self._episode_motion_metric_sums[metric_name] += float(
-                    motion_components[metric_name]
-                )
-            self._episode_motion_metric_count += 1
-
-            # ----------------------------- Episode-row append (L1730–1746) ---
-            # `task_reward`, `motion_reward`, `done` (terminations_tensor) are
-            # the same values pushed into the replay buffer below — recording
-            # them on the HDF5 row makes the trajectory file self-sufficient
-            # for offline policy replay / re-evaluation without needing the
-            # runtime replay buffer.
+            # `reward`, `done` (terminations_tensor) are the same values pushed
+            # into the replay buffer below — recording them on the HDF5 row
+            # makes the trajectory file self-sufficient for offline policy
+            # replay / re-evaluation without needing the runtime replay buffer.
             self._episode_rows.append(
                 self._build_split_episode_row(
                     env=env,
@@ -591,8 +484,7 @@ class PolicyRunner:
                     episode_step_idx=len(self._episode_rows),
                     protective_stop_active=stop_state.protective_stop,
                     controller_disconnected=stop_state.controller_disconnected,
-                    task_reward=float(task_reward),
-                    motion_reward=float(motion_reward),
+                    reward=float(task_reward),
                     done=float(terminations_tensor.item()),
                 )
             )
@@ -608,8 +500,7 @@ class PolicyRunner:
                 obs=obs_tensor[0],
                 next_obs=torch.as_tensor(next_obs, dtype=torch.float32, device=device),
                 action=action_tensor[0],
-                task_reward=torch.tensor(float(task_reward), dtype=torch.float32, device=device),
-                motion_reward=torch.tensor(float(motion_reward), dtype=torch.float32, device=device),
+                reward=torch.tensor(float(task_reward), dtype=torch.float32, device=device),
                 done=terminations_tensor,
                 prev_action=prev_action[0],
             )
@@ -722,11 +613,8 @@ class PolicyRunner:
         # ----------------------------- Compose metrics ----------------
         episode_return = float(self._episode_trajectory.episode_return)
         episode_length = float(len(self._episode_trajectory.observations))
-        episode_task_reward = float(
-            torch.stack(self._episode_trajectory.task_rewards, dim=0).sum().item()
-        )
-        episode_motion_reward = float(
-            torch.stack(self._episode_trajectory.motion_rewards, dim=0).sum().item()
+        episode_reward = float(
+            torch.stack(self._episode_trajectory.rewards, dim=0).sum().item()
         )
         episode_estop_flag = (
             1.0
@@ -737,14 +625,6 @@ class PolicyRunner:
             else 0.0
         )
 
-        if self._episode_motion_metric_count > 0:
-            motion_metric_means = {
-                name: float(self._episode_motion_metric_sums[name]) / float(self._episode_motion_metric_count)
-                for name in MOTION_METRIC_NAMES
-            }
-        else:
-            motion_metric_means = {}
-
         delta_transition_hold_steps = (
             int(transition_hold.steps_total) - int(delta_transition_hold_steps_at_start)
         )
@@ -752,11 +632,8 @@ class PolicyRunner:
         metrics = EpisodeMetrics(
             episode_return=episode_return,
             episode_length=episode_length,
-            episode_task_reward=episode_task_reward,
-            episode_motion_reward=episode_motion_reward,
+            episode_reward=episode_reward,
             episode_estop_flag=episode_estop_flag,
-            motion_metric_means=motion_metric_means,
-            motion_metric_count=int(self._episode_motion_metric_count),
             puck_detection_latency_ms=list(self._episode_puck_detection_latency_ms),
             model_inference_latency_ms=list(self._episode_model_inference_latency_ms),
             block_sleep_latency_ms=list(self._episode_block_sleep_latency_ms),

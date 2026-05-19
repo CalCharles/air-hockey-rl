@@ -78,8 +78,6 @@ residual_ema_decay: null
 residual_action_l2: 0.0
 
 # --- TD3 core (CQL recipe) --------------------------------------------------
-task_gamma: 0.985
-motion_gamma: 0.85
 tau: 0.005
 batch_size: 512
 min_replay_size_before_learning: 0
@@ -148,21 +146,8 @@ exploration_target_position_delta_y: 0.12
 exploration_target_position_steps: 5
 
 # --- Reward weights — matches sim2sim CQL recipe ----------------------------
-task_reward_weight: 1.0
-motion_reward_weight: 0.0
 
-stand_still_reward_weight: 0.1
-temporal_alignment_reward_weight: 0.0
-axis_alignment_reward_weight: 0.0
-velocity_reward_weight: 0.5
-jerk_reward_weight: 0.5
 
-stand_still_threshold: 0.015
-temporal_alignment_horizon: 4
-velocity_at_one: 0.2
-velocity_at_zero: 0.6
-jerk_at_one: 8.0
-jerk_at_zero: 20.0
 
 # --- Paths ------------------------------------------------------------------
 config: "configs/real_configs/rollout_config_residual.yaml"

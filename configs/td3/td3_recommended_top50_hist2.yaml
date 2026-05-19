@@ -25,8 +25,6 @@ num_envs: 1
 
 # TD3 core
 buffer_size: 100000
-task_gamma: 0.985
-motion_gamma: 0.85
 tau: 0.005
 batch_size: 512
 learning_starts: 20000
@@ -88,23 +86,10 @@ exploration_target_position_steps: 5
 # Pre-contact hit variant (disabled)
 
 # Dual-head reward decomposition
-task_reward_weight: 1.0
-motion_reward_weight: 0.0
 
 # Motion reward component weights
-stand_still_reward_weight: 0.1
-temporal_alignment_reward_weight: 0.0
-axis_alignment_reward_weight: 0.0
-velocity_reward_weight: 0.5
-jerk_reward_weight: 0.5
 
 # Motion reward calibration
-stand_still_threshold: 0.015
-temporal_alignment_horizon: 4
-velocity_at_one: 0.2
-velocity_at_zero: 0.6
-jerk_at_one: 8.0
-jerk_at_zero: 20.0
 
 # Simulator physics (real-world tuned — see environments/real-world/puck-system-id.md
 # and teleop-system-id.md). hist_len=2 variant applies a 2-timestep low-pass

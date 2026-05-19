@@ -2,10 +2,10 @@
 
 See notes/docs/environments/real-world/episode-lifecycle.md for the metrics context.
 
-Each numeric series tracked over the rolling window (task reward, motion
-reward, episode length, total episode return) is summarized as a
-``SeriesStats`` — count, average, min, max, standard deviation, median.
-This lets the user read both *level* (``avg`` / ``median``) and *spread*
+Each numeric series tracked over the rolling window (reward, episode
+length, total episode return) is summarized as a ``SeriesStats`` —
+count, average, min, max, standard deviation, median. This lets the
+user read both *level* (``avg`` / ``median``) and *spread*
 (``min`` / ``max`` / ``std``) of the policy's recent performance from
 TensorBoard or the console without having to inspect the raw window.
 
@@ -26,8 +26,6 @@ import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 
 
-# Default window sizes emitted to TensorBoard / stats / console. Listed
-# smallest → largest so logs read in increasing-stability order.
 ROLLING_WINDOW_SIZES: tuple[int, ...] = (5, 10, 25, 50)
 
 
@@ -39,13 +37,6 @@ def rolling_mean(values: Sequence[float]) -> float:
 
 @dataclass(frozen=True)
 class SeriesStats:
-    """Distribution summary for one rolling-window numeric series.
-
-    All fields are 0.0 for an empty window; this keeps TensorBoard /
-    console output unobtrusive before any episode has been recorded.
-    ``std`` is the population standard deviation (numpy default).
-    """
-
     count: int
     avg: float
     min: float
@@ -74,42 +65,24 @@ def compute_series_stats(values: Sequence[float]) -> SeriesStats:
 
 @dataclass(frozen=True)
 class RollingWindowMetrics:
-    """Distribution stats for a single rolling window of size ``window_size``.
-
-    ``window_count`` is the actual number of episodes summarized — equal
-    to ``window_size`` once the window has filled, less otherwise.
-    """
-
     window_size: int
     window_count: int
-    task_reward: SeriesStats
-    motion_reward: SeriesStats
+    reward: SeriesStats
     episode_length: SeriesStats
     episode_return: SeriesStats
     estop_episode_count: float
-    # New series. Defaulted so legacy callers (and old checkpoints whose
-    # rolling state predates juggle tracking) still construct cleanly.
     episode_juggles: SeriesStats = field(default_factory=SeriesStats.empty)
     episode_contacts: SeriesStats = field(default_factory=SeriesStats.empty)
 
-    # Backwards-compat scalar aliases used by collector log lines that
-    # were written before per-series distribution stats existed.
     @property
-    def task_reward_avg(self) -> float:
-        return self.task_reward.avg
-
-    @property
-    def motion_reward_avg(self) -> float:
-        return self.motion_reward.avg
+    def reward_avg(self) -> float:
+        return self.reward.avg
 
     @property
     def episode_length_avg(self) -> float:
         return self.episode_length.avg
 
 
-# Legacy alias — the metrics object originally tracked only the rolling-50
-# window; today it can represent any window size. Kept so that callers
-# that imported ``Rolling50Metrics`` continue to type-check.
 Rolling50Metrics = RollingWindowMetrics
 
 
@@ -125,23 +98,14 @@ def _last_n(values: Sequence[float] | None, n: int) -> list[float]:
 def compute_rolling_window_metrics(
     *,
     window_size: int,
-    task_reward_values: Sequence[float],
-    motion_reward_values: Sequence[float],
+    reward_values: Sequence[float],
     episode_length_values: Sequence[float],
     estop_episode_flags: Sequence[float],
     episode_return_values: Sequence[float] | None = None,
     episode_juggles_values: Sequence[float] | None = None,
     episode_contacts_values: Sequence[float] | None = None,
 ) -> RollingWindowMetrics:
-    """Compute distribution stats over the most-recent ``window_size`` items.
-
-    Inputs may hold up to ``max(ROLLING_WINDOW_SIZES)`` items (typically
-    50); this helper slices the last ``window_size`` items from each
-    series so all sizes can be derived from a single source-of-truth
-    deque.
-    """
-    task_w = _last_n(task_reward_values, window_size)
-    motion_w = _last_n(motion_reward_values, window_size)
+    reward_w = _last_n(reward_values, window_size)
     length_w = _last_n(episode_length_values, window_size)
     estop_w = _last_n(estop_episode_flags, window_size)
     return_w = _last_n(episode_return_values, window_size)
@@ -150,8 +114,7 @@ def compute_rolling_window_metrics(
     return RollingWindowMetrics(
         window_size=int(window_size),
         window_count=len(length_w),
-        task_reward=compute_series_stats(task_w),
-        motion_reward=compute_series_stats(motion_w),
+        reward=compute_series_stats(reward_w),
         episode_length=compute_series_stats(length_w),
         episode_return=compute_series_stats(return_w),
         estop_episode_count=float(sum(estop_w)),
@@ -162,8 +125,7 @@ def compute_rolling_window_metrics(
 
 def compute_rolling_window_metrics_multi(
     *,
-    task_reward_values: Sequence[float],
-    motion_reward_values: Sequence[float],
+    reward_values: Sequence[float],
     episode_length_values: Sequence[float],
     estop_episode_flags: Sequence[float],
     episode_return_values: Sequence[float] | None = None,
@@ -171,12 +133,10 @@ def compute_rolling_window_metrics_multi(
     episode_contacts_values: Sequence[float] | None = None,
     window_sizes: Sequence[int] = ROLLING_WINDOW_SIZES,
 ) -> dict[int, RollingWindowMetrics]:
-    """Compute per-window stats for several window sizes from one input."""
     return {
         int(n): compute_rolling_window_metrics(
             window_size=int(n),
-            task_reward_values=task_reward_values,
-            motion_reward_values=motion_reward_values,
+            reward_values=reward_values,
             episode_length_values=episode_length_values,
             estop_episode_flags=estop_episode_flags,
             episode_return_values=episode_return_values,
@@ -187,18 +147,15 @@ def compute_rolling_window_metrics_multi(
     }
 
 
-# Backwards-compat wrapper for callers that only want the rolling-50 view.
 def compute_rolling50_metrics(
-    rolling50_task_reward_values: Sequence[float],
-    rolling50_motion_reward_values: Sequence[float],
+    rolling50_reward_values: Sequence[float],
     rolling50_episode_length_values: Sequence[float],
     rolling50_estop_episode_flags: Sequence[float],
     rolling50_episode_return_values: Sequence[float] | None = None,
 ) -> RollingWindowMetrics:
     return compute_rolling_window_metrics(
         window_size=50,
-        task_reward_values=rolling50_task_reward_values,
-        motion_reward_values=rolling50_motion_reward_values,
+        reward_values=rolling50_reward_values,
         episode_length_values=rolling50_episode_length_values,
         estop_episode_flags=rolling50_estop_episode_flags,
         episode_return_values=rolling50_episode_return_values,
@@ -222,8 +179,7 @@ def _write_window_to_stats(
     stats[f"{key_prefix}_window_count"] = float(m.window_count)
     stats[f"{key_prefix}_estop_episode_count"] = float(m.estop_episode_count)
     for series_prefix, series_stats in (
-        (f"{key_prefix}_task_reward", m.task_reward),
-        (f"{key_prefix}_motion_reward", m.motion_reward),
+        (f"{key_prefix}_reward", m.reward),
         (f"{key_prefix}_episode_length", m.episode_length),
         (f"{key_prefix}_episode_return", m.episode_return),
         (f"{key_prefix}_episode_juggles", m.episode_juggles),
@@ -237,24 +193,16 @@ def update_stats_dict_rolling_windows(
     stats: MutableMapping[str, object],
     multi: Mapping[int, RollingWindowMetrics],
     *,
-    raw_task_reward_values: Sequence[float],
-    raw_motion_reward_values: Sequence[float],
+    raw_reward_values: Sequence[float],
     raw_episode_length_values: Sequence[float],
     raw_estop_episode_flags: Sequence[float],
     raw_episode_return_values: Sequence[float] | None = None,
     raw_episode_juggles_values: Sequence[float] | None = None,
     raw_episode_contacts_values: Sequence[float] | None = None,
 ) -> None:
-    """Write per-window stats + raw-deque values into ``stats``.
-
-    Only the largest window's raw values are persisted (under
-    ``rolling50_*_values``) — smaller windows are derived from those at
-    load time, so resume/checkpoint round-trip is unchanged.
-    """
     for window_size, m in multi.items():
         _write_window_to_stats(stats, m, key_prefix=f"rolling{int(window_size)}")
-    stats["rolling50_task_reward_values"] = list(raw_task_reward_values)
-    stats["rolling50_motion_reward_values"] = list(raw_motion_reward_values)
+    stats["rolling50_reward_values"] = list(raw_reward_values)
     stats["rolling50_episode_length_values"] = list(raw_episode_length_values)
     stats["rolling50_estop_episode_flags"] = list(raw_estop_episode_flags)
     stats["rolling50_episode_return_values"] = list(raw_episode_return_values or ())
@@ -262,22 +210,19 @@ def update_stats_dict_rolling_windows(
     stats["rolling50_episode_contacts_values"] = list(raw_episode_contacts_values or ())
 
 
-# Backwards-compat wrapper used by the legacy single-window collector.
 def update_stats_dict_rolling50(
     stats: MutableMapping[str, object],
     m: RollingWindowMetrics,
     *,
     window_size: int,
-    rolling50_task_reward_values: Sequence[float],
-    rolling50_motion_reward_values: Sequence[float],
+    rolling50_reward_values: Sequence[float],
     rolling50_episode_length_values: Sequence[float],
     rolling50_estop_episode_flags: Sequence[float],
     rolling50_episode_return_values: Sequence[float] | None = None,
 ) -> None:
-    _ = window_size  # always 50; retained for API compatibility
+    _ = window_size
     _write_window_to_stats(stats, m, key_prefix="rolling50")
-    stats["rolling50_task_reward_values"] = list(rolling50_task_reward_values)
-    stats["rolling50_motion_reward_values"] = list(rolling50_motion_reward_values)
+    stats["rolling50_reward_values"] = list(rolling50_reward_values)
     stats["rolling50_episode_length_values"] = list(rolling50_episode_length_values)
     stats["rolling50_estop_episode_flags"] = list(rolling50_estop_episode_flags)
     stats["rolling50_episode_return_values"] = list(rolling50_episode_return_values or ())
@@ -291,8 +236,7 @@ def _write_window_to_tb(
     tag_prefix: str,
 ) -> None:
     for series_prefix, series_stats in (
-        (f"{tag_prefix}/task_reward", m.task_reward),
-        (f"{tag_prefix}/motion_reward", m.motion_reward),
+        (f"{tag_prefix}/reward", m.reward),
         (f"{tag_prefix}/episode_length", m.episode_length),
         (f"{tag_prefix}/episode_return", m.episode_return),
         (f"{tag_prefix}/episode_juggles", m.episode_juggles),
@@ -312,17 +256,10 @@ def write_rolling_windows_tensorboard_scalars(
     multi: Mapping[int, RollingWindowMetrics],
     total_steps: int,
 ) -> None:
-    """Emit ``rolling{N}/<series>_<stat>`` scalars for every window in ``multi``.
-
-    Each window groups under its own TensorBoard tag prefix
-    (``rolling5``, ``rolling10``, ``rolling25``, ``rolling50``) so they
-    can be overlaid on a single chart in the UI.
-    """
     for window_size, m in multi.items():
         _write_window_to_tb(writer, m, total_steps, tag_prefix=f"rolling{int(window_size)}")
 
 
-# Backwards-compat wrapper for the legacy single-window collector.
 def write_rolling50_tensorboard_scalars(
     writer: SummaryWriter,
     m: RollingWindowMetrics,
@@ -332,14 +269,6 @@ def write_rolling50_tensorboard_scalars(
 
 
 def format_rolling_window_console_line(m: RollingWindowMetrics) -> str:
-    """One-line summary of a single window's distribution.
-
-    Layout: ``count=<n> estops=<k> | <series>: avg=… std=… [min..max] median=… | …``
-    The configured window size is conveyed by the caller's log prefix
-    (``[collector_rolling<N>]``); ``count`` is the *actual* number of
-    items so the reader can tell when the window is still warming up.
-    """
-
     def _fmt_reward(s: SeriesStats) -> str:
         return (
             f"avg={s.avg:.3f} std={s.std:.3f} "
@@ -362,11 +291,9 @@ def format_rolling_window_console_line(m: RollingWindowMetrics) -> str:
         f"count={int(m.window_count)} estops={m.estop_episode_count:.0f} "
         f"| return: {_fmt_reward(m.episode_return)} "
         f"| juggles: {_fmt_count(m.episode_juggles)} "
-        f"| task: {_fmt_reward(m.task_reward)} "
-        f"| motion: {_fmt_reward(m.motion_reward)} "
+        f"| reward: {_fmt_reward(m.reward)} "
         f"| length: {_fmt_length(m.episode_length)}"
     )
 
 
-# Backwards-compat alias (older orchestrator code referenced this name).
 format_rolling50_console_line = format_rolling_window_console_line

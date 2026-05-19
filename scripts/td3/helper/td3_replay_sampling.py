@@ -36,8 +36,7 @@ def concat_replay_samples(sample_chunks: List[Dict[str, torch.Tensor]]) -> Dict[
         "next_observations",
         "actions",
         "prev_actions",
-        "task_rewards",
-        "motion_rewards",
+        "rewards",
         "dones",
         "weights",
         "sampled_priorities",
@@ -80,8 +79,8 @@ def sample_critic_source_chunk(
         }
 
     data = replay_buffer.sample(sample_count)
-    data["weights"] = torch.ones((sample_count,), dtype=torch.float32, device=data["task_rewards"].device)
-    data["sampled_priorities"] = torch.zeros((sample_count,), dtype=torch.float32, device=data["task_rewards"].device)
+    data["weights"] = torch.ones((sample_count,), dtype=torch.float32, device=data["rewards"].device)
+    data["sampled_priorities"] = torch.zeros((sample_count,), dtype=torch.float32, device=data["rewards"].device)
     return {
         "data": data,
         "per_count": 0,
