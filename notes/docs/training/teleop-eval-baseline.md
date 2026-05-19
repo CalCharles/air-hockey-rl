@@ -41,9 +41,9 @@ policy's `kept_index` row at the same `target_episodes`.
 
 * **Control mode**: `mouse` — cursor over the live `image` window drives
   the paddle (same UX as `scripts/real/teleoperate.py`).
-* **No actor / replay / checkpointing / motion reward** — irrelevant for
-  a baseline. Episode HDF5s are still written, so trajectories are
-  re-scorable offline.
+* **No actor / replay / checkpointing** — irrelevant for a baseline.
+  Episode HDF5s are still written, so trajectories are re-scorable
+  offline.
 * **Single cv2 window**: the phase banner (border color + header) is
   drawn directly on the `image` window so the participant has exactly
   one window to look at and one window to drag the cursor on.

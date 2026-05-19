@@ -9,14 +9,14 @@ TD3 is the active training algorithm. PPO/SAC paths exist as legacy (see `archit
 | Doc | What it covers |
 |-----|----------------|
 | [`architecture.md`](architecture.md) | Active code paths, legacy folders, where each topic lives |
-| [`td3-algorithm.md`](td3-algorithm.md) | h-transform, dual-head critics, actor objective |
-| [`network-architecture.md`](network-architecture.md) | `ResidualMLPTrunk`, `DualHeadQ`, `DeterministicAgent` shapes |
+| [`td3-algorithm.md`](td3-algorithm.md) | h-transform, single-head critic, actor objective |
+| [`network-architecture.md`](network-architecture.md) | `ResidualMLPTrunk`, `TD3QNetwork`, `DeterministicAgent` shapes |
 
 ## Runtime behavior
 
 | Doc | What it covers |
 |-----|----------------|
-| [`reward-shaping.md`](reward-shaping.md) | Task + motion reward composition (5 components, weights) |
+| [`reward-shaping.md`](reward-shaping.md) | Reward composition (env base reward + survival bonus) |
 | [`replay-and-episodes.md`](replay-and-episodes.md) | PER, success/failure partitions, episode staging |
 | [`checkpointing.md`](checkpointing.md) | Schema, resume vs fine-tune, migrations, real-world async resume |
 | [`monitoring.md`](monitoring.md) | TensorBoard scalar reference, console layout, rolling windows |

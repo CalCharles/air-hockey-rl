@@ -40,7 +40,6 @@ Key flags:
    ```
    with `move_lims = (0.26, 0.12)` — identical on real and sim. This recovers
    the *exact* `[-1, 1]` action the policy produced at each step, pre-pipeline.
-   Same inversion pattern as `async_td3_real_reset_policy.py:318-320`.
 
 3. **Build the sim env** from the YAML. Unless `--enable-noise`, the script
    overrides these keys to make replay deterministic:
