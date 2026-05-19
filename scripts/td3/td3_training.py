@@ -109,8 +109,6 @@ def save_training_data_like_rollout_gif(
     use_last_action_in_policy_state: bool,
     exploration_noise: float,
     primitive_selector: PrimitiveExplorationSelector,
-    warm_policy_actor,
-    warm_policy_use_last_action: bool,
     max_timesteps: int,
     fps: int,
     device: str,
@@ -123,7 +121,6 @@ def save_training_data_like_rollout_gif(
     obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
     act_dim = int(np.prod(viz_env.action_space.shape))
     last_action_for_policy = torch.zeros((1, act_dim), dtype=torch.float32, device=device)
-    warm_policy_last_action = torch.zeros((1, act_dim), dtype=torch.float32, device=device)
     action_low_single = action_low.unsqueeze(0)
     action_high_single = action_high.unsqueeze(0)
 
@@ -139,26 +136,13 @@ def save_training_data_like_rollout_gif(
         target_action_delta_x=float(primitive_selector.target_action_delta_x),
         target_action_delta_y=float(primitive_selector.target_action_delta_y),
         target_takeover_steps=int(primitive_selector.target_takeover_steps),
-        pre_contact_hit_variant_chance=float(primitive_selector.pre_contact_hit_variant_chance),
-        pre_contact_hit_variant_steps=int(primitive_selector.pre_contact_hit_variant_steps),
-        pre_contact_hit_variant_distance_threshold=float(
-            primitive_selector.pre_contact_hit_variant_distance_threshold
-        ),
-        pre_contact_hit_variant_scale_min=float(primitive_selector.pre_contact_hit_variant_scale_min),
-        pre_contact_hit_variant_scale_max=float(primitive_selector.pre_contact_hit_variant_scale_max),
-        pre_contact_hit_variant_min_upward_displacement_x=float(
-            primitive_selector.pre_contact_hit_variant_min_upward_displacement_x
-        ),
     )
     primitive_weights = primitive_selector.primitive_weights.detach().cpu().numpy()
     rollout_selector.set_primitive_weights(
         stand_still=float(primitive_weights[0]),
         same_direction=float(primitive_weights[1]),
         y_aligned=float(primitive_weights[2]),
-        policy_takeover=float(primitive_weights[3]),
-        target_position_directional=(
-            float(primitive_weights[4]) if primitive_weights.shape[0] > 4 else 0.0
-        ),
+        target_position_directional=float(primitive_weights[3]),
     )
 
     frames = []
@@ -216,23 +200,6 @@ def save_training_data_like_rollout_gif(
                 current_puck_velocity=current_puck_vel,
                 return_stats=True,
             )
-            if warm_policy_actor is not None:
-                policy_takeover_mask = rollout_selector.active & (
-                    rollout_selector.primitive_id == rollout_selector.primitive_ids.POLICY_TAKEOVER
-                )
-                if torch.any(policy_takeover_mask):
-                    warm_policy_obs = augment_policy_observation(
-                        obs_tensor,
-                        warm_policy_last_action,
-                        warm_policy_use_last_action,
-                    )
-                    warm_policy_actions = deterministic_actor_action(warm_policy_actor, warm_policy_obs)
-                    warm_policy_actions = torch.clamp(
-                        warm_policy_actions,
-                        action_low_single,
-                        action_high_single,
-                    )
-                    action_tensor[policy_takeover_mask] = warm_policy_actions[policy_takeover_mask]
 
         action_np = action_tensor.squeeze(0).detach().cpu().numpy()
         next_obs, rew, terminated, truncated, _ = viz_env.step(action_np)
@@ -243,10 +210,8 @@ def save_training_data_like_rollout_gif(
         done_tensor = torch.tensor([done], dtype=torch.bool, device=device)
         rollout_selector.reset(done_tensor)
         last_action_for_policy = action_tensor.clone()
-        warm_policy_last_action = action_tensor.clone()
         if done:
             last_action_for_policy.zero_()
-            warm_policy_last_action.zero_()
 
     duration_ms = int(1000 * 1 / max(int(fps), 1))
     imageio.mimsave(save_path, frames, format="GIF", loop=0, duration=duration_ms)
@@ -267,50 +232,6 @@ def extract_deterministic_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dic
 
 def resolve_path_relative_to_dir(path: str, base_dir: str) -> str:
     return path if os.path.isabs(path) else os.path.normpath(os.path.join(base_dir, path))
-
-
-def create_warm_start_policy(
-    warm_model_path: str,
-    warm_args_path: str,
-    warm_config_path: str,
-    env_action_space: gym.spaces.Box,
-    raw_obs_dim: int,
-    act_dim: int,
-    device: str,
-):
-    with open(warm_args_path, "r") as f:
-        warm_args = yaml.load(f, Loader=yaml.FullLoader)
-    with open(warm_config_path, "r") as f:
-        warm_config = yaml.load(f, Loader=yaml.FullLoader)
-
-    warm_use_last_action = bool(warm_args.get("use_last_action_in_policy_state", False))
-    warm_hidden_layer_size = int(warm_args.get("agent_hidden_layer_size", 64))
-    warm_num_hidden_layers = int(warm_args.get("agent_num_hidden_layers", 2))
-    warm_action_scale = float(warm_args.get("action_scale", 0.02))
-    if warm_config.get("air_hockey", {}).get("use_pid", False):
-        warm_action_scale = 1.0
-
-    warm_policy_obs_dim = raw_obs_dim + act_dim if warm_use_last_action else raw_obs_dim
-    warm_policy_env_view = SimpleNamespace(
-        single_observation_space=gym.spaces.Box(
-            low=-np.inf,
-            high=np.inf,
-            shape=(warm_policy_obs_dim,),
-            dtype=np.float32,
-        ),
-        single_action_space=env_action_space,
-    )
-    warm_policy = DeterministicAgent(
-        warm_policy_env_view,
-        action_scale=warm_action_scale,
-        action_bias=0.0,
-        hidden_layer_size=warm_hidden_layer_size,
-        num_hidden_layers=warm_num_hidden_layers,
-    ).to(device)
-    warm_state_dict = torch.load(warm_model_path, map_location=device, weights_only=False)
-    warm_policy.load_state_dict(warm_state_dict)
-    warm_policy.eval()
-    return warm_policy, warm_use_last_action
 
 
 def extract_current_paddle_position(observation: torch.Tensor) -> torch.Tensor:
@@ -486,12 +407,10 @@ class Args:
     exploration_primitive_weight_stand_still: float = 1.0 / 3.0
     exploration_primitive_weight_same_direction: float = 1.0 / 3.0
     exploration_primitive_weight_y_aligned: float = 1.0 / 3.0
-    exploration_primitive_weight_policy_takeover: float = 0.4
     exploration_primitive_weight_target_position_directional: float = 0.0
     exploration_primitive_weight_anneal_stand_still: float = 0.3
     exploration_primitive_weight_anneal_same_direction: float = 0.1
     exploration_primitive_weight_anneal_y_aligned: float = 0.6
-    exploration_primitive_weight_anneal_policy_takeover: float = 0.4
     exploration_primitive_weight_anneal_target_position_directional: float = 0.0
     exploration_direction_y_component_weight: float = 1.5
     exploration_target_position_min_distance: float = 0.2
@@ -511,16 +430,6 @@ class Args:
     exploration_target_position_directional_max_angle_deg: float | None = None
     exploration_target_position_directional_min_magnitude: float | None = None
     exploration_target_position_directional_max_magnitude: float | None = None
-    exploration_pre_contact_hit_variant_chance: float = 0.15
-    exploration_pre_contact_hit_variant_steps: int = 5
-    exploration_pre_contact_hit_variant_distance_threshold: float = 0.25
-    exploration_pre_contact_hit_variant_scale_min: float = 0.5
-    exploration_pre_contact_hit_variant_scale_max: float = 1.5
-    exploration_pre_contact_hit_variant_min_upward_displacement_x: float = 0.12
-    exploration_policy_takeover_enabled: bool = True
-    exploration_policy_takeover_model_path: str = "model1.pth"
-    exploration_policy_takeover_args_path: str = "args.yaml"
-    exploration_policy_takeover_config_path: str = "config.yaml"
 
     # Dual-head reward decomposition
     task_reward_weight: float = 1.0
@@ -1159,7 +1068,6 @@ def _entrypoint():
     interval_env_steps = 0
     interval_primitive_env_steps = 0
     interval_primitive_horizontal_env_steps = 0
-    interval_policy_takeover_env_steps = 0
     interval_target_position_directional_env_steps = 0
     rolling_step_stats_window = deque()
     rolling_episode_stats_window = deque()
@@ -1216,33 +1124,6 @@ def _entrypoint():
 
     action_low = torch.as_tensor(envs.single_action_space.low, dtype=torch.float32, device=args.device)
     action_high = torch.as_tensor(envs.single_action_space.high, dtype=torch.float32, device=args.device)
-    warm_start_base_dir = os.path.join(os.path.dirname(__file__), "extras", "warm_start")
-    warm_model_path = resolve_path_relative_to_dir(
-        args.exploration_policy_takeover_model_path,
-        warm_start_base_dir,
-    )
-    warm_args_path = resolve_path_relative_to_dir(
-        args.exploration_policy_takeover_args_path,
-        warm_start_base_dir,
-    )
-    warm_config_path = resolve_path_relative_to_dir(
-        args.exploration_policy_takeover_config_path,
-        warm_start_base_dir,
-    )
-    warm_policy_actor = None
-    warm_policy_use_last_action = False
-    warm_policy_last_action = torch.zeros((args.num_envs, act_dim), dtype=torch.float32, device=args.device)
-    if args.exploration_policy_takeover_enabled and not args.eval_mode:
-        warm_policy_actor, warm_policy_use_last_action = create_warm_start_policy(
-            warm_model_path=warm_model_path,
-            warm_args_path=warm_args_path,
-            warm_config_path=warm_config_path,
-            env_action_space=envs.single_action_space,
-            raw_obs_dim=raw_obs_dim,
-            act_dim=act_dim,
-            device=args.device,
-        )
-        print(f"Warm-start takeover policy loaded from {warm_model_path}")
 
     primitive_selector = PrimitiveExplorationSelector(
         num_envs=args.num_envs,
@@ -1276,31 +1157,15 @@ def _entrypoint():
             args.exploration_target_position_directional_max_magnitude
         ),
         target_takeover_steps=args.exploration_target_position_steps,
-        pre_contact_hit_variant_chance=args.exploration_pre_contact_hit_variant_chance,
-        pre_contact_hit_variant_steps=args.exploration_pre_contact_hit_variant_steps,
-        pre_contact_hit_variant_distance_threshold=(
-            args.exploration_pre_contact_hit_variant_distance_threshold
-        ),
-        pre_contact_hit_variant_scale_min=args.exploration_pre_contact_hit_variant_scale_min,
-        pre_contact_hit_variant_scale_max=args.exploration_pre_contact_hit_variant_scale_max,
-        pre_contact_hit_variant_min_upward_displacement_x=(
-            args.exploration_pre_contact_hit_variant_min_upward_displacement_x
-        ),
     )
     primitive_selector.set_primitive_weights(
         stand_still=args.exploration_primitive_weight_stand_still,
         same_direction=args.exploration_primitive_weight_same_direction,
         y_aligned=args.exploration_primitive_weight_y_aligned,
-        policy_takeover=(
-            args.exploration_primitive_weight_policy_takeover
-            if args.exploration_policy_takeover_enabled
-            else 0.0
-        ),
         target_position_directional=args.exploration_primitive_weight_target_position_directional,
     )
     if args.eval_mode:
         primitive_selector.chance = 0.0
-        primitive_selector.pre_contact_hit_variant_chance = 0.0
     if resume_checkpoint is not None:
         restored_state = load_resume_training_state(
             resume_checkpoint,
@@ -1312,7 +1177,6 @@ def _entrypoint():
             q_optimizer=q_optimizer,
             actor_optimizer=actor_optimizer,
             defaults={
-                "warm_policy_last_action": warm_policy_last_action,
                 "train_metrics": train_metrics,
                 "velocity_magnitudes": velocity_magnitudes,
                 "acceleration_magnitudes": acceleration_magnitudes,
@@ -1321,7 +1185,6 @@ def _entrypoint():
                 "interval_env_steps": interval_env_steps,
                 "interval_primitive_env_steps": interval_primitive_env_steps,
                 "interval_primitive_horizontal_env_steps": interval_primitive_horizontal_env_steps,
-                "interval_policy_takeover_env_steps": interval_policy_takeover_env_steps,
                 "interval_target_position_directional_env_steps": (
                     interval_target_position_directional_env_steps
                 ),
@@ -1340,7 +1203,6 @@ def _entrypoint():
             torch.tensor(obs, dtype=torch.float32, device=args.device)
         ).clone()
         last_action_for_policy = restored_state["last_action_for_policy"]
-        warm_policy_last_action = restored_state["warm_policy_last_action"]
         temporal_paddle_history = restored_state["temporal_paddle_history"]
         temporal_puck_history = restored_state["temporal_puck_history"]
         steps_since_done = restored_state["steps_since_done"]
@@ -1355,7 +1217,6 @@ def _entrypoint():
         interval_env_steps = restored_state["interval_env_steps"]
         interval_primitive_env_steps = restored_state["interval_primitive_env_steps"]
         interval_primitive_horizontal_env_steps = restored_state["interval_primitive_horizontal_env_steps"]
-        interval_policy_takeover_env_steps = restored_state["interval_policy_takeover_env_steps"]
         interval_target_position_directional_env_steps = restored_state[
             "interval_target_position_directional_env_steps"
         ]
@@ -1393,11 +1254,6 @@ def _entrypoint():
                     stand_still=args.exploration_primitive_weight_anneal_stand_still,
                     same_direction=args.exploration_primitive_weight_anneal_same_direction,
                     y_aligned=args.exploration_primitive_weight_anneal_y_aligned,
-                    policy_takeover=(
-                        args.exploration_primitive_weight_anneal_policy_takeover
-                        if args.exploration_policy_takeover_enabled
-                        else 0.0
-                    ),
                     target_position_directional=(
                         args.exploration_primitive_weight_anneal_target_position_directional
                     ),
@@ -1407,11 +1263,6 @@ def _entrypoint():
                     stand_still=args.exploration_primitive_weight_stand_still,
                     same_direction=args.exploration_primitive_weight_same_direction,
                     y_aligned=args.exploration_primitive_weight_y_aligned,
-                    policy_takeover=(
-                        args.exploration_primitive_weight_policy_takeover
-                        if args.exploration_policy_takeover_enabled
-                        else 0.0
-                    ),
                     target_position_directional=(
                         args.exploration_primitive_weight_target_position_directional
                     ),
@@ -1467,25 +1318,10 @@ def _entrypoint():
                 current_puck_velocity=current_puck_vel_for_primitive,
                 return_stats=True,
             )
-            if args.exploration_policy_takeover_enabled and warm_policy_actor is not None:
-                policy_takeover_mask = primitive_selector.active & (
-                    primitive_selector.primitive_id == primitive_selector.primitive_ids.POLICY_TAKEOVER
-                )
-                if torch.any(policy_takeover_mask):
-                    with torch.no_grad():
-                        warm_policy_obs = augment_policy_observation(
-                            obs_tensor,
-                            warm_policy_last_action,
-                            warm_policy_use_last_action,
-                        )
-                        warm_policy_actions = deterministic_actor_action(warm_policy_actor, warm_policy_obs)
-                        warm_policy_actions = torch.clamp(warm_policy_actions, action_low, action_high)
-                        action_tensor[policy_takeover_mask] = warm_policy_actions[policy_takeover_mask]
         else:
             primitive_step_stats = {
                 "primitive_applied_count": 0,
                 "primitive_horizontal_dominant_count": 0,
-                "policy_takeover_applied_count": 0,
                 "target_position_directional_applied_count": 0,
             }
         actions = action_tensor.cpu().numpy()
@@ -1532,7 +1368,6 @@ def _entrypoint():
         interval_primitive_horizontal_env_steps += int(
             primitive_step_stats["primitive_horizontal_dominant_count"]
         )
-        interval_policy_takeover_env_steps += int(primitive_step_stats["policy_takeover_applied_count"])
         interval_target_position_directional_env_steps += int(
             primitive_step_stats["target_position_directional_applied_count"]
         )
@@ -1544,8 +1379,6 @@ def _entrypoint():
         primitive_selector.reset(done_tensor)
         last_action_for_policy = action_tensor.clone()
         last_action_for_policy[done_tensor] = 0
-        warm_policy_last_action = action_tensor.clone()
-        warm_policy_last_action[done_tensor] = 0
 
         task_rewards = torch.tensor(rewards, dtype=torch.float32, device=args.device)
 
@@ -2240,16 +2073,10 @@ def _entrypoint():
                 global_step,
             )
             primitive_fraction = interval_primitive_env_steps / max(interval_env_steps, 1) if interval_env_steps > 0 else 0.0
-            primitive_directional_env_steps = max(
-                interval_primitive_env_steps - interval_policy_takeover_env_steps, 0
-            )
             primitive_horizontal_fraction = (
-                interval_primitive_horizontal_env_steps / max(primitive_directional_env_steps, 1)
-                if primitive_directional_env_steps > 0
+                interval_primitive_horizontal_env_steps / max(interval_primitive_env_steps, 1)
+                if interval_primitive_env_steps > 0
                 else 0.0
-            )
-            policy_takeover_fraction = (
-                interval_policy_takeover_env_steps / max(interval_env_steps, 1) if interval_env_steps > 0 else 0.0
             )
             target_position_directional_fraction = (
                 interval_target_position_directional_env_steps / max(interval_env_steps, 1)
@@ -2259,13 +2086,8 @@ def _entrypoint():
             print(
                 f"Step {global_step}: Primitive Actions (last interval): "
                 f"{interval_primitive_env_steps}/{interval_env_steps} env-steps ({primitive_fraction:.4f}), "
-                f"horizontal-dominant: {interval_primitive_horizontal_env_steps}/{primitive_directional_env_steps} "
+                f"horizontal-dominant: {interval_primitive_horizontal_env_steps}/{interval_primitive_env_steps} "
                 f"({primitive_horizontal_fraction:.4f})"
-            )
-            print(
-                f"Step {global_step}: Policy Takeover Actions (last interval): "
-                f"{interval_policy_takeover_env_steps}/{interval_env_steps} env-steps "
-                f"({policy_takeover_fraction:.4f})"
             )
             print(
                 f"Step {global_step}: Target-Position Directional Actions (last interval): "
@@ -2293,16 +2115,6 @@ def _entrypoint():
                 global_step,
             )
             writer.add_scalar(
-                "exploration/interval_policy_takeover_env_steps",
-                interval_policy_takeover_env_steps,
-                global_step,
-            )
-            writer.add_scalar(
-                "exploration/interval_policy_takeover_fraction",
-                policy_takeover_fraction,
-                global_step,
-            )
-            writer.add_scalar(
                 "exploration/interval_target_position_directional_env_steps",
                 interval_target_position_directional_env_steps,
                 global_step,
@@ -2316,7 +2128,6 @@ def _entrypoint():
             interval_env_steps = 0
             interval_primitive_env_steps = 0
             interval_primitive_horizontal_env_steps = 0
-            interval_policy_takeover_env_steps = 0
             interval_target_position_directional_env_steps = 0
 
         if global_step > 0 and global_step % args.checkpoint_interval == 0:
@@ -2353,7 +2164,6 @@ def _entrypoint():
                 primitive_selector=primitive_selector,
                 obs=obs,
                 last_action_for_policy=last_action_for_policy,
-                warm_policy_last_action=warm_policy_last_action,
                 temporal_paddle_history=temporal_paddle_history,
                 temporal_puck_history=temporal_puck_history,
                 steps_since_done=steps_since_done,
@@ -2368,7 +2178,6 @@ def _entrypoint():
                 interval_env_steps=interval_env_steps,
                 interval_primitive_env_steps=interval_primitive_env_steps,
                 interval_primitive_horizontal_env_steps=interval_primitive_horizontal_env_steps,
-                interval_policy_takeover_env_steps=interval_policy_takeover_env_steps,
                 interval_target_position_directional_env_steps=(
                     interval_target_position_directional_env_steps
                 ),
@@ -2403,8 +2212,6 @@ def _entrypoint():
                     use_last_action_in_policy_state=args.use_last_action_in_policy_state,
                     exploration_noise=(0.0 if args.eval_mode else args.exploration_noise),
                     primitive_selector=primitive_selector,
-                    warm_policy_actor=warm_policy_actor if args.exploration_policy_takeover_enabled else None,
-                    warm_policy_use_last_action=warm_policy_use_last_action,
                     max_timesteps=200,
                     fps=20,
                     device=args.device,
@@ -2444,7 +2251,6 @@ def _entrypoint():
             primitive_selector=primitive_selector,
             obs=obs,
             last_action_for_policy=last_action_for_policy,
-            warm_policy_last_action=warm_policy_last_action,
             temporal_paddle_history=temporal_paddle_history,
             temporal_puck_history=temporal_puck_history,
             steps_since_done=steps_since_done,
@@ -2459,7 +2265,6 @@ def _entrypoint():
             interval_env_steps=interval_env_steps,
             interval_primitive_env_steps=interval_primitive_env_steps,
             interval_primitive_horizontal_env_steps=interval_primitive_horizontal_env_steps,
-            interval_policy_takeover_env_steps=interval_policy_takeover_env_steps,
             interval_target_position_directional_env_steps=interval_target_position_directional_env_steps,
             episode_trajectory=episode_trajectory,
             recent_episode_returns=recent_episode_returns,

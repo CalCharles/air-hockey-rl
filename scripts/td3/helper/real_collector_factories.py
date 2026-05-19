@@ -92,5 +92,4 @@ def build_primitive_exploration_selector_for_real_collector(
             args.exploration_target_position_directional_max_magnitude
         ),
         target_takeover_steps=int(args.exploration_target_position_steps),
-        pre_contact_hit_variant_chance=0.0,
     )

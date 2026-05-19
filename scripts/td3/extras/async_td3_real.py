@@ -857,9 +857,7 @@ def collector_process_modular(
         stand_still=float(args.exploration_primitive_weight_stand_still),
         same_direction=float(args.exploration_primitive_weight_same_direction),
         y_aligned=float(args.exploration_primitive_weight_y_aligned),
-        policy_takeover=0.0,
         target_position_directional=float(args.exploration_primitive_weight_target_position_directional),
-        pre_contact_hit_variant=0.0,
     )
     actor.load_state_dict(
         {key: value.detach().cpu() for key, value in learner_state.actor.state_dict().items()},

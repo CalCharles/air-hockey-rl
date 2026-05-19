@@ -110,9 +110,6 @@ def load_resume_training_state(
         "total_critic_updates": int(resume_checkpoint.get("total_critic_updates", 0)),
         "obs": np.asarray(resume_checkpoint["obs"], dtype=np.float32),
         "last_action_for_policy": resume_checkpoint["last_action_for_policy"].to(device),
-        "warm_policy_last_action": resume_checkpoint.get(
-            "warm_policy_last_action", defaults["warm_policy_last_action"]
-        ).to(device),
         "temporal_paddle_history": resume_checkpoint["temporal_paddle_history"].to(device),
         "temporal_puck_history": resume_checkpoint["temporal_puck_history"].to(device),
         "steps_since_done": steps_since_done,
@@ -141,12 +138,6 @@ def load_resume_training_state(
             resume_checkpoint.get(
                 "interval_primitive_horizontal_env_steps",
                 defaults["interval_primitive_horizontal_env_steps"],
-            )
-        ),
-        "interval_policy_takeover_env_steps": int(
-            resume_checkpoint.get(
-                "interval_policy_takeover_env_steps",
-                defaults["interval_policy_takeover_env_steps"],
             )
         ),
         "interval_target_position_directional_env_steps": int(
@@ -287,7 +278,6 @@ def build_training_state(
     include_replay_buffer: bool = True,
     obs: np.ndarray,
     last_action_for_policy: torch.Tensor,
-    warm_policy_last_action: torch.Tensor,
     temporal_paddle_history: torch.Tensor,
     temporal_puck_history: torch.Tensor,
     steps_since_done: torch.Tensor,
@@ -302,7 +292,6 @@ def build_training_state(
     interval_env_steps: int,
     interval_primitive_env_steps: int,
     interval_primitive_horizontal_env_steps: int,
-    interval_policy_takeover_env_steps: int,
     interval_target_position_directional_env_steps: int,
     episode_trajectory: EpisodeTrajectory,
     recent_episode_returns,
@@ -329,7 +318,6 @@ def build_training_state(
         "primitive_selector": primitive_selector.state_dict(),
         "obs": np.array(obs, copy=True),
         "last_action_for_policy": _cpu_tensor(last_action_for_policy),
-        "warm_policy_last_action": _cpu_tensor(warm_policy_last_action),
         "temporal_paddle_history": _cpu_tensor(temporal_paddle_history),
         "temporal_puck_history": _cpu_tensor(temporal_puck_history),
         "steps_since_done": _cpu_tensor(steps_since_done),
@@ -344,7 +332,6 @@ def build_training_state(
         "interval_env_steps": interval_env_steps,
         "interval_primitive_env_steps": interval_primitive_env_steps,
         "interval_primitive_horizontal_env_steps": interval_primitive_horizontal_env_steps,
-        "interval_policy_takeover_env_steps": interval_policy_takeover_env_steps,
         "interval_target_position_directional_env_steps": interval_target_position_directional_env_steps,
         "episode_trajectory": episode_trajectory.state_dict(),
         "recent_episode_returns": list(recent_episode_returns),
