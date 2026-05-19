@@ -101,23 +101,16 @@ each containing a trajectory GIF and a side-by-side sim-vs-real replay GIF.
 
 ### trajectory_data1 categories
 
-Script: `scripts/visualization/split_teleop_categories.py`
+Script: `scripts/visualization/split_teleop_categories.py` — **deleted in commit `13a050a` (2026-05-11)**. The data1 split is already on disk under `sysid/teleop/system_id/`; the script can be recovered with `git show 13a050a^:scripts/smooth_policy/visualize_demo/split_teleop_categories.py` if a re-split is ever needed.
 
-```bash
-PYTHONPATH=/home/pearl/air-hockey-rl \
-python scripts/visualization/split_teleop_categories.py \
-    sysid/teleop/trajectory_data1.hdf5 \
-    -o sysid/teleop/system_id
-```
-
-Categories: `side_to_side_fast` (120–300), `side_to_side_slow` (310–650),
+Categories (frame ranges): `side_to_side_fast` (120–300), `side_to_side_slow` (310–650),
 `side_to_side_dynamic` (675–1150), `up_and_down_slow` (1200–1525),
 `up_and_down_fast` (1550–1725), `up_and_down_dynamic` (1780–2050),
 `circle_fast` (2100–2500), `circle_slow` (2575–2850), `random` (3150–3350).
 
 ### trajectory_data3 categories (with sim-vs-real replay)
 
-Script: `scripts/visualization/split_teleop_categories_data3.py`
+Script: `scripts/visualization/split_teleop_categories_data3.py` (restored 2026-05-19 from `13a050a^`; patched to import from `scripts.visualization.*` modules and to load `configs/new_juggle/sysid_best_params_hist2.yaml` as the replay sim config).
 
 ```bash
 PYTHONPATH=/home/pearl/air-hockey-rl \
@@ -255,15 +248,14 @@ config: `configs/new_juggle/sysid_best_params.yaml`.
 
 ### PID test script
 
-`scripts/test_pid_controller.py` — standalone test comparing legacy force-based
-controller vs PID controller on a step-input scenario. Plots position, velocity,
-acceleration, and jerk.
+`scripts/test_pid_controller.py` — **deleted in commit `13a050a` (2026-05-11)**. Standalone test that compared the legacy force-based controller vs the PID controller on a step input. Recoverable with `git show 13a050a^:scripts/test_pid_controller.py` if needed (not on the critical path for sysid).
 
 ### Visualization of best config
 
-`sysid/teleop/system_id3/render_best_config_all.py` renders side-by-side
-sim-vs-real GIFs for all segments using the chosen best config. Output:
-`sysid/teleop/system_id3/visualizations_best_config/`.
+`scripts/sysid/render_best_config_all.py` renders side-by-side sim-vs-real GIFs
+for all segments under `$AIRHOCKEY_SYSID_DATA_DIR` (default
+`sysid/teleop/system_id3/`) using the constants set inside the script. Output:
+`$AIRHOCKEY_SYSID_DATA_DIR/visualizations_best_config/`.
 
 ## Related scripts
 
@@ -271,8 +263,200 @@ sim-vs-real GIFs for all segments using the chosen best config. Output:
 |--------|---------|
 | `scripts/real/teleoperate.py` | Record teleop trajectories |
 | `scripts/visualization/render_teleop_segments.py` | Split + render segment GIFs (fixed interval) |
-| `scripts/visualization/split_teleop_categories.py` | Named category split for data1 |
+| `scripts/visualization/split_teleop_categories.py` | Named category split for data1 — *deleted, recover from `13a050a^`* |
 | `scripts/visualization/split_teleop_categories_data3.py` | Named category split + replay for data3 |
 | `scripts/visualization/visualize_real_trajectory_split.py` | Render a full split-schema HDF5 as one GIF |
-| `scripts/visualization/replay_real_in_sim.py` | Side-by-side real vs sim replay |
-| `scripts/test_pid_controller.py` | PID vs legacy controller comparison |
+| `scripts/visualization/replay_real_in_sim.py` | Core replay primitive — side-by-side real vs sim, plus `replay_errors_windowed` used by every grid search |
+| `scripts/sysid/grid_search_*.py` | PID / density / Ki grid searches (5 protocols). Default data dir / config overridable via `AIRHOCKEY_SYSID_DATA_DIR`, `AIRHOCKEY_SYSID_CONFIG`, `AIRHOCKEY_SYSID_SUBSET` (see [`_sysid_paths.py`](../../../../scripts/sysid/_sysid_paths.py)). |
+| `scripts/sysid/render_best_config_all.py` | Render sim-vs-real GIFs for the chosen best config |
+| `scripts/test_pid_controller.py` | PID vs legacy controller comparison — *deleted, recover from `13a050a^`* |
+
+## Re-running sysid for a new sim variant (e.g., `hist_len: 4` action smoothing)
+
+The sim's commanded-pose smoothing window is `simulator_params.hist_len` — applied in `_filter_update` in [`airhockey/sims/airhockey_box2d.py`](../../../../airhockey/sims/airhockey_box2d.py) (mean of `(desired_i − current_i)` over the last `hist_len` steps, added to the current pose). The real-side env applies an equivalent `filter_update` in [`airhockey/sims/air_hockey_real.py`](../../../../airhockey/sims/air_hockey_real.py). Changing `hist_len` changes the effective velocity command, which shifts the PID/density optimum — the canonical `Kp=9000, Kd=50, density=3000` in `sysid_best_params_hist2.yaml` was fit at `hist_len: 2` and is **not** valid for other values.
+
+This section documents the full protocol for re-running the paddle sysid against a new `hist_len` (worked example: `hist_len: 4`). It assumes data1/data3 trajectories were collected under a *different* `hist_len` and therefore must be re-recorded.
+
+All commands below are copy-paste-ready. Run from the repo root (`/home/pearl/air-hockey-rl`) in the `air` conda env. The grid-search scripts read three env vars — `AIRHOCKEY_SYSID_DATA_DIR`, `AIRHOCKEY_SYSID_CONFIG`, `AIRHOCKEY_SYSID_SUBSET` — so a new variant requires zero script edits.
+
+### 0. Prerequisites — draft the variant config and confirm the real side
+
+```bash
+conda activate air
+cd /home/pearl/air-hockey-rl
+
+# Draft the new sim config (PID/density values will get overwritten by the sweep).
+cp configs/new_juggle/sysid_best_params_hist2.yaml \
+   configs/new_juggle/sysid_best_params_hist4.yaml
+
+# Then edit configs/new_juggle/sysid_best_params_hist4.yaml:
+#   simulator_params.hist_len: 4    # was 2
+# Leave pid_kp / pid_kd / paddle_density at the hist2 best values; the sweep replaces them.
+```
+
+Verify the **real side** also uses `hist_len: 4` before recording — same `hist_len` is read by `air_hockey_real.py` (line 578). Inspect `configs/real_configs/mouse_config.yaml` and any args file used by `scripts/real/teleoperate.py`; if `hist_len` is set elsewhere in the launch path, set it to `4` there too. Recording with mismatched `hist_len` between sim config and real env invalidates the sweep.
+
+Hardware checklist: UR5 powered & calibrated, mouse plugged in, camera homography current, same paddle as the original sysid.
+
+### 1. Record new teleop trajectories
+
+```bash
+python scripts/real/teleoperate.py \
+    --cfg configs/real_configs/mouse_config.yaml \
+    --save-path sysid/teleop_hist4
+```
+
+Keys: `y` save+reset, `q` reset without saving, `x` exit.
+
+Aim for ≈3500 frames covering, in order with short pauses between each: `side_to_side_fast` → `side_to_side_slow` → `side_to_side_dynamic` → `up_and_down_fast` → `up_and_down_slow` → `up_and_down_dynamic` → `diagonal_fast` → `diagonal_dynamic` → `circle_fast` → `circle_slow` → `random`. Frame ranges don't have to match the original data3 — you'll annotate them in step 3.
+
+Output: `sysid/teleop_hist4/trajectory_data1.hdf5` (N auto-increments).
+
+### 2. Verify the recording (optional)
+
+```bash
+PYTHONPATH=$(pwd) \
+python scripts/visualization/visualize_real_trajectory_split.py \
+    sysid/teleop_hist4/trajectory_data1.hdf5
+```
+
+Look for: noticeably smoother paddle motion vs `hist_len: 2` (4-step moving average lags more), all categories present, no e-stop spikes.
+
+### 3. Annotate category frame ranges
+
+```bash
+PYTHONPATH=$(pwd) \
+python scripts/visualization/render_teleop_segments.py \
+    sysid/teleop_hist4/trajectory_data1.hdf5 \
+    -o sysid/teleop_hist4/trajectory_data1_segments --interval 100
+```
+
+Open each segment GIF and write down start/end frames per category. Keep the 11 category names from data3 (`side_to_side_fast`, `side_to_side_slow`, `side_to_side_dynamic`, `up_and_down_fast`, `up_and_down_slow`, `up_and_down_dynamic`, `diagonal_fast`, `diagonal_dynamic`, `circle_fast`, `circle_slow`, `random`) — the downstream subset list uses these names verbatim.
+
+### 4. Split into named categories
+
+Make a variant of `split_teleop_categories_data3.py` for the new recording:
+
+```bash
+cp scripts/visualization/split_teleop_categories_data3.py \
+   scripts/visualization/split_teleop_categories_hist4.py
+```
+
+Edit the four constants at the top of the new file:
+
+```python
+INPUT_PATH = _REPO_ROOT / "sysid" / "teleop_hist4" / "trajectory_data1.hdf5"
+OUTPUT_ROOT = _REPO_ROOT / "sysid" / "teleop_hist4" / "system_id"
+SIM_CONFIG = str(_REPO_ROOT / "configs/new_juggle/sysid_best_params_hist4.yaml")
+CATEGORIES = [
+    ("side_to_side_fast",    <start>, <end>),
+    ...  # use the ranges from step 3
+]
+```
+
+Then run:
+
+```bash
+PYTHONPATH=$(pwd) \
+python scripts/visualization/split_teleop_categories_hist4.py
+```
+
+Output: `sysid/teleop_hist4/system_id/<category>/frames_<a>_<b>/{segment_<a>_<b>.hdf5, trajectory_visualization.gif, sim_vs_real.gif, sim_vs_real.json}`. Skim a few `sim_vs_real.gif`s — they replay against the hist2 PID gains, so divergence is expected; that's the gap the grid search will close.
+
+### 5. Write the subset JSON
+
+Pick the **first 100-frame chunk** of each of the 8 representative categories and write the paths (relative to `sysid/teleop_hist4/system_id/`) into a JSON list:
+
+```bash
+cat > sysid/teleop_hist4/system_id/subset.json <<'EOF'
+[
+  "circle_fast/frames_<a>_<b>/segment_<a>_<b>.hdf5",
+  "circle_slow/frames_<a>_<b>/segment_<a>_<b>.hdf5",
+  "side_to_side_dynamic/frames_<a>_<b>/segment_<a>_<b>.hdf5",
+  "side_to_side_slow/frames_<a>_<b>/segment_<a>_<b>.hdf5",
+  "up_and_down_dynamic/frames_<a>_<b>/segment_<a>_<b>.hdf5",
+  "up_and_down_slow/frames_<a>_<b>/segment_<a>_<b>.hdf5",
+  "diagonal_fast/frames_<a>_<b>/segment_<a>_<b>.hdf5",
+  "random/frames_<a>_<b>/segment_<a>_<b>.hdf5"
+]
+EOF
+```
+
+Replace each `<a>_<b>` with the actual frame numbers — these will match the chunk names that `split_teleop_categories_hist4.py` wrote to disk.
+
+### 6. Run the grid searches
+
+Export the three env vars once per shell — every script under `scripts/sysid/` picks them up:
+
+```bash
+export AIRHOCKEY_SYSID_DATA_DIR="$(pwd)/sysid/teleop_hist4/system_id"
+export AIRHOCKEY_SYSID_CONFIG="$(pwd)/configs/new_juggle/sysid_best_params_hist4.yaml"
+export AIRHOCKEY_SYSID_SUBSET="$(pwd)/sysid/teleop_hist4/system_id/subset.json"
+```
+
+Each grid search uses `replay_errors_windowed` from `scripts/visualization/replay_real_in_sim.py` — sim resets to the real paddle state every 10 frames so errors don't compound; `park_puck=True` (inside the windowed scripts) isolates paddle tracking from puck-interaction noise. Output JSONs land under `$AIRHOCKEY_SYSID_DATA_DIR/grid_search_results_*/`.
+
+Run in order (each writes its own results directory; the next reads from JSON if it needs the previous best):
+
+```bash
+# 6a. 3D coarse — establish the basin.
+#     Grid: pid_kp 2000–8000 step 1000, pid_kd {200,600,1000}, paddle_density 1000–3000 step 500.
+python scripts/sysid/grid_search_pid_density.py
+
+# 6b. 3D fine, puck parked, windowed-10 — the protocol that drove err to 0.024 at hist_len=2.
+#     Grid: pid_kp {5500,6500,7500,8500,9000}, pid_kd {100,300,400}, paddle_density {1750,2250,2750,3250}.
+python scripts/sysid/grid_search_pid_density_fine_windowed.py
+
+# 6c. Finer windowed-10 — only if (6b) lands at a grid edge.
+#     Grid: pid_kp 7000–10000, pid_kd {50,75,100,125,150}, paddle_density {2250,2500,2750,3000,3250}.
+python scripts/sysid/grid_search_pid_density_fine.py
+
+# 6d. Ki sweep — fix best Kp/Kd/density from (6c), sweep pid_ki ∈ {0,10,25,50,100,150,200,300,500}.
+#     Expect Ki≈0 to win, but verify.
+python scripts/sysid/grid_search_ki.py
+```
+
+Each script prints progress to stdout and writes `*_results.json` under `$AIRHOCKEY_SYSID_DATA_DIR/grid_search_results_*/`. Sort by `mean_paddle_err` (averaged across the 8 segments) and take the top combo.
+
+Each results JSON already contains a `"best"` key recording the winning combo. Quick peek:
+
+```bash
+python -c "import json,sys; print(json.dumps(json.load(open(sys.argv[1]))['best'], indent=2))" \
+    sysid/teleop_hist4/system_id/grid_search_results_3d_fine_windowed_10/grid_search_3d_fine_windowed_results.json
+```
+
+### 7. Render the chosen best config
+
+Edit the four `BEST_*` constants in `scripts/sysid/render_best_config_all.py` to the values you selected in step 6, then:
+
+```bash
+python scripts/sysid/render_best_config_all.py
+```
+
+Output: `$AIRHOCKEY_SYSID_DATA_DIR/visualizations_best_config/<category>/frames_*/sim_vs_real.gif`. Spot-check that the sim paddle now tracks the real paddle within the per-segment tolerance the grid reported. If a category looks wrong, the grid's best combo overfit the other 7 — go back to step 6 with a narrower grid around the winning combo and add that category to the subset.
+
+### 8. Commit the new sysid config
+
+Update `configs/new_juggle/sysid_best_params_hist4.yaml` with the winning `pid_kp`, `pid_kd`, `pid_ki`, `paddle_density`. Header comment: cite the grid-search JSON path so future readers can audit the fit. Note that this config is paired with `hist_len: 4` and is **not** interchangeable with `sysid_best_params_hist2.yaml`.
+
+The puck parameters (`gravity`, `puck_damping`) don't depend on `hist_len` and can be carried over from `sysid_best_params.yaml`. To re-verify them, see [`puck-system-id.md`](puck-system-id.md).
+
+### Smoke-test the wiring before recording
+
+Sanity-check that the env-var override actually swaps paths, before you tie up the robot for 30 minutes of teleop:
+
+```bash
+AIRHOCKEY_SYSID_DATA_DIR=/tmp/fake_data \
+AIRHOCKEY_SYSID_CONFIG=/tmp/fake_cfg.yaml \
+python -c "from scripts.sysid._sysid_paths import SYSID_DIR, DEFAULT_CONFIG; print(SYSID_DIR); print(DEFAULT_CONFIG)"
+# Expect: /tmp/fake_data
+#         /tmp/fake_cfg.yaml
+```
+
+### Pitfalls
+
+- **Real-side `hist_len` mismatch**: if `scripts/real/teleoperate.py` runs with `hist_len: 2` while the sim grid search is configured with `hist_len: 4`, the recorded `desired_pose` stream reflects the wrong filter and the fit will land on bad values. Verify both sides before recording.
+- **Reusing data3 segments**: the existing 8-segment splits under `sysid/teleop/system_id3/` were recorded at `hist_len: 2`. Pointing `AIRHOCKEY_SYSID_DATA_DIR` at `system_id3` while running with `hist_len: 4` in the config does **not** cancel out — the recorded `desired_pose` is what the *real* robot received at the time, with whatever smoother was active then. You must re-record.
+- **Forgetting `AIRHOCKEY_SYSID_SUBSET`**: with `AIRHOCKEY_SYSID_DATA_DIR` pointed at a new directory but no `AIRHOCKEY_SYSID_SUBSET`, the scripts fall back to the hardcoded data3-hist2 paths (e.g. `circle_fast/frames_2235_2335/segment_2235_2335.hdf5`) — which don't exist in the new directory and crash with `FileNotFoundError`. The error message will name the missing path; that's the symptom to look for.
+- **`replay_real_in_sim.py` was deleted from `scripts/smooth_policy/visualize_demo/` and restored to `scripts/visualization/replay_real_in_sim.py` on 2026-05-19**. The grid scripts also moved from `sysid/teleop/system_id3/` to `scripts/sysid/` on the same date. Old code or docs pointing at the deleted paths should be updated to `scripts.visualization.replay_real_in_sim` / `scripts/sysid/*.py`.
+- **Heavy puck noise during the grid search masks paddle errors**. `load_sim_config(config_path, enable_noise=False)` (already what every grid script does) disables `puck_noise`, occlusions, observation/action delay, and attenuation. Don't turn them back on for the sweep.
