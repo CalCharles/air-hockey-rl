@@ -192,3 +192,75 @@ def draw_paddle_marker(
         offset_constants=offset_constants,
         visual_downscale_constant=visual_downscale_constant,
     )
+
+
+def draw_goal_marker(
+    frame,
+    goal_xy_robot,
+    goal_radius_m=None,
+    offset_constants=None,
+    visual_downscale_constant=DEFAULT_VISUAL_DOWNSCALE_CONSTANT,
+    color=(0, 255, 255),
+    marker_size=10,
+    thickness=2,
+):
+    """Draw a goal marker (success-radius ring + center crosshair) in robot frame.
+
+    Intended for goal-conditioned tasks (e.g. ``puck_goal_position``) so the
+    operator can see WHERE the puck is being asked to land. ``goal_xy_robot``
+    is expected in robot frame — task code that owns the goal in table frame
+    should subtract ``center_offset_constant`` before calling this.
+
+    Distinct yellow color (BGR ``(0, 255, 255)``) to avoid clashing with the
+    orange paddle-target cross and the green puck dot.
+    """
+    if frame is None or goal_xy_robot is None or len(goal_xy_robot) < 2:
+        return frame
+
+    if goal_radius_m is not None and float(goal_radius_m) > 0:
+        draw_robot_circle_marker(
+            frame,
+            float(goal_xy_robot[0]),
+            float(goal_xy_robot[1]),
+            float(goal_radius_m),
+            color,
+            offset_constants=offset_constants,
+            visual_downscale_constant=visual_downscale_constant,
+            thickness=thickness,
+        )
+
+    center = robot_to_display_pixel_int(
+        goal_xy_robot[0],
+        goal_xy_robot[1],
+        offset_constants=offset_constants,
+        visual_downscale_constant=visual_downscale_constant,
+    )
+    cv2.line(
+        frame,
+        (center[0] - marker_size, center[1]),
+        (center[0] + marker_size, center[1]),
+        (0, 0, 0),
+        thickness + 2,
+    )
+    cv2.line(
+        frame,
+        (center[0], center[1] - marker_size),
+        (center[0], center[1] + marker_size),
+        (0, 0, 0),
+        thickness + 2,
+    )
+    cv2.line(
+        frame,
+        (center[0] - marker_size, center[1]),
+        (center[0] + marker_size, center[1]),
+        color,
+        thickness,
+    )
+    cv2.line(
+        frame,
+        (center[0], center[1] - marker_size),
+        (center[0], center[1] + marker_size),
+        color,
+        thickness,
+    )
+    return frame

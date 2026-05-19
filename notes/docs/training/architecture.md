@@ -8,7 +8,7 @@ The training stack lives entirely under [`scripts/td3/`](../../../scripts/td3). 
 |------|------------|
 | Sim training | [`scripts/td3/td3_training.py`](../../../scripts/td3/td3_training.py) |
 | Real-world async training | [`scripts/td3/extras/async_td3_real.py`](../../../scripts/td3/extras/async_td3_real.py) |
-| Real-world frozen-policy eval | [`scripts/td3/extras/async_td3_real_eval.py`](../../../scripts/td3/extras/async_td3_real_eval.py) |
+| Real-world frozen-policy eval (TD3 / SGCRL / …) | [`scripts/td3/extras/async_td3_real_eval.py`](../../../scripts/td3/extras/async_td3_real_eval.py) — see [`real-world-eval-pipeline.md`](real-world-eval-pipeline.md) for the agent-dispatch + task-hooks abstractions |
 | Human-baseline teleop eval (user study) | [`scripts/td3/extras/async_td3_real_teleop_eval.py`](../../../scripts/td3/extras/async_td3_real_teleop_eval.py) |
 | Real-world reset-policy training | [`scripts/td3/extras/async_td3_real_reset_policy.py`](../../../scripts/td3/extras/async_td3_real_reset_policy.py) |
 
@@ -31,6 +31,7 @@ scripts/td3/
 │   ├── real_collector_metrics.py       # per-episode metric capture
 │   ├── real_collector_reset.py
 │   ├── real_episode_buffers.py
+│   ├── real_eval_agents.py             # --agent dispatch (td3 / sgcrl / …) for the eval entrypoint
 │   ├── real_eval_stats.py
 │   ├── real_motion_rewards.py
 │   ├── real_stop_state.py
@@ -48,6 +49,7 @@ scripts/td3/
 │   ├── exploration_selector.py
 │   ├── motion_magnitudes.py            # paddle vel/accel/jerk parsing
 │   ├── juggle_counter.py
+│   ├── real_task_eval_hooks.py         # per-task eval metrics + min_timesteps (juggle vs generic)
 │   ├── episode_artifacts.py
 │   └── run_event_log.py
 ├── extras/                # CLI entrypoints (real-world)

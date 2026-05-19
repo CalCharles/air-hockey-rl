@@ -1,0 +1,118 @@
+air_hockey:
+  diagonal_motion_rew: -0.1
+  direction_change_rew: -0.05
+  goal_max_x_velocity: 1
+  goal_max_y_velocity: 5
+  goal_min_y_velocity: 1
+  goal_radius_type: linear_decay
+  horizontal_vel_rew: -0.1
+  max_timesteps: 300
+  num_blocks: 0
+  num_obstacles: 0
+  num_paddles: 1
+  num_pucks: 1
+  num_targets: 0
+  obs_type: history
+  return_goal_obs: false
+  simulator: real
+
+  puck_spawn_near_paddle_prob: 0.15
+  puck_near_paddle_offset_min_m: 0.025
+  puck_near_paddle_offset_max_m: 0.05
+  puck_near_paddle_horizontal_std_m: 0.015
+  puck_near_paddle_speed_min_m_s: 0.0
+  puck_near_paddle_speed_max_m_s: 0.2
+
+  puck_linear_top_spawn_goal_cutoff_x: null
+  puck_linear_top_spawn_center_cutoff_x: 0.2
+  puck_linear_top_spawn_speed_min: 0.0
+  puck_linear_top_spawn_speed_max: 0.5
+  # ----- Physics-parameter randomization (the actual knob this run tests) -----
+  domain_random: false
+  random_variables: [paddle_density, puck_damping, gravity]
+  random_variable_ranges:
+    paddle_density: [2250.0, 3750.0]   # sysid 3000, ±25%
+    puck_damping:   [0.1335, 0.2225]   # sysid 0.178, ±25%
+    gravity:        [-0.826, -0.496]   # sysid -0.661, ±25% (more-negative = stronger pull)
+  simulator_params:
+    absorb_target: false
+    block_density: 500
+    block_width: 0.0254
+    force_scaling: 0.99
+    gravity: -0.661               # sysid (center of DR distribution)
+    length: 1.9304
+    max_force_timestep: 10000
+    paddle_damping: 17
+    paddle_density: 2500
+    paddle_radius: 0.0508
+    puck_damping: 0.178           # sysid (center of DR distribution)
+    puck_density: 3000
+    puck_radius: 1.09145
+    render_size: 360
+    wall_bounce_scale: 0.02
+    width: 0.8636
+    paddle_restitution: 1.0
+    side_wall_restitution: 0.99
+    end_wall_restitution: 0.7
+    puck_radius: 0.03175
+    render_size: 360
+    seed: 0
+    width: 0.8636
+    use_pid: true
+    pid_kp: 9000
+    pid_kd: 50
+    pid_ki: 0.0
+
+    hist_len: 2
+
+    # Defaults kept on:
+    puck_noise: true
+    puck_noise_std: 0.01
+    # Plain spatially-uniform puck occlusion (5% per-step start probability).
+    enable_random_occlusions: true
+    random_occlusion_rate: 0.05
+    random_occlusion_length_weights: [75, 39, 18, 9, 4, 2, 1]
+    enable_action_delay: false
+    enable_observation_delay: true   # project default — KEEP ON
+    delay_seconds: 0.025
+
+    # ----- Real-robot control (only used when simulator: real) -----
+    # Without control_mode: RL the real sim defaults to 'mouse' (teleop)
+    # and overrides the policy action with the cursor. See
+    # airhockey/sims/air_hockey_real.py defaults + use_cursor_control branch.
+    control_mode: RL
+    save_path: ./data/rollout/temp_saving/sgcrl
+    transition_hold_steps_on_estop_enter: 0
+    transition_hold_steps_on_estop_clear: 8
+    transition_hold_steps_on_safety_rearm: 3
+
+  stand_still_rew: 0.01
+  task: puck_goal_position
+  randomize_paddle_spawn: true
+  base_goal_radius: 0.06
+  puck_goal_success_bonus: 0.0
+  paddle_puck_success_bonus: 0.0
+  terminate_on_enemy_goal: false
+  terminate_on_out_of_bounds: true
+  terminate_on_puck_hit_bottom: true
+  terminate_on_puck_pass_paddle: true
+  terminate_on_puck_stop: false
+  truncate_rew: -1
+  wall_bumping_rew: -1
+algorithm: ppo
+eval_freq: 5000
+gamma: 0.99
+model_save_filepath: model
+n_eval_eps: 30
+n_threads: 1
+n_training_steps: 1000000
+print_reward: false
+seed:
+- 0
+- 1
+- 2
+- 3
+- 4
+tb_log_dir: baseline_models
+tb_log_name: air_hockey_agent
+vec_normalize_save_filepath: vec_normalize.pkl

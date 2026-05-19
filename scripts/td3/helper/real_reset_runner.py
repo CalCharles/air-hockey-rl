@@ -111,12 +111,35 @@ def _hard_reset_with_pause(
     return obs, info
 
 
+def _append_goal_if_goal_env(env: AirHockeyEnv, obs: np.ndarray) -> np.ndarray:
+    """Match AirHockeyGoalEnv.step/reset's obs shape.
+
+    Goal-conditioned tasks (puck_goal_position, paddle_reach_position, …)
+    inherit from ``AirHockeyGoalEnv``, which concatenates ``get_desired_goal()``
+    onto the base obs in ``step`` / ``reset`` when ``return_goal_obs=False``.
+    ``env.get_observation(...)`` — called directly from the priming path
+    below — does NOT apply that wrapper, so without this fix the priming
+    obs is one slot shorter than every subsequent step-obs the policy sees.
+    Non-goal tasks (juggle, …) don't define ``get_desired_goal``; the
+    ``hasattr`` guard makes this a no-op there.
+    """
+    has_goal = hasattr(env, "get_desired_goal") and not getattr(env, "return_goal_obs", False)
+    if not has_goal:
+        return np.asarray(obs, dtype=np.float32)
+    return np.concatenate(
+        [
+            np.asarray(obs, dtype=np.float32),
+            np.asarray(env.get_desired_goal(), dtype=np.float32),
+        ]
+    )
+
+
 def _prime_paddle_history_stand_still_non_occluded(env: AirHockeyEnv) -> np.ndarray:
     """Fill paddle history with stationary non-occluded entries and rebuild observation."""
     simulator = getattr(env, "simulator", None)
     if simulator is None:
         obs, _ = env.get_current_state()
-        return np.asarray(obs, dtype=np.float32)
+        return _append_goal_if_goal_env(env, obs)
     state_info = simulator.get_current_state()
     try:
         paddle_position = np.asarray(
@@ -126,19 +149,25 @@ def _prime_paddle_history_stand_still_non_occluded(env: AirHockeyEnv) -> np.ndar
         paddle_x = float(paddle_position[0])
         paddle_y = float(paddle_position[1])
     except Exception:
-        return env.get_observation(
+        return _append_goal_if_goal_env(
+            env,
+            env.get_observation(
+                state_info,
+                obs_type=env.obs_type,
+                puck_history=simulator.puck_history,
+                paddle_history=simulator.paddle_history,
+            ),
+        )
+    history_len = int(getattr(simulator, "paddle_history_len", 5))
+    simulator.paddle_history = [(paddle_x, paddle_y, 0) for _ in range(max(1, history_len))]
+    return _append_goal_if_goal_env(
+        env,
+        env.get_observation(
             state_info,
             obs_type=env.obs_type,
             puck_history=simulator.puck_history,
             paddle_history=simulator.paddle_history,
-        )
-    history_len = int(getattr(simulator, "paddle_history_len", 5))
-    simulator.paddle_history = [(paddle_x, paddle_y, 0) for _ in range(max(1, history_len))]
-    return env.get_observation(
-        state_info,
-        obs_type=env.obs_type,
-        puck_history=simulator.puck_history,
-        paddle_history=simulator.paddle_history,
+        ),
     )
 
 

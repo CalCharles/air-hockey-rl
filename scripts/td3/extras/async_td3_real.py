@@ -167,6 +167,7 @@ def _save_episode_artifacts_and_pending_reset(
     pending_reset_artifact,
     latency_output_dir: Path | None,
     counters: dict,
+    min_timesteps: int = EPISODE_MIN_TIMESTEPS,
 ) -> tuple[int, bool, str, Path | None]:
     """HDF5 + GIF + camera video + pending reset flush — matches L1953–L2154.
 
@@ -183,6 +184,10 @@ def _save_episode_artifacts_and_pending_reset(
     * ``artifact_path`` — absolute path to the retained HDF5 trajectory
       file, or ``None`` if it was discarded (the file is unlinked by
       the validator in that case).
+
+    ``min_timesteps`` is the floor passed to ``clean_episode_hdf5``;
+    callers (the eval entrypoint) override it for tasks whose episodes
+    routinely end in fewer than the juggle-default 50 steps.
 
     The pending-reset flush is included here because it lives in the
     same artifact-save block in the source.
@@ -234,7 +239,7 @@ def _save_episode_artifacts_and_pending_reset(
     )
     counters["episodes_saved"] += 1
 
-    clean_result = clean_episode_hdf5(artifact_path, min_timesteps=EPISODE_MIN_TIMESTEPS)
+    clean_result = clean_episode_hdf5(artifact_path, min_timesteps=int(min_timesteps))
     episode_stop_artifact_label = result.terminal.stop_state_artifact_label
     if not clean_result.kept:
         print(

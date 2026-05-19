@@ -51,10 +51,13 @@ python -m scripts.td3.extras.async_td3_real \
 
 ## Real-robot frozen-policy eval
 
-Same as the residual command but with the eval entrypoint and no gradient updates:
+Frozen actor against the real robot — no learner / replay / checkpointing. `--agent` selects how the actor is built (default `td3`); the env config's `task:` selects the per-episode metrics via [`real_task_eval_hooks.py`](../../scripts/td3/helper/real_task_eval_hooks.py). See [`training/real-world-eval-pipeline.md`](training/real-world-eval-pipeline.md).
+
+### TD3 (canonical juggle)
 
 ```bash
 python -m scripts.td3.extras.async_td3_real_eval \
+  --agent td3 \
   --config configs/real_configs/rollout_config_residual.yaml \
   --args-file configs/td3_real_world/td3_residual.yaml \
   --model-path <path_to_training_state.pth> \
@@ -64,7 +67,20 @@ python -m scripts.td3.extras.async_td3_real_eval \
   --data-root-dir real_runs/eval_run
 ```
 
-Emits `eval_summary.json` + `eval_per_episode.jsonl`.
+### SGCRL on `puck_goal_position`
+
+```bash
+python -m scripts.td3.extras.async_td3_real_eval \
+  --agent sgcrl \
+  --config configs/gcrl/gcrl.yaml \
+  --model-path gcrl/03500032_sgcrl_AirHockeyPuckGoalPosition-v0.pkl \
+  --collector-device cpu \
+  --eval-episodes 20
+```
+
+`--train-args` / `--args-file` are not required — the SGCRL architecture lives inside the `.pkl` and the policy-state contract is synthesized.
+
+Emits `eval_summary.json` + `eval_per_episode.jsonl` (schema varies by task hook).
 
 ## Human-baseline teleop eval (user study)
 

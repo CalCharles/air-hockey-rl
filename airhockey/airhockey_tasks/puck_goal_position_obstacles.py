@@ -22,18 +22,18 @@ class AirHockeyPuckGoalPositionObstaclesEnv(AirHockeyGoalEnv):
         goal_high = [0, self.table_y_right]
         
         if self.return_goal_obs:
-            self.observation_space = self.get_goal_obs_space(low, high, goal_low, goal_high)
+            self.observation_space = self.single_observation_space = self.get_goal_obs_space(low, high, goal_low, goal_high)
         else:
             low = low + goal_low
             high = high + goal_high
-            self.observation_space = self.get_obs_space(low, high)
+            self.observation_space = self.single_observation_space = self.get_obs_space(low, high)
 
         # self.min_goal_radius = self.width / 16
         # self.max_goal_radius = self.width / 4
         
         self.goal_radius = self.base_goal_radius
 
-        self.action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
+        self.action_space = self.single_action_space = Box(low=-1, high=1, shape=(2,), dtype=np.float32) # 2D action space
         self.reward_range = Box(low=-1, high=1) # need to make sure rewards are between 0 and 1
         
         # Need a puck touching reward to 

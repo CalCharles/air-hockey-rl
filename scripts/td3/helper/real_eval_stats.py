@@ -40,6 +40,10 @@ from typing import Any, Mapping, Sequence
 # Numeric per-episode fields → summarized with full distribution stats.
 # Order chosen so the printed/JSON summary reads "what the user asked for"
 # first (return, juggles, contacts), then secondary metrics.
+#
+# These are the historical juggle-task defaults; ``compute_eval_aggregate``
+# and ``format_eval_summary_console`` accept overrides so non-juggle tasks
+# can supply their own field set (see ``helper/real_task_eval_hooks.py``).
 NUMERIC_SERIES_FIELDS: tuple[str, ...] = (
     "episode_return",
     "episode_juggles",
@@ -57,6 +61,16 @@ RATE_FIELDS: tuple[str, ...] = (
     "had_controller_disconnect",
     "readiness_fail_estop",
 )
+
+# Historical juggle-task precision overrides used when no
+# ``field_format_overrides`` mapping is supplied to
+# ``format_eval_summary_console``. Hooks-driven callers pass their own
+# (possibly empty) mapping and bypass this default — see
+# ``helper/real_task_eval_hooks.py``.
+_LEGACY_FIELD_FORMAT_OVERRIDES: dict[str, tuple[str, str, str, str]] = {
+    "episode_juggles":  (".2f", ".0f", ".1f", ".2f"),
+    "episode_contacts": (".2f", ".0f", ".1f", ".2f"),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +150,12 @@ def _extract_bools(records: Sequence[Mapping[str, Any]], field: str) -> list[int
     return out
 
 
-def compute_eval_aggregate(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+def compute_eval_aggregate(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    numeric_fields: Sequence[str] = NUMERIC_SERIES_FIELDS,
+    rate_fields: Sequence[str] = RATE_FIELDS,
+) -> dict[str, Any]:
     """Build the aggregate stats dict for a batch of *kept* eval episodes.
 
     Each record is the per-episode dict produced by the eval entrypoint
@@ -144,24 +163,28 @@ def compute_eval_aggregate(records: Sequence[Mapping[str, Any]]) -> dict[str, An
 
       ``n_episodes``           — kept count actually evaluated.
       ``series.<field>``       — full ``SeriesSummary`` for every entry of
-                                 ``NUMERIC_SERIES_FIELDS`` (count / mean /
-                                 std / min / max / median / p25 / p75).
+                                 ``numeric_fields`` (count / mean / std /
+                                 min / max / median / p25 / p75).
       ``rates.<field>``        — ``{count, total, rate}`` for every entry
-                                 of ``RATE_FIELDS``.
+                                 of ``rate_fields``.
       ``estop_total``          — number of episodes flagged with *any*
                                  e-stop class (protective / controller-
                                  disconnect / readiness-fail). Collapses
                                  the three rate fields so the common
                                  question "how many e-stops?" has one
                                  answer.
+
+    ``numeric_fields`` / ``rate_fields`` default to the juggle field set;
+    non-juggle tasks pass their own (see
+    ``helper/real_task_eval_hooks.py``).
     """
     n = len(records)
     series: dict[str, dict[str, float | int]] = {}
-    for field in NUMERIC_SERIES_FIELDS:
+    for field in numeric_fields:
         series[field] = summarize_series(_extract_floats(records, field)).to_dict()
 
     rates: dict[str, dict[str, float | int]] = {}
-    for field in RATE_FIELDS:
+    for field in rate_fields:
         flags = _extract_bools(records, field)
         total = int(sum(flags))
         rates[field] = {
@@ -241,12 +264,20 @@ def format_eval_summary_console(
     n_target: int,
     n_attempts: int,
     n_discarded: int,
+    numeric_fields: Sequence[str] = NUMERIC_SERIES_FIELDS,
+    rate_fields: Sequence[str] = RATE_FIELDS,
+    field_format_overrides: Mapping[str, tuple[str, str, str, str]] | None = None,
 ) -> str:
     """Multi-line human-readable digest for the end-of-run print.
 
     Format mirrors the rolling-window console line so eyes already trained
     on training output find what they expect (avg / std / [min..max] /
     median).
+
+    ``numeric_fields`` / ``rate_fields`` and ``field_format_overrides`` are
+    plumbed from the active ``TaskEvalHooks`` so non-juggle tasks can
+    customize which fields render and what precision they use. ``episode_length``
+    keeps its built-in precision because it's emitted by every task.
     """
     lines: list[str] = []
     n_kept = int(aggregate.get("n_episodes", 0))
@@ -257,15 +288,21 @@ def format_eval_summary_console(
         f"estop_total={estop_total}"
     )
 
+    overrides = (
+        dict(field_format_overrides)
+        if field_format_overrides is not None
+        else dict(_LEGACY_FIELD_FORMAT_OVERRIDES)
+    )
     series: Mapping[str, Mapping[str, float]] = aggregate.get("series", {})
-    for field in NUMERIC_SERIES_FIELDS:
+    for field in numeric_fields:
         s = series.get(field)
         if not s:
             continue
-        # Choose precision per field: integer-y counts get .2f, returns / rewards
-        # / lengths get .3f. Falls back to .3f if unknown.
-        if field in ("episode_juggles", "episode_contacts"):
-            avg_p, lim_p, med_p, std_p = ".2f", ".0f", ".1f", ".2f"
+        # Hooks-supplied overrides win first; ``episode_length`` keeps its
+        # built-in tweak because it ships with every task; everything else
+        # falls back to ``.3f``.
+        if field in overrides:
+            avg_p, lim_p, med_p, std_p = overrides[field]
         elif field == "episode_length":
             avg_p, lim_p, med_p, std_p = ".1f", ".0f", ".1f", ".1f"
         else:
@@ -278,9 +315,9 @@ def format_eval_summary_console(
             f"p25={s['p25']:{med_p}} p75={s['p75']:{med_p}}"
         )
 
-    rates: Mapping[str, Mapping[str, float]] = aggregate.get("rates", {})
-    for field in RATE_FIELDS:
-        r = rates.get(field)
+    rates_view: Mapping[str, Mapping[str, float]] = aggregate.get("rates", {})
+    for field in rate_fields:
+        r = rates_view.get(field)
         if not r:
             continue
         lines.append(

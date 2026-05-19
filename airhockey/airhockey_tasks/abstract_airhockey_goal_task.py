@@ -51,9 +51,26 @@ class AirHockeyGoalEnv(AirHockeyBaseEnv, ABC):
             achieved_goal=Box(low=np.array(goal_low), high=np.array(goal_high), dtype=float)
         ))
         
+    def _sync_goal_marker_to_simulator(self):
+        """Push ``self.goal_pos`` to the simulator for on-screen visualization.
+
+        No-op when the simulator backend doesn't implement ``set_goal_marker``
+        (e.g. Box2D already renders the goal itself via ``AirHockeyRenderer``).
+        Called after every ``set_goals`` so non-goal tasks — which never enter
+        this class — leave the marker untouched.
+        """
+        set_marker = getattr(self.simulator, "set_goal_marker", None)
+        if not callable(set_marker):
+            return
+        goal_pos = getattr(self, "goal_pos", None)
+        if goal_pos is None:
+            return
+        set_marker(goal_pos, getattr(self, "goal_radius", None))
+
     def reset(self, seed=None, **kwargs):
         self.set_goals(self.goal_radius_type)
         obs, success = super().reset(seed, **kwargs)
+        self._sync_goal_marker_to_simulator()
         achieved_goal = self.get_achieved_goal(self.current_state)
         desired_goal = self.get_desired_goal()
         if self.return_goal_obs:
@@ -66,6 +83,7 @@ class AirHockeyGoalEnv(AirHockeyBaseEnv, ABC):
         self.set_goals(None, goal_pos=goal_vector)
 
         obs, success = super().reset_from_state(state_vector, seed)
+        self._sync_goal_marker_to_simulator()
 
         achieved_goal = self.get_achieved_goal(self.current_state)
         desired_goal = self.get_desired_goal()

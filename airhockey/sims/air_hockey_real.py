@@ -18,7 +18,12 @@ from .real.robot_control import MotionPrimitive, apply_negative_z_force, filter_
 from .real.coordinate_transform import compute_rect, compute_pol, clip_limits
 from .real.proprioceptive_state import get_state_array
 from .real.image_detection import find_red_hockey_puck, find_red_hockey_puck_antiglare
-from .real.overlay_utils import draw_target_marker, draw_puck_marker_from_state, draw_paddle_marker
+from .real.overlay_utils import (
+    draw_target_marker,
+    draw_puck_marker_from_state,
+    draw_paddle_marker,
+    draw_goal_marker,
+)
 import multiprocessing
 import cv2
 import copy
@@ -38,7 +43,7 @@ reset_positions = {
 }
 
 
-_ASYNC_RENDER_METADATA_WIDTH = 7
+_ASYNC_RENDER_METADATA_WIDTH = 11
 
 
 def _async_render_worker(
@@ -105,6 +110,13 @@ def _async_render_worker(
             target_xy = (float(data[0]), float(data[1]))
             puck_state = np.array((data[2], data[3], data[4]), dtype=float)
             paddle_xy = (float(data[5]), float(data[6]))
+            goal_valid = bool(data[9] > 0.5)
+            goal_xy_robot = (
+                (float(data[7]) - center_offset_constant, float(data[8]))
+                if goal_valid
+                else None
+            )
+            goal_radius = float(data[10]) if data[10] > 0 else None
             draw_target_marker(
                 frame,
                 target_xy,
@@ -129,6 +141,14 @@ def _async_render_worker(
                 visual_downscale_constant=visual_downscale_constant,
                 color=(255, 0, 0),
             )
+            if goal_xy_robot is not None:
+                draw_goal_marker(
+                    frame,
+                    goal_xy_robot,
+                    goal_radius_m=goal_radius,
+                    offset_constants=offset_constants,
+                    visual_downscale_constant=visual_downscale_constant,
+                )
             cv2.imshow(window_name, frame)
             if sim_renderer is not None:
                 sim_frame = sim_renderer.render_frame(
@@ -398,6 +418,12 @@ class AirHockeyReal:
         self._render_epoch = None
         self._render_stop_event = None
         self._render_process = None
+        # Optional goal-marker overlay (set by goal-conditioned tasks via
+        # ``set_goal_marker``). Stored in TABLE frame to mirror how
+        # ``self.goal_pos`` lives on the env; converted to robot frame at
+        # draw time. Stays ``None`` for non-goal tasks so no marker is drawn.
+        self._goal_marker_pos_table = None
+        self._goal_marker_radius_m = None
         self.above_table = False
         if self.control_type == "prim":
             self.motion_primitive = MotionPrimitive()
@@ -886,6 +912,46 @@ class AirHockeyReal:
             if self._async_render_runtime_enabled and self.control_mode not in ["observe"]:
                 self._start_async_renderer(self._async_render_default_frame_shape)
 
+    def set_goal_marker(self, goal_xy_table, radius_m=None):
+        """Register a goal position for visualization on the camera overlay.
+
+        Called by goal-conditioned tasks (``AirHockeyGoalEnv``) on reset; for
+        non-goal tasks this is never called and no marker is drawn.
+
+        Args:
+            goal_xy_table: (x, y) goal position in TABLE/observation frame
+                (the natural frame of ``env.goal_pos``). Pass ``None`` to
+                clear the overlay.
+            radius_m: Optional success radius (meters). When provided, drawn
+                as a ring around the goal so the operator can see the
+                acceptance region.
+        """
+        if goal_xy_table is None:
+            self.clear_goal_marker()
+            return
+        arr = np.asarray(goal_xy_table, dtype=float).reshape(-1)
+        if arr.size < 2:
+            self.clear_goal_marker()
+            return
+        self._goal_marker_pos_table = np.array([float(arr[0]), float(arr[1])], dtype=float)
+        self._goal_marker_radius_m = (
+            float(radius_m) if radius_m is not None and float(radius_m) > 0 else None
+        )
+
+    def clear_goal_marker(self):
+        """Remove any registered goal overlay (e.g. when switching tasks)."""
+        self._goal_marker_pos_table = None
+        self._goal_marker_radius_m = None
+
+    def _goal_marker_robot_xy(self):
+        """Return the goal in robot frame, or ``None`` if no goal is set."""
+        if self._goal_marker_pos_table is None:
+            return None
+        return (
+            float(self._goal_marker_pos_table[0]) - float(self.center_offset_constant),
+            float(self._goal_marker_pos_table[1]),
+        )
+
     def _render_overlay_inline(self, image, target_xy, puck_state, paddle_xy):
         if image is None:
             return
@@ -913,6 +979,15 @@ class AirHockeyReal:
             visual_downscale_constant=self.visual_downscale_constant,
             color=(255, 0, 0),
         )
+        goal_xy_robot = self._goal_marker_robot_xy()
+        if goal_xy_robot is not None:
+            draw_goal_marker(
+                image,
+                goal_xy_robot,
+                goal_radius_m=self._goal_marker_radius_m,
+                offset_constants=self.offset_constants,
+                visual_downscale_constant=self.visual_downscale_constant,
+            )
         cv2.imshow(self.async_render_window_name, image)
         if self.async_render_sim_view_enabled:
             sim_renderer = self._get_inline_sim_renderer()
@@ -1081,6 +1156,20 @@ class AirHockeyReal:
                 self._render_metadata[4] = float(puck_state[2]) if len(puck_state) > 2 else 1.0
                 self._render_metadata[5] = float(paddle_xy[0])
                 self._render_metadata[6] = float(paddle_xy[1])
+                if self._goal_marker_pos_table is not None:
+                    self._render_metadata[7] = float(self._goal_marker_pos_table[0])
+                    self._render_metadata[8] = float(self._goal_marker_pos_table[1])
+                    self._render_metadata[9] = 1.0
+                    self._render_metadata[10] = (
+                        float(self._goal_marker_radius_m)
+                        if self._goal_marker_radius_m is not None
+                        else 0.0
+                    )
+                else:
+                    self._render_metadata[7] = 0.0
+                    self._render_metadata[8] = 0.0
+                    self._render_metadata[9] = 0.0
+                    self._render_metadata[10] = 0.0
                 self._render_seq.value = int(self._render_seq.value) + 1
             return True
         except Exception as exc:

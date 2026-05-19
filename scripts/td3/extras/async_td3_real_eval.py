@@ -26,12 +26,22 @@ the analyst's existing tooling works unchanged):
 Aggregate captures (see ``helper/real_eval_stats.py``):
 
   * ``series.<field>``: count / mean / std / min / max / median / p25 / p75
-    over ``episode_return``, ``episode_juggles``, ``episode_contacts``,
-    ``episode_task_reward``, ``episode_motion_reward``, ``episode_length``.
-  * ``rates.<field>``: count / total / rate over ``episode_juggle_success``,
-    ``episode_success``, ``had_protective_stop``,
-    ``had_controller_disconnect``, ``readiness_fail_estop``.
+    over the numeric fields supplied by the active ``TaskEvalHooks``.
+    For juggle tasks (``JuggleEvalHooks``): ``episode_return``,
+    ``episode_juggles``, ``episode_contacts``, ``episode_task_reward``,
+    ``episode_motion_reward``, ``episode_length``. For unregistered tasks
+    (``GenericEvalHooks``): the runner-emitted subset minus the juggle
+    columns.
+  * ``rates.<field>``: count / total / rate over the boolean fields the
+    hooks list. Juggle includes ``episode_juggle_success``; every task
+    includes ``episode_success``, the e-stop class flags, and
+    ``readiness_fail_estop``.
   * ``estop_total``: collapsed e-stop count (any class).
+
+The task hooks (``helper/real_task_eval_hooks.py``) also drive the
+``min_timesteps`` floor passed to ``clean_episode_hdf5`` and per-field
+console precision, so plugging a new task into the eval pipeline only
+requires (optionally) registering a hooks class for it.
 
 The eval-loop body lives inside ``run_eval`` and depends only on the
 env, actor, and runner factories — future training-loop integration
@@ -59,9 +69,6 @@ from scripts.td3.helper.episode_artifacts import (
     clean_episode_hdf5,
     save_split_episode_hdf5,
 )
-from scripts.td3.helper.juggle_counter import (
-    count_juggles_from_rows,
-)
 from scripts.td3.helper.real_collector_factories import (
     build_primitive_exploration_selector_for_real_collector,
 )
@@ -81,6 +88,9 @@ from scripts.td3.helper.real_reset_runner import (
     ResetRunner,
     StopFlags,
     pick_reset_kind,
+)
+from scripts.td3.helper.real_task_eval_hooks import (
+    get_task_eval_hooks,
 )
 from scripts.td3.helper.real_transition_hold import (
     RolloutContext,
@@ -102,12 +112,10 @@ from scripts.td3.helper.real_td3_runtime import (
     Args,
     TrainArgs,
     _build_args_file_defaults,
-    _build_collector_actor,
     _env_timing_info,
     _extract_primitive_state_tensors,
     _latest_camera_frame,
     _load_train_args,
-    _load_training_state_checkpoint,
     _next_available_episode_id,
     _prepare_air_hockey_config,
     _reset_primitive_rollout_state,
@@ -119,6 +127,11 @@ from scripts.td3.helper.real_td3_runtime import (
     deterministic_actor_action,
     install_quiet_print_filter,
     primitive_exploration_chance_for_step,
+)
+from scripts.td3.helper.real_eval_agents import (
+    EvalAgent,
+    build_eval_agent,
+    synthesize_eval_train_args,
 )
 from scripts.td3.extras.async_td3_real import (
     _save_episode_artifacts_and_pending_reset,
@@ -160,6 +173,12 @@ class EvalSpecificArgs:
     # See ``_install_quiet_print_filter`` for the exact prefix list.
     quiet: bool = True
 
+    # Agent kind dispatched to ``real_eval_agents.build_eval_agent``.
+    # Default ``td3`` preserves the historical CLI contract (``--train-args``
+    # / ``--args-file`` still required). Non-TD3 kinds (e.g. ``sgcrl``)
+    # synthesize a minimal ``TrainArgs`` and skip the args-file step.
+    agent: str = "td3"
+
 
 def _parse_eval_specific_args() -> EvalSpecificArgs:
     """Strip eval-specific flags from ``sys.argv`` before tyro sees it.
@@ -180,6 +199,17 @@ def _parse_eval_specific_args() -> EvalSpecificArgs:
         action="store_true",
         help="Restore noisy per-step/per-reset debug prints from training-side helpers.",
     )
+    parser.add_argument(
+        "--agent",
+        type=str,
+        default="td3",
+        help=(
+            "Agent kind. 'td3' (default) requires --train-args and --args-file. "
+            "'sgcrl' loads a pickled SGCRL actor and synthesizes the policy-state "
+            "contract; --train-args / --args-file may be omitted. "
+            "See scripts/td3/helper/real_eval_agents.EVAL_AGENT_BUILDERS."
+        ),
+    )
     parsed, remaining = parser.parse_known_args(sys.argv[1:])
     sys.argv = [sys.argv[0]] + remaining
     return EvalSpecificArgs(
@@ -188,6 +218,7 @@ def _parse_eval_specific_args() -> EvalSpecificArgs:
         eval_summary_filename=str(parsed.eval_summary_filename),
         eval_per_episode_filename=str(parsed.eval_per_episode_filename),
         quiet=not bool(parsed.verbose),
+        agent=str(parsed.agent),
     )
 
 
@@ -215,78 +246,6 @@ def _force_eval_mode(args: Args) -> None:
     # Eval mode never touches replay; loud disable in case someone reads
     # the value off args later.
     args.load_replay_from_checkpoint = False
-
-
-# ---------------------------------------------------------------------------
-# Actor build + load.
-# ---------------------------------------------------------------------------
-
-
-def _load_actor_for_eval(
-    *,
-    args: Args,
-    train_args: TrainArgs,
-    obs_dim: int,
-    act_dim: int,
-    action_low_np: np.ndarray,
-    action_high_np: np.ndarray,
-    device: torch.device,
-) -> Tuple[torch.nn.Module, Dict[str, Any]]:
-    """Build the eval actor and load weights from ``args.model_path``.
-
-    Reuses the training-side ``_build_collector_actor`` so the actor
-    architecture (vanilla DeterministicAgent vs. ResidualActor) matches
-    whatever the source training run used. Loads the *full* actor
-    state dict from the checkpoint — including the residual head when
-    present — via ``strict=False`` so older / cross-source checkpoints
-    keep working.
-
-    Returns ``(actor, checkpoint_dict)``. The caller uses the second
-    return value to extract metadata (q_updates, actor_updates) for
-    the eval summary.
-    """
-    if args.model_path is None:
-        raise SystemExit(
-            "async_td3_real_eval.py requires --model-path pointing to a "
-            "training_state.pth checkpoint produced by td3_training.py or an "
-            "async-real run. Eval mode cannot run against a fresh / random "
-            "actor — there is nothing to evaluate."
-        )
-    if not os.path.exists(args.model_path):
-        raise FileNotFoundError(f"--model-path does not exist: {args.model_path}")
-
-    checkpoint = _load_training_state_checkpoint(args.model_path)
-    actor = _build_collector_actor(
-        args=args,
-        train_args=train_args,
-        obs_dim=obs_dim,
-        act_dim=act_dim,
-        action_low_np=action_low_np,
-        action_high_np=action_high_np,
-        device=device,
-    )
-    load_result = actor.load_state_dict(checkpoint["actor"], strict=False)
-    n_actor_keys = len(actor.state_dict())
-    n_loaded = n_actor_keys - len(load_result.missing_keys)
-    if n_loaded == 0:
-        raise ValueError(
-            f"Loading checkpoint['actor'] into the eval actor produced 0 matching "
-            f"keys. Likely a mode mismatch — was the source checkpoint trained "
-            f"with full_checkpoint_load={args.full_checkpoint_load!r}? "
-            f"first_missing={list(load_result.missing_keys)[:5]} "
-            f"first_unexpected={list(load_result.unexpected_keys)[:5]}"
-        )
-    actor.eval()
-    print(
-        f"[eval_actor] loaded actor from {args.model_path} "
-        f"residual_mode={args.full_checkpoint_load in ('residual', 'residual_resume')} "
-        f"loaded_keys={n_loaded}/{n_actor_keys} "
-        f"missing={len(load_result.missing_keys)} "
-        f"unexpected={len(load_result.unexpected_keys)} "
-        f"q_updates={int(checkpoint.get('learner_q_updates', 0))} "
-        f"actor_updates={int(checkpoint.get('learner_actor_updates', 0))}"
-    )
-    return actor, checkpoint
 
 
 # ---------------------------------------------------------------------------
@@ -330,9 +289,25 @@ def run_eval(
             args.transition_hold_steps_post_safety_rearm
         )
     env = AirHockeyEnv(collector_config)
+    # Task-specific eval hooks supply: which extra per-episode metrics to
+    # compute, which fields land in eval_summary.json, the min-episode-length
+    # floor for clean_episode_hdf5, and per-field console precision. Falls
+    # back to GenericEvalHooks for any task not in the registry.
+    task_name = str(collector_config.get("task", ""))
+    task_hooks = get_task_eval_hooks(task_name)
+    print(
+        f"[eval_run] task={task_name!r} "
+        f"hooks={type(task_hooks).__name__} "
+        f"min_timesteps={int(task_hooks.min_timesteps)}"
+    )
 
-    # Actor + checkpoint metadata.
-    actor, checkpoint = _load_actor_for_eval(
+    # Agent + metadata. Dispatched on ``eval_args.agent``: 'td3' rebuilds the
+    # historical DeterministicAgent (or ResidualActor) and loads
+    # training_state.pth; 'sgcrl' wraps the pickled SGCRL actor behind a
+    # tensor-IO adapter. Both expose the same ``.get_action(tensor)``
+    # contract the runner uses.
+    agent_bundle: EvalAgent = build_eval_agent(
+        eval_args.agent,
         args=args,
         train_args=train_args,
         obs_dim=obs_dim,
@@ -341,6 +316,7 @@ def run_eval(
         action_high_np=action_high_np,
         device=device,
     )
+    actor = agent_bundle.actor
     action_low = torch.as_tensor(action_low_np, dtype=torch.float32, device=device).unsqueeze(0)
     action_high = torch.as_tensor(action_high_np, dtype=torch.float32, device=device).unsqueeze(0)
     primitive_selector = build_primitive_exploration_selector_for_real_collector(
@@ -490,7 +466,9 @@ def run_eval(
         # 2. Save artifacts (HDF5 + GIF + camera video) and flush pending reset.
         # This is the same helper the training orchestrator uses, so the on-
         # disk layout is identical and the existing training-side analysis
-        # tools work without changes.
+        # tools work without changes. ``min_timesteps`` is task-controlled:
+        # the juggle default (50) keeps long episodes; short-success tasks
+        # (e.g. puck_strike) override via GenericEvalHooks / a task hook.
         saved_episode_id = next_episode_file_id
         (
             next_episode_file_id,
@@ -504,10 +482,13 @@ def run_eval(
             pending_reset_artifact=pending_reset_artifact,
             latency_output_dir=None,
             counters=counters,
+            min_timesteps=int(task_hooks.min_timesteps),
         )
         pending_reset_artifact = None
 
-        episode_juggle_counts = count_juggles_from_rows(result.rows)
+        task_metrics = task_hooks.compute_episode_metrics(
+            result=result, rows=result.rows
+        )
         if episode_kept:
             # Note: ``counters["successful_online_episodes_kept"]`` is already
             # incremented inside ``_save_episode_artifacts_and_pending_reset``
@@ -524,9 +505,6 @@ def run_eval(
                 "episode_return": float(result.metrics.episode_return),
                 "episode_task_reward": float(result.metrics.episode_task_reward),
                 "episode_motion_reward": float(result.metrics.episode_motion_reward),
-                "episode_juggles": int(episode_juggle_counts.n_juggles),
-                "episode_contacts": int(episode_juggle_counts.n_contacts),
-                "episode_juggle_success": bool(episode_juggle_counts.juggle_success),
                 "episode_success": bool(result.terminal.episode_success),
                 "episode_estop_flag": float(result.metrics.episode_estop_flag),
                 "had_protective_stop": bool(result.metrics.had_protective_stop),
@@ -536,20 +514,23 @@ def run_eval(
                 "episode_end_reason": result.terminal.episode_end_reason,
                 "stop_state_artifact_label": result.terminal.stop_state_artifact_label,
                 "artifact_path": str(artifact_path) if artifact_path is not None else None,
+                **task_metrics,
             }
             per_episode_records.append(record)
             # Mirror this row into eval_per_episode.jsonl so a partial-run
             # crash still leaves the eval set queryable on disk.
             _append_eval_per_episode_row(args, eval_args, record)
-            print(
-                f"[eval] kept {len(per_episode_records)}/{target_kept} "
-                f"episode_id={saved_episode_id} "
-                f"return={result.metrics.episode_return:.3f} "
-                f"juggles={episode_juggle_counts.n_juggles} "
-                f"contacts={episode_juggle_counts.n_contacts} "
-                f"estop={int(result.metrics.episode_estop_flag)} "
-                f"len={result.metrics.episode_length:.0f}"
-            )
+            parts = [
+                f"[eval] kept {len(per_episode_records)}/{target_kept}",
+                f"episode_id={saved_episode_id}",
+                f"return={result.metrics.episode_return:.3f}",
+            ]
+            extras = task_hooks.format_kept_console_extras(task_metrics)
+            if extras:
+                parts.append(extras)
+            parts.append(f"estop={int(result.metrics.episode_estop_flag)}")
+            parts.append(f"len={result.metrics.episode_length:.0f}")
+            print(" ".join(parts))
         else:
             print(
                 f"[eval] discarded episode_id={saved_episode_id} reason={clean_reason} "
@@ -558,7 +539,9 @@ def run_eval(
 
         # 3. Always emit one row to the standard episode_summaries.jsonl so
         # the eval directory has the same train-time analysis surface
-        # (kept *and* discarded episodes are visible).
+        # (kept *and* discarded episodes are visible). Task-specific keys
+        # come from the hooks; juggle tasks keep the historical
+        # juggles/contacts/juggle_success triple.
         append_episode_summary(
             args,
             {
@@ -577,9 +560,6 @@ def run_eval(
                 "episode_task_reward": float(result.metrics.episode_task_reward),
                 "episode_motion_reward": float(result.metrics.episode_motion_reward),
                 "episode_success": bool(result.terminal.episode_success),
-                "episode_juggles": int(episode_juggle_counts.n_juggles),
-                "episode_contacts": int(episode_juggle_counts.n_contacts),
-                "episode_juggle_success": bool(episode_juggle_counts.juggle_success),
                 "episode_estop_flag": float(result.metrics.episode_estop_flag),
                 "had_protective_stop": bool(result.metrics.had_protective_stop),
                 "had_controller_disconnect": bool(result.metrics.had_controller_disconnect),
@@ -590,9 +570,10 @@ def run_eval(
                 "replay_partition": None,
                 "episode_return_success_threshold": None,
                 "total_steps": int(policy_runner.total_steps),
-                "actor_version": int(checkpoint.get("learner_actor_updates", 0)),
+                "actor_version": int(agent_bundle.metadata.get("actor_updates", 0)),
                 "run_elapsed_total_s": float(time.time() - eval_start_time),
                 "exploration_primitive_chance_runtime": float(primitive_selector.chance),
+                **task_metrics,
             },
         )
 
@@ -637,9 +618,14 @@ def run_eval(
 
     eval_finished_time = time.time()
     eval_finished_iso = datetime.fromtimestamp(eval_finished_time, tz=timezone.utc).isoformat()
-    aggregate = compute_eval_aggregate(per_episode_records)
+    aggregate = compute_eval_aggregate(
+        per_episode_records,
+        numeric_fields=task_hooks.numeric_series_fields,
+        rate_fields=task_hooks.rate_fields,
+    )
 
     run_meta: Dict[str, Any] = {
+        "agent": str(eval_args.agent),
         "model_path": str(args.model_path) if args.model_path is not None else None,
         "config": str(args.config),
         "args_file": str(args.args_file) if args.args_file is not None else None,
@@ -653,8 +639,9 @@ def run_eval(
         "started_iso": eval_started_iso,
         "finished_iso": eval_finished_iso,
         "elapsed_s": float(eval_finished_time - eval_start_time),
-        "checkpoint_q_updates": int(checkpoint.get("learner_q_updates", 0)),
-        "checkpoint_actor_updates": int(checkpoint.get("learner_actor_updates", 0)),
+        "checkpoint_q_updates": int(agent_bundle.metadata.get("q_updates", 0)),
+        "checkpoint_actor_updates": int(agent_bundle.metadata.get("actor_updates", 0)),
+        "agent_metadata": dict(agent_bundle.metadata),
         "full_checkpoint_load": str(args.full_checkpoint_load),
         "residual_scale": float(args.residual_scale),
         "policy_obs_dim": int(obs_dim),
@@ -674,6 +661,9 @@ def run_eval(
         n_target=target_kept,
         n_attempts=total_attempts,
         n_discarded=total_attempts - len(per_episode_records),
+        numeric_fields=task_hooks.numeric_series_fields,
+        rate_fields=task_hooks.rate_fields,
+        field_format_overrides=task_hooks.field_format_overrides,
     ))
 
     env.close()
@@ -814,32 +804,57 @@ if __name__ == "__main__":
     eval_args = _parse_eval_specific_args()
 
     temp_args = tyro.cli(Args)
-    if temp_args.train_args is None:
-        raise SystemExit(
-            "async_td3_real_eval.py requires --train-args pointing to the "
-            "training run's args.yaml (the same file the training run used). "
-            "Architecture must match the saved checkpoint."
+    if eval_args.agent == "td3":
+        # TD3 path: --train-args (architecture) + --args-file (online-behavior
+        # defaults) are both required. Same contract as before the agent
+        # refactor — a TD3 checkpoint can't be rebuilt without them.
+        if temp_args.train_args is None:
+            raise SystemExit(
+                "--agent td3 requires --train-args pointing to the "
+                "training run's args.yaml (the same file the training run used). "
+                "Architecture must match the saved checkpoint."
+            )
+        if temp_args.args_file is None:
+            raise SystemExit(
+                "--agent td3 requires --args-file pointing to an online-behavior "
+                "YAML (e.g. td3_residual.yaml). Same args-file the training run "
+                "used is fine — exploration knobs are forced to zero regardless "
+                "of what the file specifies."
+            )
+        train_args = _load_train_args(temp_args.train_args)
+        mapped_defaults, applied_keys, ignored_keys = _build_args_file_defaults(
+            temp_args.args_file
         )
-    if temp_args.args_file is None:
-        raise SystemExit(
-            "async_td3_real_eval.py requires --args-file pointing to an "
-            "online-behavior YAML (e.g. td3_residual.yaml). Same args-file the "
-            "training run used is fine — exploration knobs are forced to zero "
-            "regardless of what the file specifies."
-        )
-    train_args = _load_train_args(temp_args.train_args)
-    mapped_defaults, applied_keys, ignored_keys = _build_args_file_defaults(temp_args.args_file)
-    mapped_defaults["args_file"] = temp_args.args_file
-    mapped_defaults["train_args"] = temp_args.train_args
-    default_args = Args(**mapped_defaults)
+        mapped_defaults["args_file"] = temp_args.args_file
+        mapped_defaults["train_args"] = temp_args.train_args
+        default_args = Args(**mapped_defaults)
 
-    args = tyro.cli(Args, default=default_args)
-    print(f"[train_args] loaded architecture from: {args.train_args}")
-    print(f"[args_file] loaded defaults from: {args.args_file}")
-    if applied_keys:
-        print("[args_file] applied keys:", ", ".join(applied_keys))
-    if ignored_keys:
-        print("[args_file] ignored unsupported keys:", ", ".join(ignored_keys))
+        args = tyro.cli(Args, default=default_args)
+        print(f"[train_args] loaded architecture from: {args.train_args}")
+        print(f"[args_file] loaded defaults from: {args.args_file}")
+        if applied_keys:
+            print("[args_file] applied keys:", ", ".join(applied_keys))
+        if ignored_keys:
+            print("[args_file] ignored unsupported keys:", ", ".join(ignored_keys))
+    else:
+        # Non-TD3 path (e.g. --agent sgcrl): the architecture lives inside the
+        # agent's own checkpoint, so --train-args / --args-file are not
+        # required. We still want all other CLI flags (config, model-path,
+        # collector-device, …) to flow through tyro normally; ``temp_args``
+        # already captured them, so use it directly as the resolved Args
+        # without re-applying any YAML defaults.
+        args = temp_args
+        if args.model_path is None:
+            raise SystemExit(
+                f"--agent {eval_args.agent} requires --model-path pointing to a "
+                f"checkpoint file."
+            )
+        train_args = synthesize_eval_train_args(use_last_action=False)
+        print(
+            f"[train_args] synthesized for --agent {eval_args.agent} "
+            f"(use_last_action_in_policy_state=False)"
+        )
+
     # No interactive run-note prompt — eval is meant to run unattended.
     _setup_run_data_dir(args, run_note="")
     main(args, train_args, eval_args)
