@@ -95,7 +95,6 @@ exploration_target_position_steps: 5
 
 # Source sim — hist_len=2 with paddle_density / puck_damping / gravity DR
 config: "configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25.yaml"
-enable_puck_delay_interpolation: true
 
 # Paths
 args_file: null
@@ -106,7 +105,6 @@ run_name: "td3_paramrand_pm25"
 # Runtime
 device: "cuda:1"
 seed: 0
-action_scale: 1.0
 h_transform_eps: 0.001
 
 # Architecture (2-layer 64 — matches td3_recommended)

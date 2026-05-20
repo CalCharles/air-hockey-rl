@@ -166,7 +166,7 @@ def load_td3_deterministic_policy(
     policy_env_view = build_policy_env_view(policy_obs_dim, env_act_dim)
     actor = DeterministicAgent(
         policy_env_view,
-        action_scale=train_args.action_scale,
+        action_scale=1.0,
         action_bias=0.0,
         hidden_layer_size=train_args.agent_hidden_layer_size,
         num_hidden_layers=train_args.agent_num_hidden_layers,
@@ -185,7 +185,6 @@ def load_td3_deterministic_policy(
     print(
         f"[run_policy] loaded td3 actor from {model_path} "
         f"(hidden={train_args.agent_hidden_layer_size}x{train_args.agent_num_hidden_layers}, "
-        f"action_scale={train_args.action_scale}, "
         f"use_last_action={train_args.use_last_action_in_policy_state})"
     )
     return TD3DeterministicPolicy(

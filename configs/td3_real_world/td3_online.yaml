@@ -93,7 +93,6 @@ run_name: "td3_standard"
 # Runtime
 learner_device: "cuda:0"
 seed: 0
-action_scale: 1.0
 h_transform_eps: 0.001
 
 # Agent / critic architecture

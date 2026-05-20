@@ -219,7 +219,6 @@ run_name: "async_td3_real_residual_v27"
 # --- Runtime ----------------------------------------------------------------
 learner_device: "cuda:0"
 seed: 0
-action_scale: 1.0
 h_transform_eps: 0.001
 
 # --- Architecture (informational; effective values come from --train-args) --

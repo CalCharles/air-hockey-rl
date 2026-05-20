@@ -44,7 +44,6 @@ air_hockey:
     render_size: 360
     seed: 0
     width: 0.8636
-    use_pid: true
     pid_kp: 5000
     pid_kd: 200
     pid_ki: 0.0

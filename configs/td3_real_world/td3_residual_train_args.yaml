@@ -21,7 +21,6 @@
 #   - `use_last_action_in_policy_state` must also match the source — flipping
 #     it changes the actor's input dim and breaks state_dict loading.
 
-action_scale: 1.0
 
 # Architecture — v27 standard (2-layer 64-wide hist-style base, matching the
 # sim2sim winner). MUST match the source actor in `model_path`. If your base

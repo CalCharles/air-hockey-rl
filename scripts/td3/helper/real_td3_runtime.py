@@ -247,7 +247,7 @@ def _build_collector_actor(
     policy_env_view = build_policy_env_view(policy_obs_dim, act_dim)
     base = DeterministicAgent(
         policy_env_view,
-        action_scale=train_args.action_scale,
+        action_scale=1.0,
         action_bias=0.0,
         hidden_layer_size=train_args.agent_hidden_layer_size,
         num_hidden_layers=train_args.agent_num_hidden_layers,
@@ -570,7 +570,6 @@ class TrainArgs:
     backwards-compatible vanilla-TD3 default (N=2, subset=None).
     """
 
-    action_scale: float
     agent_hidden_layer_size: int
     agent_num_hidden_layers: int
     q_hidden_layer_size: int
@@ -589,7 +588,6 @@ TRAIN_ARGS_FIELD_NAMES: Tuple[str, ...] = tuple(f.name for f in fields(TrainArgs
 # Ensemble keys are optional with safe defaults so older args.yaml files keep
 # loading; see _load_train_args (and feedback_loader_defaults memory).
 _TRAIN_ARGS_REQUIRED_FIELDS: Tuple[str, ...] = (
-    "action_scale",
     "agent_hidden_layer_size",
     "agent_num_hidden_layers",
     "q_hidden_layer_size",
@@ -619,10 +617,15 @@ def _load_train_args(train_args_path: str) -> TrainArgs:
             f"--train-args file {train_args_path} is missing required fields: {missing}. "
             f"Expected canonical td3_training.py args.yaml field names."
         )
+    if "action_scale" in loaded:
+        raise KeyError(
+            f"--train-args file {train_args_path} contains deprecated `action_scale` "
+            "field. action_scale is now hardcoded to 1.0 throughout the pipeline; "
+            "remove this key from the args.yaml to migrate."
+        )
     raw_subset = loaded.get("target_critic_subset_size", None)
     target_subset: int | None = None if raw_subset is None else int(raw_subset)
     return TrainArgs(
-        action_scale=float(loaded["action_scale"]),
         agent_hidden_layer_size=int(loaded["agent_hidden_layer_size"]),
         agent_num_hidden_layers=int(loaded["agent_num_hidden_layers"]),
         q_hidden_layer_size=int(loaded["q_hidden_layer_size"]),
@@ -1413,14 +1416,14 @@ def _init_sync_learner_state(
     policy_env_view = build_policy_env_view(policy_obs_dim, act_dim)
     actor = DeterministicAgent(
         policy_env_view,
-        action_scale=train_args.action_scale,
+        action_scale=1.0,
         action_bias=0.0,
         hidden_layer_size=train_args.agent_hidden_layer_size,
         num_hidden_layers=train_args.agent_num_hidden_layers,
     ).to(device)
     actor_target = DeterministicAgent(
         policy_env_view,
-        action_scale=train_args.action_scale,
+        action_scale=1.0,
         action_bias=0.0,
         hidden_layer_size=train_args.agent_hidden_layer_size,
         num_hidden_layers=train_args.agent_num_hidden_layers,

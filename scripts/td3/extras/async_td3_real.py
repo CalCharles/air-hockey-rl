@@ -8,7 +8,7 @@ library (``helper/real_td3_runtime.py``: ``Args`` / ``TrainArgs`` /
 ``LearnerRuntimeState``, args-file parsing, checkpoint helpers,
 episode/replay utilities, the synchronous learner step) and the per-concern
 runners (``real_policy_runner``, ``real_reset_runner``,
-``real_transition_hold``, ``real_stop_state``, ``real_motion_rewards``,
+``real_transition_hold``, ``real_stop_state``,
 ``real_collector_metrics``, ``real_warm_start``, ``real_episode_buffers``,
 …). This file is the only ``__main__`` for real-world async TD3 runs.
 
@@ -1290,8 +1290,7 @@ def collector_process_modular(
                 )
 
             rolling_multi = compute_rolling_window_metrics_multi(
-                task_reward_values=rolling_state["task"],
-                motion_reward_values=rolling_state["motion"],
+                reward_values=rolling_state["reward"],
                 episode_length_values=rolling_state["length"],
                 estop_episode_flags=rolling_state["estop"],
                 episode_return_values=rolling_state["return"],
@@ -1301,8 +1300,7 @@ def collector_process_modular(
             update_stats_dict_rolling_windows(
                 stats,
                 rolling_multi,
-                raw_task_reward_values=rolling_state["task"],
-                raw_motion_reward_values=rolling_state["motion"],
+                raw_reward_values=rolling_state["reward"],
                 raw_episode_length_values=rolling_state["length"],
                 raw_estop_episode_flags=rolling_state["estop"],
                 raw_episode_return_values=rolling_state["return"],
@@ -1809,7 +1807,6 @@ if __name__ == "__main__":
     print(f"[train_args] loaded architecture from: {args.train_args}")
     print(
         f"[train_args] "
-        f"action_scale={train_args.action_scale} "
         f"agent_hidden_layer_size={train_args.agent_hidden_layer_size} "
         f"agent_num_hidden_layers={train_args.agent_num_hidden_layers} "
         f"q_hidden_layer_size={train_args.q_hidden_layer_size} "

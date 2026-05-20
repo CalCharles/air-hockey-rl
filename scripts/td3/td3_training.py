@@ -1,11 +1,11 @@
 """
-TD3 training with transformed Bellman targets and dual-head critics.
+TD3 training with transformed Bellman targets and single-head critics.
 
 Compared to SAC+AMP:
 - no discriminator
 - no entropy term / alpha tuning
 - deterministic actor updates (TD3)
-- twin critics with separate task and motion heads in transformed space
+- twin critics (REDQ-style ensemble when num_critics > 2), single scalar Q head
 """
 
 import os
@@ -17,9 +17,7 @@ from datetime import datetime
 from types import SimpleNamespace
 from typing import Dict, List, Literal, Tuple
 
-import cv2
 import gymnasium as gym
-import imageio
 import numpy as np
 import torch
 import torch.optim as optim
@@ -31,7 +29,15 @@ from airhockey import AirHockeyEnv
 from airhockey.renderers import AirHockeyRenderer
 from scripts.td3.deterministic_agent import DeterministicAgent
 from scripts.td3.helper.q_network import TD3QNetwork
+from scripts.td3.helper.td3_args_validation import validate_args
 from scripts.td3.helper.td3_cql import cql_penalty, precompute_cql_terms
+from scripts.td3.helper.td3_gif_recorder import GIFEpisodeRecorder
+from scripts.td3.helper.td3_loop_logging import (
+    build_actor_metrics,
+    build_critic_metrics,
+    build_target_q_debug_metrics,
+    write_periodic_episode_stats,
+)
 from scripts.td3.helper.td3_residual import build_residual_training
 from scripts.td3.helper.exploration_selector import (
     PrimitiveExplorationSelector,
@@ -158,24 +164,6 @@ def primitive_exploration_chance_for_step(args, step: int) -> float:
     )
 
 
-def validate_optional_exploration_range(
-    *,
-    primitive_name: str,
-    min_angle_deg: float | None,
-    max_angle_deg: float | None,
-    min_magnitude: float | None,
-    max_magnitude: float | None,
-) -> None:
-    values = (min_angle_deg, max_angle_deg, min_magnitude, max_magnitude)
-    if all(value is None for value in values):
-        return
-    if any(value is None for value in values):
-        raise ValueError(
-            f"{primitive_name} exploration range requires all four fields: "
-            "min_angle_deg, max_angle_deg, min_magnitude, max_magnitude."
-        )
-
-
 def sum_info_metric(infos: dict, metric_name: str) -> float:
     metric_values = infos.get(metric_name)
     if metric_values is None:
@@ -186,25 +174,16 @@ def sum_info_metric(infos: dict, metric_name: str) -> float:
         return 0.0
 
 
-def sum_info_bool_metric(infos: dict, metric_name: str) -> float:
-    metric_values = infos.get(metric_name)
-    if metric_values is None:
-        return 0.0
-    try:
-        return float(np.asarray(metric_values, dtype=np.bool_).sum())
-    except Exception:
-        return 0.0
-
-
 @dataclass
 class Args:
-    # Evaluation-only mode (no exploration, no replay writes, no updates).
-    # In this mode, total_timesteps is the rollout horizon in env-steps.
+    """TD3 training args. Per-field docs: notes/docs/training/td3-args-reference.md."""
+
+    # --- Run mode ---
     eval_mode: bool = False
     total_timesteps: int = 1000000
     num_envs: int = 1
 
-    # TD3 core
+    # --- TD3 core ---
     buffer_size: int = int(1e6)
     gamma: float = 0.975
     tau: float = 0.005
@@ -215,42 +194,38 @@ class Args:
     q_weight_decay: float = 1e-4
     q_frequency: int = 1
     q_updates: int = 1
-    # Critic ensemble (REDQ-style — Chen et al. ICLR 2021).
-    # num_critics=2 reproduces vanilla TD3 (default; backwards compatible).
-    # num_critics>2 with target_critic_subset_size=None → Maxmin-N (min over all N targets).
-    # num_critics>2 with target_critic_subset_size=M (M<N) → REDQ-N-M (min over a random M-subset).
-    num_critics: int = 2
-    target_critic_subset_size: int | None = None
     policy_frequency: int = 2
     target_network_frequency: int = 1
     actor_updates_per_iteration: int = 1
     exploration_noise: float = 0.1
     policy_noise: float = 0.2
     noise_clip: float = 0.5
+    h_transform_eps: float = 1e-3
+
+    # --- Critic ensemble (REDQ-style) ---
+    num_critics: int = 2
+    target_critic_subset_size: int | None = None
+
+    # --- Prioritized experience replay ---
     per_enabled: bool = True
     per_alpha: float = 0.6
     per_beta_start: float = 0.4
     per_beta_end: float = 1.0
     per_beta_anneal_steps: int = 200000
     per_eps: float = 1e-6
-    # Age-weighted PER: multiplies sample priorities by exp(-priority_age_decay
-    # * age_in_slots) before alpha-scaling. age_in_slots is 0 for the most
-    # recently added transition and grows linearly with eviction order.
-    # Implements "stochastic recency-weighted sampling" — orthogonal to FIFO
-    # eviction (which binary-evicts) and TD-error PER (age-blind). 0.0 disables.
-    # Reasonable: 1e-5 (gentle, half-life ≈ 70k slots), 1e-4 (medium, ≈7k),
-    # 1e-3 (aggressive, ≈700). Used in residual_rl_paddle50_log.md v9+.
     priority_age_decay: float = 0.0
-    critic_per_fraction: float = 0.7
-    critic_uniform_fraction: float = 0.3
+
+    # --- Replay buffer split + sampling mix ---
     success_buffer_size: int = int(2e5)
     failure_buffer_size: int = int(8e5)
     success_top_fraction: float = 0.2
     recent_episode_window_size: int = 500
+    critic_per_fraction: float = 0.7
+    critic_uniform_fraction: float = 0.3
     critic_success_sample_fraction: float = 0.3
     critic_failure_sample_fraction: float = 0.7
 
-    # Primitive exploration takeover
+    # --- Primitive exploration takeover ---
     exploration_primitive_chance: float = 0.05
     exploration_primitive_chance_start: float = 0.5
     exploration_primitive_chance_pre_learning_starts: float | None = None
@@ -284,76 +259,46 @@ class Args:
     exploration_target_position_directional_min_magnitude: float | None = None
     exploration_target_position_directional_max_magnitude: float | None = None
 
-    # Checkpointing
+    # --- Checkpointing ---
     checkpoint_interval: int = 25000
     save_replay_buffer: bool = True
 
-    # Paths
+    # --- Paths + checkpoint loading ---
     config: str = "configs/new_juggle/sysid_best_params.yaml"
     args_file: str | None = None
     model_path: str | None = None
-    # Full checkpoint load behavior when model_path points to a training-state dict.
-    # - "full_resume": restore full training runtime state (legacy/default behavior)
-    # - "weights_only": restore actor/Q networks only, keep runtime fresh
-    # - "residual": load source actor as frozen base, build fresh residual + fresh critic
     full_checkpoint_load: Literal["full_resume", "weights_only", "residual"] = "full_resume"
-    # Residual RL: max magnitude of the residual action component (used when
-    # full_checkpoint_load=="residual"). Combined action is clipped to the env
-    # action bounds, so residual_scale > 0 caps |residual|_inf via tanh.
-    residual_scale: float = 0.25
-    # L2 weight decay on the residual actor's parameters (Adam weight_decay).
-    # > 0 keeps the residual head close to zero even when the critic encourages
-    # large corrections — counteracts long-horizon drift at residual_scale=0.15.
-    residual_weight_decay: float = 0.0
-    # CQL (Kumar et al. 2020): conservative-Q penalty on critic loss.
-    # If cql_alpha > 0, add `cql_alpha * (logsumexp_a Q(s,a) - Q(s, pi(s)))` to
-    # each critic's loss. logsumexp is approximated by sampling `cql_n_random`
-    # uniform actions in [-1,1]^act_dim per state.
-    cql_alpha: float = 0.0
-    cql_n_random: int = 10
     log_parent_dir: str | None = None
     run_name: str = "default"
 
-    # Runtime
+    # --- Residual RL (active when full_checkpoint_load == "residual") ---
+    residual_scale: float = 0.25
+    residual_weight_decay: float = 0.0
+
+    # --- CQL (conservative Q-learning) ---
+    cql_alpha: float = 0.0
+    cql_n_random: int = 10
+
+    # --- Runtime ---
     device: str = "cuda:0"
     seed: int = 0
-    action_scale: float = 0.02
-    h_transform_eps: float = 1e-3
 
-    # Agent/critic architecture
+    # --- Network architecture ---
     agent_hidden_layer_size: int = 64
     agent_num_hidden_layers: int = 2
     q_hidden_layer_size: int = 128
     q_num_hidden_layers: int = 2
 
-    # Policy state options
+    # --- Policy observation ---
     use_last_action_in_policy_state: bool = False
 
-    # Optional physics overrides (applied to air_hockey config when not None)
-    puck_density: float | None = None
-    paddle_density: float | None = None
-    gravity: float | None = None
-    puck_damping: float | None = None
-    paddle_damping: float | None = None
-    puck_restitution: float | None = None
-    paddle_restitution: float | None = None
-
-    # Puck delay interpolation (timing jitter simulation)
-    enable_puck_delay_interpolation: bool = False
-    puck_delay_interpolation_min: float | None = None
-    puck_delay_interpolation_max: float | None = None
-
-    # Live episode GIF recording
+    # --- Episode GIF recording ---
     watch_ring_size: int = 10
     watch_episode_interval: int = 50
     sample_gif_interval: int = 10000
     sample_gif_max_storage_mb: float = 50.0
 
-    # Multi-env evaluation (used by td3_training_dr.py wrapper).
-    # When eval_param_seed is None (default), behavior is unchanged.
-    # When set, the wrapper monkey-patches `evaluate_agent` to roll N
-    # episodes through each of `eval_n_envs` fixed seed-sampled environments
-    # and aggregate; per-env stats are dumped to <ckpt_dir>/multi_env_eval.json.
+    # --- Multi-env evaluation (used by td3_training_dr.py wrapper) ---
     eval_param_seed: int | None = None
     eval_n_envs: int = 1
     eval_eps_per_env: int = 4
@@ -367,80 +312,6 @@ def make_env(env_id):
         return env
 
     return _thunk
-
-
-def validate_args(args: "Args") -> None:
-    """Range / mutual-exclusion checks for args; raises ValueError on misconfig."""
-    def _positive(name: str, value: float) -> None:
-        if value <= 0:
-            raise ValueError(f"{name} must be > 0.")
-
-    def _fraction(name: str, value: float, *, exclusive: bool = False) -> None:
-        lo_ok = 0.0 < value if exclusive else 0.0 <= value
-        hi_ok = value < 1.0 if exclusive else value <= 1.0
-        if not (lo_ok and hi_ok):
-            bracket = "(0, 1)" if exclusive else "[0, 1]"
-            raise ValueError(f"{name} must be in {bracket}, got {value}.")
-
-    def _sums_to_one(name1: str, name2: str, v1: float, v2: float) -> None:
-        total = float(v1 + v2)
-        if abs(total - 1.0) > 1e-6:
-            raise ValueError(f"{name1} + {name2} must equal 1.0, got {total:.6f}.")
-
-    if args.num_envs != 1:
-        raise ValueError(
-            "This training script currently supports only single-environment collection. "
-            f"Set num_envs=1, got {args.num_envs}."
-        )
-    _fraction("critic_per_fraction", args.critic_per_fraction)
-    _fraction("critic_uniform_fraction", args.critic_uniform_fraction)
-    _sums_to_one(
-        "critic_per_fraction", "critic_uniform_fraction",
-        args.critic_per_fraction, args.critic_uniform_fraction,
-    )
-    _positive("success_buffer_size", args.success_buffer_size)
-    _positive("failure_buffer_size", args.failure_buffer_size)
-    _positive("recent_episode_window_size", args.recent_episode_window_size)
-    _fraction("success_top_fraction", args.success_top_fraction, exclusive=True)
-    _fraction("critic_success_sample_fraction", args.critic_success_sample_fraction)
-    _fraction("critic_failure_sample_fraction", args.critic_failure_sample_fraction)
-    _sums_to_one(
-        "critic_success_sample_fraction", "critic_failure_sample_fraction",
-        args.critic_success_sample_fraction, args.critic_failure_sample_fraction,
-    )
-    _positive("q_updates", args.q_updates)
-    _positive("target_network_frequency", args.target_network_frequency)
-    _positive("actor_updates_per_iteration", args.actor_updates_per_iteration)
-    if args.target_network_frequency > args.q_updates:
-        # The Polyak gate counts completed critic updates globally (see
-        # total_critic_updates), so this still fires — just less often than
-        # once per cycle. Loud warning since it's almost always a config typo.
-        print(
-            f"[warn] target_network_frequency ({args.target_network_frequency}) "
-            f"> q_updates ({args.q_updates}); target nets will update less than "
-            f"once per training cycle."
-        )
-    for name in ("same_direction", "y_aligned", "target_position_directional"):
-        validate_optional_exploration_range(
-            primitive_name=name,
-            min_angle_deg=getattr(args, f"exploration_{name}_min_angle_deg"),
-            max_angle_deg=getattr(args, f"exploration_{name}_max_angle_deg"),
-            min_magnitude=getattr(args, f"exploration_{name}_min_magnitude"),
-            max_magnitude=getattr(args, f"exploration_{name}_max_magnitude"),
-        )
-
-
-def enforce_sample_storage_cap(samples_dir: str, max_mb: float) -> None:
-    files = sorted(
-        [os.path.join(samples_dir, f) for f in os.listdir(samples_dir) if f.endswith(".gif")],
-        key=os.path.getmtime,
-    )
-    total = sum(os.path.getsize(f) for f in files)
-    max_bytes = max_mb * 1024 * 1024
-    while total > max_bytes and files:
-        oldest = files.pop(0)
-        total -= os.path.getsize(oldest)
-        os.remove(oldest)
 
 
 def _entrypoint():
@@ -469,23 +340,6 @@ def _entrypoint():
     with open(args.config, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
 
-    sim_params_overrides = {
-        "puck_density": args.puck_density,
-        "paddle_density": args.paddle_density,
-        "gravity": args.gravity,
-        "puck_damping": args.puck_damping,
-        "paddle_damping": args.paddle_damping,
-        "puck_restitution": args.puck_restitution,
-        "paddle_restitution": args.paddle_restitution,
-        "enable_puck_delay_interpolation": True if args.enable_puck_delay_interpolation else None,
-        "puck_delay_interpolation_min": args.puck_delay_interpolation_min,
-        "puck_delay_interpolation_max": args.puck_delay_interpolation_max,
-    }
-    for key, value in sim_params_overrides.items():
-        if value is not None:
-            config["air_hockey"].setdefault("simulator_params", {})[key] = value
-            print(f"Physics override: simulator_params.{key} = {value}")
-
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     task_name = config["air_hockey"].get("task")
     run_name = args.run_name
@@ -512,10 +366,7 @@ def _entrypoint():
     envs = gym.vector.AsyncVectorEnv([make_env(i) for i in range(args.num_envs)])
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
 
-    if "use_pid" in config["air_hockey"] and config["air_hockey"]["use_pid"]:
-        action_scale = 1
-    else:
-        action_scale = args.action_scale
+    action_scale = 1
 
     raw_obs_dim = int(np.array(envs.single_observation_space.shape).prod())
     act_dim = int(np.prod(envs.single_action_space.shape))
@@ -618,60 +469,25 @@ def _entrypoint():
         elif is_full_state:
             resume_checkpoint = loaded_obj
             if args.eval_mode:
-                if checkpoint_load_mode == "full_resume":
-                    print(
-                        "Deprecation warning: eval_mode with full_checkpoint_load='full_resume' "
-                        "will load as weights_only. Set full_checkpoint_load='weights_only' "
-                        "explicitly to silence this warning."
-                    )
                 checkpoint_load_mode = "weights_only"
             actor.load_state_dict(extract_deterministic_state_dict(resume_checkpoint["actor"]), strict=False)
-            if "actor_target" in resume_checkpoint:
-                actor_target.load_state_dict(
-                    extract_deterministic_state_dict(resume_checkpoint["actor_target"]),
-                    strict=False,
-                )
-            else:
-                actor_target.load_state_dict(actor.state_dict())
-            # Backwards-compat: legacy ckpts have only qf1/qf2 keys. Newer
-            # ckpts (num_critics>2) add qf3, qf4, ... and corresponding _target.
-            # When resuming with a LARGER ensemble than the ckpt (e.g., fine-tuning
-            # a 2-critic source into a 5-critic ensemble), load what's available
-            # and leave the extra critics at their fresh init.
+            actor_target.load_state_dict(
+                extract_deterministic_state_dict(resume_checkpoint["actor_target"]),
+                strict=False,
+            )
             n_in_ckpt = sum(
                 1
                 for k in resume_checkpoint
                 if k.startswith("qf") and not k.endswith("_target") and k[2:].isdigit()
             )
-            if n_in_ckpt > args.num_critics:
+            if n_in_ckpt != args.num_critics:
                 raise ValueError(
                     f"Resume mismatch: checkpoint has {n_in_ckpt} critics but "
-                    f"args.num_critics={args.num_critics} is smaller. "
-                    "Cannot drop critics from an ensemble checkpoint."
+                    f"args.num_critics={args.num_critics}. Ensemble size must match."
                 )
-            n_to_load = min(n_in_ckpt, args.num_critics)
-            for i in range(1, n_to_load + 1):
+            for i in range(1, args.num_critics + 1):
                 qfs[i - 1].load_state_dict(resume_checkpoint[f"qf{i}"])
                 qfs_target[i - 1].load_state_dict(resume_checkpoint[f"qf{i}_target"])
-            if n_in_ckpt < args.num_critics:
-                # Critical: when expanding from a smaller ensemble (e.g., 2-critic
-                # source -> 5-critic ensemble), do NOT leave qf{n+1}..qf{N} at
-                # fresh init. The min-over-critics target would then be dominated
-                # by the untrained fresh critics (Q ~ 0), collapsing the entire
-                # Q estimate and crashing the actor. Instead, clone qf1's loaded
-                # weights into all extra slots — diversity will emerge through
-                # subsequent independent gradient updates.
-                src_state = qfs[0].state_dict()
-                src_target_state = qfs_target[0].state_dict()
-                for i in range(n_to_load + 1, args.num_critics + 1):
-                    qfs[i - 1].load_state_dict(src_state)
-                    qfs_target[i - 1].load_state_dict(src_target_state)
-                print(
-                    f"Partial critic load: checkpoint has {n_in_ckpt} critics, "
-                    f"args.num_critics={args.num_critics}. Loaded qf1..qf{n_to_load}, "
-                    f"cloned qf1 into qf{n_to_load+1}..qf{args.num_critics} "
-                    f"(extra critics start with same weights; diverge via training updates)."
-                )
             print("Full training checkpoint loaded (network weights).")
             if checkpoint_load_mode == "weights_only":
                 # Weights-only mode: keep networks, skip optimizer/replay/runtime restore.
@@ -748,7 +564,6 @@ def _entrypoint():
     interval_target_position_directional_env_steps = 0
     rolling_step_stats_window = deque()
     rolling_episode_stats_window = deque()
-    prev_protective_stop_flags = np.zeros(args.num_envs, dtype=bool)
     episode_trajectory = EpisodeTrajectory.empty()
     recent_episode_returns = deque(maxlen=args.recent_episode_window_size)
     episode_return_success_threshold = 0.0
@@ -757,21 +572,17 @@ def _entrypoint():
     previous_puck_position_for_trigger = extract_current_puck_position(initial_obs_tensor).clone()
 
     # --- Live episode GIF recording ---
-    watch_dir = os.path.join(log_parent_dir, "watch")
-    samples_dir = os.path.join(log_parent_dir, "samples")
-    os.makedirs(watch_dir, exist_ok=True)
-    os.makedirs(samples_dir, exist_ok=True)
     renderer_env = AirHockeyEnv(config["air_hockey"])
     train_renderer = AirHockeyRenderer(
         renderer_env, show_target_position=True, show_acceleration_arrow=False
     )
-    recording_frames: list = []
-    recording_episode = False
-    recording_cum_rew = 0.0
-    recording_last_rew = 0.0
-    completed_episode_count = 0
-    watch_ring_idx = 0
-    last_sample_gif_step = 0
+    gif_recorder = GIFEpisodeRecorder(
+        log_parent_dir,
+        watch_ring_size=args.watch_ring_size,
+        watch_episode_interval=args.watch_episode_interval,
+        sample_gif_interval=args.sample_gif_interval,
+        sample_gif_max_storage_mb=args.sample_gif_max_storage_mb,
+    )
 
     start_time = time.time()
     global_step = 0
@@ -1010,43 +821,12 @@ def _entrypoint():
             }
         actions = action_tensor.cpu().numpy()
 
-        if recording_episode:
-            frame = train_renderer.get_frame()
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            aspect_ratio = frame.shape[1] / frame.shape[0]
-            frame = cv2.resize(frame, (160, int(160 / aspect_ratio)))
-            cv2.putText(
-                frame, f"R: {recording_last_rew:.2f}",
-                (frame.shape[1] - 150, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2,
-            )
-            cv2.putText(
-                frame, f"G: {recording_cum_rew:.2f}",
-                (frame.shape[1] - 150, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2,
-            )
-            cv2.putText(
-                frame, f"Step: {global_step}",
-                (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (80, 80, 80), 1,
-            )
-            recording_frames.append(frame)
+        gif_recorder.capture_frame(train_renderer, global_step)
 
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
         dones = np.logical_or(terminations, truncations)
         step_puck_hits = sum_info_metric(infos, "paddle_puck_collision_count")
         interval_paddle_puck_collisions += step_puck_hits
-        current_protective_stop_flags = np.asarray(
-            infos.get("protective_stop", np.zeros(args.num_envs, dtype=bool)),
-            dtype=np.bool_,
-        )
-        current_protective_stop_flags = np.atleast_1d(current_protective_stop_flags)
-        estop_event_mask = np.zeros(args.num_envs, dtype=bool)
-        if current_protective_stop_flags.size == args.num_envs:
-            estop_event_mask = np.logical_and(current_protective_stop_flags, np.logical_not(prev_protective_stop_flags))
-            step_estop_events = float(estop_event_mask.sum())
-            prev_protective_stop_flags = current_protective_stop_flags.copy()
-            prev_protective_stop_flags[dones] = False
-        else:
-            step_estop_events = sum_info_bool_metric(infos, "protective_stop")
-            prev_protective_stop_flags = np.zeros(args.num_envs, dtype=bool)
         interval_env_steps += args.num_envs
         interval_primitive_env_steps += int(primitive_step_stats["primitive_applied_count"])
         interval_primitive_horizontal_env_steps += int(
@@ -1066,9 +846,7 @@ def _entrypoint():
 
         rewards_tensor = torch.tensor(rewards, dtype=torch.float32, device=args.device)
 
-        if recording_episode:
-            recording_last_rew = float(rewards_tensor[0].item())
-            recording_cum_rew += recording_last_rew
+        gif_recorder.note_reward(float(rewards_tensor[0].item()))
 
         if "final_info" in infos:
             for info in infos["final_info"]:
@@ -1088,7 +866,6 @@ def _entrypoint():
                 int(global_step + args.num_envs),
                 int(args.num_envs),
                 float(step_puck_hits),
-                float(step_estop_events),
             )
         )
         rolling_cutoff_step = int(global_step + args.num_envs - ROLLING_STATS_WINDOW_STEPS)
@@ -1123,26 +900,8 @@ def _entrypoint():
             )
         episode_finished = bool(dones[0])
 
-        if recording_episode and episode_finished and len(recording_frames) > 0:
-            watch_path = os.path.join(watch_dir, f"ep_{watch_ring_idx}.gif")
-            imageio.mimsave(watch_path, recording_frames, format="GIF", loop=0, duration=50)
-            watch_ring_idx = (watch_ring_idx + 1) % args.watch_ring_size
-
-            if global_step - last_sample_gif_step >= args.sample_gif_interval:
-                sample_path = os.path.join(samples_dir, f"step_{global_step}.gif")
-                imageio.mimsave(sample_path, recording_frames, format="GIF", loop=0, duration=50)
-                last_sample_gif_step = global_step
-                enforce_sample_storage_cap(samples_dir, args.sample_gif_max_storage_mb)
-
-            recording_frames.clear()
-            recording_episode = False
-            recording_cum_rew = 0.0
-            recording_last_rew = 0.0
-
         if episode_finished:
-            completed_episode_count += 1
-            if completed_episode_count % args.watch_episode_interval == 0:
-                recording_episode = True
+            gif_recorder.on_episode_end(global_step)
 
         obs = next_obs
 
@@ -1273,14 +1032,9 @@ def _entrypoint():
                     )
 
                     if should_update_train_metrics and q_update_idx == args.q_updates - 1:
-                        train_metrics.update(
-                            {
-                                "debug/bellman_target_original_mean": (
-                                    bellman_target_original.mean().item()
-                                ),
-                                "debug/next_q_h_mean": next_q_value_h.mean().item(),
-                            }
-                        )
+                        train_metrics.update(build_target_q_debug_metrics(
+                            bellman_target_original, next_q_value_h,
+                        ))
 
                 # Forward pass over all N critics; train each against the shared target.
                 qi_h_list = []
@@ -1335,72 +1089,28 @@ def _entrypoint():
                     sampled_priorities = data.get("sampled_priorities")
                     if sampled_priorities is None:
                         sampled_priorities = torch.zeros_like(sampled_weights)
-                    positive_reward_mask = sampled_rewards > 0.0
-                    positive_reward_count = float(positive_reward_mask.sum().item())
-                    minibatch_size = max(int(sampled_rewards.numel()), 1)
-                    positive_rewards = sampled_rewards[positive_reward_mask]
-                    priority_td_error_mean = (
-                        priority_td_error.mean().item()
-                        if args.per_enabled and per_sample_count > 0
-                        else 0.0
-                    )
-                    train_metrics.update(
-                        {
-                            "losses/q_loss": sum(l.item() for l in qi_loss_list) / args.num_critics,
-                            "losses/q_total_loss": q_total_loss.item(),
-                            "losses/q1_mean": q1_h.mean().item(),
-                            "rewards/sampled_reward_mean": sampled_rewards.mean().item(),
-                            "rewards/sampled_reward_min": sampled_rewards.min().item(),
-                            "rewards/sampled_reward_std": sampled_rewards.std(
-                                unbiased=False
-                            ).item(),
-                            "rewards/sampled_reward_positive_count": positive_reward_count,
-                            "rewards/sampled_reward_positive_fraction": (
-                                positive_reward_count / float(minibatch_size)
-                            ),
-                            "rewards/sampled_reward_positive_mean": (
-                                positive_rewards.mean().item()
-                                if positive_rewards.numel() > 0
-                                else 0.0
-                            ),
-                            "rewards/sampled_reward_positive_std": (
-                                positive_rewards.std(unbiased=False).item()
-                                if positive_rewards.numel() > 0
-                                else 0.0
-                            ),
-                            "replay/per_beta": per_beta,
-                            "replay/per_is_weight_mean": sampled_weights.mean().item(),
-                            "replay/per_sampled_priority_mean": sampled_priorities.mean().item(),
-                            "replay/per_priority_td_error_mean": priority_td_error_mean,
-                            "replay/critic_per_sample_count": float(per_sample_count),
-                            "replay/critic_uniform_sample_count": float(uniform_sample_count),
-                            "replay/critic_per_sample_fraction": (
-                                float(per_sample_count) / float(max(args.batch_size, 1))
-                            ),
-                            "replay/success_buffer_size": float(len(success_rb)),
-                            "replay/failure_buffer_size": float(len(failure_rb)),
-                            "replay/critic_success_sample_count": float(success_batch_count),
-                            "replay/critic_failure_sample_count": float(failure_batch_count),
-                            "replay/critic_success_sample_fraction": (
-                                float(success_batch_count) / float(max(args.batch_size, 1))
-                            ),
-                            "replay/critic_failure_sample_fraction": (
-                                float(failure_batch_count) / float(max(args.batch_size, 1))
-                            ),
-                            "replay/episode_return_success_threshold": (
-                                episode_return_success_threshold
-                            ),
-                            "replay/recent_episode_window_count": float(len(recent_episode_returns)),
-                        }
-                    )
-                    if args.num_critics > 2:
-                        for ci, qh in enumerate(qi_h_list, start=1):
-                            if ci == 1:
-                                continue  # already logged as q1_mean
-                            train_metrics[f"losses/q{ci}_mean"] = qh.mean().item()
-                        all_h = torch.stack(qi_h_list, dim=0)
-                        train_metrics["losses/q_min_mean"] = all_h.min(dim=0).values.mean().item()
-                        train_metrics["losses/q_mean_mean"] = all_h.mean().item()
+                    train_metrics.update(build_critic_metrics(
+                        qi_h_list=qi_h_list,
+                        qi_loss_list=qi_loss_list,
+                        q_total_loss=q_total_loss,
+                        q1_h=q1_h,
+                        num_critics=args.num_critics,
+                        sampled_rewards=sampled_rewards,
+                        sampled_weights=sampled_weights,
+                        sampled_priorities=sampled_priorities,
+                        priority_td_error=priority_td_error,
+                        per_beta=per_beta,
+                        per_enabled=args.per_enabled,
+                        per_sample_count=per_sample_count,
+                        uniform_sample_count=uniform_sample_count,
+                        batch_size=args.batch_size,
+                        success_batch_count=success_batch_count,
+                        failure_batch_count=failure_batch_count,
+                        len_success_rb=len(success_rb),
+                        len_failure_rb=len(failure_rb),
+                        episode_return_success_threshold=episode_return_success_threshold,
+                        recent_episode_window_count=len(recent_episode_returns),
+                    ))
 
                 total_critic_updates += 1
                 if total_critic_updates % args.target_network_frequency == 0:
@@ -1454,12 +1164,7 @@ def _entrypoint():
                 actor_loss.backward()
                 actor_optimizer.step()
                 if should_update_train_metrics and actor_update_idx == args.actor_updates_per_iteration - 1:
-                    train_metrics.update(
-                        {
-                            "losses/actor_loss": actor_loss.item(),
-                            "losses/actor_norm_q_mean": norm_q.mean().item(),
-                        }
-                    )
+                    train_metrics.update(build_actor_metrics(actor_loss, norm_q))
 
             if should_update_train_metrics:
                 train_metrics.update(
@@ -1475,129 +1180,16 @@ def _entrypoint():
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
 
-        # LOGGING AND EVALUATION
         if global_step > 0 and global_step % 500 == 0:
-            if rolling_episode_stats_window:
-                rolling_returns = [item[1] for item in rolling_episode_stats_window]
-                rolling_lengths = [item[2] for item in rolling_episode_stats_window]
-                rolling_success = [item[3] for item in rolling_episode_stats_window]
-                avg_return = float(np.mean(rolling_returns))
-                min_return = float(np.min(rolling_returns))
-                max_return = float(np.max(rolling_returns))
-                avg_success = float(np.mean(rolling_success))
-                avg_episode_length = float(np.mean(rolling_lengths))
-                print(
-                    f"Step {global_step}: Rolling(2k) Avg Return: {avg_return:.2f}, "
-                    f"Min: {min_return:.2f}, Max: {max_return:.2f}, "
-                    f"Success Rate: {avg_success:.2f}, Avg Episode Length: {avg_episode_length:.2f}, "
-                    f"Episodes: {len(rolling_episode_stats_window)}"
-                )
-                writer.add_scalar("charts/avg_episodic_return", avg_return, global_step)
-                writer.add_scalar("charts/min_episodic_return", min_return, global_step)
-                writer.add_scalar("charts/max_episodic_return", max_return, global_step)
-                writer.add_scalar("charts/avg_success_rate", avg_success, global_step)
-                writer.add_scalar("charts/rolling2k_avg_episode_return", avg_return, global_step)
-                writer.add_scalar("charts/rolling2k_avg_episode_length", avg_episode_length, global_step)
-                writer.add_scalar("charts/rolling2k_episode_count", len(rolling_episode_stats_window), global_step)
-            else:
-                print(f"Step {global_step}: No episodes in rolling 2k-step window")
-
-            rolling_window_env_steps = int(sum(item[1] for item in rolling_step_stats_window))
-            rolling_window_puck_hits = float(sum(item[2] for item in rolling_step_stats_window))
-            rolling_window_estop_events = float(sum(item[3] for item in rolling_step_stats_window))
-            rolling_puck_hits_per_env_step = (
-                rolling_window_puck_hits / float(rolling_window_env_steps)
-                if rolling_window_env_steps > 0
-                else 0.0
-            )
-            rolling_estop_rate = (
-                rolling_window_estop_events / float(rolling_window_env_steps)
-                if rolling_window_env_steps > 0
-                else 0.0
-            )
-            print(
-                f"Step {global_step}: Rolling(2k) Puck Hits: {int(rolling_window_puck_hits)}, "
-                f"E-Stop Events: {int(rolling_window_estop_events)}, "
-                f"Puck Hits/env-step: {rolling_puck_hits_per_env_step:.4f}, "
-                f"E-Stop Rate: {rolling_estop_rate:.4f}"
-            )
-            writer.add_scalar("charts/rolling2k_puck_hits_total", rolling_window_puck_hits, global_step)
-            writer.add_scalar("charts/rolling2k_estop_events_total", rolling_window_estop_events, global_step)
-            writer.add_scalar(
-                "charts/rolling2k_puck_hits_per_env_step",
-                rolling_puck_hits_per_env_step,
-                global_step,
-            )
-            writer.add_scalar("charts/rolling2k_estop_rate", rolling_estop_rate, global_step)
-
-            collisions_per_env_step = (
-                interval_paddle_puck_collisions / max(interval_env_steps, 1) if interval_env_steps > 0 else 0.0
-            )
-            print(
-                f"Step {global_step}: Paddle-Puck Collisions (last interval): "
-                f"{int(interval_paddle_puck_collisions)} total, {collisions_per_env_step:.4f} per env-step"
-            )
-            writer.add_scalar(
-                "contacts/interval_paddle_puck_collisions_total",
-                interval_paddle_puck_collisions,
-                global_step,
-            )
-            writer.add_scalar(
-                "contacts/interval_paddle_puck_collisions_per_env_step",
-                collisions_per_env_step,
-                global_step,
-            )
-            primitive_fraction = interval_primitive_env_steps / max(interval_env_steps, 1) if interval_env_steps > 0 else 0.0
-            primitive_horizontal_fraction = (
-                interval_primitive_horizontal_env_steps / max(interval_primitive_env_steps, 1)
-                if interval_primitive_env_steps > 0
-                else 0.0
-            )
-            target_position_directional_fraction = (
-                interval_target_position_directional_env_steps / max(interval_env_steps, 1)
-                if interval_env_steps > 0
-                else 0.0
-            )
-            print(
-                f"Step {global_step}: Primitive Actions (last interval): "
-                f"{interval_primitive_env_steps}/{interval_env_steps} env-steps ({primitive_fraction:.4f}), "
-                f"horizontal-dominant: {interval_primitive_horizontal_env_steps}/{interval_primitive_env_steps} "
-                f"({primitive_horizontal_fraction:.4f})"
-            )
-            print(
-                f"Step {global_step}: Target-Position Directional Actions (last interval): "
-                f"{interval_target_position_directional_env_steps}/{interval_env_steps} env-steps "
-                f"({target_position_directional_fraction:.4f})"
-            )
-            writer.add_scalar(
-                "exploration/interval_primitive_env_steps",
-                interval_primitive_env_steps,
-                global_step,
-            )
-            writer.add_scalar(
-                "exploration/interval_primitive_env_step_fraction",
-                primitive_fraction,
-                global_step,
-            )
-            writer.add_scalar(
-                "exploration/interval_primitive_horizontal_env_steps",
-                interval_primitive_horizontal_env_steps,
-                global_step,
-            )
-            writer.add_scalar(
-                "exploration/interval_primitive_horizontal_fraction",
-                primitive_horizontal_fraction,
-                global_step,
-            )
-            writer.add_scalar(
-                "exploration/interval_target_position_directional_env_steps",
-                interval_target_position_directional_env_steps,
-                global_step,
-            )
-            writer.add_scalar(
-                "exploration/interval_target_position_directional_fraction",
-                target_position_directional_fraction,
-                global_step,
+            write_periodic_episode_stats(
+                writer, global_step,
+                rolling_episode_stats_window=rolling_episode_stats_window,
+                rolling_step_stats_window=rolling_step_stats_window,
+                interval_paddle_puck_collisions=interval_paddle_puck_collisions,
+                interval_env_steps=interval_env_steps,
+                interval_primitive_env_steps=interval_primitive_env_steps,
+                interval_primitive_horizontal_env_steps=interval_primitive_horizontal_env_steps,
+                interval_target_position_directional_env_steps=interval_target_position_directional_env_steps,
             )
             interval_paddle_puck_collisions = 0.0
             interval_env_steps = 0

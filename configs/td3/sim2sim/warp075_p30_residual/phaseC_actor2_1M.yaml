@@ -51,7 +51,6 @@ exploration_target_position_delta_x: 0.26
 exploration_target_position_delta_y: 0.12
 exploration_target_position_steps: 5
 config: configs/new_juggle/sim2sim_warp075_p30.yaml
-enable_puck_delay_interpolation: true
 model_path: runs/td3/hist_motion_collision/hist2_motion0/checkpoint_975000/model.pth
 full_checkpoint_load: residual
 residual_scale: 0.15
@@ -61,7 +60,6 @@ log_parent_dir: runs/td3/sim2sim_redesign/residual_warp075_p30/phaseC_actor2_1M/
 run_name: campaign_phaseC_actor2_1M
 device: cuda:0
 seed: 0
-action_scale: 1.0
 h_transform_eps: 0.001
 agent_hidden_layer_size: 64
 agent_num_hidden_layers: 2

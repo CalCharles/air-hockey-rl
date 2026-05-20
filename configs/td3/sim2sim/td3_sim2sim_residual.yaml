@@ -111,7 +111,6 @@ exploration_target_position_steps: 5
 
 # --- sim2sim targets ---------------------------------------------------------
 config: "configs/new_juggle/sim2sim_combined.yaml"
-enable_puck_delay_interpolation: true
 
 # Source actor checkpoint. Loaded into the frozen base; residual head is fresh.
 model_path: "runs/td3/hist_motion_collision/hist2_motion0/checkpoint_975000/model.pth"
@@ -133,7 +132,6 @@ run_name: "td3_sim2sim_residual"
 
 device: "cuda:0"
 seed: 0
-action_scale: 1.0
 h_transform_eps: 0.001
 
 agent_hidden_layer_size: 64

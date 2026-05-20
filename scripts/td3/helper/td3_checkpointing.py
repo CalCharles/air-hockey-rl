@@ -127,17 +127,11 @@ def load_resume_training_state(
         ),
         "rolling_step_stats_window": deque(
             [
-                (
-                    int(item[0]),
-                    int(item[1]),
-                    float(item[2]),
-                    float(item[3]),
-                )
+                (int(item[0]), int(item[1]), float(item[2]))
                 for item in resume_checkpoint.get(
                     "rolling_step_stats_window",
                     defaults["rolling_step_stats_window"],
                 )
-                if isinstance(item, (list, tuple)) and len(item) >= 4
             ]
         ),
         "rolling_episode_stats_window": deque(
@@ -222,7 +216,6 @@ def build_training_state(
                 int(item[0]),
                 int(item[1]),
                 float(item[2]),
-                float(item[3]),
             )
             for item in rolling_step_stats_window
         ],

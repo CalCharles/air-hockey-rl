@@ -79,7 +79,6 @@ exploration_target_position_steps: 5
 
 # Source env for fine-tuning (wrapped by GATEnvWrapper at runtime).
 config: "configs/new_juggle/sysid_best_params_hist2.yaml"
-enable_puck_delay_interpolation: true
 
 # Pretrained paramrand checkpoint — update path before running.
 model_path: "latest_models/canonical/hist2_motion0_v2/model.pth"
@@ -98,7 +97,6 @@ run_name: "gat_warp075_p30_seed0"
 device: "cuda:0"
 seed: 0
 
-action_scale: 1.0
 h_transform_eps: 0.001
 agent_hidden_layer_size: 64
 agent_num_hidden_layers: 2

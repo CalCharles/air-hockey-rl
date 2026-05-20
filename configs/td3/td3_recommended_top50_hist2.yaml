@@ -95,7 +95,6 @@ exploration_target_position_steps: 5
 # and teleop-system-id.md). hist_len=2 variant applies a 2-timestep low-pass
 # filter on the PID target (see _filter_update in airhockey/sims/airhockey_box2d.py).
 config: "configs/new_juggle/sysid_best_params_hist2.yaml"
-enable_puck_delay_interpolation: true
 
 # Paths
 args_file: null
@@ -106,7 +105,6 @@ run_name: "td3_recommended_top50_hist2"
 # Runtime
 device: "cuda:1"
 seed: 0
-action_scale: 1.0
 h_transform_eps: 0.001
 
 # Agent / critic architecture (2-layer, 64 hidden — see ablations doc)
