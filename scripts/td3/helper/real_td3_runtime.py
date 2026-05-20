@@ -289,44 +289,6 @@ def primitive_exploration_chance_for_step(args: "Args", step: int) -> float:
     )
 
 
-def _primitive_state_tensor(values: object, device: torch.device) -> torch.Tensor:
-    return torch.as_tensor(values, dtype=torch.float32, device=device).reshape(1, -1)[:, :2]
-
-
-def _extract_primitive_state_tensors(
-    env: AirHockeyEnv,
-    device: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    zeros = torch.zeros((1, 2), dtype=torch.float32, device=device)
-    state_info = None
-    simulator = getattr(env, "simulator", None)
-    if simulator is not None and hasattr(simulator, "get_current_state"):
-        try:
-            state_info = simulator.get_current_state()
-        except Exception:
-            state_info = None
-    if state_info is None:
-        state_info = getattr(env, "current_state", None)
-    if not isinstance(state_info, dict):
-        return zeros.clone(), zeros.clone(), zeros.clone()
-    try:
-        paddle_position = _primitive_state_tensor(
-            state_info["paddles"]["paddle_ego"]["position"],
-            device=device,
-        )
-        puck_position = _primitive_state_tensor(
-            state_info["pucks"][0]["position"],
-            device=device,
-        )
-        puck_velocity = _primitive_state_tensor(
-            state_info["pucks"][0]["velocity"],
-            device=device,
-        )
-        return paddle_position, puck_position, puck_velocity
-    except Exception:
-        return zeros.clone(), zeros.clone(), zeros.clone()
-
-
 def _reset_primitive_rollout_state(
     primitive_selector: PrimitiveExplorationSelector | None,
 ) -> None:
@@ -731,28 +693,16 @@ class Args:
     exploration_primitive_steps: int = 5
     exploration_primitive_weight_stand_still: float = 1.0
     exploration_primitive_weight_same_direction: float = 1.0
-    exploration_primitive_weight_y_aligned: float = 1.0
-    exploration_primitive_weight_target_position_directional: float = 1.0
-    # Legacy action-space skew knob kept for compatibility with older configs.
+    # Legacy action-space skew knob (same_direction legacy sampling path).
     exploration_direction_y_component_weight: float = 2.0
-    # Simulator-space per-step displacement ranges for directional primitives.
+    # Action box used to project same_direction simulator-space displacements.
+    exploration_action_delta_x: float = 0.26
+    exploration_action_delta_y: float = 0.12
+    # Simulator-space per-step displacement range for the same_direction primitive.
     exploration_same_direction_min_angle_deg: float = -180.0
     exploration_same_direction_max_angle_deg: float = 180.0
     exploration_same_direction_min_magnitude: float = 0.012
     exploration_same_direction_max_magnitude: float = 0.26
-    exploration_y_aligned_min_angle_deg: float = 45.0
-    exploration_y_aligned_max_angle_deg: float = 135.0
-    exploration_y_aligned_min_magnitude: float = 0.012
-    exploration_y_aligned_max_magnitude: float = 0.12
-    exploration_target_position_directional_min_angle_deg: float = -180.0
-    exploration_target_position_directional_max_angle_deg: float = 180.0
-    exploration_target_position_directional_min_magnitude: float = 0.2
-    exploration_target_position_directional_max_magnitude: float = 0.5
-    exploration_target_position_min_distance: float = 0.2
-    exploration_target_position_max_distance: float = 0.5
-    exploration_target_position_delta_x: float = 0.26
-    exploration_target_position_delta_y: float = 0.12
-    exploration_target_position_steps: int = 5
     collector_policy_stand_still: bool = False
     transition_hold_steps_post_reset: int = 8
     transition_hold_steps_post_estop_enter: int = 0

@@ -135,7 +135,6 @@ def write_periodic_episode_stats(
     interval_env_steps: int,
     interval_primitive_env_steps: int,
     interval_primitive_horizontal_env_steps: int,
-    interval_target_position_directional_env_steps: int,
 ) -> None:
     """Emit the every-500-step rollup: rolling-window episode summaries,
     per-env-step puck-hit rates, and exploration-primitive fractions.
@@ -208,21 +207,11 @@ def write_periodic_episode_stats(
         if interval_primitive_env_steps > 0
         else 0.0
     )
-    target_position_directional_fraction = (
-        interval_target_position_directional_env_steps / max(interval_env_steps, 1)
-        if interval_env_steps > 0
-        else 0.0
-    )
     print(
         f"Step {global_step}: Primitive Actions (last interval): "
         f"{interval_primitive_env_steps}/{interval_env_steps} env-steps ({primitive_fraction:.4f}), "
         f"horizontal-dominant: {interval_primitive_horizontal_env_steps}/{interval_primitive_env_steps} "
         f"({primitive_horizontal_fraction:.4f})"
-    )
-    print(
-        f"Step {global_step}: Target-Position Directional Actions (last interval): "
-        f"{interval_target_position_directional_env_steps}/{interval_env_steps} env-steps "
-        f"({target_position_directional_fraction:.4f})"
     )
     writer.add_scalar(
         "exploration/interval_primitive_env_steps",
@@ -239,12 +228,4 @@ def write_periodic_episode_stats(
     writer.add_scalar(
         "exploration/interval_primitive_horizontal_fraction",
         primitive_horizontal_fraction, global_step,
-    )
-    writer.add_scalar(
-        "exploration/interval_target_position_directional_env_steps",
-        interval_target_position_directional_env_steps, global_step,
-    )
-    writer.add_scalar(
-        "exploration/interval_target_position_directional_fraction",
-        target_position_directional_fraction, global_step,
     )

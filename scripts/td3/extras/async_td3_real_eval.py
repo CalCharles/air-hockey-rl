@@ -109,7 +109,6 @@ from scripts.td3.helper.real_td3_runtime import (
     TrainArgs,
     _build_args_file_defaults,
     _env_timing_info,
-    _extract_primitive_state_tensors,
     _latest_camera_frame,
     _load_train_args,
     _next_available_episode_id,
@@ -326,7 +325,6 @@ def run_eval(
     ctx = RolloutContext(
         last_action_for_policy=torch.zeros((1, act_dim), dtype=torch.float32, device=device),
         last_executed_action=torch.zeros((1, act_dim), dtype=torch.float32, device=device),
-        previous_puck_position_for_primitive=torch.zeros((1, 2), dtype=torch.float32, device=device),
     )
     transition_hold = TransitionHoldState(
         last_action_mode=normalize_transition_last_action_mode(args.transition_last_action_mode),
@@ -345,7 +343,6 @@ def run_eval(
         reset_policy_fsm_cls=ResetPolicyFSM,
         build_split_episode_row=_build_split_episode_row,
         latest_camera_frame=_latest_camera_frame,
-        extract_primitive_state_tensors=_extract_primitive_state_tensors,
     )
     pending_reset_artifact = None
 
@@ -391,7 +388,6 @@ def run_eval(
         primitive_selector=primitive_selector,
         transition_hold=transition_hold,
         ctx=ctx,
-        extract_primitive_state_tensors=_extract_primitive_state_tensors,
         reset_primitive_rollout_state=_reset_primitive_rollout_state,
         deterministic_actor_action=deterministic_actor_action,
         augment_policy_observation=augment_policy_observation,
@@ -410,7 +406,6 @@ def run_eval(
         env=env,
         ctx=ctx,
         primitive_selector=primitive_selector,
-        extract_primitive_state_tensors=_extract_primitive_state_tensors,
         reset_primitive_rollout_state=_reset_primitive_rollout_state,
         use_last_action_in_policy_state=train_args.use_last_action_in_policy_state,
         device=device,
@@ -600,7 +595,6 @@ def run_eval(
             env=env,
             ctx=ctx,
             primitive_selector=primitive_selector,
-            extract_primitive_state_tensors=_extract_primitive_state_tensors,
             reset_primitive_rollout_state=_reset_primitive_rollout_state,
             use_last_action_in_policy_state=train_args.use_last_action_in_policy_state,
             device=device,

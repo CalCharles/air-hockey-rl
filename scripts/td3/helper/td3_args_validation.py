@@ -76,11 +76,10 @@ def validate_args(args) -> None:
             f"> q_updates ({args.q_updates}); target nets will update less than "
             f"once per training cycle."
         )
-    for name in ("same_direction", "y_aligned", "target_position_directional"):
-        validate_optional_exploration_range(
-            primitive_name=name,
-            min_angle_deg=getattr(args, f"exploration_{name}_min_angle_deg"),
-            max_angle_deg=getattr(args, f"exploration_{name}_max_angle_deg"),
-            min_magnitude=getattr(args, f"exploration_{name}_min_magnitude"),
-            max_magnitude=getattr(args, f"exploration_{name}_max_magnitude"),
-        )
+    validate_optional_exploration_range(
+        primitive_name="same_direction",
+        min_angle_deg=args.exploration_same_direction_min_angle_deg,
+        max_angle_deg=args.exploration_same_direction_max_angle_deg,
+        min_magnitude=args.exploration_same_direction_min_magnitude,
+        max_magnitude=args.exploration_same_direction_max_magnitude,
+    )

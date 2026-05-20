@@ -329,7 +329,6 @@ class TeleopRunner:
             delta_transition_hold_steps=0,
             delta_interval_primitive_env_steps=0,
             delta_interval_primitive_horizontal_env_steps=0,
-            delta_interval_target_position_directional_env_steps=0,
             delta_human_interrupt_steps=int(self._stop_flags.had_human_interrupt),
             had_protective_stop=self._stop_flags.had_protective_stop,
             had_controller_disconnect=self._stop_flags.had_controller_disconnect,

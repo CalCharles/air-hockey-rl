@@ -76,7 +76,7 @@ The checkpoint loader handles several schema changes from older versions:
 | `episode_transition_staging` (list) | `episode_trajectory` (single) | First element of the list is used |
 | `bootstrap_terminals` (in replay) | `dones` | `bootstrap_terminals` preferred when present for critic-correct semantics |
 | `task_rewards` (in `episode_trajectory`) | `rewards` | `task_rewards` accepted when `rewards` is absent (motion-reward removal) |
-| Primitive weight vectors of length 6 (with deleted `policy_takeover` / `pre_contact_hit_variant` slots) | Length 4 | Drop dead slots; current primitives are stand_still / same_direction / y_aligned / target_position_directional |
+| Primitive weight vectors from older checkpoints (length ≠ 2) | Length 2 | Mismatched-length weights are ignored on load; the config-provided weights win. Current primitives are stand_still / same_direction |
 
 ## Resuming real-world async training
 

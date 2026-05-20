@@ -180,8 +180,6 @@ exploration_primitive_steps: 5
 
 exploration_primitive_weight_stand_still: 0.0
 exploration_primitive_weight_same_direction: 1.0
-exploration_primitive_weight_y_aligned: 0.0
-exploration_primitive_weight_target_position_directional: 0.0
 
 # v27 sim2sim leaves the per-primitive direction/magnitude sub-knobs (e.g.
 # `_min_angle_deg`, `_min_magnitude`) at their td3_training.py defaults. We
@@ -189,11 +187,6 @@ exploration_primitive_weight_target_position_directional: 0.0
 # side but it doesn't matter because no primitive ever fires (chance=0). If
 # you do enable primitives later, add the sub-knobs explicitly.
 exploration_direction_y_component_weight: 2
-exploration_target_position_min_distance: 0.2
-exploration_target_position_max_distance: 0.5
-exploration_target_position_delta_x: 0.26
-exploration_target_position_delta_y: 0.12
-exploration_target_position_steps: 5
 
 # --- Reward weights — mirrors sim2sim v27 -----------------------------------
 # v27 zeroes motion shaping (`motion_reward_weight: 0.0`). The motion-head

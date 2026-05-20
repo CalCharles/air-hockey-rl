@@ -127,7 +127,6 @@ from scripts.td3.helper.real_td3_runtime import (
     _coerce_float_list,
     _copy_to_stop_dir,
     _env_timing_info,
-    _extract_primitive_state_tensors,
     _finalize_sync_learner_state,
     _init_sync_learner_state,
     _latest_camera_frame,
@@ -469,9 +468,6 @@ def _periodic_log(
     stats["transition_hold_steps"] = float(transition_hold.steps_total)
     stats["primitive_chance"] = float(primitive_selector.chance)
     stats["interval_primitive_env_steps"] = float(interval_state["primitive"])
-    stats["interval_target_position_directional_env_steps"] = float(
-        interval_state["target_position_directional"]
-    )
     stats["run_elapsed_total_s"] = float(elapsed_s)
     update_stats_dict_rolling_windows(
         stats,
@@ -490,11 +486,6 @@ def _periodic_log(
     writer.add_scalar(
         "exploration/primitive_horizontal_env_steps",
         float(interval_state["primitive_horizontal"]),
-        total_steps,
-    )
-    writer.add_scalar(
-        "exploration/target_position_directional_env_steps",
-        float(interval_state["target_position_directional"]),
         total_steps,
     )
     writer.add_scalar(
@@ -631,7 +622,6 @@ def _periodic_log(
         f"transition_hold_steps={transition_hold.steps_total} "
         f"primitive_chance={primitive_selector.chance:.4f} "
         f"primitive_steps={interval_state['primitive']} "
-        f"target_position_steps={interval_state['target_position_directional']} "
         f"transition_hold_active={int(transition_hold.active())} "
         f"transition_hold_remaining={transition_hold.steps_remaining} "
         f"transition_events_total={transition_hold.events_total} "
@@ -652,7 +642,6 @@ def _periodic_log(
         )
     interval_state["primitive"] = 0
     interval_state["primitive_horizontal"] = 0
-    interval_state["target_position_directional"] = 0
     return now
 
 
@@ -845,8 +834,6 @@ def collector_process_modular(
     primitive_selector.set_primitive_weights(
         stand_still=float(args.exploration_primitive_weight_stand_still),
         same_direction=float(args.exploration_primitive_weight_same_direction),
-        y_aligned=float(args.exploration_primitive_weight_y_aligned),
-        target_position_directional=float(args.exploration_primitive_weight_target_position_directional),
     )
     actor.load_state_dict(
         {key: value.detach().cpu() for key, value in learner_state.actor.state_dict().items()},
@@ -857,7 +844,6 @@ def collector_process_modular(
     ctx = RolloutContext(
         last_action_for_policy=torch.zeros((1, act_dim), dtype=torch.float32, device=device),
         last_executed_action=torch.zeros((1, act_dim), dtype=torch.float32, device=device),
-        previous_puck_position_for_primitive=torch.zeros((1, 2), dtype=torch.float32, device=device),
     )
     transition_hold = TransitionHoldState(
         last_action_mode=normalize_transition_last_action_mode(args.transition_last_action_mode),
@@ -898,7 +884,6 @@ def collector_process_modular(
         reset_policy_fsm_cls=reset_fsm_factory,
         build_split_episode_row=_build_split_episode_row,
         latest_camera_frame=_latest_camera_frame,
-        extract_primitive_state_tensors=_extract_primitive_state_tensors,
     )
     pending_reset_artifact = None
 
@@ -953,7 +938,6 @@ def collector_process_modular(
         primitive_selector=primitive_selector,
         transition_hold=transition_hold,
         ctx=ctx,
-        extract_primitive_state_tensors=_extract_primitive_state_tensors,
         reset_primitive_rollout_state=_reset_primitive_rollout_state,
         deterministic_actor_action=deterministic_actor_action,
         augment_policy_observation=augment_policy_observation,
@@ -981,7 +965,6 @@ def collector_process_modular(
         env=env,
         ctx=ctx,
         primitive_selector=primitive_selector,
-        extract_primitive_state_tensors=_extract_primitive_state_tensors,
         reset_primitive_rollout_state=_reset_primitive_rollout_state,
         use_last_action_in_policy_state=train_args.use_last_action_in_policy_state,
         device=device,
@@ -1052,7 +1035,6 @@ def collector_process_modular(
     interval_state = {
         "primitive": 0,
         "primitive_horizontal": 0,
-        "target_position_directional": 0,
     }
     episodic_returns: list = []
     episodic_lengths: list = []
@@ -1215,9 +1197,6 @@ def collector_process_modular(
             interval_state["primitive_horizontal"] += (
                 result.metrics.delta_interval_primitive_horizontal_env_steps
             )
-            interval_state["target_position_directional"] += (
-                result.metrics.delta_interval_target_position_directional_env_steps
-            )
             rolling_state["reward"].append(result.metrics.episode_reward)
             rolling_state["length"].append(result.metrics.episode_length)
             rolling_state["estop"].append(result.metrics.episode_estop_flag)
@@ -1283,7 +1262,6 @@ def collector_process_modular(
                     env=env,
                     ctx=ctx,
                     primitive_selector=primitive_selector,
-                    extract_primitive_state_tensors=_extract_primitive_state_tensors,
                     reset_primitive_rollout_state=_reset_primitive_rollout_state,
                     use_last_action_in_policy_state=train_args.use_last_action_in_policy_state,
                     device=device,
@@ -1424,7 +1402,6 @@ def collector_process_modular(
             env=env,
             ctx=ctx,
             primitive_selector=primitive_selector,
-            extract_primitive_state_tensors=_extract_primitive_state_tensors,
             reset_primitive_rollout_state=_reset_primitive_rollout_state,
             use_last_action_in_policy_state=train_args.use_last_action_in_policy_state,
             device=device,

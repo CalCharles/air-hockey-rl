@@ -113,35 +113,6 @@ def resolve_path_relative_to_dir(path: str, base_dir: str) -> str:
     return path if os.path.isabs(path) else os.path.normpath(os.path.join(base_dir, path))
 
 
-def extract_current_paddle_position(observation: torch.Tensor) -> torch.Tensor:
-    obs_dim = observation.shape[-1]
-    if obs_dim >= 30:
-        return observation[:, 12:14]
-    return observation[:, 0:2]
-
-
-def extract_current_puck_position(observation: torch.Tensor) -> torch.Tensor:
-    obs_dim = observation.shape[-1]
-    if obs_dim >= 30:
-        return observation[:, 27:29]
-    if obs_dim >= 8:
-        return observation[:, 4:6]
-    if obs_dim >= 4:
-        return observation[:, 2:4]
-    raise ValueError(f"Observation dim {obs_dim} is too small to extract puck position.")
-
-
-def extract_current_puck_velocity(observation: torch.Tensor) -> torch.Tensor:
-    obs_dim = observation.shape[-1]
-    if obs_dim >= 30:
-        # History obs stores 5 puck positions at indices [15:30], so estimate velocity
-        # using window displacement (last - first) to reduce one-step noise.
-        return observation[:, 27:29] - observation[:, 15:17]
-    if obs_dim >= 8 and obs_dim < 30:
-        return observation[:, 6:8]
-    return torch.zeros((observation.shape[0], 2), dtype=observation.dtype, device=observation.device)
-
-
 def linear_anneal(start: float, end: float, step: int, anneal_steps: int) -> float:
     if anneal_steps <= 0:
         return end
@@ -232,32 +203,17 @@ class Args:
     exploration_pre_learning_action_source: Literal["random", "policy"] = "random"
     exploration_primitive_chance_anneal_steps: int = 50000
     exploration_primitive_steps: int = 3
-    exploration_primitive_weight_stand_still: float = 1.0 / 3.0
-    exploration_primitive_weight_same_direction: float = 1.0 / 3.0
-    exploration_primitive_weight_y_aligned: float = 1.0 / 3.0
-    exploration_primitive_weight_target_position_directional: float = 0.0
+    exploration_primitive_weight_stand_still: float = 0.5
+    exploration_primitive_weight_same_direction: float = 0.5
     exploration_primitive_weight_anneal_stand_still: float = 0.3
-    exploration_primitive_weight_anneal_same_direction: float = 0.1
-    exploration_primitive_weight_anneal_y_aligned: float = 0.6
-    exploration_primitive_weight_anneal_target_position_directional: float = 0.0
+    exploration_primitive_weight_anneal_same_direction: float = 0.7
     exploration_direction_y_component_weight: float = 1.5
-    exploration_target_position_min_distance: float = 0.2
-    exploration_target_position_max_distance: float = 0.5
-    exploration_target_position_delta_x: float = 0.26
-    exploration_target_position_delta_y: float = 0.12
-    exploration_target_position_steps: int = 5
+    exploration_action_delta_x: float = 0.26
+    exploration_action_delta_y: float = 0.12
     exploration_same_direction_min_angle_deg: float | None = None
     exploration_same_direction_max_angle_deg: float | None = None
     exploration_same_direction_min_magnitude: float | None = None
     exploration_same_direction_max_magnitude: float | None = None
-    exploration_y_aligned_min_angle_deg: float | None = None
-    exploration_y_aligned_max_angle_deg: float | None = None
-    exploration_y_aligned_min_magnitude: float | None = None
-    exploration_y_aligned_max_magnitude: float | None = None
-    exploration_target_position_directional_min_angle_deg: float | None = None
-    exploration_target_position_directional_max_angle_deg: float | None = None
-    exploration_target_position_directional_min_magnitude: float | None = None
-    exploration_target_position_directional_max_magnitude: float | None = None
 
     # --- Checkpointing ---
     checkpoint_interval: int = 25000
@@ -561,15 +517,11 @@ def _entrypoint():
     interval_env_steps = 0
     interval_primitive_env_steps = 0
     interval_primitive_horizontal_env_steps = 0
-    interval_target_position_directional_env_steps = 0
     rolling_step_stats_window = deque()
     rolling_episode_stats_window = deque()
     episode_trajectory = EpisodeTrajectory.empty()
     recent_episode_returns = deque(maxlen=args.recent_episode_window_size)
     episode_return_success_threshold = 0.0
-
-    initial_obs_tensor = torch.tensor(obs, dtype=torch.float32, device=args.device)
-    previous_puck_position_for_trigger = extract_current_puck_position(initial_obs_tensor).clone()
 
     # --- Live episode GIF recording ---
     renderer_env = AirHockeyEnv(config["air_hockey"])
@@ -605,37 +557,16 @@ def _entrypoint():
         device=args.device,
         dtype=torch.float32,
         direction_y_component_weight=args.exploration_direction_y_component_weight,
-        target_min_distance=args.exploration_target_position_min_distance,
-        target_max_distance=args.exploration_target_position_max_distance,
-        target_action_delta_x=args.exploration_target_position_delta_x,
-        target_action_delta_y=args.exploration_target_position_delta_y,
+        action_delta_x=args.exploration_action_delta_x,
+        action_delta_y=args.exploration_action_delta_y,
         same_direction_min_angle_deg=args.exploration_same_direction_min_angle_deg,
         same_direction_max_angle_deg=args.exploration_same_direction_max_angle_deg,
         same_direction_min_magnitude=args.exploration_same_direction_min_magnitude,
         same_direction_max_magnitude=args.exploration_same_direction_max_magnitude,
-        y_aligned_min_angle_deg=args.exploration_y_aligned_min_angle_deg,
-        y_aligned_max_angle_deg=args.exploration_y_aligned_max_angle_deg,
-        y_aligned_min_magnitude=args.exploration_y_aligned_min_magnitude,
-        y_aligned_max_magnitude=args.exploration_y_aligned_max_magnitude,
-        target_position_directional_min_angle_deg=(
-            args.exploration_target_position_directional_min_angle_deg
-        ),
-        target_position_directional_max_angle_deg=(
-            args.exploration_target_position_directional_max_angle_deg
-        ),
-        target_position_directional_min_magnitude=(
-            args.exploration_target_position_directional_min_magnitude
-        ),
-        target_position_directional_max_magnitude=(
-            args.exploration_target_position_directional_max_magnitude
-        ),
-        target_takeover_steps=args.exploration_target_position_steps,
     )
     primitive_selector.set_primitive_weights(
         stand_still=args.exploration_primitive_weight_stand_still,
         same_direction=args.exploration_primitive_weight_same_direction,
-        y_aligned=args.exploration_primitive_weight_y_aligned,
-        target_position_directional=args.exploration_primitive_weight_target_position_directional,
     )
     if args.eval_mode:
         primitive_selector.chance = 0.0
@@ -655,9 +586,6 @@ def _entrypoint():
                 "interval_env_steps": interval_env_steps,
                 "interval_primitive_env_steps": interval_primitive_env_steps,
                 "interval_primitive_horizontal_env_steps": interval_primitive_horizontal_env_steps,
-                "interval_target_position_directional_env_steps": (
-                    interval_target_position_directional_env_steps
-                ),
                 "recent_episode_returns": recent_episode_returns,
                 "episode_return_success_threshold": episode_return_success_threshold,
                 "rolling_step_stats_window": rolling_step_stats_window,
@@ -668,18 +596,12 @@ def _entrypoint():
         iteration = restored_state["iteration"]
         total_critic_updates = restored_state["total_critic_updates"]
         obs = restored_state["obs"]
-        previous_puck_position_for_trigger = extract_current_puck_position(
-            torch.tensor(obs, dtype=torch.float32, device=args.device)
-        ).clone()
         last_action_for_policy = restored_state["last_action_for_policy"]
         train_metrics = restored_state["train_metrics"]
         interval_paddle_puck_collisions = restored_state["interval_paddle_puck_collisions"]
         interval_env_steps = restored_state["interval_env_steps"]
         interval_primitive_env_steps = restored_state["interval_primitive_env_steps"]
         interval_primitive_horizontal_env_steps = restored_state["interval_primitive_horizontal_env_steps"]
-        interval_target_position_directional_env_steps = restored_state[
-            "interval_target_position_directional_env_steps"
-        ]
         episode_trajectory = restored_state["episode_trajectory"]
         recent_episode_returns = restored_state["recent_episode_returns"]
         episode_return_success_threshold = restored_state["episode_return_success_threshold"]
@@ -723,9 +645,6 @@ def _entrypoint():
             interval_env_steps=interval_env_steps,
             interval_primitive_env_steps=interval_primitive_env_steps,
             interval_primitive_horizontal_env_steps=interval_primitive_horizontal_env_steps,
-            interval_target_position_directional_env_steps=(
-                interval_target_position_directional_env_steps
-            ),
             episode_trajectory=episode_trajectory,
             recent_episode_returns=recent_episode_returns,
             episode_return_success_threshold=episode_return_success_threshold,
@@ -748,19 +667,11 @@ def _entrypoint():
                 primitive_selector.set_primitive_weights(
                     stand_still=args.exploration_primitive_weight_anneal_stand_still,
                     same_direction=args.exploration_primitive_weight_anneal_same_direction,
-                    y_aligned=args.exploration_primitive_weight_anneal_y_aligned,
-                    target_position_directional=(
-                        args.exploration_primitive_weight_anneal_target_position_directional
-                    ),
                 )
             else:
                 primitive_selector.set_primitive_weights(
                     stand_still=args.exploration_primitive_weight_stand_still,
                     same_direction=args.exploration_primitive_weight_same_direction,
-                    y_aligned=args.exploration_primitive_weight_y_aligned,
-                    target_position_directional=(
-                        args.exploration_primitive_weight_target_position_directional
-                    ),
                 )
         prev_action_for_transition = last_action_for_policy.clone()
         obs_tensor = torch.tensor(obs, dtype=torch.float32, device=args.device)
@@ -793,31 +704,16 @@ def _entrypoint():
 
         action_tensor = torch.as_tensor(actions, dtype=torch.float32, device=args.device)
         if not args.eval_mode:
-            current_paddle_pos_for_primitive = extract_current_paddle_position(obs_tensor)
-            current_puck_pos_for_primitive = extract_current_puck_position(obs_tensor)
-            current_puck_vel_for_primitive = extract_current_puck_velocity(obs_tensor)
-            if torch.all(current_puck_vel_for_primitive == 0):
-                current_puck_vel_for_primitive = (
-                    current_puck_pos_for_primitive - previous_puck_position_for_trigger
-                )
-            y_alignment_sign = torch.sign(
-                current_puck_pos_for_primitive[:, 1] - current_paddle_pos_for_primitive[:, 1]
-            )
             action_tensor, primitive_step_stats = primitive_selector.apply(
                 action_tensor,
                 action_low=action_low,
                 action_high=action_high,
-                y_alignment_sign=y_alignment_sign,
-                current_paddle_position=current_paddle_pos_for_primitive,
-                current_puck_position=current_puck_pos_for_primitive,
-                current_puck_velocity=current_puck_vel_for_primitive,
                 return_stats=True,
             )
         else:
             primitive_step_stats = {
                 "primitive_applied_count": 0,
                 "primitive_horizontal_dominant_count": 0,
-                "target_position_directional_applied_count": 0,
             }
         actions = action_tensor.cpu().numpy()
 
@@ -832,13 +728,7 @@ def _entrypoint():
         interval_primitive_horizontal_env_steps += int(
             primitive_step_stats["primitive_horizontal_dominant_count"]
         )
-        interval_target_position_directional_env_steps += int(
-            primitive_step_stats["target_position_directional_applied_count"]
-        )
         next_obs_tensor = torch.tensor(next_obs, dtype=torch.float32, device=args.device)
-        current_paddle_pos = extract_current_paddle_position(next_obs_tensor)
-        current_puck_pos = extract_current_puck_position(next_obs_tensor)
-        previous_puck_position_for_trigger = current_puck_pos.clone()
         done_tensor = torch.tensor(dones, dtype=torch.bool, device=args.device)
         primitive_selector.reset(done_tensor)
         last_action_for_policy = action_tensor.clone()
@@ -1189,13 +1079,11 @@ def _entrypoint():
                 interval_env_steps=interval_env_steps,
                 interval_primitive_env_steps=interval_primitive_env_steps,
                 interval_primitive_horizontal_env_steps=interval_primitive_horizontal_env_steps,
-                interval_target_position_directional_env_steps=interval_target_position_directional_env_steps,
             )
             interval_paddle_puck_collisions = 0.0
             interval_env_steps = 0
             interval_primitive_env_steps = 0
             interval_primitive_horizontal_env_steps = 0
-            interval_target_position_directional_env_steps = 0
 
         if global_step > 0 and global_step % args.checkpoint_interval == 0:
             checkpoint_dir = os.path.join(log_parent_dir, f"checkpoint_{global_step}")

@@ -105,7 +105,6 @@ from scripts.td3.helper.real_td3_runtime import (
     Args,
     _build_args_file_defaults,
     _build_split_episode_row,
-    _extract_primitive_state_tensors,
     _latest_camera_frame,
     _next_available_episode_id,
     _prepare_air_hockey_config,
@@ -628,7 +627,6 @@ def run_teleop_eval(
         reset_policy_fsm_cls=ResetPolicyFSM,
         build_split_episode_row=_build_split_episode_row,
         latest_camera_frame=_latest_camera_frame,
-        extract_primitive_state_tensors=_extract_primitive_state_tensors,
     )
     pending_reset_artifact = None
 

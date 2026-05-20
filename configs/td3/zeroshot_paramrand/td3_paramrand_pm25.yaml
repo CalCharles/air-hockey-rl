@@ -67,25 +67,18 @@ exploration_primitive_chance_pre_learning_starts: null
 exploration_primitive_chance_anneal_steps: 200000
 exploration_primitive_steps: 5
 
-# Exploration after annealing phase
+# Exploration after annealing phase (2 primitives: stand_still + same_direction).
+# same_direction weight 3.0 preserves the prior 1:15 stand_still:others ratio
+# validated in notes/scratch/experiments/2026-05-20_07-39_simplified-exploration-ablation.md.
 exploration_primitive_weight_stand_still: 0.2
-exploration_primitive_weight_same_direction: 1.0
-exploration_primitive_weight_y_aligned: 1.0
-exploration_primitive_weight_target_position_directional: 1.0
+exploration_primitive_weight_same_direction: 3.0
 
 # Exploration during annealing phase
 exploration_primitive_weight_anneal_stand_still: 0.2
-exploration_primitive_weight_anneal_same_direction: 1.0
-exploration_primitive_weight_anneal_y_aligned: 1.0
-exploration_primitive_weight_anneal_target_position_directional: 1.0
+exploration_primitive_weight_anneal_same_direction: 3.0
 
 # Exploration-specific knobs
 exploration_direction_y_component_weight: 2
-exploration_target_position_min_distance: 0.2
-exploration_target_position_max_distance: 0.5
-exploration_target_position_delta_x: 0.26
-exploration_target_position_delta_y: 0.12
-exploration_target_position_steps: 5
 
 
 

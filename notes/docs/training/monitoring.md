@@ -81,7 +81,7 @@ Single TensorBoard writer at `log_parent_dir` (created near the top of `_entrypo
 | `charts/rolling2k_avg_episode_return`, `…_avg_episode_length`, `…_episode_count` | (same line) | Same window stats |
 | `charts/rolling2k_puck_hits_total`, `…_estop_events_total`, `…_puck_hits_per_env_step`, `…_estop_rate` | `Rolling(2k) Puck Hits / E-Stop Events / per env-step / E-Stop Rate` | Contact + safety rates |
 | `contacts/interval_paddle_puck_collisions_total`, `…_per_env_step` | `Paddle-Puck Collisions (last interval)` | Contact frequency |
-| `exploration/interval_primitive_*`, `…_target_position_directional_*` | `Primitive / Target-Position Directional Actions` | Action source breakdown |
+| `exploration/interval_primitive_*` | `Primitive Actions` | Action source breakdown |
 
 ### Eval loop & artifacts
 
@@ -120,7 +120,7 @@ Every `collector_log_interval_sec` (`_periodic_log`, `:310–512`), in addition 
 | **rolling50** (last ≤50 episodes) | `rolling50/reward_avg`, `rolling50/episode_length_avg`, `rolling50/estop_episode_count`, `rolling50/window_count` | `helper/real_collector_metrics.py` |
 | Window aggregates | `charts/avg_episodic_return`, `charts/min_episodic_return`, `charts/max_episodic_return`, `charts/avg_success_rate`, `charts/avg_episodic_length` | `:457–467` (only when episodes occurred in the interval) |
 | Replay | `replay/success_buffer_size`, `replay/failure_buffer_size` | `:383–384` |
-| Exploration | `exploration/primitive_chance`, `exploration/primitive_env_steps`, `exploration/primitive_horizontal_env_steps`, `exploration/target_position_directional_env_steps` | `:385–406` |
+| Exploration | `exploration/primitive_chance`, `exploration/primitive_env_steps`, `exploration/primitive_horizontal_env_steps` | `:385–406` |
 | Artifacts | `artifacts/episodes_saved`, `…_removed_short`, `…_removed_invalid`, `…_gif_generated`, `…_gif_failed`, `…_camera_video_generated`, `…_camera_video_failed` | `:407–426` |
 | Safety | `safety/estop_steps`, `safety/estop_episodes`, `safety/controller_disconnect_steps`, `safety/controller_disconnect_episodes`, `safety/readiness_fail_steps`, `safety/readiness_fail_estop_episodes`, `safety/readiness_fail_dropped_steps` | `:428–449` |
 | Transitions | `transitions/hold_active`, `transitions/hold_steps_remaining`, `transitions/hold_events_total` | `:443–449` |

@@ -79,19 +79,12 @@ When the policy hands off to a scripted primitive (stand-still, same-direction, 
 | `exploration_pre_learning_action_source` | `"random"` | `"random"` or `"policy"` actions during the pre-learning rollout phase. |
 | `exploration_primitive_chance_anneal_steps` | `50_000` | Step count over which `chance_start → chance` anneals. |
 | `exploration_primitive_steps` | `3` | Default takeover horizon (env-steps the primitive holds). |
-| `exploration_primitive_weight_{stand_still,same_direction,y_aligned,target_position_directional}` | `1/3, 1/3, 1/3, 0` | Steady-state primitive-selection weights. Each must be ≥ 0. |
-| `exploration_primitive_weight_anneal_{...}` | `0.3, 0.1, 0.6, 0` | Annealing-phase weights (used while `global_step < exploration_primitive_chance_anneal_steps`). |
-| `exploration_direction_y_component_weight` | `1.5` | Bias factor on the y-component for direction-based primitives. |
-| `exploration_target_position_min_distance` | `0.2` | Target-position primitive: minimum distance from current paddle. |
-| `exploration_target_position_max_distance` | `0.5` | Target-position primitive: maximum distance. |
-| `exploration_target_position_delta_x` / `_delta_y` | `0.26` / `0.12` | Action delta scales for the target-position primitive. |
-| `exploration_target_position_steps` | `5` | Takeover horizon for the target-position primitive. |
-| `exploration_same_direction_{min,max}_angle_deg` | `None` | Optional override for same-direction angle bounds. All four (min/max angle + min/max magnitude) must be set together. |
-| `exploration_same_direction_{min,max}_magnitude` | `None` | Optional override for same-direction magnitude bounds. |
-| `exploration_y_aligned_{min,max}_angle_deg` | `None` | Optional override for y-aligned angle bounds. |
-| `exploration_y_aligned_{min,max}_magnitude` | `None` | Optional override for y-aligned magnitude bounds. |
-| `exploration_target_position_directional_{min,max}_angle_deg` | `None` | Optional override for target-position-directional angle bounds. |
-| `exploration_target_position_directional_{min,max}_magnitude` | `None` | Optional override for target-position-directional magnitude bounds. |
+| `exploration_primitive_weight_{stand_still,same_direction}` | `0.5, 0.5` | Steady-state primitive-selection weights. Each must be ≥ 0. |
+| `exploration_primitive_weight_anneal_{stand_still,same_direction}` | `0.3, 0.7` | Annealing-phase weights (used while `global_step < exploration_primitive_chance_anneal_steps`). |
+| `exploration_direction_y_component_weight` | `1.5` | Bias factor on the y-component for the same_direction legacy sampling path. |
+| `exploration_action_delta_x` / `_delta_y` | `0.26` / `0.12` | Action box used to project same_direction simulator-space displacements. |
+| `exploration_same_direction_{min,max}_angle_deg` | `None` | Optional simulator-space-range override for same_direction angle bounds. All four (min/max angle + min/max magnitude) must be set together. |
+| `exploration_same_direction_{min,max}_magnitude` | `None` | Optional simulator-space-range override for same_direction magnitude bounds. |
 
 ## Checkpointing
 

@@ -87,7 +87,6 @@ class EpisodeMetrics:
     delta_transition_hold_steps: int
     delta_interval_primitive_env_steps: int
     delta_interval_primitive_horizontal_env_steps: int
-    delta_interval_target_position_directional_env_steps: int
     delta_human_interrupt_steps: int
     had_protective_stop: bool
     had_controller_disconnect: bool
@@ -129,7 +128,6 @@ class PolicyRunner:
         primitive_selector,
         transition_hold: TransitionHoldState,
         ctx: RolloutContext,
-        extract_primitive_state_tensors: Callable,
         reset_primitive_rollout_state: Callable,
         deterministic_actor_action: Callable,
         augment_policy_observation: Callable,
@@ -150,7 +148,6 @@ class PolicyRunner:
         self._primitive_selector = primitive_selector
         self._transition_hold = transition_hold
         self._ctx = ctx
-        self._extract_primitive_state_tensors = extract_primitive_state_tensors
         self._reset_primitive_rollout_state = reset_primitive_rollout_state
         self._deterministic_actor_action = deterministic_actor_action
         self._augment_policy_observation = augment_policy_observation
@@ -275,7 +272,6 @@ class PolicyRunner:
         delta_transition_hold_steps_at_start = transition_hold.steps_total
         delta_interval_primitive_env_steps = 0
         delta_interval_primitive_horizontal_env_steps = 0
-        delta_interval_target_position_directional_env_steps = 0
 
         # Episode-end fields populated when `dones` becomes True.
         terminal: TerminalInfo | None = None
@@ -356,7 +352,6 @@ class PolicyRunner:
             primitive_step_stats = {
                 "primitive_applied_count": 0,
                 "primitive_horizontal_dominant_count": 0,
-                "target_position_directional_applied_count": 0,
             }
             with torch.no_grad():
                 inference_start_s = (
@@ -375,24 +370,10 @@ class PolicyRunner:
                     primitive_selector.chance = float(
                         self._primitive_exploration_chance_for_step(args, self._total_steps)
                     )
-                    current_paddle_pos, current_puck_pos, current_puck_vel = (
-                        self._extract_primitive_state_tensors(env, device=device)
-                    )
-                    if torch.all(current_puck_vel == 0):
-                        current_puck_vel = (
-                            current_puck_pos - ctx.previous_puck_position_for_primitive
-                        )
-                    y_alignment_sign = torch.sign(
-                        current_puck_pos[:, 1] - current_paddle_pos[:, 1]
-                    )
                     action_tensor, primitive_step_stats = primitive_selector.apply(
                         action_tensor,
                         action_low=action_low,
                         action_high=action_high,
-                        y_alignment_sign=y_alignment_sign,
-                        current_paddle_position=current_paddle_pos,
-                        current_puck_position=current_puck_pos,
-                        current_puck_velocity=current_puck_vel,
                         return_stats=True,
                     )
                 if transition_hold_active:
@@ -492,9 +473,6 @@ class PolicyRunner:
             delta_interval_primitive_horizontal_env_steps += int(
                 primitive_step_stats["primitive_horizontal_dominant_count"]
             )
-            delta_interval_target_position_directional_env_steps += int(
-                primitive_step_stats["target_position_directional_applied_count"]
-            )
 
             self._episode_trajectory.append_step(
                 obs=obs_tensor[0],
@@ -508,9 +486,6 @@ class PolicyRunner:
             self._total_steps += 1
             delta_total_steps += 1
             ctx.last_executed_action = action_tensor.detach().clone()
-            ctx.previous_puck_position_for_primitive = self._extract_primitive_state_tensors(
-                env, device=device
-            )[1]
             primitive_selector.reset(torch.tensor([dones], dtype=torch.bool, device=device))
 
             if train_args.use_last_action_in_policy_state:
@@ -647,9 +622,6 @@ class PolicyRunner:
             delta_transition_hold_steps=int(delta_transition_hold_steps),
             delta_interval_primitive_env_steps=int(delta_interval_primitive_env_steps),
             delta_interval_primitive_horizontal_env_steps=int(delta_interval_primitive_horizontal_env_steps),
-            delta_interval_target_position_directional_env_steps=int(
-                delta_interval_target_position_directional_env_steps
-            ),
             delta_human_interrupt_steps=int(delta_human_interrupt_steps),
             had_protective_stop=self._stop_flags.had_protective_stop,
             had_controller_disconnect=self._stop_flags.had_controller_disconnect,

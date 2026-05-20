@@ -17,23 +17,12 @@ class RealCollectorPrimitiveExplorationConfig(Protocol):
     exploration_primitive_chance_anneal_steps: int
     exploration_primitive_steps: int
     exploration_direction_y_component_weight: float
-    exploration_target_position_min_distance: float
-    exploration_target_position_max_distance: float
-    exploration_target_position_delta_x: float
-    exploration_target_position_delta_y: float
+    exploration_action_delta_x: float
+    exploration_action_delta_y: float
     exploration_same_direction_min_angle_deg: float
     exploration_same_direction_max_angle_deg: float
     exploration_same_direction_min_magnitude: float
     exploration_same_direction_max_magnitude: float
-    exploration_y_aligned_min_angle_deg: float
-    exploration_y_aligned_max_angle_deg: float
-    exploration_y_aligned_min_magnitude: float
-    exploration_y_aligned_max_magnitude: float
-    exploration_target_position_directional_min_angle_deg: float
-    exploration_target_position_directional_max_angle_deg: float
-    exploration_target_position_directional_min_magnitude: float
-    exploration_target_position_directional_max_magnitude: float
-    exploration_target_position_steps: int
 
 
 def _linear_anneal(start: float, end: float, step: int, anneal_steps: int) -> float:
@@ -67,29 +56,10 @@ def build_primitive_exploration_selector_for_real_collector(
         device=device,
         dtype=torch.float32,
         direction_y_component_weight=float(args.exploration_direction_y_component_weight),
-        target_min_distance=float(args.exploration_target_position_min_distance),
-        target_max_distance=float(args.exploration_target_position_max_distance),
-        target_action_delta_x=float(args.exploration_target_position_delta_x),
-        target_action_delta_y=float(args.exploration_target_position_delta_y),
+        action_delta_x=float(args.exploration_action_delta_x),
+        action_delta_y=float(args.exploration_action_delta_y),
         same_direction_min_angle_deg=float(args.exploration_same_direction_min_angle_deg),
         same_direction_max_angle_deg=float(args.exploration_same_direction_max_angle_deg),
         same_direction_min_magnitude=float(args.exploration_same_direction_min_magnitude),
         same_direction_max_magnitude=float(args.exploration_same_direction_max_magnitude),
-        y_aligned_min_angle_deg=float(args.exploration_y_aligned_min_angle_deg),
-        y_aligned_max_angle_deg=float(args.exploration_y_aligned_max_angle_deg),
-        y_aligned_min_magnitude=float(args.exploration_y_aligned_min_magnitude),
-        y_aligned_max_magnitude=float(args.exploration_y_aligned_max_magnitude),
-        target_position_directional_min_angle_deg=float(
-            args.exploration_target_position_directional_min_angle_deg
-        ),
-        target_position_directional_max_angle_deg=float(
-            args.exploration_target_position_directional_max_angle_deg
-        ),
-        target_position_directional_min_magnitude=float(
-            args.exploration_target_position_directional_min_magnitude
-        ),
-        target_position_directional_max_magnitude=float(
-            args.exploration_target_position_directional_max_magnitude
-        ),
-        target_takeover_steps=int(args.exploration_target_position_steps),
     )

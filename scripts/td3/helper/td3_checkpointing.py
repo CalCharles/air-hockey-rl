@@ -108,12 +108,6 @@ def load_resume_training_state(
                 defaults["interval_primitive_horizontal_env_steps"],
             )
         ),
-        "interval_target_position_directional_env_steps": int(
-            resume_checkpoint.get(
-                "interval_target_position_directional_env_steps",
-                defaults["interval_target_position_directional_env_steps"],
-            )
-        ),
         "episode_trajectory": load_episode_trajectory_from_checkpoint(
             resume_checkpoint,
             device=device,
@@ -176,7 +170,6 @@ def build_training_state(
     interval_env_steps: int,
     interval_primitive_env_steps: int,
     interval_primitive_horizontal_env_steps: int,
-    interval_target_position_directional_env_steps: int,
     episode_trajectory: EpisodeTrajectory,
     recent_episode_returns,
     episode_return_success_threshold: float,
@@ -207,7 +200,6 @@ def build_training_state(
         "interval_env_steps": interval_env_steps,
         "interval_primitive_env_steps": interval_primitive_env_steps,
         "interval_primitive_horizontal_env_steps": interval_primitive_horizontal_env_steps,
-        "interval_target_position_directional_env_steps": interval_target_position_directional_env_steps,
         "episode_trajectory": episode_trajectory.state_dict(),
         "recent_episode_returns": list(recent_episode_returns),
         "episode_return_success_threshold": episode_return_success_threshold,
