@@ -106,7 +106,8 @@ class EpisodeTrajectory:
         trajectory = cls.empty()
         if not isinstance(state_dict, dict):
             return trajectory
-        # Tolerate old checkpoints that stored task_rewards alongside motion_rewards.
+        # Old checkpoints (pre motion-reward removal) stored the per-step
+        # reward array as `task_rewards`; current code uses `rewards`.
         reward_key = "rewards" if "rewards" in state_dict else "task_rewards"
         for attr, key in (
             ("observations", "observations"),

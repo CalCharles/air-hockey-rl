@@ -6,7 +6,7 @@ Shared context for AI agents (Claude Code, Cursor, etc.). Read this before makin
 
 ## What this project is
 
-Reinforcement learning for a physical air-hockey robot (UR5 arm + paddle). The agent learns to juggle a puck in a Box2D simulator, then transfers the policy to the real robot. The training algorithm is **TD3 with dual-head critics and transformed Bellman targets**.
+Reinforcement learning for a physical air-hockey robot (UR5 arm + paddle). The agent learns to juggle a puck in a Box2D simulator, then transfers the policy to the real robot. The training algorithm is **TD3 with single-head critic and transformed Bellman targets**.
 
 See [`notes/docs/repo/project-goal-and-safety.md`](notes/docs/repo/project-goal-and-safety.md) for safety policy (real-robot e-stops, protective stops).
 
@@ -35,7 +35,8 @@ latest_models/ablations/ — CoRL-2026 deployment-ready ablation checkpoints
 
 | What | Where |
 |------|-------|
-| **Training entrypoint** | `scripts/td3/td3_training.py` |
+| **Training entrypoint (source-sim only)** | `scripts/td3/td3_training.py` |
+| **Training entrypoint (canonical sim2sim / sim2real)** | `scripts/td3/td3_training_dr.py` — wraps `td3_training.py` with per-reset env-parameter randomization. Used with `configs/td3/zeroshot_paramrand/td3_paramrand_pm25.yaml` (sim config `configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25.yaml`). |
 | **Canonical sim config (sysid ground truth)** | `configs/new_juggle/sysid_best_params.yaml` (or `sysid_best_params_hist2.yaml` for hist_len=2) |
 | **Canonical TD3 args** | `configs/td3/td3_recommended_top50_hist2.yaml` — 2-layer, q=25/a=6, references `sysid_best_params_hist2.yaml` |
 | **Sim-to-real ground truth source policy** | `latest_models/canonical/hist2_motion0_v2/` (predecessor `hist2_motion0/` kept on disk for reproducibility; don't reference in new work) |

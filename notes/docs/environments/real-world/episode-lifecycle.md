@@ -82,7 +82,7 @@ This prevents post-failure garbage transitions from entering the replay buffer.
 
 **Code:** [`real_policy_runner.py`](../../../../scripts/td3/helper/real_policy_runner.py) (live), [`real_episode_buffers.py`](../../../../scripts/td3/helper/real_episode_buffers.py) (readiness-fail), [`real_warm_start.py`](../../../../scripts/td3/helper/real_warm_start.py) (HDF5 replay).
 
-When a stop event (protective stop, controller disconnect, readiness-fail) ends an episode, the rollout loop exits but the e-stop transition is stored with `done=0` — semantically a **truncation**, not a termination. The learner's Bellman target therefore continues to bootstrap from V(s') at the cutoff. No motion-reward penalty is applied at the stop event. Recording (HDF5 `estop` column, `stop_flags`, episode summaries, rolling-50 e-stop counters, TensorBoard `safety/estop_*`) is unchanged — the e-stop is fully observable in the data, just not special-cased in value updates.
+When a stop event (protective stop, controller disconnect, readiness-fail) ends an episode, the rollout loop exits but the e-stop transition is stored with `done=0` — semantically a **truncation**, not a termination. The learner's Bellman target therefore continues to bootstrap from V(s') at the cutoff. No special penalty is applied at the stop event. Recording (HDF5 `estop` column, `stop_flags`, episode summaries, rolling-50 e-stop counters, TensorBoard `safety/estop_*`) is unchanged — the e-stop is fully observable in the data, just not special-cased in value updates.
 
 ## Replay routing
 

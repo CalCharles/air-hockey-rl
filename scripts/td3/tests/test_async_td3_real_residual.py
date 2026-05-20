@@ -95,8 +95,7 @@ class LoadTrainingStateCheckpointDefaultsTests(unittest.TestCase):
         self.assertEqual(loaded["learner_actor_updates"], 0)
         self.assertEqual(loaded["collector_total_steps"], 0)
         self.assertEqual(loaded["run_elapsed_total_s"], 0.0)
-        self.assertEqual(loaded["rolling50_task_reward_values"], [])
-        self.assertEqual(loaded["rolling50_motion_reward_values"], [])
+        self.assertEqual(loaded["rolling50_reward_values"], [])
         self.assertEqual(loaded["rolling50_episode_length_values"], [])
         self.assertEqual(loaded["rolling50_estop_episode_flags"], [])
         # Existing values are preserved (not overwritten by defaults).
@@ -121,7 +120,7 @@ class LoadTrainingStateCheckpointDefaultsTests(unittest.TestCase):
         self.assertNotIn("actor_optimizer", loaded)
         # Counters/rolling50 are still defaulted for safe direct-access.
         self.assertEqual(loaded["learner_q_updates"], 0)
-        self.assertEqual(loaded["rolling50_task_reward_values"], [])
+        self.assertEqual(loaded["rolling50_reward_values"], [])
 
     def test_missing_vital_keys_still_raise(self) -> None:
         payload = _make_minimal_vital_state()
@@ -143,9 +142,9 @@ class LoadTrainingStateCheckpointDefaultsTests(unittest.TestCase):
             loaded_a = _load_training_state_checkpoint(str(path))
             loaded_b = _load_training_state_checkpoint(str(path))
 
-        loaded_a["rolling50_task_reward_values"].append(99.0)
-        self.assertEqual(loaded_b["rolling50_task_reward_values"], [])
-        self.assertEqual(_NON_VITAL_TRAINING_STATE_DEFAULTS["rolling50_task_reward_values"], [])
+        loaded_a["rolling50_reward_values"].append(99.0)
+        self.assertEqual(loaded_b["rolling50_reward_values"], [])
+        self.assertEqual(_NON_VITAL_TRAINING_STATE_DEFAULTS["rolling50_reward_values"], [])
 
 
 class ResidualArgsMappingTests(unittest.TestCase):
@@ -190,7 +189,6 @@ class ResidualArgsMappingTests(unittest.TestCase):
 
 def _make_train_args() -> TrainArgs:
     return TrainArgs(
-        action_scale=1.0,
         agent_hidden_layer_size=8,
         agent_num_hidden_layers=1,
         q_hidden_layer_size=8,

@@ -61,7 +61,6 @@ OPTIONAL_SPLIT_DATASETS = (
     # comparison without needing the runtime replay buffer.
     ("policy_action", 2),   # Raw normalized [-1, 1] action executed this step
     ("task_reward", 1),     # Per-step env task reward
-    ("motion_reward", 1),   # Per-step motion-shaping reward (incl. stop penalty)
     ("done", 1),            # Same no-bootstrap done flag stored in replay buffer
 )
 OPTIONAL_ALLOWED_WIDTHS = {

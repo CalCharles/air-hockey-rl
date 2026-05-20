@@ -56,22 +56,23 @@ To direct artifacts to a different location, change **`--data-root-dir`**. The `
 
 ## Sim: `td3_training.py`
 
-Single TensorBoard writer at `log_parent_dir` (`td3_training.py:765`). Two cadences:
+Single TensorBoard writer at `log_parent_dir` (created near the top of `_entrypoint()` in `td3_training.py`). Two cadences:
 
 ### Per-update (every gradient step)
 
-`log_scalar_metrics(...)` (`td3_training.py:1961`, helper at `helper/td3_metrics.py`) writes:
+`log_scalar_metrics(...)` (helper at `helper/td3_metrics.py`; metric bundles built in `helper/td3_loop_logging.py`) writes:
 
 | Group | Scalars |
 |------|---------|
-| `losses/` | `q_loss`, `q_total_loss`, `actor_loss`, `actor_norm_q_mean` |
+| `losses/` | `q_loss`, `q_total_loss`, `q1_mean`, `actor_loss`, `actor_norm_q_mean` (plus `q{i}_mean` / `q_min_mean` / `q_mean_mean` when `num_critics > 2`) |
+| `debug/` | `bellman_target_original_mean`, `next_q_h_mean` |
 | Sampled-batch reward stats | `sampled_reward_mean/std/min`, `sampled_reward_positive_count/fraction/mean/std` |
 | Replay state | PER importance-weight stats, priority TD-error means, success/failure buffer sizes, episode-window counts |
 | `charts/` | `exploration_primitive_chance`, `SPS` |
 
-### Every 500 env steps (`td3_training.py:1967`)
+### Every 500 env steps
 
-Console print + TB scalars:
+`write_periodic_episode_stats` (`helper/td3_loop_logging.py`) emits console print + TB scalars:
 
 | Scalar | Console prefix | What it is |
 |--------|---------------|------------|
@@ -84,13 +85,13 @@ Console print + TB scalars:
 
 ### Eval loop & artifacts
 
-Every `checkpoint_interval` (`td3_training.py:2133–2222`):
+Every `checkpoint_interval`:
 
 - `evaluate_agent(n_eps=4, n_gifs=1)` — held-out rollouts in a separate eval env
-- Live training-episode GIFs are written separately to `samples/step_*.gif` at `sample_gif_interval` (real trajectories with exploration noise + primitives applied)
+- Live training-episode GIFs are written separately to `samples/step_*.gif` at `sample_gif_interval` (real trajectories with exploration noise + primitives applied; recorded by `helper/td3_gif_recorder.py`)
 - Model checkpoint (`actor.pth`, critics, full training state)
 
-Final eval at script end: `td3_training.py:2291–2299`.
+Final eval runs at script end (`evaluate_agent(...)` call in `_entrypoint`).
 
 ### Practical: scalars to watch first
 

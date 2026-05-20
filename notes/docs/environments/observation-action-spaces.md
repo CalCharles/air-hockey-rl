@@ -26,7 +26,7 @@ Named slice indices used by **training code** (reward shaping; not part of the p
 | `[12:14]` | current paddle position (x, y) | `extract_current_paddle_position` |
 | `[15:17]` | oldest puck position (t-4) | velocity estimate denominator |
 | `[27:29]` | current puck position (x, y) | `extract_current_puck_position` |
-| `[27:29] − [15:17]` | estimated puck velocity (proxy) — **used by reward shaping (`velocity_reward_from_magnitude`, `jerk_reward_from_magnitude`); NOT inserted into the obs vector seen by the actor/critic.** The policy reads only the raw 30 (or 32) dims and is expected to learn its own velocity sense from the position history. | `extract_current_puck_velocity` (`td3_training.py:333`) |
+| `[27:29] − [15:17]` | estimated puck velocity (proxy) — extracted by the training script but **not** inserted into the obs vector seen by the actor/critic. The policy reads only the raw 30 (or 32) dims and is expected to learn its own velocity sense from the position history. (Historical: used to feed motion-reward shaping, removed 2026-05-19.) | `extract_current_puck_velocity` in [`td3_training.py`](../../../scripts/td3/td3_training.py) |
 
 ### Temporal density caveat
 
@@ -52,10 +52,6 @@ Implications:
   same physical puck velocity produces a 2× larger raw delta when the
   history density is 20 Hz (delay-off / real-world) than when it is
   40 Hz (canonical training).
-- The reward-shaping thresholds `velocity_at_one`, `velocity_at_zero`,
-  `jerk_at_one`, `jerk_at_zero` (set in TD3 args) are calibrated for
-  the canonical 40 Hz training density. They are **not** valid as-is
-  for any other density.
 - The canonical `hist2_motion0_v2`-style training therefore uses a
   history density that does **not** match real-world deployment — a
   silent sim-to-real obs distribution gap independent of any explicit
@@ -131,7 +127,7 @@ The raw target is then:
 
 ### Training-level scaling
 
-`action_scale: 1.0` in all current TD3 configs — no additional RL-level scaling. The `DeterministicAgent` outputs values in `[-1, 1]` via `tanh`; these pass directly to `env.step`.
+No additional RL-level scaling. `DeterministicAgent` outputs values in `[-1, 1]` via `tanh` (its `action_scale`/`action_bias` buffers are hardcoded to 1.0/0.0); these pass directly to `env.step`. Residual policies wrap a frozen base actor with a fresh head whose `action_scale` is the `residual_scale` arg.
 
 ### Boundary enforcement
 

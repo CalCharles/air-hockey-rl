@@ -28,7 +28,7 @@ obs -> ResidualMLPTrunk -> Linear (actor_mean_head) -> tanh -> scale + bias -> a
 ```
 
 - Input: observation vector (optionally augmented with last action)
-- Output: continuous action in `[-action_scale + bias, action_scale + bias]`
+- Output: continuous action in `[-1, 1]` (the `action_scale`/`action_bias` buffers are hardcoded to 1.0/0.0 for the canonical 2D action space; residual policies use `residual_scale` as the head's `action_scale`).
 - The `actor` and `actor_mean_head` attribute names are intentionally compatible with the stochastic `Agent` class, allowing direct weight transfer between PPO-trained and TD3 policies.
 
 | Parameter | Default | Role |

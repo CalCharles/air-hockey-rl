@@ -63,7 +63,7 @@ Current code stores **only** `dones`, with the **critic** semantics above (same 
 
 All three variants invoke the same entrypoint and require two YAML files:
 
-- `--train-args <train_run>/args.yaml` — training-run args.yaml. Supplies architecture only (`agent_hidden_layer_size`, `agent_num_hidden_layers`, `q_hidden_layer_size`, `q_num_hidden_layers`, `action_scale`, `use_last_action_in_policy_state`). Not CLI-overridable.
+- `--train-args <train_run>/args.yaml` — training-run args.yaml. Supplies architecture only (`agent_hidden_layer_size`, `agent_num_hidden_layers`, `q_hidden_layer_size`, `q_num_hidden_layers`, `use_last_action_in_policy_state`). Not CLI-overridable. (Legacy `action_scale` in the file is accepted but ignored — `action_scale` is hardcoded to 1.0 throughout the pipeline.)
 - `--args-file` — online-behavior defaults (typically [`td3_residual.yaml`](../../../../configs/td3_real_world/td3_residual.yaml)). CLI flags override. Only canonical field names are accepted (legacy aliases `agent_hidden_size`, `q_hidden_size`, `learning_starts`, `device` are no longer remapped). Architecture fields in this file are ignored.
 
 Mirrored in the top-level [README](../../../../README.md) under "TD3 Real-World Commands".
