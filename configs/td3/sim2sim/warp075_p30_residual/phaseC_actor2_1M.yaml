@@ -65,11 +65,8 @@ action_scale: 1.0
 h_transform_eps: 0.001
 agent_hidden_layer_size: 64
 agent_num_hidden_layers: 2
-agent_hidden_size: null
 q_hidden_layer_size: 64
 q_num_hidden_layers: 2
-q_hidden_size: null
 use_last_action_in_policy_state: true
 cql_alpha: 20.0
 cql_n_random: 10
-residual_action_l2: 0.0

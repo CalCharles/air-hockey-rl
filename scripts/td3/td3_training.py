@@ -8,8 +8,6 @@ Compared to SAC+AMP:
 - twin critics with separate task and motion heads in transformed space
 """
 
-import copy
-import math
 import os
 import random
 import time
@@ -32,8 +30,9 @@ from torch.utils.tensorboard import SummaryWriter
 from airhockey import AirHockeyEnv
 from airhockey.renderers import AirHockeyRenderer
 from scripts.td3.deterministic_agent import DeterministicAgent
-from scripts.td3.residual_agent import ResidualActor, zero_init_residual_head
 from scripts.td3.helper.q_network import TD3QNetwork
+from scripts.td3.helper.td3_cql import cql_penalty, precompute_cql_terms
+from scripts.td3.helper.td3_residual import build_residual_training
 from scripts.td3.helper.exploration_selector import (
     PrimitiveExplorationSelector,
 )
@@ -43,9 +42,7 @@ from scripts.td3.helper.prioritized_replay_buffer import (
 )
 from scripts.td3.helper.td3_checkpointing import (
     build_training_state,
-    load_fine_tune_optimizer_state,
     load_resume_training_state,
-    seed_fine_tune_replay_from_source,
 )
 from scripts.td3.helper.td3_episode_collection import (
     EpisodeTrajectory,
@@ -92,124 +89,6 @@ def deterministic_actor_action(actor, policy_obs):
     if hasattr(actor, "get_action"):
         return actor.get_action(policy_obs)
     raise TypeError(f"Unsupported actor type for deterministic action: {type(actor)}")
-
-
-def save_training_data_like_rollout_gif(
-    save_path: str,
-    env_params: Dict[str, object],
-    actor,
-    action_low: torch.Tensor,
-    action_high: torch.Tensor,
-    use_last_action_in_policy_state: bool,
-    exploration_noise: float,
-    primitive_selector: PrimitiveExplorationSelector,
-    max_timesteps: int,
-    fps: int,
-    device: str,
-) -> None:
-    viz_env = AirHockeyEnv(dict(env_params))
-    viz_env.max_timesteps = int(max_timesteps)
-    renderer = AirHockeyRenderer(viz_env, show_target_position=True, show_acceleration_arrow=False)
-
-    obs, _ = viz_env.reset()
-    obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
-    act_dim = int(np.prod(viz_env.action_space.shape))
-    last_action_for_policy = torch.zeros((1, act_dim), dtype=torch.float32, device=device)
-    action_low_single = action_low.unsqueeze(0)
-    action_high_single = action_high.unsqueeze(0)
-
-    rollout_selector = PrimitiveExplorationSelector(
-        num_envs=1,
-        chance=float(primitive_selector.chance),
-        takeover_steps=int(primitive_selector.takeover_steps),
-        device=device,
-        dtype=torch.float32,
-        direction_y_component_weight=float(primitive_selector.direction_y_component_weight),
-        target_min_distance=float(primitive_selector.target_min_distance),
-        target_max_distance=float(primitive_selector.target_max_distance),
-        target_action_delta_x=float(primitive_selector.target_action_delta_x),
-        target_action_delta_y=float(primitive_selector.target_action_delta_y),
-        target_takeover_steps=int(primitive_selector.target_takeover_steps),
-    )
-    primitive_weights = primitive_selector.primitive_weights.detach().cpu().numpy()
-    rollout_selector.set_primitive_weights(
-        stand_still=float(primitive_weights[0]),
-        same_direction=float(primitive_weights[1]),
-        y_aligned=float(primitive_weights[2]),
-        target_position_directional=float(primitive_weights[3]),
-    )
-
-    frames = []
-    rew = 0.0
-    cum_rew = 0.0
-    done = False
-    previous_puck_position = extract_current_puck_position(obs_tensor).clone()
-    while not done and len(frames) < int(max_timesteps):
-        frame = renderer.get_frame()
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        aspect_ratio = frame.shape[1] / frame.shape[0]
-        frame = cv2.resize(frame, (160, int(160 / aspect_ratio)))
-        cv2.putText(
-            frame,
-            f"Reward: {rew:.2f}",
-            (frame.shape[1] - 150, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (0, 0, 0),
-            2,
-        )
-        cv2.putText(
-            frame,
-            f"Return: {cum_rew:.2f}",
-            (frame.shape[1] - 150, 60),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (0, 0, 0),
-            2,
-        )
-        frames.append(frame)
-
-        with torch.no_grad():
-            policy_obs = augment_policy_observation(
-                obs_tensor, last_action_for_policy, use_last_action_in_policy_state
-            )
-            action_tensor = deterministic_actor_action(actor, policy_obs)
-            if exploration_noise > 0:
-                action_tensor = action_tensor + torch.randn_like(action_tensor) * float(exploration_noise)
-            action_tensor = torch.clamp(action_tensor, action_low_single, action_high_single)
-
-            current_paddle_pos = extract_current_paddle_position(obs_tensor)
-            current_puck_pos = extract_current_puck_position(obs_tensor)
-            current_puck_vel = extract_current_puck_velocity(obs_tensor)
-            if torch.all(current_puck_vel == 0):
-                current_puck_vel = current_puck_pos - previous_puck_position
-            y_alignment_sign = torch.sign(current_puck_pos[:, 1] - current_paddle_pos[:, 1])
-            action_tensor, _ = rollout_selector.apply(
-                action_tensor,
-                action_low=action_low_single,
-                action_high=action_high_single,
-                y_alignment_sign=y_alignment_sign,
-                current_paddle_position=current_paddle_pos,
-                current_puck_position=current_puck_pos,
-                current_puck_velocity=current_puck_vel,
-                return_stats=True,
-            )
-
-        action_np = action_tensor.squeeze(0).detach().cpu().numpy()
-        next_obs, rew, terminated, truncated, _ = viz_env.step(action_np)
-        done = bool(terminated or truncated)
-        cum_rew += float(rew)
-        obs_tensor = torch.tensor(next_obs, dtype=torch.float32, device=device).unsqueeze(0)
-        previous_puck_position = extract_current_puck_position(obs_tensor).clone()
-        done_tensor = torch.tensor([done], dtype=torch.bool, device=device)
-        rollout_selector.reset(done_tensor)
-        last_action_for_policy = action_tensor.clone()
-        if done:
-            last_action_for_policy.zero_()
-
-    duration_ms = int(1000 * 1 / max(int(fps), 1))
-    imageio.mimsave(save_path, frames, format="GIF", loop=0, duration=duration_ms)
-    viz_env.close()
 
 
 def extract_deterministic_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -416,55 +295,22 @@ class Args:
     # Full checkpoint load behavior when model_path points to a training-state dict.
     # - "full_resume": restore full training runtime state (legacy/default behavior)
     # - "weights_only": restore actor/Q networks only, keep runtime fresh
-    # - "fine_tune": restore actor/Q networks + optimizer states, keep runtime fresh
     # - "residual": load source actor as frozen base, build fresh residual + fresh critic
-    # Note: optimizer state restore may overwrite optimizer param-group values such as lr.
-    full_checkpoint_load: Literal["full_resume", "weights_only", "fine_tune", "residual"] = "full_resume"
+    full_checkpoint_load: Literal["full_resume", "weights_only", "residual"] = "full_resume"
     # Residual RL: max magnitude of the residual action component (used when
     # full_checkpoint_load=="residual"). Combined action is clipped to the env
     # action bounds, so residual_scale > 0 caps |residual|_inf via tanh.
     residual_scale: float = 0.25
-    # Residual RL drift fixes:
-    #   residual_weight_decay: L2 weight decay on the residual actor's parameters
-    #     (Adam weight_decay). Default 0 = no extra penalty. Setting > 0 keeps the
-    #     residual head close to zero even when the critic encourages large
-    #     corrections — directly counteracts the long-horizon drift observed at
-    #     residual_scale=0.15. Reasonable values: 1e-3 (mild), 1e-2 (strong).
+    # L2 weight decay on the residual actor's parameters (Adam weight_decay).
+    # > 0 keeps the residual head close to zero even when the critic encourages
+    # large corrections — counteracts long-horizon drift at residual_scale=0.15.
     residual_weight_decay: float = 0.0
-    #   residual_scale_end: if not None, the residual_scale at end of training.
-    #     Linearly anneals residual_scale → residual_scale_end over total_timesteps.
-    #     Lets the head learn corrections at high scale early then constrains them
-    #     to protect against drift late. Implemented by mutating the buffers on the
-    #     ResidualActor (online + target) at every env step.
-    residual_scale_end: float | None = None
-    #   residual_ema_decay: if not None, maintain an exponential-moving-average
-    #     copy of the residual actor's parameters, updated each actor gradient
-    #     step (`p_ema = decay*p_ema + (1-decay)*p`). Saved alongside each
-    #     checkpoint as `model_ema.pth`. Lets us deploy an averaged "smoothed"
-    #     residual that doesn't track the per-checkpoint volatility of the
-    #     online actor, addressing post-peak drift operationally rather than
-    #     preventing it. Reasonable values: 0.999 (1k-step window), 0.9999
-    #     (10k-step), 0.99999 (100k-step).
-    residual_ema_decay: float | None = None
-    #   residual_action_l2: if > 0, add `lambda * mean(residual_action^2)` to the
-    #     actor loss in residual mode. Penalizes the *output* of the residual head
-    #     directly (vs. residual_weight_decay which penalizes parameters). More
-    #     direct counter to drift: pulls residual outputs toward zero so the
-    #     wrapped policy stays close to the frozen base.
-    residual_action_l2: float = 0.0
     # CQL (Kumar et al. 2020): conservative-Q penalty on critic loss.
     # If cql_alpha > 0, add `cql_alpha * (logsumexp_a Q(s,a) - Q(s, pi(s)))` to
-    # each critic's task-head loss. logsumexp is approximated by sampling
-    # `cql_n_random` uniform actions in [-1,1]^act_dim per state. Pushes Q down
-    # for OOD actions while keeping Q up for the policy's action — the canonical
-    # fix for the Q-overestimation drift mechanism §8.13 documented.
+    # each critic's loss. logsumexp is approximated by sampling `cql_n_random`
+    # uniform actions in [-1,1]^act_dim per state.
     cql_alpha: float = 0.0
     cql_n_random: int = 10
-    # Fine-tune replay seeding: when full_checkpoint_load=="fine_tune", how many
-    # samples (total, split proportionally between success/failure) to subsample
-    # from the source replay buffer into the fresh target buffers. None or 0
-    # disables seeding (current default behavior).
-    fine_tune_replay_keep: int | None = None
     log_parent_dir: str | None = None
     run_name: str = "default"
 
@@ -477,10 +323,8 @@ class Args:
     # Agent/critic architecture
     agent_hidden_layer_size: int = 64
     agent_num_hidden_layers: int = 2
-    agent_hidden_size: int | None = None
     q_hidden_layer_size: int = 128
     q_num_hidden_layers: int = 2
-    q_hidden_size: int | None = None
 
     # Policy state options
     use_last_action_in_policy_state: bool = False
@@ -525,6 +369,67 @@ def make_env(env_id):
     return _thunk
 
 
+def validate_args(args: "Args") -> None:
+    """Range / mutual-exclusion checks for args; raises ValueError on misconfig."""
+    def _positive(name: str, value: float) -> None:
+        if value <= 0:
+            raise ValueError(f"{name} must be > 0.")
+
+    def _fraction(name: str, value: float, *, exclusive: bool = False) -> None:
+        lo_ok = 0.0 < value if exclusive else 0.0 <= value
+        hi_ok = value < 1.0 if exclusive else value <= 1.0
+        if not (lo_ok and hi_ok):
+            bracket = "(0, 1)" if exclusive else "[0, 1]"
+            raise ValueError(f"{name} must be in {bracket}, got {value}.")
+
+    def _sums_to_one(name1: str, name2: str, v1: float, v2: float) -> None:
+        total = float(v1 + v2)
+        if abs(total - 1.0) > 1e-6:
+            raise ValueError(f"{name1} + {name2} must equal 1.0, got {total:.6f}.")
+
+    if args.num_envs != 1:
+        raise ValueError(
+            "This training script currently supports only single-environment collection. "
+            f"Set num_envs=1, got {args.num_envs}."
+        )
+    _fraction("critic_per_fraction", args.critic_per_fraction)
+    _fraction("critic_uniform_fraction", args.critic_uniform_fraction)
+    _sums_to_one(
+        "critic_per_fraction", "critic_uniform_fraction",
+        args.critic_per_fraction, args.critic_uniform_fraction,
+    )
+    _positive("success_buffer_size", args.success_buffer_size)
+    _positive("failure_buffer_size", args.failure_buffer_size)
+    _positive("recent_episode_window_size", args.recent_episode_window_size)
+    _fraction("success_top_fraction", args.success_top_fraction, exclusive=True)
+    _fraction("critic_success_sample_fraction", args.critic_success_sample_fraction)
+    _fraction("critic_failure_sample_fraction", args.critic_failure_sample_fraction)
+    _sums_to_one(
+        "critic_success_sample_fraction", "critic_failure_sample_fraction",
+        args.critic_success_sample_fraction, args.critic_failure_sample_fraction,
+    )
+    _positive("q_updates", args.q_updates)
+    _positive("target_network_frequency", args.target_network_frequency)
+    _positive("actor_updates_per_iteration", args.actor_updates_per_iteration)
+    if args.target_network_frequency > args.q_updates:
+        # The Polyak gate counts completed critic updates globally (see
+        # total_critic_updates), so this still fires — just less often than
+        # once per cycle. Loud warning since it's almost always a config typo.
+        print(
+            f"[warn] target_network_frequency ({args.target_network_frequency}) "
+            f"> q_updates ({args.q_updates}); target nets will update less than "
+            f"once per training cycle."
+        )
+    for name in ("same_direction", "y_aligned", "target_position_directional"):
+        validate_optional_exploration_range(
+            primitive_name=name,
+            min_angle_deg=getattr(args, f"exploration_{name}_min_angle_deg"),
+            max_angle_deg=getattr(args, f"exploration_{name}_max_angle_deg"),
+            min_magnitude=getattr(args, f"exploration_{name}_min_magnitude"),
+            max_magnitude=getattr(args, f"exploration_{name}_max_magnitude"),
+        )
+
+
 def enforce_sample_storage_cap(samples_dir: str, max_mb: float) -> None:
     files = sorted(
         [os.path.join(samples_dir, f) for f in os.listdir(samples_dir) if f.endswith(".gif")],
@@ -553,80 +458,7 @@ def _entrypoint():
         default_args = Args()
 
     args = tyro.cli(Args, default=default_args)
-    if args.num_envs != 1:
-        raise ValueError(
-            "This training script currently supports only single-environment collection. "
-            f"Set num_envs=1, got {args.num_envs}."
-        )
-    if args.agent_hidden_size is not None:
-        args.agent_hidden_layer_size = int(args.agent_hidden_size)
-    if args.q_hidden_size is not None:
-        args.q_hidden_layer_size = int(args.q_hidden_size)
-    if not (0.0 <= args.critic_per_fraction <= 1.0):
-        raise ValueError("critic_per_fraction must be between 0 and 1.")
-    if not (0.0 <= args.critic_uniform_fraction <= 1.0):
-        raise ValueError("critic_uniform_fraction must be between 0 and 1.")
-    critic_mix_sum = float(args.critic_per_fraction + args.critic_uniform_fraction)
-    if abs(critic_mix_sum - 1.0) > 1e-6:
-        raise ValueError(
-            f"critic_per_fraction + critic_uniform_fraction must equal 1.0, got {critic_mix_sum:.6f}."
-        )
-    if args.success_buffer_size <= 0:
-        raise ValueError("success_buffer_size must be > 0.")
-    if args.failure_buffer_size <= 0:
-        raise ValueError("failure_buffer_size must be > 0.")
-    if args.recent_episode_window_size <= 0:
-        raise ValueError("recent_episode_window_size must be > 0.")
-    if not (0.0 < args.success_top_fraction < 1.0):
-        raise ValueError("success_top_fraction must be between 0 and 1 (exclusive).")
-    if not (0.0 <= args.critic_success_sample_fraction <= 1.0):
-        raise ValueError("critic_success_sample_fraction must be between 0 and 1.")
-    if not (0.0 <= args.critic_failure_sample_fraction <= 1.0):
-        raise ValueError("critic_failure_sample_fraction must be between 0 and 1.")
-    success_failure_mix_sum = float(
-        args.critic_success_sample_fraction + args.critic_failure_sample_fraction
-    )
-    if abs(success_failure_mix_sum - 1.0) > 1e-6:
-        raise ValueError(
-            "critic_success_sample_fraction + critic_failure_sample_fraction must equal 1.0, "
-            f"got {success_failure_mix_sum:.6f}."
-        )
-    if args.q_updates <= 0:
-        raise ValueError("q_updates must be > 0.")
-    if args.target_network_frequency <= 0:
-        raise ValueError("target_network_frequency must be > 0.")
-    if args.actor_updates_per_iteration <= 0:
-        raise ValueError("actor_updates_per_iteration must be > 0.")
-    if args.target_network_frequency > args.q_updates:
-        # The Polyak gate counts completed critic updates globally (see
-        # total_critic_updates), so this still fires — just less often than once
-        # per cycle. Loud warning anyway since it's almost always a config typo.
-        print(
-            f"[warn] target_network_frequency ({args.target_network_frequency}) "
-            f"> q_updates ({args.q_updates}); target nets will update less than "
-            f"once per training cycle."
-        )
-    validate_optional_exploration_range(
-        primitive_name="same_direction",
-        min_angle_deg=args.exploration_same_direction_min_angle_deg,
-        max_angle_deg=args.exploration_same_direction_max_angle_deg,
-        min_magnitude=args.exploration_same_direction_min_magnitude,
-        max_magnitude=args.exploration_same_direction_max_magnitude,
-    )
-    validate_optional_exploration_range(
-        primitive_name="y_aligned",
-        min_angle_deg=args.exploration_y_aligned_min_angle_deg,
-        max_angle_deg=args.exploration_y_aligned_max_angle_deg,
-        min_magnitude=args.exploration_y_aligned_min_magnitude,
-        max_magnitude=args.exploration_y_aligned_max_magnitude,
-    )
-    validate_optional_exploration_range(
-        primitive_name="target_position_directional",
-        min_angle_deg=args.exploration_target_position_directional_min_angle_deg,
-        max_angle_deg=args.exploration_target_position_directional_max_angle_deg,
-        min_magnitude=args.exploration_target_position_directional_min_magnitude,
-        max_magnitude=args.exploration_target_position_directional_max_magnitude,
-    )
+    validate_args(args)
 
     # `config` must be a MODULE-LEVEL name because the module-level
     # `make_env(env_id)._thunk` closure (line ~661) reads it as a free
@@ -748,7 +580,7 @@ def _entrypoint():
     qf1_target, qf2_target = qfs_target[0], qfs_target[1]
     resume_checkpoint = None
     checkpoint_load_mode = args.full_checkpoint_load
-    actor_ema = None  # set below in residual mode if args.residual_ema_decay is not None
+    residual_actor_optimizer: optim.Optimizer | None = None
 
     if args.model_path is not None:
         if not os.path.exists(args.model_path):
@@ -765,70 +597,27 @@ def _entrypoint():
                 )
             base_state = loaded_obj["actor"] if is_full_state else loaded_obj
             actor.load_state_dict(extract_deterministic_state_dict(base_state), strict=False)
-            residual_online = DeterministicAgent(
-                policy_env_view,
-                action_scale=args.residual_scale,
-                action_bias=0.0,
-                hidden_layer_size=args.agent_hidden_layer_size,
-                num_hidden_layers=args.agent_num_hidden_layers,
-            ).to(args.device)
-            residual_target = DeterministicAgent(
-                policy_env_view,
-                action_scale=args.residual_scale,
-                action_bias=0.0,
-                hidden_layer_size=args.agent_hidden_layer_size,
-                num_hidden_layers=args.agent_num_hidden_layers,
-            ).to(args.device)
-            zero_init_residual_head(residual_online)
-            zero_init_residual_head(residual_target)
-            residual_target.load_state_dict(residual_online.state_dict())
-            residual_action_low = torch.as_tensor(
+            action_low_tensor = torch.as_tensor(
                 envs.single_action_space.low, dtype=torch.float32, device=args.device
             )
-            residual_action_high = torch.as_tensor(
+            action_high_tensor = torch.as_tensor(
                 envs.single_action_space.high, dtype=torch.float32, device=args.device
             )
-            actor = ResidualActor(
+            actor, actor_target, residual_actor_optimizer = build_residual_training(
                 base_actor=actor,
-                residual_actor=residual_online,
-                action_low=residual_action_low,
-                action_high=residual_action_high,
-            ).to(args.device)
-            actor_target = ResidualActor(
-                base_actor=actor.base,
-                residual_actor=residual_target,
-                action_low=residual_action_low,
-                action_high=residual_action_high,
-            ).to(args.device)
-            # Optional EMA copy of the residual for smoothed-checkpoint inference.
-            # Stored as a separate ResidualActor wrapping the same frozen base
-            # plus an EMA-averaged copy of the residual head.
-            actor_ema = None
-            if args.residual_ema_decay is not None:
-                residual_ema = copy.deepcopy(residual_online)
-                for p in residual_ema.parameters():
-                    p.requires_grad_(False)
-                actor_ema = ResidualActor(
-                    base_actor=actor.base,
-                    residual_actor=residual_ema,
-                    action_low=residual_action_low,
-                    action_high=residual_action_high,
-                ).to(args.device)
-                print(
-                    f"Residual EMA: decay={args.residual_ema_decay} — "
-                    f"saving model_ema.pth alongside each checkpoint"
-                )
-            print(
-                f"Residual mode: base frozen, residual_scale={args.residual_scale},"
-                " critic from scratch."
+                policy_env_view=policy_env_view,
+                action_low=action_low_tensor,
+                action_high=action_high_tensor,
+                device=args.device,
+                residual_scale=args.residual_scale,
+                residual_weight_decay=args.residual_weight_decay,
+                agent_hidden_layer_size=args.agent_hidden_layer_size,
+                agent_num_hidden_layers=args.agent_num_hidden_layers,
+                policy_lr=args.policy_lr,
             )
         elif is_full_state:
             resume_checkpoint = loaded_obj
             if args.eval_mode:
-                if checkpoint_load_mode == "fine_tune":
-                    raise ValueError(
-                        "full_checkpoint_load='fine_tune' is incompatible with eval_mode=True."
-                    )
                 if checkpoint_load_mode == "full_resume":
                     print(
                         "Deprecation warning: eval_mode with full_checkpoint_load='full_resume' "
@@ -898,58 +687,10 @@ def _entrypoint():
         lr=args.q_lr,
         weight_decay=args.q_weight_decay,
     )
-    if checkpoint_load_mode == "residual":
-        actor_optimizer = optim.Adam(
-            actor.residual.parameters(),
-            lr=args.policy_lr,
-            weight_decay=args.residual_weight_decay,
-        )
-        if args.residual_weight_decay > 0:
-            print(
-                f"Residual actor optimizer: Adam(lr={args.policy_lr}, "
-                f"weight_decay={args.residual_weight_decay}) — residual head L2 active"
-            )
+    if residual_actor_optimizer is not None:
+        actor_optimizer = residual_actor_optimizer
     else:
         actor_optimizer = optim.Adam(actor.parameters(), lr=args.policy_lr)
-    pending_fine_tune_source_replay = None
-    if resume_checkpoint is not None and checkpoint_load_mode == "fine_tune":
-        # When num_critics differs from the source checkpoint, the q_optimizer
-        # has more parameters than the saved state — skip optimizer restore in
-        # that case (only ~learning_starts steps of momentum lost; negligible).
-        n_ckpt_critics = sum(
-            1
-            for k in resume_checkpoint
-            if k.startswith("qf") and not k.endswith("_target") and k[2:].isdigit()
-        )
-        skip_q_optimizer = n_ckpt_critics != args.num_critics
-        if skip_q_optimizer:
-            print(
-                f"Skipping q_optimizer state restore (ckpt has {n_ckpt_critics} critics, "
-                f"args.num_critics={args.num_critics}); only restoring actor_optimizer."
-            )
-            actor_optimizer.load_state_dict(resume_checkpoint["actor_optimizer"])
-        else:
-            load_fine_tune_optimizer_state(
-                resume_checkpoint,
-                q_optimizer=q_optimizer,
-                actor_optimizer=actor_optimizer,
-            )
-        # Optimizer state restore overwrites param-group lr from the source's value.
-        # Re-apply current args lrs so config knobs take effect during FT.
-        for pg in actor_optimizer.param_groups:
-            pg["lr"] = float(args.policy_lr)
-        for pg in q_optimizer.param_groups:
-            pg["lr"] = float(args.q_lr)
-        if args.fine_tune_replay_keep:
-            pending_fine_tune_source_replay = {
-                "success": resume_checkpoint.get("success_replay_buffer"),
-                "failure": resume_checkpoint.get("failure_replay_buffer"),
-            }
-        resume_checkpoint = None
-        print(
-            f"Fine-tune load enabled: restored optimizer state, lrs reset to "
-            f"policy_lr={args.policy_lr}, q_lr={args.q_lr}; skipping replay/runtime resume."
-        )
 
     if args.per_enabled:
         success_rb = TD3PrioritizedReplayBuffer(
@@ -996,21 +737,6 @@ def _entrypoint():
             "✓ TD3 replay buffers initialized "
             f"(success_capacity={args.success_buffer_size:,}, "
             f"failure_capacity={args.failure_buffer_size:,})\n"
-        )
-
-    if pending_fine_tune_source_replay is not None and args.fine_tune_replay_keep:
-        kept = seed_fine_tune_replay_from_source(
-            success_rb=success_rb,
-            failure_rb=failure_rb,
-            source_success=pending_fine_tune_source_replay["success"],
-            source_failure=pending_fine_tune_source_replay["failure"],
-            keep_total=int(args.fine_tune_replay_keep),
-            seed=args.seed,
-        )
-        print(
-            f"Fine-tune replay seeded: success_kept={kept['success_kept']}, "
-            f"failure_kept={kept['failure_kept']} "
-            f"(target keep_total={int(args.fine_tune_replay_keep)})"
         )
 
     obs, _ = envs.reset(seed=args.seed)
@@ -1150,25 +876,60 @@ def _entrypoint():
         rolling_episode_stats_window = restored_state["rolling_episode_stats_window"]
         print(f"Resuming training from global_step={global_step}, iteration={iteration}")
 
+    def save_full_checkpoint(out_dir: str) -> str:
+        os.makedirs(out_dir, exist_ok=True)
+        with open(f"{out_dir}/config.yaml", "w") as f:
+            yaml.dump(config, f)
+        with open(f"{out_dir}/args.yaml", "w") as f:
+            yaml.dump(vars(args), f)
+        model_path_local = f"{out_dir}/model.pth"
+        torch.save(actor.state_dict(), model_path_local)
+        torch.save(actor_target.state_dict(), f"{out_dir}/actor_target.pth")
+        for ci, q in enumerate(qfs, start=1):
+            torch.save(q.state_dict(), f"{out_dir}/qf{ci}.pth")
+            torch.save(qfs_target[ci - 1].state_dict(), f"{out_dir}/qf{ci}_target.pth")
+        state = build_training_state(
+            global_step=global_step,
+            iteration=iteration,
+            total_critic_updates=total_critic_updates,
+            actor=actor,
+            actor_target=actor_target,
+            qf1=qf1,
+            qf2=qf2,
+            qf1_target=qf1_target,
+            qf2_target=qf2_target,
+            extra_qfs=qfs[2:] if args.num_critics > 2 else None,
+            extra_qfs_target=qfs_target[2:] if args.num_critics > 2 else None,
+            q_optimizer=q_optimizer,
+            actor_optimizer=actor_optimizer,
+            success_rb=success_rb,
+            failure_rb=failure_rb,
+            primitive_selector=primitive_selector,
+            obs=obs,
+            last_action_for_policy=last_action_for_policy,
+            train_metrics=train_metrics,
+            interval_paddle_puck_collisions=interval_paddle_puck_collisions,
+            interval_env_steps=interval_env_steps,
+            interval_primitive_env_steps=interval_primitive_env_steps,
+            interval_primitive_horizontal_env_steps=interval_primitive_horizontal_env_steps,
+            interval_target_position_directional_env_steps=(
+                interval_target_position_directional_env_steps
+            ),
+            episode_trajectory=episode_trajectory,
+            recent_episode_returns=recent_episode_returns,
+            episode_return_success_threshold=episode_return_success_threshold,
+            rolling_step_stats_window=rolling_step_stats_window,
+            rolling_episode_stats_window=rolling_episode_stats_window,
+            args_dict=vars(args),
+            include_replay_buffer=args.save_replay_buffer,
+        )
+        torch.save(state, f"{out_dir}/training_state.pth")
+        return model_path_local
+
     while global_step < args.total_timesteps:
         should_update_train_metrics = global_step > 0 and np.random.rand() < 0.1
         should_refresh_annealing = (not args.eval_mode) and (np.random.rand() < 0.1)
 
-        # Residual scale annealing: linearly decay residual_scale → residual_scale_end
-        # over total_timesteps. Mutates the action_scale buffer on both online and target
-        # residual actors. No-op unless residual mode is active and residual_scale_end is set.
-        if (
-            checkpoint_load_mode == "residual"
-            and args.residual_scale_end is not None
-            and not args.eval_mode
-        ):
-            frac = min(1.0, max(0.0, global_step / max(1, args.total_timesteps)))
-            current_scale = (
-                args.residual_scale + (args.residual_scale_end - args.residual_scale) * frac
-            )
-            actor.residual.action_scale.fill_(current_scale)
-            actor_target.residual.action_scale.fill_(current_scale)
-        
         if should_refresh_annealing:
             annealing_active = global_step < args.exploration_primitive_chance_anneal_steps
             primitive_selector.chance = primitive_exploration_chance_for_step(args, global_step)
@@ -1525,16 +1286,8 @@ def _entrypoint():
                 qi_h_list = []
                 qi_err_list = []
                 qi_loss_list = []
-                # Pre-compute CQL random actions and policy action once per minibatch.
+                cql_terms = None
                 if args.cql_alpha > 0.0:
-                    bsz = sampled_observations.shape[0]
-                    n_rand = int(args.cql_n_random)
-                    cql_random_actions = torch.empty(
-                        n_rand * bsz, act_dim, device=args.device
-                    ).uniform_(-1.0, 1.0)
-                    cql_obs_repeat = sampled_observations.unsqueeze(0).expand(
-                        n_rand, -1, -1
-                    ).reshape(n_rand * bsz, -1)
                     cql_policy_obs = augment_policy_observation(
                         sampled_observations,
                         sampled_prev_actions,
@@ -1544,20 +1297,22 @@ def _entrypoint():
                         cql_policy_action = deterministic_actor_action(
                             actor, cql_policy_obs
                         )
+                    cql_terms = precompute_cql_terms(
+                        sampled_observations=sampled_observations,
+                        policy_action=cql_policy_action,
+                        act_dim=act_dim,
+                        n_random=int(args.cql_n_random),
+                    )
                 for q in qfs:
                     qi_h = q(sampled_observations, sampled_actions)
                     qi_err = qi_h.view(-1) - next_q_value_h
                     qi_h_list.append(qi_h)
                     qi_err_list.append(qi_err)
                     loss_i = (sampled_weights * qi_err.pow(2)).mean()
-                    if args.cql_alpha > 0.0:
-                        q_rand_h = q(cql_obs_repeat, cql_random_actions).view(n_rand, bsz)
-                        q_pi_h = q(sampled_observations, cql_policy_action).view(-1)
-                        cql_logsumexp = (
-                            torch.logsumexp(q_rand_h, dim=0) - math.log(float(n_rand))
+                    if cql_terms is not None:
+                        loss_i = loss_i + args.cql_alpha * cql_penalty(
+                            q, sampled_observations, cql_terms
                         )
-                        cql_penalty = (cql_logsumexp - q_pi_h).mean()
-                        loss_i = loss_i + args.cql_alpha * cql_penalty
                     qi_loss_list.append(loss_i)
                 q1_h = qi_h_list[0]
 
@@ -1695,22 +1450,9 @@ def _entrypoint():
                 q1 = h_inverse(q1_h, eps=args.h_transform_eps).view(-1)
                 norm_q = (1.0 - args.gamma) * q1
                 actor_loss = -norm_q.mean()
-                if (
-                    checkpoint_load_mode == "residual"
-                    and args.residual_action_l2 > 0.0
-                ):
-                    residual_action = actor.residual.get_action(sampled_policy_observations)
-                    actor_loss = actor_loss + args.residual_action_l2 * (residual_action ** 2).mean()
                 actor_optimizer.zero_grad()
                 actor_loss.backward()
                 actor_optimizer.step()
-                if actor_ema is not None:
-                    decay = args.residual_ema_decay
-                    with torch.no_grad():
-                        for p_ema, p_online in zip(
-                            actor_ema.residual.parameters(), actor.residual.parameters()
-                        ):
-                            p_ema.data.mul_(decay).add_(p_online.data, alpha=1.0 - decay)
                 if should_update_train_metrics and actor_update_idx == args.actor_updates_per_iteration - 1:
                     train_metrics.update(
                         {
@@ -1865,55 +1607,7 @@ def _entrypoint():
 
         if global_step > 0 and global_step % args.checkpoint_interval == 0:
             checkpoint_dir = os.path.join(log_parent_dir, f"checkpoint_{global_step}")
-            os.makedirs(checkpoint_dir, exist_ok=True)
-            with open(f"{checkpoint_dir}/config.yaml", "w") as f:
-                yaml.dump(config, f)
-            with open(f"{checkpoint_dir}/args.yaml", "w") as f:
-                yaml.dump(vars(args), f)
-            model_path = f"{checkpoint_dir}/model.pth"
-            torch.save(actor.state_dict(), model_path)
-            torch.save(actor_target.state_dict(), f"{checkpoint_dir}/actor_target.pth")
-            if actor_ema is not None:
-                torch.save(actor_ema.state_dict(), f"{checkpoint_dir}/model_ema.pth")
-            for ci, q in enumerate(qfs, start=1):
-                torch.save(q.state_dict(), f"{checkpoint_dir}/qf{ci}.pth")
-                torch.save(qfs_target[ci - 1].state_dict(), f"{checkpoint_dir}/qf{ci}_target.pth")
-            training_state = build_training_state(
-                global_step=global_step,
-                iteration=iteration,
-                total_critic_updates=total_critic_updates,
-                actor=actor,
-                actor_target=actor_target,
-                qf1=qf1,
-                qf2=qf2,
-                qf1_target=qf1_target,
-                qf2_target=qf2_target,
-                extra_qfs=qfs[2:] if args.num_critics > 2 else None,
-                extra_qfs_target=qfs_target[2:] if args.num_critics > 2 else None,
-                q_optimizer=q_optimizer,
-                actor_optimizer=actor_optimizer,
-                success_rb=success_rb,
-                failure_rb=failure_rb,
-                primitive_selector=primitive_selector,
-                obs=obs,
-                last_action_for_policy=last_action_for_policy,
-                train_metrics=train_metrics,
-                interval_paddle_puck_collisions=interval_paddle_puck_collisions,
-                interval_env_steps=interval_env_steps,
-                interval_primitive_env_steps=interval_primitive_env_steps,
-                interval_primitive_horizontal_env_steps=interval_primitive_horizontal_env_steps,
-                interval_target_position_directional_env_steps=(
-                    interval_target_position_directional_env_steps
-                ),
-                episode_trajectory=episode_trajectory,
-                recent_episode_returns=recent_episode_returns,
-                episode_return_success_threshold=episode_return_success_threshold,
-                rolling_step_stats_window=rolling_step_stats_window,
-                rolling_episode_stats_window=rolling_episode_stats_window,
-                args_dict=vars(args),
-                include_replay_buffer=args.save_replay_buffer,
-            )
-            torch.save(training_state, f"{checkpoint_dir}/training_state.pth")
+            model_path = save_full_checkpoint(checkpoint_dir)
             print(f"\nCheckpoint saved at step {global_step}")
             try:
                 evaluate_agent(
@@ -1927,19 +1621,6 @@ def _entrypoint():
                     agent_num_hidden_layers=args.agent_num_hidden_layers,
                     use_last_action_in_policy_state=args.use_last_action_in_policy_state,
                 )
-                save_training_data_like_rollout_gif(
-                    save_path=os.path.join(checkpoint_dir, "rollout_data_like_0.gif"),
-                    env_params=config["air_hockey"],
-                    actor=actor,
-                    action_low=action_low,
-                    action_high=action_high,
-                    use_last_action_in_policy_state=args.use_last_action_in_policy_state,
-                    exploration_noise=(0.0 if args.eval_mode else args.exploration_noise),
-                    primitive_selector=primitive_selector,
-                    max_timesteps=200,
-                    fps=20,
-                    device=args.device,
-                )
             except Exception as e:
                 print(f"Evaluation failed: {e}")
 
@@ -1949,47 +1630,7 @@ def _entrypoint():
     envs.close()
 
     if not args.eval_mode:
-        torch.save(actor.state_dict(), f"{log_parent_dir}/model.pth")
-        torch.save(actor_target.state_dict(), f"{log_parent_dir}/actor_target.pth")
-        if actor_ema is not None:
-            torch.save(actor_ema.state_dict(), f"{log_parent_dir}/model_ema.pth")
-        for ci, q in enumerate(qfs, start=1):
-            torch.save(q.state_dict(), f"{log_parent_dir}/qf{ci}.pth")
-            torch.save(qfs_target[ci - 1].state_dict(), f"{log_parent_dir}/qf{ci}_target.pth")
-        final_training_state = build_training_state(
-            global_step=global_step,
-            iteration=iteration,
-            total_critic_updates=total_critic_updates,
-            actor=actor,
-            actor_target=actor_target,
-            qf1=qf1,
-            qf2=qf2,
-            qf1_target=qf1_target,
-            qf2_target=qf2_target,
-            extra_qfs=qfs[2:] if args.num_critics > 2 else None,
-            extra_qfs_target=qfs_target[2:] if args.num_critics > 2 else None,
-            q_optimizer=q_optimizer,
-            actor_optimizer=actor_optimizer,
-            success_rb=success_rb,
-            failure_rb=failure_rb,
-            primitive_selector=primitive_selector,
-            obs=obs,
-            last_action_for_policy=last_action_for_policy,
-            train_metrics=train_metrics,
-            interval_paddle_puck_collisions=interval_paddle_puck_collisions,
-            interval_env_steps=interval_env_steps,
-            interval_primitive_env_steps=interval_primitive_env_steps,
-            interval_primitive_horizontal_env_steps=interval_primitive_horizontal_env_steps,
-            interval_target_position_directional_env_steps=interval_target_position_directional_env_steps,
-            episode_trajectory=episode_trajectory,
-            recent_episode_returns=recent_episode_returns,
-            episode_return_success_threshold=episode_return_success_threshold,
-            rolling_step_stats_window=rolling_step_stats_window,
-            rolling_episode_stats_window=rolling_episode_stats_window,
-            args_dict=vars(args),
-            include_replay_buffer=args.save_replay_buffer,
-        )
-        torch.save(final_training_state, f"{log_parent_dir}/training_state.pth")
+        save_full_checkpoint(log_parent_dir)
     elif args.model_path is None:
         print("Eval mode is enabled without model_path; final evaluate_agent will be skipped.")
 

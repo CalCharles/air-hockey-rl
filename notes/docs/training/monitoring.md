@@ -87,7 +87,7 @@ Console print + TB scalars:
 Every `checkpoint_interval` (`td3_training.py:2133–2222`):
 
 - `evaluate_agent(n_eps=4, n_gifs=1)` — held-out rollouts in a separate eval env
-- `rollout_data_like_0.gif` snapshot from training
+- Live training-episode GIFs are written separately to `samples/step_*.gif` at `sample_gif_interval` (real trajectories with exploration noise + primitives applied)
 - Model checkpoint (`actor.pth`, critics, full training state)
 
 Final eval at script end: `td3_training.py:2291–2299`.
@@ -182,7 +182,8 @@ For rollout-only collection (large `--min-replay-size-before-learning`), the `[c
 <log_parent_dir>/
   events.out.tfevents.*           # TB scalars (single writer)
   rollouts/                       # eval GIFs (n_gifs=1 per checkpoint)
-  rollout_data_like_0.gif         # in-training snapshot
+  watch/                          # ring-buffer GIFs of recent training episodes
+  samples/                        # periodic snapshot GIFs at sample_gif_interval
   *.pth                           # actor / critic / training_state checkpoints
 
 # async_td3_real.py — single unified run folder:

@@ -40,11 +40,6 @@
 #   (eval-all-checkpoints helper script removed; iterate manually if needed.) \
 #     <target_config> cuda:N
 #
-# Optional: add `residual_ema_decay: 0.9999` to also save model_ema.pth
-# (EMA-averaged residual head). EMA model has lower peak but is more
-# stable across the training trajectory — useful as a "safe deploy"
-# fallback.
-#
 # For better statistics, run 3+ seeds and pick the best peak across seeds.
 
 total_timesteps: 100000   # 100k covers the peak window (step 20-60k); past that policy degrades
@@ -143,9 +138,7 @@ h_transform_eps: 0.001
 
 agent_hidden_layer_size: 64
 agent_num_hidden_layers: 2
-agent_hidden_size: null
 q_hidden_layer_size: 64
 q_num_hidden_layers: 2
-q_hidden_size: null
 
 use_last_action_in_policy_state: true

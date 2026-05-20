@@ -112,10 +112,8 @@ h_transform_eps: 0.001
 # Agent / critic architecture (2-layer, 64 hidden — see ablations doc)
 agent_hidden_layer_size: 64
 agent_num_hidden_layers: 2
-agent_hidden_size: null
 q_hidden_layer_size: 64
 q_num_hidden_layers: 2
-q_hidden_size: null
 
 # Policy state options
 use_last_action_in_policy_state: true
