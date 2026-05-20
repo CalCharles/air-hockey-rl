@@ -31,8 +31,7 @@ class SharedReplayPartition:
     next_observations: torch.Tensor
     actions: torch.Tensor
     prev_actions: torch.Tensor
-    task_rewards: torch.Tensor
-    motion_rewards: torch.Tensor
+    rewards: torch.Tensor
     dones: torch.Tensor
     position: mp.Value
     size: mp.Value
@@ -45,16 +44,14 @@ class SharedReplayPartition:
         next_observations = torch.zeros((capacity, *obs_shape), dtype=torch.float32).share_memory_()
         actions = torch.zeros((capacity, *action_shape), dtype=torch.float32).share_memory_()
         prev_actions = torch.zeros((capacity, *action_shape), dtype=torch.float32).share_memory_()
-        task_rewards = torch.zeros((capacity,), dtype=torch.float32).share_memory_()
-        motion_rewards = torch.zeros((capacity,), dtype=torch.float32).share_memory_()
+        rewards = torch.zeros((capacity,), dtype=torch.float32).share_memory_()
         dones = torch.zeros((capacity,), dtype=torch.float32).share_memory_()
         return cls(
             observations=observations,
             next_observations=next_observations,
             actions=actions,
             prev_actions=prev_actions,
-            task_rewards=task_rewards,
-            motion_rewards=motion_rewards,
+            rewards=rewards,
             dones=dones,
             position=mp.Value("i", 0, lock=False),
             size=mp.Value("i", 0, lock=False),
@@ -68,16 +65,14 @@ class SharedReplayPartition:
         next_observations: torch.Tensor,
         actions: torch.Tensor,
         prev_actions: torch.Tensor,
-        task_rewards: torch.Tensor,
-        motion_rewards: torch.Tensor,
+        rewards: torch.Tensor,
         dones: torch.Tensor,
     ) -> int:
         obs = _as_cpu_float_tensor(observations)
         next_obs = _as_cpu_float_tensor(next_observations)
         act = _as_cpu_float_tensor(actions)
         prev_act = _as_cpu_float_tensor(prev_actions)
-        task_rew = _as_cpu_float_tensor(task_rewards).reshape(-1)
-        motion_rew = _as_cpu_float_tensor(motion_rewards).reshape(-1)
+        rew = _as_cpu_float_tensor(rewards).reshape(-1)
         done_vals = _as_cpu_float_tensor(dones).reshape(-1)
 
         batch_size = int(obs.shape[0])
@@ -90,8 +85,7 @@ class SharedReplayPartition:
             next_obs = next_obs[start_idx:]
             act = act[start_idx:]
             prev_act = prev_act[start_idx:]
-            task_rew = task_rew[start_idx:]
-            motion_rew = motion_rew[start_idx:]
+            rew = rew[start_idx:]
             done_vals = done_vals[start_idx:]
             batch_size = self.capacity
 
@@ -104,8 +98,7 @@ class SharedReplayPartition:
             self.next_observations[first_slice] = next_obs[:first_chunk]
             self.actions[first_slice] = act[:first_chunk]
             self.prev_actions[first_slice] = prev_act[:first_chunk]
-            self.task_rewards[first_slice] = task_rew[:first_chunk]
-            self.motion_rewards[first_slice] = motion_rew[:first_chunk]
+            self.rewards[first_slice] = rew[:first_chunk]
             self.dones[first_slice] = done_vals[:first_chunk]
 
             second_chunk = batch_size - first_chunk
@@ -115,8 +108,7 @@ class SharedReplayPartition:
                 self.next_observations[second_slice] = next_obs[first_chunk:]
                 self.actions[second_slice] = act[first_chunk:]
                 self.prev_actions[second_slice] = prev_act[first_chunk:]
-                self.task_rewards[second_slice] = task_rew[first_chunk:]
-                self.motion_rewards[second_slice] = motion_rew[first_chunk:]
+                self.rewards[second_slice] = rew[first_chunk:]
                 self.dones[second_slice] = done_vals[first_chunk:]
 
             self.position.value = (position + batch_size) % self.capacity
@@ -137,8 +129,7 @@ class SharedReplayPartition:
                 "next_observations": self.next_observations[indices].clone(),
                 "actions": self.actions[indices].clone(),
                 "prev_actions": self.prev_actions[indices].clone(),
-                "task_rewards": self.task_rewards[indices].clone(),
-                "motion_rewards": self.motion_rewards[indices].clone(),
+                "rewards": self.rewards[indices].clone(),
                 "dones": self.dones[indices].clone(),
             }
 
@@ -158,8 +149,7 @@ class SharedReplayPartition:
                 "next_observations": self.next_observations[:size].clone(),
                 "actions": self.actions[:size].clone(),
                 "prev_actions": self.prev_actions[:size].clone(),
-                "task_rewards": self.task_rewards[:size].clone(),
-                "motion_rewards": self.motion_rewards[:size].clone(),
+                "rewards": self.rewards[:size].clone(),
                 "dones": self.dones[:size].clone(),
                 "position": int(position),
                 "size": int(size),
@@ -171,8 +161,11 @@ class SharedReplayPartition:
         next_observations = _as_cpu_float_tensor(state["next_observations"])
         actions = _as_cpu_float_tensor(state["actions"])
         prev_actions = _as_cpu_float_tensor(state["prev_actions"])
-        task_rewards = _as_cpu_float_tensor(state["task_rewards"]).reshape(-1)
-        motion_rewards = _as_cpu_float_tensor(state["motion_rewards"]).reshape(-1)
+        if "rewards" in state:
+            rewards = _as_cpu_float_tensor(state["rewards"]).reshape(-1)
+        else:
+            # Old checkpoints stored separate task / motion reward channels.
+            rewards = _as_cpu_float_tensor(state["task_rewards"]).reshape(-1)
         # Prefer legacy bootstrap_terminals (critic mask) when present; else td3_training-style dones.
         dones_raw = state.get("bootstrap_terminals", state["dones"])
         dones = _as_cpu_float_tensor(dones_raw).reshape(-1)
@@ -193,16 +186,14 @@ class SharedReplayPartition:
             self.next_observations.zero_()
             self.actions.zero_()
             self.prev_actions.zero_()
-            self.task_rewards.zero_()
-            self.motion_rewards.zero_()
+            self.rewards.zero_()
             self.dones.zero_()
             if size > 0:
                 self.observations[:size] = observations[:size]
                 self.next_observations[:size] = next_observations[:size]
                 self.actions[:size] = actions[:size]
                 self.prev_actions[:size] = prev_actions[:size]
-                self.task_rewards[:size] = task_rewards[:size]
-                self.motion_rewards[:size] = motion_rewards[:size]
+                self.rewards[:size] = rewards[:size]
                 self.dones[:size] = dones[:size]
             self.size.value = int(size)
             self.position.value = int(position)
@@ -235,8 +226,7 @@ class SharedTD3Replay:
             next_observations=episode_tensors["next_observations"],
             actions=episode_tensors["actions"],
             prev_actions=episode_tensors["prev_actions"],
-            task_rewards=episode_tensors["task_rewards"],
-            motion_rewards=episode_tensors["motion_rewards"],
+            rewards=episode_tensors["rewards"],
             dones=episode_tensors["dones"],
         )
 

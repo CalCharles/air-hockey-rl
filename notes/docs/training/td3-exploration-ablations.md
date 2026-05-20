@@ -1,5 +1,13 @@
 # TD3 Exploration Ablations — Warm-start and Bootstrap
 
+> **Stale-code note:** the `policy_takeover` primitive and its
+> `exploration_primitive_weight_policy_takeover` /
+> `exploration_policy_takeover_enabled` knobs were removed from the code
+> in the 2026-05-19 cleanup branch (always-zero in every active config).
+> The E2 / E5 cells in this report referenced those knobs, but the
+> ablation's conclusion (no benefit from the warm-start primitive) is
+> consistent with the removal. Treat the cells as historical context.
+>
 > **Path note:** these sweeps were originally run against the hist4 variant of `td3_recommended.yaml` and the matching `sysid_best_params_hist4.yaml` sim config. Both have since been removed from the tree. The active canonical args YAML is now [`configs/td3/td3_recommended_top50_hist2.yaml`](../../../configs/td3/td3_recommended_top50_hist2.yaml) ([`td3-configs.md`](td3-configs.md)); the ablation conclusions below still apply (only `config:` and `success_top_fraction` differ between the historical and active configs).
 
 Effect of exploration knobs on juggle-task learning. All Phase-1 runs use

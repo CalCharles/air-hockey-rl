@@ -42,7 +42,7 @@ from scripts.td3.helper.episode_artifacts import (
     generate_episode_gif,
     save_split_episode_hdf5,
 )
-from scripts.td3.helper.dual_head_q import TD3DualHeadQNetwork
+from scripts.td3.helper.q_network import TD3QNetwork
 from scripts.td3.helper.exploration_selector import (
     PrimitiveExplorationSelector,
 )
@@ -382,8 +382,7 @@ def _build_async_training_state(
     collector_total_steps: int,
     last_checkpoint_collector_steps: int,
     run_elapsed_total_s: float,
-    rolling50_task_reward_values: Sequence[float],
-    rolling50_motion_reward_values: Sequence[float],
+    rolling50_reward_values: Sequence[float],
     rolling50_episode_length_values: Sequence[float],
     rolling50_estop_episode_flags: Sequence[float],
     rolling50_episode_return_values: Sequence[float] = (),
@@ -420,8 +419,7 @@ def _build_async_training_state(
                 "last_checkpoint_collector_steps": int(last_checkpoint_collector_steps),
                 "run_elapsed_total_s": float(run_elapsed_total_s),
                 "rolling_window_size": int(ROLLING_PERF_WINDOW_EPISODES),
-                "rolling50_task_reward_values": list(rolling50_task_reward_values),
-                "rolling50_motion_reward_values": list(rolling50_motion_reward_values),
+                "rolling50_reward_values": list(rolling50_reward_values),
                 "rolling50_episode_length_values": list(rolling50_episode_length_values),
                 "rolling50_estop_episode_flags": list(rolling50_estop_episode_flags),
                 "rolling50_episode_return_values": list(rolling50_episode_return_values),
@@ -495,12 +493,11 @@ def _save_async_checkpoint(
         collector_total_steps=int(stats.get("collector_total_steps", stats.get("collector_steps", 0.0))),
         last_checkpoint_collector_steps=int(float(stats.get("last_checkpoint_collector_steps", 0.0))),
         run_elapsed_total_s=float(stats.get("run_elapsed_total_s", 0.0)),
-        rolling50_task_reward_values=_coerce_float_list(
-            stats.get("rolling50_task_reward_values", []),
-            max_items=ROLLING_PERF_WINDOW_EPISODES,
-        ),
-        rolling50_motion_reward_values=_coerce_float_list(
-            stats.get("rolling50_motion_reward_values", []),
+        rolling50_reward_values=_coerce_float_list(
+            stats.get(
+                "rolling50_reward_values",
+                stats.get("rolling50_task_reward_values", []),
+            ),
             max_items=ROLLING_PERF_WINDOW_EPISODES,
         ),
         rolling50_episode_length_values=_coerce_float_list(
@@ -687,8 +684,7 @@ class Args:
     warm_start_hdf5_recursive: bool = True
 
     # TD3 core
-    task_gamma: float = 0.975
-    motion_gamma: float = 0.8
+    gamma: float = 0.975
     tau: float = 0.005
     batch_size: int = 256
     # Gates the learner on TOTAL replay size (success + failure). Engaged
@@ -721,19 +717,6 @@ class Args:
     # See notes/docs/training/residual-rl-recipe.md.
     cql_alpha: float = 0.0
     cql_n_random: int = 10
-    task_reward_weight: float = 1.0
-    motion_reward_weight: float = 1.0
-    stand_still_reward_weight: float = 0.5
-    temporal_alignment_reward_weight: float = 0.5
-    axis_alignment_reward_weight: float = 0.5
-    velocity_reward_weight: float = 0.5
-    jerk_reward_weight: float = 0.5
-    stand_still_threshold: float = 0.015
-    temporal_alignment_horizon: int = 4
-    velocity_at_one: float = 0.3
-    velocity_at_zero: float = 0.6
-    jerk_at_one: float = 10.0
-    jerk_at_zero: float = 23.0
     critic_success_sample_fraction: float = 0.3
     critic_failure_sample_fraction: float = 0.7
 
@@ -856,8 +839,7 @@ def _episode_to_tensors(episode_trajectory: EpisodeTrajectory) -> Dict[str, torc
         "next_observations": torch.stack(episode_trajectory.next_observations, dim=0),
         "actions": torch.stack(episode_trajectory.actions, dim=0),
         "prev_actions": torch.stack(episode_trajectory.prev_actions, dim=0),
-        "task_rewards": torch.stack(episode_trajectory.task_rewards, dim=0).view(-1),
-        "motion_rewards": torch.stack(episode_trajectory.motion_rewards, dim=0).view(-1),
+        "rewards": torch.stack(episode_trajectory.rewards, dim=0).view(-1),
         # Same semantics as td3_training replay `dones`: env terminations (+ stop / last-step
         # signals), not time-limit truncation alone.
         "dones": torch.stack(episode_trajectory.dones, dim=0).view(-1),
@@ -915,8 +897,7 @@ _NON_VITAL_TRAINING_STATE_DEFAULTS: Dict[str, object] = {
     "train_metrics": {},
     "collector_total_steps": 0,
     "run_elapsed_total_s": 0.0,
-    "rolling50_task_reward_values": [],
-    "rolling50_motion_reward_values": [],
+    "rolling50_reward_values": [],
     "rolling50_episode_length_values": [],
     "rolling50_estop_episode_flags": [],
     "rolling50_episode_juggles_values": [],
@@ -1171,18 +1152,17 @@ def _build_split_episode_row(
     controller_disconnected: bool,
     reset_stage_id: int | None = None,
     *,
-    task_reward: float | None = None,
-    motion_reward: float | None = None,
+    reward: float | None = None,
     done: float | None = None,
 ) -> Dict[str, np.ndarray]:
     """Build one HDF5 row for a single env step.
 
-    Optional ``task_reward`` / ``motion_reward`` / ``done`` are written when
-    provided (the policy runner passes them every step) and omitted
-    otherwise (the reset-FSM runner has no policy reward stream). Together
-    with ``policy_action`` (the raw [-1, 1] action vector recorded
-    alongside the post-transform ``desired_pose``), these fields make a
-    policy-collected HDF5 self-sufficient for offline policy replay.
+    Optional ``reward`` / ``done`` are written when provided (the policy
+    runner passes them every step) and omitted otherwise (the reset-FSM
+    runner has no policy reward stream). Together with ``policy_action``
+    (the raw [-1, 1] action vector recorded alongside the post-transform
+    ``desired_pose``), these fields make a policy-collected HDF5
+    self-sufficient for offline policy replay.
     """
     state_info = getattr(env, "current_state", None)
     if not isinstance(state_info, dict):
@@ -1276,10 +1256,9 @@ def _build_split_episode_row(
     }
     if reset_stage_id is not None:
         row["reset_stage_id"] = np.array([float(reset_stage_id)], dtype=np.float64)
-    if task_reward is not None:
+    if reward is not None:
         row["policy_action"] = np.asarray(action_xy, dtype=np.float64).reshape(-1)[:2]
-        row["task_reward"] = np.array([float(task_reward)], dtype=np.float64)
-        row["motion_reward"] = np.array([float(motion_reward) if motion_reward is not None else 0.0], dtype=np.float64)
+        row["reward"] = np.array([float(reward)], dtype=np.float64)
         row["done"] = np.array([float(done) if done is not None else 0.0], dtype=np.float64)
     return row
 
@@ -1314,8 +1293,7 @@ def _mixed_sample_from_shared(
                 "next_observations",
                 "actions",
                 "prev_actions",
-                "task_rewards",
-                "motion_rewards",
+                "rewards",
                 "dones",
             )
         }
@@ -1348,8 +1326,8 @@ class LearnerRuntimeState:
     # `qf1`, `qf2`, `qf1_target`, `qf2_target` are properties that alias
     # qfs[0]/qfs[1] for backwards compatibility with checkpoint helpers and
     # sites that predate the ensemble path. Anything new should index `qfs`.
-    qfs: list[TD3DualHeadQNetwork] = field(default_factory=list)
-    qfs_target: list[TD3DualHeadQNetwork] = field(default_factory=list)
+    qfs: list[TD3QNetwork] = field(default_factory=list)
+    qfs_target: list[TD3QNetwork] = field(default_factory=list)
     # M = target_critic_subset_size (None → Maxmin: use all N targets).
     target_critic_subset_size: int | None = None
     q_optimizer: optim.Optimizer = None  # type: ignore[assignment]
@@ -1370,19 +1348,19 @@ class LearnerRuntimeState:
     actor_ema: DeterministicAgent | None = None
 
     @property
-    def qf1(self) -> TD3DualHeadQNetwork:
+    def qf1(self) -> TD3QNetwork:
         return self.qfs[0]
 
     @property
-    def qf2(self) -> TD3DualHeadQNetwork:
+    def qf2(self) -> TD3QNetwork:
         return self.qfs[1]
 
     @property
-    def qf1_target(self) -> TD3DualHeadQNetwork:
+    def qf1_target(self) -> TD3QNetwork:
         return self.qfs_target[0]
 
     @property
-    def qf2_target(self) -> TD3DualHeadQNetwork:
+    def qf2_target(self) -> TD3QNetwork:
         return self.qfs_target[1]
 
 
@@ -1392,8 +1370,8 @@ def _make_qf(
     hidden_layer_size: int,
     num_hidden_layers: int,
     device: torch.device,
-) -> TD3DualHeadQNetwork:
-    return TD3DualHeadQNetwork(
+) -> TD3QNetwork:
+    return TD3QNetwork(
         obs_dim=obs_dim,
         act_dim=act_dim,
         hidden_layer_size=hidden_layer_size,
@@ -1449,7 +1427,7 @@ def _init_sync_learner_state(
     ).to(device)
     actor_target.load_state_dict(actor.state_dict())
     # Build N critics + N targets. Distinct nn.Module instances → diverse inits.
-    qfs: list[TD3DualHeadQNetwork] = [
+    qfs: list[TD3QNetwork] = [
         _make_qf(
             obs_dim,
             act_dim,
@@ -1459,7 +1437,7 @@ def _init_sync_learner_state(
         )
         for _ in range(num_critics)
     ]
-    qfs_target: list[TD3DualHeadQNetwork] = [
+    qfs_target: list[TD3QNetwork] = [
         _make_qf(
             obs_dim,
             act_dim,
@@ -1900,8 +1878,7 @@ def _run_sync_learner_iteration(
         sampled_observations = batch["observations"]
         sampled_next_observations = batch["next_observations"]
         sampled_actions = batch["actions"]
-        sampled_task_rewards = batch["task_rewards"]
-        sampled_motion_rewards = batch["motion_rewards"]
+        sampled_rewards = batch["rewards"]
         sampled_dones = batch["dones"]
         sampled_next_prev_actions = sampled_actions * (1.0 - sampled_dones.unsqueeze(-1))
         sampled_next_policy_observations = augment_policy_observation(
@@ -1916,7 +1893,7 @@ def _run_sync_learner_iteration(
             noise = torch.clamp(noise, -float(args.noise_clip), float(args.noise_clip))
             target_next_action = torch.clamp(target_next_action + noise, state.action_low, state.action_high)
             # Target Q = min over the chosen subset (Maxmin if subset is None or
-            # ≥N; REDQ-style random M-of-N otherwise). Re-sampled each update.
+            # ≥N; REDQ-style random M-of-N otherwise).
             subset_size = state.target_critic_subset_size
             if subset_size is None or int(subset_size) >= n_critics:
                 target_indices = list(range(n_critics))
@@ -1924,43 +1901,23 @@ def _run_sync_learner_iteration(
                 target_indices = (
                     torch.randperm(n_critics)[: int(subset_size)].tolist()
                 )
-            next_task_h_list = []
-            next_motion_h_list = []
-            for ti in target_indices:
-                nt_h, nm_h = state.qfs_target[ti](
-                    sampled_next_observations, target_next_action
-                )
-                next_task_h_list.append(nt_h)
-                next_motion_h_list.append(nm_h)
-            if len(next_task_h_list) == 1:
-                min_next_task_h = next_task_h_list[0]
-                min_next_motion_h = next_motion_h_list[0]
-            elif len(next_task_h_list) == 2:
-                # Preserve the original kernel path so N=2 is bit-identical.
-                min_next_task_h = torch.min(next_task_h_list[0], next_task_h_list[1])
-                min_next_motion_h = torch.min(next_motion_h_list[0], next_motion_h_list[1])
+            next_q_h_list = [
+                state.qfs_target[ti](sampled_next_observations, target_next_action)
+                for ti in target_indices
+            ]
+            if len(next_q_h_list) == 1:
+                min_next_q_h = next_q_h_list[0]
+            elif len(next_q_h_list) == 2:
+                min_next_q_h = torch.min(next_q_h_list[0], next_q_h_list[1])
             else:
-                min_next_task_h = torch.stack(next_task_h_list, dim=0).min(dim=0).values
-                min_next_motion_h = torch.stack(next_motion_h_list, dim=0).min(dim=0).values
-            min_next_task = h_inverse(
-                min_next_task_h, eps=float(args.h_transform_eps)
-            ).view(-1)
-            min_next_motion = h_inverse(
-                min_next_motion_h, eps=float(args.h_transform_eps)
-            ).view(-1)
-            bellman_task = (
-                sampled_task_rewards
-                + (1.0 - sampled_dones) * float(args.task_gamma) * min_next_task
+                min_next_q_h = torch.stack(next_q_h_list, dim=0).min(dim=0).values
+            min_next_q = h_inverse(min_next_q_h, eps=float(args.h_transform_eps)).view(-1)
+            bellman = (
+                sampled_rewards
+                + (1.0 - sampled_dones) * float(args.gamma) * min_next_q
             )
-            bellman_motion = (
-                sampled_motion_rewards
-                + (1.0 - sampled_dones) * float(args.motion_gamma) * min_next_motion
-            )
-            target_task_h = h_transform(bellman_task, eps=float(args.h_transform_eps))
-            target_motion_h = h_transform(bellman_motion, eps=float(args.h_transform_eps))
-        # Pre-compute CQL random actions and policy action once per minibatch
-        # (shared across critics — random sampling and policy forward are
-        # independent of which critic we're scoring). Mirrors td3_training.py.
+            target_h = h_transform(bellman, eps=float(args.h_transform_eps))
+        # Pre-compute CQL random actions and policy action once per minibatch.
         cql_enabled = float(args.cql_alpha) > 0.0
         cql_penalty_value: float | None = None
         if cql_enabled:
@@ -1986,80 +1943,58 @@ def _run_sync_learner_iteration(
                     state.actor, cql_policy_obs
                 )
         # Forward pass over all N critics; train each against the shared target.
-        qi_task_h_list = []
-        qi_motion_h_list = []
-        qi_task_loss_list = []
-        qi_motion_loss_list = []
+        qi_h_list = []
+        qi_loss_list = []
         cql_penalty_per_critic: list[torch.Tensor] = []
         for q in state.qfs:
-            qi_task_h, qi_motion_h = q(sampled_observations, sampled_actions)
-            qi_task_h_list.append(qi_task_h)
-            qi_motion_h_list.append(qi_motion_h)
-            task_loss_i = torch.nn.functional.mse_loss(qi_task_h.view(-1), target_task_h)
+            qi_h = q(sampled_observations, sampled_actions)
+            qi_h_list.append(qi_h)
+            loss_i = torch.nn.functional.mse_loss(qi_h.view(-1), target_h)
             if cql_enabled:
-                # log(1/n_rand * sum exp Q) = logsumexp - log(n_rand)
-                q_rand_task_h, _ = q(cql_obs_repeat, cql_random_actions)
-                q_rand_task_h = q_rand_task_h.view(n_rand, bsz)
-                q_pi_task_h, _ = q(sampled_observations, cql_policy_action)
-                q_pi_task_h = q_pi_task_h.view(-1)
+                q_rand_h = q(cql_obs_repeat, cql_random_actions).view(n_rand, bsz)
+                q_pi_h = q(sampled_observations, cql_policy_action).view(-1)
                 cql_logsumexp = (
-                    torch.logsumexp(q_rand_task_h, dim=0) - math.log(float(n_rand))
+                    torch.logsumexp(q_rand_h, dim=0) - math.log(float(n_rand))
                 )
-                cql_penalty = (cql_logsumexp - q_pi_task_h).mean()
-                task_loss_i = task_loss_i + float(args.cql_alpha) * cql_penalty
+                cql_penalty = (cql_logsumexp - q_pi_h).mean()
+                loss_i = loss_i + float(args.cql_alpha) * cql_penalty
                 cql_penalty_per_critic.append(cql_penalty.detach())
-            qi_task_loss_list.append(task_loss_i)
-            qi_motion_loss_list.append(
-                torch.nn.functional.mse_loss(qi_motion_h.view(-1), target_motion_h)
-            )
+            qi_loss_list.append(loss_i)
         if cql_enabled and cql_penalty_per_critic:
             cql_penalty_value = float(
                 torch.stack(cql_penalty_per_critic).mean().item()
             )
-        # Legacy aliases for the metrics block below; behavior matches td3_training.py:1881.
-        q1_task_h, q1_motion_h = qi_task_h_list[0], qi_motion_h_list[0]
-        q1_task_loss, q1_motion_loss = qi_task_loss_list[0], qi_motion_loss_list[0]
-        q2_task_loss = qi_task_loss_list[1]
-        q2_motion_loss = qi_motion_loss_list[1]
-        q_loss = sum(qi_task_loss_list) + sum(qi_motion_loss_list)
+        q1_h = qi_h_list[0]
+        q_loss = sum(qi_loss_list)
         state.q_optimizer.zero_grad(set_to_none=True)
         q_loss.backward()
         state.q_optimizer.step()
         state.total_updates += 1
-        positive_task_reward_mask = sampled_task_rewards > 0
-        positive_task_reward_count = float(positive_task_reward_mask.sum().item())
-        minibatch_size = max(int(sampled_task_rewards.numel()), 1)
-        positive_task_rewards = sampled_task_rewards[positive_task_reward_mask]
+        positive_reward_mask = sampled_rewards > 0
+        positive_reward_count = float(positive_reward_mask.sum().item())
+        minibatch_size = max(int(sampled_rewards.numel()), 1)
+        positive_rewards = sampled_rewards[positive_reward_mask]
         state.latest_train_metrics.update(
             {
-                "losses/q_task_loss": float(
-                    (sum(qi_task_loss_list) / float(n_critics)).item()
-                ),
-                "losses/q_motion_loss": float(
-                    (sum(qi_motion_loss_list) / float(n_critics)).item()
+                "losses/q_loss": float(
+                    (sum(qi_loss_list) / float(n_critics)).item()
                 ),
                 "losses/q_total_loss": float(q_loss.item()),
-                "losses/q1_task_mean": float(q1_task_h.mean().item()),
-                "losses/q1_motion_mean": float(q1_motion_h.mean().item()),
-                "losses/q1_total_mean": float((q1_task_h + q1_motion_h).mean().item()),
-                "rewards/sampled_task_reward_mean": float(sampled_task_rewards.mean().item()),
-                "rewards/sampled_task_reward_min": float(sampled_task_rewards.min().item()),
-                "rewards/sampled_task_reward_std": float(sampled_task_rewards.std(unbiased=False).item()),
-                "rewards/sampled_task_reward_positive_count": positive_task_reward_count,
-                "rewards/sampled_task_reward_positive_fraction": (
-                    positive_task_reward_count / float(minibatch_size)
+                "losses/q1_mean": float(q1_h.mean().item()),
+                "rewards/sampled_reward_mean": float(sampled_rewards.mean().item()),
+                "rewards/sampled_reward_min": float(sampled_rewards.min().item()),
+                "rewards/sampled_reward_std": float(sampled_rewards.std(unbiased=False).item()),
+                "rewards/sampled_reward_positive_count": positive_reward_count,
+                "rewards/sampled_reward_positive_fraction": (
+                    positive_reward_count / float(minibatch_size)
                 ),
-                "rewards/sampled_task_reward_positive_mean": (
-                    float(positive_task_rewards.mean().item()) if positive_task_rewards.numel() > 0 else 0.0
+                "rewards/sampled_reward_positive_mean": (
+                    float(positive_rewards.mean().item()) if positive_rewards.numel() > 0 else 0.0
                 ),
-                "rewards/sampled_task_reward_positive_std": (
-                    float(positive_task_rewards.std(unbiased=False).item())
-                    if positive_task_rewards.numel() > 0
+                "rewards/sampled_reward_positive_std": (
+                    float(positive_rewards.std(unbiased=False).item())
+                    if positive_rewards.numel() > 0
                     else 0.0
-                ),
-                "rewards/sampled_motion_reward_mean": float(sampled_motion_rewards.mean().item()),
-                "rewards/sampled_combined_reward_mean": float(
-                    (sampled_task_rewards + sampled_motion_rewards).mean().item()
                 ),
                 "replay/success_buffer_size": float(replay.len("success")),
                 "replay/failure_buffer_size": float(replay.len("failure")),
@@ -2111,11 +2046,9 @@ def _run_sync_learner_iteration(
             train_args.use_last_action_in_policy_state,
         )
         policy_actions = deterministic_actor_action(state.actor, actor_policy_obs)
-        q1_task_h, q1_motion_h = state.qf1(actor_obs, policy_actions)
-        q1_task = h_inverse(q1_task_h, eps=float(args.h_transform_eps)).view(-1)
-        q1_motion = h_inverse(q1_motion_h, eps=float(args.h_transform_eps)).view(-1)
-        actor_objective = float(args.task_reward_weight) * q1_task + float(args.motion_reward_weight) * q1_motion
-        actor_loss = -actor_objective.mean()
+        q1_h = state.qf1(actor_obs, policy_actions)
+        q1 = h_inverse(q1_h, eps=float(args.h_transform_eps)).view(-1)
+        actor_loss = -q1.mean()
         residual_action_l2_loss: float | None = None
         if (
             args.full_checkpoint_load in ("residual", "residual_resume")
@@ -2138,13 +2071,11 @@ def _run_sync_learner_iteration(
                     state.actor.residual.parameters(),
                 ):
                     ema_param.data.mul_(decay).add_(online_param.data, alpha=1.0 - decay)
-        norm_task = (1.0 - float(args.task_gamma)) * q1_task
-        norm_motion = (1.0 - float(args.motion_gamma)) * q1_motion
+        norm_q = (1.0 - float(args.gamma)) * q1
         state.latest_train_metrics.update(
             {
                 "losses/actor_loss": float(actor_loss.item()),
-                "losses/actor_norm_task_mean": float(norm_task.mean().item()),
-                "losses/actor_norm_motion_mean": float(norm_motion.mean().item()),
+                "losses/actor_norm_q_mean": float(norm_q.mean().item()),
             }
         )
         if residual_action_l2_loss is not None:

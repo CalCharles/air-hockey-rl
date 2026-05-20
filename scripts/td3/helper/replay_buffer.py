@@ -1,11 +1,9 @@
-"""Replay buffer for TD3 with separate task and motion rewards."""
+"""Uniform replay buffer for TD3."""
 
 import torch
 
 
 class TD3ReplayBuffer:
-    """Replay buffer that stores task and motion rewards separately."""
-
     def __init__(self, buffer_size, obs_shape, action_shape, device="cuda", n_envs=1):
         self.buffer_size = int(buffer_size)
         self.obs_shape = obs_shape
@@ -17,23 +15,19 @@ class TD3ReplayBuffer:
         self.next_observations = torch.zeros((buffer_size, *obs_shape), dtype=torch.float32, device=device)
         self.actions = torch.zeros((buffer_size, *action_shape), dtype=torch.float32, device=device)
         self.prev_actions = torch.zeros((buffer_size, *action_shape), dtype=torch.float32, device=device)
-        self.task_rewards = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
-        self.motion_rewards = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
+        self.rewards = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
         self.dones = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
 
         self.position = 0
         self.size = 0
 
-    def add(self, obs, next_obs, actions, task_rewards, motion_rewards, dones, prev_action):
+    def add(self, obs, next_obs, actions, rewards, dones, prev_action):
         obs = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
         next_obs = torch.as_tensor(next_obs, dtype=torch.float32, device=self.device)
         actions = torch.as_tensor(actions, dtype=torch.float32, device=self.device)
         prev_action = torch.as_tensor(prev_action, dtype=torch.float32, device=self.device)
-        task_rewards = torch.as_tensor(task_rewards, dtype=torch.float32, device=self.device).reshape(-1)
-        motion_rewards = torch.as_tensor(motion_rewards, dtype=torch.float32, device=self.device).reshape(-1)
+        rewards = torch.as_tensor(rewards, dtype=torch.float32, device=self.device).reshape(-1)
         dones = torch.as_tensor(dones, dtype=torch.float32, device=self.device).reshape(-1)
-
-
 
         batch_size = int(obs.shape[0])
 
@@ -43,8 +37,7 @@ class TD3ReplayBuffer:
         self.next_observations[first_slice] = next_obs[:first_chunk]
         self.actions[first_slice] = actions[:first_chunk]
         self.prev_actions[first_slice] = prev_action[:first_chunk]
-        self.task_rewards[first_slice] = task_rewards[:first_chunk]
-        self.motion_rewards[first_slice] = motion_rewards[:first_chunk]
+        self.rewards[first_slice] = rewards[:first_chunk]
         self.dones[first_slice] = dones[:first_chunk]
 
         second_chunk = batch_size - first_chunk
@@ -54,8 +47,7 @@ class TD3ReplayBuffer:
             self.next_observations[second_slice] = next_obs[first_chunk:]
             self.actions[second_slice] = actions[first_chunk:]
             self.prev_actions[second_slice] = prev_action[first_chunk:]
-            self.task_rewards[second_slice] = task_rewards[first_chunk:]
-            self.motion_rewards[second_slice] = motion_rewards[first_chunk:]
+            self.rewards[second_slice] = rewards[first_chunk:]
             self.dones[second_slice] = dones[first_chunk:]
 
         self.position = (self.position + batch_size) % self.buffer_size
@@ -70,8 +62,7 @@ class TD3ReplayBuffer:
             "next_observations": self.next_observations[indices],
             "actions": self.actions[indices],
             "prev_actions": self.prev_actions[indices],
-            "task_rewards": self.task_rewards[indices],
-            "motion_rewards": self.motion_rewards[indices],
+            "rewards": self.rewards[indices],
             "dones": self.dones[indices],
         }
 
@@ -87,8 +78,7 @@ class TD3ReplayBuffer:
             "next_observations": self.next_observations.detach().clone().cpu(),
             "actions": self.actions.detach().clone().cpu(),
             "prev_actions": self.prev_actions.detach().clone().cpu(),
-            "task_rewards": self.task_rewards.detach().clone().cpu(),
-            "motion_rewards": self.motion_rewards.detach().clone().cpu(),
+            "rewards": self.rewards.detach().clone().cpu(),
             "dones": self.dones.detach().clone().cpu(),
         }
 
@@ -99,10 +89,12 @@ class TD3ReplayBuffer:
         self.next_observations.copy_(state_dict["next_observations"].to(self.device))
         self.actions.copy_(state_dict["actions"].to(self.device))
         self.prev_actions.copy_(state_dict["prev_actions"].to(self.device))
-        self.task_rewards.copy_(state_dict["task_rewards"].to(self.device))
-        self.motion_rewards.copy_(state_dict["motion_rewards"].to(self.device))
+        # Old checkpoints stored separate task / motion reward channels.
+        if "rewards" in state_dict:
+            self.rewards.copy_(state_dict["rewards"].to(self.device))
+        elif "task_rewards" in state_dict:
+            self.rewards.copy_(state_dict["task_rewards"].to(self.device))
         self.dones.copy_(state_dict["dones"].to(self.device))
 
     def __len__(self):
         return self.size
-

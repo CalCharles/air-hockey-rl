@@ -42,19 +42,18 @@ obs -> ResidualMLPTrunk -> Linear (actor_mean_head) -> tanh -> scale + bias -> a
 
 Used by PPO training; shares the same `ResidualMLPTrunk` backbone. Adds a log-std parameter head for Gaussian exploration. Not used during TD3 training but weight-compatible with `DeterministicAgent` for warm-starting.
 
-## Dual-head critic: `TD3DualHeadQNetwork`
+## Critic: `TD3QNetwork`
 
-**Code:** [`scripts/td3/helper/dual_head_q.py`](../../../scripts/td3/helper/dual_head_q.py)
+**Code:** [`scripts/td3/helper/q_network.py`](../../../scripts/td3/helper/q_network.py)
 
 ```
-cat(obs, action) -> ResidualMLPTrunk -> task_head (Linear -> scalar)
-                                     -> motion_head (Linear -> scalar)
+cat(obs, action) -> ResidualMLPTrunk -> head (Linear -> scalar)
 ```
 
 - Input: concatenation of observation and action vectors
-- Output: tuple of `(q_task_h, q_motion_h)` -- Q-values in h-transformed space
-- Both output heads use small initialization (`std=0.01`) to keep initial Q estimates near zero
-- Two instances are created (qf1, qf2) for twin-critic TD3, plus two target copies
+- Output: Q-value in h-transformed space
+- The output head uses small initialization (`std=0.01`) to keep initial Q estimates near zero
+- `num_critics` instances (default 2 for twin TD3) plus target copies
 
 | Parameter | Default | Role |
 |-----------|---------|------|

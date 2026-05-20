@@ -31,7 +31,6 @@ Key choices and why:
 | `success_top_fraction` | **0.5** | Median-split PER mix; from-scratch ablation in [`residual-rl-recipe.md`](residual-rl-recipe.md). |
 | `enable_puck_delay_interpolation` | `true` | Matches the real-world puck-delay behavior the sysid was tuned against. |
 | `exploration_primitive_chance_pre_learning_starts` | `null` | Bootstrap-forcing (`=1.0`) was actively harmful; leaving null uses the annealing schedule. |
-| `exploration_primitive_weight_policy_takeover` | `0.0` | No external warmstart policy needed. |
 
 Launch:
 

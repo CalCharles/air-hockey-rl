@@ -20,8 +20,8 @@ High-level map of the repository. Paths are relative to the repo root.
 | [`scripts/td3/td3_training.py`](../../../scripts/td3/td3_training.py) | Sim TD3 trainer (entrypoint). |
 | [`scripts/td3/{agent,deterministic_agent,residual_agent,encoder}.py`](../../../scripts/td3/) | TD3 actor networks. |
 | [`scripts/td3/{evaluate,eval_utils}.py`](../../../scripts/td3/) | TD3 evaluation. |
-| [`scripts/td3/helper/`](../../../scripts/td3/helper/) | Runtime support: replay, dual-head Q, exploration, real-world runners, checkpointing, metrics. |
-| [`scripts/td3/extras/`](../../../scripts/td3/extras/) | Real-world entrypoints: `async_td3_real{,_eval,_teleop_eval,_reset_policy}.py`. |
+| [`scripts/td3/helper/`](../../../scripts/td3/helper/) | Runtime support: replay, Q-network, exploration, real-world runners, checkpointing, metrics. |
+| [`scripts/td3/extras/`](../../../scripts/td3/extras/) | Real-world entrypoints: `async_td3_real{,_eval,_teleop_eval}.py`. |
 | [`scripts/td3/tests/`](../../../scripts/td3/tests/) | Pytest suite. |
 
 ## Other scripts

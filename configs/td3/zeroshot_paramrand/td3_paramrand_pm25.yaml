@@ -31,8 +31,6 @@ num_envs: 1
 
 # TD3 core
 buffer_size: 100000
-task_gamma: 0.985
-motion_gamma: 0.85
 tau: 0.005
 batch_size: 512
 learning_starts: 20000
@@ -73,14 +71,12 @@ exploration_primitive_steps: 5
 exploration_primitive_weight_stand_still: 0.2
 exploration_primitive_weight_same_direction: 1.0
 exploration_primitive_weight_y_aligned: 1.0
-exploration_primitive_weight_policy_takeover: 0.0
 exploration_primitive_weight_target_position_directional: 1.0
 
 # Exploration during annealing phase
 exploration_primitive_weight_anneal_stand_still: 0.2
 exploration_primitive_weight_anneal_same_direction: 1.0
 exploration_primitive_weight_anneal_y_aligned: 1.0
-exploration_primitive_weight_anneal_policy_takeover: 0.0
 exploration_primitive_weight_anneal_target_position_directional: 1.0
 
 # Exploration-specific knobs
@@ -91,34 +87,11 @@ exploration_target_position_delta_x: 0.26
 exploration_target_position_delta_y: 0.12
 exploration_target_position_steps: 5
 
-exploration_policy_takeover_enabled: false
-exploration_policy_takeover_model_path: "model2.pth"
-exploration_policy_takeover_args_path: "args.yaml"
-exploration_policy_takeover_config_path: "config.yaml"
 
-exploration_pre_contact_hit_variant_chance: 0.0
-exploration_pre_contact_hit_variant_steps: 5
-exploration_pre_contact_hit_variant_distance_threshold: 0.25
-exploration_pre_contact_hit_variant_scale_min: 0.5
-exploration_pre_contact_hit_variant_scale_max: 1.5
-exploration_pre_contact_hit_variant_min_upward_displacement_x: 0.12
 
 # Dual-head reward decomposition
-task_reward_weight: 1.0
-motion_reward_weight: 0.0
 
-stand_still_reward_weight: 0.1
-temporal_alignment_reward_weight: 0.0
-axis_alignment_reward_weight: 0.0
-velocity_reward_weight: 0.5
-jerk_reward_weight: 0.5
 
-stand_still_threshold: 0.015
-temporal_alignment_horizon: 4
-velocity_at_one: 0.2
-velocity_at_zero: 0.6
-jerk_at_one: 8.0
-jerk_at_zero: 20.0
 
 # Source sim — hist_len=2 with paddle_density / puck_damping / gravity DR
 config: "configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25.yaml"

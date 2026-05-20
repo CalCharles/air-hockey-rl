@@ -1,4 +1,4 @@
-"""Prioritized replay buffer for TD3 with task/motion reward decomposition."""
+"""Prioritized replay buffer for TD3."""
 
 import torch
 
@@ -25,18 +25,14 @@ class TD3PrioritizedReplayBuffer:
         self.alpha = float(alpha)
         self.priority_eps = float(priority_eps)
         # Age-weighted sampling: priority is multiplied by exp(-age_decay * age_in_slots)
-        # before alpha-scaling at sample time. age_decay=0.0 disables. Reasonable
-        # values: 1e-5 (very gentle, half-life ~70k slots) to 1e-3 (aggressive,
-        # half-life ~700 slots). Implements "stochastic recency-weighted sampling"
-        # from residual_rl_drift_fix_log.md open follow-ups.
+        # before alpha-scaling at sample time. age_decay=0.0 disables.
         self.age_decay = float(age_decay)
 
         self.observations = torch.zeros((buffer_size, *obs_shape), dtype=torch.float32, device=device)
         self.next_observations = torch.zeros((buffer_size, *obs_shape), dtype=torch.float32, device=device)
         self.actions = torch.zeros((buffer_size, *action_shape), dtype=torch.float32, device=device)
         self.prev_actions = torch.zeros((buffer_size, *action_shape), dtype=torch.float32, device=device)
-        self.task_rewards = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
-        self.motion_rewards = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
+        self.rewards = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
         self.dones = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
         self.priorities = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
 
@@ -44,13 +40,12 @@ class TD3PrioritizedReplayBuffer:
         self.size = 0
         self.max_priority = 1.0
 
-    def add(self, obs, next_obs, actions, task_rewards, motion_rewards, dones, prev_action):
+    def add(self, obs, next_obs, actions, rewards, dones, prev_action):
         obs = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
         next_obs = torch.as_tensor(next_obs, dtype=torch.float32, device=self.device)
         actions = torch.as_tensor(actions, dtype=torch.float32, device=self.device)
         prev_action = torch.as_tensor(prev_action, dtype=torch.float32, device=self.device)
-        task_rewards = torch.as_tensor(task_rewards, dtype=torch.float32, device=self.device).reshape(-1)
-        motion_rewards = torch.as_tensor(motion_rewards, dtype=torch.float32, device=self.device).reshape(-1)
+        rewards = torch.as_tensor(rewards, dtype=torch.float32, device=self.device).reshape(-1)
         dones = torch.as_tensor(dones, dtype=torch.float32, device=self.device).reshape(-1)
 
         batch_size = int(obs.shape[0])
@@ -62,8 +57,7 @@ class TD3PrioritizedReplayBuffer:
         self.next_observations[first_slice] = next_obs[:first_chunk]
         self.actions[first_slice] = actions[:first_chunk]
         self.prev_actions[first_slice] = prev_action[:first_chunk]
-        self.task_rewards[first_slice] = task_rewards[:first_chunk]
-        self.motion_rewards[first_slice] = motion_rewards[:first_chunk]
+        self.rewards[first_slice] = rewards[:first_chunk]
         self.dones[first_slice] = dones[:first_chunk]
         self.priorities[first_slice] = priority_value
 
@@ -74,8 +68,7 @@ class TD3PrioritizedReplayBuffer:
             self.next_observations[second_slice] = next_obs[first_chunk:]
             self.actions[second_slice] = actions[first_chunk:]
             self.prev_actions[second_slice] = prev_action[first_chunk:]
-            self.task_rewards[second_slice] = task_rewards[first_chunk:]
-            self.motion_rewards[second_slice] = motion_rewards[first_chunk:]
+            self.rewards[second_slice] = rewards[first_chunk:]
             self.dones[second_slice] = dones[first_chunk:]
             self.priorities[second_slice] = priority_value
 
@@ -87,24 +80,12 @@ class TD3PrioritizedReplayBuffer:
             raise ValueError("Cannot sample from empty buffer")
 
         valid_priorities = self.priorities[: self.size].clamp_min(self.priority_eps)
-        # Age-weighted sampling. Each slot's age in "slots since added" is
-        # computed from its index relative to self.position (write head).
-        # Newer slots (higher index, freshly written) get age ~0 and full priority.
-        # Older slots get exponentially down-weighted: w = exp(-age_decay * age).
-        # This implements proper stochastic recency-weighted sampling — orthogonal
-        # to FIFO eviction (which is binary "in / out") and to TD-error PER (which
-        # ignores age).
         if self.age_decay > 0.0:
             if self.size < self.buffer_size:
-                # Buffer not yet full: indices 0..size-1 contain entries in
-                # temporal order. age(i) = (size-1) - i.
                 ages = (self.size - 1) - torch.arange(
                     self.size, device=self.device, dtype=torch.float32
                 )
             else:
-                # Buffer full: write head at self.position.
-                # Most recent write was at (position - 1) mod N → age 0.
-                # Oldest live entry is at self.position → age N-1.
                 idx = torch.arange(self.buffer_size, device=self.device, dtype=torch.long)
                 ages = ((self.position - 1 - idx) % self.buffer_size).to(torch.float32)
             age_weights = torch.exp(-self.age_decay * ages)
@@ -129,8 +110,7 @@ class TD3PrioritizedReplayBuffer:
             "next_observations": self.next_observations[indices],
             "actions": self.actions[indices],
             "prev_actions": self.prev_actions[indices],
-            "task_rewards": self.task_rewards[indices],
-            "motion_rewards": self.motion_rewards[indices],
+            "rewards": self.rewards[indices],
             "dones": self.dones[indices],
             "indices": indices,
             "weights": weights,
@@ -146,8 +126,7 @@ class TD3PrioritizedReplayBuffer:
             "next_observations": self.next_observations[indices],
             "actions": self.actions[indices],
             "prev_actions": self.prev_actions[indices],
-            "task_rewards": self.task_rewards[indices],
-            "motion_rewards": self.motion_rewards[indices],
+            "rewards": self.rewards[indices],
             "dones": self.dones[indices],
             "indices": indices,
             "weights": torch.ones((batch_size,), dtype=torch.float32, device=self.device),
@@ -178,8 +157,7 @@ class TD3PrioritizedReplayBuffer:
             "next_observations": self.next_observations.detach().clone().cpu(),
             "actions": self.actions.detach().clone().cpu(),
             "prev_actions": self.prev_actions.detach().clone().cpu(),
-            "task_rewards": self.task_rewards.detach().clone().cpu(),
-            "motion_rewards": self.motion_rewards.detach().clone().cpu(),
+            "rewards": self.rewards.detach().clone().cpu(),
             "dones": self.dones.detach().clone().cpu(),
             "priorities": self.priorities.detach().clone().cpu(),
         }
@@ -194,8 +172,10 @@ class TD3PrioritizedReplayBuffer:
         self.next_observations.copy_(state_dict["next_observations"].to(self.device))
         self.actions.copy_(state_dict["actions"].to(self.device))
         self.prev_actions.copy_(state_dict["prev_actions"].to(self.device))
-        self.task_rewards.copy_(state_dict["task_rewards"].to(self.device))
-        self.motion_rewards.copy_(state_dict["motion_rewards"].to(self.device))
+        if "rewards" in state_dict:
+            self.rewards.copy_(state_dict["rewards"].to(self.device))
+        elif "task_rewards" in state_dict:
+            self.rewards.copy_(state_dict["task_rewards"].to(self.device))
         self.dones.copy_(state_dict["dones"].to(self.device))
 
         priorities = state_dict.get("priorities")

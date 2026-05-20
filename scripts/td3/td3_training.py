@@ -33,9 +33,7 @@ from airhockey import AirHockeyEnv
 from airhockey.renderers import AirHockeyRenderer
 from scripts.td3.deterministic_agent import DeterministicAgent
 from scripts.td3.residual_agent import ResidualActor, zero_init_residual_head
-from scripts.td3.helper.dual_head_q import (
-    TD3DualHeadQNetwork,
-)
+from scripts.td3.helper.q_network import TD3QNetwork
 from scripts.td3.helper.exploration_selector import (
     PrimitiveExplorationSelector,
 )
@@ -56,16 +54,12 @@ from scripts.td3.helper.td3_episode_collection import (
 from scripts.td3.helper.td3_metrics import (
     initialize_train_metrics,
     log_scalar_metrics,
-    tensor_mean_items,
 )
 from scripts.td3.helper.td3_replay_sampling import (
     concat_replay_samples,
     critic_success_failure_counts,
     sample_actor_source_chunk,
     sample_critic_source_chunk,
-)
-from scripts.td3.helper.motion_magnitudes import (
-    parse_motion_magnitudes_from_infos,
 )
 from scripts.td3.evaluate import evaluate_agent
 from scripts.utils import save_tensorboard_plots
@@ -109,8 +103,6 @@ def save_training_data_like_rollout_gif(
     use_last_action_in_policy_state: bool,
     exploration_noise: float,
     primitive_selector: PrimitiveExplorationSelector,
-    warm_policy_actor,
-    warm_policy_use_last_action: bool,
     max_timesteps: int,
     fps: int,
     device: str,
@@ -123,7 +115,6 @@ def save_training_data_like_rollout_gif(
     obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
     act_dim = int(np.prod(viz_env.action_space.shape))
     last_action_for_policy = torch.zeros((1, act_dim), dtype=torch.float32, device=device)
-    warm_policy_last_action = torch.zeros((1, act_dim), dtype=torch.float32, device=device)
     action_low_single = action_low.unsqueeze(0)
     action_high_single = action_high.unsqueeze(0)
 
@@ -139,26 +130,13 @@ def save_training_data_like_rollout_gif(
         target_action_delta_x=float(primitive_selector.target_action_delta_x),
         target_action_delta_y=float(primitive_selector.target_action_delta_y),
         target_takeover_steps=int(primitive_selector.target_takeover_steps),
-        pre_contact_hit_variant_chance=float(primitive_selector.pre_contact_hit_variant_chance),
-        pre_contact_hit_variant_steps=int(primitive_selector.pre_contact_hit_variant_steps),
-        pre_contact_hit_variant_distance_threshold=float(
-            primitive_selector.pre_contact_hit_variant_distance_threshold
-        ),
-        pre_contact_hit_variant_scale_min=float(primitive_selector.pre_contact_hit_variant_scale_min),
-        pre_contact_hit_variant_scale_max=float(primitive_selector.pre_contact_hit_variant_scale_max),
-        pre_contact_hit_variant_min_upward_displacement_x=float(
-            primitive_selector.pre_contact_hit_variant_min_upward_displacement_x
-        ),
     )
     primitive_weights = primitive_selector.primitive_weights.detach().cpu().numpy()
     rollout_selector.set_primitive_weights(
         stand_still=float(primitive_weights[0]),
         same_direction=float(primitive_weights[1]),
         y_aligned=float(primitive_weights[2]),
-        policy_takeover=float(primitive_weights[3]),
-        target_position_directional=(
-            float(primitive_weights[4]) if primitive_weights.shape[0] > 4 else 0.0
-        ),
+        target_position_directional=float(primitive_weights[3]),
     )
 
     frames = []
@@ -216,23 +194,6 @@ def save_training_data_like_rollout_gif(
                 current_puck_velocity=current_puck_vel,
                 return_stats=True,
             )
-            if warm_policy_actor is not None:
-                policy_takeover_mask = rollout_selector.active & (
-                    rollout_selector.primitive_id == rollout_selector.primitive_ids.POLICY_TAKEOVER
-                )
-                if torch.any(policy_takeover_mask):
-                    warm_policy_obs = augment_policy_observation(
-                        obs_tensor,
-                        warm_policy_last_action,
-                        warm_policy_use_last_action,
-                    )
-                    warm_policy_actions = deterministic_actor_action(warm_policy_actor, warm_policy_obs)
-                    warm_policy_actions = torch.clamp(
-                        warm_policy_actions,
-                        action_low_single,
-                        action_high_single,
-                    )
-                    action_tensor[policy_takeover_mask] = warm_policy_actions[policy_takeover_mask]
 
         action_np = action_tensor.squeeze(0).detach().cpu().numpy()
         next_obs, rew, terminated, truncated, _ = viz_env.step(action_np)
@@ -243,10 +204,8 @@ def save_training_data_like_rollout_gif(
         done_tensor = torch.tensor([done], dtype=torch.bool, device=device)
         rollout_selector.reset(done_tensor)
         last_action_for_policy = action_tensor.clone()
-        warm_policy_last_action = action_tensor.clone()
         if done:
             last_action_for_policy.zero_()
-            warm_policy_last_action.zero_()
 
     duration_ms = int(1000 * 1 / max(int(fps), 1))
     imageio.mimsave(save_path, frames, format="GIF", loop=0, duration=duration_ms)
@@ -267,50 +226,6 @@ def extract_deterministic_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dic
 
 def resolve_path_relative_to_dir(path: str, base_dir: str) -> str:
     return path if os.path.isabs(path) else os.path.normpath(os.path.join(base_dir, path))
-
-
-def create_warm_start_policy(
-    warm_model_path: str,
-    warm_args_path: str,
-    warm_config_path: str,
-    env_action_space: gym.spaces.Box,
-    raw_obs_dim: int,
-    act_dim: int,
-    device: str,
-):
-    with open(warm_args_path, "r") as f:
-        warm_args = yaml.load(f, Loader=yaml.FullLoader)
-    with open(warm_config_path, "r") as f:
-        warm_config = yaml.load(f, Loader=yaml.FullLoader)
-
-    warm_use_last_action = bool(warm_args.get("use_last_action_in_policy_state", False))
-    warm_hidden_layer_size = int(warm_args.get("agent_hidden_layer_size", 64))
-    warm_num_hidden_layers = int(warm_args.get("agent_num_hidden_layers", 2))
-    warm_action_scale = float(warm_args.get("action_scale", 0.02))
-    if warm_config.get("air_hockey", {}).get("use_pid", False):
-        warm_action_scale = 1.0
-
-    warm_policy_obs_dim = raw_obs_dim + act_dim if warm_use_last_action else raw_obs_dim
-    warm_policy_env_view = SimpleNamespace(
-        single_observation_space=gym.spaces.Box(
-            low=-np.inf,
-            high=np.inf,
-            shape=(warm_policy_obs_dim,),
-            dtype=np.float32,
-        ),
-        single_action_space=env_action_space,
-    )
-    warm_policy = DeterministicAgent(
-        warm_policy_env_view,
-        action_scale=warm_action_scale,
-        action_bias=0.0,
-        hidden_layer_size=warm_hidden_layer_size,
-        num_hidden_layers=warm_num_hidden_layers,
-    ).to(device)
-    warm_state_dict = torch.load(warm_model_path, map_location=device, weights_only=False)
-    warm_policy.load_state_dict(warm_state_dict)
-    warm_policy.eval()
-    return warm_policy, warm_use_last_action
 
 
 def extract_current_paddle_position(observation: torch.Tensor) -> torch.Tensor:
@@ -340,25 +255,6 @@ def extract_current_puck_velocity(observation: torch.Tensor) -> torch.Tensor:
     if obs_dim >= 8 and obs_dim < 30:
         return observation[:, 6:8]
     return torch.zeros((observation.shape[0], 2), dtype=observation.dtype, device=observation.device)
-
-
-def velocity_reward_from_magnitude(
-    velocity_mag: torch.Tensor,
-    velocity_at_one: float,
-    velocity_at_zero: float,
-) -> torch.Tensor:
-    denom = max(velocity_at_zero - velocity_at_one, 1e-6)
-    reward = 1.0 - (velocity_mag - velocity_at_one) / denom
-    return torch.clamp_max(reward, 1.0)
-
-
-def jerk_reward_from_magnitude(
-    jerk_mag: torch.Tensor,
-    jerk_at_one: float,
-    jerk_at_zero: float,
-) -> torch.Tensor:
-    denom = max(jerk_at_zero - jerk_at_one, 1e-6)
-    return 1.0 - (jerk_mag - jerk_at_one) / denom
 
 
 def linear_anneal(start: float, end: float, step: int, anneal_steps: int) -> float:
@@ -431,8 +327,7 @@ class Args:
 
     # TD3 core
     buffer_size: int = int(1e6)
-    task_gamma: float = 0.975
-    motion_gamma: float = 0.8
+    gamma: float = 0.975
     tau: float = 0.005
     batch_size: int = 256
     learning_starts: int = 5000
@@ -486,12 +381,10 @@ class Args:
     exploration_primitive_weight_stand_still: float = 1.0 / 3.0
     exploration_primitive_weight_same_direction: float = 1.0 / 3.0
     exploration_primitive_weight_y_aligned: float = 1.0 / 3.0
-    exploration_primitive_weight_policy_takeover: float = 0.4
     exploration_primitive_weight_target_position_directional: float = 0.0
     exploration_primitive_weight_anneal_stand_still: float = 0.3
     exploration_primitive_weight_anneal_same_direction: float = 0.1
     exploration_primitive_weight_anneal_y_aligned: float = 0.6
-    exploration_primitive_weight_anneal_policy_takeover: float = 0.4
     exploration_primitive_weight_anneal_target_position_directional: float = 0.0
     exploration_direction_y_component_weight: float = 1.5
     exploration_target_position_min_distance: float = 0.2
@@ -511,35 +404,6 @@ class Args:
     exploration_target_position_directional_max_angle_deg: float | None = None
     exploration_target_position_directional_min_magnitude: float | None = None
     exploration_target_position_directional_max_magnitude: float | None = None
-    exploration_pre_contact_hit_variant_chance: float = 0.15
-    exploration_pre_contact_hit_variant_steps: int = 5
-    exploration_pre_contact_hit_variant_distance_threshold: float = 0.25
-    exploration_pre_contact_hit_variant_scale_min: float = 0.5
-    exploration_pre_contact_hit_variant_scale_max: float = 1.5
-    exploration_pre_contact_hit_variant_min_upward_displacement_x: float = 0.12
-    exploration_policy_takeover_enabled: bool = True
-    exploration_policy_takeover_model_path: str = "model1.pth"
-    exploration_policy_takeover_args_path: str = "args.yaml"
-    exploration_policy_takeover_config_path: str = "config.yaml"
-
-    # Dual-head reward decomposition
-    task_reward_weight: float = 1.0
-    motion_reward_weight: float = 1.0
-
-    # Motion reward component weights
-    stand_still_reward_weight: float = 0.5
-    temporal_alignment_reward_weight: float = 0.5
-    axis_alignment_reward_weight: float = 0.5
-    velocity_reward_weight: float = 0.5
-    jerk_reward_weight: float = 0.5
-
-    # Motion reward component calibration
-    stand_still_threshold: float = 0.015
-    temporal_alignment_horizon: int = 4
-    velocity_at_one: float = 0.3
-    velocity_at_zero: float = 0.6
-    jerk_at_one: float = 10.0
-    jerk_at_zero: float = 23.0
 
     # Checkpointing
     checkpoint_interval: int = 25000
@@ -859,7 +723,7 @@ def _entrypoint():
         )
     # Build N critics + N targets. RNG advances between modules → diverse inits.
     qfs = [
-        TD3DualHeadQNetwork(
+        TD3QNetwork(
             obs_dim=obs_dim,
             act_dim=act_dim,
             hidden_layer_size=args.q_hidden_layer_size,
@@ -868,7 +732,7 @@ def _entrypoint():
         for _ in range(args.num_critics)
     ]
     qfs_target = [
-        TD3DualHeadQNetwork(
+        TD3QNetwork(
             obs_dim=obs_dim,
             act_dim=act_dim,
             hidden_layer_size=args.q_hidden_layer_size,
@@ -1149,17 +1013,12 @@ def _entrypoint():
             f"(target keep_total={int(args.fine_tune_replay_keep)})"
         )
 
-    velocity_magnitudes = []
-    acceleration_magnitudes = []
-    jerk_magnitudes = []
-
     obs, _ = envs.reset(seed=args.seed)
     last_action_for_policy = torch.zeros((args.num_envs, act_dim), dtype=torch.float32, device=args.device)
     interval_paddle_puck_collisions = 0.0
     interval_env_steps = 0
     interval_primitive_env_steps = 0
     interval_primitive_horizontal_env_steps = 0
-    interval_policy_takeover_env_steps = 0
     interval_target_position_directional_env_steps = 0
     rolling_step_stats_window = deque()
     rolling_episode_stats_window = deque()
@@ -1168,23 +1027,8 @@ def _entrypoint():
     recent_episode_returns = deque(maxlen=args.recent_episode_window_size)
     episode_return_success_threshold = 0.0
 
-    if args.temporal_alignment_horizon <= 0:
-        raise ValueError("temporal_alignment_horizon must be > 0 for stand-still and alignment rewards.")
-
-    temporal_horizon = args.temporal_alignment_horizon
-    temporal_paddle_history = torch.zeros((args.num_envs, temporal_horizon + 1, 2), device=args.device)
-    temporal_puck_history = torch.zeros((args.num_envs, temporal_horizon + 1, 2), device=args.device)
-    # Consecutive non-terminal transitions since the most recent done.
-    # This replaces done-window + fill-count bookkeeping for temporal_valid.
-    steps_since_done = torch.zeros(args.num_envs, dtype=torch.long, device=args.device)
     initial_obs_tensor = torch.tensor(obs, dtype=torch.float32, device=args.device)
-    temporal_paddle_history[:, -1, :] = extract_current_paddle_position(initial_obs_tensor)
-    temporal_puck_history[:, -1, :] = extract_current_puck_position(initial_obs_tensor)
     previous_puck_position_for_trigger = extract_current_puck_position(initial_obs_tensor).clone()
-
-    current_velocity_mag = torch.zeros(args.num_envs, dtype=torch.float32, device=args.device)
-    current_acceleration_mag = torch.zeros(args.num_envs, dtype=torch.float32, device=args.device)
-    current_jerk_mag = torch.zeros(args.num_envs, dtype=torch.float32, device=args.device)
 
     # --- Live episode GIF recording ---
     watch_dir = os.path.join(log_parent_dir, "watch")
@@ -1216,33 +1060,6 @@ def _entrypoint():
 
     action_low = torch.as_tensor(envs.single_action_space.low, dtype=torch.float32, device=args.device)
     action_high = torch.as_tensor(envs.single_action_space.high, dtype=torch.float32, device=args.device)
-    warm_start_base_dir = os.path.join(os.path.dirname(__file__), "extras", "warm_start")
-    warm_model_path = resolve_path_relative_to_dir(
-        args.exploration_policy_takeover_model_path,
-        warm_start_base_dir,
-    )
-    warm_args_path = resolve_path_relative_to_dir(
-        args.exploration_policy_takeover_args_path,
-        warm_start_base_dir,
-    )
-    warm_config_path = resolve_path_relative_to_dir(
-        args.exploration_policy_takeover_config_path,
-        warm_start_base_dir,
-    )
-    warm_policy_actor = None
-    warm_policy_use_last_action = False
-    warm_policy_last_action = torch.zeros((args.num_envs, act_dim), dtype=torch.float32, device=args.device)
-    if args.exploration_policy_takeover_enabled and not args.eval_mode:
-        warm_policy_actor, warm_policy_use_last_action = create_warm_start_policy(
-            warm_model_path=warm_model_path,
-            warm_args_path=warm_args_path,
-            warm_config_path=warm_config_path,
-            env_action_space=envs.single_action_space,
-            raw_obs_dim=raw_obs_dim,
-            act_dim=act_dim,
-            device=args.device,
-        )
-        print(f"Warm-start takeover policy loaded from {warm_model_path}")
 
     primitive_selector = PrimitiveExplorationSelector(
         num_envs=args.num_envs,
@@ -1276,31 +1093,15 @@ def _entrypoint():
             args.exploration_target_position_directional_max_magnitude
         ),
         target_takeover_steps=args.exploration_target_position_steps,
-        pre_contact_hit_variant_chance=args.exploration_pre_contact_hit_variant_chance,
-        pre_contact_hit_variant_steps=args.exploration_pre_contact_hit_variant_steps,
-        pre_contact_hit_variant_distance_threshold=(
-            args.exploration_pre_contact_hit_variant_distance_threshold
-        ),
-        pre_contact_hit_variant_scale_min=args.exploration_pre_contact_hit_variant_scale_min,
-        pre_contact_hit_variant_scale_max=args.exploration_pre_contact_hit_variant_scale_max,
-        pre_contact_hit_variant_min_upward_displacement_x=(
-            args.exploration_pre_contact_hit_variant_min_upward_displacement_x
-        ),
     )
     primitive_selector.set_primitive_weights(
         stand_still=args.exploration_primitive_weight_stand_still,
         same_direction=args.exploration_primitive_weight_same_direction,
         y_aligned=args.exploration_primitive_weight_y_aligned,
-        policy_takeover=(
-            args.exploration_primitive_weight_policy_takeover
-            if args.exploration_policy_takeover_enabled
-            else 0.0
-        ),
         target_position_directional=args.exploration_primitive_weight_target_position_directional,
     )
     if args.eval_mode:
         primitive_selector.chance = 0.0
-        primitive_selector.pre_contact_hit_variant_chance = 0.0
     if resume_checkpoint is not None:
         restored_state = load_resume_training_state(
             resume_checkpoint,
@@ -1312,20 +1113,14 @@ def _entrypoint():
             q_optimizer=q_optimizer,
             actor_optimizer=actor_optimizer,
             defaults={
-                "warm_policy_last_action": warm_policy_last_action,
                 "train_metrics": train_metrics,
-                "velocity_magnitudes": velocity_magnitudes,
-                "acceleration_magnitudes": acceleration_magnitudes,
-                "jerk_magnitudes": jerk_magnitudes,
                 "interval_paddle_puck_collisions": interval_paddle_puck_collisions,
                 "interval_env_steps": interval_env_steps,
                 "interval_primitive_env_steps": interval_primitive_env_steps,
                 "interval_primitive_horizontal_env_steps": interval_primitive_horizontal_env_steps,
-                "interval_policy_takeover_env_steps": interval_policy_takeover_env_steps,
                 "interval_target_position_directional_env_steps": (
                     interval_target_position_directional_env_steps
                 ),
-                "steps_since_done": steps_since_done,
                 "recent_episode_returns": recent_episode_returns,
                 "episode_return_success_threshold": episode_return_success_threshold,
                 "rolling_step_stats_window": rolling_step_stats_window,
@@ -1340,22 +1135,11 @@ def _entrypoint():
             torch.tensor(obs, dtype=torch.float32, device=args.device)
         ).clone()
         last_action_for_policy = restored_state["last_action_for_policy"]
-        warm_policy_last_action = restored_state["warm_policy_last_action"]
-        temporal_paddle_history = restored_state["temporal_paddle_history"]
-        temporal_puck_history = restored_state["temporal_puck_history"]
-        steps_since_done = restored_state["steps_since_done"]
-        current_velocity_mag = restored_state["current_velocity_mag"]
-        current_acceleration_mag = restored_state["current_acceleration_mag"]
-        current_jerk_mag = restored_state["current_jerk_mag"]
         train_metrics = restored_state["train_metrics"]
-        velocity_magnitudes = restored_state["velocity_magnitudes"]
-        acceleration_magnitudes = restored_state["acceleration_magnitudes"]
-        jerk_magnitudes = restored_state["jerk_magnitudes"]
         interval_paddle_puck_collisions = restored_state["interval_paddle_puck_collisions"]
         interval_env_steps = restored_state["interval_env_steps"]
         interval_primitive_env_steps = restored_state["interval_primitive_env_steps"]
         interval_primitive_horizontal_env_steps = restored_state["interval_primitive_horizontal_env_steps"]
-        interval_policy_takeover_env_steps = restored_state["interval_policy_takeover_env_steps"]
         interval_target_position_directional_env_steps = restored_state[
             "interval_target_position_directional_env_steps"
         ]
@@ -1393,11 +1177,6 @@ def _entrypoint():
                     stand_still=args.exploration_primitive_weight_anneal_stand_still,
                     same_direction=args.exploration_primitive_weight_anneal_same_direction,
                     y_aligned=args.exploration_primitive_weight_anneal_y_aligned,
-                    policy_takeover=(
-                        args.exploration_primitive_weight_anneal_policy_takeover
-                        if args.exploration_policy_takeover_enabled
-                        else 0.0
-                    ),
                     target_position_directional=(
                         args.exploration_primitive_weight_anneal_target_position_directional
                     ),
@@ -1407,11 +1186,6 @@ def _entrypoint():
                     stand_still=args.exploration_primitive_weight_stand_still,
                     same_direction=args.exploration_primitive_weight_same_direction,
                     y_aligned=args.exploration_primitive_weight_y_aligned,
-                    policy_takeover=(
-                        args.exploration_primitive_weight_policy_takeover
-                        if args.exploration_policy_takeover_enabled
-                        else 0.0
-                    ),
                     target_position_directional=(
                         args.exploration_primitive_weight_target_position_directional
                     ),
@@ -1467,25 +1241,10 @@ def _entrypoint():
                 current_puck_velocity=current_puck_vel_for_primitive,
                 return_stats=True,
             )
-            if args.exploration_policy_takeover_enabled and warm_policy_actor is not None:
-                policy_takeover_mask = primitive_selector.active & (
-                    primitive_selector.primitive_id == primitive_selector.primitive_ids.POLICY_TAKEOVER
-                )
-                if torch.any(policy_takeover_mask):
-                    with torch.no_grad():
-                        warm_policy_obs = augment_policy_observation(
-                            obs_tensor,
-                            warm_policy_last_action,
-                            warm_policy_use_last_action,
-                        )
-                        warm_policy_actions = deterministic_actor_action(warm_policy_actor, warm_policy_obs)
-                        warm_policy_actions = torch.clamp(warm_policy_actions, action_low, action_high)
-                        action_tensor[policy_takeover_mask] = warm_policy_actions[policy_takeover_mask]
         else:
             primitive_step_stats = {
                 "primitive_applied_count": 0,
                 "primitive_horizontal_dominant_count": 0,
-                "policy_takeover_applied_count": 0,
                 "target_position_directional_applied_count": 0,
             }
         actions = action_tensor.cpu().numpy()
@@ -1532,7 +1291,6 @@ def _entrypoint():
         interval_primitive_horizontal_env_steps += int(
             primitive_step_stats["primitive_horizontal_dominant_count"]
         )
-        interval_policy_takeover_env_steps += int(primitive_step_stats["policy_takeover_applied_count"])
         interval_target_position_directional_env_steps += int(
             primitive_step_stats["target_position_directional_applied_count"]
         )
@@ -1544,113 +1302,12 @@ def _entrypoint():
         primitive_selector.reset(done_tensor)
         last_action_for_policy = action_tensor.clone()
         last_action_for_policy[done_tensor] = 0
-        warm_policy_last_action = action_tensor.clone()
-        warm_policy_last_action[done_tensor] = 0
 
-        task_rewards = torch.tensor(rewards, dtype=torch.float32, device=args.device)
-
-        current_velocity_mag, current_acceleration_mag, current_jerk_mag = parse_motion_magnitudes_from_infos(
-            infos=infos,
-            num_envs=args.num_envs,
-            device=args.device,
-            fallback_velocity_mag=current_velocity_mag,
-            fallback_acceleration_mag=current_acceleration_mag,
-            fallback_jerk_mag=current_jerk_mag,
-        )
-
-        temporal_paddle_history = torch.roll(temporal_paddle_history, shifts=-1, dims=1)
-        temporal_paddle_history[:, -1, :] = current_paddle_pos
-        temporal_puck_history = torch.roll(temporal_puck_history, shifts=-1, dims=1)
-        temporal_puck_history[:, -1, :] = current_puck_pos
-        steps_since_done = torch.where(
-            done_tensor,
-            torch.zeros_like(steps_since_done),
-            steps_since_done + 1,
-        )
-
-        realized_movement = temporal_paddle_history[:, -1, :] - temporal_paddle_history[:, 0, :]
-        movement_norm = torch.norm(realized_movement, dim=-1)
-        eps = 1e-8
-
-        temporal_valid = steps_since_done >= temporal_horizon
-        stand_still_reward_raw = ((movement_norm <= args.stand_still_threshold) & temporal_valid).float()
-
-        target_direction = temporal_puck_history[:, 0, :] - temporal_paddle_history[:, 0, :]
-        movement_norm_safe = movement_norm.clamp_min(eps)
-        target_norm_safe = torch.norm(target_direction, dim=-1).clamp_min(eps)
-        temporal_cosine = (realized_movement * target_direction).sum(dim=-1) / (
-            movement_norm_safe * target_norm_safe
-        )
-        temporal_alignment_reward_raw = torch.clamp((temporal_cosine + 1.0) * 0.5, 0.0, 1.0)
-        temporal_alignment_reward_raw = temporal_alignment_reward_raw * temporal_valid.float()
-        temporal_alignment_reward_raw = torch.where(
-            stand_still_reward_raw > 0.5, torch.ones_like(temporal_alignment_reward_raw), temporal_alignment_reward_raw
-        )
-
-        movement_unit = realized_movement / movement_norm_safe.unsqueeze(-1)
-        max_axis_cosine = torch.max(torch.abs(movement_unit[:, 0]), torch.abs(movement_unit[:, 1]))
-        min_axis_cosine = float(1.0 / np.sqrt(2.0))
-        axis_alignment_reward_raw = (max_axis_cosine - min_axis_cosine) / (1.0 - min_axis_cosine + eps)
-        axis_alignment_reward_raw = torch.clamp(axis_alignment_reward_raw, 0.0, 1.0) * temporal_valid.float()
-        axis_alignment_reward_raw = torch.where(
-            stand_still_reward_raw > 0.5, torch.ones_like(axis_alignment_reward_raw), axis_alignment_reward_raw
-        )
-
-        velocity_reward_raw = velocity_reward_from_magnitude(
-            current_velocity_mag, velocity_at_one=args.velocity_at_one, velocity_at_zero=args.velocity_at_zero
-        )
-        jerk_reward_raw = jerk_reward_from_magnitude(
-            current_jerk_mag, jerk_at_one=args.jerk_at_one, jerk_at_zero=args.jerk_at_zero
-        )
-
-        stand_still_reward_weighted = args.stand_still_reward_weight * stand_still_reward_raw
-        temporal_alignment_reward_weighted = args.temporal_alignment_reward_weight * temporal_alignment_reward_raw
-        axis_alignment_reward_weighted = args.axis_alignment_reward_weight * axis_alignment_reward_raw
-        velocity_reward_weighted = args.velocity_reward_weight * velocity_reward_raw
-        jerk_reward_weighted = args.jerk_reward_weight * jerk_reward_raw
-
-        motion_rewards = (
-            stand_still_reward_weighted
-            + temporal_alignment_reward_weighted
-            + axis_alignment_reward_weighted
-            + velocity_reward_weighted
-            + jerk_reward_weighted
-        )
+        rewards_tensor = torch.tensor(rewards, dtype=torch.float32, device=args.device)
 
         if recording_episode:
-            recording_last_rew = float(task_rewards[0].item())
+            recording_last_rew = float(rewards_tensor[0].item())
             recording_cum_rew += recording_last_rew
-
-        if should_update_train_metrics:
-            motion_reward_mean_metrics = tensor_mean_items(
-                {
-                    "rewards/temporal_valid_fraction": temporal_valid.float(),
-                    "rewards/stand_still_reward_raw_mean": stand_still_reward_raw,
-                    "rewards/temporal_alignment_reward_raw_mean": temporal_alignment_reward_raw,
-                    "rewards/axis_alignment_reward_raw_mean": axis_alignment_reward_raw,
-                    "rewards/velocity_reward_raw_mean": velocity_reward_raw,
-                    "rewards/jerk_reward_raw_mean": jerk_reward_raw,
-                    "rewards/stand_still_reward_weighted_mean": stand_still_reward_weighted,
-                    "rewards/temporal_alignment_reward_weighted_mean": temporal_alignment_reward_weighted,
-                    "rewards/axis_alignment_reward_weighted_mean": axis_alignment_reward_weighted,
-                    "rewards/velocity_reward_weighted_mean": velocity_reward_weighted,
-                    "rewards/jerk_reward_weighted_mean": jerk_reward_weighted,
-                }
-            )
-            train_metrics.update(motion_reward_mean_metrics)
-            # Log this rollout diagnostic at collection time so it is not biased
-            # by terminal-step-only training updates.
-            writer.add_scalar(
-                "rewards/temporal_valid_fraction",
-                motion_reward_mean_metrics["rewards/temporal_valid_fraction"],
-                global_step,
-            )
-
-        if dones.any():
-            temporal_paddle_history[done_tensor] = 0
-            temporal_paddle_history[done_tensor, -1, :] = current_paddle_pos[done_tensor]
-            temporal_puck_history[done_tensor] = 0
-            temporal_puck_history[done_tensor, -1, :] = current_puck_pos[done_tensor]
 
         if "final_info" in infos:
             for info in infos["final_info"]:
@@ -1665,10 +1322,6 @@ def _entrypoint():
                             1.0 if info.get("success", False) else 0.0,
                         )
                     )
-                    if "motion_data" in info:
-                        velocity_magnitudes.extend(info["motion_data"]["velocity_mags"])
-                        acceleration_magnitudes.extend(info["motion_data"]["acceleration_mags"])
-                        jerk_magnitudes.extend(info["motion_data"]["jerk_mags"])
         rolling_step_stats_window.append(
             (
                 int(global_step + args.num_envs),
@@ -1694,8 +1347,7 @@ def _entrypoint():
                 obs=obs_tensor[0],
                 next_obs=real_next_obs_tensor[0],
                 action=action_tensor[0],
-                task_reward=task_rewards[0],
-                motion_reward=motion_rewards[0],
+                reward=rewards_tensor[0],
                 done=terminations_tensor[0],
                 prev_action=prev_action_for_transition[0],
             )
@@ -1773,7 +1425,7 @@ def _entrypoint():
                     )
                     source_data = source_chunk["data"]
                     replay_chunks.append(source_data)
-                    source_batch_size = int(source_data["task_rewards"].shape[0])
+                    source_batch_size = int(source_data["rewards"].shape[0])
                     source_per_count = int(source_chunk["per_count"])
                     source_uniform_count = int(source_chunk["uniform_count"])
                     per_sample_count += source_per_count
@@ -1800,13 +1452,12 @@ def _entrypoint():
                 sampled_observations = data["observations"]
                 sampled_next_observations = data["next_observations"]
                 sampled_actions = data["actions"]
-                sampled_task_rewards = data["task_rewards"]
-                sampled_motion_rewards = data["motion_rewards"]
+                sampled_rewards = data["rewards"]
                 sampled_dones = data["dones"]
                 sampled_prev_actions = data["prev_actions"]
                 sampled_weights = data.get("weights")
                 if sampled_weights is None:
-                    sampled_weights = torch.ones_like(sampled_task_rewards)
+                    sampled_weights = torch.ones_like(sampled_rewards)
                 sampled_weights = sampled_weights.view(-1)
                 sampled_next_prev_actions = sampled_actions * (1.0 - sampled_dones.unsqueeze(-1))
                 sampled_next_policy_observations = augment_policy_observation(
@@ -1826,8 +1477,7 @@ def _entrypoint():
 
                     # Subset selection for the target Q (REDQ-style; min over a
                     # sampled M-subset). When target_critic_subset_size is None
-                    # OR equals num_critics, behaves as Maxmin-N. With N=2 and
-                    # subset=None, this is bit-identical to original twin TD3.
+                    # OR equals num_critics, behaves as Maxmin-N.
                     if (
                         args.target_critic_subset_size is None
                         or args.target_critic_subset_size >= args.num_critics
@@ -1840,71 +1490,45 @@ def _entrypoint():
                             ]
                             .tolist()
                         )
-                    next_task_h_list = []
-                    next_motion_h_list = []
-                    for ti in target_indices:
-                        nt_h, nm_h = qfs_target[ti](
-                            sampled_next_observations, target_next_action
-                        )
-                        next_task_h_list.append(nt_h)
-                        next_motion_h_list.append(nm_h)
-                    if len(next_task_h_list) == 1:
-                        min_next_task_h = next_task_h_list[0]
-                        min_next_motion_h = next_motion_h_list[0]
-                    elif len(next_task_h_list) == 2:
-                        # Preserve original kernel path for bit-identical behavior on N=2.
-                        min_next_task_h = torch.min(next_task_h_list[0], next_task_h_list[1])
-                        min_next_motion_h = torch.min(next_motion_h_list[0], next_motion_h_list[1])
+                    next_q_h_list = [
+                        qfs_target[ti](sampled_next_observations, target_next_action)
+                        for ti in target_indices
+                    ]
+                    if len(next_q_h_list) == 1:
+                        min_next_q_h = next_q_h_list[0]
+                    elif len(next_q_h_list) == 2:
+                        min_next_q_h = torch.min(next_q_h_list[0], next_q_h_list[1])
                     else:
-                        min_next_task_h = torch.stack(next_task_h_list, dim=0).min(dim=0).values
-                        min_next_motion_h = torch.stack(next_motion_h_list, dim=0).min(dim=0).values
+                        min_next_q_h = torch.stack(next_q_h_list, dim=0).min(dim=0).values
 
-                    min_next_task = h_inverse(min_next_task_h, eps=args.h_transform_eps).view(-1)
-                    min_next_motion = h_inverse(min_next_motion_h, eps=args.h_transform_eps).view(-1)
+                    min_next_q = h_inverse(min_next_q_h, eps=args.h_transform_eps).view(-1)
 
-                    bellman_target_task_original = sampled_task_rewards + (
+                    bellman_target_original = sampled_rewards + (
                         1 - sampled_dones
-                    ) * args.task_gamma * min_next_task
-                    bellman_target_motion_original = sampled_motion_rewards + (
-                        1 - sampled_dones
-                    ) * args.motion_gamma * min_next_motion
+                    ) * args.gamma * min_next_q
 
-                    next_q_task_value_h = h_transform(
-                        bellman_target_task_original, eps=args.h_transform_eps
-                    )
-                    next_q_motion_value_h = h_transform(
-                        bellman_target_motion_original, eps=args.h_transform_eps
+                    next_q_value_h = h_transform(
+                        bellman_target_original, eps=args.h_transform_eps
                     )
 
                     if should_update_train_metrics and q_update_idx == args.q_updates - 1:
                         train_metrics.update(
                             {
-                                "debug/bellman_target_task_original_mean": (
-                                    bellman_target_task_original.mean().item()
+                                "debug/bellman_target_original_mean": (
+                                    bellman_target_original.mean().item()
                                 ),
-                                "debug/bellman_target_motion_original_mean": (
-                                    bellman_target_motion_original.mean().item()
-                                ),
-                                "debug/next_q_task_h_mean": next_q_task_value_h.mean().item(),
-                                "debug/next_q_motion_h_mean": next_q_motion_value_h.mean().item(),
+                                "debug/next_q_h_mean": next_q_value_h.mean().item(),
                             }
                         )
 
                 # Forward pass over all N critics; train each against the shared target.
-                qi_task_h_list = []
-                qi_motion_h_list = []
-                qi_task_err_list = []
-                qi_motion_err_list = []
-                qi_task_loss_list = []
-                qi_motion_loss_list = []
-                # Pre-compute CQL random actions and policy action once per minibatch
-                # (shared across critics — random sampling and policy forward are
-                # independent of which critic we're scoring).
+                qi_h_list = []
+                qi_err_list = []
+                qi_loss_list = []
+                # Pre-compute CQL random actions and policy action once per minibatch.
                 if args.cql_alpha > 0.0:
                     bsz = sampled_observations.shape[0]
                     n_rand = int(args.cql_n_random)
-                    # Uniform random actions in [-1, 1]^act_dim. Action space is
-                    # symmetric ([-1,1]) for this env so this is the full support.
                     cql_random_actions = torch.empty(
                         n_rand * bsz, act_dim, device=args.device
                     ).uniform_(-1.0, 1.0)
@@ -1921,50 +1545,30 @@ def _entrypoint():
                             actor, cql_policy_obs
                         )
                 for q in qfs:
-                    qi_task_h, qi_motion_h = q(sampled_observations, sampled_actions)
-                    qi_task_err = qi_task_h.view(-1) - next_q_task_value_h
-                    qi_motion_err = qi_motion_h.view(-1) - next_q_motion_value_h
-                    qi_task_h_list.append(qi_task_h)
-                    qi_motion_h_list.append(qi_motion_h)
-                    qi_task_err_list.append(qi_task_err)
-                    qi_motion_err_list.append(qi_motion_err)
-                    task_loss_i = (sampled_weights * qi_task_err.pow(2)).mean()
+                    qi_h = q(sampled_observations, sampled_actions)
+                    qi_err = qi_h.view(-1) - next_q_value_h
+                    qi_h_list.append(qi_h)
+                    qi_err_list.append(qi_err)
+                    loss_i = (sampled_weights * qi_err.pow(2)).mean()
                     if args.cql_alpha > 0.0:
-                        # Q for random actions: shape (n_rand, bsz, 1) after reshape.
-                        q_rand_task_h, _ = q(cql_obs_repeat, cql_random_actions)
-                        q_rand_task_h = q_rand_task_h.view(n_rand, bsz)
-                        # Q for current policy action (no actor gradient).
-                        q_pi_task_h, _ = q(sampled_observations, cql_policy_action)
-                        q_pi_task_h = q_pi_task_h.view(-1)
-                        # log(1/n_rand * sum exp Q) = logsumexp - log(n_rand)
+                        q_rand_h = q(cql_obs_repeat, cql_random_actions).view(n_rand, bsz)
+                        q_pi_h = q(sampled_observations, cql_policy_action).view(-1)
                         cql_logsumexp = (
-                            torch.logsumexp(q_rand_task_h, dim=0) - math.log(float(n_rand))
+                            torch.logsumexp(q_rand_h, dim=0) - math.log(float(n_rand))
                         )
-                        cql_penalty = (cql_logsumexp - q_pi_task_h).mean()
-                        task_loss_i = task_loss_i + args.cql_alpha * cql_penalty
-                    qi_task_loss_list.append(task_loss_i)
-                    qi_motion_loss_list.append((sampled_weights * qi_motion_err.pow(2)).mean())
-                # Legacy aliases — used by debug logs and PER on N=2.
-                q1_task_h, q1_motion_h = qi_task_h_list[0], qi_motion_h_list[0]
-                q2_task_h, q2_motion_h = qi_task_h_list[1], qi_motion_h_list[1]
-                q1_task_error_h, q1_motion_error_h = qi_task_err_list[0], qi_motion_err_list[0]
-                q2_task_error_h, q2_motion_error_h = qi_task_err_list[1], qi_motion_err_list[1]
-                q1_task_loss, q1_motion_loss = qi_task_loss_list[0], qi_motion_loss_list[0]
-                q2_task_loss, q2_motion_loss = qi_task_loss_list[1], qi_motion_loss_list[1]
+                        cql_penalty = (cql_logsumexp - q_pi_h).mean()
+                        loss_i = loss_i + args.cql_alpha * cql_penalty
+                    qi_loss_list.append(loss_i)
+                q1_h = qi_h_list[0]
 
-                q_total_loss = sum(qi_task_loss_list) + sum(qi_motion_loss_list)
+                q_total_loss = sum(qi_loss_list)
 
                 q_optimizer.zero_grad()
                 q_total_loss.backward()
                 q_optimizer.step()
 
-                # PER priority: mean of |TD error| across all (critic, head) pairs.
-                # For N=2 this reduces to the original 0.25 * sum_4 expression.
-                num_err_components = 2 * args.num_critics
-                priority_td_error = (
-                    sum(e.abs() for e in qi_task_err_list)
-                    + sum(e.abs() for e in qi_motion_err_list)
-                ) / num_err_components
+                # PER priority: mean of |TD error| across critics.
+                priority_td_error = sum(e.abs() for e in qi_err_list) / args.num_critics
                 if args.per_enabled and per_sample_count > 0:
                     for source_buffer, per_indices, start_idx, end_idx in per_priority_update_slices:
                         source_buffer.update_priorities(
@@ -1976,10 +1580,10 @@ def _entrypoint():
                     sampled_priorities = data.get("sampled_priorities")
                     if sampled_priorities is None:
                         sampled_priorities = torch.zeros_like(sampled_weights)
-                    positive_task_reward_mask = sampled_task_rewards > 0.0
-                    positive_task_reward_count = float(positive_task_reward_mask.sum().item())
-                    minibatch_size = max(int(sampled_task_rewards.numel()), 1)
-                    positive_task_rewards = sampled_task_rewards[positive_task_reward_mask]
+                    positive_reward_mask = sampled_rewards > 0.0
+                    positive_reward_count = float(positive_reward_mask.sum().item())
+                    minibatch_size = max(int(sampled_rewards.numel()), 1)
+                    positive_rewards = sampled_rewards[positive_reward_mask]
                     priority_td_error_mean = (
                         priority_td_error.mean().item()
                         if args.per_enabled and per_sample_count > 0
@@ -1987,35 +1591,28 @@ def _entrypoint():
                     )
                     train_metrics.update(
                         {
-                            "losses/q_task_loss": sum(l.item() for l in qi_task_loss_list) / args.num_critics,
-                            "losses/q_motion_loss": sum(l.item() for l in qi_motion_loss_list) / args.num_critics,
+                            "losses/q_loss": sum(l.item() for l in qi_loss_list) / args.num_critics,
                             "losses/q_total_loss": q_total_loss.item(),
-                            "losses/q1_task_mean": q1_task_h.mean().item(),
-                            "losses/q1_motion_mean": q1_motion_h.mean().item(),
-                            "losses/q1_total_mean": (q1_task_h + q1_motion_h).mean().item(),
-                            "rewards/sampled_task_reward_mean": sampled_task_rewards.mean().item(),
-                            "rewards/sampled_task_reward_min": sampled_task_rewards.min().item(),
-                            "rewards/sampled_task_reward_std": sampled_task_rewards.std(
+                            "losses/q1_mean": q1_h.mean().item(),
+                            "rewards/sampled_reward_mean": sampled_rewards.mean().item(),
+                            "rewards/sampled_reward_min": sampled_rewards.min().item(),
+                            "rewards/sampled_reward_std": sampled_rewards.std(
                                 unbiased=False
                             ).item(),
-                            "rewards/sampled_task_reward_positive_count": positive_task_reward_count,
-                            "rewards/sampled_task_reward_positive_fraction": (
-                                positive_task_reward_count / float(minibatch_size)
+                            "rewards/sampled_reward_positive_count": positive_reward_count,
+                            "rewards/sampled_reward_positive_fraction": (
+                                positive_reward_count / float(minibatch_size)
                             ),
-                            "rewards/sampled_task_reward_positive_mean": (
-                                positive_task_rewards.mean().item()
-                                if positive_task_rewards.numel() > 0
+                            "rewards/sampled_reward_positive_mean": (
+                                positive_rewards.mean().item()
+                                if positive_rewards.numel() > 0
                                 else 0.0
                             ),
-                            "rewards/sampled_task_reward_positive_std": (
-                                positive_task_rewards.std(unbiased=False).item()
-                                if positive_task_rewards.numel() > 0
+                            "rewards/sampled_reward_positive_std": (
+                                positive_rewards.std(unbiased=False).item()
+                                if positive_rewards.numel() > 0
                                 else 0.0
                             ),
-                            "rewards/sampled_motion_reward_mean": sampled_motion_rewards.mean().item(),
-                            "rewards/sampled_combined_reward_mean": (
-                                sampled_task_rewards + sampled_motion_rewards
-                            ).mean().item(),
                             "replay/per_beta": per_beta,
                             "replay/per_is_weight_mean": sampled_weights.mean().item(),
                             "replay/per_sampled_priority_mean": sampled_priorities.mean().item(),
@@ -2041,20 +1638,14 @@ def _entrypoint():
                             "replay/recent_episode_window_count": float(len(recent_episode_returns)),
                         }
                     )
-                    # Per-critic Q stats (only if ensemble; q1_*_mean already logged above).
                     if args.num_critics > 2:
-                        for ci, (qt_h, qm_h) in enumerate(
-                            zip(qi_task_h_list, qi_motion_h_list), start=1
-                        ):
+                        for ci, qh in enumerate(qi_h_list, start=1):
                             if ci == 1:
-                                continue  # already logged as q1_task_mean above
-                            train_metrics[f"losses/q{ci}_task_mean"] = qt_h.mean().item()
-                            train_metrics[f"losses/q{ci}_motion_mean"] = qm_h.mean().item()
-                        all_task_h = torch.stack(qi_task_h_list, dim=0)
-                        all_motion_h = torch.stack(qi_motion_h_list, dim=0)
-                        train_metrics["losses/q_min_task_mean"] = all_task_h.min(dim=0).values.mean().item()
-                        train_metrics["losses/q_min_motion_mean"] = all_motion_h.min(dim=0).values.mean().item()
-                        train_metrics["losses/q_mean_task_mean"] = all_task_h.mean().item()
+                                continue  # already logged as q1_mean
+                            train_metrics[f"losses/q{ci}_mean"] = qh.mean().item()
+                        all_h = torch.stack(qi_h_list, dim=0)
+                        train_metrics["losses/q_min_mean"] = all_h.min(dim=0).values.mean().item()
+                        train_metrics["losses/q_mean_mean"] = all_h.mean().item()
 
                 total_critic_updates += 1
                 if total_critic_updates % args.target_network_frequency == 0:
@@ -2100,19 +1691,10 @@ def _entrypoint():
                 )
 
                 current_policy_actions = deterministic_actor_action(actor, sampled_policy_observations)
-                q1_task_h, q1_motion_h = qf1(
-                    sampled_observations,
-                    current_policy_actions,
-                )
-                q1_task = h_inverse(q1_task_h, eps=args.h_transform_eps).view(-1)
-                q1_motion = h_inverse(q1_motion_h, eps=args.h_transform_eps).view(-1)
-                norm_task = (1.0 - args.task_gamma) * q1_task
-                norm_motion = (1.0 - args.motion_gamma) * q1_motion
-                actor_objective = (
-                    args.task_reward_weight * norm_task
-                    + args.motion_reward_weight * norm_motion
-                )
-                actor_loss = -actor_objective.mean()
+                q1_h = qf1(sampled_observations, current_policy_actions)
+                q1 = h_inverse(q1_h, eps=args.h_transform_eps).view(-1)
+                norm_q = (1.0 - args.gamma) * q1
+                actor_loss = -norm_q.mean()
                 if (
                     checkpoint_load_mode == "residual"
                     and args.residual_action_l2 > 0.0
@@ -2133,8 +1715,7 @@ def _entrypoint():
                     train_metrics.update(
                         {
                             "losses/actor_loss": actor_loss.item(),
-                            "losses/actor_norm_task_mean": norm_task.mean().item(),
-                            "losses/actor_norm_motion_mean": norm_motion.mean().item(),
+                            "losses/actor_norm_q_mean": norm_q.mean().item(),
                         }
                     )
 
@@ -2207,21 +1788,6 @@ def _entrypoint():
             )
             writer.add_scalar("charts/rolling2k_estop_rate", rolling_estop_rate, global_step)
 
-            if velocity_magnitudes:
-                avg_vel_mag = np.mean(velocity_magnitudes)
-                avg_acc_mag = np.mean(acceleration_magnitudes)
-                avg_jerk_mag = np.mean(jerk_magnitudes)
-                print(
-                    f"Step {global_step}: Avg Velocity: {avg_vel_mag:.4f}, "
-                    f"Avg Acceleration: {avg_acc_mag:.4f}, Avg Jerk: {avg_jerk_mag:.4f}"
-                )
-                writer.add_scalar("motion/avg_velocity_magnitude", avg_vel_mag, global_step)
-                writer.add_scalar("motion/avg_acceleration_magnitude", avg_acc_mag, global_step)
-                writer.add_scalar("motion/avg_jerk_magnitude", avg_jerk_mag, global_step)
-                velocity_magnitudes.clear()
-                acceleration_magnitudes.clear()
-                jerk_magnitudes.clear()
-
             collisions_per_env_step = (
                 interval_paddle_puck_collisions / max(interval_env_steps, 1) if interval_env_steps > 0 else 0.0
             )
@@ -2240,16 +1806,10 @@ def _entrypoint():
                 global_step,
             )
             primitive_fraction = interval_primitive_env_steps / max(interval_env_steps, 1) if interval_env_steps > 0 else 0.0
-            primitive_directional_env_steps = max(
-                interval_primitive_env_steps - interval_policy_takeover_env_steps, 0
-            )
             primitive_horizontal_fraction = (
-                interval_primitive_horizontal_env_steps / max(primitive_directional_env_steps, 1)
-                if primitive_directional_env_steps > 0
+                interval_primitive_horizontal_env_steps / max(interval_primitive_env_steps, 1)
+                if interval_primitive_env_steps > 0
                 else 0.0
-            )
-            policy_takeover_fraction = (
-                interval_policy_takeover_env_steps / max(interval_env_steps, 1) if interval_env_steps > 0 else 0.0
             )
             target_position_directional_fraction = (
                 interval_target_position_directional_env_steps / max(interval_env_steps, 1)
@@ -2259,13 +1819,8 @@ def _entrypoint():
             print(
                 f"Step {global_step}: Primitive Actions (last interval): "
                 f"{interval_primitive_env_steps}/{interval_env_steps} env-steps ({primitive_fraction:.4f}), "
-                f"horizontal-dominant: {interval_primitive_horizontal_env_steps}/{primitive_directional_env_steps} "
+                f"horizontal-dominant: {interval_primitive_horizontal_env_steps}/{interval_primitive_env_steps} "
                 f"({primitive_horizontal_fraction:.4f})"
-            )
-            print(
-                f"Step {global_step}: Policy Takeover Actions (last interval): "
-                f"{interval_policy_takeover_env_steps}/{interval_env_steps} env-steps "
-                f"({policy_takeover_fraction:.4f})"
             )
             print(
                 f"Step {global_step}: Target-Position Directional Actions (last interval): "
@@ -2293,16 +1848,6 @@ def _entrypoint():
                 global_step,
             )
             writer.add_scalar(
-                "exploration/interval_policy_takeover_env_steps",
-                interval_policy_takeover_env_steps,
-                global_step,
-            )
-            writer.add_scalar(
-                "exploration/interval_policy_takeover_fraction",
-                policy_takeover_fraction,
-                global_step,
-            )
-            writer.add_scalar(
                 "exploration/interval_target_position_directional_env_steps",
                 interval_target_position_directional_env_steps,
                 global_step,
@@ -2316,7 +1861,6 @@ def _entrypoint():
             interval_env_steps = 0
             interval_primitive_env_steps = 0
             interval_primitive_horizontal_env_steps = 0
-            interval_policy_takeover_env_steps = 0
             interval_target_position_directional_env_steps = 0
 
         if global_step > 0 and global_step % args.checkpoint_interval == 0:
@@ -2353,22 +1897,11 @@ def _entrypoint():
                 primitive_selector=primitive_selector,
                 obs=obs,
                 last_action_for_policy=last_action_for_policy,
-                warm_policy_last_action=warm_policy_last_action,
-                temporal_paddle_history=temporal_paddle_history,
-                temporal_puck_history=temporal_puck_history,
-                steps_since_done=steps_since_done,
-                current_velocity_mag=current_velocity_mag,
-                current_acceleration_mag=current_acceleration_mag,
-                current_jerk_mag=current_jerk_mag,
                 train_metrics=train_metrics,
-                velocity_magnitudes=velocity_magnitudes,
-                acceleration_magnitudes=acceleration_magnitudes,
-                jerk_magnitudes=jerk_magnitudes,
                 interval_paddle_puck_collisions=interval_paddle_puck_collisions,
                 interval_env_steps=interval_env_steps,
                 interval_primitive_env_steps=interval_primitive_env_steps,
                 interval_primitive_horizontal_env_steps=interval_primitive_horizontal_env_steps,
-                interval_policy_takeover_env_steps=interval_policy_takeover_env_steps,
                 interval_target_position_directional_env_steps=(
                     interval_target_position_directional_env_steps
                 ),
@@ -2403,8 +1936,6 @@ def _entrypoint():
                     use_last_action_in_policy_state=args.use_last_action_in_policy_state,
                     exploration_noise=(0.0 if args.eval_mode else args.exploration_noise),
                     primitive_selector=primitive_selector,
-                    warm_policy_actor=warm_policy_actor if args.exploration_policy_takeover_enabled else None,
-                    warm_policy_use_last_action=warm_policy_use_last_action,
                     max_timesteps=200,
                     fps=20,
                     device=args.device,
@@ -2444,22 +1975,11 @@ def _entrypoint():
             primitive_selector=primitive_selector,
             obs=obs,
             last_action_for_policy=last_action_for_policy,
-            warm_policy_last_action=warm_policy_last_action,
-            temporal_paddle_history=temporal_paddle_history,
-            temporal_puck_history=temporal_puck_history,
-            steps_since_done=steps_since_done,
-            current_velocity_mag=current_velocity_mag,
-            current_acceleration_mag=current_acceleration_mag,
-            current_jerk_mag=current_jerk_mag,
             train_metrics=train_metrics,
-            velocity_magnitudes=velocity_magnitudes,
-            acceleration_magnitudes=acceleration_magnitudes,
-            jerk_magnitudes=jerk_magnitudes,
             interval_paddle_puck_collisions=interval_paddle_puck_collisions,
             interval_env_steps=interval_env_steps,
             interval_primitive_env_steps=interval_primitive_env_steps,
             interval_primitive_horizontal_env_steps=interval_primitive_horizontal_env_steps,
-            interval_policy_takeover_env_steps=interval_policy_takeover_env_steps,
             interval_target_position_directional_env_steps=interval_target_position_directional_env_steps,
             episode_trajectory=episode_trajectory,
             recent_episode_returns=recent_episode_returns,
@@ -2495,13 +2015,10 @@ def _entrypoint():
 
     metrics = [
         "charts/episodic_return",
-        "losses/q_task_loss",
-        "losses/q_motion_loss",
+        "losses/q_loss",
         "losses/q_total_loss",
         "losses/actor_loss",
-        "rewards/sampled_task_reward_mean",
-        "rewards/sampled_motion_reward_mean",
-        "rewards/sampled_combined_reward_mean",
+        "rewards/sampled_reward_mean",
         "replay/per_beta",
         "replay/per_is_weight_mean",
         "replay/per_sampled_priority_mean",

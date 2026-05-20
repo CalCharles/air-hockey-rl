@@ -107,7 +107,6 @@ class PuckScoreGoalShotTests(unittest.TestCase):
     def _make_env(self):
         cfg = _load_score_cfg(
             seed=0,
-            use_reward_shaping=False,
             terminate_on_puck_pass_paddle=False,
             terminate_on_out_of_bounds=False,
             terminate_on_enemy_goal=False,

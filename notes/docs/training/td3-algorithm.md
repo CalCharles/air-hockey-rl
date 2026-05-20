@@ -11,58 +11,41 @@ h(x)      = sign(x) * (sqrt(|x| + 1) - 1) + eps * x
 h_inv(x)  = sign(x) * ( ((sqrt(1 + 4*eps*(|x| + 1 + eps)) - 1) / (2*eps))^2 - 1 )
 ```
 
-`eps` (default `1e-3`) adds a small linear term that keeps `h` invertible everywhere. Both critics output values in the transformed space; Bellman targets are computed in original space, then mapped back through `h`.
+`eps` (default `1e-3`) adds a small linear term that keeps `h` invertible everywhere. Critics output values in transformed space; Bellman targets are computed in original space, then mapped back through `h`.
 
-**Code:** `h_transform` / `h_inverse` in `td3_training.py` (lines 72-81) and duplicated in `helper/real_td3_runtime.py`.
+**Code:** `h_transform` / `h_inverse` in `td3_training.py` and duplicated in `helper/real_td3_runtime.py`.
 
-## Dual-head critics
+## Single-head critic
 
-Each of the two critic networks ([`TD3DualHeadQNetwork`](../../../scripts/td3/helper/dual_head_q.py)) has a shared residual trunk and two independent scalar output heads:
+Each of the `num_critics` critic networks ([`TD3QNetwork`](../../../scripts/td3/helper/q_network.py)) has a residual trunk and one scalar output head predicting transformed Q for the environment reward stream.
 
-- **Task head** -- predicts transformed Q for the environment/task reward stream
-- **Motion head** -- predicts transformed Q for the auxiliary motion reward stream
-
-This dual-head design allows separate discount factors and reward scales while sharing representation:
-
-| Parameter | Default | Role |
-|-----------|---------|------|
-| `task_gamma` | 0.975 | Discount factor for task rewards |
-| `motion_gamma` | 0.8 | Discount factor for motion rewards (shorter horizon, faster credit assignment) |
-
-See also: [network-architecture.md](network-architecture.md) for the `TD3DualHeadQNetwork` structure.
+See also: [network-architecture.md](network-architecture.md) for the `TD3QNetwork` structure.
 
 ## Critic update
 
-Standard TD3 twin-critic procedure, extended for dual heads:
+Standard TD3 twin-critic procedure (generalized to `num_critics >= 2`):
 
 1. **Target actions:** query the target actor with the next observation, add clipped Gaussian noise (`policy_noise=0.2`, `noise_clip=0.5`), clamp to action bounds.
-2. **Min-of-two targets:** for each head, take the element-wise minimum across the two target critics (in transformed space), then invert via `h_inv`.
-3. **Bellman targets:** computed in original space per head:
-   - `target_task = task_reward + (1 - done) * task_gamma * min_next_task`
-   - `target_motion = motion_reward + (1 - done) * motion_gamma * min_next_motion`
-4. **Transform back:** `h(target_task)`, `h(target_motion)` become the regression targets.
-5. **Loss:** weighted MSE in transformed space (weights come from PER importance sampling when enabled):
-   - `q_total_loss = q1_task_loss + q2_task_loss + q1_motion_loss + q2_motion_loss`
-6. **Priority update:** when PER is active, the TD error for priority updates is the mean of the absolute errors across all four head-critic combinations.
+2. **Min target:** element-wise minimum across the target critics in transformed space (or a sampled subset of size `target_critic_subset_size` for REDQ-style training), then inverted via `h_inv`.
+3. **Bellman target:** `target = reward + (1 - done) * gamma * min_next_q`, then mapped through `h`.
+4. **Loss:** weighted MSE in transformed space (weights come from PER importance sampling when enabled): `q_total_loss = sum_i q_i_loss`.
+5. **CQL (optional):** when `cql_alpha > 0`, an offline-RL penalty `cql_alpha * (logsumexp_a Q(s, a_rand) - Q(s, pi(s)))` is added to each critic loss (canonical residual recipe sets `cql_alpha=20`).
+6. **Priority update:** when PER is active, the TD error for priority updates is the mean of the absolute errors across all critics.
 
 ## Actor update
 
-The actor maximizes a weighted combination of the two Q streams, each normalized by `(1 - gamma)` to put them on comparable scales:
+The actor maximizes `Q_1(s, pi(s))` normalized by `(1 - gamma)` to keep it on a per-step scale:
 
 ```
-norm_task   = (1 - task_gamma) * h_inv(Q1_task(s, pi(s)))
-norm_motion = (1 - motion_gamma) * h_inv(Q1_motion(s, pi(s)))
-actor_objective = task_reward_weight * norm_task + motion_reward_weight * norm_motion
-actor_loss = -mean(actor_objective)
+norm_q          = (1 - gamma) * h_inv(Q1(s, pi(s)))
+actor_loss      = -mean(norm_q)
 ```
 
-The `(1 - gamma)` normalization converts discounted sums to per-step-equivalent values, preventing the higher-gamma task stream from dominating the objective.
-
-**Code:** actor loss block in `td3_training.py` (lines 1626-1642).
+In residual mode an optional `residual_action_l2` term is added to keep the residual head small.
 
 ## Target network updates
 
-Polyak averaging of all three network pairs (actor, qf1, qf2) with `tau=0.005`:
+Polyak averaging of every critic/target pair + the actor target with `tau=0.005`:
 
 ```
 target_param = tau * param + (1 - tau) * target_param
@@ -103,23 +86,26 @@ action = actor(obs) + N(0, exploration_noise)
 
 `exploration_noise` defaults to `0.1`. This is separate from the target policy smoothing noise used in critic targets (`policy_noise=0.2`, `noise_clip=0.5`).
 
-Primitive exploration (stand-still, directional, target-position, etc.) can override the noisy policy action for configurable multi-step windows. See [td3-primitives.md](../exploration/td3-primitives.md).
+Primitive exploration (stand-still, directional, target-position) can override the noisy policy action for configurable multi-step windows. See [td3-primitives.md](../exploration/td3-primitives.md).
 
 ## Key hyperparameters
 
 | Parameter | Default | Role |
 |-----------|---------|------|
+| `gamma` | 0.975 | Discount factor |
 | `policy_lr` | 3e-4 | Actor learning rate (Adam) |
 | `q_lr` | 1e-3 | Critic learning rate (Adam) |
 | `q_weight_decay` | 1e-4 | Critic weight decay |
 | `buffer_size` | 1e6 | Replay buffer capacity |
 | `tau` | 0.005 | Polyak averaging coefficient |
 | `h_transform_eps` | 1e-3 | Epsilon for h-transform invertibility |
+| `num_critics` | 2 | Number of critics (twin TD3 with 2; REDQ-style ensemble for >2) |
+| `cql_alpha` | 0.0 | CQL penalty weight (canonical residual recipe uses 20.0) |
 
 ## Related docs
 
-- [Reward shaping](reward-shaping.md) -- task and motion reward composition
-- [Network architecture](network-architecture.md) -- `TD3DualHeadQNetwork`, `DeterministicAgent`, `ResidualMLPTrunk`
+- [Reward shaping](reward-shaping.md)
+- [Network architecture](network-architecture.md) -- `TD3QNetwork`, `DeterministicAgent`, `ResidualMLPTrunk`
 - [Replay and episodes](replay-and-episodes.md) -- buffer types, PER, episode staging
 - [Checkpointing](checkpointing.md) -- save/resume schema
-- [Exploration primitives](../exploration/td3-primitives.md) -- primitive takeover behavior
+- [Exploration primitives](../exploration/td3-primitives.md)

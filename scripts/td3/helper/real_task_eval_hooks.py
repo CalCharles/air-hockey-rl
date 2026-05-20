@@ -37,8 +37,7 @@ from .juggle_counter import count_juggles_from_rows
 
 BASE_NUMERIC_SERIES_FIELDS: Tuple[str, ...] = (
     "episode_return",
-    "episode_task_reward",
-    "episode_motion_reward",
+    "episode_reward",
     "episode_length",
 )
 BASE_RATE_FIELDS: Tuple[str, ...] = (
@@ -104,8 +103,7 @@ class JuggleEvalHooks:
         "episode_return",
         "episode_juggles",
         "episode_contacts",
-        "episode_task_reward",
-        "episode_motion_reward",
+        "episode_reward",
         "episode_length",
     )
     rate_fields: Tuple[str, ...] = (

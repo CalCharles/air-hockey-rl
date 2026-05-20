@@ -16,8 +16,7 @@ Fixed-capacity ring buffer on GPU. Stores per-transition:
 | `next_observations` | `(buffer_size, *obs_shape)` | Next observation |
 | `actions` | `(buffer_size, *act_shape)` | Action taken |
 | `prev_actions` | `(buffer_size, *act_shape)` | Previous action (for last-action augmentation) |
-| `task_rewards` | `(buffer_size,)` | Task reward scalar |
-| `motion_rewards` | `(buffer_size,)` | Motion reward scalar |
+| `rewards` | `(buffer_size,)` | Reward scalar |
 | `dones` | `(buffer_size,)` | Episode boundary mask (termination-style, not truncation-only) |
 
 `add` handles wrap-around with a two-chunk copy when the batch crosses the ring boundary. `sample` draws uniform random indices.

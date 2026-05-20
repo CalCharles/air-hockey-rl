@@ -31,14 +31,13 @@ def _truncate_episode_trajectory_inplace(episode_trajectory: EpisodeTrajectory, 
     episode_trajectory.observations = episode_trajectory.observations[:keep_count]
     episode_trajectory.next_observations = episode_trajectory.next_observations[:keep_count]
     episode_trajectory.actions = episode_trajectory.actions[:keep_count]
-    episode_trajectory.task_rewards = episode_trajectory.task_rewards[:keep_count]
-    episode_trajectory.motion_rewards = episode_trajectory.motion_rewards[:keep_count]
+    episode_trajectory.rewards = episode_trajectory.rewards[:keep_count]
     episode_trajectory.dones = episode_trajectory.dones[:keep_count]
     episode_trajectory.bootstrap_terminals = episode_trajectory.bootstrap_terminals[:keep_count]
     episode_trajectory.prev_actions = episode_trajectory.prev_actions[:keep_count]
     if keep_count > 0:
         episode_trajectory.episode_return = float(
-            torch.stack(episode_trajectory.task_rewards, dim=0).sum().item()
+            torch.stack(episode_trajectory.rewards, dim=0).sum().item()
         )
     else:
         episode_trajectory.episode_return = 0.0

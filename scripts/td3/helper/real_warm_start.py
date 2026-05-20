@@ -14,12 +14,6 @@ import numpy as np
 import torch
 
 from airhockey import AirHockeyEnv
-from scripts.td3.helper.real_motion_rewards import (
-    _compute_motion_reward_components,
-    _extract_motion_magnitudes_from_state_info,
-    _extract_motion_positions_from_state_info,
-    _init_motion_reward_state,
-)
 from scripts.td3.helper.real_stop_state import (
     _stop_state_from_saved_row,
 )
@@ -186,7 +180,6 @@ def _reset_warm_start_env_state(env: AirHockeyEnv, first_state: dict) -> None:
     env.min_reward_in_single_step = np.inf
     env.episode_return = 0.0
     env.episode_length = 0
-    env.episode_motion_data = {"velocity_mags": [], "acceleration_mags": [], "jerk_mags": []}
     env._last_done_reasons = {"terminated": [], "truncated": []}
     env._puck_pass_paddle_score = 0
     if "pucks" in first_state and len(first_state["pucks"]) > 0:
@@ -201,11 +194,11 @@ def _recompute_warm_start_rewards(
     *,
     prev_state: dict,
     next_state: dict,
-    motion_state: Any,
     step_index: int,
     stop_state: Any,
     is_last_transition: bool,
-) -> tuple[float, float, float]:
+) -> tuple[float, float]:
+    del args, stop_state
     env.current_timestep = int(max(step_index, 0))
     env.old_state = prev_state
     env.current_state = next_state
@@ -219,29 +212,15 @@ def _recompute_warm_start_rewards(
     else:
         task_reward = float(env.truncate_rew)
 
-    if env.use_reward_shaping:
-        task_reward += float(env.get_reward_shaping(next_state))
     if env.enable_survival_bonus and (not terminations) and (not truncations):
         task_reward += float(env.survival_bonus_per_step)
 
-    next_paddle_xy, next_puck_xy = _extract_motion_positions_from_state_info(next_state)
-    velocity_mag, _, jerk_mag = _extract_motion_magnitudes_from_state_info(next_state, motion_state)
-    motion_components = _compute_motion_reward_components(
-        args=args,
-        motion_state=motion_state,
-        paddle_xy=next_paddle_xy,
-        puck_xy=next_puck_xy,
-        velocity_mag=velocity_mag,
-        jerk_mag=jerk_mag,
-    )
-    motion_reward = float(motion_components["motion_reward_total"])
-
-    # E-stops (`stop_state.active`) are stored as truncations: `done=0` so the
-    # learner bootstraps from V(s'). Only true env terminations or the final
-    # warm-start transition mark the trajectory boundary. See
+    # E-stops are stored as truncations: `done=0` so the learner bootstraps
+    # from V(s'). Only true env terminations or the final warm-start
+    # transition mark the trajectory boundary. See
     # notes/docs/environments/real-world/episode-lifecycle.md.
     terminations_only = float(1.0 if (terminations or is_last_transition) else 0.0)
-    return float(task_reward), float(motion_reward), terminations_only
+    return float(task_reward), terminations_only
 
 
 def _load_warm_start_episode(
@@ -333,12 +312,6 @@ def _load_warm_start_episode(
     env.reset(seed=int(getattr(env, "rng", np.random.RandomState(0)).randint(0, int(1e8))))
     _reset_warm_start_env_state(env, state_infos[0])
 
-    initial_paddle_xy, initial_puck_xy = _extract_motion_positions_from_state_info(state_infos[0])
-    motion_reward_state = _init_motion_reward_state(
-        int(args.temporal_alignment_horizon),
-        anchor_paddle_xy=initial_paddle_xy,
-        anchor_puck_xy=initial_puck_xy,
-    )
     episode_trajectory = EpisodeTrajectory.empty()
     for row_idx in range(1, train_vals.shape[0]):
         prev_state = state_infos[row_idx - 1]
@@ -356,12 +329,11 @@ def _load_warm_start_episode(
             paddle_history=padded_paddle_histories[row_idx],
         )
         stop_state = _stop_state_from_saved_row(train_vals, optional_data, row_idx)
-        task_reward, motion_reward, terminations_only = _recompute_warm_start_rewards(
+        task_reward, terminations_only = _recompute_warm_start_rewards(
             args,
             env,
             prev_state=prev_state,
             next_state=next_state,
-            motion_state=motion_reward_state,
             step_index=int(step_indices[row_idx]),
             stop_state=stop_state,
             is_last_transition=bool(row_idx == (train_vals.shape[0] - 1)),
@@ -370,8 +342,7 @@ def _load_warm_start_episode(
             obs=torch.as_tensor(prev_obs, dtype=torch.float32),
             next_obs=torch.as_tensor(next_obs, dtype=torch.float32),
             action=torch.as_tensor(actions_xy[row_idx], dtype=torch.float32),
-            task_reward=torch.tensor(task_reward, dtype=torch.float32),
-            motion_reward=torch.tensor(motion_reward, dtype=torch.float32),
+            reward=torch.tensor(task_reward, dtype=torch.float32),
             done=torch.tensor(terminations_only, dtype=torch.float32),
             prev_action=torch.as_tensor(actions_xy[row_idx - 1], dtype=torch.float32),
         )
