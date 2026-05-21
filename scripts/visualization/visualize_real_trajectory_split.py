@@ -192,6 +192,9 @@ def visualize_single_file(data_path, output_dir, args):
         render_size=args.render_size,
         robot_x_offset=args.robot_x_offset,
         orientation="vertical",
+        # Split-schema pose/desired_pose come from get_current_state() (table frame),
+        # same as render_teleop_segments.py — not raw robot-base TCP coords.
+        paddle_input_frame="table",
     )
 
     create_trajectory_gif(

@@ -35,6 +35,7 @@ air_hockey:
     control_mode: mouse
     wait_for_space_to_start: true
     save_path: ./data/rollout/temp_saving/mouse_test
+    hist_len: 4
   stand_still_rew: 0.01
   task: puck_velocity
   terminate_on_enemy_goal: true
