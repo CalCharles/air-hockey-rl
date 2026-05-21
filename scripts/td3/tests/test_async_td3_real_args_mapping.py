@@ -64,9 +64,7 @@ class AsyncTd3ArgsFileMappingTests(unittest.TestCase):
             exploration_primitive_steps: 7
             exploration_primitive_weight_stand_still: 0.25
             exploration_primitive_weight_same_direction: 1.5
-            exploration_primitive_weight_y_aligned: 0.75
-            exploration_primitive_weight_target_position_directional: 2.0
-            exploration_target_position_steps: 6
+            exploration_action_delta_x: 0.3
             enable_latency_profiling: true
             latency_profile_output_dir: "/tmp/latency"
             latency_profile_hist_bins: 50
@@ -87,9 +85,7 @@ class AsyncTd3ArgsFileMappingTests(unittest.TestCase):
         self.assertEqual(mapped["exploration_primitive_steps"], 7)
         self.assertEqual(mapped["exploration_primitive_weight_stand_still"], 0.25)
         self.assertEqual(mapped["exploration_primitive_weight_same_direction"], 1.5)
-        self.assertEqual(mapped["exploration_primitive_weight_y_aligned"], 0.75)
-        self.assertEqual(mapped["exploration_primitive_weight_target_position_directional"], 2.0)
-        self.assertEqual(mapped["exploration_target_position_steps"], 6)
+        self.assertEqual(mapped["exploration_action_delta_x"], 0.3)
         self.assertTrue(mapped["enable_latency_profiling"])
         self.assertEqual(mapped["latency_profile_output_dir"], "/tmp/latency")
         self.assertEqual(mapped["latency_profile_hist_bins"], 50)

@@ -510,12 +510,6 @@ class AirHockeyBox2D:
             # <= 0 disables norm clipping.
             'max_acceleration_norm': 0.0,
             'max_jerk_norm': 0.0,
-            # Optional crude e-stop simulation using jerk magnitude (m/s^3).
-            'simulate_jerk_estop': False,
-            'jerk_estop_consecutive_steps': 10,
-            'jerk_estop_consecutive_threshold': 18.0,
-            'jerk_estop_avg_window_steps': 50,
-            'jerk_estop_avg_threshold': 15.0,
             # Edge-preserving sine warp on the puck-y observation only
             # (paddle obs untouched). Models a systematic perception error
             # in the lateral axis. Disabled when amplitude == 0.
@@ -652,18 +646,6 @@ class AirHockeyBox2D:
         self.jerk_ema_alpha = float(np.clip(config.jerk_ema_alpha, 0.0, 1.0))
         self.max_acceleration_norm = float(config.max_acceleration_norm)
         self.max_jerk_norm = float(config.max_jerk_norm)
-        self.simulate_jerk_estop = bool(config.simulate_jerk_estop)
-        self.jerk_estop_consecutive_steps = max(1, int(config.jerk_estop_consecutive_steps))
-        self.jerk_estop_consecutive_threshold = float(config.jerk_estop_consecutive_threshold)
-        self.jerk_estop_avg_window_steps = max(1, int(config.jerk_estop_avg_window_steps))
-        self.jerk_estop_avg_threshold = float(config.jerk_estop_avg_threshold)
-        self._jerk_estop_window_len = max(
-            self.jerk_estop_consecutive_steps,
-            self.jerk_estop_avg_window_steps,
-        )
-        self._jerk_mag_history = deque(maxlen=self._jerk_estop_window_len)
-        self._jerk_estop_latched = False
-        self._jerk_estop_reason = None
         self.puck_noise = config.puck_noise
         self.puck_noise_std = float(config.puck_noise_std)
         self.enable_puck_delay_interpolation = bool(config.enable_puck_delay_interpolation)
@@ -684,9 +666,6 @@ class AirHockeyBox2D:
         self._occlusion_run_remaining = {}
         self._occlusion_last_visible_base = {}
         self._occlusion_prev_occluded = {}
-        self._jerk_mag_history.clear()
-        self._jerk_estop_latched = False
-        self._jerk_estop_reason = None
         self._prev_puck_positions_box2d = {}
 
         self.last_action = np.zeros(2) # keep the last action taken, used for action lag
@@ -708,7 +687,6 @@ class AirHockeyBox2D:
         pid_kp = kwargs.get('pid_kp', 1000.0)
         pid_ki = kwargs.get('pid_ki', 50.0)
         pid_kd = kwargs.get('pid_kd', 100.0)
-        self.use_pid = kwargs.get('use_pid', False)  # Flag to enable/disable PID control
         self.pid_controller = PIDController(Kp=pid_kp, Ki=pid_ki, Kd=pid_kd, dt=self.time_per_step)
 
         # these assume 2d, in 3d since we have height it would be higher mass
@@ -834,10 +812,7 @@ class AirHockeyBox2D:
         self._occlusion_run_remaining = {}
         self._occlusion_last_visible_base = {}
         self._occlusion_prev_occluded = {}
-        self._jerk_mag_history.clear()
-        self._jerk_estop_latched = False
-        self._jerk_estop_reason = None
-        
+
         # Reset PID controller
         if hasattr(self, 'pid_controller'):
             self.pid_controller.reset()
@@ -1404,31 +1379,6 @@ class AirHockeyBox2D:
         self.jerk = filtered_jerk.copy()
         return filtered_acceleration, filtered_jerk
 
-    def _update_simulated_jerk_estop(self, jerk_vector):
-        jerk_mag = float(np.linalg.norm(np.asarray(jerk_vector, dtype=float)))
-        self._jerk_mag_history.append(jerk_mag)
-        if self._jerk_estop_latched:
-            return
-        if not self.simulate_jerk_estop:
-            return
-
-        recent_vals = list(self._jerk_mag_history)
-        if len(recent_vals) < 1:
-            return
-
-        if len(recent_vals) >= self.jerk_estop_consecutive_steps:
-            tail = recent_vals[-self.jerk_estop_consecutive_steps:]
-            if all(v > self.jerk_estop_consecutive_threshold for v in tail):
-                self._jerk_estop_latched = True
-                self._jerk_estop_reason = "jerk_consecutive"
-                return
-
-        if len(recent_vals) >= self.jerk_estop_avg_window_steps:
-            tail = recent_vals[-self.jerk_estop_avg_window_steps:]
-            if float(np.mean(tail)) > self.jerk_estop_avg_threshold:
-                self._jerk_estop_latched = True
-                self._jerk_estop_reason = "jerk_avg"
-
     def get_singleagent_transition(self, action):
         collision_start_idx = len(self.collision_listener.collision_forces)
         self.observation_state_info = None
@@ -1468,43 +1418,17 @@ class AirHockeyBox2D:
             if pos[1] > 0 - 3 * self.paddle_radius:
                 act[1] = min(act[1], 0)
             
-            # Compute force using either PID controller or legacy controller
-            if self.use_pid:
-                # PID controller target uses real-like scaled delta + rect projection + clipping.
-                target_pos = self._compute_pid_target_pos(pos, act)
-                self.pose_hist.append(np.array(pos, dtype=float))
-                self.dpose_hist.append(np.array(target_pos, dtype=float))
-                target_pos = self._filter_update()
-                self.last_target_position = self._box2d_to_base_coords(target_pos)
-                current_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0], 
-                                       self.paddles['paddle_ego'].linearVelocity[1]])
-                
-                # Compute force using PID controller
-                force = self.pid_controller.compute(target_pos, pos, current_vel)
-                
-            else:
-                # Keep overlay target consistent with commanded move geometry even
-                # when using the legacy force controller (non-PID).
-                target_pos = self._compute_pid_target_pos(pos, act)
-                self.last_target_position = self._box2d_to_base_coords(target_pos)
-                # Legacy controller: action is delta position
-                # let's use simple time-optimal control to figure out the force to apply
-                delta_pos = np.array([act[0], act[1]])
-                current_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0], 
-                                       self.paddles['paddle_ego'].linearVelocity[1]])
-                
-                # first let's determine velocity
-                vel = delta_pos / sim_time
-                vel_mag = np.linalg.norm(vel)
-                vel_unit = vel / (vel_mag + 1e-8)
+            # PID controller target uses real-like scaled delta + rect projection + clipping.
+            target_pos = self._compute_pid_target_pos(pos, act)
+            self.pose_hist.append(np.array(pos, dtype=float))
+            self.dpose_hist.append(np.array(target_pos, dtype=float))
+            target_pos = self._filter_update()
+            self.last_target_position = self._box2d_to_base_coords(target_pos)
+            current_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0],
+                                   self.paddles['paddle_ego'].linearVelocity[1]])
+            force = self.pid_controller.compute(target_pos, pos, current_vel)
 
-                # first clipping
-                if vel_mag > self.max_paddle_vel:
-                    vel = vel_unit * self.max_paddle_vel
-
-                force = self.paddles['paddle_ego'].mass * vel / sim_time
-
-            # clipping/normalization applies to both controllers
+            # Force clipping / normalization
             force_mag = np.linalg.norm(force)
             force_unit = force / (force_mag + 1e-8)
 
@@ -1550,17 +1474,7 @@ class AirHockeyBox2D:
                 
             # check if out of bounds and correct
             pos = np.array([self.paddles['paddle_ego'].position[0], self.paddles['paddle_ego'].position[1]], dtype=float)
-            if self.use_pid:
-                pos = self._clip_pid_target_to_workspace(pos)
-            else:
-                if pos[0] < self.table_x_min:
-                    pos[0] = self.table_x_min
-                if pos[0] > self.table_x_max:
-                    pos[0] = self.table_x_max
-                if pos[1] > 0:
-                    pos[1] = 0
-                if pos[1] > self.table_y_max:
-                    pos[1] = self.table_y_max
+            pos = self._clip_pid_target_to_workspace(pos)
             paddle_body = self.paddles["paddle_ego"]
             # pybox2d: assigning ``position`` routes through the internal SetTransform.
             paddle_body.position = (float(pos[0]), float(pos[1]))
@@ -1607,14 +1521,9 @@ class AirHockeyBox2D:
         current_acceleration, current_jerk = self._update_motion_derivatives(initial_vel, final_vel)
         self.paddles['paddle_ego_acceleration'] = current_acceleration
         self.paddles['paddle_ego_jerk'] = current_jerk
-        self._update_simulated_jerk_estop(current_jerk)
 
         # Refresh state so acceleration/jerk in returned transition are current-step values.
         state_info = self.get_current_state()
-        if self._jerk_estop_latched:
-            state_info["protective_stop"] = True
-            if self._jerk_estop_reason is not None:
-                state_info["protective_stop_reason"] = str(self._jerk_estop_reason)
         if t_obs is not None and not obs_snapshot_recorded:
             self.observation_state_info = copy.deepcopy(state_info)
             self.observation_puck_history = list(self.puck_history)

@@ -97,7 +97,7 @@ def build_juggle_actor(device: torch.device | None = None) -> tuple[Deterministi
     policy_env_view = build_policy_env_view(actor_input_dim, act_dim)
     actor = DeterministicAgent(
         policy_env_view,
-        action_scale=juggle_train_args.action_scale,
+        action_scale=1.0,
         action_bias=0.0,
         hidden_layer_size=juggle_train_args.agent_hidden_layer_size,
         num_hidden_layers=juggle_train_args.agent_num_hidden_layers,

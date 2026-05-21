@@ -1,10 +1,7 @@
 air_hockey:
-  diagonal_motion_rew: -0.1
-  direction_change_rew: -0.05
   goal_max_x_velocity: 1
   goal_max_y_velocity: 5
   goal_min_y_velocity: 1
-  horizontal_vel_rew: -0.1
   max_timesteps: 600
   n_training_steps: 1000000
   num_blocks: 0
@@ -33,7 +30,6 @@ air_hockey:
     render_size: 360
     wall_bounce_scale: 0.02
     width: 0.8636
-  stand_still_rew: -0.05
   task: puck_score
   # Top-edge goal strip in y: default is middle third of table width (omit key or use null).
   # top_edge_goal_slot_half_width_y_m: null
@@ -51,7 +47,6 @@ air_hockey:
   terminate_on_puck_pass_paddle: true
   terminate_on_puck_stop: false
   truncate_rew: -10
-  wall_bumping_rew: -1
 algorithm: ppo
 eval_freq: 5000
 gamma: 0.99

@@ -19,7 +19,7 @@ At a high level, the real-world async TD3 script runs one process that alternate
    - Build actor + twin critics (+ target networks), set optimizers, and restore optimizer/rng state if available.
 3. **Collect one policy episode on hardware**
    - Run policy inference with exploration (noise and primitive takeover logic).
-   - Step the env, compute task + motion reward, classify stop/safety state, and append transitions to an in-memory episode buffer.
+   - Step the env, classify stop/safety state, and append transitions to an in-memory episode buffer.
 4. **End-of-episode processing**
    - Optionally truncate post-failure steps for readiness-fail safety handling.
    - Add the episode to success/failure replay partitions.
@@ -37,7 +37,6 @@ After modularization, most heavy logic is grouped in helper modules:
 - episode truncation buffers: `real_episode_buffers.py`
 - reset and transition helpers: `real_collector_reset.py`
 - rolling metrics + TB helpers: `real_collector_metrics.py`
-- motion reward helpers: `real_motion_rewards.py`
 - stop state classification helpers: `real_stop_state.py`
 - warm-start HDF5 loading helpers: `real_warm_start.py`
 
@@ -64,7 +63,7 @@ Current code stores **only** `dones`, with the **critic** semantics above (same 
 
 All three variants invoke the same entrypoint and require two YAML files:
 
-- `--train-args <train_run>/args.yaml` — training-run args.yaml. Supplies architecture only (`agent_hidden_layer_size`, `agent_num_hidden_layers`, `q_hidden_layer_size`, `q_num_hidden_layers`, `action_scale`, `use_last_action_in_policy_state`). Not CLI-overridable.
+- `--train-args <train_run>/args.yaml` — training-run args.yaml. Supplies architecture only (`agent_hidden_layer_size`, `agent_num_hidden_layers`, `q_hidden_layer_size`, `q_num_hidden_layers`, `use_last_action_in_policy_state`). Not CLI-overridable. (Legacy `action_scale` in the file is accepted but ignored — `action_scale` is hardcoded to 1.0 throughout the pipeline.)
 - `--args-file` — online-behavior defaults (typically [`td3_residual.yaml`](../../../../configs/td3_real_world/td3_residual.yaml)). CLI flags override. Only canonical field names are accepted (legacy aliases `agent_hidden_size`, `q_hidden_size`, `learning_starts`, `device` are no longer remapped). Architecture fields in this file are ignored.
 
 Mirrored in the top-level [README](../../../../README.md) under "TD3 Real-World Commands".
@@ -125,6 +124,3 @@ python -m scripts.td3.extras.async_td3_real \
 ## Staging scripts
 
 Two wrapper scripts under `td3/extras/` launch `td3_training.py` with scheduled hyperparameter changes (sim-side, despite the name):
-
-
-Related reset-policy helper (single-process buffer, same `dones`-only convention): [`async_td3_real_reset_policy.py`](../../../../scripts/td3/extras/async_td3_real_reset_policy.py).

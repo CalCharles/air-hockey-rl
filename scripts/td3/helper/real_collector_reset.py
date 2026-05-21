@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Protocol, Tuple
+from typing import Any, Callable, Protocol
 
 
 class _ResetArtifactView(Protocol):
@@ -55,15 +55,11 @@ def merge_reset_fsm_artifact_into_pending(
     return pending_reset_artifact, next_reset_file_id
 
 
-def soft_reset_prime_paddle_and_extract_previous_puck(
+def soft_reset_and_prime_paddle(
     env: Any,
     *,
-    device: Any,
     prime_paddle_history_stand_still_non_occluded: Callable[[Any], Any],
-    extract_primitive_state_tensors: Callable[[Any, Any], Tuple[Any, Any, Any]],
-) -> tuple[Any, Any]:
-    """env.soft_reset, prime paddle history, then previous puck tensor for primitives."""
-    obs, _ = env.soft_reset()
-    obs = prime_paddle_history_stand_still_non_occluded(env)
-    _, previous_puck_position_for_primitive, _ = extract_primitive_state_tensors(env, device=device)
-    return obs, previous_puck_position_for_primitive
+) -> Any:
+    """env.soft_reset, then prime paddle history; returns the primed observation."""
+    env.soft_reset()
+    return prime_paddle_history_stand_still_non_occluded(env)

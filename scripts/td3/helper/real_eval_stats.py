@@ -9,9 +9,9 @@ reuse the same helpers without depending on the entrypoint.
 
 Numeric series tracked over the eval batch:
 
-* ``episode_return``       — total return (task + motion).
-* ``episode_task_reward``  — task-only return.
-* ``episode_motion_reward``— motion-shaping-only return.
+* ``episode_return``       — total return.
+* ``episode_reward``       — sum of per-step rewards (== episode_return for
+                              single-objective TD3).
 * ``episode_length``       — policy steps in the kept episode.
 * ``episode_juggles``      — paddle-puck juggles (see helper/juggle_counter.py).
 * ``episode_contacts``     — paddle-puck contacts.
@@ -48,8 +48,7 @@ NUMERIC_SERIES_FIELDS: tuple[str, ...] = (
     "episode_return",
     "episode_juggles",
     "episode_contacts",
-    "episode_task_reward",
-    "episode_motion_reward",
+    "episode_reward",
     "episode_length",
 )
 

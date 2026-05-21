@@ -55,15 +55,12 @@ def request_sim_transition_hold(env: AirHockeyEnv, steps: int, reason: str) -> b
 class RolloutContext:
     """Mutable per-rollout state shared between PolicyRunner and orchestrator.
 
-    PolicyRunner mutates all three fields every env step.
-    ``TransitionHoldState.begin`` re-extracts
-    ``previous_puck_position_for_primitive`` from env and may overwrite
-    ``last_action_for_policy`` per the configured ``last_action_mode``.
+    PolicyRunner mutates both fields every env step. ``TransitionHoldState.begin``
+    may overwrite ``last_action_for_policy`` per the configured ``last_action_mode``.
     """
 
     last_action_for_policy: torch.Tensor
     last_executed_action: torch.Tensor
-    previous_puck_position_for_primitive: torch.Tensor
 
 
 @dataclass
@@ -120,7 +117,6 @@ class TransitionHoldState:
         env: AirHockeyEnv,
         ctx: RolloutContext,
         primitive_selector,
-        extract_primitive_state_tensors: Callable,
         reset_primitive_rollout_state: Callable,
         use_last_action_in_policy_state: bool,
         device: torch.device,
@@ -129,8 +125,7 @@ class TransitionHoldState:
 
         Lifted from L1405–1436 (``begin_transition_hold`` closure).
         Mutates: ``self`` (counters/reason), ``ctx.last_action_for_policy``
-        (per ``last_action_mode``), ``ctx.previous_puck_position_for_primitive``
-        (re-extracted from env), and primitive-selector rollout state.
+        (per ``last_action_mode``), and primitive-selector rollout state.
         ``sim_hold=True`` matches the closure's ``request_sim_hold=True``
         default — call sites use ``False`` only for the post-actor-sync hold
         (L1889).
@@ -141,9 +136,6 @@ class TransitionHoldState:
         self.reason = str(reason)
         self.steps_remaining = max(int(self.steps_remaining), hold_steps)
         reset_primitive_rollout_state(primitive_selector)
-        _, ctx.previous_puck_position_for_primitive, _ = extract_primitive_state_tensors(
-            env, device=device
-        )
         if use_last_action_in_policy_state:
             if self.last_action_mode == "zero":
                 ctx.last_action_for_policy.zero_()

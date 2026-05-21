@@ -63,22 +63,6 @@ def sample_uniform_magnitude(
     return min_mag + torch.rand(count, device=device, dtype=dtype) * (max_mag - min_mag)
 
 
-def sample_target_distances(
-    count: int,
-    min_distance: float,
-    max_distance: float,
-    device: torch.device | str,
-    dtype: torch.dtype,
-) -> torch.Tensor:
-    if count <= 0:
-        return torch.zeros((0,), device=device, dtype=dtype)
-    min_dist = float(min_distance)
-    max_dist = float(max_distance)
-    if max_dist < min_dist:
-        raise ValueError("max_distance must be >= min_distance")
-    return min_dist + torch.rand(count, device=device, dtype=dtype) * (max_dist - min_dist)
-
-
 def stand_still_actions(count: int, device: torch.device | str, dtype: torch.dtype) -> torch.Tensor:
     return torch.zeros((count, 2), device=device, dtype=dtype)
 

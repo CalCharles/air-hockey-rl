@@ -1,6 +1,6 @@
 # Air Hockey RL
 
-Reinforcement learning for a physical air-hockey robot (UR5 arm + paddle). The agent learns to juggle a puck in a Box2D simulator, then transfers the policy to the real robot. Active algorithm: TD3 with dual-head critics and transformed Bellman targets.
+Reinforcement learning for a physical air-hockey robot (UR5 arm + paddle). The agent learns to juggle a puck in a Box2D simulator, then transfers the policy to the real robot. Active algorithm: TD3 with single-head critic and transformed Bellman targets.
 
 Project context for agents and humans: [`CLAUDE.md`](CLAUDE.md). Formal documentation: [`notes/docs/index.md`](notes/docs/index.md).
 

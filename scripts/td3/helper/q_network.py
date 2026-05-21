@@ -1,11 +1,6 @@
-"""
-TD3 dual-head Q networks with transformed Bellman outputs.
+"""TD3 critic with transformed Bellman output (single scalar head).
 
-Each Q-network predicts two transformed-value heads:
-- task head for environment/task rewards
-- motion head for auxiliary motion rewards
-
-The trunk mirrors the current policy style by using residual blocks.
+The trunk mirrors the policy style by using residual blocks.
 """
 
 from __future__ import annotations
@@ -16,8 +11,8 @@ import torch.nn as nn
 from scripts.td3.agent import ResidualMLPTrunk, layer_init
 
 
-class TD3DualHeadQNetwork(nn.Module):
-    """Single TD3 critic with residual trunk and two scalar Q heads."""
+class TD3QNetwork(nn.Module):
+    """TD3 critic with residual trunk and one scalar Q head."""
 
     def __init__(
         self,
@@ -46,17 +41,9 @@ class TD3DualHeadQNetwork(nn.Module):
         )
 
         # Small output-head init keeps initial Q estimates close to zero.
-        self.task_head = layer_init(nn.Linear(hidden_layer_size, 1), std=0.01)
-        self.motion_head = layer_init(nn.Linear(hidden_layer_size, 1), std=0.01)
+        self.head = layer_init(nn.Linear(hidden_layer_size, 1), std=0.01)
 
-    def forward(
-        self,
-        obs: torch.Tensor,
-        action: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, obs: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
         x = torch.cat([obs, action], dim=-1)
         x = self.trunk(x)
-        q_task_h = self.task_head(x)
-        q_motion_h = self.motion_head(x)
-        return q_task_h, q_motion_h
-
+        return self.head(x)

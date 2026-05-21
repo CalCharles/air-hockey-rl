@@ -24,7 +24,7 @@ from airhockey import AirHockeyEnv
 
 from .real_collector_reset import (
     merge_reset_fsm_artifact_into_pending,
-    soft_reset_prime_paddle_and_extract_previous_puck,
+    soft_reset_and_prime_paddle,
 )
 from .real_stop_state import _classify_stop_event
 
@@ -387,7 +387,6 @@ class ResetRunner:
         reset_policy_fsm_cls: Callable,
         build_split_episode_row: Callable,
         latest_camera_frame: Callable,
-        extract_primitive_state_tensors: Callable,
         episode_start_reset_bottom_margin: float = 0.25,
         episode_start_reset_bottom_fail_count: int = 2,
         episode_start_reset_occluded_fail_count: int = 6,
@@ -398,7 +397,6 @@ class ResetRunner:
         self._reset_policy_fsm_cls = reset_policy_fsm_cls
         self._build_split_episode_row = build_split_episode_row
         self._latest_camera_frame = latest_camera_frame
-        self._extract_primitive_state_tensors = extract_primitive_state_tensors
         self._bottom_margin = float(episode_start_reset_bottom_margin)
         self._bottom_fail_count = int(episode_start_reset_bottom_fail_count)
         self._occluded_fail_count = int(episode_start_reset_occluded_fail_count)
@@ -418,13 +416,11 @@ class ResetRunner:
             latest_camera_frame=self._latest_camera_frame,
         )
 
-    def _soft_prime(self) -> tuple[np.ndarray, torch.Tensor]:
-        return soft_reset_prime_paddle_and_extract_previous_puck(
+    def _soft_prime(self) -> np.ndarray:
+        return soft_reset_and_prime_paddle(
             self._env,
-            device=self._device,
             prime_paddle_history_stand_still_non_occluded=
                 _prime_paddle_history_stand_still_non_occluded,
-            extract_primitive_state_tensors=self._extract_primitive_state_tensors,
         )
 
     # ------------------------------------------------------------------
@@ -471,7 +467,7 @@ class ResetRunner:
                 startup_buffered_message=True,
             )
             artifact_for_log = fsm_result.artifact
-            obs, _ = self._soft_prime()
+            obs = self._soft_prime()
 
         elif kind == ResetKind.SOFT:
             # Source: L2156–L2194 (no stop, not periodic-3).
@@ -495,7 +491,7 @@ class ResetRunner:
                 startup_buffered_message=False,
             )
             artifact_for_log = fsm_result.artifact
-            obs, _ = self._soft_prime()
+            obs = self._soft_prime()
 
         elif kind == ResetKind.HARD_WITH_FSM or kind == ResetKind.HARD_SKIP_FSM:
             # Source: L2195–L2264 (periodic-3 OR stop-driven).
@@ -557,7 +553,7 @@ class ResetRunner:
                     startup_buffered_message=False,
                 )
                 artifact_for_log = fsm_result.artifact
-                obs, _ = self._soft_prime()
+                obs = self._soft_prime()
                 self._counters["bottom"] = 0
                 self._counters["occ"] = 0
             else:

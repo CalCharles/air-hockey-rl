@@ -105,7 +105,6 @@ from scripts.td3.helper.real_td3_runtime import (
     Args,
     _build_args_file_defaults,
     _build_split_episode_row,
-    _extract_primitive_state_tensors,
     _latest_camera_frame,
     _next_available_episode_id,
     _prepare_air_hockey_config,
@@ -628,7 +627,6 @@ def run_teleop_eval(
         reset_policy_fsm_cls=ResetPolicyFSM,
         build_split_episode_row=_build_split_episode_row,
         latest_camera_frame=_latest_camera_frame,
-        extract_primitive_state_tensors=_extract_primitive_state_tensors,
     )
     pending_reset_artifact = None
 
@@ -820,8 +818,7 @@ def run_teleop_eval(
                 "n_steps": int(len(result.rows)),
                 "episode_length": float(result.metrics.episode_length),
                 "episode_return": float(result.metrics.episode_return),
-                "episode_task_reward": float(result.metrics.episode_task_reward),
-                "episode_motion_reward": float(result.metrics.episode_motion_reward),
+                "episode_reward": float(result.metrics.episode_reward),
                 "episode_juggles": int(episode_juggle_counts.n_juggles),
                 "episode_contacts": int(episode_juggle_counts.n_contacts),
                 "episode_juggle_success": bool(episode_juggle_counts.juggle_success),
@@ -852,8 +849,7 @@ def run_teleop_eval(
                 "n_steps": int(len(result.rows)),
                 "episode_length": float(result.metrics.episode_length),
                 "episode_return": float(result.metrics.episode_return),
-                "episode_task_reward": float(result.metrics.episode_task_reward),
-                "episode_motion_reward": float(result.metrics.episode_motion_reward),
+                "episode_reward": float(result.metrics.episode_reward),
                 "episode_success": bool(result.terminal.episode_success),
                 "episode_juggles": int(episode_juggle_counts.n_juggles),
                 "episode_contacts": int(episode_juggle_counts.n_contacts),

@@ -3,8 +3,6 @@
 #
 # Modeled after ppo/amp_larger.yaml structure, but aligned to TD3 args.
 
-task_gamma: 0.985
-motion_gamma: 0.85
 tau: 0.005
 batch_size: 512
 min_replay_size_before_learning: 0
@@ -49,10 +47,11 @@ exploration_primitive_chance_start: 0.025 # at the start of annealing
 
 exploration_primitive_chance_anneal_steps: 0 # around 2000-5000 episodes
 exploration_primitive_steps: 5
+# 2 primitives: stand_still + same_direction. The prior directional weight
+# (y_aligned 1.0 + target 0.25) is folded into same_direction so exploration
+# stays fully directional.
 exploration_primitive_weight_stand_still: 0.00
-exploration_primitive_weight_same_direction: 0.25
-exploration_primitive_weight_y_aligned: 1.0
-exploration_primitive_weight_target_position_directional: 0.25
+exploration_primitive_weight_same_direction: 1.5
 
 # exploration specific knobs
 # Angles are in simulator displacement coordinates:
@@ -61,42 +60,16 @@ exploration_primitive_weight_target_position_directional: 0.25
 # To cover the full circle, use [-180, 180], [0, 360], or any span >= 360 deg.
 # If max_angle_deg < min_angle_deg, the range wraps around across the branch cut.
 # Magnitudes are simulator-space per-step displacements before conversion into normalized action space.
-# For `y_aligned`, the sampled angle band is mirrored to the puck-relative y sign automatically.
-# Legacy action-space skew knob kept for compatibility; simulator-space ranges below drive real primitive sampling.
 exploration_same_direction_min_angle_deg: -180.0
 exploration_same_direction_max_angle_deg: 180.0
 exploration_same_direction_min_magnitude: 0.075
 exploration_same_direction_max_magnitude: 0.150
-exploration_y_aligned_min_angle_deg: 45.0
-exploration_y_aligned_max_angle_deg: 135.0
-exploration_y_aligned_min_magnitude: 0.075
-exploration_y_aligned_max_magnitude: 0.175
-exploration_target_position_directional_min_angle_deg: -180.0
-exploration_target_position_directional_max_angle_deg: 180.0
-exploration_target_position_directional_min_magnitude: 0.075
-exploration_target_position_directional_max_magnitude: 0.175
-exploration_target_position_delta_x: 0.26
-exploration_target_position_delta_y: 0.12
-exploration_target_position_steps: 7 # more coherent than before
 
 # Dual-head reward decomposition
-task_reward_weight: 1.0
-motion_reward_weight: 0.025 # lower motion reward for training juggling
 
 # Motion reward component weights
-stand_still_reward_weight: 0.1
-temporal_alignment_reward_weight: 0.0
-axis_alignment_reward_weight: 0.0
-velocity_reward_weight: 0.5
-jerk_reward_weight: 0.5
 
 # Motion reward calibration
-stand_still_threshold: 0.015
-temporal_alignment_horizon: 4
-velocity_at_one: 0.2
-velocity_at_zero: 0.6
-jerk_at_one: 8.0
-jerk_at_zero: 20.0
 
 # Paths
 config: "configs/real_configs/rollout_td3_config.yaml"
@@ -108,7 +81,6 @@ run_name: "td3_standard"
 # Runtime
 learner_device: "cuda:0"
 seed: 0
-action_scale: 1.0
 h_transform_eps: 0.001
 
 # Agent / critic architecture

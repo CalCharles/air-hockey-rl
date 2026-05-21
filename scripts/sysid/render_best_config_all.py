@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Render side-by-side REAL vs SIM GIFs for ALL segments in system_id3/
-using the best sysid config: kp=9000, kd=50, ki=0, density=3000.
+using the best sysid config from hist4 windowed-10 grid search
+(kp=7500, kd=50, ki=0, density=3500).
 """
 
 from __future__ import annotations
@@ -27,10 +28,10 @@ from scripts.sysid._sysid_paths import DEFAULT_CONFIG, SYSID_DIR
 
 OUT_DIR = SYSID_DIR / "visualizations_best_config"
 
-BEST_KP = 9000
+BEST_KP = 7500
 BEST_KD = 50
 BEST_KI = 0
-BEST_DENSITY = 3000
+BEST_DENSITY = 3500
 
 
 def find_all_segments() -> list[Path]:

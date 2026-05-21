@@ -47,18 +47,6 @@ Legacy checkpoints may have a single `replay_buffer` key instead -- loaded into 
 | `recent_episode_returns` | Deque of recent episode returns for success threshold |
 | `episode_return_success_threshold` | Current quantile threshold |
 
-### Kinematic tracking
-
-| Key | Description |
-|-----|-------------|
-| `temporal_paddle_history` | Paddle position history tensor |
-| `temporal_puck_history` | Puck position history tensor |
-| `steps_since_done` | Steps since last episode reset per env |
-| `current_velocity_mag` | Current velocity magnitude |
-| `current_acceleration_mag` | Current acceleration magnitude |
-| `current_jerk_mag` | Current jerk magnitude |
-| `velocity_magnitudes`, `acceleration_magnitudes`, `jerk_magnitudes` | Rolling lists for logging |
-
 ### RNG state
 
 | Key | Description |
@@ -76,11 +64,7 @@ Two distinct load paths exist:
 
 ### Full resume (`load_resume_training_state`)
 
-Restores everything: networks, optimizers, replay buffers, exploration state, RNG, kinematic history, episode staging, metrics. Intended for continuing an interrupted run with minimal state loss.
-
-### Fine-tune (`load_fine_tune_optimizer_state`)
-
-Restores **only** optimizer state dicts (not replay, not RNG, not exploration). Used when transferring a trained policy to a new task or reward configuration where the replay buffer contents would be stale.
+Restores everything: networks, optimizers, replay buffers, exploration state, RNG, episode staging, metrics. Intended for continuing an interrupted run with minimal state loss.
 
 ## Legacy field migrations
 
@@ -88,11 +72,11 @@ The checkpoint loader handles several schema changes from older versions:
 
 | Old field | New field | Migration |
 |-----------|-----------|-----------|
-| `temporal_done_history` + `temporal_position_count` | `steps_since_done` | Position count - 1, clamped to 0; any recent done in history resets to 0 |
 | Single `replay_buffer` | `success_replay_buffer` + `failure_replay_buffer` | Old buffer loaded into failure partition |
 | `episode_transition_staging` (list) | `episode_trajectory` (single) | First element of the list is used |
 | `bootstrap_terminals` (in replay) | `dones` | `bootstrap_terminals` preferred when present for critic-correct semantics |
-| Primitive weight vectors of length 3/4/5 | Length 6 | Padded with zeros for new primitive types |
+| `task_rewards` (in `episode_trajectory`) | `rewards` | `task_rewards` accepted when `rewards` is absent (motion-reward removal) |
+| Primitive weight vectors from older checkpoints (length ≠ 2) | Length 2 | Mismatched-length weights are ignored on load; the config-provided weights win. Current primitives are stand_still / same_direction |
 
 ## Resuming real-world async training
 
@@ -162,7 +146,7 @@ Loaded by `_load_training_state_checkpoint` and `_init_sync_learner_state` ([`he
 | Learner update counters (`total_updates`, `total_actor_updates`) | `learner_q_updates`, `learner_actor_updates` (non-vital) |
 | `collector_total_steps` (TB x-axis continuity) | `collector_total_steps` (non-vital) |
 | `run_elapsed_total_s` (run-elapsed clock) | `run_elapsed_total_s` (non-vital) |
-| Rolling-window deques (`task`, `motion`, `length`, `estop`, `return`) | `rolling50_*_values` (non-vital) — smaller windows (5/10/25) derived on the fly |
+| Rolling-window deques (`reward`, `length`, `estop`, `return`, `juggles`, `contacts`) | `rolling50_*_values` (non-vital) — smaller windows (5/10/25) derived on the fly |
 | Replay buffers | `success_replay_buffer`, `failure_replay_buffer` (gated by `--load-replay-from-checkpoint` and `--replay-source-priority`) |
 | Episode artifact id counter | recovered from the highest existing HDF5 in `episode_hdf5/` |
 

@@ -23,8 +23,6 @@ num_envs: 1
 
 # TD3 core — matched to phaseC residual recipe for fair comparison.
 buffer_size: 20000
-task_gamma: 0.985
-motion_gamma: 0.85
 tau: 0.005
 batch_size: 512
 learning_starts: 2000
@@ -64,49 +62,14 @@ exploration_primitive_chance_anneal_steps: 50000
 exploration_primitive_steps: 5
 exploration_primitive_weight_stand_still: 0.0
 exploration_primitive_weight_same_direction: 1.0
-exploration_primitive_weight_y_aligned: 0.0
-exploration_primitive_weight_policy_takeover: 0.0
-exploration_primitive_weight_target_position_directional: 0.0
 exploration_primitive_weight_anneal_stand_still: 0.0
 exploration_primitive_weight_anneal_same_direction: 1.0
-exploration_primitive_weight_anneal_y_aligned: 0.0
-exploration_primitive_weight_anneal_policy_takeover: 0.0
-exploration_primitive_weight_anneal_target_position_directional: 0.0
 exploration_direction_y_component_weight: 2
-exploration_target_position_min_distance: 0.2
-exploration_target_position_max_distance: 0.5
-exploration_target_position_delta_x: 0.26
-exploration_target_position_delta_y: 0.12
-exploration_target_position_steps: 5
-exploration_policy_takeover_enabled: false
-exploration_policy_takeover_model_path: model2.pth
-exploration_policy_takeover_args_path: args.yaml
-exploration_policy_takeover_config_path: config.yaml
-exploration_pre_contact_hit_variant_chance: 0.0
-exploration_pre_contact_hit_variant_steps: 5
-exploration_pre_contact_hit_variant_distance_threshold: 0.25
-exploration_pre_contact_hit_variant_scale_min: 0.5
-exploration_pre_contact_hit_variant_scale_max: 1.5
-exploration_pre_contact_hit_variant_min_upward_displacement_x: 0.12
 
 # Reward decomposition — task-only (same as residual recipe).
-task_reward_weight: 1.0
-motion_reward_weight: 0.0
-stand_still_reward_weight: 0.1
-temporal_alignment_reward_weight: 0.0
-axis_alignment_reward_weight: 0.0
-velocity_reward_weight: 0.5
-jerk_reward_weight: 0.5
-stand_still_threshold: 0.015
-temporal_alignment_horizon: 4
-velocity_at_one: 0.2
-velocity_at_zero: 0.6
-jerk_at_one: 8.0
-jerk_at_zero: 20.0
 
 # Source env for fine-tuning (wrapped by GATEnvWrapper at runtime).
 config: "configs/new_juggle/sysid_best_params_hist2.yaml"
-enable_puck_delay_interpolation: true
 
 # Pretrained paramrand checkpoint — update path before running.
 model_path: "latest_models/canonical/hist2_motion0_v2/model.pth"
@@ -125,12 +88,9 @@ run_name: "gat_warp075_p30_seed0"
 device: "cuda:0"
 seed: 0
 
-action_scale: 1.0
 h_transform_eps: 0.001
 agent_hidden_layer_size: 64
 agent_num_hidden_layers: 2
-agent_hidden_size: null
 q_hidden_layer_size: 64
 q_num_hidden_layers: 2
-q_hidden_size: null
 use_last_action_in_policy_state: true

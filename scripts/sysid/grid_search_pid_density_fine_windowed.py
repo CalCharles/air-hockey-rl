@@ -257,6 +257,66 @@ def run_ki_sweep(ki_values, fixed_kp, fixed_kd, fixed_density):
 
 
 def main():
+    # NOTE (2026-05-21): main() previously invoked run_ki_sweep with hardcoded
+    # kp=9000/kd=50/density=3000 (hist2 canonical values), so this "fine
+    # windowed PID/density" script was actually producing a Ki sweep written
+    # to grid_search_results_ki_windowed_{RESET_INTERVAL}/. That contradicted
+    # the script name and the step-6b protocol documented in
+    # notes/docs/environments/real-world/teleop-system-id.md.
+    #
+    # The original Ki-sweep main() body is preserved below under
+    # `_legacy_main_ki_sweep()` — call that directly if you need to reproduce
+    # the previous behavior. Revert by replacing the body of this function
+    # with `_legacy_main_ki_sweep()`.
+    # Follow-up refine grid around hist4 windowed-10 best (kp=6500, kd=100, d=3250).
+    # Previous pass: grid_search_results_3d_fine_windowed_10/ (mean paddle err ≈ 0.057 m).
+    kp_values = [6500, 7500, 8500, 9000]
+    kd_values = [50, 75, 100]
+    density_values = [3250, 3500, 3750]
+
+    results = run_3d_grid_search(kp_values, kd_values, density_values)
+    ranked = print_leaderboard(results, top_n=20)
+
+    out_dir = SYSID_DIR / f"grid_search_results_3d_fine_windowed_{RESET_INTERVAL}_refine"
+    out_dir.mkdir(exist_ok=True)
+
+    plot_heatmaps_per_density(
+        results, kp_values, kd_values, density_values, out_dir,
+        metric="mean_paddle_err", label="paddle",
+    )
+    plot_density_vs_kp(
+        results, kp_values, kd_values, density_values, out_dir,
+        metric="mean_paddle_err", label="paddle",
+    )
+
+    summary = {
+        "reset_interval": RESET_INTERVAL,
+        "kp_values": kp_values,
+        "kd_values": kd_values,
+        "density_values": density_values,
+        "puck": "parked at [-0.9, 0.0] with zero velocity (no interaction)",
+        "protocol": f"windowed reset every {RESET_INTERVAL} frames with PID state seeding",
+        "best": {
+            "kp": ranked[0][0][0],
+            "kd": ranked[0][0][1],
+            "density": ranked[0][0][2],
+            "mean_paddle_err": ranked[0][1]["mean_paddle_err"],
+        },
+        "trajectories": SUBSET_TRAJECTORIES,
+        "results": {
+            f"kp{kp}_kd{kd}_d{d}": v for (kp, kd, d), v in results.items()
+        },
+    }
+    out_path = out_dir / "grid_search_3d_fine_windowed_refine_results.json"
+    with open(out_path, "w") as f:
+        json.dump(summary, f, indent=2)
+    print(f"\nResults saved to: {out_path}")
+
+
+def _legacy_main_ki_sweep():
+    """Original main() body — runs a Ki sweep at hardcoded hist2 canonical
+    (kp=9000, kd=50, density=3000). Kept for one-line revert; not part of the
+    documented step-6b protocol."""
     fixed_kp = 9000
     fixed_kd = 50
     fixed_density = 3000
@@ -267,7 +327,6 @@ def main():
     out_dir = SYSID_DIR / f"grid_search_results_ki_windowed_{RESET_INTERVAL}"
     out_dir.mkdir(exist_ok=True)
 
-    # Plot ki vs error
     fig, ax = plt.subplots(figsize=(8, 5))
     kis = sorted(results.keys())
     errs = [results[k]["mean_paddle_err"] for k in kis]

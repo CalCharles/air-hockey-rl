@@ -18,19 +18,22 @@ High-level map of the repository. Paths are relative to the repo root.
 | Path | Role |
 |------|------|
 | [`scripts/td3/td3_training.py`](../../../scripts/td3/td3_training.py) | Sim TD3 trainer (entrypoint). |
+| [`scripts/td3/td3_training_dr.py`](../../../scripts/td3/td3_training_dr.py) | Wraps `td3_training.py` with per-reset env-parameter randomization (canonical sim2sim / sim2real source-policy entrypoint). |
+| [`scripts/td3/td3_training_gat.py`](../../../scripts/td3/td3_training_gat.py), [`scripts/td3/gat_trainer.py`](../../../scripts/td3/gat_trainer.py) | GAT-based sim2sim research training. |
 | [`scripts/td3/{agent,deterministic_agent,residual_agent,encoder}.py`](../../../scripts/td3/) | TD3 actor networks. |
 | [`scripts/td3/{evaluate,eval_utils}.py`](../../../scripts/td3/) | TD3 evaluation. |
-| [`scripts/td3/helper/`](../../../scripts/td3/helper/) | Runtime support: replay, dual-head Q, exploration, real-world runners, checkpointing, metrics. |
-| [`scripts/td3/extras/`](../../../scripts/td3/extras/) | Real-world entrypoints: `async_td3_real{,_eval,_teleop_eval,_reset_policy}.py`. |
+| [`scripts/td3/helper/`](../../../scripts/td3/helper/) | Runtime support: replay, single-head Q-network (`q_network.py`), exploration, real-world runners, checkpointing, metrics, CQL penalty (`td3_cql.py`), residual wiring (`td3_residual.py`), args validation, GIF recording, periodic logging, pluggable real-world eval (`real_eval_agents.py`, `real_task_eval_hooks.py`). |
+| [`scripts/td3/extras/`](../../../scripts/td3/extras/) | Real-world entrypoints: `async_td3_real{,_eval,_teleop_eval}.py`. |
 | [`scripts/td3/tests/`](../../../scripts/td3/tests/) | Pytest suite. |
 
 ## Other scripts
 
 | Path | Role |
 |------|------|
-| [`scripts/real/`](../../../scripts/real/) | Real-robot rollout helpers (calibration, teleop, ArUco, homography, frozen-policy rollout). |
-| [`scripts/visualization/`](../../../scripts/visualization/) | Trajectory rendering, teleop-segment visualization (used by both training and real-world stacks). |
+| [`scripts/real/`](../../../scripts/real/) | Real-robot rollout helpers (calibration, teleop, ArUco, homography, frozen-policy rollout, `run_policy.py`, `sgcrl_policy.py`). |
+| [`scripts/visualization/`](../../../scripts/visualization/) | Trajectory rendering, teleop-segment visualization, real-trajectory-in-sim replay (`replay_real_in_sim.py`). |
 | [`scripts/analysis/`](../../../scripts/analysis/) | Standalone analysis tools (e.g., occlusion-pattern analysis). |
+| [`scripts/sysid/`](../../../scripts/sysid/) | Paddle / puck system-ID grid searches (PID, density, Ki sweep, fine/windowed variants). |
 | [`scripts/utils.py`](../../../scripts/utils.py) | Shared utilities (e.g., `save_tensorboard_plots`). |
 
 ## Configs
@@ -42,7 +45,10 @@ All YAMLs at the repo root under `configs/`:
 | [`configs/new_juggle/`](../../../configs/new_juggle/) | Sim env configs. **For sim2sim / sim2real transfer**: `zeroshot_ablations/sim_paramrand_pm25.yaml` (env-param DR, canonical). For source-sim-only training / ablations: `sysid_best_params{,_hist2}.yaml`. Sim2sim warp targets: `sim2sim_*.yaml`. |
 | [`configs/td3/`](../../../configs/td3/) | TD3 sim training args. **Canonical sim2sim / sim2real source-policy training**: `zeroshot_paramrand/td3_paramrand_pm25.yaml` (launched via `scripts/td3/td3_training_dr.py`). Source-sim-only / ablations: `td3_recommended_top50_hist2.yaml`. |
 | [`configs/td3/sim2sim/`](../../../configs/td3/sim2sim/) | Sim2sim residual fine-tune recipes (used on top of a trained source policy: canonical: `warp075_p30_residual/phaseC_actor2_1M.yaml` + phaseD variants; small-gap: `td3_sim2sim_residual.yaml`). |
-| [`configs/td3_real_world/`](../../../configs/td3_real_world/) | Real-robot residual fine-tune args (`td3_residual.yaml`). |
+| [`configs/td3/gat/`](../../../configs/td3/gat/) | GAT sim2sim research configs. |
+| [`configs/td3_real_world/`](../../../configs/td3_real_world/) | Real-robot fine-tune args: `td3_residual.yaml` (v27 baseline, no CQL), `td3_residual_cql.yaml` (canonical CQL recipe), `td3_online.yaml`. |
+| [`configs/baseline_box2d/`](../../../configs/baseline_box2d/) | Reference per-task env configs (drop_strike, pinball, multipuck, puck_score, paddle_position, etc.) — none target the canonical juggle task. |
+| [`configs/gcrl/`](../../../configs/gcrl/) | Goal-conditioned RL configs. |
 | [`configs/real_configs/`](../../../configs/real_configs/) | Real-robot rollout / mouse-teleop configs. |
 
 ## Models

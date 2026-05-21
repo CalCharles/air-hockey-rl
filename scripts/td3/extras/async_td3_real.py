@@ -8,7 +8,7 @@ library (``helper/real_td3_runtime.py``: ``Args`` / ``TrainArgs`` /
 ``LearnerRuntimeState``, args-file parsing, checkpoint helpers,
 episode/replay utilities, the synchronous learner step) and the per-concern
 runners (``real_policy_runner``, ``real_reset_runner``,
-``real_transition_hold``, ``real_stop_state``, ``real_motion_rewards``,
+``real_transition_hold``, ``real_stop_state``,
 ``real_collector_metrics``, ``real_warm_start``, ``real_episode_buffers``,
 …). This file is the only ``__main__`` for real-world async TD3 runs.
 
@@ -67,16 +67,10 @@ from scripts.td3.helper.juggle_counter import (
     JuggleCounts,
     count_juggles_from_rows,
 )
-from scripts.td3.helper.real_motion_rewards import (
-    _init_motion_reward_state,
-)
 from scripts.td3.helper.real_warm_start import (
     _warm_start_replay_from_hdf5,
 )
-from scripts.td3.helper.real_policy_runner import (
-    MOTION_METRIC_NAMES,
-    PolicyRunner,
-)
+from scripts.td3.helper.real_policy_runner import PolicyRunner
 from scripts.td3.helper.real_reset_runner import (
     ResetKind,
     ResetRunner,
@@ -133,7 +127,6 @@ from scripts.td3.helper.real_td3_runtime import (
     _coerce_float_list,
     _copy_to_stop_dir,
     _env_timing_info,
-    _extract_primitive_state_tensors,
     _finalize_sync_learner_state,
     _init_sync_learner_state,
     _latest_camera_frame,
@@ -440,8 +433,7 @@ def _periodic_log(
     snapshot = replay.state_snapshot()
     elapsed_s = max(0.0, elapsed_offset_s + (now - collector_start_time))
     rolling_multi = compute_rolling_window_metrics_multi(
-        task_reward_values=rolling_state["task"],
-        motion_reward_values=rolling_state["motion"],
+        reward_values=rolling_state["reward"],
         episode_length_values=rolling_state["length"],
         estop_episode_flags=rolling_state["estop"],
         episode_return_values=rolling_state["return"],
@@ -476,15 +468,11 @@ def _periodic_log(
     stats["transition_hold_steps"] = float(transition_hold.steps_total)
     stats["primitive_chance"] = float(primitive_selector.chance)
     stats["interval_primitive_env_steps"] = float(interval_state["primitive"])
-    stats["interval_target_position_directional_env_steps"] = float(
-        interval_state["target_position_directional"]
-    )
     stats["run_elapsed_total_s"] = float(elapsed_s)
     update_stats_dict_rolling_windows(
         stats,
         rolling_multi,
-        raw_task_reward_values=rolling_state["task"],
-        raw_motion_reward_values=rolling_state["motion"],
+        raw_reward_values=rolling_state["reward"],
         raw_episode_length_values=rolling_state["length"],
         raw_estop_episode_flags=rolling_state["estop"],
         raw_episode_return_values=rolling_state["return"],
@@ -498,11 +486,6 @@ def _periodic_log(
     writer.add_scalar(
         "exploration/primitive_horizontal_env_steps",
         float(interval_state["primitive_horizontal"]),
-        total_steps,
-    )
-    writer.add_scalar(
-        "exploration/target_position_directional_env_steps",
-        float(interval_state["target_position_directional"]),
         total_steps,
     )
     writer.add_scalar(
@@ -639,15 +622,13 @@ def _periodic_log(
         f"transition_hold_steps={transition_hold.steps_total} "
         f"primitive_chance={primitive_selector.chance:.4f} "
         f"primitive_steps={interval_state['primitive']} "
-        f"target_position_steps={interval_state['target_position_directional']} "
         f"transition_hold_active={int(transition_hold.active())} "
         f"transition_hold_remaining={transition_hold.steps_remaining} "
         f"transition_events_total={transition_hold.events_total} "
         f"transition_reason={transition_hold.reason} "
         f"elapsed_total_s={elapsed_s:.1f} "
         f"rolling50_juggles_avg={rolling50_m.episode_juggles.avg:.2f} "
-        f"rolling50_task_avg={rolling50_m.task_reward_avg:.4f} "
-        f"rolling50_motion_avg={rolling50_m.motion_reward_avg:.4f} "
+        f"rolling50_reward_avg={rolling50_m.reward_avg:.4f} "
         f"rolling50_len_avg={rolling50_m.episode_length_avg:.2f} "
         f"rolling50_estops={rolling50_m.estop_episode_count:.0f}"
     )
@@ -661,7 +642,6 @@ def _periodic_log(
         )
     interval_state["primitive"] = 0
     interval_state["primitive_horizontal"] = 0
-    interval_state["target_position_directional"] = 0
     return now
 
 
@@ -686,11 +666,6 @@ def _write_per_episode_tb(
         float(1.0 if juggle_counts.juggle_success else 0.0),
         total_steps,
     )
-    if result.metrics.motion_metric_count > 0:
-        for metric_name in MOTION_METRIC_NAMES:
-            metric_mean = float(result.metrics.motion_metric_means[metric_name])
-            stats[f"rewards/{metric_name}_mean"] = metric_mean
-            writer.add_scalar(f"rewards/{metric_name}_mean", metric_mean, total_steps)
 
 
 def _print_episode_progress(
@@ -714,8 +689,7 @@ def _print_episode_progress(
     elapsed_min = elapsed_s / 60.0
     elapsed_hr = elapsed_s / 3600.0
     rolling_multi = compute_rolling_window_metrics_multi(
-        task_reward_values=rolling_state["task"],
-        motion_reward_values=rolling_state["motion"],
+        reward_values=rolling_state["reward"],
         episode_length_values=rolling_state["length"],
         estop_episode_flags=rolling_state["estop"],
         episode_return_values=rolling_state["return"],
@@ -759,8 +733,7 @@ def _print_episode_progress(
         f"contacts={juggle_counts.n_contacts} "
         f"juggle_success={int(juggle_counts.juggle_success)} "
         f"rolling50_juggles_avg={rolling50_m.episode_juggles.avg:.2f} "
-        f"rolling50_task_avg={rolling50_m.task_reward_avg:.4f} "
-        f"rolling50_motion_avg={rolling50_m.motion_reward_avg:.4f} "
+        f"rolling50_reward_avg={rolling50_m.reward_avg:.4f} "
         f"rolling50_len_avg={rolling50_m.episode_length_avg:.2f} "
         f"rolling50_estops={rolling50_m.estop_episode_count:.0f}"
     )
@@ -861,10 +834,6 @@ def collector_process_modular(
     primitive_selector.set_primitive_weights(
         stand_still=float(args.exploration_primitive_weight_stand_still),
         same_direction=float(args.exploration_primitive_weight_same_direction),
-        y_aligned=float(args.exploration_primitive_weight_y_aligned),
-        policy_takeover=0.0,
-        target_position_directional=float(args.exploration_primitive_weight_target_position_directional),
-        pre_contact_hit_variant=0.0,
     )
     actor.load_state_dict(
         {key: value.detach().cpu() for key, value in learner_state.actor.state_dict().items()},
@@ -875,7 +844,6 @@ def collector_process_modular(
     ctx = RolloutContext(
         last_action_for_policy=torch.zeros((1, act_dim), dtype=torch.float32, device=device),
         last_executed_action=torch.zeros((1, act_dim), dtype=torch.float32, device=device),
-        previous_puck_position_for_primitive=torch.zeros((1, 2), dtype=torch.float32, device=device),
     )
     transition_hold = TransitionHoldState(
         last_action_mode=normalize_transition_last_action_mode(args.transition_last_action_mode),
@@ -916,7 +884,6 @@ def collector_process_modular(
         reset_policy_fsm_cls=reset_fsm_factory,
         build_split_episode_row=_build_split_episode_row,
         latest_camera_frame=_latest_camera_frame,
-        extract_primitive_state_tensors=_extract_primitive_state_tensors,
     )
     pending_reset_artifact = None
 
@@ -971,7 +938,6 @@ def collector_process_modular(
         primitive_selector=primitive_selector,
         transition_hold=transition_hold,
         ctx=ctx,
-        extract_primitive_state_tensors=_extract_primitive_state_tensors,
         reset_primitive_rollout_state=_reset_primitive_rollout_state,
         deterministic_actor_action=deterministic_actor_action,
         augment_policy_observation=augment_policy_observation,
@@ -980,12 +946,9 @@ def collector_process_modular(
         env_timing_info=_env_timing_info,
         safe_nonnegative_ms=_safe_nonnegative_ms,
         build_split_episode_row=_build_split_episode_row,
-        init_motion_reward_state=_init_motion_reward_state,
         readiness_fn=_simulator_step_readiness,
     )
-    policy_runner.seed_initial(
-        startup_result.obs, motion_reward_horizon=int(args.temporal_alignment_horizon)
-    )
+    policy_runner.seed_initial(startup_result.obs)
     total_steps = int(stats.get("collector_total_steps", stats.get("collector_steps", 0.0)))
     policy_runner.set_total_steps(total_steps)
     # Fresh-step counter base. `total_steps` may be non-zero on resume — we
@@ -1002,7 +965,6 @@ def collector_process_modular(
         env=env,
         ctx=ctx,
         primitive_selector=primitive_selector,
-        extract_primitive_state_tensors=_extract_primitive_state_tensors,
         reset_primitive_rollout_state=_reset_primitive_rollout_state,
         use_last_action_in_policy_state=train_args.use_last_action_in_policy_state,
         device=device,
@@ -1020,16 +982,9 @@ def collector_process_modular(
     recent_episode_returns: deque[float] = deque(maxlen=args.recent_episode_window_size)
     episode_return_success_threshold = 0.0
     rolling_state = {
-        "task": deque(
+        "reward": deque(
             _coerce_float_list(
-                stats.get("rolling50_task_reward_values", []),
-                max_items=ROLLING_PERF_WINDOW_EPISODES,
-            ),
-            maxlen=ROLLING_PERF_WINDOW_EPISODES,
-        ),
-        "motion": deque(
-            _coerce_float_list(
-                stats.get("rolling50_motion_reward_values", []),
+                stats.get("rolling50_reward_values", []),
                 max_items=ROLLING_PERF_WINDOW_EPISODES,
             ),
             maxlen=ROLLING_PERF_WINDOW_EPISODES,
@@ -1080,7 +1035,6 @@ def collector_process_modular(
     interval_state = {
         "primitive": 0,
         "primitive_horizontal": 0,
-        "target_position_directional": 0,
     }
     episodic_returns: list = []
     episodic_lengths: list = []
@@ -1243,11 +1197,7 @@ def collector_process_modular(
             interval_state["primitive_horizontal"] += (
                 result.metrics.delta_interval_primitive_horizontal_env_steps
             )
-            interval_state["target_position_directional"] += (
-                result.metrics.delta_interval_target_position_directional_env_steps
-            )
-            rolling_state["task"].append(result.metrics.episode_task_reward)
-            rolling_state["motion"].append(result.metrics.episode_motion_reward)
+            rolling_state["reward"].append(result.metrics.episode_reward)
             rolling_state["length"].append(result.metrics.episode_length)
             rolling_state["estop"].append(result.metrics.episode_estop_flag)
             rolling_state["return"].append(result.metrics.episode_return)
@@ -1312,15 +1262,13 @@ def collector_process_modular(
                     env=env,
                     ctx=ctx,
                     primitive_selector=primitive_selector,
-                    extract_primitive_state_tensors=_extract_primitive_state_tensors,
                     reset_primitive_rollout_state=_reset_primitive_rollout_state,
                     use_last_action_in_policy_state=train_args.use_last_action_in_policy_state,
                     device=device,
                 )
 
             rolling_multi = compute_rolling_window_metrics_multi(
-                task_reward_values=rolling_state["task"],
-                motion_reward_values=rolling_state["motion"],
+                reward_values=rolling_state["reward"],
                 episode_length_values=rolling_state["length"],
                 estop_episode_flags=rolling_state["estop"],
                 episode_return_values=rolling_state["return"],
@@ -1330,8 +1278,7 @@ def collector_process_modular(
             update_stats_dict_rolling_windows(
                 stats,
                 rolling_multi,
-                raw_task_reward_values=rolling_state["task"],
-                raw_motion_reward_values=rolling_state["motion"],
+                raw_reward_values=rolling_state["reward"],
                 raw_episode_length_values=rolling_state["length"],
                 raw_estop_episode_flags=rolling_state["estop"],
                 raw_episode_return_values=rolling_state["return"],
@@ -1384,8 +1331,7 @@ def collector_process_modular(
                 "n_steps": int(len(result.rows)),
                 "episode_length": float(result.metrics.episode_length),
                 "episode_return": float(result.metrics.episode_return),
-                "episode_task_reward": float(result.metrics.episode_task_reward),
-                "episode_motion_reward": float(result.metrics.episode_motion_reward),
+                "episode_reward": float(result.metrics.episode_reward),
                 "episode_success": bool(result.terminal.episode_success),
                 "episode_juggles": int(episode_juggle_counts.n_juggles),
                 "episode_contacts": int(episode_juggle_counts.n_contacts),
@@ -1456,7 +1402,6 @@ def collector_process_modular(
             env=env,
             ctx=ctx,
             primitive_selector=primitive_selector,
-            extract_primitive_state_tensors=_extract_primitive_state_tensors,
             reset_primitive_rollout_state=_reset_primitive_rollout_state,
             use_last_action_in_policy_state=train_args.use_last_action_in_policy_state,
             device=device,
@@ -1615,12 +1560,10 @@ def main(args: Args, train_args: TrainArgs, *, quiet: bool = True) -> None:
     stats["run_elapsed_total_s"] = float(0.0)
     stats["rolling50_window_size"] = float(ROLLING_PERF_WINDOW_EPISODES)
     stats["rolling50_window_count"] = float(0.0)
-    stats["rolling50_task_reward_avg"] = float(0.0)
-    stats["rolling50_motion_reward_avg"] = float(0.0)
+    stats["rolling50_reward_avg"] = float(0.0)
     stats["rolling50_episode_length_avg"] = float(0.0)
     stats["rolling50_estop_episode_count"] = float(0.0)
-    stats["rolling50_task_reward_values"] = []
-    stats["rolling50_motion_reward_values"] = []
+    stats["rolling50_reward_values"] = []
     stats["rolling50_episode_length_values"] = []
     stats["rolling50_estop_episode_flags"] = []
     stats["rolling50_episode_return_values"] = []
@@ -1630,12 +1573,11 @@ def main(args: Args, train_args: TrainArgs, *, quiet: bool = True) -> None:
     if args.model_path is not None:
         training_state_checkpoint = _load_training_state_checkpoint(args.model_path)
         if "collector_total_steps" in training_state_checkpoint:
-            loaded_task_values = _coerce_float_list(
-                training_state_checkpoint["rolling50_task_reward_values"],
-                max_items=ROLLING_PERF_WINDOW_EPISODES,
-            )
-            loaded_motion_values = _coerce_float_list(
-                training_state_checkpoint["rolling50_motion_reward_values"],
+            loaded_reward_values = _coerce_float_list(
+                training_state_checkpoint.get(
+                    "rolling50_reward_values",
+                    training_state_checkpoint.get("rolling50_task_reward_values", []),
+                ),
                 max_items=ROLLING_PERF_WINDOW_EPISODES,
             )
             loaded_length_values = _coerce_float_list(
@@ -1676,8 +1618,7 @@ def main(args: Args, train_args: TrainArgs, *, quiet: bool = True) -> None:
                 )
             )
             stats["run_elapsed_total_s"] = float(training_state_checkpoint["run_elapsed_total_s"])
-            stats["rolling50_task_reward_values"] = loaded_task_values
-            stats["rolling50_motion_reward_values"] = loaded_motion_values
+            stats["rolling50_reward_values"] = loaded_reward_values
             stats["rolling50_episode_length_values"] = loaded_length_values
             stats["rolling50_estop_episode_flags"] = loaded_estop_flags
             stats["rolling50_episode_return_values"] = loaded_return_values
@@ -1685,15 +1626,13 @@ def main(args: Args, train_args: TrainArgs, *, quiet: bool = True) -> None:
             stats["rolling50_episode_contacts_values"] = loaded_contacts_values
             stats["rolling50_window_count"] = float(
                 max(
-                    len(loaded_task_values),
-                    len(loaded_motion_values),
+                    len(loaded_reward_values),
                     len(loaded_length_values),
                     len(loaded_estop_flags),
                     len(loaded_return_values),
                 )
             )
-            stats["rolling50_task_reward_avg"] = float(rolling_mean(loaded_task_values))
-            stats["rolling50_motion_reward_avg"] = float(rolling_mean(loaded_motion_values))
+            stats["rolling50_reward_avg"] = float(rolling_mean(loaded_reward_values))
             stats["rolling50_episode_length_avg"] = float(rolling_mean(loaded_length_values))
             stats["rolling50_episode_return_avg"] = float(rolling_mean(loaded_return_values))
             stats["rolling50_episode_juggles_avg"] = float(rolling_mean(loaded_juggles_values))
@@ -1845,7 +1784,6 @@ if __name__ == "__main__":
     print(f"[train_args] loaded architecture from: {args.train_args}")
     print(
         f"[train_args] "
-        f"action_scale={train_args.action_scale} "
         f"agent_hidden_layer_size={train_args.agent_hidden_layer_size} "
         f"agent_num_hidden_layers={train_args.agent_num_hidden_layers} "
         f"q_hidden_layer_size={train_args.q_hidden_layer_size} "

@@ -3,7 +3,7 @@
 End-to-end flow of a single policy episode on the real UR5, from collection through replay ingestion and artifact output.
 
 Primary code: [`extras/async_td3_real.py`](../../../../scripts/td3/extras/async_td3_real.py) (`collector_process_modular`); shared dataclasses, learner, and runtime helpers live in [`helper/real_td3_runtime.py`](../../../../scripts/td3/helper/real_td3_runtime.py).
-Helpers: [`real_episode_buffers.py`](../../../../scripts/td3/helper/real_episode_buffers.py), [`real_stop_state.py`](../../../../scripts/td3/helper/real_stop_state.py), [`real_motion_rewards.py`](../../../../scripts/td3/helper/real_motion_rewards.py), [`episode_artifacts.py`](../../../../scripts/td3/helper/episode_artifacts.py), [`real_warm_start.py`](../../../../scripts/td3/helper/real_warm_start.py).
+Helpers: [`real_episode_buffers.py`](../../../../scripts/td3/helper/real_episode_buffers.py), [`real_stop_state.py`](../../../../scripts/td3/helper/real_stop_state.py), [`episode_artifacts.py`](../../../../scripts/td3/helper/episode_artifacts.py), [`real_warm_start.py`](../../../../scripts/td3/helper/real_warm_start.py).
 
 ## Overview
 
@@ -15,7 +15,6 @@ soft_reset / prime paddle
         |              |
         |         env.step(action)
         |              |
-        |         compute task + motion reward
         |         classify stop event
         |         append to episode trajectory + episode_rows
         |              |
@@ -45,10 +44,9 @@ Each step:
 
 1. **Action selection:** deterministic actor output + Gaussian noise, or primitive exploration override.
 2. **Environment step:** `env.step(action)` returns `(obs, reward, termination, truncation, info)`.
-3. **Task reward:** environment reward (base + shaping + survival bonus).
-4. **Motion reward:** computed via `_compute_motion_reward_components` using `MotionRewardState` to track paddle/puck history across steps. See [reward-shaping.md](../../training/reward-shaping.md).
-5. **Stop classification:** `_classify_stop_event` checks for protective stops, controller disconnects, and legacy e-stop signals.
-6. **Trajectory append:** observation, action, rewards, done flags are appended to `EpisodeTrajectory`; raw sensor/timing data is appended to `episode_rows` for HDF5.
+3. **Reward:** environment reward (base + survival bonus). See [reward-shaping.md](../../training/reward-shaping.md).
+4. **Stop classification:** `_classify_stop_event` checks for protective stops, controller disconnects, and legacy e-stop signals.
+5. **Trajectory append:** observation, action, reward, done flag are appended to `EpisodeTrajectory`; raw sensor/timing data is appended to `episode_rows` for HDF5.
 
 ## Stop event classification
 
@@ -84,7 +82,7 @@ This prevents post-failure garbage transitions from entering the replay buffer.
 
 **Code:** [`real_policy_runner.py`](../../../../scripts/td3/helper/real_policy_runner.py) (live), [`real_episode_buffers.py`](../../../../scripts/td3/helper/real_episode_buffers.py) (readiness-fail), [`real_warm_start.py`](../../../../scripts/td3/helper/real_warm_start.py) (HDF5 replay).
 
-When a stop event (protective stop, controller disconnect, readiness-fail) ends an episode, the rollout loop exits but the e-stop transition is stored with `done=0` — semantically a **truncation**, not a termination. The learner's Bellman target therefore continues to bootstrap from V(s') at the cutoff. No motion-reward penalty is applied at the stop event. Recording (HDF5 `estop` column, `stop_flags`, episode summaries, rolling-50 e-stop counters, TensorBoard `safety/estop_*`) is unchanged — the e-stop is fully observable in the data, just not special-cased in value updates.
+When a stop event (protective stop, controller disconnect, readiness-fail) ends an episode, the rollout loop exits but the e-stop transition is stored with `done=0` — semantically a **truncation**, not a termination. The learner's Bellman target therefore continues to bootstrap from V(s') at the cutoff. No special penalty is applied at the stop event. Recording (HDF5 `estop` column, `stop_flags`, episode summaries, rolling-50 e-stop counters, TensorBoard `safety/estop_*`) is unchanged — the e-stop is fully observable in the data, just not special-cased in value updates.
 
 ## Replay routing
 
@@ -138,7 +136,7 @@ Before live collection begins, the replay buffer can be seeded from previously s
 
 1. `_list_warm_start_hdf5_files` discovers files across configured input directories, interleaving from multiple sources.
 2. For each file, `_load_warm_start_episode` reads the split HDF5 data, reconstructs `state_info` dicts from the stored arrays, and rebuilds transitions.
-3. `_recompute_warm_start_rewards` replays the environment reward and motion reward logic on the reconstructed states, ensuring rewards match the current reward configuration (not the original training run's). E-stop transitions in the saved HDF5 are replayed as truncations (`done=0`) with no special motion-reward penalty — same semantics as live collection.
+3. `_recompute_warm_start_rewards` replays the environment reward on the reconstructed states, ensuring rewards match the current reward configuration (not the original training run's). E-stop transitions in the saved HDF5 are replayed as truncations (`done=0`) — same semantics as live collection.
 4. Episodes are routed to success/failure partitions using the same quantile threshold logic as live episodes.
 
 This allows training to start with meaningful replay data from prior real-world sessions, even if the reward function has changed.
@@ -148,8 +146,7 @@ This allows training to start with meaningful replay data from prior real-world 
 **Code:** [`real_collector_metrics.py`](../../../../scripts/td3/helper/real_collector_metrics.py)
 
 A rolling window of the last 50 episodes tracks:
-- Average task reward
-- Average motion reward
+- Average reward
 - Average episode length
 - E-stop episode count
 
@@ -157,7 +154,7 @@ These are written to TensorBoard under the `rolling50/` prefix and shared with t
 
 ## Related docs
 
-- [Reward shaping](../../training/reward-shaping.md) -- motion reward component details
+- [Reward shaping](../../training/reward-shaping.md)
 - [Replay and episodes](../../training/replay-and-episodes.md) -- buffer types and partitioning
 - [Reset FSM](reset-fsm.md) -- how the puck is reset between episodes
 - [Async replay semantics](td3-async-replay.md) -- `dones` column conventions

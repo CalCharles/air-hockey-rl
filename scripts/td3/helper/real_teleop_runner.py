@@ -203,8 +203,7 @@ class TeleopRunner:
                         episode_step_idx=len(self._episode_rows),
                         protective_stop_active=stop_state.protective_stop,
                         controller_disconnected=stop_state.controller_disconnected,
-                        task_reward=float(task_reward),
-                        motion_reward=0.0,
+                        reward=float(task_reward),
                         done=float(bool(terminations)),
                     )
                 )
@@ -216,8 +215,7 @@ class TeleopRunner:
                     obs=obs_tensor,
                     next_obs=next_obs_tensor,
                     action=action_tensor,
-                    task_reward=torch.tensor(float(task_reward), dtype=torch.float32, device=device),
-                    motion_reward=torch.tensor(0.0, dtype=torch.float32, device=device),
+                    reward=torch.tensor(float(task_reward), dtype=torch.float32, device=device),
                     done=torch.tensor(float(bool(terminations)), dtype=torch.float32, device=device),
                     prev_action=action_tensor,
                 )
@@ -231,7 +229,7 @@ class TeleopRunner:
                         self._on_step(
                             len(self._episode_rows),
                             {
-                                "task_reward": float(task_reward),
+                                "reward": float(task_reward),
                                 "stop_now": bool(stop_now),
                             },
                         )
@@ -301,8 +299,8 @@ class TeleopRunner:
 
         episode_return = float(self._episode_trajectory.episode_return)
         episode_length = float(len(self._episode_trajectory.observations))
-        episode_task_reward = float(
-            torch.stack(self._episode_trajectory.task_rewards, dim=0).sum().item()
+        episode_reward = float(
+            torch.stack(self._episode_trajectory.rewards, dim=0).sum().item()
         )
         episode_estop_flag = (
             1.0
@@ -316,11 +314,8 @@ class TeleopRunner:
         metrics = EpisodeMetrics(
             episode_return=episode_return,
             episode_length=episode_length,
-            episode_task_reward=episode_task_reward,
-            episode_motion_reward=0.0,
+            episode_reward=episode_reward,
             episode_estop_flag=episode_estop_flag,
-            motion_metric_means={},
-            motion_metric_count=0,
             puck_detection_latency_ms=[],
             model_inference_latency_ms=[],
             block_sleep_latency_ms=[],
@@ -334,7 +329,6 @@ class TeleopRunner:
             delta_transition_hold_steps=0,
             delta_interval_primitive_env_steps=0,
             delta_interval_primitive_horizontal_env_steps=0,
-            delta_interval_target_position_directional_env_steps=0,
             delta_human_interrupt_steps=int(self._stop_flags.had_human_interrupt),
             had_protective_stop=self._stop_flags.had_protective_stop,
             had_controller_disconnect=self._stop_flags.had_controller_disconnect,

@@ -56,22 +56,23 @@ To direct artifacts to a different location, change **`--data-root-dir`**. The `
 
 ## Sim: `td3_training.py`
 
-Single TensorBoard writer at `log_parent_dir` (`td3_training.py:765`). Two cadences:
+Single TensorBoard writer at `log_parent_dir` (created near the top of `_entrypoint()` in `td3_training.py`). Two cadences:
 
 ### Per-update (every gradient step)
 
-`log_scalar_metrics(...)` (`td3_training.py:1961`, helper at `helper/td3_metrics.py`) writes:
+`log_scalar_metrics(...)` (helper at `helper/td3_metrics.py`; metric bundles built in `helper/td3_loop_logging.py`) writes:
 
 | Group | Scalars |
 |------|---------|
-| `losses/` | `q_task_loss`, `q_motion_loss`, `q_total_loss`, `actor_loss`, `actor_norm_task_mean`, `actor_norm_motion_mean` |
-| Sampled-batch reward stats | `sampled_task_reward_mean/std`, `sampled_motion_reward_mean/std`, `sampled_combined_reward_mean/std`, plus mean/std for each motion component (`stand_still`, `temporal_alignment`, `axis_alignment`, `velocity`, `jerk`) raw and weighted |
+| `losses/` | `q_loss`, `q_total_loss`, `q1_mean`, `actor_loss`, `actor_norm_q_mean` (plus `q{i}_mean` / `q_min_mean` / `q_mean_mean` when `num_critics > 2`) |
+| `debug/` | `bellman_target_original_mean`, `next_q_h_mean` |
+| Sampled-batch reward stats | `sampled_reward_mean/std/min`, `sampled_reward_positive_count/fraction/mean/std` |
 | Replay state | PER importance-weight stats, priority TD-error means, success/failure buffer sizes, episode-window counts |
 | `charts/` | `exploration_primitive_chance`, `SPS` |
 
-### Every 500 env steps (`td3_training.py:1967`)
+### Every 500 env steps
 
-Console print + TB scalars:
+`write_periodic_episode_stats` (`helper/td3_loop_logging.py`) emits console print + TB scalars:
 
 | Scalar | Console prefix | What it is |
 |--------|---------------|------------|
@@ -79,26 +80,24 @@ Console print + TB scalars:
 | `charts/avg_success_rate` | `Success Rate:` | Mean success flag over same window |
 | `charts/rolling2k_avg_episode_return`, `…_avg_episode_length`, `…_episode_count` | (same line) | Same window stats |
 | `charts/rolling2k_puck_hits_total`, `…_estop_events_total`, `…_puck_hits_per_env_step`, `…_estop_rate` | `Rolling(2k) Puck Hits / E-Stop Events / per env-step / E-Stop Rate` | Contact + safety rates |
-| `motion/avg_velocity_magnitude`, `…acceleration…`, `…jerk…` | `Avg Velocity / Acceleration / Jerk` | Smoothness diagnostics |
 | `contacts/interval_paddle_puck_collisions_total`, `…_per_env_step` | `Paddle-Puck Collisions (last interval)` | Contact frequency |
-| `exploration/interval_primitive_*`, `…_policy_takeover_*`, `…_target_position_directional_*` | `Primitive / Policy Takeover / Target-Position Directional Actions` | Action source breakdown — only sim has takeover / horizontal-dominant fractions |
+| `exploration/interval_primitive_*` | `Primitive Actions` | Action source breakdown |
 
 ### Eval loop & artifacts
 
-Every `checkpoint_interval` (`td3_training.py:2133–2222`):
+Every `checkpoint_interval`:
 
 - `evaluate_agent(n_eps=4, n_gifs=1)` — held-out rollouts in a separate eval env
-- `rollout_data_like_0.gif` snapshot from training
+- Live training-episode GIFs are written separately to `samples/step_*.gif` at `sample_gif_interval` (real trajectories with exploration noise + primitives applied; recorded by `helper/td3_gif_recorder.py`)
 - Model checkpoint (`actor.pth`, critics, full training state)
 
-Final eval at script end: `td3_training.py:2291–2299`.
+Final eval runs at script end (`evaluate_agent(...)` call in `_entrypoint`).
 
 ### Practical: scalars to watch first
 
 1. `charts/rolling2k_avg_episode_return` — main learning curve.
 2. `charts/avg_success_rate` and `charts/rolling2k_estop_rate` — task and safety together.
 3. `losses/actor_loss` / `losses/q_total_loss` — divergence early-warning.
-4. `motion/avg_jerk_magnitude` — smoothness, especially before sim2real fine-tune.
 
 ---
 
@@ -113,16 +112,15 @@ Per finished episode (`_write_per_episode_tb`, `:515`):
 | Scalar | What it is |
 |--------|------------|
 | `charts/episodic_return`, `charts/episodic_length`, `charts/episodic_success` | Single-episode values |
-| `rewards/<motion_component>_mean` | Per-episode mean of each motion-reward component, when motion metrics are present |
 
 Every `collector_log_interval_sec` (`_periodic_log`, `:310–512`), in addition to clearing-and-averaging the per-episode lists:
 
 | Group | Scalars | Source |
 |-------|---------|--------|
-| **rolling50** (last ≤50 episodes) | `rolling50/task_reward_avg`, `rolling50/motion_reward_avg`, `rolling50/episode_length_avg`, `rolling50/estop_episode_count`, `rolling50/window_count` | `helper/real_collector_metrics.py:66–75` |
+| **rolling50** (last ≤50 episodes) | `rolling50/reward_avg`, `rolling50/episode_length_avg`, `rolling50/estop_episode_count`, `rolling50/window_count` | `helper/real_collector_metrics.py` |
 | Window aggregates | `charts/avg_episodic_return`, `charts/min_episodic_return`, `charts/max_episodic_return`, `charts/avg_success_rate`, `charts/avg_episodic_length` | `:457–467` (only when episodes occurred in the interval) |
 | Replay | `replay/success_buffer_size`, `replay/failure_buffer_size` | `:383–384` |
-| Exploration | `exploration/primitive_chance`, `exploration/primitive_env_steps`, `exploration/primitive_horizontal_env_steps`, `exploration/target_position_directional_env_steps` | `:385–406` |
+| Exploration | `exploration/primitive_chance`, `exploration/primitive_env_steps`, `exploration/primitive_horizontal_env_steps` | `:385–406` |
 | Artifacts | `artifacts/episodes_saved`, `…_removed_short`, `…_removed_invalid`, `…_gif_generated`, `…_gif_failed`, `…_camera_video_generated`, `…_camera_video_failed` | `:407–426` |
 | Safety | `safety/estop_steps`, `safety/estop_episodes`, `safety/controller_disconnect_steps`, `safety/controller_disconnect_episodes`, `safety/readiness_fail_steps`, `safety/readiness_fail_estop_episodes`, `safety/readiness_fail_dropped_steps` | `:428–449` |
 | Transitions | `transitions/hold_active`, `transitions/hold_steps_remaining`, `transitions/hold_events_total` | `:443–449` |
@@ -148,12 +146,11 @@ The async path collects on hardware so several sim diagnostics are intentionally
 
 | Missing in async | Sim location | Why / workaround |
 |------------------|--------------|------------------|
-| Per-update sampled-batch reward statistics | `td3_training.py:1953–1961` | Async learner runs in another process; only `losses/…` are surfaced to `learner_tb/` |
-| Held-out evaluation loop (`evaluate_agent`) | `td3_training.py:2195–2205, :2291–2299` | No eval env on hardware; rolling50 over live episodes is the proxy |
-| Min/max return over a sliding window | `td3_training.py:1983–1985` | `charts/{min,max}_episodic_return` exists but is reset each interval, not a sliding window |
-| Policy-takeover fraction, horizontal-dominant fraction | `td3_training.py:2086–2125` | Async logs primitive-step counts but not the takeover / horizontal split |
-| Velocity / acceleration / jerk averages | `td3_training.py:2029–2031` | Compute from saved episode HDF5 if needed |
-| Per-env-step puck hit rate | `td3_training.py:2012–2018` | `safety/estop_*` is the closest signal; for hits, post-process episode HDF5 |
+| Per-update sampled-batch reward statistics | sim trainer | Async learner runs in another process; only `losses/…` are surfaced to `learner_tb/` |
+| Held-out evaluation loop (`evaluate_agent`) | sim trainer | No eval env on hardware; rolling50 over live episodes is the proxy |
+| Min/max return over a sliding window | sim trainer | `charts/{min,max}_episodic_return` exists but is reset each interval, not a sliding window |
+| Horizontal-dominant fraction | sim trainer | Async logs primitive-step counts only |
+| Per-env-step puck hit rate | sim trainer | `safety/estop_*` is the closest signal; for hits, post-process episode HDF5 |
 | PER importance-weight / TD-error visibility | `helper/td3_metrics.py` | Fine when learner is idle; if active, it goes to `learner_tb/` |
 
 ### Episode artifacts on disk
@@ -169,7 +166,7 @@ Example: `--data-root-dir real_runs/online_run_modular --model-path latest_model
 
 ### Practical: scalars to watch first
 
-1. `rolling50/task_reward_avg` — primary "how is it doing" curve.
+1. `rolling50/reward_avg` — primary "how is it doing" curve.
 2. `rolling50/episode_length_avg` and `rolling50/estop_episode_count` — episode-shape and safety, together.
 3. `safety/estop_episodes` and `safety/controller_disconnect_episodes` — escalation signal; if these climb, intervene.
 4. `artifacts/episodes_saved` vs `artifacts/episodes_removed_*` — confirms episodes are actually being kept.
@@ -186,7 +183,8 @@ For rollout-only collection (large `--min-replay-size-before-learning`), the `[c
 <log_parent_dir>/
   events.out.tfevents.*           # TB scalars (single writer)
   rollouts/                       # eval GIFs (n_gifs=1 per checkpoint)
-  rollout_data_like_0.gif         # in-training snapshot
+  watch/                          # ring-buffer GIFs of recent training episodes
+  samples/                        # periodic snapshot GIFs at sample_gif_interval
   *.pth                           # actor / critic / training_state checkpoints
 
 # async_td3_real.py — single unified run folder:

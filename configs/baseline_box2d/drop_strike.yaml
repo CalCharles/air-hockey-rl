@@ -1,10 +1,7 @@
 air_hockey:
-  diagonal_motion_rew: 0.0
-  direction_change_rew: 0.0
   goal_max_x_velocity: 1
   goal_max_y_velocity: 5
   goal_min_y_velocity: 1
-  horizontal_vel_rew: 0.0
   max_timesteps: 250
   n_training_steps: 1000000
   num_blocks: 0
@@ -44,13 +41,11 @@ air_hockey:
     render_size: 360
     seed: 0
     width: 0.8636
-    use_pid: true
     pid_kp: 9000
     pid_kd: 50
     pid_ki: 0.0
     hist_len: 2
 
-  stand_still_rew: 0.0
   task: puck_strike
   puck_spawn_mode: linear_top
   puck_spawn_affected_by_gravity: true
@@ -61,9 +56,6 @@ air_hockey:
   terminate_on_puck_pass_paddle: true
   terminate_on_puck_stop: false
   truncate_rew: 0
-  wall_bumping_rew: 0
-  use_reward_shaping: true
-  use_smooth_penalty: false
   base_reward_scaling: 1
 algorithm: ppo
 eval_freq: 5000

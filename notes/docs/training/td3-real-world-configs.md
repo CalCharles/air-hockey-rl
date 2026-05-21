@@ -14,7 +14,6 @@ Real-world entrypoints all accept `--args-file <this yaml>`:
 - Training: `scripts/td3/extras/async_td3_real.py`
 - Frozen-policy evaluation: `scripts/td3/extras/async_td3_real_eval.py`
 - Human-baseline teleop / user study: `scripts/td3/extras/async_td3_real_teleop_eval.py`
-- Reset-policy training variant: `scripts/td3/extras/async_td3_real_reset_policy.py`
 
 ### `td3_residual_cql.yaml` — Canonical big-gap residual + CQL (default)
 The 2026-05-08 winner. v27 Maxmin-5 base + `cql_alpha: 20.0` + `actor_updates_per_iteration: 2`. CQL penalty (Conservative-Q on the task head) is the load-bearing addition over v27 — pushes Q down on OOD residual actions and up on the current policy action. `cql_n_random: 10`. Everything else (success_top_fraction=0.15, residual_scale=0.15, no exploration, no BC anchor, q_weight_decay=1e-3, q_updates=4) matches v27. Ships with `learning_starts_fresh_steps: 2000` and an empty warm-start; pass `--warm-start-hdf5-dirs <prior-real-run>/episode_hdf5 --learning-starts-fresh-steps 0` to seed the buffer with prior-launch HDF5s instead. Pair with `td3_residual_train_args.yaml`.

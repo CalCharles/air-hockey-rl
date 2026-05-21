@@ -22,8 +22,7 @@ class EpisodeTrajectory:
     observations: List[torch.Tensor]
     next_observations: List[torch.Tensor]
     actions: List[torch.Tensor]
-    task_rewards: List[torch.Tensor]
-    motion_rewards: List[torch.Tensor]
+    rewards: List[torch.Tensor]
     dones: List[torch.Tensor]
     bootstrap_terminals: List[torch.Tensor]
     prev_actions: List[torch.Tensor]
@@ -35,8 +34,7 @@ class EpisodeTrajectory:
             observations=[],
             next_observations=[],
             actions=[],
-            task_rewards=[],
-            motion_rewards=[],
+            rewards=[],
             dones=[],
             bootstrap_terminals=[],
             prev_actions=[],
@@ -48,8 +46,7 @@ class EpisodeTrajectory:
         obs: torch.Tensor,
         next_obs: torch.Tensor,
         action: torch.Tensor,
-        task_reward: torch.Tensor,
-        motion_reward: torch.Tensor,
+        reward: torch.Tensor,
         done: torch.Tensor,
         prev_action: torch.Tensor,
         bootstrap_terminal: torch.Tensor | None = None,
@@ -57,8 +54,7 @@ class EpisodeTrajectory:
         self.observations.append(obs.detach().clone())
         self.next_observations.append(next_obs.detach().clone())
         self.actions.append(action.detach().clone())
-        self.task_rewards.append(task_reward.detach().clone())
-        self.motion_rewards.append(motion_reward.detach().clone())
+        self.rewards.append(reward.detach().clone())
         done_tensor = done.detach().clone()
         self.dones.append(done_tensor)
         if bootstrap_terminal is None:
@@ -66,7 +62,7 @@ class EpisodeTrajectory:
         else:
             self.bootstrap_terminals.append(bootstrap_terminal.detach().clone())
         self.prev_actions.append(prev_action.detach().clone())
-        self.episode_return += float(task_reward.item())
+        self.episode_return += float(reward.item())
 
     def flush_to_buffer(self, replay_buffer) -> int:
         transition_count = len(self.observations)
@@ -76,8 +72,7 @@ class EpisodeTrajectory:
             obs=torch.stack(self.observations, dim=0),
             next_obs=torch.stack(self.next_observations, dim=0),
             actions=torch.stack(self.actions, dim=0),
-            task_rewards=torch.stack(self.task_rewards, dim=0).view(-1),
-            motion_rewards=torch.stack(self.motion_rewards, dim=0).view(-1),
+            rewards=torch.stack(self.rewards, dim=0).view(-1),
             dones=torch.stack(self.dones, dim=0).view(-1),
             prev_action=torch.stack(self.prev_actions, dim=0),
         )
@@ -88,8 +83,7 @@ class EpisodeTrajectory:
         self.observations.clear()
         self.next_observations.clear()
         self.actions.clear()
-        self.task_rewards.clear()
-        self.motion_rewards.clear()
+        self.rewards.clear()
         self.dones.clear()
         self.bootstrap_terminals.clear()
         self.prev_actions.clear()
@@ -100,8 +94,7 @@ class EpisodeTrajectory:
             "observations": [_cpu_tensor(item) for item in self.observations],
             "next_observations": [_cpu_tensor(item) for item in self.next_observations],
             "actions": [_cpu_tensor(item) for item in self.actions],
-            "task_rewards": [_cpu_tensor(item) for item in self.task_rewards],
-            "motion_rewards": [_cpu_tensor(item) for item in self.motion_rewards],
+            "rewards": [_cpu_tensor(item) for item in self.rewards],
             "dones": [_cpu_tensor(item) for item in self.dones],
             "bootstrap_terminals": [_cpu_tensor(item) for item in self.bootstrap_terminals],
             "prev_actions": [_cpu_tensor(item) for item in self.prev_actions],
@@ -113,12 +106,14 @@ class EpisodeTrajectory:
         trajectory = cls.empty()
         if not isinstance(state_dict, dict):
             return trajectory
+        # Old checkpoints (pre motion-reward removal) stored the per-step
+        # reward array as `task_rewards`; current code uses `rewards`.
+        reward_key = "rewards" if "rewards" in state_dict else "task_rewards"
         for attr, key in (
             ("observations", "observations"),
             ("next_observations", "next_observations"),
             ("actions", "actions"),
-            ("task_rewards", "task_rewards"),
-            ("motion_rewards", "motion_rewards"),
+            ("rewards", reward_key),
             ("dones", "dones"),
             ("prev_actions", "prev_actions"),
         ):

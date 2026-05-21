@@ -6,12 +6,9 @@
 # spans (base ± half_base on y) do not overlap between obstacles.
 # Puck: centerline x (50% from goal), uniform random y, zero initial speed.
 air_hockey:
-  diagonal_motion_rew: 0.0
-  direction_change_rew: 0.0
   goal_max_x_velocity: 1
   goal_max_y_velocity: 5
   goal_min_y_velocity: 1
-  horizontal_vel_rew: 0.0
   max_timesteps: 250 # lower for testing
   n_training_steps: 1000000
   num_blocks: 0
@@ -62,7 +59,6 @@ air_hockey:
     render_size: 360
     seed: 0
     width: 0.8636
-    use_pid: true
     pid_kp: 5000
     pid_kd: 200
     pid_ki: 0.0
@@ -89,7 +85,6 @@ air_hockey:
     action_force_attenuation_min: 0.25
     action_force_attenuation_max: 0.75
 
-  stand_still_rew: 0.0
   task: puck_juggle_pinball_triangle_sides
   terminate_on_enemy_goal: true
   terminate_on_out_of_bounds: false
@@ -98,7 +93,4 @@ air_hockey:
   terminate_on_puck_pass_paddle: true
   terminate_on_puck_stop: false
   truncate_rew: 0
-  wall_bumping_rew: 0
-  use_reward_shaping: true
-  use_smooth_penalty: false
   base_reward_scaling: 1

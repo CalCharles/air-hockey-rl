@@ -85,48 +85,13 @@ def load_resume_training_state(
     if "rng_states" in resume_checkpoint:
         set_rng_states(resume_checkpoint["rng_states"])
 
-    if "steps_since_done" in resume_checkpoint:
-        steps_since_done = resume_checkpoint["steps_since_done"].to(device)
-    else:
-        # Backward compatibility for older checkpoints that used
-        # temporal_done_history + temporal_position_count.
-        legacy_position_count = resume_checkpoint.get("temporal_position_count")
-        if legacy_position_count is None:
-            steps_since_done = defaults["steps_since_done"]
-        else:
-            steps_since_done = torch.clamp(legacy_position_count.to(device) - 1, min=0)
-        legacy_done_history = resume_checkpoint.get("temporal_done_history")
-        if legacy_done_history is not None:
-            recent_done = legacy_done_history.to(device).any(dim=1)
-            steps_since_done = torch.where(
-                recent_done,
-                torch.zeros_like(steps_since_done),
-                steps_since_done,
-            )
-
     return {
         "global_step": int(resume_checkpoint["global_step"]),
         "iteration": int(resume_checkpoint["iteration"]),
         "total_critic_updates": int(resume_checkpoint.get("total_critic_updates", 0)),
         "obs": np.asarray(resume_checkpoint["obs"], dtype=np.float32),
         "last_action_for_policy": resume_checkpoint["last_action_for_policy"].to(device),
-        "warm_policy_last_action": resume_checkpoint.get(
-            "warm_policy_last_action", defaults["warm_policy_last_action"]
-        ).to(device),
-        "temporal_paddle_history": resume_checkpoint["temporal_paddle_history"].to(device),
-        "temporal_puck_history": resume_checkpoint["temporal_puck_history"].to(device),
-        "steps_since_done": steps_since_done,
-        "current_velocity_mag": resume_checkpoint["current_velocity_mag"].to(device),
-        "current_acceleration_mag": resume_checkpoint["current_acceleration_mag"].to(device),
-        "current_jerk_mag": resume_checkpoint["current_jerk_mag"].to(device),
         "train_metrics": dict(resume_checkpoint.get("train_metrics", defaults["train_metrics"])),
-        "velocity_magnitudes": list(
-            resume_checkpoint.get("velocity_magnitudes", defaults["velocity_magnitudes"])
-        ),
-        "acceleration_magnitudes": list(
-            resume_checkpoint.get("acceleration_magnitudes", defaults["acceleration_magnitudes"])
-        ),
-        "jerk_magnitudes": list(resume_checkpoint.get("jerk_magnitudes", defaults["jerk_magnitudes"])),
         "interval_paddle_puck_collisions": float(
             resume_checkpoint.get(
                 "interval_paddle_puck_collisions",
@@ -143,18 +108,6 @@ def load_resume_training_state(
                 defaults["interval_primitive_horizontal_env_steps"],
             )
         ),
-        "interval_policy_takeover_env_steps": int(
-            resume_checkpoint.get(
-                "interval_policy_takeover_env_steps",
-                defaults["interval_policy_takeover_env_steps"],
-            )
-        ),
-        "interval_target_position_directional_env_steps": int(
-            resume_checkpoint.get(
-                "interval_target_position_directional_env_steps",
-                defaults["interval_target_position_directional_env_steps"],
-            )
-        ),
         "episode_trajectory": load_episode_trajectory_from_checkpoint(
             resume_checkpoint,
             device=device,
@@ -168,17 +121,11 @@ def load_resume_training_state(
         ),
         "rolling_step_stats_window": deque(
             [
-                (
-                    int(item[0]),
-                    int(item[1]),
-                    float(item[2]),
-                    float(item[3]),
-                )
+                (int(item[0]), int(item[1]), float(item[2]))
                 for item in resume_checkpoint.get(
                     "rolling_step_stats_window",
                     defaults["rolling_step_stats_window"],
                 )
-                if isinstance(item, (list, tuple)) and len(item) >= 4
             ]
         ),
         "rolling_episode_stats_window": deque(
@@ -197,75 +144,6 @@ def load_resume_training_state(
             ]
         ),
     }
-
-
-def load_fine_tune_optimizer_state(
-    checkpoint: Dict[str, Any], *, q_optimizer, actor_optimizer
-) -> None:
-    if "q_optimizer" not in checkpoint:
-        raise KeyError("Missing 'q_optimizer' in checkpoint; cannot run fine-tune optimizer restore.")
-    if "actor_optimizer" not in checkpoint:
-        raise KeyError("Missing 'actor_optimizer' in checkpoint; cannot run fine-tune optimizer restore.")
-    q_optimizer.load_state_dict(checkpoint["q_optimizer"])
-    actor_optimizer.load_state_dict(checkpoint["actor_optimizer"])
-
-
-def seed_fine_tune_replay_from_source(
-    *,
-    success_rb,
-    failure_rb,
-    source_success: Dict[str, Any] | None,
-    source_failure: Dict[str, Any] | None,
-    keep_total: int,
-    seed: int = 0,
-) -> Dict[str, int]:
-    """Seed fresh target replay buffers with up to ``keep_total`` source samples.
-
-    Subsamples uniformly within each source buffer, splitting the keep budget
-    proportionally to how full each source buffer is. Source samples are added
-    via the buffers' ``add()`` API so positions/sizes stay consistent.
-    """
-    keep_total = int(keep_total)
-    if keep_total <= 0:
-        return {"success_kept": 0, "failure_kept": 0}
-
-    success_size = int(source_success["size"]) if source_success is not None else 0
-    failure_size = int(source_failure["size"]) if source_failure is not None else 0
-    total_source = success_size + failure_size
-    if total_source == 0:
-        return {"success_kept": 0, "failure_kept": 0}
-
-    keep_total = min(keep_total, total_source)
-    success_keep = int(round(keep_total * success_size / total_source))
-    failure_keep = keep_total - success_keep
-    success_keep = min(success_keep, success_size)
-    failure_keep = min(failure_keep, failure_size)
-
-    rng = torch.Generator(device="cpu")
-    rng.manual_seed(int(seed))
-
-    def _seed_one(target_rb, source: Dict[str, Any], n_keep: int) -> int:
-        if n_keep <= 0 or source is None:
-            return 0
-        size = int(source["size"])
-        if size == 0:
-            return 0
-        n_keep = min(n_keep, size)
-        idx = torch.randperm(size, generator=rng)[:n_keep]
-        target_rb.add(
-            obs=source["observations"][idx],
-            next_obs=source["next_observations"][idx],
-            actions=source["actions"][idx],
-            task_rewards=source["task_rewards"][idx],
-            motion_rewards=source["motion_rewards"][idx],
-            dones=source["dones"][idx],
-            prev_action=source["prev_actions"][idx],
-        )
-        return n_keep
-
-    kept_success = _seed_one(success_rb, source_success, success_keep)
-    kept_failure = _seed_one(failure_rb, source_failure, failure_keep)
-    return {"success_kept": kept_success, "failure_kept": kept_failure}
 
 
 def build_training_state(
@@ -287,23 +165,11 @@ def build_training_state(
     include_replay_buffer: bool = True,
     obs: np.ndarray,
     last_action_for_policy: torch.Tensor,
-    warm_policy_last_action: torch.Tensor,
-    temporal_paddle_history: torch.Tensor,
-    temporal_puck_history: torch.Tensor,
-    steps_since_done: torch.Tensor,
-    current_velocity_mag: torch.Tensor,
-    current_acceleration_mag: torch.Tensor,
-    current_jerk_mag: torch.Tensor,
     train_metrics: Dict[str, float],
-    velocity_magnitudes,
-    acceleration_magnitudes,
-    jerk_magnitudes,
     interval_paddle_puck_collisions: float,
     interval_env_steps: int,
     interval_primitive_env_steps: int,
     interval_primitive_horizontal_env_steps: int,
-    interval_policy_takeover_env_steps: int,
-    interval_target_position_directional_env_steps: int,
     episode_trajectory: EpisodeTrajectory,
     recent_episode_returns,
     episode_return_success_threshold: float,
@@ -329,23 +195,11 @@ def build_training_state(
         "primitive_selector": primitive_selector.state_dict(),
         "obs": np.array(obs, copy=True),
         "last_action_for_policy": _cpu_tensor(last_action_for_policy),
-        "warm_policy_last_action": _cpu_tensor(warm_policy_last_action),
-        "temporal_paddle_history": _cpu_tensor(temporal_paddle_history),
-        "temporal_puck_history": _cpu_tensor(temporal_puck_history),
-        "steps_since_done": _cpu_tensor(steps_since_done),
-        "current_velocity_mag": _cpu_tensor(current_velocity_mag),
-        "current_acceleration_mag": _cpu_tensor(current_acceleration_mag),
-        "current_jerk_mag": _cpu_tensor(current_jerk_mag),
         "train_metrics": dict(train_metrics),
-        "velocity_magnitudes": list(velocity_magnitudes),
-        "acceleration_magnitudes": list(acceleration_magnitudes),
-        "jerk_magnitudes": list(jerk_magnitudes),
         "interval_paddle_puck_collisions": interval_paddle_puck_collisions,
         "interval_env_steps": interval_env_steps,
         "interval_primitive_env_steps": interval_primitive_env_steps,
         "interval_primitive_horizontal_env_steps": interval_primitive_horizontal_env_steps,
-        "interval_policy_takeover_env_steps": interval_policy_takeover_env_steps,
-        "interval_target_position_directional_env_steps": interval_target_position_directional_env_steps,
         "episode_trajectory": episode_trajectory.state_dict(),
         "recent_episode_returns": list(recent_episode_returns),
         "episode_return_success_threshold": episode_return_success_threshold,
@@ -354,7 +208,6 @@ def build_training_state(
                 int(item[0]),
                 int(item[1]),
                 float(item[2]),
-                float(item[3]),
             )
             for item in rolling_step_stats_window
         ],

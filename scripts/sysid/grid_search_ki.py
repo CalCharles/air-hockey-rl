@@ -48,9 +48,9 @@ SUBSET_TRAJECTORIES_DEFAULT = [
 
 SUBSET_TRAJECTORIES = load_subset(SUBSET_TRAJECTORIES_DEFAULT)
 
-BEST_KP = 7500
+BEST_KP = 6500 # 7500
 BEST_KD = 100
-BEST_DENSITY = 2750
+BEST_DENSITY = 3250 # 2750
 
 
 def replay_errors_only(episode_path: str, sim_cfg: dict) -> dict[str, float]:
@@ -91,7 +91,7 @@ def replay_errors_only(episode_path: str, sim_cfg: dict) -> dict[str, float]:
 
 
 def main():
-    ki_values = [0, 10, 25, 50, 100, 150, 200, 300, 500]
+    ki_values = [0, 10, 25, 50, 100, 150, 200, 300, 500, 600, 700, 800, 900, 1000, 1100, 1200, 1300, 1400, 1500]
 
     episode_paths = [str(SYSID_DIR / t) for t in SUBSET_TRAJECTORIES]
     for p in episode_paths:
