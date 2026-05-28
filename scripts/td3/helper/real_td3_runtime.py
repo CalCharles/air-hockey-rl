@@ -733,6 +733,13 @@ class Args:
     # Set to 0 to disable cap.
     episode_camera_video_max_frames: int = 0
     episode_camera_video_codec: str = "mp4v"
+    # Homography-warped camera GIF with live-style overlays (goal ring, etc.).
+    # Only emitted when the episode HDF5 contains a ``goal`` dataset (goal-
+    # conditioned tasks). Reconstructs ``showdst`` from ``train_img``.
+    enable_episode_homography_gif: bool = True
+    episode_homography_gif_fps: int = 20
+    episode_homography_gif_subsample: int = 1
+    episode_homography_gif_max_frames: int = 0
     log_parent_dir: str | None = None
     run_name: str = "async_td3_real"
     enable_periodic_checkpointing: bool = True
@@ -1213,6 +1220,25 @@ def _build_split_episode_row(
         row["policy_action"] = np.asarray(action_xy, dtype=np.float64).reshape(-1)[:2]
         row["reward"] = np.array([float(reward)], dtype=np.float64)
         row["done"] = np.array([float(done) if done is not None else 0.0], dtype=np.float64)
+    # Goal-conditioned tasks (puck_goal_position*, paddle_reach_position*, etc.)
+    # expose `env.goal_pos` in TABLE frame; persist enlarged marker radius
+    # (``env.goal_marker_radius_m()``) so GIFs match the live homography overlay.
+    goal_pos_attr = getattr(env, "goal_pos", None)
+    if goal_pos_attr is not None:
+        goal_xy = np.asarray(goal_pos_attr, dtype=np.float64).reshape(-1)[:2]
+        goal_radius_fn = getattr(env, "goal_marker_radius_m", None)
+        if callable(goal_radius_fn):
+            goal_radius_val = goal_radius_fn()
+        else:
+            goal_radius_val = getattr(env, "goal_radius", 0.0)
+        try:
+            goal_radius_val = float(goal_radius_val) if goal_radius_val is not None else 0.0
+        except (TypeError, ValueError):
+            goal_radius_val = 0.0
+        row["goal"] = vector_with_width(
+            np.array([goal_xy[0], goal_xy[1], goal_radius_val], dtype=np.float64),
+            3,
+        )
     return row
 
 
@@ -2077,6 +2103,8 @@ def _setup_run_data_dir(args: Args, run_note: str) -> Path:
         episode_hdf5/             ← per-step trajectories
         reset_hdf5/               ← reset-FSM trajectories
         episode_gifs/              ← side-by-side Box2D + camera GIFs
+        episode_homography_gifs/   ← homography-warped camera + goal overlay GIFs
+                                     (flat: trajectory_dataN/, not length buckets)
         episode_camera_videos/     ← raw camera MP4s
         collector_tb/              ← collector TensorBoard scalars
         learner_tb/                ← learner TensorBoard scalars
@@ -2107,6 +2135,7 @@ def _setup_run_data_dir(args: Args, run_note: str) -> Path:
     args.episode_artifact_dir = str(run_data_dir / "episode_hdf5")
     args.reset_artifact_dir = str(run_data_dir / "reset_hdf5")
     args.episode_gif_dir = str(run_data_dir / "episode_gifs")
+    args.episode_homography_gif_dir = str(run_data_dir / "episode_homography_gifs")
     args.episode_camera_video_dir = str(run_data_dir / "episode_camera_videos")
 
     # Force TB logs + checkpoints under the same root as the episode data so

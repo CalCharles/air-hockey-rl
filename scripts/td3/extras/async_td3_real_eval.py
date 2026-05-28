@@ -56,7 +56,7 @@ import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 import numpy as np
 import torch
@@ -68,6 +68,7 @@ from scripts.td3.helper.episode_artifacts import (
     clean_episode_hdf5,
     save_split_episode_hdf5,
 )
+from scripts.td3.helper.juggle_counter import count_juggles_from_rows
 from scripts.td3.helper.real_collector_factories import (
     build_primitive_exploration_selector_for_real_collector,
 )
@@ -83,6 +84,7 @@ from scripts.td3.helper.real_reset_runner import (
     ResetKind,
     ResetRunner,
     StopFlags,
+    _rewind_goal_sequence_if_available,
     pick_reset_kind,
 )
 from scripts.td3.helper.real_task_eval_hooks import (
@@ -122,6 +124,12 @@ from scripts.td3.helper.real_td3_runtime import (
     deterministic_actor_action,
     install_quiet_print_filter,
     primitive_exploration_chance_for_step,
+)
+from scripts.td3.helper.eval_goal_grid import (
+    GOAL_GRID_COLS,
+    GOAL_GRID_ROWS,
+    GOAL_GRID_TASK_NAMES,
+    build_eval_goal_grid_from_env,
 )
 from scripts.td3.helper.real_eval_agents import (
     EvalAgent,
@@ -174,6 +182,21 @@ class EvalSpecificArgs:
     # synthesize a minimal ``TrainArgs`` and skip the args-file step.
     agent: str = "td3"
 
+    # Multiply the actor's y output by this factor before env clamp/step.
+    # Default 1.0 = off (omit --action-y-scaling to disable).
+    action_y_scaling: float = 1.0
+
+    # 1-based eval episode to start collecting from (default 1 = full run).
+    # Episode N uses the Nth scripted goal in the eval grid; only episodes
+    # N..eval_episodes are collected into this run's eval set.
+    restart_eval_from_episode: int = 1
+
+    # When set, protective-stop / readiness-fail e-stop episodes rewind the
+    # scripted goal so the next attempt retries the same target instead of
+    # advancing the eval grid. Episodes with more than one paddle-puck hit
+    # are kept and advance normally even if they end on an e-stop.
+    rewind_goal_on_estop: bool = False
+
 
 def _parse_eval_specific_args() -> EvalSpecificArgs:
     """Strip eval-specific flags from ``sys.argv`` before tyro sees it.
@@ -201,8 +224,41 @@ def _parse_eval_specific_args() -> EvalSpecificArgs:
         help=(
             "Agent kind. 'td3' (default) requires --train-args and --args-file. "
             "'sgcrl' loads a pickled SGCRL actor and synthesizes the policy-state "
-            "contract; --train-args / --args-file may be omitted. "
+            "contract; 'iwr' loads an interaction-weighted-sampling checkpoint "
+            "with the same actor contract. Goal-conditioned variants "
+            "'crtr', 'sac-gcrl', 'sac-her', 'sac-weighted-her', and 'ppo-gcrl' use the same "
+            "contract (underscore/hyphen spellings are equivalent). "
+            "--train-args / --args-file may be omitted for all non-TD3 agents. "
             "See scripts/td3/helper/real_eval_agents.EVAL_AGENT_BUILDERS."
+        ),
+    )
+    parser.add_argument(
+        "--action-y-scaling",
+        type=float,
+        default=1.0,
+        help=(
+            "Multiply the actor's y output by this factor before env clamp/step. "
+            "Default 1.0 = no boost."
+        ),
+    )
+    parser.add_argument(
+        "--restart-eval-from-episode",
+        type=int,
+        default=1,
+        help=(
+            "1-based eval episode to start from (default 1 = full run). "
+            "Episode 4 uses the 4th goal in the eval grid and collects "
+            "episodes 4..eval-episodes only."
+        ),
+    )
+    parser.add_argument(
+        "--rewind-goal-on-estop",
+        action="store_true",
+        help=(
+            "After a protective-stop or readiness-fail e-stop, rewind the "
+            "scripted goal so the next attempt retries the same target when "
+            "the episode had at most one paddle-puck hit. Multi-hit e-stop "
+            "episodes are kept and advance the eval grid normally."
         ),
     )
     parsed, remaining = parser.parse_known_args(sys.argv[1:])
@@ -214,6 +270,9 @@ def _parse_eval_specific_args() -> EvalSpecificArgs:
         eval_per_episode_filename=str(parsed.eval_per_episode_filename),
         quiet=not bool(parsed.verbose),
         agent=str(parsed.agent),
+        action_y_scaling=float(parsed.action_y_scaling),
+        restart_eval_from_episode=int(parsed.restart_eval_from_episode),
+        rewind_goal_on_estop=bool(parsed.rewind_goal_on_estop),
     )
 
 
@@ -241,6 +300,172 @@ def _force_eval_mode(args: Args) -> None:
     # Eval mode never touches replay; loud disable in case someone reads
     # the value off args later.
     args.load_replay_from_checkpoint = False
+
+
+def _make_eval_actor_action_fn(
+    action_y_scaling: float,
+) -> Callable[..., torch.Tensor]:
+    """Return ``deterministic_actor_action``, optionally scaling y on output."""
+    scale = float(action_y_scaling)
+    if scale == 1.0:
+        return deterministic_actor_action
+
+    def _scaled_deterministic_actor_action(actor: Any, policy_obs: torch.Tensor) -> torch.Tensor:
+        action = deterministic_actor_action(actor, policy_obs)
+        action = action.clone()
+        action[..., 1] = action[..., 1] * scale
+        return action
+
+    return _scaled_deterministic_actor_action
+
+
+# ---------------------------------------------------------------------------
+# Deterministic goal grid for goal-tasks. Shared with
+# ``scripts/visualization/render_eval_goal_grid_homography.py``.
+# ---------------------------------------------------------------------------
+
+
+def _maybe_install_eval_goal_grid(env, task_name: str) -> None:
+    """If ``task_name`` is a goal-position task, install a fixed eval grid."""
+    if task_name not in GOAL_GRID_TASK_NAMES:
+        return
+    set_seq = getattr(env, "set_goal_sequence", None)
+    if not callable(set_seq):
+        print(
+            f"[eval_goal_grid] task={task_name!r} expected to expose "
+            "`set_goal_sequence` but does not; skipping deterministic grid."
+        )
+        return
+    grid = build_eval_goal_grid_from_env(env)
+    set_seq(grid)
+    print(
+        f"[eval_goal_grid] task={task_name!r} installed "
+        f"{GOAL_GRID_ROWS}x{GOAL_GRID_COLS}={len(grid)} row-major grid. "
+        f"x_range=[{grid[0][0]:+.3f},{grid[-1][0]:+.3f}] "
+        f"y_range=[{grid[0][1]:+.3f},{grid[-1][1]:+.3f}] "
+        f"(sequence wraps modulo {len(grid)} for longer eval runs)"
+    )
+
+
+def _episode_had_estop(result) -> bool:
+    return bool(
+        result.metrics.had_protective_stop or result.terminal.readiness_fail_estop
+    )
+
+
+def _count_episode_paddle_puck_hits(rows) -> int:
+    return int(count_juggles_from_rows(rows).n_contacts)
+
+
+def _estop_triggers_goal_retry(
+    *,
+    rewind_on_estop: bool,
+    had_estop: bool,
+    n_paddle_puck_hits: int,
+) -> bool:
+    return bool(
+        rewind_on_estop and had_estop and int(n_paddle_puck_hits) <= 1
+    )
+
+
+def _should_rewind_goal_after_episode(
+    *,
+    episode_kept: bool,
+    rewind_on_estop: bool,
+    had_estop: bool,
+    n_paddle_puck_hits: int,
+) -> bool:
+    if not episode_kept:
+        return True
+    return _estop_triggers_goal_retry(
+        rewind_on_estop=rewind_on_estop,
+        had_estop=had_estop,
+        n_paddle_puck_hits=n_paddle_puck_hits,
+    )
+
+
+def _counts_toward_eval_set(
+    *,
+    episode_kept: bool,
+    rewind_on_estop: bool,
+    had_estop: bool,
+    n_paddle_puck_hits: int,
+) -> bool:
+    if not episode_kept:
+        return False
+    if _estop_triggers_goal_retry(
+        rewind_on_estop=rewind_on_estop,
+        had_estop=had_estop,
+        n_paddle_puck_hits=n_paddle_puck_hits,
+    ):
+        return False
+    return True
+
+
+def _maybe_rewind_goal_sequence_after_episode(
+    env,
+    *,
+    episode_kept: bool,
+    rewind_on_estop: bool,
+    had_estop: bool,
+    n_paddle_puck_hits: int,
+) -> bool:
+    """Rewind scripted goal before inter-episode reset when retrying.
+
+    Returns True when a rewind was applied (caller may need to compensate
+    again on hard-reset + soft-reset paths).
+    """
+    if not _should_rewind_goal_after_episode(
+        episode_kept=episode_kept,
+        rewind_on_estop=rewind_on_estop,
+        had_estop=had_estop,
+        n_paddle_puck_hits=n_paddle_puck_hits,
+    ):
+        return False
+    reason = "after estop" if episode_kept and had_estop else "after discard"
+    _rewind_goal_sequence_if_available(env, reason=reason)
+    return True
+
+
+def _log_goal_sequence_state(env, *, label: str) -> None:
+    seq = getattr(env, "_goal_sequence", None)
+    if not seq:
+        return
+    idx = int(getattr(env, "_goal_sequence_idx", 0))
+    goal_pos = getattr(env, "goal_pos", None)
+    goal_str = np.array2string(np.asarray(goal_pos, dtype=float), precision=3)
+    print(f"[eval_goal_grid] {label} next_idx={idx} goal_pos={goal_str}")
+
+
+# ---------------------------------------------------------------------------
+# Restart-eval helpers.
+# ---------------------------------------------------------------------------
+
+
+def _validate_restart_eval_args(eval_args: EvalSpecificArgs) -> None:
+    restart_from = int(eval_args.restart_eval_from_episode)
+    if restart_from < 1:
+        raise SystemExit("--restart-eval-from-episode must be >= 1.")
+    if restart_from > int(eval_args.eval_episodes):
+        raise SystemExit(
+            f"--restart-eval-from-episode={restart_from} exceeds "
+            f"--eval-episodes={eval_args.eval_episodes}."
+        )
+
+
+def _align_goal_sequence_for_restart(env, *, restart_from_episode: int) -> None:
+    """Point the scripted goal grid at the Nth goal before the first policy episode."""
+    if int(restart_from_episode) <= 1:
+        return
+    prepare = getattr(env, "prepare_goal_sequence_for_kept_index", None)
+    if not callable(prepare):
+        return
+    prepare(int(restart_from_episode) - 1)
+    idx = int(getattr(env, "_goal_sequence_idx", 0))
+    print(
+        f"[eval_restart] goal sequence aligned for episode "
+        f"{int(restart_from_episode)} (next_idx={idx})"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +509,9 @@ def run_eval(
             args.transition_hold_steps_post_safety_rearm
         )
     env = AirHockeyEnv(collector_config)
+    action_y_scaling = float(eval_args.action_y_scaling)
+    if action_y_scaling != 1.0:
+        print(f"[eval_run] action_y_scaling={action_y_scaling} (actor output)")
     # Task-specific eval hooks supply: which extra per-episode metrics to
     # compute, which fields land in eval_summary.json, the min-episode-length
     # floor for clean_episode_hdf5, and per-field console precision. Falls
@@ -295,6 +523,17 @@ def run_eval(
         f"hooks={type(task_hooks).__name__} "
         f"min_timesteps={int(task_hooks.min_timesteps)}"
     )
+
+    # Deterministic goal grid for goal-tasks. Without this the goal would
+    # (a) be frozen across the ~2 of every 3 episodes that take the SOFT
+    # reset path, and (b) vary run-to-run on the HARD path. We inject a
+    # fixed grid in row-major order so every eval visits the same goals
+    # in the same sequence.
+    _maybe_install_eval_goal_grid(env, task_name)
+
+    restart_from_episode = int(eval_args.restart_eval_from_episode)
+    per_episode_records: List[Dict[str, Any]] = []
+    total_attempts = 0
 
     # Agent + metadata. Dispatched on ``eval_args.agent``: 'td3' rebuilds the
     # historical DeterministicAgent (or ResidualActor) and loads
@@ -310,6 +549,17 @@ def run_eval(
         action_low_np=action_low_np,
         action_high_np=action_high_np,
         device=device,
+    )
+    # Append a dedicated row capturing what the builder actually produced —
+    # the checkpoint's own ``algorithm_name`` (when it differs from the CLI
+    # ``--agent`` kind), update counts for TD3, source path, etc. Pairs with
+    # the ``run_start`` event but fires only after the actor is in memory.
+    append_run_event(
+        args,
+        "agent_loaded",
+        agent=str(eval_args.agent),
+        model_path=str(args.model_path) if args.model_path is not None else None,
+        metadata=dict(agent_bundle.metadata),
     )
     actor = agent_bundle.actor
     action_low = torch.as_tensor(action_low_np, dtype=torch.float32, device=device).unsqueeze(0)
@@ -358,6 +608,10 @@ def run_eval(
     pending_reset_artifact = startup_result.pending_reset_artifact
     next_reset_file_id = startup_result.next_reset_file_id
 
+    _align_goal_sequence_for_restart(
+        env, restart_from_episode=restart_from_episode
+    )
+
     counters: dict = {
         "reset_fsm_steps_total": int(startup_result.total_fsm_steps),
         "protective_stop_episodes": 0,
@@ -372,6 +626,8 @@ def run_eval(
         "episodes_removed_invalid": 0,
         "episodes_gif_generated": 0,
         "episodes_gif_failed": 0,
+        "episodes_homography_gif_generated": 0,
+        "episodes_homography_gif_failed": 0,
         "episodes_camera_video_generated": 0,
         "episodes_camera_video_failed": 0,
         "successful_online_episodes_kept": 0,
@@ -389,7 +645,7 @@ def run_eval(
         transition_hold=transition_hold,
         ctx=ctx,
         reset_primitive_rollout_state=_reset_primitive_rollout_state,
-        deterministic_actor_action=deterministic_actor_action,
+        deterministic_actor_action=_make_eval_actor_action_fn(action_y_scaling),
         augment_policy_observation=augment_policy_observation,
         primitive_exploration_chance_for_step=primitive_exploration_chance_for_step,
         latest_camera_frame=_latest_camera_frame,
@@ -412,15 +668,20 @@ def run_eval(
     )
 
     next_episode_file_id = _next_available_episode_id(args.episode_artifact_dir)
-    target_kept = max(1, int(eval_args.eval_episodes))
+    target_kept = int(eval_args.eval_episodes) - restart_from_episode + 1
     max_attempts = (
         int(eval_args.eval_max_attempts) if int(eval_args.eval_max_attempts) > 0 else None
     )
+    if restart_from_episode > 1:
+        print(
+            f"[eval_restart] collecting episodes {restart_from_episode}.."
+            f"{eval_args.eval_episodes} ({target_kept} kept target)"
+        )
 
-    per_episode_records: List[Dict[str, Any]] = []
-    total_attempts = 0
     eval_start_time = time.time()
-    eval_started_iso = datetime.fromtimestamp(eval_start_time, tz=timezone.utc).isoformat()
+    eval_started_iso = datetime.fromtimestamp(
+        eval_start_time, tz=timezone.utc
+    ).isoformat()
 
     while len(per_episode_records) < target_kept:
         if max_attempts is not None and total_attempts >= max_attempts:
@@ -477,13 +738,22 @@ def run_eval(
         task_metrics = task_hooks.compute_episode_metrics(
             result=result, rows=result.rows
         )
-        if episode_kept:
+        had_estop = _episode_had_estop(result)
+        rewind_on_estop = bool(eval_args.rewind_goal_on_estop)
+        n_paddle_puck_hits = _count_episode_paddle_puck_hits(result.rows)
+        count_toward_eval = _counts_toward_eval_set(
+            episode_kept=episode_kept,
+            rewind_on_estop=rewind_on_estop,
+            had_estop=had_estop,
+            n_paddle_puck_hits=n_paddle_puck_hits,
+        )
+        if count_toward_eval:
             # Note: ``counters["successful_online_episodes_kept"]`` is already
             # incremented inside ``_save_episode_artifacts_and_pending_reset``
             # — do NOT increment it again here or the count is doubled.
             record = {
                 "episode_id": int(saved_episode_id),
-                "kept_index": int(len(per_episode_records) + 1),
+                "kept_index": int(len(per_episode_records) + restart_from_episode),
                 "wall_time_s": float(episode_end_wall_time),
                 "timestamp_iso": datetime.fromtimestamp(
                     episode_end_wall_time, tz=timezone.utc
@@ -518,6 +788,16 @@ def run_eval(
             parts.append(f"estop={int(result.metrics.episode_estop_flag)}")
             parts.append(f"len={result.metrics.episode_length:.0f}")
             print(" ".join(parts))
+        elif _estop_triggers_goal_retry(
+            rewind_on_estop=rewind_on_estop,
+            had_estop=had_estop,
+            n_paddle_puck_hits=n_paddle_puck_hits,
+        ):
+            print(
+                f"[eval] estop episode_id={saved_episode_id}; rewinding goal for retry "
+                f"(hits={n_paddle_puck_hits}, kept "
+                f"{len(per_episode_records)}/{target_kept}, attempts={total_attempts})"
+            )
         else:
             print(
                 f"[eval] discarded episode_id={saved_episode_id} reason={clean_reason} "
@@ -563,7 +843,15 @@ def run_eval(
             },
         )
 
-        # 4. Reset between episodes.
+        # 4. Reset between episodes. Rewind the scripted goal first when this
+        # attempt was discarded or hit an e-stop with --rewind-goal-on-estop.
+        should_rewind_goal = _maybe_rewind_goal_sequence_after_episode(
+            env,
+            episode_kept=episode_kept,
+            rewind_on_estop=rewind_on_estop,
+            had_estop=had_estop,
+            n_paddle_puck_hits=n_paddle_puck_hits,
+        )
         kind = pick_reset_kind(
             total_attempts,
             StopFlags(
@@ -583,7 +871,11 @@ def run_eval(
             episode_end_wall_time=episode_end_wall_time,
             pending_reset_artifact=pending_reset_artifact,
             next_reset_file_id=next_reset_file_id,
+            compensate_goal_sequence_before_soft_prime=(
+                should_rewind_goal and kind != ResetKind.SOFT
+            ),
         )
+        _log_goal_sequence_state(env, label="after inter-episode reset")
         counters["reset_fsm_steps_total"] += reset_result.total_fsm_steps
         pending_reset_artifact = reset_result.pending_reset_artifact
         next_reset_file_id = reset_result.next_reset_file_id
@@ -617,6 +909,9 @@ def run_eval(
         "train_args_file": str(args.train_args) if args.train_args is not None else None,
         "run_data_dir": str(run_data_dir_from_args(args)),
         "seed": int(args.seed),
+        "eval_episodes": int(eval_args.eval_episodes),
+        "restart_eval_from_episode": int(restart_from_episode),
+        "rewind_goal_on_estop": bool(eval_args.rewind_goal_on_estop),
         "n_target_episodes": int(target_kept),
         "n_attempts": int(total_attempts),
         "n_kept": int(len(per_episode_records)),
@@ -631,6 +926,7 @@ def run_eval(
         "residual_scale": float(args.residual_scale),
         "policy_obs_dim": int(obs_dim),
         "policy_act_dim": int(act_dim),
+        "action_y_scaling": action_y_scaling,
         "counters_at_finish": dict(counters),
     }
     summary_path = Path(run_data_dir_from_args(args)) / eval_args.eval_summary_filename
@@ -704,6 +1000,7 @@ def main(args: Args, train_args: TrainArgs, eval_args: EvalSpecificArgs) -> None
     _force_eval_mode(args)
     if eval_args.eval_episodes <= 0:
         raise ValueError(f"eval_episodes must be > 0, got {eval_args.eval_episodes}")
+    _validate_restart_eval_args(eval_args)
 
     with open(args.config, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
@@ -724,6 +1021,8 @@ def main(args: Args, train_args: TrainArgs, eval_args: EvalSpecificArgs) -> None
         "[eval_run] "
         f"model_path={args.model_path} "
         f"eval_episodes={eval_args.eval_episodes} "
+        f"restart_eval_from_episode={eval_args.restart_eval_from_episode} "
+        f"rewind_goal_on_estop={eval_args.rewind_goal_on_estop} "
         f"eval_max_attempts={eval_args.eval_max_attempts} "
         f"config={args.config} "
         f"seed={args.seed} "
@@ -745,9 +1044,15 @@ def main(args: Args, train_args: TrainArgs, eval_args: EvalSpecificArgs) -> None
         train_args=str(getattr(args, "train_args", "")) if getattr(args, "train_args", None) else None,
         config=str(getattr(args, "config", "")) if getattr(args, "config", None) else None,
         model_path=str(getattr(args, "model_path", "")) if getattr(args, "model_path", None) else None,
+        # Agent kind from --agent (e.g. "td3", "sgcrl", "iwr"). Pinned at the
+        # run_start row so a JSONL-only reader knows exactly which actor class
+        # was loaded for this run without having to open eval_summary.json.
+        agent=str(eval_args.agent),
         mode="eval",
         eval_episodes=int(eval_args.eval_episodes),
         eval_max_attempts=int(eval_args.eval_max_attempts),
+        restart_eval_from_episode=int(eval_args.restart_eval_from_episode),
+        rewind_goal_on_estop=bool(eval_args.rewind_goal_on_estop),
     )
 
     eval_outcome_reason = "completed"
@@ -841,5 +1146,6 @@ if __name__ == "__main__":
         )
 
     # No interactive run-note prompt — eval is meant to run unattended.
+    _validate_restart_eval_args(eval_args)
     _setup_run_data_dir(args, run_note="")
     main(args, train_args, eval_args)

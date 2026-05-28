@@ -29,6 +29,7 @@ air_hockey:
     wait_for_space_to_start: true
     save_path: ./data/rollout/temp_saving/mouse_test
     hist_len: 4
+    x_robot_correction: 0.04
   stand_still_rew: 0.01
   task: puck_velocity
   terminate_on_enemy_goal: true
@@ -37,3 +38,5 @@ air_hockey:
   terminate_on_puck_hit_paddle: false
   terminate_on_puck_pass_paddle: true
   terminate_on_puck_stop: false
+n_training_steps: 0
+algorithm: teleop

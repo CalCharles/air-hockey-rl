@@ -649,6 +649,8 @@ def run_teleop_eval(
         "episodes_removed_invalid": 0,
         "episodes_gif_generated": 0,
         "episodes_gif_failed": 0,
+        "episodes_homography_gif_generated": 0,
+        "episodes_homography_gif_failed": 0,
         "episodes_camera_video_generated": 0,
         "episodes_camera_video_failed": 0,
         "successful_online_episodes_kept": 0,
@@ -1078,6 +1080,10 @@ def main(args: Args, eval_args: TeleopEvalSpecificArgs) -> None:
         run_name=str(getattr(args, "run_name", "")),
         seed=int(getattr(args, "seed", 0)),
         config=str(getattr(args, "config", "")),
+        # ``agent`` mirrors the eval entrypoint's schema so downstream tooling
+        # can branch on a single field. The human-teleop "agent" is the
+        # mouse-driven operator.
+        agent="human",
         mode="teleop_eval",
         eval_episodes=int(eval_args.eval_episodes),
         eval_max_attempts=int(eval_args.eval_max_attempts),

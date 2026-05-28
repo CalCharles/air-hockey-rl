@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict
 
+import h5py
 import numpy as np
 import torch
 import tyro
@@ -38,6 +39,7 @@ from scripts.td3.helper.episode_artifacts import (
     clean_episode_hdf5,
     generate_episode_camera_video,
     generate_episode_gif,
+    generate_episode_homography_gif,
     save_split_episode_hdf5,
 )
 from scripts.td3.helper.shared_replay import SharedTD3Replay
@@ -326,6 +328,48 @@ def _save_episode_artifacts_and_pending_reset(
                 f"[collector] episode_id={next_episode_file_id} "
                 f"camera video SKIPPED (enable_episode_camera_video=False)"
             )
+
+        if args.enable_episode_homography_gif:
+            try:
+                with h5py.File(clean_result.path, "r") as h5_file:
+                    has_goal_dataset = "goal" in h5_file
+                    has_train_img = "train_img" in h5_file
+                if has_goal_dataset and has_train_img:
+                    homography_gif_path = generate_episode_homography_gif(
+                        episode_hdf5_path=clean_result.path,
+                        gif_root=args.episode_homography_gif_dir,
+                        fps=args.episode_homography_gif_fps,
+                        max_frames=(
+                            args.episode_homography_gif_max_frames
+                            if args.episode_homography_gif_max_frames > 0
+                            else None
+                        ),
+                        subsample=args.episode_homography_gif_subsample,
+                    )
+                    counters["episodes_homography_gif_generated"] += 1
+                    if episode_stop_artifact_label is not None:
+                        stop_homography_gif_path = _copy_to_stop_dir(
+                            homography_gif_path,
+                            _stop_output_dir(
+                                args.episode_homography_gif_dir,
+                                episode_stop_artifact_label,
+                            ),
+                        )
+                        print(
+                            f"[collector] episode_id={next_episode_file_id} "
+                            f"{episode_stop_artifact_label} homography GIF copied to "
+                            f"{stop_homography_gif_path}"
+                        )
+                    print(
+                        f"[collector] episode_id={next_episode_file_id} "
+                        f"homography GIF OK -> {homography_gif_path}"
+                    )
+            except Exception:
+                counters["episodes_homography_gif_failed"] += 1
+                print(
+                    f"[collector] episode_id={next_episode_file_id} "
+                    f"homography GIF FAILED:\n{traceback.format_exc()}"
+                )
 
     # Pending reset artifact flush — same block as L2106–2146.
     if pending_reset_artifact is not None:
@@ -813,6 +857,11 @@ def collector_process_modular(
         train_args=str(getattr(args, "train_args", "")) if getattr(args, "train_args", None) else None,
         config=str(getattr(args, "config", "")) if getattr(args, "config", None) else None,
         model_path=str(getattr(args, "model_path", "")) if getattr(args, "model_path", None) else None,
+        # This entrypoint always trains a TD3 (single-head critic + transformed
+        # Bellman target) actor — pinned here for parity with the eval log
+        # schema so downstream tooling can branch uniformly on ``agent``.
+        agent="td3",
+        mode="train",
         smoke_test_seconds=float(getattr(args, "smoke_test_seconds", 0.0)),
     )
 
@@ -921,6 +970,8 @@ def collector_process_modular(
         "episodes_removed_invalid": 0,
         "episodes_gif_generated": 0,
         "episodes_gif_failed": 0,
+        "episodes_homography_gif_generated": 0,
+        "episodes_homography_gif_failed": 0,
         "episodes_camera_video_generated": 0,
         "episodes_camera_video_failed": 0,
         "successful_online_episodes_kept": int(stats.get("successful_online_episodes_kept", 0)),

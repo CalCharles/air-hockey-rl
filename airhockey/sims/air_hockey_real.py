@@ -18,12 +18,7 @@ from .real.robot_control import MotionPrimitive, apply_negative_z_force, filter_
 from .real.coordinate_transform import compute_rect, compute_pol, clip_limits
 from .real.proprioceptive_state import get_state_array
 from .real.image_detection import find_red_hockey_puck, find_red_hockey_puck_antiglare
-from .real.overlay_utils import (
-    draw_target_marker,
-    draw_puck_marker_from_state,
-    draw_paddle_marker,
-    draw_goal_marker,
-)
+from .real.overlay_utils import draw_homography_episode_markers
 import multiprocessing
 import cv2
 import copy
@@ -111,44 +106,23 @@ def _async_render_worker(
             puck_state = np.array((data[2], data[3], data[4]), dtype=float)
             paddle_xy = (float(data[5]), float(data[6]))
             goal_valid = bool(data[9] > 0.5)
-            goal_xy_robot = (
-                (float(data[7]) - center_offset_constant, float(data[8]))
-                if goal_valid
-                else None
+            goal_xy_table = (
+                (float(data[7]), float(data[8])) if goal_valid else None
             )
             goal_radius = float(data[10]) if data[10] > 0 else None
-            draw_target_marker(
+            draw_homography_episode_markers(
                 frame,
-                target_xy,
+                target_xy_robot=target_xy,
+                puck_state_table=puck_state,
+                paddle_xy_robot=paddle_xy,
+                goal_xy_table=goal_xy_table,
+                goal_radius_m=goal_radius,
+                center_offset_constant=center_offset_constant,
+                puck_radius_m=puck_radius,
+                paddle_radius_m=paddle_radius,
                 offset_constants=offset_constants,
                 visual_downscale_constant=visual_downscale_constant,
             )
-            draw_puck_marker_from_state(
-                frame,
-                puck_state,
-                puck_radius,
-                x_offset_for_state=center_offset_constant,
-                offset_constants=offset_constants,
-                visual_downscale_constant=visual_downscale_constant,
-                color=(0, 255, 0),
-                require_visible=True,
-            )
-            draw_paddle_marker(
-                frame,
-                paddle_xy,
-                paddle_radius,
-                offset_constants=offset_constants,
-                visual_downscale_constant=visual_downscale_constant,
-                color=(255, 0, 0),
-            )
-            if goal_xy_robot is not None:
-                draw_goal_marker(
-                    frame,
-                    goal_xy_robot,
-                    goal_radius_m=goal_radius,
-                    offset_constants=offset_constants,
-                    visual_downscale_constant=visual_downscale_constant,
-                )
             cv2.imshow(window_name, frame)
             if sim_renderer is not None:
                 sim_frame = sim_renderer.render_frame(
@@ -159,6 +133,9 @@ def _async_render_worker(
                     puck_occluded=bool(data[4] > 0.5),
                     target_x=float(data[0]) + center_offset_constant,
                     target_y=float(data[1]),
+                    goal_x=(goal_xy_table[0] if goal_xy_table is not None else None),
+                    goal_y=(goal_xy_table[1] if goal_xy_table is not None else None),
+                    goal_radius=goal_radius,
                 )
                 cv2.imshow(sim_view_window_name, sim_frame)
             cv2.waitKey(1)
@@ -229,8 +206,16 @@ class AirHockeyReal:
             "zslope": 0.02577,
             "x_offset": 1.2,
             "y_offset": 0.0,
-            "paddle_additional_x_offset": -0.075,
+            "paddle_additional_x_offset": -0.035, # -0.075,
             "paddle_additional_y_offset": -0.03,
+            # Global additive correction (m) applied to the converted robot-frame x.
+            # Use to compensate for a constant homography/calibration bias without
+            # re-running `calibrate_robo_camera`. Applied symmetrically to:
+            #   * pixel→robot puck conversions (all puck ingest paths)
+            #   * TCP→paddle-center conversion (rendering AND paddle observations)
+            # Positive value shifts both puck and paddle BACKWARD (toward robot
+            # base, i.e. less negative x). Defaults to 0.0 = no correction.
+            "x_robot_correction": 0.00,
             "bot_abs": 0.1,
             "top_abs": 0.8,
             "max_bias_p": -0.15,
@@ -476,6 +461,7 @@ class AirHockeyReal:
         self.x_offset = config.x_offset
         self.paddle_additional_x_offset = config.paddle_additional_x_offset
         self.paddle_additional_y_offset = config.paddle_additional_y_offset
+        self.x_robot_correction = float(getattr(config, "x_robot_correction", 0.0))
         
 
         # self.x_min_lim = -0.8
@@ -739,10 +725,18 @@ class AirHockeyReal:
             time.sleep(float(max(0.01, poll_s)))
 
     def _paddle_display_xy_from_pose(self, pose_xy):
-        """Convert robot TCP XY to paddle-center XY for rendering."""
+        """Convert robot TCP XY to paddle-center XY for rendering.
+
+        Includes ``x_robot_correction`` so the rendered paddle and the paddle
+        observation stay in the same shifted robot frame as the puck (which
+        gets the same correction at vision-ingest time). See defaults dict for
+        sign convention.
+        """
         return np.array(
             (
-                float(pose_xy[0]) + self.paddle_additional_x_offset,
+                float(pose_xy[0])
+                + self.paddle_additional_x_offset
+                + self.x_robot_correction,
                 float(pose_xy[1]) + self.paddle_additional_y_offset,
             ),
             dtype=float,
@@ -955,39 +949,19 @@ class AirHockeyReal:
     def _render_overlay_inline(self, image, target_xy, puck_state, paddle_xy):
         if image is None:
             return
-        draw_target_marker(
+        draw_homography_episode_markers(
             image,
-            target_xy,
+            target_xy_robot=target_xy,
+            puck_state_table=puck_state,
+            paddle_xy_robot=paddle_xy,
+            goal_xy_table=self._goal_marker_pos_table,
+            goal_radius_m=self._goal_marker_radius_m,
+            center_offset_constant=self.center_offset_constant,
+            puck_radius_m=self.puck_radius,
+            paddle_radius_m=self.paddle_radius,
             offset_constants=self.offset_constants,
             visual_downscale_constant=self.visual_downscale_constant,
         )
-        draw_puck_marker_from_state(
-            image,
-            puck_state,
-            self.puck_radius,
-            x_offset_for_state=self.center_offset_constant,
-            offset_constants=self.offset_constants,
-            visual_downscale_constant=self.visual_downscale_constant,
-            color=(0, 255, 0),
-            require_visible=True,
-        )
-        draw_paddle_marker(
-            image,
-            paddle_xy,
-            self.paddle_radius,
-            offset_constants=self.offset_constants,
-            visual_downscale_constant=self.visual_downscale_constant,
-            color=(255, 0, 0),
-        )
-        goal_xy_robot = self._goal_marker_robot_xy()
-        if goal_xy_robot is not None:
-            draw_goal_marker(
-                image,
-                goal_xy_robot,
-                goal_radius_m=self._goal_marker_radius_m,
-                offset_constants=self.offset_constants,
-                visual_downscale_constant=self.visual_downscale_constant,
-            )
         cv2.imshow(self.async_render_window_name, image)
         if self.async_render_sim_view_enabled:
             sim_renderer = self._get_inline_sim_renderer()
@@ -1000,6 +974,17 @@ class AirHockeyReal:
                     puck_occluded=bool(puck_state[2] > 0.5) if len(puck_state) > 2 else None,
                     target_x=float(target_xy[0]) + self.center_offset_constant,
                     target_y=float(target_xy[1]),
+                    goal_x=(
+                        float(self._goal_marker_pos_table[0])
+                        if self._goal_marker_pos_table is not None
+                        else None
+                    ),
+                    goal_y=(
+                        float(self._goal_marker_pos_table[1])
+                        if self._goal_marker_pos_table is not None
+                        else None
+                    ),
+                    goal_radius=self._goal_marker_radius_m,
                 )
                 cv2.imshow(self.async_render_sim_view_window_name, sim_frame)
         cv2.waitKey(1)
@@ -1237,8 +1222,8 @@ class AirHockeyReal:
             None,
             None,
             show=False,
-            lims=None,
-            edge_lims=None,
+            lims=self.lims,
+            edge_lims=self.edge_lims,
             region_x_offset=self.x_offset,
         )
         self.images.append(save_img)
@@ -1250,6 +1235,7 @@ class AirHockeyReal:
         )
         puck = np.array(puck)
         if int(puck[2]) == 0:
+            puck[0] += self.x_robot_correction
             puck[0] += self.center_offset_constant
         self.puck_history.append(puck)
         self.puck = puck[:2]
@@ -1269,6 +1255,7 @@ class AirHockeyReal:
             # Detector hit (occluded==0) is detector-frame x and needs +center offset.
             # Occlusion fallback (occluded==1) already comes from puck_history/state frame.
             if int(puck[2]) == 0:
+                puck[0] += self.x_robot_correction
                 puck[0] += self.center_offset_constant
         else: puck = (puck_history[-1][0],puck_history[-1][1],0)
         puck_vals = np.concatenate( [np.array(puck_history[self.puck_history_len-i]) for i in range(1,self.puck_history_len)] + [np.array(puck)])
@@ -1614,16 +1601,14 @@ class AirHockeyReal:
         render_used_async = False
         # get image data
         if self.cap is not None:
-            # Detection runs on this frame immediately after capture; skip optional
-            # overlay drawing here to reduce per-step CPU overhead.
             image, save_img, camera_frame_received_s = save_collect(
                 self.cap,
                 [paddle_display_xy[0], paddle_display_xy[1], self.paddle_radius],
                 None,
                 None,
                 show=False,
-                lims=None,
-                edge_lims=None,
+                lims=self.lims,
+                edge_lims=self.edge_lims,
                 region_x_offset=self.x_offset,
             )
             self.images.append(save_img)
@@ -1646,7 +1631,11 @@ class AirHockeyReal:
             else:
                 self._last_teleop_policy_action = raw_action.copy()
             puck = np.zeros(3)
-            puck[0] = self.protected_puck_pos[0] + self.center_offset_constant
+            puck[0] = (
+                self.protected_puck_pos[0]
+                + self.x_robot_correction
+                + self.center_offset_constant
+            )
             puck[1] = self.protected_puck_pos[1]
             puck[2] = self.protected_puck_pos[2]
             if self.protected_puck_pos[2] == 1:
@@ -1668,7 +1657,11 @@ class AirHockeyReal:
             y = tcp_target_pose[1] + move_vector[1]
             self._last_teleop_policy_action = np.array([delta_x, delta_y], dtype=np.float64)
             puck = np.zeros(3)
-            puck[0] = self.protected_puck_pos[0] + self.center_offset_constant
+            puck[0] = (
+                self.protected_puck_pos[0]
+                + self.x_robot_correction
+                + self.center_offset_constant
+            )
             puck[1] = self.protected_puck_pos[1]
             puck[2] = self.protected_puck_pos[2]
             if self.protected_puck_pos[2] == 1:

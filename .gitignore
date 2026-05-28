@@ -75,3 +75,4 @@ nohup.out
 
 # OS / misc
 .DS_Store
+gcrl/*
