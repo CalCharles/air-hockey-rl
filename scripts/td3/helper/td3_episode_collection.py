@@ -26,6 +26,7 @@ class EpisodeTrajectory:
     dones: List[torch.Tensor]
     bootstrap_terminals: List[torch.Tensor]
     prev_actions: List[torch.Tensor]
+    history: List[torch.Tensor]          # NEW — (T, obs_dim) snapshot per step
     episode_return: float = 0.0
 
     @staticmethod
@@ -38,6 +39,7 @@ class EpisodeTrajectory:
             dones=[],
             bootstrap_terminals=[],
             prev_actions=[],
+            history=[],
             episode_return=0.0,
         )
 
@@ -49,6 +51,7 @@ class EpisodeTrajectory:
         reward: torch.Tensor,
         done: torch.Tensor,
         prev_action: torch.Tensor,
+        history: torch.Tensor | None = None,    # (T, obs_dim)
         bootstrap_terminal: torch.Tensor | None = None,
     ) -> None:
         self.observations.append(obs.detach().clone())
@@ -62,6 +65,11 @@ class EpisodeTrajectory:
         else:
             self.bootstrap_terminals.append(bootstrap_terminal.detach().clone())
         self.prev_actions.append(prev_action.detach().clone())
+
+        # Store history if given
+        if history is not None:
+            self.history.append(history.detach().clone())
+
         self.episode_return += float(reward.item())
 
     def flush_to_buffer(self, replay_buffer) -> int:
@@ -75,7 +83,9 @@ class EpisodeTrajectory:
             rewards=torch.stack(self.rewards, dim=0).view(-1),
             dones=torch.stack(self.dones, dim=0).view(-1),
             prev_action=torch.stack(self.prev_actions, dim=0),
+            history=torch.stack(self.history, dim=0) if self.history else None,
         )
+
         self.reset()
         return transition_count
 
@@ -87,10 +97,11 @@ class EpisodeTrajectory:
         self.dones.clear()
         self.bootstrap_terminals.clear()
         self.prev_actions.clear()
+        self.history.clear()
         self.episode_return = 0.0
 
     def state_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "observations": [_cpu_tensor(item) for item in self.observations],
             "next_observations": [_cpu_tensor(item) for item in self.next_observations],
             "actions": [_cpu_tensor(item) for item in self.actions],
@@ -100,6 +111,11 @@ class EpisodeTrajectory:
             "prev_actions": [_cpu_tensor(item) for item in self.prev_actions],
             "episode_return": float(self.episode_return),
         }
+
+        if self.history:
+            result["history"] = [_cpu_tensor(item) for item in self.history],
+
+        return result
 
     @classmethod
     def from_state_dict(cls, state_dict: Any, device: str) -> "EpisodeTrajectory":
@@ -134,6 +150,14 @@ class EpisodeTrajectory:
             trajectory.bootstrap_terminals = [
                 item.detach().clone() for item in trajectory.dones
             ]
+
+        history_values = state_dict.get("history", [])
+        if isinstance(history_values, list) and len(history_values) > 0:
+            trajectory.history = [
+                torch.as_tensor(item, dtype=torch.float32, device=device)
+                for item in history_values
+            ]
+
         trajectory.episode_return = float(state_dict.get("episode_return", 0.0))
         return trajectory
 

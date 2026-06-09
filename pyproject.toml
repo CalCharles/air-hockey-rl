@@ -35,6 +35,7 @@ train = [
     "torch",
     "scikit-learn",
     "tyro",
+    "transformers",
 ]
 
 [project.urls]

@@ -64,6 +64,12 @@ from scripts.td3.helper.td3_replay_sampling import (
     sample_actor_source_chunk,
     sample_critic_source_chunk,
 )
+
+from scripts.transformer.context_encoder import ContextEncoder
+from scripts.transformer.history_buffer import HistoryBuffer
+from scripts.transformer.context_vector_analysis import context_vector_analysis
+from scripts.transformer.compare_performance_ID_OOD import compare_performance_ID_OOD
+
 from scripts.td3.evaluate import evaluate_agent
 from scripts.utils import save_tensorboard_plots
 
@@ -259,6 +265,30 @@ class Args:
     eval_n_envs: int = 1
     eval_eps_per_env: int = 4
 
+    # --- Context Vector Generation ---
+    use_context_vector: bool = False
+    context_len: int = 7
+    context_vector_dim: int = 8
+    transformer_lr: float = 0.00005 
+
+    # --- Context Vector OOD Analysis ---
+    analyze_context_vectors: bool = False
+    context_analysis_n_eps: int = 20
+    context_analysis_n_envs: int = 10
+    context_analysis_ood_scale: float = 2.0
+    context_analysis_out_dir: str = "results/context_tsne"
+
+    # --- Compare performance of ID and OOD for baseline and transformer based model
+    eval_id_ood: bool = False
+    eval_id_ood_n_envs: int = 10
+    eval_id_ood_n_eps: int = 8
+    eval_id_ood_ood_scale: float = 2.0
+    eval_id_ood_out_dir: str = "results/id_ood_comparison"
+    # Path to a *second* model to compare against (the context-vector model when
+    # running on a baseline checkpoint, or vice versa).  Optional — if omitted,
+    # only the model loaded via --model-path is evaluated.
+    eval_id_ood_compare_model_path: str | None = None
+
 
 def make_env(env_id):
     def _thunk():
@@ -327,6 +357,8 @@ def _entrypoint():
     raw_obs_dim = int(np.array(envs.single_observation_space.shape).prod())
     act_dim = int(np.prod(envs.single_action_space.shape))
     policy_obs_dim = raw_obs_dim + act_dim if args.use_last_action_in_policy_state else raw_obs_dim
+    policy_obs_dim = policy_obs_dim + args.context_vector_dim if args.use_context_vector else policy_obs_dim
+
     policy_env_view = SimpleNamespace(
         single_observation_space=gym.spaces.Box(
             low=-np.inf, high=np.inf, shape=(policy_obs_dim,), dtype=np.float32
@@ -340,6 +372,8 @@ def _entrypoint():
         action_bias=0.0,
         hidden_layer_size=args.agent_hidden_layer_size,
         num_hidden_layers=args.agent_num_hidden_layers,
+        use_context=args.use_context_vector,
+        context_vector_dim=args.context_vector_dim
     ).to(args.device)
     actor_target = DeterministicAgent(
         policy_env_view,
@@ -347,6 +381,8 @@ def _entrypoint():
         action_bias=0.0,
         hidden_layer_size=args.agent_hidden_layer_size,
         num_hidden_layers=args.agent_num_hidden_layers,
+        use_context=args.use_context_vector,
+        context_vector_dim=args.context_vector_dim
     ).to(args.device)
     actor_target.load_state_dict(actor.state_dict())
 
@@ -388,6 +424,23 @@ def _entrypoint():
     resume_checkpoint = None
     checkpoint_load_mode = args.full_checkpoint_load
     residual_actor_optimizer: optim.Optimizer | None = None
+
+
+    if args.use_context_vector and (args.context_vector_dim > 0):
+        transformer = ContextEncoder(
+            obs_dim=raw_obs_dim,
+            context_dim=args.context_vector_dim,
+            context_len=args.context_len
+        ).to(args.device)
+
+        history_buf = HistoryBuffer(
+            obs_dim=raw_obs_dim,
+            context_len=args.context_len,
+            device=args.device,
+        )
+
+        transformer_optimizer = optim.Adam(transformer.parameters(), lr=args.transformer_lr)
+
 
     if args.model_path is not None:
         if not os.path.exists(args.model_path):
@@ -454,6 +507,23 @@ def _entrypoint():
             actor_target.load_state_dict(actor.state_dict())
             print("Actor-only model loaded successfully.")
 
+
+
+        # Load the transformer from path if specified
+        if args.model_path is not None and args.use_context_vector:
+            checkpoint_dir = os.path.dirname(args.model_path)
+            transformer_path = os.path.join(checkpoint_dir, "transformer.pth")
+            if os.path.exists(transformer_path):
+
+                transformer.load_state_dict(torch.load(transformer_path, map_location=args.device))
+
+                print(f"Transformer loaded from {transformer_path}")
+
+            else:
+                print(f"Warning: use_context_vector=True but transformer.pth not found at {transformer_path}")
+                return
+
+
     q_optimizer = optim.Adam(
         [p for q in qfs for p in q.parameters()],
         lr=args.q_lr,
@@ -463,6 +533,9 @@ def _entrypoint():
         actor_optimizer = residual_actor_optimizer
     else:
         actor_optimizer = optim.Adam(actor.parameters(), lr=args.policy_lr)
+
+
+
 
     if args.per_enabled:
         success_rb = TD3PrioritizedReplayBuffer(
@@ -474,6 +547,7 @@ def _entrypoint():
             alpha=args.per_alpha,
             priority_eps=args.per_eps,
             age_decay=args.priority_age_decay,
+            context_len=args.context_len,
         )
         failure_rb = TD3PrioritizedReplayBuffer(
             buffer_size=args.failure_buffer_size,
@@ -484,6 +558,7 @@ def _entrypoint():
             alpha=args.per_alpha,
             priority_eps=args.per_eps,
             age_decay=args.priority_age_decay,
+            context_len=args.context_len,
         )
         print(
             "✓ TD3 prioritized replay buffers initialized "
@@ -621,6 +696,10 @@ def _entrypoint():
         for ci, q in enumerate(qfs, start=1):
             torch.save(q.state_dict(), f"{out_dir}/qf{ci}.pth")
             torch.save(qfs_target[ci - 1].state_dict(), f"{out_dir}/qf{ci}_target.pth")
+        
+        if args.use_context_vector:
+            torch.save(transformer.state_dict(), f"{out_dir}/transformer.pth")
+
         state = build_training_state(
             global_step=global_step,
             iteration=iteration,
@@ -656,7 +735,137 @@ def _entrypoint():
         torch.save(state, f"{out_dir}/training_state.pth")
         return model_path_local
 
+
+    # We wun this function assuming the transformer is loaded in from a checkpoint (.pth)
+    # Use the above to support argument parsing and setting up environment for context vector analysis after transformer is trained
+    
+    if args.eval_id_ood:
+        # The model already loaded via --model-path is treated as the baseline.
+        # If --eval-id-ood-compare-model-path is set, load that second model as
+        # the context-vector actor (requires use_context_vector=True on that run).
+        compare_actor = None
+        compare_transformer = None
+        compare_history_buf = None
+        compare_model_path_str = ""
+
+        if args.eval_id_ood_compare_model_path is not None:
+            # from scripts.td3.deterministic_agent import DeterministicAgent
+            # import gymnasium as gym
+            # from types import SimpleNamespace
+
+            _cmp_context_dim = args.context_vector_dim
+            _cmp_context_len = args.context_len
+            _cmp_policy_obs_dim = (
+                raw_obs_dim + _cmp_context_dim
+                + (act_dim if args.use_last_action_in_policy_state else 0)
+            )
+            _cmp_policy_env_view = SimpleNamespace(
+                single_observation_space=gym.spaces.Box(
+                    low=-np.inf, high=np.inf,
+                    shape=(_cmp_policy_obs_dim,), dtype=np.float32,
+                ),
+                single_action_space=envs.single_action_space,
+            )
+            compare_actor = DeterministicAgent(
+                _cmp_policy_env_view,
+                action_scale=action_scale,
+                action_bias=0.0,
+                hidden_layer_size=args.agent_hidden_layer_size,
+                num_hidden_layers=args.agent_num_hidden_layers,
+                use_context=True,
+                context_vector_dim=_cmp_context_dim,
+            ).to(args.device)
+
+            _cmp_loaded = torch.load(
+                args.eval_id_ood_compare_model_path,
+                map_location=args.device,
+                weights_only=False,
+            )
+            _cmp_state = _cmp_loaded["actor"] if (
+                isinstance(_cmp_loaded, dict) and "actor" in _cmp_loaded
+            ) else _cmp_loaded
+            compare_actor.load_state_dict(
+                extract_deterministic_state_dict(_cmp_state), strict=False
+            )
+            compare_actor.eval()
+
+            compare_transformer = ContextEncoder(
+                obs_dim=raw_obs_dim,
+                context_dim=_cmp_context_dim,
+                context_len=_cmp_context_len,
+            ).to(args.device)
+            _cmp_dir = os.path.dirname(args.eval_id_ood_compare_model_path)
+            _cmp_transformer_path = os.path.join(_cmp_dir, "transformer.pth")
+            if not os.path.exists(_cmp_transformer_path):
+                raise FileNotFoundError(
+                    f"transformer.pth not found at {_cmp_transformer_path}. "
+                    "Expected as a sibling of the compare model.pth."
+                )
+            compare_transformer.load_state_dict(
+                torch.load(_cmp_transformer_path, map_location=args.device)
+            )
+            compare_transformer.eval()
+
+            compare_history_buf = HistoryBuffer(
+                obs_dim=raw_obs_dim,
+                context_len=_cmp_context_len,
+                device=args.device,
+            )
+            compare_model_path_str = args.eval_id_ood_compare_model_path
+
+        compare_performance_ID_OOD(
+            baseline_actor=actor,
+            air_hockey_base=config["air_hockey"],
+            raw_obs_dim=raw_obs_dim,
+            act_dim=act_dim,
+            use_last_action=args.use_last_action_in_policy_state,
+            n_envs=args.eval_id_ood_n_envs,
+            n_eps=args.eval_id_ood_n_eps,
+            ood_scale=args.eval_id_ood_ood_scale,
+            out_dir=args.eval_id_ood_out_dir,
+            device=args.device,
+            seed=args.seed,
+            context_actor=compare_actor,
+            context_transformer=compare_transformer,
+            context_history_buf=compare_history_buf,
+            baseline_model_path=args.model_path or "",
+            context_model_path=compare_model_path_str,
+        )
+        return  # exit after eval, don't train
+            
+    
+    
+    
+    
+    if args.analyze_context_vectors:
+                
+        context_vector_analysis(
+            actor=actor,
+            transformer=transformer,
+            air_hockey_base=config["air_hockey"],
+            raw_obs_dim=raw_obs_dim,
+            act_dim=act_dim,
+            context_len=args.context_len,
+            context_vector_dim=args.context_vector_dim,
+            use_last_action=args.use_last_action_in_policy_state,
+            n_eps=args.context_analysis_n_eps,
+            n_envs=args.context_analysis_n_envs,
+            ood_scale=args.context_analysis_ood_scale,
+            out_dir=args.context_analysis_out_dir,
+            device=args.device,
+            seed=args.seed,
+        )
+        return  # exit after analysis, don't train
+
+
+
+
+    episode_finished = None
+    should_update_train_metrics = None
+    recent_episode_returns = []
+
     while global_step < args.total_timesteps:
+        
         should_update_train_metrics = global_step > 0 and np.random.rand() < 0.1
         should_refresh_annealing = (not args.eval_mode) and (np.random.rand() < 0.1)
 
@@ -675,9 +884,21 @@ def _entrypoint():
                 )
         prev_action_for_transition = last_action_for_policy.clone()
         obs_tensor = torch.tensor(obs, dtype=torch.float32, device=args.device)
-        policy_obs_tensor = augment_policy_observation(
-            obs_tensor, last_action_for_policy, args.use_last_action_in_policy_state
-        )
+
+
+        if args.use_context_vector:
+            with torch.no_grad():
+                state_history = history_buf.sample()
+                context_vector = transformer(state_history)
+                obs_with_context_tensor = torch.cat([obs_tensor, context_vector], dim=-1)
+
+                policy_obs_tensor = augment_policy_observation(
+                    obs_with_context_tensor, last_action_for_policy, args.use_last_action_in_policy_state
+                )
+        else:
+            policy_obs_tensor = augment_policy_observation(
+                obs_tensor, last_action_for_policy, args.use_last_action_in_policy_state
+            )
 
         if global_step < args.learning_starts and not args.eval_mode:
             if args.exploration_pre_learning_action_source == "random":
@@ -721,6 +942,16 @@ def _entrypoint():
 
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
         dones = np.logical_or(terminations, truncations)
+
+        history_buf.add(obs[0], done=bool(dones[0]))
+
+        if args.use_context_vector:
+            # sample() returns (1, T, obs_dim).
+            history_snapshot = history_buf.sample()[0]
+        else:
+            history_snapshot = None
+        
+
         step_puck_hits = sum_info_metric(infos, "paddle_puck_collision_count")
         interval_paddle_puck_collisions += step_puck_hits
         interval_env_steps += args.num_envs
@@ -738,19 +969,22 @@ def _entrypoint():
 
         gif_recorder.note_reward(float(rewards_tensor[0].item()))
 
-        if "final_info" in infos:
-            for info in infos["final_info"]:
-                if info and "episode_return" in info:
-                    writer.add_scalar("charts/episodic_return", info["episode_return"], global_step)
-                    writer.add_scalar("charts/episodic_length", info["episode_length"], global_step)
-                    rolling_episode_stats_window.append(
-                        (
-                            int(global_step + args.num_envs),
-                            float(info["episode_return"]),
-                            float(info["episode_length"]),
-                            1.0 if info.get("success", False) else 0.0,
-                        )
-                    )
+        # For some reason this isn't passing conditions necessary to get to add_scalar. 
+        # Thus when training these metrics are not tracked. See work around further below.
+        # if "final_info" in infos:
+        #     for info in infos["final_info"]:
+        #         if info and "episode_return" in info:
+        #             writer.add_scalar("charts/episodic_return", info["episode_return"], global_step)
+        #             writer.add_scalar("charts/episodic_length", info["episode_length"], global_step)
+        #             rolling_episode_stats_window.append(
+        #                 (
+        #                     int(global_step + args.num_envs),
+        #                     float(info["episode_return"]),
+        #                     float(info["episode_length"]),
+        #                     1.0 if info.get("success", False) else 0.0,
+        #                 )
+        #             )
+        
         rolling_step_stats_window.append(
             (
                 int(global_step + args.num_envs),
@@ -765,9 +999,12 @@ def _entrypoint():
             rolling_episode_stats_window.popleft()
 
         real_next_obs = next_obs.copy()
-        for idx, trunc in enumerate(truncations):
-            if trunc:
-                real_next_obs[idx] = infos["final_observation"][idx]
+
+        if "final_observation" in infos:
+            for idx, trunc in enumerate(truncations):
+                if trunc:
+                    real_next_obs[idx] = infos["final_observation"][idx]
+
         real_next_obs_tensor = torch.as_tensor(real_next_obs, dtype=torch.float32, device=args.device)
         terminations_tensor = torch.as_tensor(terminations, dtype=torch.float32, device=args.device)
         if not args.eval_mode:
@@ -778,7 +1015,25 @@ def _entrypoint():
                 reward=rewards_tensor[0],
                 done=terminations_tensor[0],
                 prev_action=prev_action_for_transition[0],
+                history=history_snapshot,
             )
+
+            # Work around solution to above add_scalar conditions not being met
+            if bool(dones[0]):
+                episode_return = episode_trajectory.episode_return
+                episode_length = len(episode_trajectory.observations)
+                episode_success = bool(infos["success"][0])
+
+                writer.add_scalar("charts/episodic_return", episode_return, global_step)
+                writer.add_scalar("charts/episodic_length", episode_length, global_step)
+                rolling_episode_stats_window.append((
+                    int(global_step + args.num_envs),
+                    float(episode_return),
+                    float(episode_length),
+                    1.0 if episode_success else 0.0,
+                ))
+
+
             episode_return_success_threshold = finalize_episode_if_done(
                 episode_done=bool(dones[0]),
                 episode_trajectory=episode_trajectory,
@@ -870,11 +1125,24 @@ def _entrypoint():
                     sampled_weights = torch.ones_like(sampled_rewards)
                 sampled_weights = sampled_weights.view(-1)
                 sampled_next_prev_actions = sampled_actions * (1.0 - sampled_dones.unsqueeze(-1))
-                sampled_next_policy_observations = augment_policy_observation(
-                    sampled_next_observations,
-                    sampled_next_prev_actions,
-                    args.use_last_action_in_policy_state,
-                )
+
+                if args.use_context_vector:
+                    sampled_next_history = data["history"].to(args.device)
+                    with torch.no_grad():
+                        sampled_next_context = transformer(sampled_next_history)
+
+                    sampled_next_obs_with_context = torch.cat([sampled_next_observations, sampled_next_context], dim=-1)
+                    sampled_next_policy_observations = augment_policy_observation(
+                        sampled_next_obs_with_context,
+                        sampled_next_prev_actions,
+                        args.use_last_action_in_policy_state,
+                    )
+                else:
+                    sampled_next_policy_observations = augment_policy_observation(
+                        sampled_next_observations,
+                        sampled_next_prev_actions,
+                        args.use_last_action_in_policy_state,
+                    )
 
                 with torch.no_grad():
                     target_next_action = deterministic_actor_action(
@@ -1039,11 +1307,33 @@ def _entrypoint():
                             [chunk["prev_actions"] for chunk in actor_data_chunks], dim=0
                         ),
                     }
+
+                    if args.use_context_vector and all("history" in chunk for chunk in actor_data_chunks):
+                        data["history"] = torch.cat(
+                            [chunk["history"] for chunk in actor_data_chunks], dim=0
+                        )
+
                 sampled_observations = data["observations"]
                 sampled_prev_actions = data["prev_actions"]
-                sampled_policy_observations = augment_policy_observation(
-                    sampled_observations, sampled_prev_actions, args.use_last_action_in_policy_state
-                )
+
+                if args.use_context_vector:
+                    # Shape: (B, T, obs_dim) -> transformer -> (B, context_dim)
+                    sampled_history = data["history"].to(args.device)
+
+                    sampled_context = transformer(sampled_history)
+
+                    sampled_obs_with_context = torch.cat([sampled_observations, sampled_context], dim=-1)
+
+                    sampled_policy_observations = augment_policy_observation(
+                        sampled_obs_with_context, sampled_prev_actions,
+                        args.use_last_action_in_policy_state,
+                    )
+
+                else:
+                    sampled_policy_observations = augment_policy_observation(
+                        sampled_observations, sampled_prev_actions,
+                        args.use_last_action_in_policy_state,
+                    )
 
                 current_policy_actions = deterministic_actor_action(actor, sampled_policy_observations)
                 q1_h = qf1(sampled_observations, current_policy_actions)
@@ -1051,10 +1341,21 @@ def _entrypoint():
                 norm_q = (1.0 - args.gamma) * q1
                 actor_loss = -norm_q.mean()
                 actor_optimizer.zero_grad()
+
+                # New
+                if args.use_context_vector:
+                    transformer_optimizer.zero_grad()
+
                 actor_loss.backward()
                 actor_optimizer.step()
+
+                if args.use_context_vector:
+                    transformer_optimizer.step()
+
                 if should_update_train_metrics and actor_update_idx == args.actor_updates_per_iteration - 1:
                     train_metrics.update(build_actor_metrics(actor_loss, norm_q))
+
+
 
             if should_update_train_metrics:
                 train_metrics.update(
@@ -1070,7 +1371,9 @@ def _entrypoint():
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
 
+
         if global_step > 0 and global_step % 500 == 0:
+
             write_periodic_episode_stats(
                 writer, global_step,
                 rolling_episode_stats_window=rolling_episode_stats_window,
@@ -1100,6 +1403,9 @@ def _entrypoint():
                     agent_hidden_layer_size=args.agent_hidden_layer_size,
                     agent_num_hidden_layers=args.agent_num_hidden_layers,
                     use_last_action_in_policy_state=args.use_last_action_in_policy_state,
+                    use_context_vector=args.use_context_vector,
+                    context_vector_dim=args.context_vector_dim,
+                    context_len=args.context_len,
                 )
             except Exception as e:
                 print(f"Evaluation failed: {e}")
@@ -1130,6 +1436,9 @@ def _entrypoint():
             agent_hidden_layer_size=args.agent_hidden_layer_size,
             agent_num_hidden_layers=args.agent_num_hidden_layers,
             use_last_action_in_policy_state=args.use_last_action_in_policy_state,
+            use_context_vector=args.use_context_vector,
+            context_vector_dim=args.context_vector_dim,
+            context_len=args.context_len,
         )
     except Exception as e:
         print(f"Final evaluation failed: {e}")

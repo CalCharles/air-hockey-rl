@@ -53,6 +53,9 @@ from scripts.td3.eval_utils import (
 )
 from airhockey import AirHockeyEnv
 import gymnasium as gym
+from types import SimpleNamespace
+from scripts.transformer.context_encoder import ContextEncoder
+from scripts.transformer.history_buffer import HistoryBuffer
 
 
 # Module-level state populated at startup from the args YAML so the
@@ -130,6 +133,9 @@ def _rollout_returns(
     agent_hidden_layer_size: int,
     agent_num_hidden_layers: int,
     use_last_action_in_policy_state: bool,
+    use_context_vector=False,
+    context_vector_dim=8,
+    context_len=7,
 ) -> dict[str, Any]:
     """Build env from `air_hockey_params`, load actor from `model_path`,
     run `n_eps` episodes, return per-episode returns + aggregate stats.
@@ -143,7 +149,23 @@ def _rollout_returns(
 
     envs = gym.vector.SyncVectorEnv([_make_eval_env])
     action_dim = int(np.prod(envs.single_action_space.shape))
-    policy_env_view = build_policy_env_view(envs, use_last_action_in_policy_state)
+
+    if use_context_vector:
+        raw_obs_dim = int(np.prod(envs.single_observation_space.shape))
+        act_dim = int(np.prod(envs.single_action_space.shape))
+        augmented_obs_dim = raw_obs_dim + context_vector_dim
+        if use_last_action_in_policy_state:
+            augmented_obs_dim += act_dim
+        policy_env_view = SimpleNamespace(
+            single_observation_space=gym.spaces.Box(
+                low=-np.inf, high=np.inf, shape=(augmented_obs_dim,), dtype=np.float32
+            ),
+            single_action_space=envs.single_action_space,
+        )
+    else:
+        policy_env_view = build_policy_env_view(envs, use_last_action_in_policy_state)
+
+
     model = load_policy_for_evaluation(
         model_path=model_path,
         policy_env_view=policy_env_view,
@@ -151,6 +173,27 @@ def _rollout_returns(
         agent_hidden_layer_size=agent_hidden_layer_size,
         agent_num_hidden_layers=agent_num_hidden_layers,
     )
+
+    transformer = None
+    history_buf = None
+    if use_context_vector:
+        
+        raw_obs_dim = int(np.prod(envs.single_observation_space.shape))
+        transformer = ContextEncoder(
+            obs_dim=raw_obs_dim,
+            context_dim=context_vector_dim,
+            context_len=context_len,
+        )
+        transformer_path = os.path.join(os.path.dirname(model_path), "transformer.pth")
+        if os.path.exists(transformer_path):
+            transformer.load_state_dict(torch.load(transformer_path, map_location="cpu"))
+            transformer.eval()
+        else:
+            print(f"Warning: transformer.pth not found at {transformer_path}, using random weights")
+        history_buf = HistoryBuffer(
+            obs_dim=raw_obs_dim,
+            context_len=context_len,
+        )
 
     env = envs.envs[0]
     env.max_timesteps = 200  # match the GIF eval's truncation budget
@@ -167,9 +210,21 @@ def _rollout_returns(
         cum_rew = 0.0
         steps = 0
         while not done:
-            policy_obs = augment_policy_observation(
-                obs_tensor.unsqueeze(0), last_action, use_last_action_in_policy_state
-            )
+
+            if use_context_vector and transformer is not None and history_buf is not None:
+                history_buf.add(obs, done=False)
+                with torch.no_grad():
+                    state_history = history_buf.sample()
+                    context_vector = transformer(state_history)  # (1, context_dim)
+                obs_with_context = torch.cat([obs_tensor.unsqueeze(0), context_vector], dim=-1)
+                policy_obs = augment_policy_observation(
+                    obs_with_context, last_action, use_last_action_in_policy_state
+                )
+            else:
+                policy_obs = augment_policy_observation(
+                    obs_tensor.unsqueeze(0), last_action, use_last_action_in_policy_state
+                )
+
             with torch.no_grad():
                 action = model(policy_obs).numpy().squeeze()
             obs, rew, term, trunc, info = env.step(action)
@@ -215,6 +270,9 @@ def _evaluate_agent_multi_env(
     agent_hidden_size=None,
     use_last_action_in_policy_state=False,
     policy_type=None,
+    use_context_vector=False,
+    context_vector_dim=8,
+    context_len=7,
 ):
     """Drop-in replacement for `td3_training.evaluate_agent`.
 
@@ -325,6 +383,9 @@ def _evaluate_agent_multi_env(
                     agent_hidden_size=agent_hidden_size,
                     use_last_action_in_policy_state=use_last_action_in_policy_state,
                     policy_type=policy_type,
+                    use_context_vector=use_context_vector,       
+                    context_vector_dim=context_vector_dim,       
+                    context_len=context_len,
                 )
             except Exception as e:
                 print(f"[td3_training_dr] env0 GIF eval failed (continuing): {e}")
@@ -338,6 +399,9 @@ def _evaluate_agent_multi_env(
                 agent_hidden_layer_size=agent_hidden_layer_size,
                 agent_num_hidden_layers=agent_num_hidden_layers,
                 use_last_action_in_policy_state=use_last_action_in_policy_state,
+                use_context_vector=use_context_vector,
+                context_vector_dim=context_vector_dim,
+                context_len=context_len,
             )
             stats["env_idx"] = env_idx
             stats["override"] = override
