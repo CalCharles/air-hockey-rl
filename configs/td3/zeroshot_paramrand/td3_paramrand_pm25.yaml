@@ -96,7 +96,7 @@ log_parent_dir: "runs/td3/zeroshot_paramrand/paramrand_pm25/seed0"
 run_name: "td3_paramrand_pm25"
 
 # Runtime
-device: "cuda:1"
+device: "cuda:0"
 seed: 0
 h_transform_eps: 0.001
 
@@ -117,3 +117,24 @@ checkpoint_interval: 25000
 eval_param_seed: 12345
 eval_n_envs: 5
 eval_eps_per_env: 4
+
+# For: use transformer/context-vector
+use_context_vector: True
+context_len: 30          
+context_vector_dim: 8
+transformer_lr: 0.0003     
+
+# For: analysis of context vectors after training the transformer
+analyze_context_vectors: true
+context_analysis_n_eps: 20      
+context_analysis_n_envs: 10     
+context_analysis_ood_scale: 2.0   
+context_analysis_out_dir: "results/context_tsne"
+
+# For evaluation of baseline vs ours for ID and OOD env param distributions
+eval_id_ood: False
+eval_id_ood_n_envs: 30
+eval_id_ood_n_eps: 8
+eval_id_ood_ood_scale: 2.0
+eval_id_ood_out_dir: "results/id_ood_comparison"
+eval_id_ood_compare_model_path: None
