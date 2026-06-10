@@ -196,9 +196,7 @@ def evaluate_agent(
     transformer = None
 
     history_buf = HistoryBuffer(
-        # obs_dim=raw_obs_dim,
         context_len=context_len,
-        device=args.device,
     )
     
     if use_transformer:

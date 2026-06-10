@@ -285,8 +285,6 @@ class Args:
     eval_id_ood: bool = False
     eval_id_ood_n_envs: int = 10
     eval_id_ood_n_eps: int = 8
-    eval_id_ood_ood_scale: float = 1.0
-    eval_id_ood_out_dir: str = "results/id_ood_comparison"
     # Path to a *second* model to compare against (the context-vector model when
     # running on a baseline checkpoint, or vice versa).  Optional — if omitted,
     # only the model loaded via --model-path is evaluated.
@@ -451,7 +449,7 @@ def _entrypoint():
     if args.use_transformer and (args.context_vector_dim > 0):
 
         transformer = ContextEncoder(
-            obs_dim=raw_obs_dim,
+            obs_dim=HISTORY_ENTRY_DIM,
             context_dim=args.context_vector_dim,
             context_len=args.context_len
         ).to(args.device)
@@ -759,100 +757,99 @@ def _entrypoint():
     # Use the above to support argument parsing and setting up environment for context vector analysis after transformer is trained
 
     # TODO: Note this is still using the original way of use_context_vector and assumes usage of transformer if use_context_vector is True. So we need to update this but do later when we get exp going
-    if args.eval_id_ood:
+    # if args.eval_id_ood:
 
-        # The model already loaded via --model-path is treated as the baseline.
-        # If --eval-id-ood-compare-model-path is set, load that second model as
-        # the context-vector actor (requires use_context_vector=True on that run).
-        compare_actor = None
-        compare_transformer = None
-        compare_history_buf = None
-        compare_model_path_str = ""
+    #     # The model already loaded via --model-path is treated as the baseline.
+    #     # If --eval-id-ood-compare-model-path is set, load that second model as
+    #     # the context-vector actor (requires use_context_vector=True on that run).
+    #     compare_actor = None
+    #     compare_transformer = None
+    #     compare_history_buf = None
+    #     compare_model_path_str = ""
 
-        if args.eval_id_ood_compare_model_path is not None:
-            # from scripts.td3.deterministic_agent import DeterministicAgent
-            # import gymnasium as gym
-            # from types import SimpleNamespace
+    #     if args.eval_id_ood_compare_model_path is not None:
+    #         # from scripts.td3.deterministic_agent import DeterministicAgent
+    #         # import gymnasium as gym
+    #         # from types import SimpleNamespace
 
-            _cmp_context_dim = args.context_vector_dim
-            _cmp_context_len = args.context_len
-            _cmp_policy_obs_dim = (
-                raw_obs_dim + _cmp_context_dim
-                + (act_dim if args.use_last_action_in_policy_state else 0)
-            )
-            _cmp_policy_env_view = SimpleNamespace(
-                single_observation_space=gym.spaces.Box(
-                    low=-np.inf, high=np.inf,
-                    shape=(_cmp_policy_obs_dim,), dtype=np.float32,
-                ),
-                single_action_space=envs.single_action_space,
-            )
-            compare_actor = DeterministicAgent(
-                _cmp_policy_env_view,
-                action_scale=action_scale,
-                action_bias=0.0,
-                hidden_layer_size=args.agent_hidden_layer_size,
-                num_hidden_layers=args.agent_num_hidden_layers,
-                use_context=True,
-                context_vector_dim=_cmp_context_dim,
-            ).to(args.device)
+    #         _cmp_context_dim = args.context_vector_dim
+    #         _cmp_context_len = args.context_len
+    #         _cmp_policy_obs_dim = (
+    #             raw_obs_dim + _cmp_context_dim
+    #             + (act_dim if args.use_last_action_in_policy_state else 0)
+    #         )
+    #         _cmp_policy_env_view = SimpleNamespace(
+    #             single_observation_space=gym.spaces.Box(
+    #                 low=-np.inf, high=np.inf,
+    #                 shape=(_cmp_policy_obs_dim,), dtype=np.float32,
+    #             ),
+    #             single_action_space=envs.single_action_space,
+    #         )
+    #         compare_actor = DeterministicAgent(
+    #             _cmp_policy_env_view,
+    #             action_scale=action_scale,
+    #             action_bias=0.0,
+    #             hidden_layer_size=args.agent_hidden_layer_size,
+    #             num_hidden_layers=args.agent_num_hidden_layers,
+    #             use_context=True,
+    #             context_vector_dim=_cmp_context_dim,
+    #         ).to(args.device)
 
-            _cmp_loaded = torch.load(
-                args.eval_id_ood_compare_model_path,
-                map_location=args.device,
-                weights_only=False,
-            )
-            _cmp_state = _cmp_loaded["actor"] if (
-                isinstance(_cmp_loaded, dict) and "actor" in _cmp_loaded
-            ) else _cmp_loaded
-            compare_actor.load_state_dict(
-                extract_deterministic_state_dict(_cmp_state), strict=False
-            )
-            compare_actor.eval()
+    #         _cmp_loaded = torch.load(
+    #             args.eval_id_ood_compare_model_path,
+    #             map_location=args.device,
+    #             weights_only=False,
+    #         )
+    #         _cmp_state = _cmp_loaded["actor"] if (
+    #             isinstance(_cmp_loaded, dict) and "actor" in _cmp_loaded
+    #         ) else _cmp_loaded
+    #         compare_actor.load_state_dict(
+    #             extract_deterministic_state_dict(_cmp_state), strict=False
+    #         )
+    #         compare_actor.eval()
 
-            compare_transformer = ContextEncoder(
-                obs_dim=HISTORY_ENTRY_DIM,
-                context_dim=_cmp_context_dim,
-                context_len=_cmp_context_len,
-            ).to(args.device)
-            _cmp_dir = os.path.dirname(args.eval_id_ood_compare_model_path)
-            _cmp_transformer_path = os.path.join(_cmp_dir, "transformer.pth")
-            if not os.path.exists(_cmp_transformer_path):
-                raise FileNotFoundError(
-                    f"transformer.pth not found at {_cmp_transformer_path}. "
-                    "Expected as a sibling of the compare model.pth."
-                )
-            compare_transformer.load_state_dict(
-                torch.load(_cmp_transformer_path, map_location=args.device)
-            )
-            compare_transformer.eval()
+    #         compare_transformer = ContextEncoder(
+    #             obs_dim=HISTORY_ENTRY_DIM,
+    #             context_dim=_cmp_context_dim,
+    #             context_len=_cmp_context_len,
+    #         ).to(args.device)
+    #         _cmp_dir = os.path.dirname(args.eval_id_ood_compare_model_path)
+    #         _cmp_transformer_path = os.path.join(_cmp_dir, "transformer.pth")
+    #         if not os.path.exists(_cmp_transformer_path):
+    #             raise FileNotFoundError(
+    #                 f"transformer.pth not found at {_cmp_transformer_path}. "
+    #                 "Expected as a sibling of the compare model.pth."
+    #             )
+    #         compare_transformer.load_state_dict(
+    #             torch.load(_cmp_transformer_path, map_location=args.device)
+    #         )
+    #         compare_transformer.eval()
 
-            compare_history_buf = HistoryBuffer(
-                context_len=_cmp_context_len,
-                device=args.device,
-            )
-            compare_model_path_str = args.eval_id_ood_compare_model_path
+    #         compare_history_buf = HistoryBuffer(
+    #             context_len=_cmp_context_len,
+    #             device=args.device,
+    #         )
+    #         compare_model_path_str = args.eval_id_ood_compare_model_path
 
-        compare_performance_ID_OOD(
-            baseline_actor=actor,
-            air_hockey_base=config["air_hockey"],
-            raw_obs_dim=raw_obs_dim,
-            act_dim=act_dim,
-            use_last_action=args.use_last_action_in_policy_state,
-            n_envs=args.eval_id_ood_n_envs,
-            n_eps=args.eval_id_ood_n_eps,
-            ood_scale=args.eval_id_ood_ood_scale,
-            out_dir=args.eval_id_ood_out_dir,
-            device=args.device,
-            seed=args.seed,
-            context_actor=compare_actor,
-            context_transformer=compare_transformer,
-            context_history_buf=compare_history_buf,
-            baseline_model_path=args.model_path or "",
-            context_model_path=compare_model_path_str,
-            params_cache_path=args.params_cache_path
-        )
-        return  # exit after eval, don't train
+    #     compare_performance_ID_OOD(
+    #         baseline_actor=actor,
+    #         air_hockey_base=config["air_hockey"],
+    #         raw_obs_dim=raw_obs_dim,
+    #         act_dim=act_dim,
+    #         use_last_action=args.use_last_action_in_policy_state,
+    #         n_envs=args.eval_id_ood_n_envs,
+    #         n_eps=args.eval_id_ood_n_eps,
+    #         out_dir=args.eval_id_ood_out_dir,
+    #         device=args.device,
+    #         seed=args.seed,
+    #         context_actor=compare_actor,
+    #         context_transformer=compare_transformer,
+    #         context_history_buf=compare_history_buf,
+    #         baseline_model_path=args.model_path or "",
+    #         context_model_path=compare_model_path_str,
+    #         params_cache_path=args.params_cache_path
+    #     )
+    #     return  # exit after eval, don't train
             
     
     
@@ -1507,6 +1504,30 @@ def _entrypoint():
         "replay/per_priority_td_error_mean",
     ]
     save_tensorboard_plots(log_parent_dir, config, metrics=metrics)
+
+    if args.eval_id_ood:
+
+        compare_performance_ID_OOD(
+            actor=actor,
+            air_hockey_base=config["air_hockey"],
+            raw_obs_dim=raw_obs_dim,
+            act_dim=act_dim,
+            use_last_action=args.use_last_action_in_policy_state,
+
+            use_history=args.use_history,
+            use_transformer=args.use_transformer,
+            transformer=transformer if (args.use_history and args.use_transformer) else None,
+
+            context_len=args.context_len,
+            n_envs=args.eval_id_ood_n_envs,
+            n_eps=args.eval_id_ood_n_eps,
+            out_dir=os.path.join("results", args.run_name),
+            device=args.device,
+            seed=args.seed,
+            model_path=args.model_path or "",
+            params_cache_path=args.params_cache_path,
+        )
+
     writer.close()
 
 
