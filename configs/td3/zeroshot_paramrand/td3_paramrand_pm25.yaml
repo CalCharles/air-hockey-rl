@@ -27,7 +27,7 @@
 #
 
 # TODO: was 2000000
-total_timesteps: 1000
+total_timesteps: 2000000
 num_envs: 1
 
 # TD3 core
@@ -113,7 +113,7 @@ q_num_hidden_layers: 2
 use_last_action_in_policy_state: true
 
 # TODO: was 25000
-checkpoint_interval: 5000
+checkpoint_interval: 25000
 
 # Multi-env evaluation (consumed by td3_training_dr.py wrapper).
 # Sets the seed for the eval-env sampler at startup; once seeded, the 5
