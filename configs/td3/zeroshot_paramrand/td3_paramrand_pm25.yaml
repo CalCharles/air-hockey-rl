@@ -124,8 +124,6 @@ eval_eps_per_env: 4
 # For: use transformer/context-vector
 use_history: True
 use_transformer: False
-
-# use_transformer: False
 context_len: 30          
 context_vector_dim: 8
 transformer_lr: 0.0003     

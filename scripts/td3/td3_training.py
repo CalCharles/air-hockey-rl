@@ -1151,11 +1151,13 @@ def _entrypoint():
                 sampled_weights = sampled_weights.view(-1)
                 sampled_next_prev_actions = sampled_actions * (1.0 - sampled_dones.unsqueeze(-1))
 
-                # TODO: Fix this
+
                 if args.use_history:
                     
-                    # TODO: Is this a concern? The history doesn't exactly line up with the "next_observations" but rather on "observations"
-                    # At least I think so. So is this a problem?
+                    # TODO: See that we use the same history to compute the context for the actor_target and actor
+                    #       I think this is fine because the only difference would be is by one timestep.
+                    #       This especially shouldn't change the learned information because the normal observation already contains the data in sampled_next_observations
+                    #       So this is fine because the history does it's job by containing information of past timesteps that the observation or next_observations cannot see
                     sampled_next_history = data["history"].to(args.device)
                     
                     if args.use_transformer:
