@@ -74,6 +74,7 @@ from scripts.td3.evaluate import evaluate_agent
 from scripts.utils import save_tensorboard_plots
 
 ROLLING_STATS_WINDOW_STEPS = 2000
+HISTORY_ENTRY_DIM = 4
 
 
 def h_transform(x: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
@@ -266,7 +267,9 @@ class Args:
     eval_eps_per_env: int = 4
 
     # --- Context Vector Generation ---
-    use_context_vector: bool = False
+    use_transformer: bool = False
+
+    use_history: bool = False
     context_len: int = 7
     context_vector_dim: int = 8
     transformer_lr: float = 0.00005 
@@ -358,7 +361,15 @@ def _entrypoint():
     raw_obs_dim = int(np.array(envs.single_observation_space.shape).prod())
     act_dim = int(np.prod(envs.single_action_space.shape))
     policy_obs_dim = raw_obs_dim + act_dim if args.use_last_action_in_policy_state else raw_obs_dim
-    policy_obs_dim = policy_obs_dim + args.context_vector_dim if args.use_context_vector else policy_obs_dim
+
+    if args.use_history:
+        if args.use_transformer:
+            policy_obs_dim +=  args.context_vector_dim
+        else:
+            policy_obs_dim += (args.context_len * HISTORY_ENTRY_DIM)
+
+        
+
 
     policy_env_view = SimpleNamespace(
         single_observation_space=gym.spaces.Box(
@@ -373,8 +384,6 @@ def _entrypoint():
         action_bias=0.0,
         hidden_layer_size=args.agent_hidden_layer_size,
         num_hidden_layers=args.agent_num_hidden_layers,
-        use_context=args.use_context_vector,
-        context_vector_dim=args.context_vector_dim
     ).to(args.device)
     actor_target = DeterministicAgent(
         policy_env_view,
@@ -382,8 +391,6 @@ def _entrypoint():
         action_bias=0.0,
         hidden_layer_size=args.agent_hidden_layer_size,
         num_hidden_layers=args.agent_num_hidden_layers,
-        use_context=args.use_context_vector,
-        context_vector_dim=args.context_vector_dim
     ).to(args.device)
     actor_target.load_state_dict(actor.state_dict())
 
@@ -426,19 +433,28 @@ def _entrypoint():
     checkpoint_load_mode = args.full_checkpoint_load
     residual_actor_optimizer: optim.Optimizer | None = None
 
+    # TODO: Need to update obs_dim to store only the current timestep obs and not history with it
 
-    if args.use_context_vector and (args.context_vector_dim > 0):
+
+    history_buf = HistoryBuffer(
+        context_len=args.context_len,
+        device=args.device,
+    )
+
+
+    # TODO: I want to see the raw_obs_dim because now I just want to store the current and not include history
+    # I wonder if transformer was not helpful because there was high correlation between inputs bc all of them overlapped so much
+    # Sanity check could be re-running TD3+Transformer <-- we're doing this anyway with varying context length so we'll find that out.
+    
+
+
+    if args.use_transformer and (args.context_vector_dim > 0):
+
         transformer = ContextEncoder(
             obs_dim=raw_obs_dim,
             context_dim=args.context_vector_dim,
             context_len=args.context_len
         ).to(args.device)
-
-        history_buf = HistoryBuffer(
-            obs_dim=raw_obs_dim,
-            context_len=args.context_len,
-            device=args.device,
-        )
 
         transformer_optimizer = optim.Adam(transformer.parameters(), lr=args.transformer_lr)
 
@@ -511,7 +527,7 @@ def _entrypoint():
 
 
         # Load the transformer from path if specified
-        if args.model_path is not None and args.use_context_vector:
+        if args.model_path is not None and args.use_transformer:
             checkpoint_dir = os.path.dirname(args.model_path)
             transformer_path = os.path.join(checkpoint_dir, "transformer.pth")
             if os.path.exists(transformer_path):
@@ -521,7 +537,7 @@ def _entrypoint():
                 print(f"Transformer loaded from {transformer_path}")
 
             else:
-                print(f"Warning: use_context_vector=True but transformer.pth not found at {transformer_path}")
+                print(f"Warning: use_transformer=True but transformer.pth not found at {transformer_path}")
                 return
 
 
@@ -548,6 +564,7 @@ def _entrypoint():
             alpha=args.per_alpha,
             priority_eps=args.per_eps,
             age_decay=args.priority_age_decay,
+            history_entry_dim=HISTORY_ENTRY_DIM,
             context_len=args.context_len,
         )
         failure_rb = TD3PrioritizedReplayBuffer(
@@ -559,6 +576,7 @@ def _entrypoint():
             alpha=args.per_alpha,
             priority_eps=args.per_eps,
             age_decay=args.priority_age_decay,
+            history_entry_dim=HISTORY_ENTRY_DIM,
             context_len=args.context_len,
         )
         print(
@@ -698,7 +716,7 @@ def _entrypoint():
             torch.save(q.state_dict(), f"{out_dir}/qf{ci}.pth")
             torch.save(qfs_target[ci - 1].state_dict(), f"{out_dir}/qf{ci}_target.pth")
         
-        if args.use_context_vector:
+        if args.use_transformer:
             torch.save(transformer.state_dict(), f"{out_dir}/transformer.pth")
 
         state = build_training_state(
@@ -739,7 +757,8 @@ def _entrypoint():
 
     # We wun this function assuming the transformer is loaded in from a checkpoint (.pth)
     # Use the above to support argument parsing and setting up environment for context vector analysis after transformer is trained
-    
+
+    # TODO: Note this is still using the original way of use_context_vector and assumes usage of transformer if use_context_vector is True. So we need to update this but do later when we get exp going
     if args.eval_id_ood:
 
         # The model already loaded via --model-path is treated as the baseline.
@@ -792,7 +811,7 @@ def _entrypoint():
             compare_actor.eval()
 
             compare_transformer = ContextEncoder(
-                obs_dim=raw_obs_dim,
+                obs_dim=HISTORY_ENTRY_DIM,
                 context_dim=_cmp_context_dim,
                 context_len=_cmp_context_len,
             ).to(args.device)
@@ -809,7 +828,6 @@ def _entrypoint():
             compare_transformer.eval()
 
             compare_history_buf = HistoryBuffer(
-                obs_dim=raw_obs_dim,
                 context_len=_cmp_context_len,
                 device=args.device,
             )
@@ -836,7 +854,6 @@ def _entrypoint():
         )
         return  # exit after eval, don't train
             
-    
     
     
     
@@ -887,17 +904,24 @@ def _entrypoint():
                 )
         prev_action_for_transition = last_action_for_policy.clone()
         obs_tensor = torch.tensor(obs, dtype=torch.float32, device=args.device)
+        
+        if args.use_history:
+            
+            history_buf.add(obs[0])
 
+            state_history = history_buf.sample()
 
-        if args.use_context_vector:
-            with torch.no_grad():
-                state_history = history_buf.sample()
-                context_vector = transformer(state_history)
-                obs_with_context_tensor = torch.cat([obs_tensor, context_vector], dim=-1)
+            if args.use_transformer:
+                with torch.no_grad():
+                    context = transformer(state_history)      # (1, context_vector_dim)
+            else:
+                context = state_history.view(1, -1)       # (1, T*4) — flat concat
 
-                policy_obs_tensor = augment_policy_observation(
-                    obs_with_context_tensor, last_action_for_policy, args.use_last_action_in_policy_state
-                )
+            obs_with_context = torch.cat([obs_tensor, context], dim=-1)
+            policy_obs_tensor = augment_policy_observation(
+                obs_with_context, last_action_for_policy, args.use_last_action_in_policy_state
+            )
+
         else:
             policy_obs_tensor = augment_policy_observation(
                 obs_tensor, last_action_for_policy, args.use_last_action_in_policy_state
@@ -947,14 +971,12 @@ def _entrypoint():
         dones = np.logical_or(terminations, truncations)
 
 
-        if args.use_context_vector:
-            history_buf.add(obs[0], done=bool(dones[0]))
-            # sample() returns (1, T, obs_dim).
-            history_snapshot = history_buf.sample()[0]
-        else:
-            history_snapshot = None
-        
+        history_snapshot = history_buf.sample()[0]
 
+        if bool(dones[0]):
+            history_buf.reset_env()
+
+        
         step_puck_hits = sum_info_metric(infos, "paddle_puck_collision_count")
         interval_paddle_puck_collisions += step_puck_hits
         interval_env_steps += args.num_envs
@@ -1129,10 +1151,19 @@ def _entrypoint():
                 sampled_weights = sampled_weights.view(-1)
                 sampled_next_prev_actions = sampled_actions * (1.0 - sampled_dones.unsqueeze(-1))
 
-                if args.use_context_vector:
+                # TODO: Fix this
+                if args.use_history:
+                    
+                    # TODO: Is this a concern? The history doesn't exactly line up with the "next_observations" but rather on "observations"
+                    # At least I think so. So is this a problem?
                     sampled_next_history = data["history"].to(args.device)
-                    with torch.no_grad():
-                        sampled_next_context = transformer(sampled_next_history)
+                    
+                    if args.use_transformer:
+                        with torch.no_grad():
+                            sampled_next_context = transformer(sampled_next_history)
+                    else:
+                        sampled_next_context = sampled_history.view(sampled_history.shape[0], -1)  # (B, T*4)
+
 
                     sampled_next_obs_with_context = torch.cat([sampled_next_observations, sampled_next_context], dim=-1)
                     sampled_next_policy_observations = augment_policy_observation(
@@ -1140,6 +1171,8 @@ def _entrypoint():
                         sampled_next_prev_actions,
                         args.use_last_action_in_policy_state,
                     )
+
+
                 else:
                     sampled_next_policy_observations = augment_policy_observation(
                         sampled_next_observations,
@@ -1311,7 +1344,10 @@ def _entrypoint():
                         ),
                     }
 
-                    if args.use_context_vector and all("history" in chunk for chunk in actor_data_chunks):
+                    # TODO: What are we going to do about this?
+                    # TODO: ^^^ See that I removed this because now we're always collecting the history
+                    #           whether we're using transformer or not - bc we want option of passing raw history into actor
+                    if all("history" in chunk for chunk in actor_data_chunks):
                         data["history"] = torch.cat(
                             [chunk["history"] for chunk in actor_data_chunks], dim=0
                         )
@@ -1319,11 +1355,16 @@ def _entrypoint():
                 sampled_observations = data["observations"]
                 sampled_prev_actions = data["prev_actions"]
 
-                if args.use_context_vector:
+                # TODO: Compute observation for input to actor for training
+                if args.use_history:
                     # Shape: (B, T, obs_dim) -> transformer -> (B, context_dim)
                     sampled_history = data["history"].to(args.device)
 
-                    sampled_context = transformer(sampled_history)
+                    if args.use_transformer:
+                        sampled_context = transformer(sampled_history)
+                    else:
+                        sampled_context = sampled_history.view(sampled_history.shape[0], -1)  # (B, T*4)
+                        # TODO: I assume this is the correct shape but we should make sure
 
                     sampled_obs_with_context = torch.cat([sampled_observations, sampled_context], dim=-1)
 
@@ -1345,14 +1386,14 @@ def _entrypoint():
                 actor_loss = -norm_q.mean()
                 actor_optimizer.zero_grad()
 
-                # New
-                if args.use_context_vector:
+
+                if args.use_transformer:
                     transformer_optimizer.zero_grad()
 
                 actor_loss.backward()
                 actor_optimizer.step()
 
-                if args.use_context_vector:
+                if args.use_transformer:
                     transformer_optimizer.step()
 
                 if should_update_train_metrics and actor_update_idx == args.actor_updates_per_iteration - 1:
@@ -1406,7 +1447,10 @@ def _entrypoint():
                     agent_hidden_layer_size=args.agent_hidden_layer_size,
                     agent_num_hidden_layers=args.agent_num_hidden_layers,
                     use_last_action_in_policy_state=args.use_last_action_in_policy_state,
-                    use_context_vector=args.use_context_vector,
+
+                    HISTORY_ENTRY_DIM=HISTORY_ENTRY_DIM,
+                    use_history=args.use_history,
+                    use_transformer=args.use_transformer,
                     context_vector_dim=args.context_vector_dim,
                     context_len=args.context_len,
                 )
@@ -1439,7 +1483,10 @@ def _entrypoint():
             agent_hidden_layer_size=args.agent_hidden_layer_size,
             agent_num_hidden_layers=args.agent_num_hidden_layers,
             use_last_action_in_policy_state=args.use_last_action_in_policy_state,
-            use_context_vector=args.use_context_vector,
+
+            HISTORY_ENTRY_DIM=HISTORY_ENTRY_DIM,
+            use_history=args.use_history,
+            use_transformer=args.use_transformer,
             context_vector_dim=args.context_vector_dim,
             context_len=args.context_len,
         )

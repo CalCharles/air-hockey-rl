@@ -50,7 +50,7 @@ class ReferenceStateWrapper(gym.Wrapper):
 
 def _save_task_gif_with_last_action(
     n_eps_viz, n_gifs, env_test, policy, renderer, log_dir, action_dim, use_last_action_in_policy_state,
-    transformer=None, history_buf=None, use_context_vector=False,
+    transformer=None, history_buf=None, use_history=False,
 ):
     env_test.max_timesteps = 200
     for gif_idx in range(n_gifs):
@@ -79,12 +79,21 @@ def _save_task_gif_with_last_action(
                 frames.append(frame)
 
 
-                if use_context_vector and transformer is not None and history_buf is not None:
-                    history_buf.add(obs, done=False)
-                    with torch.no_grad():
-                        state_history = history_buf.sample()
-                        context_vector = transformer(state_history)  # (1, context_dim)
-                    obs_with_context = torch.cat([obs_tensor.unsqueeze(0), context_vector], dim=-1)
+                history_buf.add(obs)
+
+                if use_history:
+                    
+                    state_history = history_buf.sample()
+
+                    if transformer is not None:
+                        with torch.no_grad():
+                            context = transformer(state_history)  # (1, context_dim)
+                    
+                    else:
+                        context = state_history.view(1, -1)
+                    
+                    
+                    obs_with_context = torch.cat([obs_tensor.unsqueeze(0), context], dim=-1)
                     policy_obs = augment_policy_observation(
                         obs_with_context, last_action, use_last_action_in_policy_state
                     )
@@ -124,7 +133,10 @@ def evaluate_agent(
     agent_hidden_size=None,
     use_last_action_in_policy_state=False,
     policy_type=None,
-    use_context_vector=False,
+
+    HISTORY_ENTRY_DIM=0,
+    use_transformer=False,
+    use_history=False,
     context_vector_dim=8,
     context_len=7,
 ):
@@ -149,18 +161,25 @@ def evaluate_agent(
     envs = gym.vector.SyncVectorEnv([make_eval_env])
     action_dim = int(np.prod(envs.single_action_space.shape))
 
-    if use_context_vector:
+    if use_history:
+
         raw_obs_dim = int(np.prod(envs.single_observation_space.shape))
         act_dim = int(np.prod(envs.single_action_space.shape))
-        augmented_obs_dim = raw_obs_dim + context_vector_dim
-        if use_last_action_in_policy_state:
-            augmented_obs_dim += act_dim
+
+        augmented_obs_dim = raw_obs_dim + act_dim if use_last_action_in_policy_state else raw_obs_dim
+        
+        if use_transformer:
+            augmented_obs_dim += context_vector_dim
+        else:
+            augmented_obs_dim += (context_len * HISTORY_ENTRY_DIM)
+
         policy_env_view = SimpleNamespace(
             single_observation_space=gym.spaces.Box(
                 low=-np.inf, high=np.inf, shape=(augmented_obs_dim,), dtype=np.float32
             ),
             single_action_space=envs.single_action_space,
         )
+
     else:
         policy_env_view = build_policy_env_view(envs, use_last_action_in_policy_state)
 
@@ -175,12 +194,20 @@ def evaluate_agent(
     )
 
     transformer = None
-    history_buf = None
-    if use_context_vector:
+
+    history_buf = HistoryBuffer(
+        # obs_dim=raw_obs_dim,
+        context_len=context_len,
+        device=args.device,
+    )
+    
+    if use_transformer:
         
-        raw_obs_dim = int(np.prod(envs.single_observation_space.shape))
+        # raw_obs_dim = int(np.prod(envs.single_observation_space.shape))
+
+        # TODO: need to update obs_dim input
         transformer = ContextEncoder(
-            obs_dim=raw_obs_dim,
+            obs_dim=HISTORY_ENTRY_DIM,
             context_dim=context_vector_dim,
             context_len=context_len,
         )
@@ -190,10 +217,7 @@ def evaluate_agent(
             transformer.eval()
         else:
             print(f"Warning: transformer.pth not found at {transformer_path}, using random weights")
-        history_buf = HistoryBuffer(
-            obs_dim=raw_obs_dim,
-            context_len=context_len,
-        )
+        
 
     env = envs.envs[0]
     renderer = AirHockeyRenderer(env, show_target_position=True, show_acceleration_arrow=False)
@@ -214,7 +238,7 @@ def evaluate_agent(
             use_last_action_in_policy_state=use_last_action_in_policy_state,
             transformer=transformer,
             history_buf=history_buf,
-            use_context_vector=use_context_vector,
+            use_history=use_history,
         )
     else:
         save_task_gif(n_eps, n_gifs, env, model, renderer, save_dir)

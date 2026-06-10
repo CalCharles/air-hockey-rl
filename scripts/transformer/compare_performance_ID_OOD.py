@@ -151,7 +151,7 @@ def _rollout_episodes(
 
         while not done:
             if transformer is not None and history_buf is not None:
-                history_buf.add(obs, done=False)
+                history_buf.add(obs)
                 with torch.no_grad():
                     state_history = history_buf.sample()          # (1, T, obs_dim)
                     context_vec = transformer(state_history)      # (1, context_dim)

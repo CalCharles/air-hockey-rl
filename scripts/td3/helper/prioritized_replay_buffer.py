@@ -16,6 +16,8 @@ class TD3PrioritizedReplayBuffer:
         alpha=0.6,
         priority_eps=1e-6,
         age_decay=0.0,
+        use_history=False,
+        history_entry_dim=4,
         context_len=0,
     ):
         self.buffer_size = int(buffer_size)
@@ -28,7 +30,10 @@ class TD3PrioritizedReplayBuffer:
         # Age-weighted sampling: priority is multiplied by exp(-age_decay * age_in_slots)
         # before alpha-scaling at sample time. age_decay=0.0 disables.
         self.age_decay = float(age_decay)
+
+        self.use_history = bool(use_history)
         self.context_len = int(context_len)
+        self.history_entry_dim = int(history_entry_dim)
 
 
         self.observations = torch.zeros((buffer_size, *obs_shape), dtype=torch.float32, device=device)
@@ -39,15 +44,26 @@ class TD3PrioritizedReplayBuffer:
         self.dones = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
         self.priorities = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
 
-        if self.context_len > 0:
-            obs_dim = obs_shape[0]
-            self.history = torch.zeros(
-                (buffer_size, self.context_len, obs_dim),
-                dtype=torch.float32,
-                device=device,
-            )
-        else:
-            self.history = None
+        # TODO: we need to think more on how to support using history and normal mode
+        # Maybe we don't worry about it since for now we want to collect history no matter what
+        # if self.use_history:
+        #     # obs_dim = obs_shape[0]
+
+        #     self.history = torch.zeros(
+        #         (buffer_size, self.context_len, self.history_entry_dim),
+        #         dtype=torch.float32,
+        #         device=device,
+        #     )
+        # else:
+        #     self.history = None
+
+        # TODO: Note that we init this unconditionally bc in td3_training.py I choose
+        #       to always gather history.
+        self.history = torch.zeros(
+            (buffer_size, self.context_len, self.history_entry_dim),
+            dtype=torch.float32,
+            device=device,
+        )
 
 
         self.position = 0

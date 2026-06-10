@@ -147,7 +147,7 @@ def _collect_context_vectors_for_params(
 
         while not done:
             obs_tensor = torch.tensor(obs, dtype=torch.float32)
-            history_buf.add(obs, done=False)
+            history_buf.add(obs)
 
             with torch.no_grad():
                 state_history = history_buf.sample()          # (1, T, obs_dim)

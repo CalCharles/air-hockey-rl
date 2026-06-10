@@ -26,14 +26,9 @@ class DeterministicAgent(nn.Module):
         hidden_layer_size=64,
         num_hidden_layers=2,
         hidden_size=None,
-        use_context=False,
-        context_vector_dim=0,
     ):
         super().__init__()
         obs_dim = int(np.prod(envs.single_observation_space.shape))
-
-        # if use_context:
-        #     obs_dim += context_vector_dim
             
         act_dim = int(np.prod(envs.single_action_space.shape))
 

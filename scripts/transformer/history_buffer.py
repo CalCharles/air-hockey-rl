@@ -7,6 +7,11 @@ from collections import deque
 from typing import Dict, List, Optional, Tuple
 
 
+PADDLE_POS_SLICE = slice(12, 14)   # current paddle (x, y) in raw 30-dim obs
+PUCK_POS_SLICE   = slice(27, 29)   # current puck   (x, y) in raw 30-dim obs
+HISTORY_ENTRY_DIM = 4              # [paddle_x, paddle_y, puck_x, puck_y]
+
+
 class HistoryBuffer:
     """
     Circular buffer of observations
@@ -23,51 +28,56 @@ class HistoryBuffer:
 
     def __init__(
         self,
-        obs_dim: int,
         context_len: int,
         device: torch.device | str = "cpu",
     ):
-        self.obs_dim = obs_dim
         self.context_len = context_len
         self.device = torch.device(device)
 
         # deques act as efficient circular buffers
-        self._obs_buf = deque(maxlen=context_len)
+        self._buf = deque(maxlen=context_len)
+        self.entry_dim = HISTORY_ENTRY_DIM
         
-        self._reset_env()
+        self.reset_env()
 
+    @staticmethod
+    def extract_entry(obs: np.ndarray) -> np.ndarray:
+        """Extract the 4-dim current-timestep position from a raw 30-dim obs."""
+        return np.concatenate([
+            obs[PADDLE_POS_SLICE],   # (2,)
+            obs[PUCK_POS_SLICE],     # (2,)
+        ]).astype(np.float32)        # (4,)
 
 
     def add(
         self,
-        obs: np.ndarray,            # (obs_dim)
-        done: bool = False,       # bool
+        obs: np.ndarray,            
+        done: bool = False,       
     ):
         """
-        Push the current (obs) into the history buffer.
+        Push the current timestep's puck and paddle position into the history buffer.
 
         If `done` is True the buffer is reset to zeros so
         the new episode starts with a clean history.
         """
 
-        self._obs_buf.append(obs.astype(np.float32))
-
-        if done:
-            self._reset_env()
+        self._buf.append(self.extract_entry(obs))
         
 
-    def sample(self):
-        obs_seq = torch.tensor( np.stack(list(self._obs_buf), axis=0),
-            dtype=torch.float32,
-            device=self.device
-        )                                          # (context_len, obs_dim)
-        return obs_seq.unsqueeze(0)               # (1, context_len, obs_dim)
+    def sample(self) -> torch.Tensor:
+        """
+        Returns (1, context_len, 4) — ready to feed into the transformer
+        or flatten for direct policy concatenation.
+        """
+        seq = np.stack(list(self._buf), axis=0)          # (T, 4)
+        return torch.tensor(seq, dtype=torch.float32, device=self.device).unsqueeze(0)  # (1, T, 4)
 
 
-    def _reset_env(self):
+
+    def reset_env(self):
         """Fill the env's buffer with zeros (called on episode reset)."""
-        self._obs_buf.clear()
+        self._buf.clear()
         for _ in range(self.context_len):
-            self._obs_buf.append(np.zeros(self.obs_dim, dtype=np.float32))
+            self._buf.append(np.zeros(self.entry_dim, dtype=np.float32))
 
 
