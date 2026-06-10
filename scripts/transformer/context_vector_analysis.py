@@ -55,17 +55,7 @@ def _sample_id_params(random_variable_ranges, random_variables, rng):
     }
 
 
-# def _sample_ood_params(random_variable_ranges, random_variables, rng, ood_scale=1.0):
-#     params = {}
-#     for var in random_variables:
-#         low, high = random_variable_ranges[var]
-#         id_width = high - low
-#         ood_width = ood_scale * id_width
-#         params[var] = float(rng.uniform(high, high + ood_width))
-#     return params
-
-
-def _sample_ood_params(random_variable_ranges, random_variables, rng, ood_scale=2.0, ood_gap=0.5):
+def _sample_ood_params(random_variable_ranges, random_variables, rng, ood_scale=1.0, ood_gap=0.5):
     params = {}
     for var in random_variables:
         low, high = random_variable_ranges[var]
@@ -241,7 +231,7 @@ def context_vector_analysis(
     use_last_action: bool,
     n_eps: int = 20,
     n_envs: int = 10,
-    ood_scale: float = 2.0,
+    ood_scale: float = 1.0,
     ood_gap: float = 0.5,
     out_dir: str = "results/context_tsne",
     device: str = "cpu",

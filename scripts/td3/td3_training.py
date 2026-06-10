@@ -282,12 +282,13 @@ class Args:
     eval_id_ood: bool = False
     eval_id_ood_n_envs: int = 10
     eval_id_ood_n_eps: int = 8
-    eval_id_ood_ood_scale: float = 2.0
+    eval_id_ood_ood_scale: float = 1.0
     eval_id_ood_out_dir: str = "results/id_ood_comparison"
     # Path to a *second* model to compare against (the context-vector model when
     # running on a baseline checkpoint, or vice versa).  Optional — if omitted,
     # only the model loaded via --model-path is evaluated.
     eval_id_ood_compare_model_path: str | None = None
+    params_cache_path: str | None = None
 
 
 def make_env(env_id):
@@ -740,6 +741,7 @@ def _entrypoint():
     # Use the above to support argument parsing and setting up environment for context vector analysis after transformer is trained
     
     if args.eval_id_ood:
+
         # The model already loaded via --model-path is treated as the baseline.
         # If --eval-id-ood-compare-model-path is set, load that second model as
         # the context-vector actor (requires use_context_vector=True on that run).
@@ -830,6 +832,7 @@ def _entrypoint():
             context_history_buf=compare_history_buf,
             baseline_model_path=args.model_path or "",
             context_model_path=compare_model_path_str,
+            params_cache_path=args.params_cache_path
         )
         return  # exit after eval, don't train
             
@@ -943,9 +946,9 @@ def _entrypoint():
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
         dones = np.logical_or(terminations, truncations)
 
-        history_buf.add(obs[0], done=bool(dones[0]))
 
         if args.use_context_vector:
+            history_buf.add(obs[0], done=bool(dones[0]))
             # sample() returns (1, T, obs_dim).
             history_snapshot = history_buf.sample()[0]
         else:

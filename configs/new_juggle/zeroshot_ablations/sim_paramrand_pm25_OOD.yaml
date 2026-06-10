@@ -1,0 +1,128 @@
+# Zero-shot sim2real isolation: physics-parameter randomization (±25%).
+# 2026-05-10: handwritten (does not fit the single-knob _generate.py pattern
+# because it adds top-level air_hockey keys, not just simulator_params flips).
+#
+# Defaults kept ON (per project convention + user spec):
+#   - 85/15 starting distribution (puck_spawn_near_paddle_prob: 0.15)
+#   - sysid params (gravity=-0.661, puck_damping=0.178, paddle_density=3000,
+#     pid_kp=9000, pid_kd=50)
+#   - enable_observation_delay: true (project default; do NOT flip — see
+#     feedback_obs_delay_default_on memory)
+#   - puck_noise: true
+#   - enable_random_occlusions: true
+#
+# Engineered randomization mechanisms (paddle-puck strength/direction rand,
+# wall direction rand, action force attenuation, delay jitter, paddle density
+# fluctuation) were removed from the env in the 2026-05-11 cleanup; the only
+# randomization left in the baseline is puck noise + plain uniform occlusion.
+# This config layers physics-parameter DR (paddle_density / puck_damping /
+# gravity, ±25% per-reset) on top of that minimal baseline.
+#
+# NEW: per-reset domain randomization on 3 dynamics params, ±25% around sysid:
+#   - paddle_density: [2250, 3750]  (sysid 3000)
+#   - puck_damping:   [0.1335, 0.2225]  (sysid 0.178)
+#   - gravity:        [-0.826, -0.496]  (sysid -0.661)
+# The env's reset() (airhockey_base.py:381-397) loops random_variables, draws
+# np.random.uniform(low, high) for each, reassigns to simulator_params, then
+# rebuilds the simulator. Per-reset (= per-episode) cadence — the agent has
+# consistent dynamics within an episode but they shift between episodes, so
+# the 5-step paddle/puck history can carry the implicit dynamics signal.
+
+air_hockey:
+  max_timesteps: 250
+  num_blocks: 0
+  num_obstacles: 0
+  num_paddles: 1
+  num_pucks: 1
+  num_targets: 0
+  obs_type: history
+  seed: 0
+
+  puck_spawn_near_paddle_prob: 0.15
+  puck_near_paddle_offset_min_m: 0.025
+  puck_near_paddle_offset_max_m: 0.05
+  puck_near_paddle_horizontal_std_m: 0.015
+  puck_near_paddle_speed_min_m_s: 0.0
+  puck_near_paddle_speed_max_m_s: 0.2
+
+  puck_linear_top_spawn_goal_cutoff_x: null
+  puck_linear_top_spawn_center_cutoff_x: 0.2
+  puck_linear_top_spawn_speed_min: 0.0
+  puck_linear_top_spawn_speed_max: 0.5
+
+  # ----- Physics-parameter randomization (the actual knob this run tests) -----
+  domain_random: true
+  random_variables: [paddle_density, puck_damping, gravity]
+
+  # TODO: ID random_variable_ranges
+  # random_variable_ranges:
+  #   paddle_density: [2250.0, 3750.0]   # sysid 3000, ±25%
+  #   puck_damping:   [0.1335, 0.2225]   # sysid 0.178, ±25%
+  #   gravity:        [-0.826, -0.496]   # sysid -0.661, ±25% (more-negative = stronger pull)
+  
+
+  # Made gap larger but kept range the same
+  # baseline    ID        103.95  ±  15.94        0.933
+  # baseline   OOD         45.13  ±  13.45        0.550
+  # random_variable_ranges_OOD:
+  #   paddle_density: [6000.0, 7500.0]   # high-side OOD 
+  #   puck_damping:   [0.356, 0.445]     # high-side OOD
+  #   gravity:        [-1.652, -1.321]   # low-side OOD (stronger gravity)
+
+  # TODO: For new baseline on OOD params to see if possible. We train on these OOD params as follows from above:
+  # We simply make random_variable_ranges = to the values that were OOD before
+  # baseline    ID        103.95  ±  15.94        0.933
+  # baseline   OOD         45.13  ±  13.45        0.550
+  random_variable_ranges:
+    paddle_density: [6000.0, 7500.0]   # high-side OOD 
+    puck_damping:   [0.356, 0.445]     # high-side OOD
+    gravity:        [-1.652, -1.321]   # low-side OOD (stronger gravity)
+
+
+  simulator: box2d
+  simulator_params:
+    absorb_target: false
+    enable_puck_delay_interpolation: true
+    block_density: 1000
+    block_width: 0.0254
+    length: 1.9304
+    max_force_timestep: 10000
+    paddle_radius: 0.0508
+    force_scaling: 0.99
+    paddle_damping: 17
+    paddle_density: 3000          # sysid (center of DR distribution)
+    gravity: -0.661               # sysid (center of DR distribution)
+    puck_damping: 0.178           # sysid (center of DR distribution)
+    puck_density: 3000
+    puck_restitution: 1.09145
+    paddle_restitution: 1.0
+    side_wall_restitution: 0.99
+    end_wall_restitution: 0.7
+    puck_radius: 0.03175
+    render_size: 360
+    seed: 0
+    width: 0.8636
+    pid_kp: 9000
+    pid_kd: 50
+    pid_ki: 0.0
+
+    hist_len: 2
+
+    # Defaults kept on:
+    puck_noise: true
+    puck_noise_std: 0.01
+    # Plain spatially-uniform puck occlusion (5% per-step start probability).
+    enable_random_occlusions: true
+    random_occlusion_rate: 0.05
+    random_occlusion_length_weights: [75, 39, 18, 9, 4, 2, 1]
+    enable_action_delay: false
+    enable_observation_delay: true   # project default — KEEP ON
+    delay_seconds: 0.025
+
+  task: puck_juggle_upper_half_reward
+  terminate_on_enemy_goal: true
+  terminate_on_out_of_bounds: false
+  terminate_on_puck_hit_bottom: true
+  terminate_on_puck_hit_paddle: false
+  terminate_on_puck_pass_paddle: true
+  terminate_on_puck_stop: false

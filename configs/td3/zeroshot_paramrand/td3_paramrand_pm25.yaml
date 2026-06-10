@@ -87,7 +87,10 @@ exploration_direction_y_component_weight: 2
 
 
 # Source sim — hist_len=2 with paddle_density / puck_damping / gravity DR
-config: "configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25.yaml"
+# TODO: Double check this to make sure we're training on the correct IN or OUT of distribution
+# config: "configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25.yaml" # IN-DISTRIBUTION
+config: "configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25_OOD.yaml"   # OUT-DISTRIBUTION
+
 
 # Paths
 args_file: null
@@ -119,22 +122,25 @@ eval_n_envs: 5
 eval_eps_per_env: 4
 
 # For: use transformer/context-vector
-use_context_vector: True
+use_context_vector: False
 context_len: 30          
 context_vector_dim: 8
 transformer_lr: 0.0003     
 
 # For: analysis of context vectors after training the transformer
-analyze_context_vectors: true
+analyze_context_vectors: False
 context_analysis_n_eps: 20      
 context_analysis_n_envs: 10     
-context_analysis_ood_scale: 2.0   
+context_analysis_ood_scale: 1.0   
 context_analysis_out_dir: "results/context_tsne"
 
 # For evaluation of baseline vs ours for ID and OOD env param distributions
 eval_id_ood: False
 eval_id_ood_n_envs: 30
 eval_id_ood_n_eps: 8
-eval_id_ood_ood_scale: 2.0
+eval_id_ood_ood_scale: 1.0
 eval_id_ood_out_dir: "results/id_ood_comparison"
-eval_id_ood_compare_model_path: None
+eval_id_ood_compare_model_path: null
+
+# Populate this with the path after we generate and save the ID and OOD
+params_cache_path: "saved/ID_OOD_eval_sets"

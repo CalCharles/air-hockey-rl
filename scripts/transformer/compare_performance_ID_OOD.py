@@ -61,7 +61,7 @@ def _sample_id_params(random_variable_ranges, random_variables, rng):
 
 
 
-def _sample_ood_params(random_variable_ranges, random_variables, rng, ood_scale=2.0, ood_gap=0.5):
+def _sample_ood_params(random_variable_ranges, random_variables, rng, ood_scale=1.0, ood_gap=0.5):
     params = {}
     for var in random_variables:
         low, high = random_variable_ranges[var]
@@ -295,6 +295,27 @@ def _plot_bar_chart(aggregates: dict, out_dir: str):
     plt.close(fig)
     print(f"Saved bar chart → {chart_path}")
 
+# ---------------------------------------------------------------------------
+# ID and OOD Environment Parameter save / load helper functions
+# ---------------------------------------------------------------------------
+
+def _load_params(cache_path: str) -> tuple[list[dict], list[dict]]:
+    """Load ID and OOD param sets from a previously saved cache file."""
+    with open(cache_path) as f:
+        cached = json.load(f)
+    id_params  = cached["id"]
+    ood_params = cached["ood"]
+    print(f"  Loaded {len(id_params)} ID + {len(ood_params)} OOD param sets from {cache_path}")
+    return id_params, ood_params
+
+
+def _save_params(cache_path: str, id_params: list[dict], ood_params: list[dict]) -> None:
+    os.makedirs(os.path.dirname(os.path.abspath(cache_path)), exist_ok=True)
+    with open(cache_path, "w") as f:
+        json.dump({"id": id_params, "ood": ood_params}, f, indent=2)
+    print(f"  Saved param sets → {cache_path}")
+
+
 
 # ---------------------------------------------------------------------------
 # Main entry point — called from td3_training._entrypoint()
@@ -319,6 +340,7 @@ def compare_performance_ID_OOD(
     # For table header only
     baseline_model_path: str = "",
     context_model_path: str = "",
+    params_cache_path: str = "",
 ):
     """Compare baseline vs context-vector TD3 on ID and OOD dynamics.
 
@@ -341,11 +363,13 @@ def compare_performance_ID_OOD(
     context_history_buf  : HistoryBuffer for context model (optional).
     baseline_model_path  : Path string used in table header only.
     context_model_path   : Path string used in table header only.
+    params_cache_path    : Path to saved
     """
     os.makedirs(out_dir, exist_ok=True)
 
     random_variables      = list(air_hockey_base.get("random_variables", []))
     random_variable_ranges = dict(air_hockey_base.get("random_variable_ranges", {}))
+    random_variable_ranges_OOD = dict(air_hockey_base.get("random_variable_ranges_OOD", {}))
 
     if not random_variables:
         raise ValueError(
@@ -368,8 +392,32 @@ def compare_performance_ID_OOD(
 
     # Sample fixed ID/OOD dynamics configs
     rng = np.random.RandomState(seed)
-    id_param_sets  = [_sample_id_params (random_variable_ranges, random_variables, rng) for _ in range(n_envs)]
-    ood_param_sets = [_sample_ood_params(random_variable_ranges, random_variables, rng, ood_scale) for _ in range(n_envs)]
+
+
+    # TODO: See that we're actually just sampling a set of environments. We should think about keeping these and saving them so we can use the exact same values to compare against later
+    # id_param_sets  = [_sample_id_params (random_variable_ranges, random_variables, rng) for _ in range(n_envs)]
+
+    # # TODO: For now we just want to see if these values truly are OOD so we'll use the _sample_id_params function but pass in the ranges that correspond to OOD
+    # ood_param_sets = [_sample_id_params (random_variable_ranges_OOD, random_variables, rng) for _ in range(n_envs)]
+
+    # ood_param_sets = [_sample_ood_params(random_variable_ranges, random_variables, rng, ood_scale) for _ in range(n_envs)]
+
+
+    # TODO: Load the eval ID and OOD sets from disk if there - otherwise generate them
+
+    if params_cache_path is not None and os.path.exists(params_cache_path):
+        
+        id_param_sets, ood_param_sets = _load_params(params_cache_path)
+
+        print(f"  Loaded {len(id_param_sets)} ID + {len(ood_param_sets)} OOD param sets from {params_cache_path}")
+    else:
+        id_param_sets  = [_sample_id_params(random_variable_ranges,     random_variables, rng) for _ in range(n_envs)]
+        ood_param_sets = [_sample_id_params(random_variable_ranges_OOD, random_variables, rng) for _ in range(n_envs)]
+        if params_cache_path is not None:
+            _save_params(params_cache_path, id_param_sets, ood_param_sets)
+
+
+
 
     # Which models to evaluate
     models = [("baseline", baseline_actor, None, None)]
