@@ -1161,7 +1161,7 @@ def _entrypoint():
                         with torch.no_grad():
                             sampled_next_context = transformer(sampled_next_history)
                     else:
-                        sampled_next_context = sampled_history.view(sampled_history.shape[0], -1)  # (B, T*4)
+                        sampled_next_context = sampled_next_history.view(sampled_next_history.shape[0], -1)  # (B, T*4)
 
 
                     sampled_next_obs_with_context = torch.cat([sampled_next_observations, sampled_next_context], dim=-1)

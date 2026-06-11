@@ -34,7 +34,9 @@ run_sweep() {
   done
 }
 
-run_sweep true cuda:0 &
-run_sweep false cuda:1 &
+# run_sweep true cuda:0 &
+# run_sweep false cuda:1 &
 
-wait
+# wait
+
+run_sweep false cuda:1
