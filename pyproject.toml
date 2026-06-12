@@ -36,6 +36,8 @@ train = [
     "scikit-learn",
     "tyro",
     "transformers",
+    "matplotlib",
+    "imageio",
 ]
 
 [project.urls]

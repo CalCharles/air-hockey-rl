@@ -38,6 +38,7 @@ from airhockey.airhockey_tasks.puck_goal_position_dynamic_negative_regions impor
 from airhockey.airhockey_tasks.puck_goal_position_obstacles import (
     AirHockeyPuckGoalPositionObstaclesEnv,
 )
+from airhockey.sims.robosuite_3D.robosuite_env import RobosuiteAirHockeyAdapter
 
 
 ASSETS_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../assets"))
@@ -113,3 +114,19 @@ def AirHockeyEnv(cfg):
     else:
         raise ValueError("Task {} not recognized".format(task))
     return task_env.from_dict(cfg)
+
+# TODO: Change name to 3D simulator
+def make_env(config: dict):
+    sim = config.get("simulator", "box2d")
+    if sim == "robosuite":
+        return RobosuiteAirHockeyAdapter(
+            task=config.get("task", "reach"),
+            reward_shaping=config.get("reward_shaping", True),
+            max_episode_steps=config.get("max_timesteps", 500),
+            seed=config.get("seed", None),
+            control_freq=config.get("control_freq", 20),
+            domain_random=config.get("domain_random", False),
+            random_variables=config.get("random_variables", []),
+            random_variable_ranges=config.get("random_variable_ranges", {}),
+        )
+    return AirHockeyEnv(config)   # Box2D path unchanged

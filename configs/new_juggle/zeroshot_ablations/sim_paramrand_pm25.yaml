@@ -68,7 +68,8 @@ air_hockey:
     puck_damping:   [0.356, 0.445]     # high-side OOD
     gravity:        [-1.652, -1.321]   # low-side OOD (stronger gravity)
 
-  simulator: box2d
+  simulator: robosuite    # 3D simulator
+  # simulator: box2d      # Box2d simulator
   simulator_params:
     absorb_target: false
     enable_puck_delay_interpolation: true

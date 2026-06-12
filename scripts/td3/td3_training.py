@@ -73,6 +73,12 @@ from scripts.transformer.compare_performance_ID_OOD import compare_performance_I
 from scripts.td3.evaluate import evaluate_agent
 from scripts.utils import save_tensorboard_plots
 
+from airhockey import make_env as _make_env
+
+from airhockey.envs.robosuite_env import RobosuiteAirHockeyAdapter
+from scripts.td3.helper.rollout_3d import record_rollout_video
+from scripts.td3.helper.td3_policy_fn import make_policy_fn
+
 ROLLING_STATS_WINDOW_STEPS = 2000
 HISTORY_ENTRY_DIM = 4
 
@@ -291,14 +297,26 @@ class Args:
     eval_id_ood_compare_model_path: str | None = None
     params_cache_path: str | None = None
 
+    record_video_every: int = 1
+    eval_seed: int = 0
+
+
+# def make_env(env_id):
+#     def _thunk():
+#         curr_seed = random.randint(0, int(1e8))
+#         config["air_hockey"]["seed"] = curr_seed
+#         env = AirHockeyEnv(config["air_hockey"])
+#         return env
+
+#     return _thunk
 
 def make_env(env_id):
     def _thunk():
         curr_seed = random.randint(0, int(1e8))
         config["air_hockey"]["seed"] = curr_seed
-        env = AirHockeyEnv(config["air_hockey"])
+        # ↓ only line changed — was: AirHockeyEnv(config["air_hockey"])
+        env = _make_env(config["air_hockey"])
         return env
-
     return _thunk
 
 
@@ -616,17 +634,47 @@ def _entrypoint():
     episode_return_success_threshold = 0.0
 
     # --- Live episode GIF recording ---
-    renderer_env = AirHockeyEnv(config["air_hockey"])
-    train_renderer = AirHockeyRenderer(
-        renderer_env, show_target_position=True, show_acceleration_arrow=False
-    )
-    gif_recorder = GIFEpisodeRecorder(
-        log_parent_dir,
-        watch_ring_size=args.watch_ring_size,
-        watch_episode_interval=args.watch_episode_interval,
-        sample_gif_interval=args.sample_gif_interval,
-        sample_gif_max_storage_mb=args.sample_gif_max_storage_mb,
-    )
+
+    # renderer_env = AirHockeyEnv(config["air_hockey"])
+    # train_renderer = AirHockeyRenderer(
+    #     renderer_env, show_target_position=True, show_acceleration_arrow=False
+    # )
+    # gif_recorder = GIFEpisodeRecorder(
+    #     log_parent_dir,
+    #     watch_ring_size=args.watch_ring_size,
+    #     watch_episode_interval=args.watch_episode_interval,
+    #     sample_gif_interval=args.sample_gif_interval,
+    #     sample_gif_max_storage_mb=args.sample_gif_max_storage_mb,
+    # )
+
+    is_robosuite_sim = config["air_hockey"].get("simulator") == "robosuite"
+
+    if not is_robosuite_sim:
+        renderer_env = AirHockeyEnv(config["air_hockey"])
+        train_renderer = AirHockeyRenderer(
+            renderer_env, show_target_position=True, show_acceleration_arrow=False
+        )
+        gif_recorder = GIFEpisodeRecorder(
+            log_parent_dir,
+            watch_ring_size=args.watch_ring_size,
+            watch_episode_interval=args.watch_episode_interval,
+            sample_gif_interval=args.sample_gif_interval,
+            sample_gif_max_storage_mb=args.sample_gif_max_storage_mb,
+        )
+    else:
+        train_renderer = None
+        gif_recorder = GIFEpisodeRecorder(
+            log_parent_dir,
+            watch_ring_size=0,
+            watch_episode_interval=0,
+            sample_gif_interval=0,
+            sample_gif_max_storage_mb=0.0,
+        )
+        # Make capture_frame/note_reward/on_episode_end no-ops so the rest
+        # of the loop doesn't need conditionals.
+        gif_recorder.capture_frame = lambda *a, **k: None
+        gif_recorder.note_reward = lambda *a, **k: None
+        gif_recorder.on_episode_end = lambda *a, **k: None
 
     start_time = time.time()
     global_step = 0
@@ -1435,26 +1483,73 @@ def _entrypoint():
             checkpoint_dir = os.path.join(log_parent_dir, f"checkpoint_{global_step}")
             model_path = save_full_checkpoint(checkpoint_dir)
             print(f"\nCheckpoint saved at step {global_step}")
-            try:
-                evaluate_agent(
-                    model_path,
-                    checkpoint_dir,
-                    config["air_hockey"],
-                    n_eps=4,
-                    n_gifs=1,
-                    action_scale=action_scale,
-                    agent_hidden_layer_size=args.agent_hidden_layer_size,
-                    agent_num_hidden_layers=args.agent_num_hidden_layers,
-                    use_last_action_in_policy_state=args.use_last_action_in_policy_state,
 
-                    HISTORY_ENTRY_DIM=HISTORY_ENTRY_DIM,
-                    use_history=args.use_history,
-                    use_transformer=args.use_transformer,
-                    context_vector_dim=args.context_vector_dim,
-                    context_len=args.context_len,
+            is_robosuite = config["air_hockey"].get("simulator") == "robosuite"
+
+            if is_robosuite:
+                # 3D video recording path
+                
+
+                should_record = (
+                    args.record_video_every > 0
+                    and (global_step // args.checkpoint_interval) % args.record_video_every == 0
                 )
-            except Exception as e:
-                print(f"Evaluation failed: {e}")
+                if should_record:
+                    video_env = RobosuiteAirHockeyAdapter.for_video(
+                        config["air_hockey"],
+                        camera_name=config["air_hockey"].get("video_camera", "overview"),
+                    )
+                    policy_fn = make_policy_fn(
+                        actor=actor,
+                        device=args.device,
+                        use_last_action=args.use_last_action_in_policy_state,
+                        use_history=args.use_history,
+                        use_transformer=args.use_transformer,
+                        transformer=transformer if args.use_transformer else None,
+                        context_len=args.context_len,
+                        act_dim=act_dim,
+                    )
+                    video_path = os.path.join(checkpoint_dir, f"rollout_{global_step:07d}.mp4")
+                    try:
+                        stats = record_rollout_video(
+                            video_env,
+                            policy_fn,
+                            video_path,
+                            camera_name=config["air_hockey"].get("video_camera", "overview"),
+                            fps=config["air_hockey"].get("video_fps", 20),
+                            seed=args.eval_seed,
+                        )
+                        print(f"[video] saved to {stats['video_path']} "
+                            f"return={stats['return']:.3f} success={stats['success']}")
+                    except Exception as e:
+                        print(f"Video recording failed: {e}")
+                    finally:
+                        video_env.close()
+            else:
+                # Original Box2D GIF path — unchanged
+                try:
+                    evaluate_agent(
+                        model_path,
+                        checkpoint_dir,
+                        config["air_hockey"],
+                        n_eps=4,
+                        n_gifs=1,
+                        action_scale=action_scale,
+                        agent_hidden_layer_size=args.agent_hidden_layer_size,
+                        agent_num_hidden_layers=args.agent_num_hidden_layers,
+                        use_last_action_in_policy_state=args.use_last_action_in_policy_state,
+                        HISTORY_ENTRY_DIM=HISTORY_ENTRY_DIM,
+                        use_history=args.use_history,
+                        use_transformer=args.use_transformer,
+                        context_vector_dim=args.context_vector_dim,
+                        context_len=args.context_len,
+                    )
+                except Exception as e:
+                    print(f"Evaluation failed: {e}")
+
+
+
+
 
         iteration += 1
         global_step += args.num_envs
