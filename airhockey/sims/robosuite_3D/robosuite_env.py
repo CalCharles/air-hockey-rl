@@ -81,6 +81,7 @@ class RobosuiteAirHockeyAdapter(gym.Env):
         domain_random: bool = False,
         random_variables: Optional[list] = None,
         random_variable_ranges: Optional[dict] = None,
+        table_tilt_deg: float = 2.0,
         **kwargs,
     ):
         if not HAS_ROBOSUITE:
@@ -100,6 +101,8 @@ class RobosuiteAirHockeyAdapter(gym.Env):
         self._has_offscreen_renderer = has_offscreen_renderer
         self._camera_name = camera_name
         self.has_offscreen_renderer = has_offscreen_renderer
+
+        self.table_tilt_deg = table_tilt_deg
 
         # Gymnasium spaces — identical shapes to Box2D so AsyncVectorEnv works
         self.observation_space = gym.spaces.Box(
@@ -167,7 +170,7 @@ class RobosuiteAirHockeyAdapter(gym.Env):
     #     )
     #     return env
     # Expose sim for direct access if needed
-    
+
     @property
     def sim(self):
         return self._env.sim
@@ -216,6 +219,7 @@ class RobosuiteAirHockeyAdapter(gym.Env):
             horizon=self.max_episode_steps,
             physics_overrides=physics_overrides or {},
             seed=self._seed,
+            table_tilt_deg=self.table_tilt_deg,
         )
 
     @classmethod
@@ -233,6 +237,7 @@ class RobosuiteAirHockeyAdapter(gym.Env):
             has_offscreen_renderer=True,
             camera_name=camera_name,
             # no domain_random for eval — fixed physics
+            table_tilt_deg=config.get("table_tilt_deg", 2.0),
         )
 
 

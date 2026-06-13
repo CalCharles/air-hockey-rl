@@ -1,18 +1,16 @@
-"""Free-joint puck object."""
+"""Free-joint puck object — flat disk."""
 
-from robosuite.models.objects import BallObject
+from robosuite.models.objects import CylinderObject
 
 
-class PuckObject(BallObject):
+class PuckObject(CylinderObject):
     """
-    Air hockey puck: flat cylinder-like sphere with low friction.
-
-    Uses robosuite BallObject (free joint by default) — no custom MJCF file required.
+    Air hockey puck: thin flat cylinder with low friction.
     """
 
-    def __init__(self, name="puck", radius=0.025, **kwargs):
+    def __init__(self, name="puck", radius=0.03175, height=0.012, **kwargs):
         defaults = dict(
-            size=[radius],
+            size=[radius, height / 2],  # CylinderObject: [radius, half-height]
             rgba=[0.05, 0.05, 0.05, 1],
             density=300,
             friction=(0.01, 0.0001, 0.00001),

@@ -21,6 +21,7 @@ class AirHockeyArena(TableArena):
         wall_height=0.08,
         wall_thickness=0.02,
         has_legs=False,
+        table_tilt_deg=2.0,   # NEW — tilt angle around x-axis (toward/away from robot)
     ):
         super().__init__(
             table_full_size=table_full_size,
@@ -38,6 +39,16 @@ class AirHockeyArena(TableArena):
         self._add_walls()
         self._add_goal_sites()
         self._configure_cameras()
+        # self._apply_table_tilt()
+
+
+    # def _apply_table_tilt(self):
+    #     """Tilt table about the x-axis so the puck drifts in -y (toward robot/player)."""
+    #     if self.table_tilt_deg == 0:
+    #         return
+    #     tilt_rad = np.deg2rad(self.table_tilt_deg)
+    #     quat = axisangle2quat(np.array([tilt_rad, 0, 0]))  # rotate about x-axis
+    #     self.table_body.set("quat", array_to_string(quat))
 
     def _configure_cameras(self):
         """

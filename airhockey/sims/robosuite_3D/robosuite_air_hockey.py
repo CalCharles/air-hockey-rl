@@ -51,6 +51,7 @@ class RobosuiteAirHockeyEnv(ManipulationEnv):
         render_camera="overview",
         control_freq=20,
         seed=None,
+        table_tilt_deg=2.0,
         physics_overrides: Optional[dict] = None,
         **kwargs,
     ):
@@ -62,6 +63,7 @@ class RobosuiteAirHockeyEnv(ManipulationEnv):
         self.active_task = fixed_task or "reach"
         self.use_object_obs = use_object_obs
         self.reward_shaping = reward_shaping
+        self.table_tilt_deg = table_tilt_deg
 
         # Goal line at 90 % of half-width (leaves 10 % buffer)
         self.goal_line_y = table_full_size[1] * 0.9
@@ -115,6 +117,7 @@ class RobosuiteAirHockeyEnv(ManipulationEnv):
             table_full_size=self.table_full_size,
             table_friction=self.table_friction,
             table_offset=self.table_offset,
+            table_tilt_deg=self.table_tilt_deg,
         )
         mujoco_arena.set_origin([0, 0, 0])
 
@@ -133,7 +136,8 @@ class RobosuiteAirHockeyEnv(ManipulationEnv):
             ensure_object_boundary_in_range=True,
             ensure_valid_placement=True,
             reference_pos=self.table_offset,
-            z_offset=self.table_full_size[2] + self.puck_radius,
+            # z_offset=self.table_full_size[2] + self.puck_radius,
+            z_offset=self.table_full_size[2] + self.puck.size[1],  # half-height of cylinder, not radius
             rng=self.rng,
         )
 
