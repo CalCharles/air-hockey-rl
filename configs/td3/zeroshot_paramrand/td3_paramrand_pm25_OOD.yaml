@@ -89,8 +89,8 @@ exploration_direction_y_component_weight: 2
 
 # Source sim — hist_len=2 with paddle_density / puck_damping / gravity DR
 # TODO: Double check this to make sure we're training on the correct IN or OUT of distribution
-config: "configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25.yaml" # IN-DISTRIBUTION
-# config: "configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25_OOD.yaml"   # OUT-DISTRIBUTION
+# config: "configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25.yaml" # IN-DISTRIBUTION
+config: "configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25_OOD.yaml"   # OUT-DISTRIBUTION
 
 
 # Paths

@@ -4,6 +4,11 @@
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.uv]
+required-environments = [
+    "sys_platform == 'linux' and platform_machine == 'aarch64'"
+]
+
 [project]
 name = "airhockey"
 version = "0.1.0"
@@ -24,6 +29,8 @@ dependencies = [
     "xmltodict",
     "pyyaml",
     "ur-rtde",
+    "matplotlib>=3.10.9",
+    "imageio>=2.37.3",
 ]
 
 [project.optional-dependencies]
@@ -32,7 +39,8 @@ train = [
     "tensorboard",
     "wandb",
     "pyrallis",
-    "torch",
+    "torch==2.11.0",
+    "stable-baselines3",
     "scikit-learn",
     "tyro",
     "transformers",
