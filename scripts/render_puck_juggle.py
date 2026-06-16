@@ -25,14 +25,30 @@ OUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 
 
 def build_env(num_steps=120):
+
+    # using old config path for box2d: configs/baseline_configs/robosuite/puck_juggle_robosuite.yaml
+    # cfg_fp = os.path.join(
+    #     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    # "configs", "baseline_configs", "robosuite", "puck_juggle_robosuite.yaml",
+    # )
+
+    
+    # using new config path for robosuite 3D sim
+    # configs/baseline_configs/robosuite/sysid_robosuite.yaml
     cfg_fp = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "configs", "baseline_configs", "robosuite", "puck_juggle_robosuite.yaml",
+    "configs", "baseline_configs", "robosuite", "sysid_robosuite.yaml",
     )
+
+    
     with open(cfg_fp, "r") as f:
         cfg = yaml.safe_load(f)
     ah = cfg["air_hockey"]
-    ah["n_training_steps"] = cfg["n_training_steps"]
+    # breakpoint()
+    # ah["n_training_steps"] = cfg["n_training_steps"]
+    # ah["n_training_steps"] = ah["n_training_steps"]
+
+    
     ah["return_goal_obs"] = False
     ah["seed"] = 7
     ah["max_timesteps"] = num_steps
