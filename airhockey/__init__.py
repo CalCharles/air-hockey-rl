@@ -7,16 +7,72 @@ ROBOSUITE_AVAILABLE = False
 robosuite_xml_path_completion = None
 assets_root = None
 
+
+# Original - but this is the version pre-bug fix #7
+# try:
+#     from robosuite.utils.mjcf_utils import xml_path_completion as robosuite_xml_path_completion
+#     from robosuite.models import assets_root
+#     import airhockey.sims.controllers  # registers custom controllers
+#     import airhockey.sims.robots
+#     import airhockey.sims.grippers
+#     import airhockey.sims.utils.RobosuiteTransforms
+#     ROBOSUITE_AVAILABLE = True
+# except Exception:
+#     print("Robosuite not loaded. Robosuite-only components are unavailable.")
+
+
 try:
-    from robosuite.utils.mjcf_utils import xml_path_completion as robosuite_xml_path_completion
-    from robosuite.models import assets_root
-    import airhockey.sims.controllers  # registers custom controllers
-    import airhockey.sims.robots
-    import airhockey.sims.grippers
-    import airhockey.sims.utils.RobosuiteTransforms
     ROBOSUITE_AVAILABLE = True
+
+    try:
+        from robosuite.utils.mjcf_utils import xml_path_completion as robosuite_xml_path_completion
+        from robosuite.models import assets_root
+    except Exception:
+        print("1 stuff didn't import")
+        ROBOSUITE_AVAILABLE = False
+
+
+    try:
+        import airhockey.sims.controllers
+    except Exception:
+        print("2 stuff didn't import")
+        ROBOSUITE_AVAILABLE = False
+
+    try:
+        import airhockey.sims.robots
+    except Exception:
+        print("3 stuff didn't import")
+        ROBOSUITE_AVAILABLE = False
+
+
+    try:
+        import airhockey.sims.grippers
+    except Exception:
+        print("4 stuff didn't import")
+        ROBOSUITE_AVAILABLE = False
+
+    try:
+        import airhockey.sims.utils.RobosuiteTransforms
+    except Exception:
+        print("5 stuff didn't import")
+        ROBOSUITE_AVAILABLE = False
+
+
+
 except Exception:
-    print("Robosuite not loaded. Robosuite-only components are unavailable.")
+    ROBOSUITE_AVAILABLE = False
+    print("Error during import")
+
+
+
+
+
+
+
+
+
+
+
 
 from airhockey.airhockey_simple_tasks import (
     AirHockeyPuckVelEnv,
