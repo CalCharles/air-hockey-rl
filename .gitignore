@@ -220,3 +220,5 @@ demo/
 shared/
 real_runs/
 sysid/
+saved/
+eval_gifs/
