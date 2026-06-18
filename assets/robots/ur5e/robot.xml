@@ -17,46 +17,46 @@
 	<material name="URBlue" specular="0.5" shininess="0.25" rgba="0.490196 0.678431 0.800000 1.000000"/>
       
         <!-- base material and mesh -->
-	<mesh name="base_vis_0" file="obj_meshes/base_vis/base_vis_0.obj"/>
-	<mesh name="base_vis_1" file="obj_meshes/base_vis/base_vis_1.obj"/>
+	<mesh name="base_vis_0" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/obj_meshes/base_vis/base_vis_0.obj"/>
+	<mesh name="base_vis_1" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/obj_meshes/base_vis/base_vis_1.obj"/>
 
         <!-- forearm mesh -->	
-	<mesh name="forearm_vis_0" file="obj_meshes/forearm_vis/forearm_vis_0.obj"/>
-	<mesh name="forearm_vis_1" file="obj_meshes/forearm_vis/forearm_vis_1.obj"/>
-	<mesh name="forearm_vis_2" file="obj_meshes/forearm_vis/forearm_vis_2.obj"/>
-	<mesh name="forearm_vis_3" file="obj_meshes/forearm_vis/forearm_vis_3.obj"/>
+	<mesh name="forearm_vis_0" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/obj_meshes/forearm_vis/forearm_vis_0.obj"/>
+	<mesh name="forearm_vis_1" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/obj_meshes/forearm_vis/forearm_vis_1.obj"/>
+	<mesh name="forearm_vis_2" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/obj_meshes/forearm_vis/forearm_vis_2.obj"/>
+	<mesh name="forearm_vis_3" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/obj_meshes/forearm_vis/forearm_vis_3.obj"/>
 
         <!-- shoulder material and mesh -->	
-	<mesh name="shoulder_vis_0" file="obj_meshes/shoulder_vis/shoulder_vis_0.obj"/>
-	<mesh name="shoulder_vis_1" file="obj_meshes/shoulder_vis/shoulder_vis_1.obj"/>
-	<mesh name="shoulder_vis_2" file="obj_meshes/shoulder_vis/shoulder_vis_2.obj"/>
+	<mesh name="shoulder_vis_0" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/obj_meshes/shoulder_vis/shoulder_vis_0.obj"/>
+	<mesh name="shoulder_vis_1" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/obj_meshes/shoulder_vis/shoulder_vis_1.obj"/>
+	<mesh name="shoulder_vis_2" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/obj_meshes/shoulder_vis/shoulder_vis_2.obj"/>
 
         <!-- upperarm material and mesh -->
-	<mesh name="upperarm_vis_0" file="obj_meshes/upperarm_vis/upperarm_vis_0.obj"/>
-	<mesh name="upperarm_vis_1" file="obj_meshes/upperarm_vis/upperarm_vis_1.obj"/>
-	<mesh name="upperarm_vis_2" file="obj_meshes/upperarm_vis/upperarm_vis_2.obj"/>
-	<mesh name="upperarm_vis_3" file="obj_meshes/upperarm_vis/upperarm_vis_3.obj"/>
+	<mesh name="upperarm_vis_0" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/obj_meshes/upperarm_vis/upperarm_vis_0.obj"/>
+	<mesh name="upperarm_vis_1" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/obj_meshes/upperarm_vis/upperarm_vis_1.obj"/>
+	<mesh name="upperarm_vis_2" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/obj_meshes/upperarm_vis/upperarm_vis_2.obj"/>
+	<mesh name="upperarm_vis_3" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/obj_meshes/upperarm_vis/upperarm_vis_3.obj"/>
 
         <!-- wrist1 material and mesh -->	
-	<mesh name="wrist1_vis_0" file="obj_meshes/wrist1_vis/wrist1_vis_0.obj"/>
-	<mesh name="wrist1_vis_1" file="obj_meshes/wrist1_vis/wrist1_vis_1.obj"/>
-	<mesh name="wrist1_vis_2" file="obj_meshes/wrist1_vis/wrist1_vis_2.obj"/>
+	<mesh name="wrist1_vis_0" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/obj_meshes/wrist1_vis/wrist1_vis_0.obj"/>
+	<mesh name="wrist1_vis_1" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/obj_meshes/wrist1_vis/wrist1_vis_1.obj"/>
+	<mesh name="wrist1_vis_2" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/obj_meshes/wrist1_vis/wrist1_vis_2.obj"/>
 
         <!-- wrist2 material and mesh -->	
-	<mesh name="wrist2_vis_0" file="obj_meshes/wrist2_vis/wrist2_vis_0.obj"/>
-	<mesh name="wrist2_vis_1" file="obj_meshes/wrist2_vis/wrist2_vis_1.obj"/>
-	<mesh name="wrist2_vis_2" file="obj_meshes/wrist2_vis/wrist2_vis_2.obj"/>
+	<mesh name="wrist2_vis_0" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/obj_meshes/wrist2_vis/wrist2_vis_0.obj"/>
+	<mesh name="wrist2_vis_1" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/obj_meshes/wrist2_vis/wrist2_vis_1.obj"/>
+	<mesh name="wrist2_vis_2" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/obj_meshes/wrist2_vis/wrist2_vis_2.obj"/>
 
         <!-- wrist3 material and mesh -->	
-	<mesh name="wrist3_vis" file="obj_meshes/wrist3_vis/wrist3_vis.obj"/>
+	<mesh name="wrist3_vis" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/obj_meshes/wrist3_vis/wrist3_vis.obj"/>
 	
-        <mesh name="base" file="meshes/base.stl" />
-        <mesh name="shoulder" file="meshes/shoulder.stl" />
-        <mesh name="upperarm" file="meshes/upperarm.stl" />
-        <mesh name="forearm" file="meshes/forearm.stl" />
-        <mesh name="wrist1" file="meshes/wrist1.stl" />
-        <mesh name="wrist2" file="meshes/wrist2.stl" />
-        <mesh name="wrist3" file="meshes/wrist3.stl" />
+        <mesh name="base" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/meshes/base.stl" />
+        <mesh name="shoulder" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/meshes/shoulder.stl" />
+        <mesh name="upperarm" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/meshes/upperarm.stl" />
+        <mesh name="forearm" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/meshes/forearm.stl" />
+        <mesh name="wrist1" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/meshes/wrist1.stl" />
+        <mesh name="wrist2" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/meshes/wrist2.stl" />
+        <mesh name="wrist3" file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/robots/ur5e/meshes/wrist3.stl" />
     </asset>
     <worldbody>
         <body name="base" pos="-0.26 0 0.635">

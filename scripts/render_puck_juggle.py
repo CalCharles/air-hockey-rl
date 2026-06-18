@@ -74,11 +74,19 @@ def main():
     if os.path.exists(OUT_DIR):
         shutil.rmtree(OUT_DIR)
     os.makedirs(OUT_DIR)
-
+    # breakpoint()
     env = build_env()
+
+    env.defaults
+
+
     obs, info = env.reset()
 
     sim = env.simulator.robosuite_env.sim
+
+    # breakpoint()
+
+
     puck_id = sim.model.body_name2id("puck_0")
     eef_id = sim.model.body_name2id("gripper0_right_eef")
     print(f"After env init/reset:")

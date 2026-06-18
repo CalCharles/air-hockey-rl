@@ -23,6 +23,7 @@ dependencies = [
     "h5py",
     "xmltodict",
     "pyyaml",
+    "robola>=0.2.4",
 ]
 
 [project.optional-dependencies]

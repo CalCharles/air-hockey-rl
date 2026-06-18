@@ -11,11 +11,14 @@
         <material name="transparent" specular="0.5" shininess="0.25" rgba="0.0 0.0 1.0 0"/>
         <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512"
                  height="3072"/>
-        <texture file="../textures/light-gray-floor-tile.png" type="2d" name="texplane"/>
+        <!-- <texture file="../textures/light-gray-floor-tile.png" type="2d" name="texplane"/> -->
+        <texture file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/textures/light-gray-floor-tile.png" type="2d" name="texplane"/>
         <material name="floorplane" reflectance="0.01" shininess="0.0" specular="0.0" texrepeat="2 2" texture="texplane" texuniform="true"/>
-        <texture file="../textures/light-gray-plaster.png" type="2d" name="tex-light-gray-plaster"/>
+        <!-- <texture file="../textures/light-gray-plaster.png" type="2d" name="tex-light-gray-plaster"/> -->
+        <texture file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/textures/light-gray-plaster.png" type="2d" name="tex-light-gray-plaster"/>
         <material name="walls_mat" reflectance="0.0" shininess="0.1" specular="0.1" texrepeat="3 3" texture="tex-light-gray-plaster" texuniform="true" />
-        <texture file="../textures/ceramic.png" type="cube" name="tex-ceramic"/>
+        <!-- <texture file="../textures/ceramic.png" type="cube" name="tex-ceramic"/> -->
+        <texture file="/work/10993/rohanpatel01/vista/air-hockey-rl/.venv_old_main/lib/python3.14/site-packages/robosuite/models/assets/textures/ceramic.png" type="cube" name="tex-ceramic"/>
         <material name="table_ceramic" reflectance="0.0" shininess="0.0" specular="0.2" texrepeat="1 1" texture="tex-ceramic" />
     </asset>
 

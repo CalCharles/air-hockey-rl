@@ -155,7 +155,7 @@ class AirHockeyRobosuite(AirHockeySim):
     """
 
     def __init__(self, **kwargs):
-
+        # breakpoint()
         defaults = {
             'action_x_scaling': 1.0,
             'action_y_scaling': 1.0,
@@ -196,6 +196,7 @@ class AirHockeyRobosuite(AirHockeySim):
             'renderer_config': None,
             'task': "JUGGLE_PUCK",
             'table_xml': "arenas/air_hockey_table.xml",  # relative to assets dir
+            # 'table_xml': "arenas/air_hockey_table_robola_compile.xml",  # relative to assets dir
             'puck_radius': 0.03165,
             'puck_damping': 0.01,
             'puck_density': 30,
@@ -210,10 +211,10 @@ class AirHockeyRobosuite(AirHockeySim):
             'paddle_bounds': [],
             'paddle_edge_bounds': [],
             'center_offset_constant': 1.2,
-            'depth': 0.0505,  # Table depth from XML comment
-            'table_elevation': 0.0,  # Table elevation
+            'depth': 0.0505,  # Table depth from XML comment          # TODO: was 0.0505
+            'table_elevation': 0.0,  # Table elevation          # TODO: changed just for the love of the game - was 0.0
             'table_tilt': 0.0,  # Table tilt angle
-            'rim_width': 0.05,  # Rim width for table offsets
+            'rim_width': 0.05,  # Rim width for table offsets   # TODO:L just for the love of the game - was 0.05
             'max_puck_vel': 10.0,  # Maximum puck velocity
             'max_paddle_vel': 2.0,  # Maximum paddle velocity
             'time_frequency': 20,  # Time frequency
@@ -317,7 +318,11 @@ class AirHockeyRobosuite(AirHockeySim):
         current_time = datetime.datetime.fromtimestamp(time.time())
         # formatted_time = current_time.strftime('%Y%m%d_%H%M%S')
         formatted_time = np.random.randint(1000000000000000000)
-        self.tmp_xml_fp = robosuite_xml_path_completion(self.table_xml + f"_{formatted_time}.xml")
+        # self.tmp_xml_fp = robosuite_xml_path_completion(self.table_xml + f"_{formatted_time}.xml")
+        # breakpoint()
+        self.tmp_xml_fp = robosuite_xml_path_completion(self.table_xml)
+
+
         
     def _build_controller_config(self, config):
         """
@@ -398,17 +403,87 @@ class AirHockeyRobosuite(AirHockeySim):
                 self.xml_config = xmltodict.parse(file.read())
 
             # update table config
-            assert self.xml_config['mujoco']['worldbody']['body']['@name'] == 'table'
-            self.xml_config['mujoco']['worldbody']['body']['@pos'] = f"{self.table_full_size[0]} 0 {self.table_elevation}"
+            # assert self.xml_config['mujoco']['worldbody']['body']['@name'] == 'table'
+            # self.xml_config['mujoco']['worldbody']['body']['@pos'] = f"{self.table_full_size[0]} 0 {self.table_elevation}"
 
-            # update table surface config
+            # # update table surface config
+            # table_surface_idx = None
+            # for i, body in enumerate(self.xml_config['mujoco']['worldbody']['body']['body']):
+            #     if body['@name'] == 'table_surface':
+            #         table_surface_idx = i
+            #         break
+            # self.xml_config['mujoco']['worldbody']['body']['body'][table_surface_idx]['geom']['@size'] = f"{self.table_full_size[0]} {self.table_full_size[1]} {self.table_full_size[2]}"
+
+
+            # TODO: make it such that we use the table from our XML not override it like above ^^^
+            # READ table geometry from XML instead of overwriting it with YAML values.
+            # The XML is the ground truth for the 3D sim geometry.
+            table_body = self.xml_config['mujoco']['worldbody']['body']
+            assert table_body['@name'] == 'table', f"Expected 'table' body, got {table_body['@name']}"
+
+            # Parse table position from XML to get table_elevation and x-offset
+            table_pos_str = table_body.get('@pos', f"{self.table_full_size[0]} 0 {self.table_elevation}")
+            table_pos = [float(v) for v in table_pos_str.split()]
+            xml_table_x_offset = table_pos[0]   # half-length in robosuite coords
+            xml_table_elevation = table_pos[2]
+
+            # Parse table tilt from XML if present
+            axisangle_str = table_body.get('@axisangle', None)
+            if axisangle_str is not None:
+                parts = [float(v) for v in axisangle_str.split()]
+                # axisangle is "ax ay az angle" — table uses "0 1 0 -tilt"
+                xml_table_tilt = -parts[3] if (parts[0]==0 and parts[1]==1 and parts[2]==0) else 0.0
+            else:
+                xml_table_tilt = 0.0
+
+            # Find table_surface geom and parse its size
             table_surface_idx = None
-            for i, body in enumerate(self.xml_config['mujoco']['worldbody']['body']['body']):
+            for i, body in enumerate(table_body['body']):
                 if body['@name'] == 'table_surface':
                     table_surface_idx = i
                     break
-            self.xml_config['mujoco']['worldbody']['body']['body'][table_surface_idx]['geom']['@size'] = f"{self.table_full_size[0]} {self.table_full_size[1]} {self.table_full_size[2]}"
-    
+            
+            if table_surface_idx is not None:
+                geom_size_str = table_body['body'][table_surface_idx]['geom']['@size']
+                geom_size = [float(v) for v in geom_size_str.split()]
+                xml_half_length = geom_size[0]
+                xml_half_width  = geom_size[1]
+                xml_half_depth  = geom_size[2]
+
+                # Update sim geometry to match XML — makes coordinate transforms correct
+                self.table_full_size = (xml_half_length, xml_half_width, xml_half_depth)
+                self.table_offset = np.array((0, 0, xml_table_elevation))
+                self.table_elevation = xml_table_elevation
+                self.table_tilt = xml_table_tilt
+                self.table_depth = xml_half_depth * 2
+
+                # Recompute trig ratios from actual XML tilt
+                self.x_to_x_prime_ratio = math.cos(self.table_tilt)
+                self.x_prime_to_x_ratio = 1.0 / self.x_to_x_prime_ratio if self.x_to_x_prime_ratio != 0 else 1.0
+                self.x_to_z_ratio = math.sin(self.table_tilt)
+                self.transform_z = lambda x: self.x_to_z_ratio * x + self.table_elevation - self.table_depth
+                self.transform_x = lambda x: self.x_to_x_prime_ratio * x
+                self.inverse_transform_x = lambda x: self.x_prime_to_x_ratio * x
+                self.puck_z_offset = math.sin(self.table_tilt) * self.puck_radius
+
+                # Recompute playable area bounds from XML geometry
+                self.length = xml_half_length * 2
+                self.width  = xml_half_width  * 2
+                self.high_level_table_x_top = -self.length / 2
+                self.high_level_table_x_bot =  self.length / 2
+                self.high_level_table_y_right =  self.width / 2
+                self.high_level_table_y_left  = -self.width / 2
+                self.table_x_top = self.length - self.table_x_offset
+                self.table_x_bot = self.table_x_offset
+                self.table_y_right = -self.width / 2 + self.table_y_offset
+                self.table_y_left  =  self.width / 2 - self.table_y_offset
+
+                # Update the robosuite_env_cfg table_offset so RobosuiteEnv gets the right value
+                self.table_offset = np.array((0, 0, xml_table_elevation))
+
+
+
+
     def _disable_problematic_collisions(self):
         """Disable collisions that should never happen with the air-hockey
         scene. Runs on every reset because robosuite hard_reset rebuilds the
@@ -696,7 +771,20 @@ class AirHockeyRobosuite(AirHockeySim):
             }
 
     def spawn_puck(self, pos, vel, name, affected_by_gravity=True, movable=True):
+
+
+        # TODO: New, which clips puck to be at valid location
         pos = self.high_level_to_robosuite_coords(pos, object_type='puck')
+        # Clamp to valid table area instead of hard asserting — coordinate
+        # transforms may have slight floating point overshoot at boundaries.
+        pos[0] = np.clip(pos[0], self.table_x_bot + self.puck_radius, self.table_x_top - self.puck_radius)
+        pos[1] = np.clip(pos[1], self.table_y_right + self.puck_radius, self.table_y_left - self.puck_radius)
+
+
+        # TODO: Original
+        # pos = self.high_level_to_robosuite_coords(pos, object_type='puck')
+
+
         assert pos[0] >= self.table_x_bot and pos[0] <= self.table_x_top, f"pos[0]: {pos[0]}, table_x_bot: {self.table_x_bot}, table_x_top: {self.table_x_top}"
         assert pos[1] <= self.table_y_left and pos[1] >= self.table_y_right, f"pos[1]: {pos[1]}, table_y_left: {self.table_y_left}, table_y_right: {self.table_y_right}"
         vel = self.high_level_to_robosuite_vel(vel, object_type='puck')
@@ -992,6 +1080,7 @@ class AirHockeyTableArena(Arena):
     """
 
     def __init__(self, table_offset, xml):
+        # breakpoint()
         arena_fp = robosuite_xml_path_completion(xml)
         super().__init__(arena_fp)
         self.center_pos = self.bottom_pos + np.array([0, 0, 0.0]) + table_offset

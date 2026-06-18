@@ -409,8 +409,11 @@ class AirHockeyBaseEnv(ABC, Env):
         sim_seed = self.rng.randint(0, int(1e8))
         self.simulator.reset(sim_seed, **kwargs) # no point in getting state since no spawning
         self.create_world_objects()
-        if self.simulator_name == "robosuite":
-            self.simulator.update_table(*self.solrefs)
+
+        # TODO: just for the love of the game
+        # if self.simulator_name == "robosuite":
+        #     self.simulator.update_table(*self.solrefs)
+        
         self.simulator.instantiate_objects()
         state_info = self.simulator.get_current_state()
         self.simulator.set_object_links()
