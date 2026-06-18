@@ -91,7 +91,7 @@ class TD3PrioritizedReplayBuffer:
         self.dones[first_slice] = dones[:first_chunk]
         self.priorities[first_slice] = priority_value
 
-        if self.history is not None and history is not None:
+        if self.use_history and history is not None:
             self.history[first_slice] = history[:first_chunk]
 
         second_chunk = batch_size - first_chunk
@@ -106,7 +106,7 @@ class TD3PrioritizedReplayBuffer:
             self.priorities[second_slice] = priority_value
 
             # NEW: wrap-around write for sequences
-            if self.history is not None and history is not None:
+            if self.use_history and history is not None:
                 self.history[second_slice] = history[first_chunk:]
 
         self.position = (self.position + batch_size) % self.buffer_size
