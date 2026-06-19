@@ -1,53 +1,43 @@
+# airhockey/sims/robots/custom_ur5e.py
+
 import numpy as np
+# from robosuite.robots.ur5e import UR5e as UR5eRobot
+from robosuite.models.robots.robot_model import RobotModel as UR5eRobot
 
-from robosuite.models.robots.manipulators.manipulator_model import ManipulatorModel
-from robosuite.utils.mjcf_utils import xml_path_completion as robosuite_xml_path_completion
+# robosuite/models/robots/robot_model.py
+
+from robosuite.models.robots.manipulators.ur5e_robot import UR5e as UR5eModel
+
+CUSTOM_XML_FP = "/work/10993/rohanpatel01/vista/air-hockey-rl/assets/robots/ur5e/robot.xml"
 
 
-class AirHockeyUR5e(ManipulatorModel):
-    """
-    UR5e is a sleek and elegant new robot created by Universal Robots.
-    This file customizes the UR5e for use with the Air Hockey environment.
+class _CustomUR5eModel(UR5eModel):
+    """Model wrapper that loads from our custom XML path."""
 
-    Args:
-        idn (int or str): Number or some other unique identification string for this robot instance
-    """
-
-    def __init__(self, idn=0):
-        super().__init__(robosuite_xml_path_completion("robots/custom_ur5e/custom_robot.xml"), idn=idn)
+    @property
+    def basexml_path(self):
+        return CUSTOM_XML_FP
 
     @property
     def default_mount(self):
-        return "RethinkMount"
+        # Our XML already includes the mount body — tell robosuite not to
+        # attach another one on top of it.
+        return "NoMount"
 
-    @property
-    def default_gripper(self):
-        return "RoundGripper"
 
-    @property
-    def default_controller_config(self):
-        return "default_ur5e"
+class AirHockeyUR5e(UR5eRobot):
+    """
+    Drop-in replacement for robosuite's UR5e robot that loads our custom
+    robot.xml (which has the RethinkMount base baked in).
+    """
+
+    def load_model(self):
+        # 1. Let robosuite do all its normal load_model wiring
+        super().load_model()
+        # 2. Swap out the model it built with ours
+        #    idn is already set on self by __init__ before load_model is called
+        self.robot_model = _CustomUR5eModel(idn=self.idn)
 
     @property
     def init_qpos(self):
-        return np.array([-0.23487048, -0.98489984,  2.01435974, -2.74821211, -1.55431237, -3.37570874]) # TODO: update this, right now it is initializes too high up
-
-    @property
-    def base_xpos_offset(self):
-        return {
-            "bins": (-0.5, -0.1, 0),
-            "empty": (-0.6, 0, 0),
-            "table": lambda table_length: (-0.16 - table_length / 2, 0, 0),
-        }
-
-    @property
-    def top_offset(self):
-        return np.array((0, 0, 1.0)) # TODO: Why is this 1.0? Double check.
-
-    @property
-    def _horizontal_radius(self):
-        return 0.5
-
-    @property
-    def arm_type(self):
-        return "single"
+        return np.array([-0.23487048, -0.98489984, 2.01435974, -2.74821211, -1.55431237, -3.37570874])

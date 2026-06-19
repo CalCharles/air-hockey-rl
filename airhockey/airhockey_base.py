@@ -16,7 +16,9 @@ def get_box2d_simulator_fn():
     return AirHockeyBox2D
     
 def get_robosuite_simulator_fn():
-    from airhockey.sims import AirHockeyRobosuite
+    # from airhockey.sims import AirHockeyRobosuite
+    # TODO: Fixed import error from above ^^^
+    from airhockey.sims.airhockey_robosuite import AirHockeyRobosuite
     return AirHockeyRobosuite
 
 def get_real_simulator_fn():

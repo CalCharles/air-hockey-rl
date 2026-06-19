@@ -32,6 +32,9 @@ from robosuite.models.arenas import Arena
 from airhockey.sims.utils import custom_xml_path_completion
 from ..utils import dict_to_namespace
 
+# from .robots.custom_airhockey_ur53 import CustomAirHockeyUR5e
+# airhockey/sims/robots/custom_airhockey_ur53.py
+
 class AirHockeyRobosuite(AirHockeySim):
     """
     This class corresponds to the lifting task for a single robot arm.
@@ -156,6 +159,9 @@ class AirHockeyRobosuite(AirHockeySim):
 
     def __init__(self, **kwargs):
         # breakpoint()
+        from airhockey.sims.robots.custom_ur5e import AirHockeyUR5e
+        ROBOT_CLASS_MAPPING["AirHockeyUR5e"] = AirHockeyUR5e
+
         defaults = {
             'action_x_scaling': 1.0,
             'action_y_scaling': 1.0,
@@ -169,7 +175,8 @@ class AirHockeyRobosuite(AirHockeySim):
             'paddle_bounds': [],
             'paddle_edge_bounds': [],
             'center_offset_constant': 1.2,
-            'robots': ['UR5e'],  # Use standard UR5e instead of AirHockeyUR5e
+            # 'robots': ['UR5e'],  # Use standard UR5e instead of AirHockeyUR5e
+            'robots': ['AirHockeyUR5e'],  # Use standard UR5e instead of AirHockeyUR5e
             'env_configuration': "default",
             'controller_configs': {'arm': 'OSC_POSE'},  # Use OSC controller for position-based control
             'gripper_types': None,  # Disable gripper to avoid joint name conflicts
@@ -1139,6 +1146,10 @@ class RobosuiteEnv(SingleArmEnv):
         for idx, (name, config) in enumerate(zip(robot_names, robot_configs)):
             # Create the robot instance
             robots_out[idx] = ROBOT_CLASS_MAPPING[name](robot_type=name, idn=idx, **config)
+
+            # robots_out[idx] = ROBOT_CLASS_MAPPING[name](idn=idx)
+
+
             # Now, load the robot models
             robots_out[idx].load_model()
         return robots_out
