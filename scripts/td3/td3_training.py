@@ -1180,10 +1180,10 @@ def _entrypoint():
 
         real_next_obs = next_obs.copy()
 
-        if "final_observation" in infos:
-            for idx, trunc in enumerate(truncations):
-                if trunc:
-                    real_next_obs[idx] = infos["final_observation"][idx]
+        # TODO: remove guard for final_observations
+        for idx, trunc in enumerate(truncations):
+            if trunc:
+                real_next_obs[idx] = infos["final_observation"][idx]
 
         real_next_obs_tensor = torch.as_tensor(real_next_obs, dtype=torch.float32, device=args.device)
         terminations_tensor = torch.as_tensor(terminations, dtype=torch.float32, device=args.device)
@@ -1198,20 +1198,21 @@ def _entrypoint():
                 history=history_snapshot,
             )
 
+            # TODO: Remove work around solution
             # Work around solution to above add_scalar conditions not being met
-            if bool(dones[0]):
-                episode_return = episode_trajectory.episode_return
-                episode_length = len(episode_trajectory.observations)
-                episode_success = bool(infos["success"][0])
+            # if bool(dones[0]):
+            #     episode_return = episode_trajectory.episode_return
+            #     episode_length = len(episode_trajectory.observations)
+            #     episode_success = bool(infos["success"][0])
 
-                writer.add_scalar("charts/episodic_return", episode_return, global_step)
-                writer.add_scalar("charts/episodic_length", episode_length, global_step)
-                rolling_episode_stats_window.append((
-                    int(global_step + args.num_envs),
-                    float(episode_return),
-                    float(episode_length),
-                    1.0 if episode_success else 0.0,
-                ))
+            #     writer.add_scalar("charts/episodic_return", episode_return, global_step)
+            #     writer.add_scalar("charts/episodic_length", episode_length, global_step)
+            #     rolling_episode_stats_window.append((
+            #         int(global_step + args.num_envs),
+            #         float(episode_return),
+            #         float(episode_length),
+            #         1.0 if episode_success else 0.0,
+            #     ))
 
 
             episode_return_success_threshold = finalize_episode_if_done(
