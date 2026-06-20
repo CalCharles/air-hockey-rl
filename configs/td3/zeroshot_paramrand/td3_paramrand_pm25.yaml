@@ -97,7 +97,7 @@ config: "configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25.yaml" # IN-DIS
 args_file: null
 model_path: null
 # log_parent_dir: "runs/td3/zeroshot_paramrand/paramrand_pm25/seed0"
-log_parent_dir: "runs/td3/sanity_check_identify_ood_branch_remove_guard"
+log_parent_dir: "runs/td3/sanity_check_identify_ood_branch_guard_history_fix_diffs"
 # run_name: "td3_paramrand_pm25"
 
 # Runtime

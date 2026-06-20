@@ -79,10 +79,10 @@ def _save_task_gif_with_last_action(
                 frames.append(frame)
 
 
-                history_buf.add(obs)
-
+                # TODO: Checked
                 if use_history:
                     
+                    history_buf.add(obs)
                     state_history = history_buf.sample()
 
                     if transformer is not None:
@@ -195,9 +195,13 @@ def evaluate_agent(
 
     transformer = None
 
-    history_buf = HistoryBuffer(
-        context_len=context_len,
-    )
+    # TODO: checked
+    if use_history:
+        history_buf = HistoryBuffer(
+            context_len=context_len,
+        )
+    else:
+        history_buf = None
     
     if use_transformer:
         

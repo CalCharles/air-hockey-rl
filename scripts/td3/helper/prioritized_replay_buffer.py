@@ -59,11 +59,13 @@ class TD3PrioritizedReplayBuffer:
 
         # TODO: Note that we init this unconditionally bc in td3_training.py I choose
         #       to always gather history.
-        self.history = torch.zeros(
-            (buffer_size, self.context_len, self.history_entry_dim),
-            dtype=torch.float32,
-            device=device,
-        )
+
+        if self.use_history:
+            self.history = torch.zeros(
+                (buffer_size, self.context_len, self.history_entry_dim),
+                dtype=torch.float32,
+                device=device,
+            )
 
 
         self.position = 0
@@ -154,7 +156,7 @@ class TD3PrioritizedReplayBuffer:
             "sampled_priorities": valid_priorities[indices],
         }
 
-        if self.history is not None:
+        if self.use_history and self.history is not None:
             result["history"] = self.history[indices]
 
         return result
@@ -175,7 +177,7 @@ class TD3PrioritizedReplayBuffer:
             "sampled_priorities": self.priorities[: self.size].clamp_min(self.priority_eps)[indices],
         }
 
-        if self.history is not None:
+        if self.use_history and self.history is not None:
             result["history"] = self.history[indices]
 
         return result
@@ -209,7 +211,7 @@ class TD3PrioritizedReplayBuffer:
             "priorities": self.priorities.detach().clone().cpu(),
         }
 
-        if self.history is not None:
+        if self.use_history and self.history is not None:
             state_dict["history"] = self.history.detach().clone().cpu()
 
         return state_dict
@@ -242,7 +244,7 @@ class TD3PrioritizedReplayBuffer:
         else:
             self.max_priority = max(self.max_priority, 1.0)
         
-        if "history" in state_dict and self.history is not None:
+        if self.use_history and "history" in state_dict and self.history is not None:
             self.history.copy_(state_dict["history"].to(self.device))
 
     def __len__(self):

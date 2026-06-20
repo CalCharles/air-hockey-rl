@@ -26,7 +26,7 @@ class EpisodeTrajectory:
     dones: List[torch.Tensor]
     bootstrap_terminals: List[torch.Tensor]
     prev_actions: List[torch.Tensor]
-    history: List[torch.Tensor]          # NEW — (T, obs_dim) snapshot per step
+    history: List[torch.Tensor]  | None = None,        # NEW — (T, obs_dim) snapshot per step
     episode_return: float = 0.0
 
     @staticmethod
