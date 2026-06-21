@@ -74,9 +74,9 @@ air_hockey:
   # baseline    ID        103.95  ±  15.94        0.933
   # baseline   OOD         45.13  ±  13.45        0.550
   random_variable_ranges:
-    paddle_density: [6000.0, 7500.0]   # high-side OOD 
-    puck_damping:   [0.356, 0.445]     # high-side OOD
-    gravity:        [-1.652, -1.321]   # low-side OOD (stronger gravity)
+    paddle_density: [2250.0, 3750.0]   # high-side OOD 
+    puck_damping:   [0.1335, 0.2225]     # high-side OOD
+    gravity:        [-0.826, -0.496]   # low-side OOD (stronger gravity)
 
 
   simulator: box2d

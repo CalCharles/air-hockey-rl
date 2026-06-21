@@ -75,7 +75,7 @@ from scripts.transformer.context_vector_analysis import context_vector_analysis
 from scripts.transformer.compare_performance_ID_OOD import compare_performance_ID_OOD
 
 from scripts.td3.evaluate import evaluate_agent
-# from scripts.utils import save_tensorboard_plots
+from scripts.utils import save_tensorboard_plots
 
 ROLLING_STATS_WINDOW_STEPS = 2000
 HISTORY_ENTRY_DIM = 4
@@ -498,28 +498,20 @@ def _entrypoint():
             log_parent_dir = f"{base_log_parent_dir}r{i}"
             i += 1
         print(f"Log directory exists. Saving to alternate log directory: {log_parent_dir}")
+    
+    log_parent_dir += f"_seed_{args.seed}"
     os.makedirs(log_parent_dir, exist_ok=True)
 
     # Initialize Wandb to log this run
     full_trackable_config = {"yaml_config": config, "cli_args": vars(args)}
     
-
-    import time
-    t0 = time.time()
-    print(f"[{time.time()-t0:.1f}s] before wandb.init")
-
-
     wandb_run = wandb.init(
         entity="rpp689-the-university-of-texas-at-austin",
         project="meta-rl-air-hockey",
         group=run_name,
-        name=f"{run_name}",
+        name=f"{run_name}" + f"_seed_{args.seed}",
         config=full_trackable_config,
-        # mode="offline",                     # Placed here to avoid the log hang time during start of program
     )
-
-    print(f"[{time.time()-t0:.1f}s] after wandb.init")
-
 
     # writer = SummaryWriter(log_parent_dir)
     # writer.add_text(
@@ -933,22 +925,22 @@ def _entrypoint():
     # if args.eval_id_ood:
 
     #     compare_performance_ID_OOD(
-    #         baseline_actor=actor,
+    #         actor=actor,
     #         air_hockey_base=config["air_hockey"],
     #         raw_obs_dim=raw_obs_dim,
     #         act_dim=act_dim,
     #         use_last_action=args.use_last_action_in_policy_state,
+    #         use_history=args.use_history,
+    #         use_transformer=args.use_transformer,
+    #         # transformer=transformer,            # required if use_transformer=True
+    #         context_len=args.context_len,
     #         n_envs=args.eval_id_ood_n_envs,
     #         n_eps=args.eval_id_ood_n_eps,
-    #         out_dir=args.eval_id_ood_out_dir,
+    #         # out_dir=args.eval_id_ood_out_dir,
     #         device=args.device,
     #         seed=args.seed,
-    #         context_actor=compare_actor,
-    #         context_transformer=compare_transformer,
-    #         context_history_buf=compare_history_buf,
-    #         baseline_model_path=args.model_path or "",
-    #         context_model_path=compare_model_path_str,
-    #         params_cache_path=args.params_cache_path
+    #         model_path=args.model_path or "",
+    #         params_cache_path=args.params_cache_path,
     #     )
     #     return  # exit after eval, don't train
             
@@ -1610,7 +1602,7 @@ def _entrypoint():
         "replay/per_sampled_priority_mean",
         "replay/per_priority_td_error_mean",
     ]
-    # save_tensorboard_plots(log_parent_dir, config, metrics=metrics)
+    save_tensorboard_plots(log_parent_dir, config, metrics=metrics)
 
     if args.eval_id_ood:
 
