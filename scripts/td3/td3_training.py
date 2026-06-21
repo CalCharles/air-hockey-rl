@@ -23,7 +23,8 @@ import torch
 import torch.optim as optim
 import tyro
 import yaml
-from torch.utils.tensorboard import SummaryWriter
+# from torch.utils.tensorboard import SummaryWriter
+import wandb
 import subprocess
 import shlex
 import sys
@@ -74,7 +75,7 @@ from scripts.transformer.context_vector_analysis import context_vector_analysis
 from scripts.transformer.compare_performance_ID_OOD import compare_performance_ID_OOD
 
 from scripts.td3.evaluate import evaluate_agent
-from scripts.utils import save_tensorboard_plots
+# from scripts.utils import save_tensorboard_plots
 
 ROLLING_STATS_WINDOW_STEPS = 2000
 HISTORY_ENTRY_DIM = 4
@@ -499,11 +500,32 @@ def _entrypoint():
         print(f"Log directory exists. Saving to alternate log directory: {log_parent_dir}")
     os.makedirs(log_parent_dir, exist_ok=True)
 
-    writer = SummaryWriter(log_parent_dir)
-    writer.add_text(
-        "hyperparameters",
-        "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{k}|{v}|" for k, v in vars(args).items()])),
+    # Initialize Wandb to log this run
+    full_trackable_config = {"yaml_config": config, "cli_args": vars(args)}
+    
+
+    import time
+    t0 = time.time()
+    print(f"[{time.time()-t0:.1f}s] before wandb.init")
+
+
+    wandb_run = wandb.init(
+        entity="rpp689-the-university-of-texas-at-austin",
+        project="meta-rl-air-hockey",
+        group=run_name,
+        name=f"{run_name}",
+        config=full_trackable_config,
+        # mode="offline",                     # Placed here to avoid the log hang time during start of program
     )
+
+    print(f"[{time.time()-t0:.1f}s] after wandb.init")
+
+
+    # writer = SummaryWriter(log_parent_dir)
+    # writer.add_text(
+    #     "hyperparameters",
+    #     "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{k}|{v}|" for k, v in vars(args).items()])),
+    # )
     with open(f"{log_parent_dir}/config.yaml", "w") as f:
         yaml.dump(config, f)
     with open(f"{log_parent_dir}/args.yaml", "w") as f:
@@ -955,11 +977,6 @@ def _entrypoint():
 
 
 
-    # TODO: Checked
-    # episode_finished = None
-    # should_update_train_metrics = None
-    # recent_episode_returns = []
-
     while global_step < args.total_timesteps:
         
         should_update_train_metrics = global_step > 0 and np.random.rand() < 0.1
@@ -1077,8 +1094,14 @@ def _entrypoint():
         if "final_info" in infos:
             for info in infos["final_info"]:
                 if info and "episode_return" in info:
-                    writer.add_scalar("charts/episodic_return", info["episode_return"], global_step)
-                    writer.add_scalar("charts/episodic_length", info["episode_length"], global_step)
+                    # writer.add_scalar("charts/episodic_return", info["episode_return"], global_step)
+                    # writer.add_scalar("charts/episodic_length", info["episode_length"], global_step)
+
+                    wandb.log({
+                        "charts/episodic_return": info["episode_return"],
+                        "charts/episodic_length": info["episode_length"] 
+                    }, step=global_step)
+
                     rolling_episode_stats_window.append(
                         (
                             int(global_step + args.num_envs),
@@ -1475,16 +1498,30 @@ def _entrypoint():
                         "replay/recent_episode_window_count": float(len(recent_episode_returns)),
                     }
                 )
-                log_scalar_metrics(writer, train_metrics, global_step)
-                writer.add_scalar("charts/exploration_primitive_chance", primitive_selector.chance, global_step)
-                writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+                # log_scalar_metrics(writer, train_metrics, global_step)
+                # writer.add_scalar("charts/exploration_primitive_chance", primitive_selector.chance, global_step)
+                # writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+
+                # TODO: add this
+                for name, value in train_metrics.items():       # Replacement for log_scalar_metrics(writer, train_metrics, global_step)
+                    wandb.log({name : value}, step=global_step)
+
+                wandb.log({
+                    # "replay/success_buffer_size": float(len(success_rb)),
+                    # "replay/failure_buffer_size": float(len(failure_rb)),
+                    # "replay/episode_return_success_threshold": episode_return_success_threshold,
+                    # "replay/recent_episode_window_count": float(len(recent_episode_returns)),
+                    "charts/exploration_primitive_chance": float(primitive_selector.chance),
+                    "charts/SPS": int(global_step / (time.time() - start_time)),
+                }, step=global_step)
 
 
 
         if global_step > 0 and global_step % 500 == 0:
 
             write_periodic_episode_stats(
-                writer, global_step,
+                # writer, 
+                global_step,
                 rolling_episode_stats_window=rolling_episode_stats_window,
                 rolling_step_stats_window=rolling_step_stats_window,
                 interval_paddle_puck_collisions=interval_paddle_puck_collisions,
@@ -1523,6 +1560,10 @@ def _entrypoint():
                 print(f"Evaluation failed: {e}")
 
         iteration += 1
+        
+        # Flush everything logged at this global_step, regardless of which
+        # conditional blocks above fired.
+        wandb.log({}, step=global_step, commit=True)
         global_step += args.num_envs
 
     envs.close()
@@ -1569,7 +1610,7 @@ def _entrypoint():
         "replay/per_sampled_priority_mean",
         "replay/per_priority_td_error_mean",
     ]
-    save_tensorboard_plots(log_parent_dir, config, metrics=metrics)
+    # save_tensorboard_plots(log_parent_dir, config, metrics=metrics)
 
     if args.eval_id_ood:
 
@@ -1594,9 +1635,12 @@ def _entrypoint():
             params_cache_path=args.params_cache_path,
         )
 
-    writer.close()
+    # writer.close()
 
 
 
 if __name__ == "__main__":
-    _entrypoint()
+    try:
+        _entrypoint()
+    finally:
+        wandb_run.finish()

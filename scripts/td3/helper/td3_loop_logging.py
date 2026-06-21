@@ -19,6 +19,7 @@ from typing import Dict, List
 
 import numpy as np
 import torch
+import wandb
 
 
 def build_target_q_debug_metrics(
@@ -126,7 +127,7 @@ def build_actor_metrics(
 
 
 def write_periodic_episode_stats(
-    writer,
+    # writer,
     global_step: int,
     *,
     rolling_episode_stats_window: deque,
@@ -156,13 +157,28 @@ def write_periodic_episode_stats(
             f"Success Rate: {avg_success:.2f}, Avg Episode Length: {avg_episode_length:.2f}, "
             f"Episodes: {len(rolling_episode_stats_window)}"
         )
-        writer.add_scalar("charts/avg_episodic_return", avg_return, global_step)
-        writer.add_scalar("charts/min_episodic_return", min_return, global_step)
-        writer.add_scalar("charts/max_episodic_return", max_return, global_step)
-        writer.add_scalar("charts/avg_success_rate", avg_success, global_step)
-        writer.add_scalar("charts/rolling2k_avg_episode_return", avg_return, global_step)
-        writer.add_scalar("charts/rolling2k_avg_episode_length", avg_episode_length, global_step)
-        writer.add_scalar("charts/rolling2k_episode_count", len(rolling_episode_stats_window), global_step)
+        # writer.add_scalar("charts/avg_episodic_return", avg_return, global_step)
+        # writer.add_scalar("charts/min_episodic_return", min_return, global_step)
+        # writer.add_scalar("charts/max_episodic_return", max_return, global_step)
+        # writer.add_scalar("charts/avg_success_rate", avg_success, global_step)
+        # writer.add_scalar("charts/rolling2k_avg_episode_return", avg_return, global_step)
+        # writer.add_scalar("charts/rolling2k_avg_episode_length", avg_episode_length, global_step)
+        # writer.add_scalar("charts/rolling2k_episode_count", len(rolling_episode_stats_window), global_step)
+
+        # Migrate over to wandb
+        wandb.log({
+            "charts/avg_episodic_return": avg_return,
+            "charts/min_episodic_return": min_return,
+            "charts/max_episodic_return": max_return,
+            "charts/avg_success_rate": avg_success,
+            "charts/rolling2k_avg_episode_return": avg_return,
+            "charts/rolling2k_avg_episode_length": avg_episode_length,
+            "charts/rolling2k_episode_count": len(rolling_episode_stats_window),
+        }, step=global_step)
+
+
+
+
     else:
         print(f"Step {global_step}: No episodes in rolling 2k-step window")
 
@@ -177,8 +193,13 @@ def write_periodic_episode_stats(
         f"Step {global_step}: Rolling(2k) Puck Hits: {int(rolling_window_puck_hits)}, "
         f"Puck Hits/env-step: {rolling_puck_hits_per_env_step:.4f}"
     )
-    writer.add_scalar("charts/rolling2k_puck_hits_total", rolling_window_puck_hits, global_step)
-    writer.add_scalar("charts/rolling2k_puck_hits_per_env_step", rolling_puck_hits_per_env_step, global_step)
+    # writer.add_scalar("charts/rolling2k_puck_hits_total", rolling_window_puck_hits, global_step)
+    # writer.add_scalar("charts/rolling2k_puck_hits_per_env_step", rolling_puck_hits_per_env_step, global_step)
+
+    wandb.log({
+        "charts/rolling2k_puck_hits_total": rolling_window_puck_hits,
+        "charts/rolling2k_puck_hits_per_env_step": rolling_puck_hits_per_env_step,
+    }, step=global_step)
 
     collisions_per_env_step = (
         interval_paddle_puck_collisions / max(interval_env_steps, 1)
@@ -189,14 +210,20 @@ def write_periodic_episode_stats(
         f"Step {global_step}: Paddle-Puck Collisions (last interval): "
         f"{int(interval_paddle_puck_collisions)} total, {collisions_per_env_step:.4f} per env-step"
     )
-    writer.add_scalar(
-        "contacts/interval_paddle_puck_collisions_total",
-        interval_paddle_puck_collisions, global_step,
-    )
-    writer.add_scalar(
-        "contacts/interval_paddle_puck_collisions_per_env_step",
-        collisions_per_env_step, global_step,
-    )
+    # writer.add_scalar(
+    #     "contacts/interval_paddle_puck_collisions_total",
+    #     interval_paddle_puck_collisions, global_step,
+    # )
+    # writer.add_scalar(
+    #     "contacts/interval_paddle_puck_collisions_per_env_step",
+    #     collisions_per_env_step, global_step,
+    # )
+
+    wandb.log({
+        "contacts/interval_paddle_puck_collisions_total": interval_paddle_puck_collisions,
+        "contacts/interval_paddle_puck_collisions_per_env_step": collisions_per_env_step,
+    }, step=global_step)
+
     primitive_fraction = (
         interval_primitive_env_steps / max(interval_env_steps, 1)
         if interval_env_steps > 0
@@ -213,19 +240,28 @@ def write_periodic_episode_stats(
         f"horizontal-dominant: {interval_primitive_horizontal_env_steps}/{interval_primitive_env_steps} "
         f"({primitive_horizontal_fraction:.4f})"
     )
-    writer.add_scalar(
-        "exploration/interval_primitive_env_steps",
-        interval_primitive_env_steps, global_step,
-    )
-    writer.add_scalar(
-        "exploration/interval_primitive_env_step_fraction",
-        primitive_fraction, global_step,
-    )
-    writer.add_scalar(
-        "exploration/interval_primitive_horizontal_env_steps",
-        interval_primitive_horizontal_env_steps, global_step,
-    )
-    writer.add_scalar(
-        "exploration/interval_primitive_horizontal_fraction",
-        primitive_horizontal_fraction, global_step,
-    )
+    # writer.add_scalar(
+    #     "exploration/interval_primitive_env_steps",
+    #     interval_primitive_env_steps, global_step,
+    # )
+    # writer.add_scalar(
+    #     "exploration/interval_primitive_env_step_fraction",
+    #     primitive_fraction, global_step,
+    # )
+    # writer.add_scalar(
+    #     "exploration/interval_primitive_horizontal_env_steps",
+    #     interval_primitive_horizontal_env_steps, global_step,
+    # )
+    # writer.add_scalar(
+    #     "exploration/interval_primitive_horizontal_fraction",
+    #     primitive_horizontal_fraction, global_step,
+    # )
+
+    wandb.log({
+        "exploration/interval_primitive_env_steps": interval_primitive_env_steps,
+        "exploration/interval_primitive_env_step_fraction": primitive_fraction,
+
+        "exploration/interval_primitive_horizontal_env_steps": interval_primitive_horizontal_env_steps,
+        "exploration/interval_primitive_horizontal_fraction": primitive_horizontal_fraction,
+    }, step=global_step)
+    
