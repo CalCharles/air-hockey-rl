@@ -23,10 +23,12 @@ dependencies = [
     "h5py",
     "xmltodict",
     "pyyaml",
-    "ur-rtde",
 ]
 
 [project.optional-dependencies]
+real = [
+    "ur-rtde",
+]
 train = [
     "opencv-python",
     "tensorboard",
@@ -35,6 +37,9 @@ train = [
     "torch",
     "scikit-learn",
     "tyro",
+    "imageio>=2.37.3",
+    "matplotlib>=3.10.9",
+    "stable-baselines3",
 ]
 
 [project.urls]
@@ -42,3 +47,6 @@ Repository = "https://github.com/CalCharles/air-hockey-rl"
 
 [tool.setuptools.packages.find]
 # This ensures find_packages() behavior is preserved - automatically discovers packages
+
+[tool.uv.sources]
+box2d = { git = "https://github.com/pybox2d/pybox2d.git" }

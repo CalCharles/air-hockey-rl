@@ -10,8 +10,6 @@ from types import SimpleNamespace
 from ..utils import dict_to_namespace
 from ..observation_homography import make_sine_y_warp_fn
 
-from matplotlib import pyplot as plt
-
 class PIDController:
     """
     PID controller for paddle position control.
