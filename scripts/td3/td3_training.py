@@ -1543,7 +1543,9 @@ def _entrypoint():
             interval_primitive_env_steps = 0
             interval_primitive_horizontal_env_steps = 0
 
-        if global_step > 0 and global_step % args.checkpoint_interval == 0:
+        # TODO: Change so that we only start doing evaluation and saving checkpoints after a certain timestep
+        # TODO: This is done to reduce the number of GB of data we produce
+        if (global_step > 1600000) and global_step % args.checkpoint_interval == 0:
             checkpoint_dir = os.path.join(log_parent_dir, f"checkpoint_{global_step}")
             model_path = save_full_checkpoint(checkpoint_dir)
             print(f"\nCheckpoint saved at step {global_step}")
@@ -1621,28 +1623,28 @@ def _entrypoint():
     ]
     save_tensorboard_plots(log_parent_dir, config, metrics=metrics)
 
-    if args.eval_id_ood:
 
-        compare_performance_ID_OOD(
-            actor=actor,
-            air_hockey_base=config["air_hockey"],
-            raw_obs_dim=raw_obs_dim,
-            act_dim=act_dim,
-            use_last_action=args.use_last_action_in_policy_state,
 
-            use_history=args.use_history,
-            use_transformer=args.use_transformer,
-            transformer=transformer if (args.use_history and args.use_transformer) else None,
+    compare_performance_ID_OOD(
+        actor=actor,
+        air_hockey_base=config["air_hockey"],
+        raw_obs_dim=raw_obs_dim,
+        act_dim=act_dim,
+        use_last_action=args.use_last_action_in_policy_state,
 
-            context_len=args.context_len,
-            n_envs=args.eval_id_ood_n_envs,
-            n_eps=args.eval_id_ood_n_eps,
-            out_dir=os.path.join("results", args.run_name),
-            device=args.device,
-            seed=args.seed,
-            model_path=args.model_path or "",
-            params_cache_path=args.params_cache_path,
-        )
+        use_history=args.use_history,
+        use_transformer=args.use_transformer,
+        transformer=transformer if (args.use_history and args.use_transformer) else None,
+
+        context_len=args.context_len,
+        n_envs=args.eval_id_ood_n_envs,
+        n_eps=args.eval_id_ood_n_eps,
+        out_dir=os.path.join("results", args.run_name),
+        device=args.device,
+        seed=args.seed,
+        model_path=args.model_path or "",
+        params_cache_path=args.params_cache_path,
+    )
 
     # writer.close()
 

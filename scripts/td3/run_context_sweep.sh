@@ -12,7 +12,7 @@ run_sweep() {
   # 1 2 3 4
 
   for context_len in 2 4 6 8 10 12 14 16 32; do
-    for seed in 1 2; do
+    for seed in 6 7; do
     
       run_name="sweep_transformer_${use_transformer}_ctx_${context_len}"
 
@@ -39,5 +39,5 @@ run_sweep() {
 }
 
 # TODO: Note that we're sweeping over use_transformer={true, false} as well
-# run_sweep true
+run_sweep true
 run_sweep false

@@ -113,7 +113,7 @@ q_num_hidden_layers: 2
 
 use_last_action_in_policy_state: true
 
-# TODO: was 25000
+# TODO: was 25000 - now trying to save less frequently
 checkpoint_interval: 25000
 
 # Multi-env evaluation (consumed by td3_training_dr.py wrapper).
@@ -139,7 +139,7 @@ context_analysis_ood_scale: 1.0
 context_analysis_out_dir: "results/context_tsne"
 
 # For evaluation of baseline vs ours for ID and OOD env param distributions
-eval_id_ood: True
+eval_id_ood: False
 eval_id_ood_n_envs: 30
 eval_id_ood_n_eps: 8
 
