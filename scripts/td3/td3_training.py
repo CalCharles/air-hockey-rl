@@ -300,6 +300,9 @@ class Args:
     sbatch_partition: str = "gh"                # vista partition
     sbatch_time: str = "12:00:00"              # max wall time HH:MM:SS
 
+    paddle_density_OOD: List[float] | None = None
+    puck_damping_OOD: List[float] | None = None
+    gravity_OOD: List[float] | None = None
 
 def make_env(env_id):
     def _thunk():
@@ -522,6 +525,20 @@ def _entrypoint():
         yaml.dump(config, f)
     with open(f"{log_parent_dir}/args.yaml", "w") as f:
         yaml.dump(vars(args), f)
+
+
+    # Override the ranges for random_variable_ranges if they are provided via args
+    if (args.paddle_density_OOD is not None):
+        config["air_hockey"]["random_variable_ranges_OOD"]["paddle_density"] = [args.paddle_density_OOD[0], args.paddle_density_OOD[1]]
+    
+    if (args.puck_damping_OOD is not None):
+        config["air_hockey"]["random_variable_ranges_OOD"]["puck_damping"] = [args.puck_damping_OOD[0], args.puck_damping_OOD[1]]
+
+    if (args.gravity_OOD is not None):
+        config["air_hockey"]["random_variable_ranges_OOD"]["gravity"] = [args.gravity_OOD[0], args.gravity_OOD[1]]
+
+    print("random_variable_ranges_OOD: ", config["air_hockey"]["random_variable_ranges_OOD"])
+
 
     envs = gym.vector.AsyncVectorEnv([make_env(i) for i in range(args.num_envs)])
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
@@ -922,27 +939,27 @@ def _entrypoint():
         return model_path_local
 
 
-    # if args.eval_id_ood:
+    if args.eval_id_ood:
 
-    #     compare_performance_ID_OOD(
-    #         actor=actor,
-    #         air_hockey_base=config["air_hockey"],
-    #         raw_obs_dim=raw_obs_dim,
-    #         act_dim=act_dim,
-    #         use_last_action=args.use_last_action_in_policy_state,
-    #         use_history=args.use_history,
-    #         use_transformer=args.use_transformer,
-    #         # transformer=transformer,            # required if use_transformer=True
-    #         context_len=args.context_len,
-    #         n_envs=args.eval_id_ood_n_envs,
-    #         n_eps=args.eval_id_ood_n_eps,
-    #         # out_dir=args.eval_id_ood_out_dir,
-    #         device=args.device,
-    #         seed=args.seed,
-    #         model_path=args.model_path or "",
-    #         params_cache_path=args.params_cache_path,
-    #     )
-    #     return  # exit after eval, don't train
+        compare_performance_ID_OOD(
+            actor=actor,
+            air_hockey_base=config["air_hockey"],
+            raw_obs_dim=raw_obs_dim,
+            act_dim=act_dim,
+            use_last_action=args.use_last_action_in_policy_state,
+            use_history=args.use_history,
+            use_transformer=args.use_transformer,
+            # transformer=transformer,            # required if use_transformer=True
+            context_len=args.context_len,
+            n_envs=args.eval_id_ood_n_envs,
+            n_eps=args.eval_id_ood_n_eps,
+            out_dir=str(os.path.join("results/", run_name)), #args.eval_id_ood_out_dir,
+            device=args.device,
+            seed=args.seed,
+            model_path=args.model_path or "",
+            params_cache_path=args.params_cache_path,
+        )
+        return  # exit after eval, don't train
             
     
     

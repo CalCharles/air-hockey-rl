@@ -172,7 +172,7 @@ def _agg(stat_list):
     lengths   = [s["mean_episode_length"] for s in stat_list]
     return {
         "mean_return":        float(np.mean(returns)),
-        "std_return":         float(np.std(returns)),
+        "std_return":         float(np.std(returns) / np.sqrt(len(returns))),
         "mean_success_rate":  float(np.mean(successes)),
         "std_success_rate":   float(np.std(successes)),
         "mean_ep_length":     float(np.mean(lengths)),
@@ -186,7 +186,7 @@ def _print_and_save_table(aggregates, out_dir, model_path, n_envs, n_eps):
     lines.append(f"ID/OOD Comparison  (n_envs={n_envs}, n_eps={n_eps})")
     lines.append(f"model : {model_path or '(in-memory)'}")
     lines.append("")
-    header = f"{'Cond':>4}  {'MeanReturn':>12}  {'±Std':>8}  {'SuccessRate':>11}"
+    header = f"{'Cond':>4}  {'MeanReturn':>12}  {'±Std Err':>8}  {'SuccessRate':>11}"
     lines.append(header)
     lines.append("-" * 44)
     for cond_name, agg in aggregates.items():
@@ -333,23 +333,23 @@ def compare_performance_ID_OOD(
 
     random_variables           = list(air_hockey_base.get("random_variables", []))
     random_variable_ranges     = dict(air_hockey_base.get("random_variable_ranges", {}))
-    # random_variable_ranges_OOD = dict(air_hockey_base.get("random_variable_ranges_OOD", {}))
+    random_variable_ranges_OOD = dict(air_hockey_base.get("random_variable_ranges_OOD", {}))
 
     if not random_variables:
         raise ValueError(
             "air_hockey config has no random_variables / random_variable_ranges. "
             "Use a paramrand config (e.g. sim_paramrand_pm25.yaml)."
         )
-    # if not random_variable_ranges_OOD:
-    #     raise ValueError(
-    #         "air_hockey config has no random_variable_ranges_OOD. "
-    #         "Use a config with an OOD range block (e.g. sim_paramrand_pm25_OOD.yaml)."
-    #     )
+    if not random_variable_ranges_OOD:
+        raise ValueError(
+            "air_hockey config has no random_variable_ranges_OOD. "
+            "Use a config with an OOD range block (e.g. sim_paramrand_pm25_OOD.yaml)."
+        )
 
     print(f"\n{'='*60}")
     print(f"  compare_performance_ID_OOD")
     print(f"  ID  ranges : {random_variable_ranges}")
-    # print(f"  OOD ranges : {random_variable_ranges_OOD}")
+    print(f"  OOD ranges : {random_variable_ranges_OOD}")
     print(f"  n_envs={n_envs}, n_eps={n_eps}, seed={seed}")
     print(f"  use_history={use_history}, use_transformer={use_transformer}")
     print(f"{'='*60}\n")
@@ -365,16 +365,18 @@ def compare_performance_ID_OOD(
     # --- Load or generate ID/OOD param sets ---
     if params_cache_path is not None and os.path.exists(params_cache_path):
         id_param_sets, ood_param_sets = _load_params(params_cache_path)
+        print("Loading params from memory")
     else:
+        print("Generating new samples")
         rng = np.random.RandomState(seed)
         id_param_sets  = [_sample_id_params(random_variable_ranges,     random_variables, rng) for _ in range(n_envs)]
-        # ood_param_sets = [_sample_id_params(random_variable_ranges_OOD, random_variables, rng) for _ in range(n_envs)]
+        ood_param_sets = [_sample_id_params(random_variable_ranges_OOD, random_variables, rng) for _ in range(n_envs)]
         if params_cache_path is not None:
             _save_params(params_cache_path, id_param_sets, ood_param_sets)
 
     raw_results = {"id": [], "ood": []}
 
-    for cond_name, param_sets in [("id", id_param_sets)]:   # , ("ood", ood_param_sets)
+    for cond_name, param_sets in [("id", id_param_sets), ("ood", ood_param_sets)]:
         for env_i, params in enumerate(param_sets):
             env_cfg = _build_env_config(
                 air_hockey_base, params,
@@ -420,7 +422,7 @@ def compare_performance_ID_OOD(
             "context_len": context_len,
             "random_variables":           random_variables,
             "random_variable_ranges_ID":     random_variable_ranges,
-            # "random_variable_ranges_OOD": random_variable_ranges_OOD,
+            "random_variable_ranges_OOD": random_variable_ranges_OOD,
         },
         "aggregates": aggregates,
         "per_env":    raw_results,
