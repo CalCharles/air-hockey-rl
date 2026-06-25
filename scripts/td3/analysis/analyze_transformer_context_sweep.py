@@ -72,6 +72,7 @@ import yaml
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MultipleLocator
 
 
 # ---------------------------------------------------------------------------
@@ -868,6 +869,12 @@ def plot_sweep_figure(
     branch_titles = {True: "Use Transformer", False: "No Transformer"}
 
     for ax, branch in zip(axes_arr, (True, False)):
+
+        # Make the y-axis report values by 10s and minor lines by 5s
+        ax.yaxis.set_major_locator(MultipleLocator(10))
+        ax.yaxis.set_minor_locator(MultipleLocator(5))
+        ax.grid(axis="y", which="minor", alpha=0.15)
+
         points = points_by_branch[branch]
         ctx_labels = [str(ctx) for ctx, _ in points]
         x = np.arange(len(points))
@@ -900,11 +907,27 @@ def plot_sweep_figure(
         # TODO: plot the line for this
         if OOD_oracle is not None:
 
-            # Black
+            oracle_mean = OOD_oracle["ood"]["mean_return"]
+            oracle_stderr = OOD_oracle["ood"]["stderr_return"]
+
+            # Line color: purple reads more clearly than black against the
+            # blue/red bars and the black error-bar caps already on the plot.
+            oracle_color = "#7B1FA2"
+
             ax.axhline(
-                OOD_oracle["ood"]["mean_return"], color="#000000", linestyle="--",
+                oracle_mean, color=oracle_color, linestyle="--",
                 linewidth=1.2, alpha=0.7, label="OOD_oracle",
             )
+            # Shaded +/- stderr band around the oracle line.
+            ax.axhspan(
+                oracle_mean - oracle_stderr, oracle_mean + oracle_stderr,
+                color=oracle_color, alpha=0.15, linewidth=0,
+                label="OOD_oracle ± StdErr",
+            )
+
+
+
+
 
         ax.set_xticks(x)
         ax.set_xticklabels(ctx_labels)
