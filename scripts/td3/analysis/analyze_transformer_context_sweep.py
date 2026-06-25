@@ -14,9 +14,10 @@ included for comparison.
 
 Run from the repo root (so `scripts.*` / `airhockey` imports resolve), e.g.:
 
-    .venv/bin/python -m scripts.td3.analyze_transformer_context_sweep \
+    .venv/bin/python -m scripts.td3.analysis.analyze_transformer_context_sweep \
         --runs-dir runs/td3 \
         --baseline-run-dir runs/td3/sanity_check \
+        --ood-oracle-run-dir runs/td3/OOD_Oracle_p_density... \
         --gravity-ood -1.2 -0.8 \
         --paddle-density-ood 3500 4500 \
         --puck-damping-ood 0.05 0.15 \
@@ -93,6 +94,8 @@ HISTORY_ENTRY_DIM = 4
 
 # Used as the dict key for the vanilla-TD3 baseline in the results structure.
 BASELINE_KEY = "__baseline_vanilla_td3__"
+# OOD_ORACLE_KEY = "__ood_oracle_td3__"
+OOD_ORACLE_KEY = "OOD_Oracle"
 
 
 # ---------------------------------------------------------------------------
@@ -108,8 +111,9 @@ _PREFIX_RE = re.compile(
     r"^(sweep_transformer_(?:true|false)_ctx_\d+)(?:r\d+)?(?:_seed_\d+)?$"
 )
 
-
-def parse_run_prefix(folder_name: str) -> str:
+# TODO: need to check if this can already support searching for "OOD_Oracle"
+# - if it does then great, if not then we need to fix that
+def parse_run_prefix(folder_name: str, name_filter: str, oracle_seed=[0]) -> str:
     """Collapse a run-folder name down to its structural prefix, e.g.
     'sweep_transformer_false_ctx_32r1_seed_3' -> 'sweep_transformer_false_ctx_32'.
 
@@ -119,12 +123,21 @@ def parse_run_prefix(folder_name: str) -> str:
     as its own singleton group instead, which is easy to spot in the debug
     printout).
     """
-    match = _PREFIX_RE.match(folder_name)
-    if match:
-        return match.group(1)
-    if "_seed_" in folder_name:
-        return folder_name.split("_seed_")[0]
-    return folder_name
+    # I just want hack to make OOD oracle work well with current setup
+    # oracle_seed[0] += 1
+    # + str(oracle_seed)
+
+    if "OOD_Oracle" in name_filter:
+        return (folder_name.partition("OOD_Oracle")[1] )
+
+
+    else:
+        match = _PREFIX_RE.match(folder_name)
+        if match:
+            return match.group(1)
+        if "_seed_" in folder_name:
+            return folder_name.split("_seed_")[0]
+        return folder_name
 
 
 def parse_prefix_axes(prefix: str) -> tuple[bool, int] | None:
@@ -156,7 +169,8 @@ def discover_run_folders(runs_dir: str, name_filter: str = "sweep_transformer") 
         full_path = os.path.join(runs_dir, folder)
         if not os.path.isdir(full_path):
             continue
-        prefix = parse_run_prefix(folder)
+
+        prefix = parse_run_prefix(folder, name_filter)
         grouped[prefix].append(full_path)
 
     # ------------------------------------------------------------------
@@ -597,6 +611,7 @@ def analyze_transformer_context_sweep(
     puck_damping_min_OOD: float,
     puck_damping_max_OOD: float,
     runs_dir: str = "runs/td3",
+    ood_oracle_run_dir: str | None = None,  # Note: this is a separate folder within runs/td3 which contains multiple seeds that trained TD3 vanilla on the OOD distribution
     baseline_run_dir: str | None = None,
     device: str = "cpu",
     n_envs: int = 30,
@@ -654,6 +669,7 @@ def analyze_transformer_context_sweep(
     print("\nSelecting best checkpoint per seed (by multi_env_eval.json)...")
     seed_index = build_seed_index(grouped_folders)
 
+    # Find best checkpoint from the singe run of the vanilla TD3 trained on ID
     if baseline_run_dir is not None:
         baseline_best = find_best_checkpoint_per_seed(baseline_run_dir)
         if baseline_best is None:
@@ -661,6 +677,25 @@ def analyze_transformer_context_sweep(
                   "baseline will be omitted from the figure.")
         else:
             seed_index[BASELINE_KEY] = [baseline_best]
+
+    ## ====================================================================================================
+    # TODO: Do same thing as above but to find the OOD oracles folder.
+    # Make sure to add the two dictionaries together then we can pick off the OOD oracles via prefix = OOD_oracle_key
+    # that we pass in from grouped_folders
+    # TODO: make sure name_filter matches the name of the "Step_x_OOD_Oracle we're using" <-- make it match the OOD params that we're setting
+    grouped_folders_OOD = discover_run_folders(runs_dir=ood_oracle_run_dir, name_filter="OOD_Oracle")
+    print(f"Discovered {len(grouped_folders_OOD)} distinct sweep prefixes:")
+    for prefix, folders in sorted(grouped_folders_OOD.items()):
+        print(f"  {prefix:<38} n_seed_folders={len(folders)}")
+
+    # --- Step 2: best checkpoint per seed, per prefix ---
+    print("\nSelecting best checkpoint per seed (by multi_env_eval.json)...")
+    OOD_seed_index = build_seed_index(grouped_folders_OOD)
+
+    ## ====================================================================================================
+    seed_index = seed_index | OOD_seed_index
+
+    # See what the prefix for the OOD oracle is. compare with that of the other seeds.
 
     # --- Step 3: build job list and fan out across workers ---
     # Build a flat list of jobs (one per (prefix, seed) pair) so the Pool
@@ -770,6 +805,7 @@ def print_sweep_table(final: dict[str, dict[str, dict[str, float]]]) -> None:
     lines.append("-" * 95)
 
     def sort_key(prefix):
+        # TODO: figue out how key sorting should work with OOD_ORACLE
         if prefix == BASELINE_KEY:
             return (-1, 0)
         axes = parse_prefix_axes(prefix)
@@ -780,7 +816,16 @@ def print_sweep_table(final: dict[str, dict[str, dict[str, float]]]) -> None:
 
     for prefix in sorted(final.keys(), key=sort_key):
         agg = final[prefix]
-        display_name = "BASELINE (vanilla TD3)" if prefix == BASELINE_KEY else prefix
+
+        if prefix == BASELINE_KEY:
+            display_name = "BASELINE (vanilla TD3)"
+
+        elif prefix == OOD_ORACLE_KEY:
+            display_name = "OOD ORACLE (vanilla TD3 trained on OOD)"
+
+        else:
+            display_name =  prefix
+
         for cond in ("id", "ood"):
             c = agg[cond]
             lines.append(
@@ -817,6 +862,7 @@ def plot_sweep_figure(
         points_by_branch[branch].sort(key=lambda t: t[0])
 
     baseline = final.get(BASELINE_KEY)
+    OOD_oracle = final.get(OOD_ORACLE_KEY)
 
     fig, axes_arr = plt.subplots(1, 2, figsize=(13, 5.5), sharey=True)
     branch_titles = {True: "Use Transformer", False: "No Transformer"}
@@ -838,13 +884,26 @@ def plot_sweep_figure(
                color="#F44336", alpha=0.85, label="OOD")
 
         if baseline is not None:
+
+            # Blue
             ax.axhline(
                 baseline["id"]["mean_return"], color="#2196F3", linestyle="--",
                 linewidth=1.2, alpha=0.7, label="Baseline ID",
             )
+
+            # Red
             ax.axhline(
                 baseline["ood"]["mean_return"], color="#F44336", linestyle="--",
                 linewidth=1.2, alpha=0.7, label="Baseline OOD",
+            )
+        
+        # TODO: plot the line for this
+        if OOD_oracle is not None:
+
+            # Black
+            ax.axhline(
+                OOD_oracle["ood"]["mean_return"], color="#000000", linestyle="--",
+                linewidth=1.2, alpha=0.7, label="OOD_oracle",
             )
 
         ax.set_xticks(x)
@@ -875,6 +934,8 @@ def _parse_args():
     p.add_argument("--runs-dir", default="runs/td3")
     p.add_argument("--baseline-run-dir", default=None,
                     help="e.g. runs/td3/sanity_check — single run folder for the vanilla-TD3 comparison line")
+    p.add_argument("--ood-oracle-run-dir", default=None,
+                    help="e.g. runs/td3/OOD_Oracle_p_density... — single run folder for the vanilla-TD3 comparison line")
     p.add_argument("--device", default="cpu")
     p.add_argument("--n-envs", type=int, default=30)
     p.add_argument("--n-eps", type=int, default=8)
@@ -907,6 +968,7 @@ if __name__ == "__main__":
         puck_damping_max_OOD=args.puck_damping_ood[1],
         runs_dir=args.runs_dir,
         baseline_run_dir=args.baseline_run_dir,
+        ood_oracle_run_dir=args.ood_oracle_run_dir,
         device=args.device,
         n_envs=args.n_envs,
         n_eps=args.n_eps,

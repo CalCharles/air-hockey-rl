@@ -1545,7 +1545,7 @@ def _entrypoint():
 
         # TODO: Change so that we only start doing evaluation and saving checkpoints after a certain timestep
         # TODO: This is done to reduce the number of GB of data we produce
-        if (global_step > 1600000) and global_step % args.checkpoint_interval == 0:
+        if (global_step >= 1600000) and global_step % args.checkpoint_interval == 0:
             checkpoint_dir = os.path.join(log_parent_dir, f"checkpoint_{global_step}")
             model_path = save_full_checkpoint(checkpoint_dir)
             print(f"\nCheckpoint saved at step {global_step}")
