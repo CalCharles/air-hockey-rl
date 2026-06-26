@@ -67,6 +67,11 @@ class AirHockeyMoveBlockEnv(AirHockeyBaseEnv):
     #     return obs
 
 class AirHockeyStrikeCrowdEnv(AirHockeyBaseEnv):
+    # End the episode once the block cluster is clearly struck so the env
+    # reset respawns blocks + puck (Box2D effectively does this via a fast
+    # puck_pass_paddle; pymunk needs an explicit cluster-hit trigger).
+    cluster_hit_displacement_threshold = 0.15
+
     def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
         paddle_obs_low = [self.table_x_top, self.table_y_left, -self.max_paddle_vel, -self.max_paddle_vel]
@@ -185,6 +190,55 @@ class AirHockeyStrikeCrowdEnv(AirHockeyBaseEnv):
         assert self.num_obstacles == 0
         assert self.num_targets == 0
         assert self.num_paddles == 1
+
+    def _cluster_max_displacement(self, state_info) -> float:
+        max_disp = 0.0
+        for block in state_info.get("blocks", []):
+            dist = np.linalg.norm(
+                np.array(block["current_position"]) - np.array(block["initial_position"])
+            )
+            max_disp = max(max_disp, float(dist))
+        return max_disp
+
+    def _soft_reset_after_cluster_hit(self) -> None:
+        """Respawn the block pyramid and puck without ending the episode."""
+        self.simulator.reset_blocks_to_initial()
+        puck_x = self.length / 5
+        self.simulator.reset_puck_to_spawn("puck_0", (puck_x, 0.0), (0.0, 0.0))
+        state_info = self.simulator.get_current_state()
+        self.current_state = state_info
+        if "pucks" in state_info:
+            self.simulator.puck_history.append(
+                list(state_info["pucks"][0]["position"]) + [0]
+            )
+
+    def reset(self, seed=None, **kwargs):
+        obs, info = super().reset(seed=seed, **kwargs)
+        self._cluster_reset_cooldown = 0
+        return obs, info
+
+    def single_agent_step(self, inp_action):
+        obs, reward, is_finished, truncated, info = super().single_agent_step(inp_action)
+        if (
+            not is_finished
+            and not truncated
+            and self._cluster_reset_cooldown <= 0
+            and self.current_timestep > 3
+            and "blocks" in self.current_state
+        ):
+            if self._cluster_max_displacement(self.current_state) > self.cluster_hit_displacement_threshold:
+                self._soft_reset_after_cluster_hit()
+                self._cluster_reset_cooldown = 5
+                obs = self.get_observation(
+                    self.current_state,
+                    obs_type=self.obs_type,
+                    puck_history=self.simulator.puck_history,
+                    paddle_history=self.simulator.paddle_history,
+                )
+                info["cluster_soft_reset"] = True
+        elif self._cluster_reset_cooldown > 0:
+            self._cluster_reset_cooldown -= 1
+        return obs, reward, is_finished, truncated, info
 
     def get_observation(self, state_info, obs_type='many_blocks', **kwargs):
         return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)

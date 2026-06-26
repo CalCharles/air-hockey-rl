@@ -298,6 +298,8 @@ class AirHockeyPymunk:
         # Disable global gravity and damping; applied manually per-body each sub-step.
         self._space.gravity = (0.0, 0.0)
         self._space.damping = 1.0
+        self._space.iterations = 20
+        self._min_physics_substeps = 4
         self._current_gravity_y = self.gravity if not isinstance(self.gravity, list) else -0.5
         self._setup_collision_handlers()
 
@@ -337,6 +339,78 @@ class AirHockeyPymunk:
             data=self,
         )
 
+    def _wall_segment_radius(self) -> float:
+        """Capsule radius for table-wall segments (non-zero to reduce tunneling)."""
+        return float(self.puck_radius)
+
+    def _physics_substep_count(self, sim_time: float) -> int:
+        """Sub-steps so the fastest body moves at most ~one puck diameter per sub-step."""
+        if sim_time <= 0.0:
+            return 1
+        max_speed = float(self.max_puck_vel) * 2.0
+        for body in self._dynamic_bodies:
+            max_speed = max(max_speed, float(body.velocity.length))
+        max_travel = max_speed * sim_time
+        max_disp = max(self.puck_radius * 2.0, 1e-4)
+        n = int(np.ceil(max_travel / max_disp))
+        return int(max(self._min_physics_substeps, n))
+
+    def _confine_circle_body_to_table(self, body, radius: float) -> None:
+        """Hard clamp: keep a circular body inside the table (box2d frame)."""
+        x = float(body.position.x)
+        y = float(body.position.y)
+        vx = float(body.velocity.x)
+        vy = float(body.velocity.y)
+        x_lo = self.table_x_min + radius
+        x_hi = self.table_x_max - radius
+        y_lo = self.table_y_min + radius
+        y_hi = self.table_y_max - radius
+        new_x, new_y = x, y
+        if x < x_lo:
+            new_x = x_lo
+            if vx < 0.0:
+                vx = 0.0
+        elif x > x_hi:
+            new_x = x_hi
+            if vx > 0.0:
+                vx = 0.0
+        if y < y_lo:
+            new_y = y_lo
+            if vy < 0.0:
+                vy = 0.0
+        elif y > y_hi:
+            new_y = y_hi
+            if vy > 0.0:
+                vy = 0.0
+        if new_x != x or new_y != y:
+            body.position = pymunk.Vec2d(new_x, new_y)
+            body.velocity = pymunk.Vec2d(vx, vy)
+
+    def _confine_table_objects_to_table(self) -> None:
+        """Ensure pucks and blocks cannot remain outside the table after integration."""
+        for body in self.pucks.values():
+            self._confine_circle_body_to_table(body, self.puck_radius)
+        half_block = self.block_width / 2.0
+        for body in self.blocks.values():
+            self._confine_circle_body_to_table(body, half_block)
+
+    def _advance_physics(self, sim_time: float, paddle_body, force: np.ndarray) -> None:
+        """Integrate the space with sub-steps and anti-tunnel wall safeguards."""
+        n_sub = self._physics_substep_count(sim_time)
+        sub_dt = sim_time / n_sub
+        fx, fy = float(force[0]), float(force[1])
+        paddle_pos = paddle_body.position
+        for _ in range(n_sub):
+            paddle_body.apply_force_at_world_point((fx, fy), paddle_pos)
+            for puck_body in self.pucks.values():
+                if puck_body._affected_by_gravity:
+                    grav_force = puck_body.mass * self._current_gravity_y
+                    puck_body.apply_force_at_world_point(
+                        (0.0, grav_force), puck_body.position
+                    )
+            self._space.step(sub_dt)
+            self._confine_table_objects_to_table()
+
     def _create_walls(self) -> None:
         """Create (or replace) four wall segments in box2d frame coordinates."""
         if self._wall_body is not None:
@@ -344,17 +418,25 @@ class AirHockeyPymunk:
 
         wall_body = pymunk.Body(body_type=pymunk.Body.STATIC)
         wall_body.body_tag = "table_wall"
+        wall_r = self._wall_segment_radius()
+        # Offset segment centerlines outward so the inner capsule face aligns with
+        # the table edge (matches Box2D edge placement, avoids shrinking play area).
+        x_lo = self.table_x_min - wall_r
+        x_hi = self.table_x_max + wall_r
+        y_lo = self.table_y_min - wall_r
+        y_hi = self.table_y_max + wall_r
+        corner = wall_r
         segments = [
             # Left / right side walls (constant x, vary y)
-            ((self.table_x_min, self.table_y_min), (self.table_x_min, self.table_y_max), self.side_wall_restitution),
-            ((self.table_x_max, self.table_y_min), (self.table_x_max, self.table_y_max), self.side_wall_restitution),
+            ((x_lo, y_lo - corner), (x_lo, y_hi + corner), self.side_wall_restitution),
+            ((x_hi, y_lo - corner), (x_hi, y_hi + corner), self.side_wall_restitution),
             # Bottom / top end walls (vary x, constant y)
-            ((self.table_x_min, self.table_y_min), (self.table_x_max, self.table_y_min), self.end_wall_restitution),
-            ((self.table_x_min, self.table_y_max), (self.table_x_max, self.table_y_max), self.end_wall_restitution),
+            ((x_lo - corner, y_lo), (x_hi + corner, y_lo), self.end_wall_restitution),
+            ((x_lo - corner, y_hi), (x_hi + corner, y_hi), self.end_wall_restitution),
         ]
         shapes = []
         for p1, p2, restitution in segments:
-            seg = pymunk.Segment(wall_body, p1, p2, radius=0.0)
+            seg = pymunk.Segment(wall_body, p1, p2, radius=wall_r)
             seg.elasticity = float(restitution)
             seg.friction = 0.0
             seg.collision_type = _CT_WALL
@@ -506,6 +588,23 @@ class AirHockeyPymunk:
         self.pucks[name] = body
         self.object_dict[name] = body
         self.puck_history += [(-2 + self.center_offset_constant, 0, 1) for _ in range(5)]
+
+    def reset_blocks_to_initial(self) -> None:
+        for block_name, body in self.blocks.items():
+            ix, iy = self.block_initial_positions[block_name]
+            body.position = pymunk.Vec2d(float(ix), float(iy))
+            body.velocity = (0.0, 0.0)
+            body.angular_velocity = 0.0
+
+    def reset_puck_to_spawn(self, name, pos_base, vel_base=(0.0, 0.0)) -> None:
+        body = self.pucks.get(name)
+        if body is None:
+            return
+        pos = self.base_coord_to_box2d(pos_base)
+        vel = self.base_coord_to_box2d(vel_base)
+        body.position = pymunk.Vec2d(float(pos[0]), float(pos[1]))
+        body.velocity = pymunk.Vec2d(float(vel[0]), float(vel[1]))
+        body.angular_velocity = 0.0
 
     def spawn_block(self, pos, vel, name, affected_by_gravity=False, movable=True):
         pos = self.base_coord_to_box2d(pos)
@@ -731,18 +830,7 @@ class AirHockeyPymunk:
             if force_mag > self.max_force_timestep:
                 force = force / force_mag * self.max_force_timestep
 
-            # Apply force to paddle
-            paddle_body.apply_force_at_world_point(
-                (float(force[0]), float(force[1])), paddle_body.position
-            )
-
-            # --- Sub-step: apply gravity to pucks before stepping ---
-            for puck_body in self.pucks.values():
-                if puck_body._affected_by_gravity:
-                    grav_force = puck_body.mass * self._current_gravity_y
-                    puck_body.apply_force_at_world_point((0.0, grav_force), puck_body.position)
-
-            self._space.step(sim_time)
+            self._advance_physics(sim_time, paddle_body, force)
 
             # --- Post-step: apply per-body damping ---
             for body in self._dynamic_bodies:

@@ -1136,6 +1136,26 @@ class AirHockeyBox2D:
         self.block_initial_positions[name] = pos
         self.object_dict[name] = block
 
+    def reset_blocks_to_initial(self) -> None:
+        for block_name in self.blocks:
+            block = self.blocks[block_name]
+            x, y = self.block_initial_positions[block_name]
+            block.position = (float(x), float(y))
+            block.angle = 0.0
+            block.linearVelocity = (0.0, 0.0)
+            block.angularVelocity = 0.0
+
+    def reset_puck_to_spawn(self, name, pos_base, vel_base=(0.0, 0.0)) -> None:
+        puck = self.pucks.get(name)
+        if puck is None:
+            return
+        pos = self.base_coord_to_box2d(pos_base)
+        vel = self.base_coord_to_box2d(vel_base)
+        puck.position = (float(pos[0]), float(pos[1]))
+        puck.angle = 0.0
+        puck.linearVelocity = (float(vel[0]), float(vel[1]))
+        puck.angularVelocity = 0.0
+
     def spawn_obstacle(self, pos, name, size=None, affected_by_gravity=False, movable=False):
         """Spawn an isosceles triangle obstacle (wide base, single apex).
 
