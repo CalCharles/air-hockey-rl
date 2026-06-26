@@ -1,6 +1,7 @@
 from .airhockey_box2d import AirHockeyBox2D
+from .airhockey_pymunk import AirHockeyPymunk
 
-__all__ = ["AirHockeyBox2D", "AirHockeyReal"]
+__all__ = ["AirHockeyBox2D", "AirHockeyPymunk", "AirHockeyReal"]
 
 
 def __getattr__(name):

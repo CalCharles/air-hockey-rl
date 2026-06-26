@@ -14,7 +14,11 @@ import copy
 def get_box2d_simulator_fn():
     from airhockey.sims import AirHockeyBox2D
     return AirHockeyBox2D
-    
+
+def get_pymunk_simulator_fn():
+    from airhockey.sims import AirHockeyPymunk
+    return AirHockeyPymunk
+
 def get_robosuite_simulator_fn():
     from airhockey.sims import AirHockeyRobosuite
     return AirHockeyRobosuite
@@ -113,12 +117,20 @@ class AirHockeyBaseEnv(ABC, Env):
 
         if config.simulator == 'box2d':
             simulator_fn = get_box2d_simulator_fn()
+        elif config.simulator == 'pymunk':
+            simulator_fn = get_pymunk_simulator_fn()
+        elif config.simulator == 'auto':
+            try:
+                get_box2d_simulator_fn()
+                simulator_fn = get_box2d_simulator_fn()
+            except Exception:
+                simulator_fn = get_pymunk_simulator_fn()
         elif config.simulator == 'robosuite':
             simulator_fn = get_robosuite_simulator_fn()
         elif config.simulator == 'real':
             simulator_fn = get_real_simulator_fn()
         else:
-            raise ValueError("Invalid simulator type. Must be 'box2d' or 'robosuite'.")
+            raise ValueError("Invalid simulator type. Must be 'box2d', 'pymunk', 'auto', 'robosuite', or 'real'.")
 
         simulator_params = config.simulator_params
         simulator_params.seed = config.seed
@@ -387,10 +399,12 @@ class AirHockeyBaseEnv(ABC, Env):
         if self.domain_random:
             if self.simulator_name == 'box2d':
                 simulator_fn = get_box2d_simulator_fn()
+            elif self.simulator_name == 'pymunk':
+                simulator_fn = get_pymunk_simulator_fn()
             elif self.simulator_name == 'robosuite':
                 simulator_fn = get_robosuite_simulator_fn()
             else:
-                raise ValueError("Invalid simulator type. Must be 'box2d' or 'robosuite'.")
+                raise ValueError("Invalid simulator type for domain randomization.")
 
 
             if self.domain_random:
