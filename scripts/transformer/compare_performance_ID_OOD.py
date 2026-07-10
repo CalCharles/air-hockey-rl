@@ -1,5 +1,5 @@
 """
-new_eval_id_ood_comparison.py
+compare_performance_ID_OOD.py
 
 Pure analysis module — no arg parsing, no model loading.
 
@@ -26,12 +26,17 @@ Entry point:
         seed=args.seed,
         model_path=args.model_path or "",
         params_cache_path=args.params_cache_path,
+        save_gifs=args.eval_id_ood_save_gifs,             # optional, default False
+        n_gifs_per_env=args.eval_id_ood_n_gifs_per_env,    # optional, default 1
+        n_eps_per_gif=args.eval_id_ood_n_eps_per_gif,      # optional, default 1
     )
 
 Outputs written to out_dir:
     summary.json          — per-condition stats + aggregates
     comparison_table.txt  — human-readable table
     bar_chart.png         — mean return + success rate bar chart
+    gifs/env{i}/eval_*.gif — (only if save_gifs=True) one folder per sampled
+                             dynamics config, containing rendered rollout GIFs
 """
 
 from __future__ import annotations
@@ -48,7 +53,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from airhockey import AirHockeyEnv
+from airhockey.renderers import AirHockeyRenderer
 from scripts.td3.eval_utils import augment_policy_observation
+from scripts.td3.evaluate import _save_task_gif_with_last_action
 from scripts.transformer.history_buffer import HistoryBuffer
 
 
@@ -75,7 +82,7 @@ def _build_env_config(base_config, param_overrides, seed=None):
 
 
 # ---------------------------------------------------------------------------
-# Episode rollout
+# Episode rollout (headless — stats only, no rendering)
 # ---------------------------------------------------------------------------
 
 def _rollout_episodes(
@@ -93,6 +100,7 @@ def _rollout_episodes(
     """Roll out n_eps episodes, building the policy observation exactly as
     td3_training.py does (raw obs [+ history/context] [+ last action])."""
     env = AirHockeyEnv(air_hockey_params)
+    
     env.max_timesteps = 200
 
     returns, successes, episode_lengths = [], [], []
@@ -112,20 +120,36 @@ def _rollout_episodes(
         while not done:
             if use_history:
                 history_buf.add(obs)
-                state_history = history_buf.sample().to(device)  # (1, T, 4)
+                state_history = history_buf.sample().to(device)  # (1, T, HISTORY_DIM)
+
+                # if use_transformer:
+                #     with torch.no_grad():
+                #         context = transformer(state_history)      # (1, context_dim)
+                # else:
+                #     context = state_history.view(1, -1)           # (1, T*4)
+                    
+                # obs_with_ctx = torch.cat(
+                #     [obs_tensor.unsqueeze(0).to(device), context], dim=-1
+                # )
+                # policy_obs = augment_policy_observation(
+                #     obs_with_ctx, last_action.to(device), use_last_action
+                # )
 
                 if use_transformer:
                     with torch.no_grad():
                         context = transformer(state_history)      # (1, context_dim)
+                    obs_with_ctx = torch.cat(
+                        [obs_tensor.unsqueeze(0).to(device), context], dim=-1
+                    )
+                    policy_obs = augment_policy_observation(
+                        obs_with_ctx, last_action.to(device), use_last_action
+                    )
                 else:
-                    context = state_history.view(1, -1)           # (1, T*4)
-
-                obs_with_ctx = torch.cat(
-                    [obs_tensor.unsqueeze(0).to(device), context], dim=-1
-                )
-                policy_obs = augment_policy_observation(
-                    obs_with_ctx, last_action.to(device), use_last_action
-                )
+                    context = state_history.view(1, -1)           # (1, T*entry_dim)
+                    policy_obs = augment_policy_observation(
+                        context.to(device), last_action.to(device), use_last_action
+                    )
+                    
             else:
                 policy_obs = augment_policy_observation(
                     obs_tensor.unsqueeze(0).to(device), last_action.to(device), use_last_action
@@ -160,6 +184,53 @@ def _rollout_episodes(
         "mean_success_rate": float(np.mean(successes)),
         "mean_episode_length": float(np.mean(episode_lengths)),
     }
+
+
+# ---------------------------------------------------------------------------
+# GIF rendering — reuses evaluate.py's _save_task_gif_with_last_action
+# ---------------------------------------------------------------------------
+
+def _save_gifs_for_env(
+    air_hockey_params: dict,
+    gif_actor,
+    act_dim: int,
+    use_last_action: bool,
+    out_dir: str,
+    n_gifs: int,
+    n_eps_per_gif: int,
+    use_history: bool = False,
+    gif_transformer=None,
+    context_len: int = 0,
+) -> None:
+    """Render `n_gifs` GIF(s) of `gif_actor` acting in `air_hockey_params`
+    dynamics, using the exact same rendering routine evaluate_agent() uses
+    for single-run eval GIFs (`_save_task_gif_with_last_action`).
+
+    `gif_actor` / `gif_transformer` are expected to already be on CPU — that
+    routine does not move tensors to a device, matching evaluate_agent()'s
+    existing (CPU-only) rendering path.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+
+    env = AirHockeyEnv(air_hockey_params)
+    renderer = AirHockeyRenderer(env, show_target_position=True, show_acceleration_arrow=False)
+
+    history_buf = HistoryBuffer(context_len=context_len) if use_history else None
+
+    _save_task_gif_with_last_action(
+        n_eps_viz=n_eps_per_gif,
+        n_gifs=n_gifs,
+        env_test=env,
+        policy=gif_actor,
+        renderer=renderer,
+        log_dir=out_dir,
+        action_dim=act_dim,
+        use_last_action_in_policy_state=use_last_action,
+        transformer=gif_transformer,
+        history_buf=history_buf,
+        use_history=use_history,
+    )
+    env.close()
 
 
 # ---------------------------------------------------------------------------
@@ -255,14 +326,13 @@ def _plot_bar_chart(aggregates: dict, out_dir: str):
 # ID and OOD Environment Parameter save / load helper functions
 # ---------------------------------------------------------------------------
 
-def _load_params(cache_path: str) -> tuple[list[dict], list[dict]]:
-    """Load ID and OOD param sets from a previously saved cache file."""
+def _load_params(cache_path: str) -> list[dict]:
+    """Load ID param sets from a previously saved cache file."""
     with open(cache_path) as f:
         cached = json.load(f)
-    id_params  = cached["id"]
-    ood_params = cached["ood"]
-    print(f"  Loaded {len(id_params)} ID + {len(ood_params)} OOD param sets from {cache_path}")
-    return id_params, ood_params
+    id_params = cached["id"]
+    print(f"  Loaded {len(id_params)} ID param sets from {cache_path}")
+    return id_params
 
 
 def _save_params(cache_path: str, id_params: list[dict], ood_params: list[dict]) -> None:
@@ -293,6 +363,9 @@ def compare_performance_ID_OOD(
     seed: int = 42,
     model_path: str = "",
     params_cache_path: str | None = None,
+    save_gifs: bool = False,
+    n_gifs_per_env: int = 1,
+    n_eps_per_gif: int = 1,
 ):
     """Evaluate `actor` (+ optional `transformer`/history) on a fixed ID and
     OOD set of dynamics-parameter dicts.
@@ -314,7 +387,7 @@ def compare_performance_ID_OOD(
     transformer          : Loaded ContextEncoder. Required if use_transformer.
     context_len          : History length. Required if use_history.
     n_envs               : Number of distinct dynamics configs per condition.
-    n_eps                : Episodes per dynamics config.
+    n_eps                : Episodes per dynamics config (headless stats rollout).
     out_dir              : Directory to write outputs.
     device               : torch device string.
     seed                 : RNG seed for reproducibility / param sampling.
@@ -323,6 +396,17 @@ def compare_performance_ID_OOD(
                            file exists, param sets are loaded from it
                            (ignoring n_envs/seed); otherwise n_envs sets are
                            sampled per condition and saved there.
+    save_gifs            : If True, also render `n_gifs_per_env` GIF(s) per
+                           sampled dynamics config, reusing
+                           `_save_task_gif_with_last_action` from evaluate.py
+                           (the same routine evaluate_agent() uses). GIFs are
+                           written to `out_dir/gifs/env{i}/`. Rendering always
+                           runs on CPU copies of actor/transformer, matching
+                           evaluate_agent()'s existing CPU-only rendering path
+                           — this is independent of `device`, which only
+                           controls the headless stats rollout.
+    n_gifs_per_env       : Number of GIFs to render per dynamics config.
+    n_eps_per_gif        : Number of episodes strung together into one GIF.
     """
     os.makedirs(out_dir, exist_ok=True)
 
@@ -333,25 +417,20 @@ def compare_performance_ID_OOD(
 
     random_variables           = list(air_hockey_base.get("random_variables", []))
     random_variable_ranges     = dict(air_hockey_base.get("random_variable_ranges", {}))
-    random_variable_ranges_OOD = dict(air_hockey_base.get("random_variable_ranges_OOD", {}))
-
     if not random_variables:
         raise ValueError(
             "air_hockey config has no random_variables / random_variable_ranges. "
             "Use a paramrand config (e.g. sim_paramrand_pm25.yaml)."
         )
-    if not random_variable_ranges_OOD:
-        raise ValueError(
-            "air_hockey config has no random_variable_ranges_OOD. "
-            "Use a config with an OOD range block (e.g. sim_paramrand_pm25_OOD.yaml)."
-        )
 
     print(f"\n{'='*60}")
     print(f"  compare_performance_ID_OOD")
     print(f"  ID  ranges : {random_variable_ranges}")
-    print(f"  OOD ranges : {random_variable_ranges_OOD}")
     print(f"  n_envs={n_envs}, n_eps={n_eps}, seed={seed}")
     print(f"  use_history={use_history}, use_transformer={use_transformer}")
+    print(f"  save_gifs={save_gifs}" + (
+        f"  (n_gifs_per_env={n_gifs_per_env}, n_eps_per_gif={n_eps_per_gif})" if save_gifs else ""
+    ))
     print(f"{'='*60}\n")
 
     actor.eval()
@@ -362,21 +441,38 @@ def compare_performance_ID_OOD(
     if use_history:
         history_buf = HistoryBuffer(context_len=context_len, device=device)
 
+    # --- CPU copies of actor/transformer for GIF rendering only ---
+    # _save_task_gif_with_last_action (evaluate.py) never moves tensors to a
+    # device, so we hand it CPU-resident copies regardless of what `device`
+    # the main stats rollout above uses. Copied once, reused for every env.
+    gif_actor = None
+    gif_transformer = None
+    if save_gifs:
+        gif_actor = copy.deepcopy(actor).to("cpu")
+        gif_actor.eval()
+        if transformer is not None:
+            gif_transformer = copy.deepcopy(transformer).to("cpu")
+            gif_transformer.eval()
+
     # --- Load or generate ID/OOD param sets ---
     if params_cache_path is not None and os.path.exists(params_cache_path):
-        id_param_sets, ood_param_sets = _load_params(params_cache_path)
-        print("Loading params from memory")
+        id_param_sets = _load_params(params_cache_path)
+        print("Loading saved thing at path: ", params_cache_path)
     else:
-        print("Generating new samples")
+        print("Generating")
         rng = np.random.RandomState(seed)
-        id_param_sets  = [_sample_id_params(random_variable_ranges,     random_variables, rng) for _ in range(n_envs)]
-        ood_param_sets = [_sample_id_params(random_variable_ranges_OOD, random_variables, rng) for _ in range(n_envs)]
+        id_param_sets = [_sample_id_params(random_variable_ranges, random_variables, rng) for _ in range(n_envs)]
         if params_cache_path is not None:
-            _save_params(params_cache_path, id_param_sets, ood_param_sets)
+            # Persist to disk so a *different* process (e.g. a separate
+            # `td3_training.py --eval_id_ood` invocation for a different
+            # checkpoint) reusing the same params_cache_path gets the exact
+            # same dynamics configs instead of resampling.
+
+            _save_params(params_cache_path, id_param_sets, [])
 
     raw_results = {"id": [], "ood": []}
 
-    for cond_name, param_sets in [("id", id_param_sets), ("ood", ood_param_sets)]:
+    for cond_name, param_sets in [("id", id_param_sets)]:   # , ("ood", ood_param_sets)
         for env_i, params in enumerate(param_sets):
             env_cfg = _build_env_config(
                 air_hockey_base, params,
@@ -406,6 +502,25 @@ def compare_performance_ID_OOD(
                 f"params={params}"
             )
 
+            if save_gifs:
+                gif_out_dir = os.path.join(out_dir, "gifs", cond_name, f"env{env_i}")
+                os.makedirs(gif_out_dir, exist_ok=True)
+                with open(os.path.join(gif_out_dir, "params.json"), "w") as f:
+                    json.dump(params, f, indent=2)
+                _save_gifs_for_env(
+                    air_hockey_params=env_cfg,
+                    gif_actor=gif_actor,
+                    act_dim=act_dim,
+                    use_last_action=use_last_action,
+                    out_dir=gif_out_dir,
+                    n_gifs=n_gifs_per_env,
+                    n_eps_per_gif=n_eps_per_gif,
+                    use_history=use_history,
+                    gif_transformer=gif_transformer,
+                    context_len=context_len,
+                )
+                print(f"    saved {n_gifs_per_env} gif(s) → {gif_out_dir}")
+
     aggregates = {
         "id":  _agg(raw_results["id"]),
         "ood": _agg(raw_results["ood"]),
@@ -422,7 +537,7 @@ def compare_performance_ID_OOD(
             "context_len": context_len,
             "random_variables":           random_variables,
             "random_variable_ranges_ID":     random_variable_ranges,
-            "random_variable_ranges_OOD": random_variable_ranges_OOD,
+            "save_gifs": save_gifs,
         },
         "aggregates": aggregates,
         "per_env":    raw_results,

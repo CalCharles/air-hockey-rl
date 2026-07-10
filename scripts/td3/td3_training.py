@@ -12,10 +12,10 @@ import os
 import random
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from types import SimpleNamespace
-from typing import Dict, List, Literal, Tuple
+from typing import Dict, List, Literal, Tuple, Optional
 
 import gymnasium as gym
 import numpy as np
@@ -78,7 +78,9 @@ from scripts.td3.evaluate import evaluate_agent
 from scripts.utils import save_tensorboard_plots
 
 ROLLING_STATS_WINDOW_STEPS = 2000
-HISTORY_ENTRY_DIM = 4
+HISTORY_ENTRY_DIM = 6
+# [paddle_x, paddle_y, paddle_valid, puck_x, puck_y, puck_valid]
+# one element of the history ^^^
 
 
 def h_transform(x: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
@@ -294,15 +296,28 @@ class Args:
     # only the model loaded via --model-path is evaluated.
     eval_id_ood_compare_model_path: str | None = None
     params_cache_path: str | None = None
+    eval_id_ood_out_dir: str = "results/default"
 
     # --- Parameters for submitting jobs with sbatch
     sbatch_run_name: str | None = None          # e.g. "paramrand_pm25_seed0"
     sbatch_partition: str = "gh"                # vista partition
     sbatch_time: str = "12:00:00"              # max wall time HH:MM:SS
 
-    paddle_density_OOD: List[float] | None = None
-    puck_damping_OOD: List[float] | None = None
-    gravity_OOD: List[float] | None = None
+    paddle_density: List[float] | None = None
+    puck_damping: List[float] | None = None
+    gravity: List[float] | None = None
+
+    # For compare_performance_ID_OOD when we want to generate GIFs of what we see
+    eval_id_ood_save_gifs: bool = False
+    eval_id_ood_n_gifs_per_env: int = 1
+    eval_id_ood_n_eps_per_gif: int = 1
+
+    random_variable_ranges_OOD: Optional[dict[str, tuple[float, float]]] = None
+
+    gravity_OOD: Optional[float] = None             # idk where this arg came from but it's in all the sweep transformer
+    paddle_density_OOD: Optional[float] = None      # idk where this arg came from but it's in all the sweep transformer
+    puck_damping_OOD: Optional[float] = None        # idk where this arg came from but it's in all the sweep transformer
+    # I won't use this ^^^ since we override it when we evaluate but I keep it here bc some args.yaml use it
 
 def make_env(env_id):
     def _thunk():
@@ -528,16 +543,16 @@ def _entrypoint():
 
 
     # Override the ranges for random_variable_ranges if they are provided via args
-    if (args.paddle_density_OOD is not None):
-        config["air_hockey"]["random_variable_ranges_OOD"]["paddle_density"] = [args.paddle_density_OOD[0], args.paddle_density_OOD[1]]
+    if (args.paddle_density is not None):
+        config["air_hockey"]["random_variable_ranges"]["paddle_density"] = [args.paddle_density[0], args.paddle_density[1]]
     
-    if (args.puck_damping_OOD is not None):
-        config["air_hockey"]["random_variable_ranges_OOD"]["puck_damping"] = [args.puck_damping_OOD[0], args.puck_damping_OOD[1]]
+    if (args.puck_damping is not None):
+        config["air_hockey"]["random_variable_ranges"]["puck_damping"] = [args.puck_damping[0], args.puck_damping[1]]
 
-    if (args.gravity_OOD is not None):
-        config["air_hockey"]["random_variable_ranges_OOD"]["gravity"] = [args.gravity_OOD[0], args.gravity_OOD[1]]
+    if (args.gravity is not None):
+        config["air_hockey"]["random_variable_ranges"]["gravity"] = [args.gravity[0], args.gravity[1]]
 
-    print("random_variable_ranges_OOD: ", config["air_hockey"]["random_variable_ranges_OOD"])
+    print("eval on random_variable_ranges: ", config["air_hockey"]["random_variable_ranges"])
 
 
     envs = gym.vector.AsyncVectorEnv([make_env(i) for i in range(args.num_envs)])
@@ -547,16 +562,26 @@ def _entrypoint():
 
     raw_obs_dim = int(np.array(envs.single_observation_space.shape).prod())
     act_dim = int(np.prod(envs.single_action_space.shape))
-    policy_obs_dim = raw_obs_dim + act_dim if args.use_last_action_in_policy_state else raw_obs_dim
 
-    # TODO: Checked this
+    # TODO: checked this
     if args.use_history:
-        if args.use_transformer:
-            policy_obs_dim +=  args.context_vector_dim
-        else:
-            policy_obs_dim += (args.context_len * HISTORY_ENTRY_DIM)
-
         
+        # Transformer: TD3 input dim: [raw_obs_dim, context_vector_dim]
+        if args.use_transformer:
+            policy_obs_dim = raw_obs_dim + act_dim if args.use_last_action_in_policy_state else raw_obs_dim
+            policy_obs_dim += args.context_vector_dim
+
+
+        else:
+            # context_len only: TD3 input dim: [context_len]
+            policy_obs_dim = (args.context_len * HISTORY_ENTRY_DIM)
+            if args.use_last_action_in_policy_state:
+                policy_obs_dim += act_dim
+
+    else:
+        # Default
+        policy_obs_dim = raw_obs_dim + act_dim if args.use_last_action_in_policy_state else raw_obs_dim
+
 
 
     policy_env_view = SimpleNamespace(
@@ -628,7 +653,7 @@ def _entrypoint():
             device=args.device,
         )
 
-    # TODO: Checked this
+    # TODO: need to check this
     if args.use_transformer and (args.context_vector_dim > 0):
 
         transformer = ContextEncoder(
@@ -638,7 +663,8 @@ def _entrypoint():
         ).to(args.device)
 
         transformer_optimizer = optim.Adam(transformer.parameters(), lr=args.transformer_lr)
-
+    else:
+        transformer = None
 
     if args.model_path is not None:
         if not os.path.exists(args.model_path):
@@ -708,7 +734,7 @@ def _entrypoint():
 
 
         # Load the transformer from path if specified
-        # TODO: checked this
+        # TODO: lgtm
         if args.model_path is not None and args.use_transformer:
             checkpoint_dir = os.path.dirname(args.model_path)
             transformer_path = os.path.join(checkpoint_dir, "transformer.pth")
@@ -735,7 +761,7 @@ def _entrypoint():
 
 
 
-    # TODO: Checked this
+    # TODO: need to check this
     if args.per_enabled:
         success_rb = TD3PrioritizedReplayBuffer(
             buffer_size=args.success_buffer_size,
@@ -949,15 +975,18 @@ def _entrypoint():
             use_last_action=args.use_last_action_in_policy_state,
             use_history=args.use_history,
             use_transformer=args.use_transformer,
-            # transformer=transformer,            # required if use_transformer=True
+            transformer=transformer,            # required if use_transformer=True
             context_len=args.context_len,
             n_envs=args.eval_id_ood_n_envs,
             n_eps=args.eval_id_ood_n_eps,
-            out_dir=str(os.path.join("results/", run_name)), #args.eval_id_ood_out_dir,
+            out_dir=args.eval_id_ood_out_dir, #str(os.path.join("results/", run_name)), #args.eval_id_ood_out_dir,
             device=args.device,
             seed=args.seed,
             model_path=args.model_path or "",
             params_cache_path=args.params_cache_path,
+            save_gifs=args.eval_id_ood_save_gifs,
+            n_gifs_per_env=args.eval_id_ood_n_gifs_per_env,
+            n_eps_per_gif=args.eval_id_ood_n_eps_per_gif,
         )
         return  # exit after eval, don't train
             
@@ -1007,7 +1036,7 @@ def _entrypoint():
         prev_action_for_transition = last_action_for_policy.clone()
         obs_tensor = torch.tensor(obs, dtype=torch.float32, device=args.device)
         
-        # TODO: Checked
+        # TODO: need to check this
         if args.use_history:
             
             history_buf.add(obs[0])
@@ -1015,17 +1044,25 @@ def _entrypoint():
             state_history = history_buf.sample()
 
             if args.use_transformer:
+                # use_transformer
                 with torch.no_grad():
-                    context = transformer(state_history)      # (1, context_vector_dim)
+                    context_vector = transformer(state_history)      # (1, context_vector_dim)
+                
+                obs_with_context_vector = torch.cat([obs_tensor, context_vector], dim=-1)
+                policy_obs_tensor = augment_policy_observation(
+                    obs_with_context_vector, last_action_for_policy, args.use_last_action_in_policy_state
+                )
+                
             else:
+                # history only: observation is context history
                 context = state_history.view(1, -1)       # (1, T*4) — flat concat
 
-            obs_with_context = torch.cat([obs_tensor, context], dim=-1)
-            policy_obs_tensor = augment_policy_observation(
-                obs_with_context, last_action_for_policy, args.use_last_action_in_policy_state
-            )
+                policy_obs_tensor = augment_policy_observation(
+                    context, last_action_for_policy, args.use_last_action_in_policy_state
+                )
 
         else:
+            # Default vanilla TD3
             policy_obs_tensor = augment_policy_observation(
                 obs_tensor, last_action_for_policy, args.use_last_action_in_policy_state
             )
@@ -1247,7 +1284,7 @@ def _entrypoint():
                 sampled_weights = sampled_weights.view(-1)
                 sampled_next_prev_actions = sampled_actions * (1.0 - sampled_dones.unsqueeze(-1))
 
-                # TODO: Checked
+                # TODO: need to check this
                 if args.use_history:
                     
                     # TODO: See that we use the same history to compute the context for the actor_target and actor
@@ -1258,17 +1295,23 @@ def _entrypoint():
                     
                     if args.use_transformer:
                         with torch.no_grad():
-                            sampled_next_context = transformer(sampled_next_history)
+                            sampled_next_context_vector = transformer(sampled_next_history)
+
+                        sampled_next_obs_with_context = torch.cat([sampled_next_observations, sampled_next_context_vector], dim=-1)
+                        sampled_next_policy_observations = augment_policy_observation(
+                            sampled_next_obs_with_context,
+                            sampled_next_prev_actions,
+                            args.use_last_action_in_policy_state,
+                        )
+
                     else:
                         sampled_next_context = sampled_next_history.view(sampled_next_history.shape[0], -1)  # (B, T*4)
 
-
-                    sampled_next_obs_with_context = torch.cat([sampled_next_observations, sampled_next_context], dim=-1)
-                    sampled_next_policy_observations = augment_policy_observation(
-                        sampled_next_obs_with_context,
-                        sampled_next_prev_actions,
-                        args.use_last_action_in_policy_state,
-                    )
+                        sampled_next_policy_observations = augment_policy_observation(
+                            sampled_next_context,
+                            sampled_next_prev_actions,
+                            args.use_last_action_in_policy_state,
+                        )
 
 
                 else:
@@ -1451,24 +1494,29 @@ def _entrypoint():
                 sampled_observations = data["observations"]
                 sampled_prev_actions = data["prev_actions"]
 
-                # TODO: checked
                 # TODO: Compute observation for input to actor for training
                 if args.use_history:
                     # Shape: (B, T, obs_dim) -> transformer -> (B, context_dim)
                     sampled_history = data["history"].to(args.device)
 
                     if args.use_transformer:
-                        sampled_context = transformer(sampled_history)
+                        # TODO: note that we want gradient for transformer computation here
+                        sampled_context_vector = transformer(sampled_history)
+
+                        sampled_obs_with_context = torch.cat([sampled_observations, sampled_context_vector], dim=-1)
+
+                        sampled_policy_observations = augment_policy_observation(
+                            sampled_obs_with_context, sampled_prev_actions,
+                            args.use_last_action_in_policy_state,
+                        )
+
                     else:
                         sampled_context = sampled_history.view(sampled_history.shape[0], -1)  # (B, T*4)
-                        # TODO: I assume this is the correct shape but we should make sure
 
-                    sampled_obs_with_context = torch.cat([sampled_observations, sampled_context], dim=-1)
-
-                    sampled_policy_observations = augment_policy_observation(
-                        sampled_obs_with_context, sampled_prev_actions,
-                        args.use_last_action_in_policy_state,
-                    )
+                        sampled_policy_observations = augment_policy_observation(
+                            sampled_context, sampled_prev_actions,
+                            args.use_last_action_in_policy_state,
+                        )
 
                 else:
                     sampled_policy_observations = augment_policy_observation(
@@ -1545,7 +1593,8 @@ def _entrypoint():
 
         # TODO: Change so that we only start doing evaluation and saving checkpoints after a certain timestep
         # TODO: This is done to reduce the number of GB of data we produce
-        if (global_step >= 1600000) and global_step % args.checkpoint_interval == 0:
+        # change back to >= 1900000
+        if (global_step >= 1900000) and global_step % args.checkpoint_interval == 0:
             checkpoint_dir = os.path.join(log_parent_dir, f"checkpoint_{global_step}")
             model_path = save_full_checkpoint(checkpoint_dir)
             print(f"\nCheckpoint saved at step {global_step}")

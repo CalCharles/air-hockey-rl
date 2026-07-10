@@ -8,8 +8,10 @@ from typing import Dict, List, Optional, Tuple
 
 
 PADDLE_POS_SLICE = slice(12, 14)   # current paddle (x, y) in raw 30-dim obs
+PADDLE_VALID_INDEX = 14              # current paddle valid flag in raw 30-dim obs
 PUCK_POS_SLICE   = slice(27, 29)   # current puck   (x, y) in raw 30-dim obs
-HISTORY_ENTRY_DIM = 4              # [paddle_x, paddle_y, puck_x, puck_y]
+PUCK_VALID_INDEX   = 29              # current puck   valid flag in raw 30-dim obs
+HISTORY_ENTRY_DIM  = 6               # [paddle_x, paddle_y, paddle_valid, puck_x, puck_y, puck_valid]
 
 
 class HistoryBuffer:
@@ -40,14 +42,23 @@ class HistoryBuffer:
         
         self.reset_env()
 
+    # @staticmethod
+    # def extract_entry(obs: np.ndarray) -> np.ndarray:
+    #     """Extract the 4-dim current-timestep position from a raw 30-dim obs."""
+    #     return np.concatenate([
+    #         obs[PADDLE_POS_SLICE],   # (2,)
+    #         obs[PUCK_POS_SLICE],     # (2,)
+    #     ]).astype(np.float32)        # (4,)
+
     @staticmethod
     def extract_entry(obs: np.ndarray) -> np.ndarray:
-        """Extract the 4-dim current-timestep position from a raw 30-dim obs."""
+        """Extract the 6-dim current-timestep position + validity from a raw 30-dim obs."""
         return np.concatenate([
-            obs[PADDLE_POS_SLICE],   # (2,)
-            obs[PUCK_POS_SLICE],     # (2,)
-        ]).astype(np.float32)        # (4,)
-
+            obs[PADDLE_POS_SLICE],                             # (2,) paddle x, y
+            obs[PADDLE_VALID_INDEX : PADDLE_VALID_INDEX + 1],   # (1,) paddle valid flag
+            obs[PUCK_POS_SLICE],                                # (2,) puck x, y
+            obs[PUCK_VALID_INDEX : PUCK_VALID_INDEX + 1],       # (1,) puck valid flag
+        ]).astype(np.float32)                                   # (6,)
 
     def add(
         self,

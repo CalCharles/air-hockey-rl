@@ -154,15 +154,19 @@ def _rollout_returns(
     envs = gym.vector.SyncVectorEnv([_make_eval_env])
     action_dim = int(np.prod(envs.single_action_space.shape))
 
+    # TODO: Checked
     if use_history:
         raw_obs_dim = int(np.prod(envs.single_observation_space.shape))
         act_dim = int(np.prod(envs.single_action_space.shape))
 
-        augmented_obs_dim = raw_obs_dim + act_dim if use_last_action_in_policy_state else raw_obs_dim
         if use_transformer:
+            augmented_obs_dim = raw_obs_dim + act_dim if use_last_action_in_policy_state else raw_obs_dim
             augmented_obs_dim += context_vector_dim
         else:
-            augmented_obs_dim += (context_len * HISTORY_ENTRY_DIM)
+            # context_len only
+            augmented_obs_dim = (context_len * HISTORY_ENTRY_DIM)
+            if use_last_action_in_policy_state:
+                augmented_obs_dim += act_dim
 
         policy_env_view = SimpleNamespace(
             single_observation_space=gym.spaces.Box(
@@ -223,20 +227,26 @@ def _rollout_returns(
 
             history_buf.add(obs)
 
+            # TODO: Checked
             if use_history:
 
                 state_history = history_buf.sample()
 
                 if transformer is not None:
                     with torch.no_grad():
-                        context = transformer(state_history)  # (1, context_dim)
+                        context_vector = transformer(state_history)  # (1, context_dim)
+
+                    obs_with_context = torch.cat([obs_tensor.unsqueeze(0), context_vector], dim=-1)
+                    policy_obs = augment_policy_observation(
+                        obs_with_context, last_action, use_last_action_in_policy_state
+                    )
                 else:
+                    # context_len only
                     context = state_history.view(1, -1)
 
-                obs_with_context = torch.cat([obs_tensor.unsqueeze(0), context], dim=-1)
-                policy_obs = augment_policy_observation(
-                    obs_with_context, last_action, use_last_action_in_policy_state
-                )
+                    policy_obs = augment_policy_observation(
+                        context, last_action, use_last_action_in_policy_state
+                    )
             else:
                 policy_obs = augment_policy_observation(
                     obs_tensor.unsqueeze(0), last_action, use_last_action_in_policy_state

@@ -60,6 +60,7 @@ class TD3PrioritizedReplayBuffer:
         # TODO: Note that we init this unconditionally bc in td3_training.py I choose
         #       to always gather history.
 
+        # TODO: need to check this
         if self.use_history:
             self.history = torch.zeros(
                 (buffer_size, self.context_len, self.history_entry_dim),

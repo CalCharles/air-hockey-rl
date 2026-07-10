@@ -41,12 +41,12 @@ class ContextEncoder(TrajectoryModel):
         obs_dim: int,
         context_dim: int,
         context_len: int,
-        n_layer: int = 2,
-        n_head: int = 2,
+        n_layer: int = 3,   # was 2
+        n_head: int = 1,    # was 2
         dropout: float = 0.1,
     ):
-        
-        hidden_size = context_dim if context_dim % n_head == 0 else n_head * ((context_dim + n_head - 1) // n_head)
+        # 32 is our hidden size
+        hidden_size = 32 if 32 % n_head == 0 else n_head * ((context_dim + n_head - 1) // n_head)
 
         super().__init__(obs_dim=obs_dim, context_dim=context_dim, max_length=context_len)
 
@@ -54,7 +54,7 @@ class ContextEncoder(TrajectoryModel):
         self.hidden_size = hidden_size
 
         gpt_config = transformers.GPT2Config(
-            vocab_size=1,          # unused — we feed embeddings directly
+            vocab_size=1,           # doesn't matter -- we don't use the vocab
             n_embd=hidden_size,
             n_layer=n_layer,
             n_head=n_head,
@@ -65,18 +65,6 @@ class ContextEncoder(TrajectoryModel):
             resid_pdrop=dropout,
         )
 
-        # Positional-embedding-free GPT2 (wpe removed in trajectory_gpt2.py).
-        # We add our own simple learnable positional embeddings below.
-
-        # config = GPT2Config(
-        #     vocab_size=1,      # ignored if using custom embeddings
-        #     n_embd=128,
-        #     n_layer=4,
-        #     n_head=4,
-        #     n_positions=128
-        # )
-
-
         self.transformer = GPT2Model(gpt_config)
 
         # --- Input projection ---
@@ -85,9 +73,7 @@ class ContextEncoder(TrajectoryModel):
         self.embed_ln  = nn.LayerNorm(hidden_size)
 
         # --- Output projection ---
-        # Project mean-pooled hidden states → context_dim
         self.output_proj = nn.Linear(hidden_size, context_dim)
-
 
 
     def forward(self, obs_sequence: torch.Tensor) -> torch.Tensor:
@@ -107,6 +93,7 @@ class ContextEncoder(TrajectoryModel):
 
         # --- Embed observations ---
         obs_emb = self.embed_obs(obs_sequence)                    # (B, T, H)
+        # TODO: need to check if this the shape here is correct
 
         # --- Add positional embeddings ---
         # positions are 0 … seq_len-1
@@ -115,24 +102,19 @@ class ContextEncoder(TrajectoryModel):
 
         x = self.embed_ln(obs_emb + pos_emb)                     # (B, T, H)
 
-        # --- Build attention mask ---
-        # Zero-padding detection: a time-step is padding if the entire obs vector is zero.
-        # Shape: (B, T) — 1 = real token, 0 = pad
-        is_real = (obs_sequence.abs().sum(dim=-1) > 0).long()    # (B, T)
+        mask = (obs_sequence != 0).any(dim=-1).long()
 
-        # --- Run transformer ---
         transformer_out = self.transformer(
             inputs_embeds=x,
-            attention_mask=is_real,
+            attention_mask=mask,
         )
         hidden = transformer_out["last_hidden_state"]             # (B, T, H)
 
-        # --- Mean-pool over real (non-padding) tokens ---
-        # is_real: (B, T) → (B, T, 1) for broadcasting
-        mask_f = is_real.float().unsqueeze(-1)                    # (B, T, 1)
-        real_count = mask_f.sum(dim=1).clamp(min=1.0)            # (B, 1)
-        pooled = (hidden * mask_f).sum(dim=1) / real_count       # (B, H)
-
-        # --- Project to context_dim ---
-        context = self.output_proj(pooled)                        # (B, context_dim)
+        # Causal attention means the last token has already attended to
+        # every earlier (unpadded) timestep, so it's a valid summary of
+        # the whole history. Padding is left-aligned (at the start), so
+        # position -1 is always the most recent real observation.
+        last_hidden = hidden[:, -1, :] 
+        
+        context = self.output_proj(last_hidden)                        # (B, context_dim)
         return context

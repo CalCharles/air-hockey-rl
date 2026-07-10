@@ -14,44 +14,12 @@ included for comparison.
 
 Run from the repo root (so `scripts.*` / `airhockey` imports resolve), e.g.:
 
-    Step 0
-    .venv/bin/python -m scripts.td3.analysis.analyze_transformer_context_sweep \
+    .venv/bin/python -m scripts.td3.analyze_transformer_context_sweep \
         --runs-dir runs/td3 \
-        --baseline-run-dir runs/td3/baseline \
-        --ood-oracle-run-dir runs/td3/Step_0_OOD_Oracle \
-        --gravity-ood -1.156 -0.826 \
-        --paddle-density-ood 3750 5250 \
-        --puck-damping-ood 0.2225 0.3115 \
-        --n-workers 144 |& tee parallel_output_step0_using_last_ckpt.txt
-
-
-    Step 1
-    .venv/bin/python -m scripts.td3.analysis.analyze_transformer_context_sweep \
-        --runs-dir runs/td3 \
-        --baseline-run-dir runs/td3/baseline \
-        --ood-oracle-run-dir runs/td3/Step_1_OOD_Oracle \
-        --gravity-ood -1.238 -0.908 \
-        --paddle-density-ood 4125 5625 \
-        --puck-damping-ood 0.2447 0.3337 \
-        --n-workers 144 |& tee parallel_output_step1_using_last_ckpt.txt
-
-PARALLELIZATION
----------------
-Each call to compare_performance_ID_OOD is independent (no shared state,
-no ordering dependencies), so we fan out all (prefix, seed) eval jobs across
-a multiprocessing.Pool.  On a 144-core Grace node the whole sweep finishes
-in roughly the time of a single eval call.
-
-Worker count is set by --n-workers (default: all logical CPUs via
-os.cpu_count()).  Each worker writes its own subdirectory under out_dir
-(unchanged from the serial version), so there are no filesystem races.
-All results are returned through the Pool as plain dicts; the aggregation
-step runs in the main process after all workers finish.
-
-Spawn context is used (not fork) because PyTorch models and gym envs are not
-safe to fork after initialisation.  This means each worker re-imports the
-repo modules and reconstructs the model from scratch, which is exactly what
-the serial version was doing per call anyway.
+        --baseline-run-dir runs/td3/sanity_check \
+        --gravity-ood -1.2 -0.8 \
+        --paddle-density-ood 3500 4500 \
+        --puck-damping-ood 0.05 0.15
 
 DEBUG CHECKPOINTS
 -----------------
@@ -69,11 +37,9 @@ from __future__ import annotations
 import argparse
 import copy
 import json
-import multiprocessing as mp
 import os
 import re
 import sys
-import traceback
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
@@ -84,7 +50,6 @@ import yaml
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.ticker import MultipleLocator
 
 
 # ---------------------------------------------------------------------------
@@ -103,12 +68,10 @@ except ImportError as e:
     _IMPORTS_OK = False
     _IMPORT_ERROR = e
 
-HISTORY_ENTRY_DIM = 6
+HISTORY_ENTRY_DIM = 4
 
 # Used as the dict key for the vanilla-TD3 baseline in the results structure.
 BASELINE_KEY = "__baseline_vanilla_td3__"
-# OOD_ORACLE_KEY = "__ood_oracle_td3__"
-OOD_ORACLE_KEY = "OOD_Oracle"
 
 
 # ---------------------------------------------------------------------------
@@ -120,25 +83,12 @@ OOD_ORACLE_KEY = "OOD_Oracle"
 #   sweep_transformer_false_ctx_32r1_seed_3
 #   sweep_transformer_true_ctx_14          (no seed suffix)
 #   sweep_transformer_true_ctx_14r1_seed_4
-# _PREFIX_RE = re.compile(
-#     r"^(sweep_transformer_(?:true|false)_ctx_\d+)(?:r\d+)?(?:_seed_\d+)?$"
-# )
+_PREFIX_RE = re.compile(
+    r"^(sweep_transformer_(?:true|false)_ctx_\d+)(?:r\d+)?(?:_seed_\d+)?$"
+)
 
-# use a more stable 
-# _PREFIX_RE = re.compile(
-#     r"^(sweep_transformer_(?:.+_)?(?:true|false)_ctx_\d+)(?:r\d+)?(?:_seed_\d+)?$"
-# )
 
-# _PREFIX_RE = re.compile(
-#     r"^(sweep_transformer_[a-z_]+_(?:true|false)_ctx_\d+_with_valid_flag)(?:r\d+)?(?:_seed_\d+)?$"
-# )
-
-_SEED_SUFFIX_RE  = re.compile(r"_seed_\d+$")
-_RETRY_SUFFIX_RE = re.compile(r"r\d+$")
-
-# TODO: need to check if this can already support searching for "OOD_Oracle"
-# - if it does then great, if not then we need to fix that
-def parse_run_prefix(folder_name: str, name_filter: str, oracle_seed=[0]) -> str:
+def parse_run_prefix(folder_name: str) -> str:
     """Collapse a run-folder name down to its structural prefix, e.g.
     'sweep_transformer_false_ctx_32r1_seed_3' -> 'sweep_transformer_false_ctx_32'.
 
@@ -148,43 +98,19 @@ def parse_run_prefix(folder_name: str, name_filter: str, oracle_seed=[0]) -> str
     as its own singleton group instead, which is easy to spot in the debug
     printout).
     """
-    # I just want hack to make OOD oracle work well with current setup
-    # oracle_seed[0] += 1
-    # + str(oracle_seed)
-
-    if "OOD_Oracle" in name_filter:
-        return (folder_name.partition("OOD_Oracle")[1] )
-
-    elif "td3_baseline" in name_filter:
-        return folder_name.partition("td3_baseline")[1]
-
-    else:
-        # match = _PREFIX_RE.match(folder_name)
-        # if match:
-        #     return match.group(1)
-        # if "_seed_" in folder_name:
-        #     return folder_name.split("_seed_")[0]
-        # return folder_name
-
-        prefix = _SEED_SUFFIX_RE.sub("", folder_name)   # strip "_seed_98"
-        prefix = _RETRY_SUFFIX_RE.sub("", prefix)        # strip trailing "r1"
-        return prefix
+    match = _PREFIX_RE.match(folder_name)
+    if match:
+        return match.group(1)
+    if "_seed_" in folder_name:
+        return folder_name.split("_seed_")[0]
+    return folder_name
 
 
 def parse_prefix_axes(prefix: str) -> tuple[bool, int] | None:
     """Extract (use_transformer, context_len) from a parsed prefix like
     'sweep_transformer_false_ctx_16'. Returns None if it doesn't match the
     expected sweep naming (e.g. a baseline run folder)."""
-    # m = re.match(r"^sweep_transformer_(true|false)_ctx_(\d+)$", prefix)
-    # m = re.match(r"^sweep_transformer_(?:.+_)?(true|false)_ctx_(\d+)$", prefix)
-    # if not m:
-    #     return None
-    # use_transformer = (m.group(1) == "true")
-    # ctx = int(m.group(2))
-    # return use_transformer, ctx
-
-    # TODO: new
-    m = re.match(r"^sweep_transformer_(?:.+_)?(true|false)_ctx_(\d+)", prefix)
+    m = re.match(r"^sweep_transformer_(true|false)_ctx_(\d+)$", prefix)
     if not m:
         return None
     use_transformer = (m.group(1) == "true")
@@ -209,8 +135,7 @@ def discover_run_folders(runs_dir: str, name_filter: str = "sweep_transformer") 
         full_path = os.path.join(runs_dir, folder)
         if not os.path.isdir(full_path):
             continue
-
-        prefix = parse_run_prefix(folder, name_filter)
+        prefix = parse_run_prefix(folder)
         grouped[prefix].append(full_path)
 
     # ------------------------------------------------------------------
@@ -347,18 +272,7 @@ def find_best_checkpoint_per_seed(seed_folder: str) -> CheckpointCandidate | Non
 
     if not candidates:
         return None
-    # return max(candidates, key=lambda c: c.mean_return_across_envs)
-
-    # Change so that we now grab the latest checkpoint to compute all this
-    # return max(candidates, key=lambda c: c.checkpoint_step)
-    candidate = max(candidates, key=lambda c: c.checkpoint_step)
-
-    # Filter out incomplete runs
-    if candidate.checkpoint_step < 1_900_000:
-        return None
-
-    return candidate
-
+    return max(candidates, key=lambda c: c.mean_return_across_envs)
 
 
 def build_seed_index(grouped_folders: dict[str, list[str]]) -> dict[str, list[CheckpointCandidate]]:
@@ -439,18 +353,12 @@ def build_actor_and_transformer(candidate: CheckpointCandidate, device: str):
     action_high = probe_env.action_space.high
     probe_env.close()
 
-    # TODO: Checked
+    policy_obs_dim = raw_obs_dim + act_dim if use_last_action else raw_obs_dim
     if use_history:
         if use_transformer:
-            policy_obs_dim = raw_obs_dim + act_dim if use_last_action else raw_obs_dim
             policy_obs_dim += context_vector_dim
         else:
-            policy_obs_dim = context_len * HISTORY_ENTRY_DIM
-            if use_last_action:
-                policy_obs_dim += act_dim
-    else:
-        policy_obs_dim = raw_obs_dim + act_dim if use_last_action else raw_obs_dim
-
+            policy_obs_dim += context_len * HISTORY_ENTRY_DIM
 
     from types import SimpleNamespace
     import gymnasium as gym
@@ -481,7 +389,6 @@ def build_actor_and_transformer(candidate: CheckpointCandidate, device: str):
     actor.eval()
 
     transformer = None
-    # TODO: Checked
     if use_history and use_transformer:
         if candidate.transformer_path is None:
             raise FileNotFoundError(
@@ -558,7 +465,7 @@ def run_id_ood_eval_for_candidate(
         device=device,
         seed=seed,
         model_path=candidate.training_state_path,
-        params_cache_path="saved/parallel_transformer_context_analysis_samples",  
+        params_cache_path=None,  # always sample fresh ID/OOD param sets per run
     )
 
     summary_path = os.path.join(candidate_out_dir, "summary.json")
@@ -568,62 +475,9 @@ def run_id_ood_eval_for_candidate(
 
 
 # ---------------------------------------------------------------------------
-# Parallel worker: top-level function (required for spawn-safe pickling)
-# ---------------------------------------------------------------------------
-
-def _eval_worker(job: dict[str, Any]) -> dict[str, Any]:
-    """Top-level worker function executed in each subprocess.
-
-    Receives a plain-dict job description (fully picklable), runs
-    run_id_ood_eval_for_candidate, and returns a plain dict with the
-    prefix, seed_folder path, and either the aggregates or an error string.
-    Using a plain dict (rather than a dataclass) keeps pickling simple across
-    the spawn boundary.
-
-    The job dict contains:
-        prefix          str
-        candidate       CheckpointCandidate   (dataclass, picklable)
-        ood_overrides   dict
-        device          str
-        n_envs          int
-        n_eps           int
-        seed            int
-        out_dir         str
-    """
-    candidate: CheckpointCandidate = job["candidate"]
-    try:
-        aggregates = run_id_ood_eval_for_candidate(
-            candidate=candidate,
-            ood_overrides=job["ood_overrides"],
-            device=job["device"],
-            n_envs=job["n_envs"],
-            n_eps=job["n_eps"],
-            seed=job["seed"],
-            out_dir=job["out_dir"],
-        )
-        return {
-            "prefix": job["prefix"],
-            "seed_folder": candidate.seed_folder,
-            "checkpoint_step": candidate.checkpoint_step,
-            "mean_return_across_envs": candidate.mean_return_across_envs,
-            "aggregates": aggregates,
-            "error": None,
-        }
-    except Exception:
-        return {
-            "prefix": job["prefix"],
-            "seed_folder": candidate.seed_folder,
-            "checkpoint_step": candidate.checkpoint_step,
-            "mean_return_across_envs": candidate.mean_return_across_envs,
-            "aggregates": None,
-            "error": traceback.format_exc(),
-        }
-
-
-# ---------------------------------------------------------------------------
 # Step 4: Aggregate per-seed results -> per-prefix (mean, success, stderr)
 # ---------------------------------------------------------------------------
-# TODO: make sure this is doing what we want
+
 def stderr_of_mean(values: list[float]) -> float:
     """Standard error of the mean: std(values, ddof=1) / sqrt(n).
     ddof=1 (sample std) because we're estimating the population stderr from
@@ -669,14 +523,12 @@ def analyze_transformer_context_sweep(
     puck_damping_min_OOD: float,
     puck_damping_max_OOD: float,
     runs_dir: str = "runs/td3",
-    ood_oracle_run_dir: str | None = None,  # Note: this is a separate folder within runs/td3 which contains multiple seeds that trained TD3 vanilla on the OOD distribution
     baseline_run_dir: str | None = None,
     device: str = "cpu",
     n_envs: int = 30,
     n_eps: int = 8,
     seed: int = 42,
     out_dir: str = "results/transformer_context_sweep_analysis",
-    n_workers: int | None = None,
 ) -> dict[str, Any]:
     """Main entry point.
 
@@ -688,10 +540,6 @@ def analyze_transformer_context_sweep(
     If `baseline_run_dir` is given (a single run folder, e.g.
     'runs/td3/sanity_check'), it's evaluated the same way and stored under
     BASELINE_KEY so it can be plotted as a reference line/bar.
-
-    n_workers controls the multiprocessing pool size. Defaults to
-    os.cpu_count() (all logical CPUs). Pass 1 to run serially (useful for
-    debugging with breakpoints, since multiprocessing swallows pdb).
 
     Returns the raw nested results dict (see `results` below); also writes
     a JSON dump, a text table, and PNG figures (one per OOD distribution —
@@ -707,14 +555,11 @@ def analyze_transformer_context_sweep(
         "puck_damping": [puck_damping_min_OOD, puck_damping_max_OOD],
     }
 
-    effective_workers = n_workers if n_workers is not None else os.cpu_count()
-
     print(f"\n{'='*70}")
     print("analyze_transformer_context_sweep")
     print(f"  runs_dir : {runs_dir}")
     print(f"  OOD overrides : {ood_overrides}")
     print(f"  n_envs={n_envs}, n_eps={n_eps}, seed={seed}")
-    print(f"  n_workers={effective_workers}")
     print(f"{'='*70}\n")
 
     # --- Step 1: discover + group run folders ---
@@ -727,98 +572,38 @@ def analyze_transformer_context_sweep(
     print("\nSelecting best checkpoint per seed (by multi_env_eval.json)...")
     seed_index = build_seed_index(grouped_folders)
 
-    # Find best checkpoint from the singe run of the vanilla TD3 trained on ID
     if baseline_run_dir is not None:
-        # baseline_best = find_best_checkpoint_per_seed(baseline_run_dir)
-        # if baseline_best is None:
-        #     print(f"  [WARN] baseline_run_dir='{baseline_run_dir}' has no usable checkpoints; "
-        #           "baseline will be omitted from the figure.")
-        # else:
-        #     seed_index[BASELINE_KEY] = [baseline_best]
-
-        grouped_folders_baseline = discover_run_folders(baseline_run_dir, name_filter="td3_baseline")
-        baseline_seed_index = build_seed_index(grouped_folders_baseline)
-        # collapse however many prefixes this produces into one BASELINE_KEY bucket
-        all_baseline_candidates = [c for cands in baseline_seed_index.values() for c in cands]
-        if not all_baseline_candidates:
+        baseline_best = find_best_checkpoint_per_seed(baseline_run_dir)
+        if baseline_best is None:
             print(f"  [WARN] baseline_run_dir='{baseline_run_dir}' has no usable checkpoints; "
-                "baseline will be omitted from the figure.")
+                  "baseline will be omitted from the figure.")
         else:
-            seed_index[BASELINE_KEY] = all_baseline_candidates
+            seed_index[BASELINE_KEY] = [baseline_best]
 
-    ## ====================================================================================================
-    # TODO: Do same thing as above but to find the OOD oracles folder.
-    # Make sure to add the two dictionaries together then we can pick off the OOD oracles via prefix = OOD_oracle_key
-    # that we pass in from grouped_folders
-    # TODO: make sure name_filter matches the name of the "Step_x_OOD_Oracle we're using" <-- make it match the OOD params that we're setting
-    grouped_folders_OOD = discover_run_folders(runs_dir=ood_oracle_run_dir, name_filter="OOD_Oracle")
-    print(f"Discovered {len(grouped_folders_OOD)} distinct sweep prefixes:")
-    for prefix, folders in sorted(grouped_folders_OOD.items()):
-        print(f"  {prefix:<38} n_seed_folders={len(folders)}")
-
-    # --- Step 2: best checkpoint per seed, per prefix ---
-    print("\nSelecting best checkpoint per seed (by multi_env_eval.json)...")
-    OOD_seed_index = build_seed_index(grouped_folders_OOD)
-
-    ## ====================================================================================================
-    seed_index = seed_index | OOD_seed_index
-
-    # See what the prefix for the OOD oracle is. compare with that of the other seeds.
-
-    # --- Step 3: build job list and fan out across workers ---
-    # Build a flat list of jobs (one per (prefix, seed) pair) so the Pool
-    # can distribute them freely across all available workers.  The job dict
-    # is fully picklable: CheckpointCandidate is a dataclass (all fields are
-    # plain Python types), ood_overrides is a plain dict of lists, etc.
-    jobs: list[dict[str, Any]] = []
-    for prefix, candidates in seed_index.items():
-        for candidate in candidates:
-            jobs.append({
-                "prefix": prefix,
-                "candidate": candidate,
-                "ood_overrides": ood_overrides,
-                "device": device,
-                "n_envs": n_envs,
-                "n_eps": n_eps,
-                "seed": seed,
-                "out_dir": out_dir,
-            })
-
-    total_jobs = len(jobs)
-    print(f"\nDispatching {total_jobs} eval jobs across {effective_workers} worker(s)...")
-
-    if effective_workers == 1:
-        # Serial path: keeps breakpoints / pdb / print working normally.
-        worker_results = [_eval_worker(job) for job in jobs]
-    else:
-        # Parallel path: spawn (not fork) for PyTorch / gym safety.
-        ctx = mp.get_context("spawn")
-        with ctx.Pool(processes=effective_workers) as pool:
-            worker_results = pool.map(_eval_worker, jobs)
-
-    # --- Collect worker outputs, report errors, group by prefix ---
-    # results: { prefix: [ {"id": {...}, "ood": {...}}, ... ] }
+    # --- Step 3: run ID/OOD eval for every selected (prefix, seed) pair ---
+    # results: { prefix: [ {"id": {...}, "ood": {...}}, ... ] }  (one dict per seed)
     results: dict[str, list[dict[str, dict[str, float]]]] = defaultdict(list)
 
-    completed = 0
-    for r in worker_results:
-        prefix = r["prefix"]
-        seed_folder_name = os.path.basename(r["seed_folder"])
-        step = r["checkpoint_step"]
-        if r["error"] is not None:
-            print(
-                f"  [ERROR] {prefix} / {seed_folder_name} / checkpoint_{step}: "
-                f"eval failed\n{r['error']}"
-            )
-        else:
-            completed += 1
-            print(
-                f"  [OK]    {prefix} / {seed_folder_name} / checkpoint_{step} "
-                f"(training mean_return={r['mean_return_across_envs']:.2f})"
-            )
-            results[prefix].append(r["aggregates"])
-
-    print(f"\n{completed}/{total_jobs} evals completed successfully.")
+    for prefix, candidates in seed_index.items():
+        print(f"\n--- {prefix} ({len(candidates)} seed(s)) ---")
+        for candidate in candidates:
+            print(f"  evaluating seed_folder={os.path.basename(candidate.seed_folder)} "
+                  f"checkpoint={candidate.checkpoint_step} "
+                  f"(best mean_return_across_envs={candidate.mean_return_across_envs:.2f})")
+            try:
+                aggregates = run_id_ood_eval_for_candidate(
+                    candidate=candidate,
+                    ood_overrides=ood_overrides,
+                    device=device,
+                    n_envs=n_envs,
+                    n_eps=n_eps,
+                    seed=seed,
+                    out_dir=out_dir,
+                )
+            except Exception as e:
+                print(f"  [ERROR] eval failed for {candidate.checkpoint_dir}: {e}")
+                continue
+            results[prefix].append(aggregates)
 
     # --- Step 4: aggregate across seeds, per prefix, per condition ---
     final: dict[str, dict[str, dict[str, float]]] = {}
@@ -835,13 +620,7 @@ def analyze_transformer_context_sweep(
     # --- Save raw + final results to disk ---
     dump = {
         "ood_overrides": ood_overrides,
-        "config": {
-            "n_envs": n_envs,
-            "n_eps": n_eps,
-            "seed": seed,
-            "runs_dir": runs_dir,
-            "n_workers": effective_workers,
-        },
+        "config": {"n_envs": n_envs, "n_eps": n_eps, "seed": seed, "runs_dir": runs_dir},
         "per_seed_results": {k: v for k, v in results.items()},
         "final_aggregates": final,
     }
@@ -873,7 +652,6 @@ def print_sweep_table(final: dict[str, dict[str, dict[str, float]]]) -> None:
     lines.append("-" * 95)
 
     def sort_key(prefix):
-        # TODO: figue out how key sorting should work with OOD_ORACLE
         if prefix == BASELINE_KEY:
             return (-1, 0)
         axes = parse_prefix_axes(prefix)
@@ -884,16 +662,7 @@ def print_sweep_table(final: dict[str, dict[str, dict[str, float]]]) -> None:
 
     for prefix in sorted(final.keys(), key=sort_key):
         agg = final[prefix]
-
-        if prefix == BASELINE_KEY:
-            display_name = "BASELINE (vanilla TD3)"
-
-        elif prefix == OOD_ORACLE_KEY:
-            display_name = "OOD ORACLE (vanilla TD3 trained on OOD)"
-
-        else:
-            display_name =  prefix
-
+        display_name = "BASELINE (vanilla TD3)" if prefix == BASELINE_KEY else prefix
         for cond in ("id", "ood"):
             c = agg[cond]
             lines.append(
@@ -930,18 +699,11 @@ def plot_sweep_figure(
         points_by_branch[branch].sort(key=lambda t: t[0])
 
     baseline = final.get(BASELINE_KEY)
-    OOD_oracle = final.get(OOD_ORACLE_KEY)
 
     fig, axes_arr = plt.subplots(1, 2, figsize=(13, 5.5), sharey=True)
     branch_titles = {True: "Use Transformer", False: "No Transformer"}
 
     for ax, branch in zip(axes_arr, (True, False)):
-
-        # Make the y-axis report values by 10s and minor lines by 5s
-        ax.yaxis.set_major_locator(MultipleLocator(10))
-        ax.yaxis.set_minor_locator(MultipleLocator(5))
-        ax.grid(axis="y", which="minor", alpha=0.15)
-
         points = points_by_branch[branch]
         ctx_labels = [str(ctx) for ctx, _ in points]
         x = np.arange(len(points))
@@ -958,58 +720,14 @@ def plot_sweep_figure(
                color="#F44336", alpha=0.85, label="OOD")
 
         if baseline is not None:
-
-            baseline_id_mean = baseline["id"]["mean_return"]
-            baseline_id_stderr = baseline["id"]["stderr_return"]
-
             ax.axhline(
-                baseline_id_mean, color="#2196F3", linestyle="--",
+                baseline["id"]["mean_return"], color="#2196F3", linestyle="--",
                 linewidth=1.2, alpha=0.7, label="Baseline ID",
             )
-            ax.axhspan(
-                baseline_id_mean - baseline_id_stderr, baseline_id_mean + baseline_id_stderr,
-                color="#2196F3", alpha=0.15, linewidth=0,
-                label="Baseline ID ± StdErr",
-            )
-
-            baseline_ood_mean = baseline["ood"]["mean_return"]
-            baseline_ood_stderr = baseline["ood"]["stderr_return"]
             ax.axhline(
-                baseline_ood_mean, color="#F44336", linestyle="--",
+                baseline["ood"]["mean_return"], color="#F44336", linestyle="--",
                 linewidth=1.2, alpha=0.7, label="Baseline OOD",
             )
-            ax.axhspan(
-                baseline_ood_mean - baseline_ood_stderr, baseline_ood_mean + baseline_ood_stderr,
-                color="#F44336", alpha=0.15, linewidth=0,
-                label="Baseline OOD ± StdErr",
-            )
-
-
-        
-        # TODO: plot the line for this
-        if OOD_oracle is not None:
-
-            oracle_mean = OOD_oracle["ood"]["mean_return"]
-            oracle_stderr = OOD_oracle["ood"]["stderr_return"]
-
-            # Line color: purple reads more clearly than black against the
-            # blue/red bars and the black error-bar caps already on the plot.
-            oracle_color = "#7B1FA2"
-
-            ax.axhline(
-                oracle_mean, color=oracle_color, linestyle="--",
-                linewidth=1.2, alpha=0.7, label="OOD_oracle",
-            )
-            # Shaded +/- stderr band around the oracle line.
-            ax.axhspan(
-                oracle_mean - oracle_stderr, oracle_mean + oracle_stderr,
-                color=oracle_color, alpha=0.15, linewidth=0,
-                label="OOD_oracle ± StdErr",
-            )
-
-
-
-
 
         ax.set_xticks(x)
         ax.set_xticklabels(ctx_labels)
@@ -1039,18 +757,11 @@ def _parse_args():
     p.add_argument("--runs-dir", default="runs/td3")
     p.add_argument("--baseline-run-dir", default=None,
                     help="e.g. runs/td3/sanity_check — single run folder for the vanilla-TD3 comparison line")
-    p.add_argument("--ood-oracle-run-dir", default=None,
-                    help="e.g. runs/td3/OOD_Oracle_p_density... — single run folder for the vanilla-TD3 comparison line")
     p.add_argument("--device", default="cpu")
     p.add_argument("--n-envs", type=int, default=30)
     p.add_argument("--n-eps", type=int, default=8)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--out-dir", default="results/transformer_context_sweep_analysis")
-    p.add_argument(
-        "--n-workers", type=int, default=None,
-        help="Number of parallel worker processes (default: os.cpu_count()). "
-             "Pass 1 to run serially, which preserves breakpoints and pdb.",
-    )
 
     p.add_argument("--gravity-ood", type=float, nargs=2, required=True, metavar=("MIN", "MAX"))
     p.add_argument("--paddle-density-ood", type=float, nargs=2, required=True, metavar=("MIN", "MAX"))
@@ -1059,10 +770,6 @@ def _parse_args():
 
 
 if __name__ == "__main__":
-    # Guard required for multiprocessing spawn on all platforms.
-    # Without this, spawned workers re-execute the top-level script and
-    # recurse infinitely trying to start more workers.
-    mp.freeze_support()
     args = _parse_args()
     analyze_transformer_context_sweep(
         gravity_min_OOD=args.gravity_ood[0],
@@ -1073,11 +780,9 @@ if __name__ == "__main__":
         puck_damping_max_OOD=args.puck_damping_ood[1],
         runs_dir=args.runs_dir,
         baseline_run_dir=args.baseline_run_dir,
-        ood_oracle_run_dir=args.ood_oracle_run_dir,
         device=args.device,
         n_envs=args.n_envs,
         n_eps=args.n_eps,
         seed=args.seed,
         out_dir=args.out_dir,
-        n_workers=args.n_workers,
     )

@@ -8,20 +8,30 @@ run_sweep() {
   local use_transformer=$1
 
   # Submit seed: 5 when more are finished bc we can only submit 40 jobs at a time
-  # 2 4 6 8 10 12 14 16 32
-  # 1 2 3 4
+  # 4 6 8 10 12 14 16 32
+  for context_len in 2 4 5 6 8 10 12 14 16 32; do
 
-  for context_len in 2 4 6 8 10 12 14 16 32; do
-    for seed in 6 7; do
-    
-      run_name="sweep_transformer_${use_transformer}_ctx_${context_len}"
+    # 44 46
+    for seed in 200 201 202 203; do
+
+      run_name="sweep_transformer_direct_force_${use_transformer}_ctx_${context_len}_with_valid_flag_fr_this_time"
 
       if [ "$use_transformer" = "true" ]; then
         transformer_flag="--use-transformer"
       else
         transformer_flag="--no-use-transformer"
       fi
+  
+      # Run locally
+      # WANDB_MODE=disabled .venv/bin/python -m scripts.td3.td3_training_dr \
+      #   --args-file "$BASE_ARGS" \
+      #   $transformer_flag \
+      #   --use-history \
+      #   --context-len "$context_len" \
+      #   --run_name "$run_name" \
+      #   --seed "$seed"
 
+      # Run on cluster
       .venv/bin/python -m scripts.td3.td3_training_dr \
         --args-file "$BASE_ARGS" \
         $transformer_flag \
@@ -39,5 +49,8 @@ run_sweep() {
 }
 
 # TODO: Note that we're sweeping over use_transformer={true, false} as well
-run_sweep true
+# run_sweep true
+
 run_sweep false
+
+
