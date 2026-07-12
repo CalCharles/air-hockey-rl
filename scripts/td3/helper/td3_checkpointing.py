@@ -178,6 +178,10 @@ def build_training_state(
     args_dict: Dict[str, Any],
     extra_qfs: Optional[List[Any]] = None,
     extra_qfs_target: Optional[List[Any]] = None,
+    object_prop_encoder=None,
+    adaptation_module=None,
+    encoder_optimizer=None,
+    adaptation_optimizer=None,
 ) -> Dict[str, Any]:
     state: Dict[str, Any] = {
         "checkpoint_version": 2,
@@ -234,4 +238,15 @@ def build_training_state(
             ci = offset + 3  # qf3, qf4, ...
             state[f"qf{ci}"] = q.state_dict()
             state[f"qf{ci}_target"] = qt.state_dict()
+    # Optional RMA modules. Callers of load_resume_training_state should restore
+    # object_prop_encoder / adaptation_module (and their optimizers) manually from
+    # these checkpoint keys when present.
+    if object_prop_encoder is not None:
+        state["object_prop_encoder"] = object_prop_encoder.state_dict()
+    if adaptation_module is not None:
+        state["adaptation_module"] = adaptation_module.state_dict()
+    if encoder_optimizer is not None:
+        state["encoder_optimizer"] = encoder_optimizer.state_dict()
+    if adaptation_optimizer is not None:
+        state["adaptation_optimizer"] = adaptation_optimizer.state_dict()
     return state

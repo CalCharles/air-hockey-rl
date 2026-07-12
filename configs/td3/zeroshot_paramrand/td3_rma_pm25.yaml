@@ -1,0 +1,162 @@
+# Two-stage RMA training on physics-parameter randomization (±25%).
+# One td3_training_dr invocation first co-trains the base actor and privileged
+# object encoder for total_timesteps, then freezes both and trains the
+# adaptation module for rma_adaptation_timesteps.
+# Hand-written 2026-05-10 (does not fit the 700k generator pattern because
+# this run uses a custom trainer entrypoint + new args).
+#
+# This run tests "domain randomization at the physics-parameter level" as
+# an alternative to the engineered randomizations (collision-3, action
+# attenuation, delay-jitter). Per-reset, paddle_density / puck_damping /
+# gravity are drawn uniform within ±25% of their sysid values. Phase 2 learns
+# to identify those dynamics from a 30-step paddle/puck/action history.
+#
+# Trainer: scripts/td3/td3_training_dr.py (wraps td3_training.py via
+# monkey-patch on evaluate_agent so per-checkpoint eval is the average
+# across 5 fixed seed-sampled environments rather than a single env).
+# The wrapper retains the canonical multi-environment checkpoint evaluation.
+#
+# Launch:
+#   .venv/bin/python -m scripts.td3.td3_training_dr \
+#     --args-file configs/td3/zeroshot_paramrand/td3_rma_pm25.yaml
+#
+# Eval: 5 envs × 4 episodes per env = 20 episodes per checkpoint.
+# Per-env stats + aggregate dumped to <ckpt_dir>/multi_env_eval.json.
+# eval_envs.json (the 5 sampled overrides) lives at log_parent_dir for
+# reproducibility.
+#
+# Budget: 2M steps (4× the others — "much more going on" with DR).
+# Wall clock estimate: ~7h training + ~5h eval overhead = ~12h on cuda:1.
+#
+
+# TODO: was 2000000
+total_timesteps: 2000000
+num_envs: 1
+
+# TD3 core
+buffer_size: 100000
+tau: 0.005
+batch_size: 512
+learning_starts: 20000
+policy_lr: 0.0003
+q_lr: 0.001
+q_weight_decay: 0.0001
+q_frequency: 1
+q_updates: 25
+policy_frequency: 1
+target_network_frequency: 10
+actor_updates_per_iteration: 6
+exploration_noise: 0.1
+policy_noise: 0.2
+noise_clip: 0.5
+
+# Prioritized experience replay
+per_enabled: true
+per_alpha: 0.6
+per_beta_start: 0.4
+per_beta_end: 1.0
+per_beta_anneal_steps: 200000
+per_eps: 0.000001
+success_buffer_size: 30000
+failure_buffer_size: 70000
+success_top_fraction: 0.2
+recent_episode_window_size: 500
+critic_success_sample_fraction: 0.3
+critic_failure_sample_fraction: 0.7
+
+# Primitive exploration takeover
+exploration_primitive_chance: 0.05
+exploration_primitive_chance_start: 0.15
+exploration_primitive_chance_pre_learning_starts: null
+exploration_primitive_chance_anneal_steps: 200000
+exploration_primitive_steps: 5
+
+# Exploration after annealing phase (2 primitives: stand_still + same_direction).
+# same_direction weight 3.0 preserves the prior 1:15 stand_still:others ratio
+# validated in notes/scratch/experiments/2026-05-20_07-39_simplified-exploration-ablation.md.
+exploration_primitive_weight_stand_still: 0.2
+exploration_primitive_weight_same_direction: 3.0
+
+# Exploration during annealing phase
+exploration_primitive_weight_anneal_stand_still: 0.2
+exploration_primitive_weight_anneal_same_direction: 3.0
+
+# Exploration-specific knobs
+exploration_direction_y_component_weight: 2
+
+
+
+# Dual-head reward decomposition
+
+
+
+# Source sim — hist_len=2 with paddle_density / puck_damping / gravity DR
+# TODO: Double check this to make sure we're training on the correct IN or OUT of distribution
+config: "configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25.yaml" # IN-DISTRIBUTION
+# config: "configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25_OOD.yaml"   # OUT-DISTRIBUTION
+
+
+# Paths
+args_file: null
+model_path: null
+# log_parent_dir: "runs/td3/zeroshot_paramrand/paramrand_pm25/seed0"
+log_parent_dir: "runs/td3/"
+run_name: "default_run_name"
+
+# Rapid Motor Adaptation
+use_rma: true
+rma_adaptation_timesteps: 500000
+rma_latent_dim: 8
+rma_encoder_hidden_sizes: [128, 128]
+rma_adaptation_hidden_sizes: [256, 128]
+rma_encoder_lr: 0.0003
+rma_adaptation_lr: 0.0003
+rma_adaptation_updates_per_iteration: 1
+rma_include_action_history: true
+rma_base_model_path: null
+
+# Runtime
+device: "cuda:0"
+seed: 0
+h_transform_eps: 0.001
+
+# Architecture (2-layer 64 — matches td3_recommended)
+agent_hidden_layer_size: 64
+agent_num_hidden_layers: 2
+q_hidden_layer_size: 64
+q_num_hidden_layers: 2
+
+use_last_action_in_policy_state: true
+
+# TODO: was 25000 - now trying to save less frequently
+checkpoint_interval: 25000
+
+# Multi-env evaluation (consumed by td3_training_dr.py wrapper).
+# Sets the seed for the eval-env sampler at startup; once seeded, the 5
+# (paddle_density, puck_damping, gravity) overrides are fixed for all
+# checkpoints in this run AND reproducible across reruns.
+eval_param_seed: 12345
+eval_n_envs: 5
+eval_eps_per_env: 4
+
+# For: use transformer/context-vector
+use_history: False  # RMA allocates its own history internally.
+use_transformer: False
+context_len: 30
+context_vector_dim: 8
+transformer_lr: 0.0003     
+
+# For: analysis of context vectors after training the transformer
+analyze_context_vectors: False
+context_analysis_n_eps: 20      
+context_analysis_n_envs: 10     
+context_analysis_ood_scale: 1.0   
+context_analysis_out_dir: "results/context_tsne"
+
+# For evaluation of baseline vs ours for ID and OOD env param distributions
+eval_id_ood: False
+eval_id_ood_n_envs: 30
+eval_id_ood_n_eps: 8
+
+# Populate this with the path after we generate and save the ID and OOD
+params_cache_path: "saved/ID_OOD_eval_sets"

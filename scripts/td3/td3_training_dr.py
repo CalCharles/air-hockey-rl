@@ -56,6 +56,7 @@ import gymnasium as gym
 from types import SimpleNamespace
 from scripts.transformer.context_encoder import ContextEncoder
 from scripts.transformer.history_buffer import HistoryBuffer
+from scripts.td3.encoder import AdaptationModule
 
 
 # Module-level state populated at startup from the args YAML so the
@@ -138,7 +139,12 @@ def _rollout_returns(
     use_transformer=False,
     context_vector_dim=8,
     context_len=7,
-    HISTORY_ENTRY_DIM=0,
+    HISTORY_ENTRY_DIM=6,
+    use_rma=False,
+    rma_latent_dim=8,
+    rma_include_action_history=True,
+    rma_adaptation_hidden_sizes=(256, 128),
+    adaptation_module_path=None,
 
 ) -> dict[str, Any]:
     """Build env from `air_hockey_params`, load actor from `model_path`,
@@ -155,7 +161,18 @@ def _rollout_returns(
     action_dim = int(np.prod(envs.single_action_space.shape))
 
     # TODO: Checked
-    if use_history:
+    if use_rma:
+        raw_obs_dim = int(np.prod(envs.single_observation_space.shape))
+        augmented_obs_dim = raw_obs_dim + rma_latent_dim
+        if use_last_action_in_policy_state:
+            augmented_obs_dim += action_dim
+        policy_env_view = SimpleNamespace(
+            single_observation_space=gym.spaces.Box(
+                low=-np.inf, high=np.inf, shape=(augmented_obs_dim,), dtype=np.float32
+            ),
+            single_action_space=envs.single_action_space,
+        )
+    elif use_history:
         raw_obs_dim = int(np.prod(envs.single_observation_space.shape))
         act_dim = int(np.prod(envs.single_action_space.shape))
 
@@ -190,6 +207,8 @@ def _rollout_returns(
 
     history_buf = HistoryBuffer(
         context_len=context_len,
+        include_action=rma_include_action_history if use_rma else False,
+        action_dim=action_dim,
     )
 
     if use_transformer:
@@ -207,6 +226,25 @@ def _rollout_returns(
             transformer.eval()
         else:
             print(f"Warning: transformer.pth not found at {transformer_path}, using random weights")
+
+    adaptation_module = None
+    if use_rma:
+        path = adaptation_module_path or os.path.join(
+            os.path.dirname(model_path), "adaptation_module.pth"
+        )
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"RMA adaptation checkpoint not found: {path}")
+        adaptation_module = AdaptationModule(
+            history_input_dim=context_len * (
+                HISTORY_ENTRY_DIM + (action_dim if rma_include_action_history else 0)
+            ),
+            latent_dim=rma_latent_dim,
+            hidden_size=rma_adaptation_hidden_sizes,
+        )
+        adaptation_module.load_state_dict(
+            torch.load(path, map_location="cpu", weights_only=False)
+        )
+        adaptation_module.eval()
         
 
     env = envs.envs[0]
@@ -218,6 +256,7 @@ def _rollout_returns(
 
     for _ in range(n_eps):
         obs, _ = env.reset()
+        history_buf.reset_env()
         obs_tensor = torch.tensor(obs, dtype=torch.float32)
         last_action = torch.zeros((1, action_dim), dtype=torch.float32)
         done = False
@@ -225,14 +264,25 @@ def _rollout_returns(
         steps = 0
         while not done:
 
-            history_buf.add(obs)
+            history_buf.add(obs, action=last_action.numpy().squeeze(0))
 
             # TODO: Checked
-            if use_history:
+            if use_history or use_rma:
 
                 state_history = history_buf.sample()
 
-                if transformer is not None:
+                if use_rma:
+                    with torch.no_grad():
+                        latent = adaptation_module(state_history)
+                    obs_with_context = torch.cat(
+                        [obs_tensor.unsqueeze(0), latent], dim=-1
+                    )
+                    policy_obs = augment_policy_observation(
+                        obs_with_context,
+                        last_action,
+                        use_last_action_in_policy_state,
+                    )
+                elif transformer is not None:
                     with torch.no_grad():
                         context_vector = transformer(state_history)  # (1, context_dim)
 
@@ -298,11 +348,16 @@ def _evaluate_agent_multi_env(
     use_last_action_in_policy_state=False,
     policy_type=None,
 
-    HISTORY_ENTRY_DIM=0,
+    HISTORY_ENTRY_DIM=6,
     use_transformer=False,
     use_history=False,
     context_vector_dim=8,
     context_len=7,
+    use_rma=False,
+    rma_latent_dim=8,
+    rma_include_action_history=True,
+    rma_adaptation_hidden_sizes=(256, 128),
+    adaptation_module_path=None,
 ):
     """Drop-in replacement for `td3_training.evaluate_agent`.
 
@@ -337,6 +392,15 @@ def _evaluate_agent_multi_env(
             use_last_action_in_policy_state=use_last_action_in_policy_state,
             policy_type=policy_type,
             HISTORY_ENTRY_DIM=HISTORY_ENTRY_DIM,
+            use_history=use_history,
+            use_transformer=use_transformer,
+            context_vector_dim=context_vector_dim,
+            context_len=context_len,
+            use_rma=use_rma,
+            rma_latent_dim=rma_latent_dim,
+            rma_include_action_history=rma_include_action_history,
+            rma_adaptation_hidden_sizes=rma_adaptation_hidden_sizes,
+            adaptation_module_path=adaptation_module_path,
         )
 
     if _EVAL_ENV_OVERRIDES is None:
@@ -420,6 +484,11 @@ def _evaluate_agent_multi_env(
                     use_transformer=use_transformer,       
                     context_vector_dim=context_vector_dim,       
                     context_len=context_len,
+                    use_rma=use_rma,
+                    rma_latent_dim=rma_latent_dim,
+                    rma_include_action_history=rma_include_action_history,
+                    rma_adaptation_hidden_sizes=rma_adaptation_hidden_sizes,
+                    adaptation_module_path=adaptation_module_path,
                 )
             except Exception as e:
                 print(f"[td3_training_dr] env0 GIF eval failed (continuing): {e}")
@@ -439,6 +508,11 @@ def _evaluate_agent_multi_env(
                 HISTORY_ENTRY_DIM=HISTORY_ENTRY_DIM,
                 context_vector_dim=context_vector_dim,
                 context_len=context_len,
+                use_rma=use_rma,
+                rma_latent_dim=rma_latent_dim,
+                rma_include_action_history=rma_include_action_history,
+                rma_adaptation_hidden_sizes=rma_adaptation_hidden_sizes,
+                adaptation_module_path=adaptation_module_path,
             )
             stats["env_idx"] = env_idx
             stats["override"] = override

@@ -41,6 +41,7 @@ def concat_replay_samples(sample_chunks: List[Dict[str, torch.Tensor]]) -> Dict[
         "weights",
         "sampled_priorities",
         "history",                  # Note: Actual values present only when context_len > 0
+        "env_props",                # RMA privileged props when use_env_props=True
     )
     combined = {
         key: torch.cat([chunk[key] for chunk in sample_chunks], dim=0)

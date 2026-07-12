@@ -32,6 +32,14 @@ import sys
 from airhockey import AirHockeyEnv
 from airhockey.renderers import AirHockeyRenderer
 from scripts.td3.deterministic_agent import DeterministicAgent
+from scripts.td3.encoder import AdaptationModule, ObjectPropEncoder
+from scripts.td3.rma_utils import (
+    build_prop_normalizer,
+    extract_env_props_from_vec_info,
+    normalize_env_props,
+    privileged_keys_from_config,
+    read_env_props_from_vector_env,
+)
 from scripts.td3.helper.q_network import TD3QNetwork
 from scripts.td3.helper.td3_args_validation import validate_args
 from scripts.td3.helper.td3_cql import cql_penalty, precompute_cql_terms
@@ -280,6 +288,19 @@ class Args:
     context_vector_dim: int = 8
     transformer_lr: float = 0.00005 
 
+    # --- Rapid Motor Adaptation (two-stage training) ---
+    use_rma: bool = False
+    rma_adaptation_timesteps: int = 500000
+    rma_latent_dim: int = 8
+    rma_encoder_hidden_sizes: List[int] = field(default_factory=lambda: [128, 128])
+    rma_adaptation_hidden_sizes: List[int] = field(default_factory=lambda: [256, 128])
+    rma_encoder_lr: float = 3e-4
+    rma_adaptation_lr: float = 3e-4
+    rma_adaptation_updates_per_iteration: int = 1
+    rma_include_action_history: bool = True
+    rma_base_model_path: str | None = None
+    rma_privileged_keys: List[str] = field(default_factory=list)
+
     # --- Context Vector OOD Analysis ---
     analyze_context_vectors: bool = False
     context_analysis_n_eps: int = 20
@@ -387,8 +408,14 @@ def _submit_sbatch_job():
     else:
         forward_argv += ["--run-name", sbatch_run_name]
 
-    # Build the python command the slurm job will run
-    python_cmd = f"python -m scripts.td3.td3_training_dr {shlex.join(forward_argv)}"
+    # Build the python command the slurm job will run.
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    project_python = os.path.join(repo_root, ".venv", "bin", "python")
+    python_executable = project_python if os.path.exists(project_python) else sys.executable
+    python_cmd = (
+        f"{shlex.quote(python_executable)} -m scripts.td3.td3_training_dr "
+        f"{shlex.join(forward_argv)}"
+    )
 
     # Load and patch the slurm template
     try:
@@ -413,6 +440,8 @@ def _submit_sbatch_job():
         elif line.startswith("#SBATCH --time="):
             line = f"#SBATCH --time={sbatch_time}"
             time_patched = True
+        elif line.startswith("cd "):
+            line = f'cd "{repo_root}"'
         patched_lines.append(line)
 
     # Find where the last #SBATCH line is and insert any missing directives after it
@@ -552,6 +581,31 @@ def _entrypoint():
     if (args.gravity is not None):
         config["air_hockey"]["random_variable_ranges"]["gravity"] = [args.gravity[0], args.gravity[1]]
 
+    rma_privileged_keys: List[str] = []
+    rma_prop_lows = rma_prop_highs = None
+    if args.use_rma:
+        air_hockey_config = config["air_hockey"]
+        if not air_hockey_config.get("domain_random", False):
+            raise ValueError("use_rma=True requires air_hockey.domain_random=True.")
+        rma_privileged_keys = privileged_keys_from_config(air_hockey_config)
+        relevant = {"gravity", "paddle_density", "puck_damping"}
+        if set(rma_privileged_keys) != relevant:
+            raise ValueError(
+                "RMA random_variables must contain exactly gravity, paddle_density, and "
+                f"puck_damping; got {rma_privileged_keys}."
+            )
+        rma_prop_lows, rma_prop_highs = build_prop_normalizer(
+            air_hockey_config.get("random_variable_ranges", {}),
+            rma_privileged_keys,
+        )
+        args.rma_privileged_keys = list(rma_privileged_keys)
+        config["rma_privileged_keys"] = list(rma_privileged_keys)
+        # Rewrite after CLI range overrides and RMA metadata are finalized.
+        with open(f"{log_parent_dir}/config.yaml", "w") as f:
+            yaml.dump(config, f)
+        with open(f"{log_parent_dir}/args.yaml", "w") as f:
+            yaml.dump(vars(args), f)
+
     print("eval on random_variable_ranges: ", config["air_hockey"]["random_variable_ranges"])
 
 
@@ -563,8 +617,11 @@ def _entrypoint():
     raw_obs_dim = int(np.array(envs.single_observation_space.shape).prod())
     act_dim = int(np.prod(envs.single_action_space.shape))
 
-    # TODO: checked this
-    if args.use_history:
+    if args.use_rma:
+        policy_obs_dim = raw_obs_dim + args.rma_latent_dim
+        if args.use_last_action_in_policy_state:
+            policy_obs_dim += act_dim
+    elif args.use_history:
         
         # Transformer: TD3 input dim: [raw_obs_dim, context_vector_dim]
         if args.use_transformer:
@@ -646,12 +703,15 @@ def _entrypoint():
     checkpoint_load_mode = args.full_checkpoint_load
     residual_actor_optimizer: optim.Optimizer | None = None
 
-    # TODO: Added guard
-    if args.use_history:
+    if args.use_history or args.use_rma:
         history_buf = HistoryBuffer(
             context_len=args.context_len,
             device=args.device,
+            include_action=args.rma_include_action_history if args.use_rma else False,
+            action_dim=act_dim,
         )
+    else:
+        history_buf = None
 
     # TODO: need to check this
     if args.use_transformer and (args.context_vector_dim > 0):
@@ -665,6 +725,31 @@ def _entrypoint():
         transformer_optimizer = optim.Adam(transformer.parameters(), lr=args.transformer_lr)
     else:
         transformer = None
+
+    object_prop_encoder = None
+    adaptation_module = None
+    encoder_optimizer = None
+    adaptation_optimizer = None
+    if args.use_rma:
+        object_prop_encoder = ObjectPropEncoder(
+            env_var_dim=len(rma_privileged_keys),
+            latent_dim=args.rma_latent_dim,
+            hidden_size=args.rma_encoder_hidden_sizes,
+        ).to(args.device)
+        rma_history_entry_dim = HISTORY_ENTRY_DIM + (
+            act_dim if args.rma_include_action_history else 0
+        )
+        adaptation_module = AdaptationModule(
+            history_input_dim=args.context_len * rma_history_entry_dim,
+            latent_dim=args.rma_latent_dim,
+            hidden_size=args.rma_adaptation_hidden_sizes,
+        ).to(args.device)
+        encoder_optimizer = optim.Adam(
+            object_prop_encoder.parameters(), lr=args.rma_encoder_lr
+        )
+        adaptation_optimizer = optim.Adam(
+            adaptation_module.parameters(), lr=args.rma_adaptation_lr
+        )
 
     if args.model_path is not None:
         if not os.path.exists(args.model_path):
@@ -748,6 +833,57 @@ def _entrypoint():
                 print(f"Warning: use_transformer=True but transformer.pth not found at {transformer_path}")
                 return
 
+    def load_rma_modules(checkpoint_path: str, *, require_encoder: bool) -> dict | None:
+        if not os.path.exists(checkpoint_path):
+            raise FileNotFoundError(f"RMA checkpoint path does not exist: {checkpoint_path}")
+        loaded = torch.load(checkpoint_path, map_location=args.device, weights_only=False)
+        full_state = loaded if isinstance(loaded, dict) and "actor" in loaded else None
+        if full_state is not None and full_state.get("rma_privileged_keys") is not None:
+            loaded_keys = list(full_state["rma_privileged_keys"])
+            if loaded_keys != rma_privileged_keys:
+                raise ValueError(
+                    "RMA privileged ordering mismatch: checkpoint has "
+                    f"{loaded_keys}, config has {rma_privileged_keys}."
+                )
+        actor_state = full_state["actor"] if full_state is not None else loaded
+        actor.load_state_dict(extract_deterministic_state_dict(actor_state), strict=False)
+        actor_target.load_state_dict(actor.state_dict())
+
+        encoder_state = full_state.get("object_prop_encoder") if full_state is not None else None
+        if encoder_state is None:
+            encoder_path = os.path.join(os.path.dirname(checkpoint_path), "object_prop_encoder.pth")
+            if os.path.exists(encoder_path):
+                encoder_state = torch.load(encoder_path, map_location=args.device, weights_only=False)
+        if encoder_state is None and require_encoder:
+            raise FileNotFoundError(
+                "RMA base checkpoint has no object_prop_encoder state or sibling "
+                "object_prop_encoder.pth."
+            )
+        if encoder_state is not None:
+            object_prop_encoder.load_state_dict(encoder_state)
+
+        adaptation_state = full_state.get("adaptation_module") if full_state is not None else None
+        if adaptation_state is None:
+            adaptation_path = os.path.join(os.path.dirname(checkpoint_path), "adaptation_module.pth")
+            if os.path.exists(adaptation_path):
+                adaptation_state = torch.load(
+                    adaptation_path, map_location=args.device, weights_only=False
+                )
+        if adaptation_state is not None:
+            adaptation_module.load_state_dict(adaptation_state)
+        return full_state
+
+    if args.use_rma and args.rma_base_model_path is not None:
+        load_rma_modules(args.rma_base_model_path, require_encoder=True)
+        print(f"Loaded RMA Phase-1 base from {args.rma_base_model_path}")
+    elif args.use_rma and args.model_path is not None:
+        rma_loaded_state = load_rma_modules(args.model_path, require_encoder=True)
+        if rma_loaded_state is not None:
+            if "encoder_optimizer" in rma_loaded_state:
+                encoder_optimizer.load_state_dict(rma_loaded_state["encoder_optimizer"])
+            if "adaptation_optimizer" in rma_loaded_state:
+                adaptation_optimizer.load_state_dict(rma_loaded_state["adaptation_optimizer"])
+
 
     q_optimizer = optim.Adam(
         [p for q in qfs for p in q.parameters()],
@@ -772,9 +908,15 @@ def _entrypoint():
             alpha=args.per_alpha,
             priority_eps=args.per_eps,
             age_decay=args.priority_age_decay,
-            use_history=args.use_history,
-            history_entry_dim=HISTORY_ENTRY_DIM,
+            use_history=(args.use_history or args.use_rma),
+            history_entry_dim=(
+                HISTORY_ENTRY_DIM + act_dim
+                if args.use_rma and args.rma_include_action_history
+                else HISTORY_ENTRY_DIM
+            ),
             context_len=args.context_len,
+            use_env_props=args.use_rma,
+            env_prop_dim=len(rma_privileged_keys),
         )
         failure_rb = TD3PrioritizedReplayBuffer(
             buffer_size=args.failure_buffer_size,
@@ -785,9 +927,15 @@ def _entrypoint():
             alpha=args.per_alpha,
             priority_eps=args.per_eps,
             age_decay=args.priority_age_decay,
-            use_history=args.use_history,
-            history_entry_dim=HISTORY_ENTRY_DIM,
+            use_history=(args.use_history or args.use_rma),
+            history_entry_dim=(
+                HISTORY_ENTRY_DIM + act_dim
+                if args.use_rma and args.rma_include_action_history
+                else HISTORY_ENTRY_DIM
+            ),
             context_len=args.context_len,
+            use_env_props=args.use_rma,
+            env_prop_dim=len(rma_privileged_keys),
         )
         print(
             "✓ TD3 prioritized replay buffers initialized "
@@ -801,6 +949,15 @@ def _entrypoint():
             action_shape=envs.single_action_space.shape,
             device=args.device,
             n_envs=args.num_envs,
+            use_history=(args.use_history or args.use_rma),
+            history_entry_dim=(
+                HISTORY_ENTRY_DIM + act_dim
+                if args.use_rma and args.rma_include_action_history
+                else HISTORY_ENTRY_DIM
+            ),
+            context_len=args.context_len,
+            use_env_props=args.use_rma,
+            env_prop_dim=len(rma_privileged_keys),
         )
         failure_rb = TD3ReplayBuffer(
             buffer_size=args.failure_buffer_size,
@@ -808,6 +965,15 @@ def _entrypoint():
             action_shape=envs.single_action_space.shape,
             device=args.device,
             n_envs=args.num_envs,
+            use_history=(args.use_history or args.use_rma),
+            history_entry_dim=(
+                HISTORY_ENTRY_DIM + act_dim
+                if args.use_rma and args.rma_include_action_history
+                else HISTORY_ENTRY_DIM
+            ),
+            context_len=args.context_len,
+            use_env_props=args.use_rma,
+            env_prop_dim=len(rma_privileged_keys),
         )
         print(
             "✓ TD3 replay buffers initialized "
@@ -815,7 +981,16 @@ def _entrypoint():
             f"failure_capacity={args.failure_buffer_size:,})\n"
         )
 
-    obs, _ = envs.reset(seed=args.seed)
+    obs, reset_infos = envs.reset(seed=args.seed)
+    current_env_props = None
+    if args.use_rma:
+        current_env_props = torch.as_tensor(
+            extract_env_props_from_vec_info(
+                reset_infos, rma_privileged_keys, args.num_envs
+            ),
+            dtype=torch.float32,
+            device=args.device,
+        )
     last_action_for_policy = torch.zeros((args.num_envs, act_dim), dtype=torch.float32, device=args.device)
     interval_paddle_puck_collisions = 0.0
     interval_env_steps = 0
@@ -913,7 +1088,7 @@ def _entrypoint():
         rolling_episode_stats_window = restored_state["rolling_episode_stats_window"]
         print(f"Resuming training from global_step={global_step}, iteration={iteration}")
 
-    def save_full_checkpoint(out_dir: str) -> str:
+    def save_full_checkpoint(out_dir: str, phase: str = "base") -> str:
         os.makedirs(out_dir, exist_ok=True)
         with open(f"{out_dir}/config.yaml", "w") as f:
             yaml.dump(config, f)
@@ -928,6 +1103,15 @@ def _entrypoint():
         
         if args.use_transformer:
             torch.save(transformer.state_dict(), f"{out_dir}/transformer.pth")
+        if args.use_rma:
+            torch.save(
+                object_prop_encoder.state_dict(),
+                f"{out_dir}/object_prop_encoder.pth",
+            )
+            torch.save(
+                adaptation_module.state_dict(),
+                f"{out_dir}/adaptation_module.pth",
+            )
 
         state = build_training_state(
             global_step=global_step,
@@ -960,7 +1144,13 @@ def _entrypoint():
             rolling_episode_stats_window=rolling_episode_stats_window,
             args_dict=vars(args),
             include_replay_buffer=args.save_replay_buffer,
+            object_prop_encoder=object_prop_encoder,
+            adaptation_module=adaptation_module,
+            encoder_optimizer=encoder_optimizer,
+            adaptation_optimizer=adaptation_optimizer,
         )
+        state["rma_phase"] = phase
+        state["rma_privileged_keys"] = list(rma_privileged_keys)
         torch.save(state, f"{out_dir}/training_state.pth")
         return model_path_local
 
@@ -987,6 +1177,9 @@ def _entrypoint():
             save_gifs=args.eval_id_ood_save_gifs,
             n_gifs_per_env=args.eval_id_ood_n_gifs_per_env,
             n_eps_per_gif=args.eval_id_ood_n_eps_per_gif,
+            use_rma=args.use_rma,
+            adaptation_module=adaptation_module,
+            rma_include_action_history=args.rma_include_action_history,
         )
         return  # exit after eval, don't train
             
@@ -1015,692 +1208,902 @@ def _entrypoint():
 
 
 
-    while global_step < args.total_timesteps:
-        
-        should_update_train_metrics = global_step > 0 and np.random.rand() < 0.1
-        should_refresh_annealing = (not args.eval_mode) and (np.random.rand() < 0.1)
-
-        if should_refresh_annealing:
-            annealing_active = global_step < args.exploration_primitive_chance_anneal_steps
-            primitive_selector.chance = primitive_exploration_chance_for_step(args, global_step)
-            if annealing_active:
-                primitive_selector.set_primitive_weights(
-                    stand_still=args.exploration_primitive_weight_anneal_stand_still,
-                    same_direction=args.exploration_primitive_weight_anneal_same_direction,
-                )
-            else:
-                primitive_selector.set_primitive_weights(
-                    stand_still=args.exploration_primitive_weight_stand_still,
-                    same_direction=args.exploration_primitive_weight_same_direction,
-                )
-        prev_action_for_transition = last_action_for_policy.clone()
-        obs_tensor = torch.tensor(obs, dtype=torch.float32, device=args.device)
-        
-        # TODO: need to check this
-        if args.use_history:
-            
-            history_buf.add(obs[0])
-
-            state_history = history_buf.sample()
-
-            if args.use_transformer:
-                # use_transformer
-                with torch.no_grad():
-                    context_vector = transformer(state_history)      # (1, context_vector_dim)
-                
-                obs_with_context_vector = torch.cat([obs_tensor, context_vector], dim=-1)
-                policy_obs_tensor = augment_policy_observation(
-                    obs_with_context_vector, last_action_for_policy, args.use_last_action_in_policy_state
-                )
-                
-            else:
-                # history only: observation is context history
-                context = state_history.view(1, -1)       # (1, T*4) — flat concat
-
-                policy_obs_tensor = augment_policy_observation(
-                    context, last_action_for_policy, args.use_last_action_in_policy_state
-                )
-
-        else:
-            # Default vanilla TD3
-            policy_obs_tensor = augment_policy_observation(
-                obs_tensor, last_action_for_policy, args.use_last_action_in_policy_state
+    def train_loop(phase: Literal["base", "adaptation"]):
+        nonlocal global_step, iteration, total_critic_updates, obs
+        nonlocal last_action_for_policy, current_env_props, episode_trajectory
+        nonlocal episode_return_success_threshold
+        nonlocal interval_paddle_puck_collisions, interval_env_steps
+        nonlocal interval_primitive_env_steps
+        nonlocal interval_primitive_horizontal_env_steps
+        phase_step = global_step if phase == "base" else 0
+        phase_budget = (
+            args.total_timesteps
+            if phase == "base"
+            else args.rma_adaptation_timesteps
+        )
+        adaptation_warmup = min(
+            args.learning_starts, max(1, args.rma_adaptation_timesteps // 10)
+        )
+        if args.use_rma:
+            wandb.log(
+                {"rma/phase": 1.0 if phase == "base" else 2.0},
+                step=global_step,
             )
+        while phase_step < phase_budget:
+        
+            should_update_train_metrics = global_step > 0 and np.random.rand() < 0.1
+            should_refresh_annealing = (not args.eval_mode) and (np.random.rand() < 0.1)
 
-        if global_step < args.learning_starts and not args.eval_mode:
-            if args.exploration_pre_learning_action_source == "random":
-                actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
+            if should_refresh_annealing:
+                annealing_active = global_step < args.exploration_primitive_chance_anneal_steps
+                primitive_selector.chance = primitive_exploration_chance_for_step(args, global_step)
+                if annealing_active:
+                    primitive_selector.set_primitive_weights(
+                        stand_still=args.exploration_primitive_weight_anneal_stand_still,
+                        same_direction=args.exploration_primitive_weight_anneal_same_direction,
+                    )
+                else:
+                    primitive_selector.set_primitive_weights(
+                        stand_still=args.exploration_primitive_weight_stand_still,
+                        same_direction=args.exploration_primitive_weight_same_direction,
+                    )
+            prev_action_for_transition = last_action_for_policy.clone()
+            obs_tensor = torch.tensor(obs, dtype=torch.float32, device=args.device)
+        
+            # TODO: need to check this
+            if args.use_history or args.use_rma:
+            
+                history_buf.add(
+                    obs[0],
+                    action=last_action_for_policy[0].detach().cpu().numpy(),
+                )
+
+                state_history = history_buf.sample()
+
+                if args.use_rma:
+                    with torch.no_grad():
+                        if phase == "base":
+                            normalized_props = normalize_env_props(
+                                current_env_props, rma_prop_lows, rma_prop_highs
+                            )
+                            latent = object_prop_encoder(normalized_props)
+                        else:
+                            latent = adaptation_module(state_history)
+                    obs_with_latent = torch.cat([obs_tensor, latent], dim=-1)
+                    policy_obs_tensor = augment_policy_observation(
+                        obs_with_latent,
+                        last_action_for_policy,
+                        args.use_last_action_in_policy_state,
+                    )
+                elif args.use_transformer:
+                    # use_transformer
+                    with torch.no_grad():
+                        context_vector = transformer(state_history)      # (1, context_vector_dim)
+                
+                    obs_with_context_vector = torch.cat([obs_tensor, context_vector], dim=-1)
+                    policy_obs_tensor = augment_policy_observation(
+                        obs_with_context_vector, last_action_for_policy, args.use_last_action_in_policy_state
+                    )
+                
+                else:
+                    # history only: observation is context history
+                    context = state_history.view(1, -1)       # (1, T*4) — flat concat
+
+                    policy_obs_tensor = augment_policy_observation(
+                        context, last_action_for_policy, args.use_last_action_in_policy_state
+                    )
+
+            else:
+                # Default vanilla TD3
+                policy_obs_tensor = augment_policy_observation(
+                    obs_tensor, last_action_for_policy, args.use_last_action_in_policy_state
+                )
+
+            phase_learning_starts = (
+                adaptation_warmup if phase == "adaptation" else args.learning_starts
+            )
+            if (
+                phase == "base"
+                and phase_step < phase_learning_starts
+                and not args.eval_mode
+            ):
+                if args.exploration_pre_learning_action_source == "random":
+                    actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
+                else:
+                    with torch.no_grad():
+                        deterministic_actions = deterministic_actor_action(actor, policy_obs_tensor)
+                        exploration = torch.randn_like(deterministic_actions) * args.exploration_noise
+                        deterministic_actions = torch.clamp(
+                            deterministic_actions + exploration, action_low, action_high
+                        )
+                        actions = deterministic_actions.cpu().numpy()
             else:
                 with torch.no_grad():
                     deterministic_actions = deterministic_actor_action(actor, policy_obs_tensor)
-                    exploration = torch.randn_like(deterministic_actions) * args.exploration_noise
-                    deterministic_actions = torch.clamp(
-                        deterministic_actions + exploration, action_low, action_high
-                    )
-                    actions = deterministic_actions.cpu().numpy()
-        else:
-            with torch.no_grad():
-                deterministic_actions = deterministic_actor_action(actor, policy_obs_tensor)
-                if not args.eval_mode:
-                    exploration = torch.randn_like(deterministic_actions) * args.exploration_noise
-                    deterministic_actions = torch.clamp(
-                        deterministic_actions + exploration, action_low, action_high
-                    )
-                else:
-                    deterministic_actions = torch.clamp(deterministic_actions, action_low, action_high)
-                actions = deterministic_actions.cpu().numpy()
-
-        action_tensor = torch.as_tensor(actions, dtype=torch.float32, device=args.device)
-        if not args.eval_mode:
-            action_tensor, primitive_step_stats = primitive_selector.apply(
-                action_tensor,
-                action_low=action_low,
-                action_high=action_high,
-                return_stats=True,
-            )
-        else:
-            primitive_step_stats = {
-                "primitive_applied_count": 0,
-                "primitive_horizontal_dominant_count": 0,
-            }
-        actions = action_tensor.cpu().numpy()
-
-        gif_recorder.capture_frame(train_renderer, global_step)
-
-        next_obs, rewards, terminations, truncations, infos = envs.step(actions)
-        dones = np.logical_or(terminations, truncations)
-
-        # TODO: checked
-        if args.use_history:
-            history_snapshot = history_buf.sample()[0]
-
-            if bool(dones[0]):
-                history_buf.reset_env()
-        else:
-            history_snapshot = None
-
-        
-        step_puck_hits = sum_info_metric(infos, "paddle_puck_collision_count")
-        interval_paddle_puck_collisions += step_puck_hits
-        interval_env_steps += args.num_envs
-        interval_primitive_env_steps += int(primitive_step_stats["primitive_applied_count"])
-        interval_primitive_horizontal_env_steps += int(
-            primitive_step_stats["primitive_horizontal_dominant_count"]
-        )
-        next_obs_tensor = torch.tensor(next_obs, dtype=torch.float32, device=args.device)
-        done_tensor = torch.tensor(dones, dtype=torch.bool, device=args.device)
-        primitive_selector.reset(done_tensor)
-        last_action_for_policy = action_tensor.clone()
-        last_action_for_policy[done_tensor] = 0
-
-        rewards_tensor = torch.tensor(rewards, dtype=torch.float32, device=args.device)
-
-        gif_recorder.note_reward(float(rewards_tensor[0].item()))
-
-        if "final_info" in infos:
-            for info in infos["final_info"]:
-                if info and "episode_return" in info:
-                    # writer.add_scalar("charts/episodic_return", info["episode_return"], global_step)
-                    # writer.add_scalar("charts/episodic_length", info["episode_length"], global_step)
-
-                    wandb.log({
-                        "charts/episodic_return": info["episode_return"],
-                        "charts/episodic_length": info["episode_length"] 
-                    }, step=global_step)
-
-                    rolling_episode_stats_window.append(
-                        (
-                            int(global_step + args.num_envs),
-                            float(info["episode_return"]),
-                            float(info["episode_length"]),
-                            1.0 if info.get("success", False) else 0.0,
+                    if not args.eval_mode and phase == "base":
+                        exploration = torch.randn_like(deterministic_actions) * args.exploration_noise
+                        deterministic_actions = torch.clamp(
+                            deterministic_actions + exploration, action_low, action_high
                         )
-                    )
-        
-        rolling_step_stats_window.append(
-            (
-                int(global_step + args.num_envs),
-                int(args.num_envs),
-                float(step_puck_hits),
-            )
-        )
-        rolling_cutoff_step = int(global_step + args.num_envs - ROLLING_STATS_WINDOW_STEPS)
-        while rolling_step_stats_window and int(rolling_step_stats_window[0][0]) <= rolling_cutoff_step:
-            rolling_step_stats_window.popleft()
-        while rolling_episode_stats_window and int(rolling_episode_stats_window[0][0]) <= rolling_cutoff_step:
-            rolling_episode_stats_window.popleft()
+                    else:
+                        deterministic_actions = torch.clamp(deterministic_actions, action_low, action_high)
+                    actions = deterministic_actions.cpu().numpy()
 
-        real_next_obs = next_obs.copy()
-
-        # TODO: remove guard for final_observations
-        for idx, trunc in enumerate(truncations):
-            if trunc:
-                real_next_obs[idx] = infos["final_observation"][idx]
-
-        real_next_obs_tensor = torch.as_tensor(real_next_obs, dtype=torch.float32, device=args.device)
-        terminations_tensor = torch.as_tensor(terminations, dtype=torch.float32, device=args.device)
-        # TODO: checked
-        if not args.eval_mode:
-            episode_trajectory.append_step(
-                obs=obs_tensor[0],
-                next_obs=real_next_obs_tensor[0],
-                action=action_tensor[0],
-                reward=rewards_tensor[0],
-                done=terminations_tensor[0],
-                prev_action=prev_action_for_transition[0],
-                history=history_snapshot,
-            )
-
-
-            episode_return_success_threshold = finalize_episode_if_done(
-                episode_done=bool(dones[0]),
-                episode_trajectory=episode_trajectory,
-                recent_episode_returns=recent_episode_returns,
-                success_top_fraction=args.success_top_fraction,
-                episode_return_success_threshold=episode_return_success_threshold,
-                success_rb=success_rb,
-                failure_rb=failure_rb,
-            )
-        episode_finished = bool(dones[0])
-
-        if episode_finished:
-            gif_recorder.on_episode_end(global_step)
-
-        obs = next_obs
-
-        if global_step > args.learning_starts and episode_finished and not args.eval_mode:
-            for q_update_idx in range(args.q_updates):
-                success_batch_count, failure_batch_count = critic_success_failure_counts(
-                    batch_size=args.batch_size,
-                    success_fraction=args.critic_success_sample_fraction,
-                    success_available=len(success_rb) > 0,
-                    failure_available=len(failure_rb) > 0,
+            action_tensor = torch.as_tensor(actions, dtype=torch.float32, device=args.device)
+            if not args.eval_mode and phase == "base":
+                action_tensor, primitive_step_stats = primitive_selector.apply(
+                    action_tensor,
+                    action_low=action_low,
+                    action_high=action_high,
+                    return_stats=True,
                 )
-                if success_batch_count + failure_batch_count == 0:
-                    continue
-                if args.per_enabled:
-                    per_beta = linear_anneal(
-                        args.per_beta_start,
-                        args.per_beta_end,
-                        global_step,
-                        args.per_beta_anneal_steps,
-                    )
-                else:
-                    per_beta = 0.0
+            else:
+                primitive_step_stats = {
+                    "primitive_applied_count": 0,
+                    "primitive_horizontal_dominant_count": 0,
+                }
+            actions = action_tensor.cpu().numpy()
 
-                replay_chunks: List[Dict[str, torch.Tensor]] = []
-                per_priority_update_slices: List[Tuple[object, torch.Tensor, int, int]] = []
-                per_sample_count = 0
-                uniform_sample_count = 0
-                running_offset = 0
-                for source_buffer, source_count in (
-                    (success_rb, success_batch_count),
-                    (failure_rb, failure_batch_count),
-                ):
-                    if source_count <= 0:
-                        continue
-                    source_chunk = sample_critic_source_chunk(
-                        replay_buffer=source_buffer,
-                        sample_count=source_count,
-                        per_enabled=args.per_enabled,
-                        per_beta=per_beta,
-                        critic_per_fraction=args.critic_per_fraction,
-                    )
-                    source_data = source_chunk["data"]
-                    replay_chunks.append(source_data)
-                    source_batch_size = int(source_data["rewards"].shape[0])
-                    source_per_count = int(source_chunk["per_count"])
-                    source_uniform_count = int(source_chunk["uniform_count"])
-                    per_sample_count += source_per_count
-                    uniform_sample_count += source_uniform_count
-                    if (
-                        args.per_enabled
-                        and source_per_count > 0
-                        and source_chunk["per_indices"] is not None
-                    ):
-                        per_priority_update_slices.append(
+            gif_recorder.capture_frame(train_renderer, global_step)
+
+            next_obs, rewards, terminations, truncations, infos = envs.step(actions)
+            dones = np.logical_or(terminations, truncations)
+
+            # TODO: checked
+            if args.use_history or args.use_rma:
+                history_snapshot = history_buf.sample()[0]
+
+                if bool(dones[0]):
+                    history_buf.reset_env()
+            else:
+                history_snapshot = None
+
+        
+            step_puck_hits = sum_info_metric(infos, "paddle_puck_collision_count")
+            interval_paddle_puck_collisions += step_puck_hits
+            interval_env_steps += args.num_envs
+            interval_primitive_env_steps += int(primitive_step_stats["primitive_applied_count"])
+            interval_primitive_horizontal_env_steps += int(
+                primitive_step_stats["primitive_horizontal_dominant_count"]
+            )
+            next_obs_tensor = torch.tensor(next_obs, dtype=torch.float32, device=args.device)
+            done_tensor = torch.tensor(dones, dtype=torch.bool, device=args.device)
+            primitive_selector.reset(done_tensor)
+            last_action_for_policy = action_tensor.clone()
+            last_action_for_policy[done_tensor] = 0
+
+            rewards_tensor = torch.tensor(rewards, dtype=torch.float32, device=args.device)
+
+            gif_recorder.note_reward(float(rewards_tensor[0].item()))
+
+            if "final_info" in infos:
+                for info in infos["final_info"]:
+                    if info and "episode_return" in info:
+                        # writer.add_scalar("charts/episodic_return", info["episode_return"], global_step)
+                        # writer.add_scalar("charts/episodic_length", info["episode_length"], global_step)
+
+                        wandb.log({
+                            "charts/episodic_return": info["episode_return"],
+                            "charts/episodic_length": info["episode_length"]
+                        }, step=global_step)
+
+                        rolling_episode_stats_window.append(
                             (
-                                source_buffer,
-                                source_chunk["per_indices"],
-                                running_offset,
-                                running_offset + source_per_count,
+                                int(global_step + args.num_envs),
+                                float(info["episode_return"]),
+                                float(info["episode_length"]),
+                                1.0 if info.get("success", False) else 0.0,
                             )
                         )
-                    running_offset += source_batch_size
+        
+            rolling_step_stats_window.append(
+                (
+                    int(global_step + args.num_envs),
+                    int(args.num_envs),
+                    float(step_puck_hits),
+                )
+            )
+            rolling_cutoff_step = int(global_step + args.num_envs - ROLLING_STATS_WINDOW_STEPS)
+            while rolling_step_stats_window and int(rolling_step_stats_window[0][0]) <= rolling_cutoff_step:
+                rolling_step_stats_window.popleft()
+            while rolling_episode_stats_window and int(rolling_episode_stats_window[0][0]) <= rolling_cutoff_step:
+                rolling_episode_stats_window.popleft()
 
-                if len(replay_chunks) == 1:
-                    data = replay_chunks[0]
-                else:
-                    data = concat_replay_samples(replay_chunks)
-                sampled_observations = data["observations"]
-                sampled_next_observations = data["next_observations"]
-                sampled_actions = data["actions"]
-                sampled_rewards = data["rewards"]
-                sampled_dones = data["dones"]
-                sampled_prev_actions = data["prev_actions"]
-                sampled_weights = data.get("weights")
-                if sampled_weights is None:
-                    sampled_weights = torch.ones_like(sampled_rewards)
-                sampled_weights = sampled_weights.view(-1)
-                sampled_next_prev_actions = sampled_actions * (1.0 - sampled_dones.unsqueeze(-1))
+            real_next_obs = next_obs.copy()
 
-                # TODO: need to check this
-                if args.use_history:
-                    
-                    # TODO: See that we use the same history to compute the context for the actor_target and actor
-                    #       I think this is fine because the only difference would be is by one timestep.
-                    #       This especially shouldn't change the learned information because the normal observation already contains the data in sampled_next_observations
-                    #       So this is fine because the history does it's job by containing information of past timesteps that the observation or next_observations cannot see
-                    sampled_next_history = data["history"].to(args.device)
-                    
-                    if args.use_transformer:
-                        with torch.no_grad():
-                            sampled_next_context_vector = transformer(sampled_next_history)
+            # TODO: remove guard for final_observations
+            for idx, trunc in enumerate(truncations):
+                if trunc:
+                    real_next_obs[idx] = infos["final_observation"][idx]
 
-                        sampled_next_obs_with_context = torch.cat([sampled_next_observations, sampled_next_context_vector], dim=-1)
-                        sampled_next_policy_observations = augment_policy_observation(
-                            sampled_next_obs_with_context,
-                            sampled_next_prev_actions,
-                            args.use_last_action_in_policy_state,
+            real_next_obs_tensor = torch.as_tensor(real_next_obs, dtype=torch.float32, device=args.device)
+            terminations_tensor = torch.as_tensor(terminations, dtype=torch.float32, device=args.device)
+            # TODO: checked
+            if not args.eval_mode:
+                episode_trajectory.append_step(
+                    obs=obs_tensor[0],
+                    next_obs=real_next_obs_tensor[0],
+                    action=action_tensor[0],
+                    reward=rewards_tensor[0],
+                    done=terminations_tensor[0],
+                    prev_action=prev_action_for_transition[0],
+                    history=history_snapshot,
+                    env_props=current_env_props[0] if args.use_rma else None,
+                )
+
+
+                episode_return_success_threshold = finalize_episode_if_done(
+                    episode_done=bool(dones[0]),
+                    episode_trajectory=episode_trajectory,
+                    recent_episode_returns=recent_episode_returns,
+                    success_top_fraction=args.success_top_fraction,
+                    episode_return_success_threshold=episode_return_success_threshold,
+                    success_rb=success_rb,
+                    failure_rb=failure_rb,
+                )
+            episode_finished = bool(dones[0])
+
+            if episode_finished:
+                gif_recorder.on_episode_end(global_step)
+                if args.use_rma:
+                    try:
+                        next_props = extract_env_props_from_vec_info(
+                            infos, rma_privileged_keys, args.num_envs
                         )
+                    except (KeyError, ValueError):
+                        next_props = read_env_props_from_vector_env(
+                            envs, rma_privileged_keys
+                        )
+                    current_env_props = torch.as_tensor(
+                        next_props, dtype=torch.float32, device=args.device
+                    )
 
+            obs = next_obs
+
+            if (
+                phase == "adaptation"
+                and phase_step > phase_learning_starts
+                and episode_finished
+                and not args.eval_mode
+            ):
+                for _ in range(args.rma_adaptation_updates_per_iteration):
+                    success_count, failure_count = critic_success_failure_counts(
+                        batch_size=args.batch_size,
+                        success_fraction=args.critic_success_sample_fraction,
+                        success_available=len(success_rb) > 0,
+                        failure_available=len(failure_rb) > 0,
+                    )
+                    chunks = []
+                    if success_count:
+                        chunks.append(
+                            sample_actor_source_chunk(
+                                success_rb, success_count, args.per_enabled
+                            )
+                        )
+                    if failure_count:
+                        chunks.append(
+                            sample_actor_source_chunk(
+                                failure_rb, failure_count, args.per_enabled
+                            )
+                        )
+                    if not chunks:
+                        continue
+                    adaptation_data = (
+                        chunks[0] if len(chunks) == 1 else concat_replay_samples(chunks)
+                    )
+                    predicted_z = adaptation_module(adaptation_data["history"])
+                    with torch.no_grad():
+                        target_z = object_prop_encoder(
+                            normalize_env_props(
+                                adaptation_data["env_props"],
+                                rma_prop_lows,
+                                rma_prop_highs,
+                            )
+                        )
+                    adaptation_loss = torch.nn.functional.mse_loss(
+                        predicted_z, target_z
+                    )
+                    adaptation_optimizer.zero_grad()
+                    adaptation_loss.backward()
+                    adaptation_optimizer.step()
+                    wandb.log(
+                        {
+                            "rma/adaptation_loss": float(adaptation_loss.detach().item()),
+                            "rma/latent_mae": float(
+                                (predicted_z.detach() - target_z).abs().mean().item()
+                            ),
+                            "rma/phase": 2.0,
+                        },
+                        step=global_step,
+                    )
+
+            if (
+                phase == "base"
+                and phase_step > phase_learning_starts
+                and episode_finished
+                and not args.eval_mode
+            ):
+                for q_update_idx in range(args.q_updates):
+                    success_batch_count, failure_batch_count = critic_success_failure_counts(
+                        batch_size=args.batch_size,
+                        success_fraction=args.critic_success_sample_fraction,
+                        success_available=len(success_rb) > 0,
+                        failure_available=len(failure_rb) > 0,
+                    )
+                    if success_batch_count + failure_batch_count == 0:
+                        continue
+                    if args.per_enabled:
+                        per_beta = linear_anneal(
+                            args.per_beta_start,
+                            args.per_beta_end,
+                            global_step,
+                            args.per_beta_anneal_steps,
+                        )
                     else:
-                        sampled_next_context = sampled_next_history.view(sampled_next_history.shape[0], -1)  # (B, T*4)
+                        per_beta = 0.0
 
-                        sampled_next_policy_observations = augment_policy_observation(
-                            sampled_next_context,
-                            sampled_next_prev_actions,
-                            args.use_last_action_in_policy_state,
-                        )
-
-
-                else:
-                    sampled_next_policy_observations = augment_policy_observation(
-                        sampled_next_observations,
-                        sampled_next_prev_actions,
-                        args.use_last_action_in_policy_state,
-                    )
-
-                with torch.no_grad():
-                    target_next_action = deterministic_actor_action(
-                        actor_target,
-                        sampled_next_policy_observations,
-                    )
-                    noise = torch.randn_like(target_next_action) * args.policy_noise
-                    noise = torch.clamp(noise, -args.noise_clip, args.noise_clip)
-                    target_next_action = torch.clamp(target_next_action + noise, action_low, action_high)
-
-                    # Subset selection for the target Q (REDQ-style; min over a
-                    # sampled M-subset). When target_critic_subset_size is None
-                    # OR equals num_critics, behaves as Maxmin-N.
-                    if (
-                        args.target_critic_subset_size is None
-                        or args.target_critic_subset_size >= args.num_critics
+                    replay_chunks: List[Dict[str, torch.Tensor]] = []
+                    per_priority_update_slices: List[Tuple[object, torch.Tensor, int, int]] = []
+                    per_sample_count = 0
+                    uniform_sample_count = 0
+                    running_offset = 0
+                    for source_buffer, source_count in (
+                        (success_rb, success_batch_count),
+                        (failure_rb, failure_batch_count),
                     ):
-                        target_indices = list(range(args.num_critics))
-                    else:
-                        target_indices = (
-                            torch.randperm(args.num_critics)[
-                                : args.target_critic_subset_size
-                            ]
-                            .tolist()
+                        if source_count <= 0:
+                            continue
+                        source_chunk = sample_critic_source_chunk(
+                            replay_buffer=source_buffer,
+                            sample_count=source_count,
+                            per_enabled=args.per_enabled,
+                            per_beta=per_beta,
+                            critic_per_fraction=args.critic_per_fraction,
                         )
-                    next_q_h_list = [
-                        qfs_target[ti](sampled_next_observations, target_next_action)
-                        for ti in target_indices
-                    ]
-                    if len(next_q_h_list) == 1:
-                        min_next_q_h = next_q_h_list[0]
-                    elif len(next_q_h_list) == 2:
-                        min_next_q_h = torch.min(next_q_h_list[0], next_q_h_list[1])
+                        source_data = source_chunk["data"]
+                        replay_chunks.append(source_data)
+                        source_batch_size = int(source_data["rewards"].shape[0])
+                        source_per_count = int(source_chunk["per_count"])
+                        source_uniform_count = int(source_chunk["uniform_count"])
+                        per_sample_count += source_per_count
+                        uniform_sample_count += source_uniform_count
+                        if (
+                            args.per_enabled
+                            and source_per_count > 0
+                            and source_chunk["per_indices"] is not None
+                        ):
+                            per_priority_update_slices.append(
+                                (
+                                    source_buffer,
+                                    source_chunk["per_indices"],
+                                    running_offset,
+                                    running_offset + source_per_count,
+                                )
+                            )
+                        running_offset += source_batch_size
+
+                    if len(replay_chunks) == 1:
+                        data = replay_chunks[0]
                     else:
-                        min_next_q_h = torch.stack(next_q_h_list, dim=0).min(dim=0).values
+                        data = concat_replay_samples(replay_chunks)
+                    sampled_observations = data["observations"]
+                    sampled_next_observations = data["next_observations"]
+                    sampled_actions = data["actions"]
+                    sampled_rewards = data["rewards"]
+                    sampled_dones = data["dones"]
+                    sampled_prev_actions = data["prev_actions"]
+                    sampled_weights = data.get("weights")
+                    if sampled_weights is None:
+                        sampled_weights = torch.ones_like(sampled_rewards)
+                    sampled_weights = sampled_weights.view(-1)
+                    sampled_next_prev_actions = sampled_actions * (1.0 - sampled_dones.unsqueeze(-1))
 
-                    min_next_q = h_inverse(min_next_q_h, eps=args.h_transform_eps).view(-1)
+                    # TODO: need to check this
+                    if args.use_history or args.use_rma:
+                    
+                        # TODO: See that we use the same history to compute the context for the actor_target and actor
+                        #       I think this is fine because the only difference would be is by one timestep.
+                        #       This especially shouldn't change the learned information because the normal observation already contains the data in sampled_next_observations
+                        #       So this is fine because the history does it's job by containing information of past timesteps that the observation or next_observations cannot see
+                        sampled_next_history = data["history"].to(args.device)
+                    
+                        if args.use_rma:
+                            with torch.no_grad():
+                                sampled_next_latent = object_prop_encoder(
+                                    normalize_env_props(
+                                        data["env_props"],
+                                        rma_prop_lows,
+                                        rma_prop_highs,
+                                    )
+                                )
+                            sampled_next_obs_with_latent = torch.cat(
+                                [sampled_next_observations, sampled_next_latent],
+                                dim=-1,
+                            )
+                            sampled_next_policy_observations = augment_policy_observation(
+                                sampled_next_obs_with_latent,
+                                sampled_next_prev_actions,
+                                args.use_last_action_in_policy_state,
+                            )
+                        elif args.use_transformer:
+                            with torch.no_grad():
+                                sampled_next_context_vector = transformer(sampled_next_history)
 
-                    bellman_target_original = sampled_rewards + (
-                        1 - sampled_dones
-                    ) * args.gamma * min_next_q
+                            sampled_next_obs_with_context = torch.cat([sampled_next_observations, sampled_next_context_vector], dim=-1)
+                            sampled_next_policy_observations = augment_policy_observation(
+                                sampled_next_obs_with_context,
+                                sampled_next_prev_actions,
+                                args.use_last_action_in_policy_state,
+                            )
 
-                    next_q_value_h = h_transform(
-                        bellman_target_original, eps=args.h_transform_eps
-                    )
+                        else:
+                            sampled_next_context = sampled_next_history.view(sampled_next_history.shape[0], -1)  # (B, T*4)
+
+                            sampled_next_policy_observations = augment_policy_observation(
+                                sampled_next_context,
+                                sampled_next_prev_actions,
+                                args.use_last_action_in_policy_state,
+                            )
+
+
+                    else:
+                        sampled_next_policy_observations = augment_policy_observation(
+                            sampled_next_observations,
+                            sampled_next_prev_actions,
+                            args.use_last_action_in_policy_state,
+                        )
+
+                    with torch.no_grad():
+                        target_next_action = deterministic_actor_action(
+                            actor_target,
+                            sampled_next_policy_observations,
+                        )
+                        noise = torch.randn_like(target_next_action) * args.policy_noise
+                        noise = torch.clamp(noise, -args.noise_clip, args.noise_clip)
+                        target_next_action = torch.clamp(target_next_action + noise, action_low, action_high)
+
+                        # Subset selection for the target Q (REDQ-style; min over a
+                        # sampled M-subset). When target_critic_subset_size is None
+                        # OR equals num_critics, behaves as Maxmin-N.
+                        if (
+                            args.target_critic_subset_size is None
+                            or args.target_critic_subset_size >= args.num_critics
+                        ):
+                            target_indices = list(range(args.num_critics))
+                        else:
+                            target_indices = (
+                                torch.randperm(args.num_critics)[
+                                    : args.target_critic_subset_size
+                                ]
+                                .tolist()
+                            )
+                        next_q_h_list = [
+                            qfs_target[ti](sampled_next_observations, target_next_action)
+                            for ti in target_indices
+                        ]
+                        if len(next_q_h_list) == 1:
+                            min_next_q_h = next_q_h_list[0]
+                        elif len(next_q_h_list) == 2:
+                            min_next_q_h = torch.min(next_q_h_list[0], next_q_h_list[1])
+                        else:
+                            min_next_q_h = torch.stack(next_q_h_list, dim=0).min(dim=0).values
+
+                        min_next_q = h_inverse(min_next_q_h, eps=args.h_transform_eps).view(-1)
+
+                        bellman_target_original = sampled_rewards + (
+                            1 - sampled_dones
+                        ) * args.gamma * min_next_q
+
+                        next_q_value_h = h_transform(
+                            bellman_target_original, eps=args.h_transform_eps
+                        )
+
+                        if should_update_train_metrics and q_update_idx == args.q_updates - 1:
+                            train_metrics.update(build_target_q_debug_metrics(
+                                bellman_target_original, next_q_value_h,
+                            ))
+
+                    # Forward pass over all N critics; train each against the shared target.
+                    qi_h_list = []
+                    qi_err_list = []
+                    qi_loss_list = []
+                    cql_terms = None
+                    if args.cql_alpha > 0.0:
+                        cql_actor_observations = sampled_observations
+                        if args.use_rma:
+                            with torch.no_grad():
+                                cql_latent = object_prop_encoder(
+                                    normalize_env_props(
+                                        data["env_props"],
+                                        rma_prop_lows,
+                                        rma_prop_highs,
+                                    )
+                                )
+                            cql_actor_observations = torch.cat(
+                                [sampled_observations, cql_latent], dim=-1
+                            )
+                        cql_policy_obs = augment_policy_observation(
+                            cql_actor_observations,
+                            sampled_prev_actions,
+                            args.use_last_action_in_policy_state,
+                        )
+                        with torch.no_grad():
+                            cql_policy_action = deterministic_actor_action(
+                                actor, cql_policy_obs
+                            )
+                        cql_terms = precompute_cql_terms(
+                            sampled_observations=sampled_observations,
+                            policy_action=cql_policy_action,
+                            act_dim=act_dim,
+                            n_random=int(args.cql_n_random),
+                        )
+                    for q in qfs:
+                        qi_h = q(sampled_observations, sampled_actions)
+                        qi_err = qi_h.view(-1) - next_q_value_h
+                        qi_h_list.append(qi_h)
+                        qi_err_list.append(qi_err)
+                        loss_i = (sampled_weights * qi_err.pow(2)).mean()
+                        if cql_terms is not None:
+                            loss_i = loss_i + args.cql_alpha * cql_penalty(
+                                q, sampled_observations, cql_terms
+                            )
+                        qi_loss_list.append(loss_i)
+                    q1_h = qi_h_list[0]
+
+                    q_total_loss = sum(qi_loss_list)
+
+                    q_optimizer.zero_grad()
+                    q_total_loss.backward()
+                    q_optimizer.step()
+
+                    # PER priority: mean of |TD error| across critics.
+                    priority_td_error = sum(e.abs() for e in qi_err_list) / args.num_critics
+                    if args.per_enabled and per_sample_count > 0:
+                        for source_buffer, per_indices, start_idx, end_idx in per_priority_update_slices:
+                            source_buffer.update_priorities(
+                                per_indices,
+                                priority_td_error[start_idx:end_idx].detach() + args.per_eps,
+                            )
 
                     if should_update_train_metrics and q_update_idx == args.q_updates - 1:
-                        train_metrics.update(build_target_q_debug_metrics(
-                            bellman_target_original, next_q_value_h,
+                        sampled_priorities = data.get("sampled_priorities")
+                        if sampled_priorities is None:
+                            sampled_priorities = torch.zeros_like(sampled_weights)
+                        train_metrics.update(build_critic_metrics(
+                            qi_h_list=qi_h_list,
+                            qi_loss_list=qi_loss_list,
+                            q_total_loss=q_total_loss,
+                            q1_h=q1_h,
+                            num_critics=args.num_critics,
+                            sampled_rewards=sampled_rewards,
+                            sampled_weights=sampled_weights,
+                            sampled_priorities=sampled_priorities,
+                            priority_td_error=priority_td_error,
+                            per_beta=per_beta,
+                            per_enabled=args.per_enabled,
+                            per_sample_count=per_sample_count,
+                            uniform_sample_count=uniform_sample_count,
+                            batch_size=args.batch_size,
+                            success_batch_count=success_batch_count,
+                            failure_batch_count=failure_batch_count,
+                            len_success_rb=len(success_rb),
+                            len_failure_rb=len(failure_rb),
+                            episode_return_success_threshold=episode_return_success_threshold,
+                            recent_episode_window_count=len(recent_episode_returns),
                         ))
 
-                # Forward pass over all N critics; train each against the shared target.
-                qi_h_list = []
-                qi_err_list = []
-                qi_loss_list = []
-                cql_terms = None
-                if args.cql_alpha > 0.0:
-                    cql_policy_obs = augment_policy_observation(
-                        sampled_observations,
-                        sampled_prev_actions,
-                        args.use_last_action_in_policy_state,
-                    )
-                    with torch.no_grad():
-                        cql_policy_action = deterministic_actor_action(
-                            actor, cql_policy_obs
-                        )
-                    cql_terms = precompute_cql_terms(
-                        sampled_observations=sampled_observations,
-                        policy_action=cql_policy_action,
-                        act_dim=act_dim,
-                        n_random=int(args.cql_n_random),
-                    )
-                for q in qfs:
-                    qi_h = q(sampled_observations, sampled_actions)
-                    qi_err = qi_h.view(-1) - next_q_value_h
-                    qi_h_list.append(qi_h)
-                    qi_err_list.append(qi_err)
-                    loss_i = (sampled_weights * qi_err.pow(2)).mean()
-                    if cql_terms is not None:
-                        loss_i = loss_i + args.cql_alpha * cql_penalty(
-                            q, sampled_observations, cql_terms
-                        )
-                    qi_loss_list.append(loss_i)
-                q1_h = qi_h_list[0]
-
-                q_total_loss = sum(qi_loss_list)
-
-                q_optimizer.zero_grad()
-                q_total_loss.backward()
-                q_optimizer.step()
-
-                # PER priority: mean of |TD error| across critics.
-                priority_td_error = sum(e.abs() for e in qi_err_list) / args.num_critics
-                if args.per_enabled and per_sample_count > 0:
-                    for source_buffer, per_indices, start_idx, end_idx in per_priority_update_slices:
-                        source_buffer.update_priorities(
-                            per_indices,
-                            priority_td_error[start_idx:end_idx].detach() + args.per_eps,
-                        )
-
-                if should_update_train_metrics and q_update_idx == args.q_updates - 1:
-                    sampled_priorities = data.get("sampled_priorities")
-                    if sampled_priorities is None:
-                        sampled_priorities = torch.zeros_like(sampled_weights)
-                    train_metrics.update(build_critic_metrics(
-                        qi_h_list=qi_h_list,
-                        qi_loss_list=qi_loss_list,
-                        q_total_loss=q_total_loss,
-                        q1_h=q1_h,
-                        num_critics=args.num_critics,
-                        sampled_rewards=sampled_rewards,
-                        sampled_weights=sampled_weights,
-                        sampled_priorities=sampled_priorities,
-                        priority_td_error=priority_td_error,
-                        per_beta=per_beta,
-                        per_enabled=args.per_enabled,
-                        per_sample_count=per_sample_count,
-                        uniform_sample_count=uniform_sample_count,
-                        batch_size=args.batch_size,
-                        success_batch_count=success_batch_count,
-                        failure_batch_count=failure_batch_count,
-                        len_success_rb=len(success_rb),
-                        len_failure_rb=len(failure_rb),
-                        episode_return_success_threshold=episode_return_success_threshold,
-                        recent_episode_window_count=len(recent_episode_returns),
-                    ))
-
-                total_critic_updates += 1
-                if total_critic_updates % args.target_network_frequency == 0:
-                    for param, target_param in zip(actor.parameters(), actor_target.parameters()):
-                        target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
-                    for q, qt in zip(qfs, qfs_target):
-                        for param, target_param in zip(q.parameters(), qt.parameters()):
+                    total_critic_updates += 1
+                    if total_critic_updates % args.target_network_frequency == 0:
+                        for param, target_param in zip(actor.parameters(), actor_target.parameters()):
                             target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
+                        for q, qt in zip(qfs, qfs_target):
+                            for param, target_param in zip(q.parameters(), qt.parameters()):
+                                target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
 
-            for actor_update_idx in range(args.actor_updates_per_iteration):
-                actor_success_count, actor_failure_count = critic_success_failure_counts(
-                    batch_size=args.batch_size,
-                    success_fraction=args.critic_success_sample_fraction,
-                    success_available=len(success_rb) > 0,
-                    failure_available=len(failure_rb) > 0,
-                )
-                if actor_success_count + actor_failure_count == 0:
-                    continue
-                actor_data_chunks: List[Dict[str, torch.Tensor]] = []
-                if actor_success_count > 0:
-                    actor_data_chunks.append(
-                        sample_actor_source_chunk(success_rb, actor_success_count, args.per_enabled)
+                for actor_update_idx in range(args.actor_updates_per_iteration):
+                    actor_success_count, actor_failure_count = critic_success_failure_counts(
+                        batch_size=args.batch_size,
+                        success_fraction=args.critic_success_sample_fraction,
+                        success_available=len(success_rb) > 0,
+                        failure_available=len(failure_rb) > 0,
                     )
-                if actor_failure_count > 0:
-                    actor_data_chunks.append(
-                        sample_actor_source_chunk(failure_rb, actor_failure_count, args.per_enabled)
-                    )
-                if len(actor_data_chunks) == 1:
-                    data = actor_data_chunks[0]
-                else:
-                    data = {
-                        "observations": torch.cat(
-                            [chunk["observations"] for chunk in actor_data_chunks], dim=0
-                        ),
-                        "prev_actions": torch.cat(
-                            [chunk["prev_actions"] for chunk in actor_data_chunks], dim=0
-                        ),
-                    }
-
-                    # TODO: checked
-                    if args.use_history and all("history" in chunk for chunk in actor_data_chunks):
-                        data["history"] = torch.cat(
-                            [chunk["history"] for chunk in actor_data_chunks], dim=0
+                    if actor_success_count + actor_failure_count == 0:
+                        continue
+                    actor_data_chunks: List[Dict[str, torch.Tensor]] = []
+                    if actor_success_count > 0:
+                        actor_data_chunks.append(
+                            sample_actor_source_chunk(success_rb, actor_success_count, args.per_enabled)
                         )
-
-                sampled_observations = data["observations"]
-                sampled_prev_actions = data["prev_actions"]
-
-                # TODO: Compute observation for input to actor for training
-                if args.use_history:
-                    # Shape: (B, T, obs_dim) -> transformer -> (B, context_dim)
-                    sampled_history = data["history"].to(args.device)
-
-                    if args.use_transformer:
-                        # TODO: note that we want gradient for transformer computation here
-                        sampled_context_vector = transformer(sampled_history)
-
-                        sampled_obs_with_context = torch.cat([sampled_observations, sampled_context_vector], dim=-1)
-
-                        sampled_policy_observations = augment_policy_observation(
-                            sampled_obs_with_context, sampled_prev_actions,
-                            args.use_last_action_in_policy_state,
+                    if actor_failure_count > 0:
+                        actor_data_chunks.append(
+                            sample_actor_source_chunk(failure_rb, actor_failure_count, args.per_enabled)
                         )
+                    if len(actor_data_chunks) == 1:
+                        data = actor_data_chunks[0]
+                    else:
+                        data = {
+                            "observations": torch.cat(
+                                [chunk["observations"] for chunk in actor_data_chunks], dim=0
+                            ),
+                            "prev_actions": torch.cat(
+                                [chunk["prev_actions"] for chunk in actor_data_chunks], dim=0
+                            ),
+                        }
+
+                        # TODO: checked
+                        if (args.use_history or args.use_rma) and all(
+                            "history" in chunk for chunk in actor_data_chunks
+                        ):
+                            data["history"] = torch.cat(
+                                [chunk["history"] for chunk in actor_data_chunks], dim=0
+                            )
+                        if args.use_rma:
+                            data["env_props"] = torch.cat(
+                                [chunk["env_props"] for chunk in actor_data_chunks], dim=0
+                            )
+
+                    sampled_observations = data["observations"]
+                    sampled_prev_actions = data["prev_actions"]
+
+                    # TODO: Compute observation for input to actor for training
+                    if args.use_history or args.use_rma:
+                        # Shape: (B, T, obs_dim) -> transformer -> (B, context_dim)
+                        sampled_history = data["history"].to(args.device)
+
+                        if args.use_rma:
+                            sampled_latent = object_prop_encoder(
+                                normalize_env_props(
+                                    data["env_props"],
+                                    rma_prop_lows,
+                                    rma_prop_highs,
+                                )
+                            )
+                            sampled_obs_with_latent = torch.cat(
+                                [sampled_observations, sampled_latent], dim=-1
+                            )
+                            sampled_policy_observations = augment_policy_observation(
+                                sampled_obs_with_latent,
+                                sampled_prev_actions,
+                                args.use_last_action_in_policy_state,
+                            )
+                        elif args.use_transformer:
+                            # TODO: note that we want gradient for transformer computation here
+                            sampled_context_vector = transformer(sampled_history)
+
+                            sampled_obs_with_context = torch.cat([sampled_observations, sampled_context_vector], dim=-1)
+
+                            sampled_policy_observations = augment_policy_observation(
+                                sampled_obs_with_context, sampled_prev_actions,
+                                args.use_last_action_in_policy_state,
+                            )
+
+                        else:
+                            sampled_context = sampled_history.view(sampled_history.shape[0], -1)  # (B, T*4)
+
+                            sampled_policy_observations = augment_policy_observation(
+                                sampled_context, sampled_prev_actions,
+                                args.use_last_action_in_policy_state,
+                            )
 
                     else:
-                        sampled_context = sampled_history.view(sampled_history.shape[0], -1)  # (B, T*4)
-
                         sampled_policy_observations = augment_policy_observation(
-                            sampled_context, sampled_prev_actions,
+                            sampled_observations, sampled_prev_actions,
                             args.use_last_action_in_policy_state,
                         )
 
-                else:
-                    sampled_policy_observations = augment_policy_observation(
-                        sampled_observations, sampled_prev_actions,
-                        args.use_last_action_in_policy_state,
+                    current_policy_actions = deterministic_actor_action(actor, sampled_policy_observations)
+                    q1_h = qf1(sampled_observations, current_policy_actions)
+                    q1 = h_inverse(q1_h, eps=args.h_transform_eps).view(-1)
+                    norm_q = (1.0 - args.gamma) * q1
+                    actor_loss = -norm_q.mean()
+                    actor_optimizer.zero_grad()
+                    if args.use_rma:
+                        encoder_optimizer.zero_grad()
+
+
+                    if args.use_transformer:
+                        transformer_optimizer.zero_grad()
+
+                    actor_loss.backward()
+                    actor_optimizer.step()
+                    if args.use_rma:
+                        encoder_optimizer.step()
+
+                    if args.use_transformer:
+                        transformer_optimizer.step()
+
+                    if should_update_train_metrics and actor_update_idx == args.actor_updates_per_iteration - 1:
+                        train_metrics.update(build_actor_metrics(actor_loss, norm_q))
+
+
+
+                if should_update_train_metrics:
+                    train_metrics.update(
+                        {
+                            "replay/success_buffer_size": float(len(success_rb)),
+                            "replay/failure_buffer_size": float(len(failure_rb)),
+                            "replay/episode_return_success_threshold": episode_return_success_threshold,
+                            "replay/recent_episode_window_count": float(len(recent_episode_returns)),
+                        }
                     )
+                    # log_scalar_metrics(writer, train_metrics, global_step)
+                    # writer.add_scalar("charts/exploration_primitive_chance", primitive_selector.chance, global_step)
+                    # writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-                current_policy_actions = deterministic_actor_action(actor, sampled_policy_observations)
-                q1_h = qf1(sampled_observations, current_policy_actions)
-                q1 = h_inverse(q1_h, eps=args.h_transform_eps).view(-1)
-                norm_q = (1.0 - args.gamma) * q1
-                actor_loss = -norm_q.mean()
-                actor_optimizer.zero_grad()
+                    # TODO: add this
+                    for name, value in train_metrics.items():       # Replacement for log_scalar_metrics(writer, train_metrics, global_step)
+                        wandb.log({name : value}, step=global_step)
 
-
-                if args.use_transformer:
-                    transformer_optimizer.zero_grad()
-
-                actor_loss.backward()
-                actor_optimizer.step()
-
-                if args.use_transformer:
-                    transformer_optimizer.step()
-
-                if should_update_train_metrics and actor_update_idx == args.actor_updates_per_iteration - 1:
-                    train_metrics.update(build_actor_metrics(actor_loss, norm_q))
+                    wandb.log({
+                        # "replay/success_buffer_size": float(len(success_rb)),
+                        # "replay/failure_buffer_size": float(len(failure_rb)),
+                        # "replay/episode_return_success_threshold": episode_return_success_threshold,
+                        # "replay/recent_episode_window_count": float(len(recent_episode_returns)),
+                        "charts/exploration_primitive_chance": float(primitive_selector.chance),
+                        "charts/SPS": int(global_step / (time.time() - start_time)),
+                    }, step=global_step)
 
 
 
-            if should_update_train_metrics:
-                train_metrics.update(
-                    {
-                        "replay/success_buffer_size": float(len(success_rb)),
-                        "replay/failure_buffer_size": float(len(failure_rb)),
-                        "replay/episode_return_success_threshold": episode_return_success_threshold,
-                        "replay/recent_episode_window_count": float(len(recent_episode_returns)),
-                    }
+            if global_step > 0 and global_step % 500 == 0:
+
+                write_periodic_episode_stats(
+                    # writer,
+                    global_step,
+                    rolling_episode_stats_window=rolling_episode_stats_window,
+                    rolling_step_stats_window=rolling_step_stats_window,
+                    interval_paddle_puck_collisions=interval_paddle_puck_collisions,
+                    interval_env_steps=interval_env_steps,
+                    interval_primitive_env_steps=interval_primitive_env_steps,
+                    interval_primitive_horizontal_env_steps=interval_primitive_horizontal_env_steps,
                 )
-                # log_scalar_metrics(writer, train_metrics, global_step)
-                # writer.add_scalar("charts/exploration_primitive_chance", primitive_selector.chance, global_step)
-                # writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+                interval_paddle_puck_collisions = 0.0
+                interval_env_steps = 0
+                interval_primitive_env_steps = 0
+                interval_primitive_horizontal_env_steps = 0
 
-                # TODO: add this
-                for name, value in train_metrics.items():       # Replacement for log_scalar_metrics(writer, train_metrics, global_step)
-                    wandb.log({name : value}, step=global_step)
-
-                wandb.log({
-                    # "replay/success_buffer_size": float(len(success_rb)),
-                    # "replay/failure_buffer_size": float(len(failure_rb)),
-                    # "replay/episode_return_success_threshold": episode_return_success_threshold,
-                    # "replay/recent_episode_window_count": float(len(recent_episode_returns)),
-                    "charts/exploration_primitive_chance": float(primitive_selector.chance),
-                    "charts/SPS": int(global_step / (time.time() - start_time)),
-                }, step=global_step)
-
-
-
-        if global_step > 0 and global_step % 500 == 0:
-
-            write_periodic_episode_stats(
-                # writer, 
-                global_step,
-                rolling_episode_stats_window=rolling_episode_stats_window,
-                rolling_step_stats_window=rolling_step_stats_window,
-                interval_paddle_puck_collisions=interval_paddle_puck_collisions,
-                interval_env_steps=interval_env_steps,
-                interval_primitive_env_steps=interval_primitive_env_steps,
-                interval_primitive_horizontal_env_steps=interval_primitive_horizontal_env_steps,
+            # TODO: Change so that we only start doing evaluation and saving checkpoints after a certain timestep
+            # TODO: This is done to reduce the number of GB of data we produce
+            # change back to >= 1900000
+            checkpoint_due = (
+                phase_step > 0
+                and phase_step % args.checkpoint_interval == 0
+                and (args.use_rma or global_step >= 1900000)
             )
-            interval_paddle_puck_collisions = 0.0
-            interval_env_steps = 0
-            interval_primitive_env_steps = 0
-            interval_primitive_horizontal_env_steps = 0
-
-        # TODO: Change so that we only start doing evaluation and saving checkpoints after a certain timestep
-        # TODO: This is done to reduce the number of GB of data we produce
-        # change back to >= 1900000
-        if (global_step >= 1900000) and global_step % args.checkpoint_interval == 0:
-            checkpoint_dir = os.path.join(log_parent_dir, f"checkpoint_{global_step}")
-            model_path = save_full_checkpoint(checkpoint_dir)
-            print(f"\nCheckpoint saved at step {global_step}")
-            try:
-                evaluate_agent(
-                    model_path,
-                    checkpoint_dir,
-                    config["air_hockey"],
-                    n_eps=4,
-                    n_gifs=1,
-                    action_scale=action_scale,
-                    agent_hidden_layer_size=args.agent_hidden_layer_size,
-                    agent_num_hidden_layers=args.agent_num_hidden_layers,
-                    use_last_action_in_policy_state=args.use_last_action_in_policy_state,
-
-                    HISTORY_ENTRY_DIM=HISTORY_ENTRY_DIM,
-                    use_history=args.use_history,
-                    use_transformer=args.use_transformer,
-                    context_vector_dim=args.context_vector_dim,
-                    context_len=args.context_len,
+            if checkpoint_due:
+                phase_dir = (
+                    f"phase1_base/checkpoint_{phase_step}"
+                    if phase == "base"
+                    else f"phase2_adaptation/checkpoint_{phase_step}"
                 )
-            except Exception as e:
-                print(f"Evaluation failed: {e}")
+                checkpoint_dir = os.path.join(
+                    log_parent_dir,
+                    phase_dir if args.use_rma else f"checkpoint_{global_step}",
+                )
+                model_path = save_full_checkpoint(checkpoint_dir, phase=phase)
+                print(f"\nCheckpoint saved at {phase} step {phase_step}")
+                # Phase-1 actors require privileged z, while deployment eval is
+                # adaptation-only. Evaluate RMA checkpoints after Phase 2 begins.
+                if not (args.use_rma and phase == "base"):
+                    try:
+                        evaluate_agent(
+                            model_path,
+                            checkpoint_dir,
+                            config["air_hockey"],
+                            n_eps=4,
+                            n_gifs=1,
+                            action_scale=action_scale,
+                            agent_hidden_layer_size=args.agent_hidden_layer_size,
+                            agent_num_hidden_layers=args.agent_num_hidden_layers,
+                            use_last_action_in_policy_state=args.use_last_action_in_policy_state,
+                            HISTORY_ENTRY_DIM=HISTORY_ENTRY_DIM,
+                            use_history=args.use_history,
+                            use_transformer=args.use_transformer,
+                            context_vector_dim=args.context_vector_dim,
+                            context_len=args.context_len,
+                            use_rma=args.use_rma,
+                            rma_latent_dim=args.rma_latent_dim,
+                            rma_include_action_history=args.rma_include_action_history,
+                            rma_adaptation_hidden_sizes=args.rma_adaptation_hidden_sizes,
+                            adaptation_module_path=os.path.join(
+                                checkpoint_dir, "adaptation_module.pth"
+                            ),
+                        )
+                    except Exception as e:
+                        print(f"Evaluation failed: {e}")
 
-        iteration += 1
+            iteration += 1
         
-        # Flush everything logged at this global_step, regardless of which
-        # conditional blocks above fired.
-        wandb.log({}, step=global_step, commit=True)
-        global_step += args.num_envs
+            # Flush everything logged at this global_step, regardless of which
+            # conditional blocks above fired.
+            wandb.log({}, step=global_step, commit=True)
+            global_step += args.num_envs
+            phase_step += args.num_envs
+
+    if args.use_rma:
+        if args.rma_base_model_path is None:
+            train_loop("base")
+            save_full_checkpoint(
+                os.path.join(log_parent_dir, "phase1_base"), phase="base"
+            )
+        for parameter in actor.parameters():
+            parameter.requires_grad_(False)
+        for parameter in object_prop_encoder.parameters():
+            parameter.requires_grad_(False)
+        actor.eval()
+        object_prop_encoder.eval()
+
+        success_rb.clear()
+        failure_rb.clear()
+        episode_trajectory = EpisodeTrajectory.empty()
+        recent_episode_returns.clear()
+        episode_return_success_threshold = 0.0
+        history_buf.reset_env()
+        primitive_selector.reset(
+            torch.ones(args.num_envs, dtype=torch.bool, device=args.device)
+        )
+        obs, reset_infos = envs.reset()
+        current_env_props = torch.as_tensor(
+            extract_env_props_from_vec_info(
+                reset_infos, rma_privileged_keys, args.num_envs
+            ),
+            dtype=torch.float32,
+            device=args.device,
+        )
+        last_action_for_policy.zero_()
+        train_loop("adaptation")
+    else:
+        train_loop("base")
 
     envs.close()
-
     if not args.eval_mode:
-        save_full_checkpoint(log_parent_dir)
-    elif args.model_path is None:
-        print("Eval mode is enabled without model_path; final evaluate_agent will be skipped.")
-
-    try:
-        if args.eval_mode:
-            final_eval_model_path = os.path.join(log_parent_dir, "eval_mode_model.pth")
-            torch.save(actor.state_dict(), final_eval_model_path)
-        else:
-            final_eval_model_path = f"{log_parent_dir}/model.pth"
-        if final_eval_model_path is None:
-            raise ValueError("No model path available for final evaluation.")
-        evaluate_agent(
-            final_eval_model_path,
-            log_parent_dir,
-            config["air_hockey"],
-            action_scale=action_scale,
-            agent_hidden_layer_size=args.agent_hidden_layer_size,
-            agent_num_hidden_layers=args.agent_num_hidden_layers,
-            use_last_action_in_policy_state=args.use_last_action_in_policy_state,
-
-            HISTORY_ENTRY_DIM=HISTORY_ENTRY_DIM,
-            use_history=args.use_history,
-            use_transformer=args.use_transformer,
-            context_vector_dim=args.context_vector_dim,
-            context_len=args.context_len,
+        save_full_checkpoint(
+            log_parent_dir, phase="adaptation" if args.use_rma else "base"
         )
-    except Exception as e:
-        print(f"Final evaluation failed: {e}")
 
-    metrics = [
-        "charts/episodic_return",
-        "losses/q_loss",
-        "losses/q_total_loss",
-        "losses/actor_loss",
-        "rewards/sampled_reward_mean",
-        "replay/per_beta",
-        "replay/per_is_weight_mean",
-        "replay/per_sampled_priority_mean",
-        "replay/per_priority_td_error_mean",
-    ]
-    save_tensorboard_plots(log_parent_dir, config, metrics=metrics)
+    if not args.eval_mode or args.model_path is not None:
+        final_model_path = (
+            os.path.join(log_parent_dir, "model.pth")
+            if not args.eval_mode
+            else args.model_path
+        )
+        try:
+            evaluate_agent(
+                final_model_path,
+                log_parent_dir,
+                config["air_hockey"],
+                action_scale=action_scale,
+                agent_hidden_layer_size=args.agent_hidden_layer_size,
+                agent_num_hidden_layers=args.agent_num_hidden_layers,
+                use_last_action_in_policy_state=args.use_last_action_in_policy_state,
+                HISTORY_ENTRY_DIM=HISTORY_ENTRY_DIM,
+                use_history=args.use_history,
+                use_transformer=args.use_transformer,
+                context_vector_dim=args.context_vector_dim,
+                context_len=args.context_len,
+                use_rma=args.use_rma,
+                rma_latent_dim=args.rma_latent_dim,
+                rma_include_action_history=args.rma_include_action_history,
+                rma_adaptation_hidden_sizes=args.rma_adaptation_hidden_sizes,
+            )
+        except Exception as exc:
+            print(f"Final evaluation failed: {exc}")
 
-
-
-    compare_performance_ID_OOD(
-        actor=actor,
-        air_hockey_base=config["air_hockey"],
-        raw_obs_dim=raw_obs_dim,
-        act_dim=act_dim,
-        use_last_action=args.use_last_action_in_policy_state,
-
-        use_history=args.use_history,
-        use_transformer=args.use_transformer,
-        transformer=transformer if (args.use_history and args.use_transformer) else None,
-
-        context_len=args.context_len,
-        n_envs=args.eval_id_ood_n_envs,
-        n_eps=args.eval_id_ood_n_eps,
-        out_dir=os.path.join("results", args.run_name),
-        device=args.device,
-        seed=args.seed,
-        model_path=args.model_path or "",
-        params_cache_path=args.params_cache_path,
+    save_tensorboard_plots(
+        log_parent_dir,
+        config,
+        metrics=[
+            "charts/episodic_return",
+            "losses/q_loss",
+            "losses/actor_loss",
+            "rma/adaptation_loss",
+            "rma/latent_mae",
+        ],
     )
-
-    # writer.close()
-
 
 
 if __name__ == "__main__":
     try:
         _entrypoint()
     finally:
-        wandb_run.finish()
+        wandb.finish()

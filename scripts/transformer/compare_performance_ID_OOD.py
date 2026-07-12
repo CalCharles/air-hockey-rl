@@ -95,6 +95,8 @@ def _rollout_episodes(
     use_transformer: bool = False,
     transformer=None,
     history_buf: HistoryBuffer | None = None,
+    use_rma: bool = False,
+    adaptation_module=None,
     device: str = "cpu",
 ) -> dict[str, Any]:
     """Roll out n_eps episodes, building the policy observation exactly as
@@ -118,8 +120,8 @@ def _rollout_episodes(
         steps = 0
 
         while not done:
-            if use_history:
-                history_buf.add(obs)
+            if use_history or use_rma:
+                history_buf.add(obs, action=last_action.cpu().numpy().squeeze(0))
                 state_history = history_buf.sample().to(device)  # (1, T, HISTORY_DIM)
 
                 # if use_transformer:
@@ -135,7 +137,16 @@ def _rollout_episodes(
                 #     obs_with_ctx, last_action.to(device), use_last_action
                 # )
 
-                if use_transformer:
+                if use_rma:
+                    with torch.no_grad():
+                        latent = adaptation_module(state_history)
+                    obs_with_ctx = torch.cat(
+                        [obs_tensor.unsqueeze(0).to(device), latent], dim=-1
+                    )
+                    policy_obs = augment_policy_observation(
+                        obs_with_ctx, last_action.to(device), use_last_action
+                    )
+                elif use_transformer:
                     with torch.no_grad():
                         context = transformer(state_history)      # (1, context_dim)
                     obs_with_ctx = torch.cat(
@@ -201,6 +212,9 @@ def _save_gifs_for_env(
     use_history: bool = False,
     gif_transformer=None,
     context_len: int = 0,
+    use_rma: bool = False,
+    gif_adaptation_module=None,
+    rma_include_action_history: bool = True,
 ) -> None:
     """Render `n_gifs` GIF(s) of `gif_actor` acting in `air_hockey_params`
     dynamics, using the exact same rendering routine evaluate_agent() uses
@@ -215,7 +229,15 @@ def _save_gifs_for_env(
     env = AirHockeyEnv(air_hockey_params)
     renderer = AirHockeyRenderer(env, show_target_position=True, show_acceleration_arrow=False)
 
-    history_buf = HistoryBuffer(context_len=context_len) if use_history else None
+    history_buf = (
+        HistoryBuffer(
+            context_len=context_len,
+            include_action=rma_include_action_history if use_rma else False,
+            action_dim=act_dim,
+        )
+        if use_history or use_rma
+        else None
+    )
 
     _save_task_gif_with_last_action(
         n_eps_viz=n_eps_per_gif,
@@ -229,6 +251,8 @@ def _save_gifs_for_env(
         transformer=gif_transformer,
         history_buf=history_buf,
         use_history=use_history,
+        use_rma=use_rma,
+        adaptation_module=gif_adaptation_module,
     )
     env.close()
 
@@ -238,6 +262,16 @@ def _save_gifs_for_env(
 # ---------------------------------------------------------------------------
 
 def _agg(stat_list):
+    if not stat_list:
+        return {
+            "mean_return": float("nan"),
+            "std_return": float("nan"),
+            "mean_success_rate": float("nan"),
+            "std_success_rate": float("nan"),
+            "mean_ep_length": float("nan"),
+            "per_env_returns": [],
+            "per_env_successes": [],
+        }
     returns   = [s["mean_return"]       for s in stat_list]
     successes = [s["mean_success_rate"] for s in stat_list]
     lengths   = [s["mean_episode_length"] for s in stat_list]
@@ -327,12 +361,16 @@ def _plot_bar_chart(aggregates: dict, out_dir: str):
 # ---------------------------------------------------------------------------
 
 def _load_params(cache_path: str) -> list[dict]:
-    """Load ID param sets from a previously saved cache file."""
+    """Load ID and OOD parameter sets from a saved cache file."""
     with open(cache_path) as f:
         cached = json.load(f)
-    id_params = cached["id"]
-    print(f"  Loaded {len(id_params)} ID param sets from {cache_path}")
-    return id_params
+    id_params = cached.get("id", [])
+    ood_params = cached.get("ood", [])
+    print(
+        f"  Loaded {len(id_params)} ID and {len(ood_params)} OOD param sets "
+        f"from {cache_path}"
+    )
+    return id_params, ood_params
 
 
 def _save_params(cache_path: str, id_params: list[dict], ood_params: list[dict]) -> None:
@@ -366,6 +404,9 @@ def compare_performance_ID_OOD(
     save_gifs: bool = False,
     n_gifs_per_env: int = 1,
     n_eps_per_gif: int = 1,
+    use_rma: bool = False,
+    adaptation_module=None,
+    rma_include_action_history: bool = True,
 ):
     """Evaluate `actor` (+ optional `transformer`/history) on a fixed ID and
     OOD set of dynamics-parameter dicts.
@@ -417,6 +458,9 @@ def compare_performance_ID_OOD(
 
     random_variables           = list(air_hockey_base.get("random_variables", []))
     random_variable_ranges     = dict(air_hockey_base.get("random_variable_ranges", {}))
+    random_variable_ranges_ood = dict(
+        air_hockey_base.get("random_variable_ranges_OOD", {})
+    )
     if not random_variables:
         raise ValueError(
             "air_hockey config has no random_variables / random_variable_ranges. "
@@ -436,10 +480,19 @@ def compare_performance_ID_OOD(
     actor.eval()
     if transformer is not None:
         transformer.eval()
+    if use_rma:
+        if adaptation_module is None:
+            raise ValueError("RMA ID/OOD evaluation requires adaptation_module.")
+        adaptation_module.eval()
 
     history_buf = None
-    if use_history:
-        history_buf = HistoryBuffer(context_len=context_len, device=device)
+    if use_history or use_rma:
+        history_buf = HistoryBuffer(
+            context_len=context_len,
+            device=device,
+            include_action=rma_include_action_history if use_rma else False,
+            action_dim=act_dim,
+        )
 
     # --- CPU copies of actor/transformer for GIF rendering only ---
     # _save_task_gif_with_last_action (evaluate.py) never moves tensors to a
@@ -447,32 +500,58 @@ def compare_performance_ID_OOD(
     # the main stats rollout above uses. Copied once, reused for every env.
     gif_actor = None
     gif_transformer = None
+    gif_adaptation_module = None
     if save_gifs:
         gif_actor = copy.deepcopy(actor).to("cpu")
         gif_actor.eval()
         if transformer is not None:
             gif_transformer = copy.deepcopy(transformer).to("cpu")
             gif_transformer.eval()
+        if adaptation_module is not None:
+            gif_adaptation_module = copy.deepcopy(adaptation_module).to("cpu")
+            gif_adaptation_module.eval()
 
     # --- Load or generate ID/OOD param sets ---
     if params_cache_path is not None and os.path.exists(params_cache_path):
-        id_param_sets = _load_params(params_cache_path)
+        id_param_sets, ood_param_sets = _load_params(params_cache_path)
+        if not ood_param_sets and random_variable_ranges_ood:
+            rng = np.random.RandomState(seed + 1)
+            ood_param_sets = [
+                _sample_id_params(
+                    random_variable_ranges_ood, random_variables, rng
+                )
+                for _ in range(len(id_param_sets) or n_envs)
+            ]
+            _save_params(params_cache_path, id_param_sets, ood_param_sets)
         print("Loading saved thing at path: ", params_cache_path)
     else:
         print("Generating")
         rng = np.random.RandomState(seed)
         id_param_sets = [_sample_id_params(random_variable_ranges, random_variables, rng) for _ in range(n_envs)]
+        ood_param_sets = (
+            [
+                _sample_id_params(
+                    random_variable_ranges_ood, random_variables, rng
+                )
+                for _ in range(n_envs)
+            ]
+            if random_variable_ranges_ood
+            else []
+        )
         if params_cache_path is not None:
             # Persist to disk so a *different* process (e.g. a separate
             # `td3_training.py --eval_id_ood` invocation for a different
             # checkpoint) reusing the same params_cache_path gets the exact
             # same dynamics configs instead of resampling.
 
-            _save_params(params_cache_path, id_param_sets, [])
+            _save_params(params_cache_path, id_param_sets, ood_param_sets)
 
     raw_results = {"id": [], "ood": []}
 
-    for cond_name, param_sets in [("id", id_param_sets)]:   # , ("ood", ood_param_sets)
+    for cond_name, param_sets in [
+        ("id", id_param_sets),
+        ("ood", ood_param_sets),
+    ]:
         for env_i, params in enumerate(param_sets):
             env_cfg = _build_env_config(
                 air_hockey_base, params,
@@ -490,6 +569,8 @@ def compare_performance_ID_OOD(
                 use_transformer=use_transformer,
                 transformer=transformer,
                 history_buf=history_buf,
+                use_rma=use_rma,
+                adaptation_module=adaptation_module,
                 device=device,
             )
             stats["params"]  = params
@@ -518,6 +599,9 @@ def compare_performance_ID_OOD(
                     use_history=use_history,
                     gif_transformer=gif_transformer,
                     context_len=context_len,
+                    use_rma=use_rma,
+                    gif_adaptation_module=gif_adaptation_module,
+                    rma_include_action_history=rma_include_action_history,
                 )
                 print(f"    saved {n_gifs_per_env} gif(s) → {gif_out_dir}")
 
@@ -534,9 +618,11 @@ def compare_performance_ID_OOD(
             "model_path": model_path,
             "n_envs": len(id_param_sets), "n_eps": n_eps, "seed": seed,
             "use_history": use_history, "use_transformer": use_transformer,
+            "use_rma": use_rma,
             "context_len": context_len,
             "random_variables":           random_variables,
             "random_variable_ranges_ID":     random_variable_ranges,
+            "random_variable_ranges_OOD": random_variable_ranges_ood,
             "save_gifs": save_gifs,
         },
         "aggregates": aggregates,

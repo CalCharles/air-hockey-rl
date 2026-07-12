@@ -26,7 +26,8 @@ class EpisodeTrajectory:
     dones: List[torch.Tensor]
     bootstrap_terminals: List[torch.Tensor]
     prev_actions: List[torch.Tensor]
-    history: List[torch.Tensor]  | None = None,        # NEW — (T, obs_dim) snapshot per step
+    history: List[torch.Tensor] | None = None  # (T, entry_dim) snapshot per step
+    env_props: List[torch.Tensor] | None = None  # RMA privileged props per step
     episode_return: float = 0.0
 
     @staticmethod
@@ -40,6 +41,7 @@ class EpisodeTrajectory:
             bootstrap_terminals=[],
             prev_actions=[],
             history=[],
+            env_props=[],
             episode_return=0.0,
         )
 
@@ -52,6 +54,7 @@ class EpisodeTrajectory:
         done: torch.Tensor,
         prev_action: torch.Tensor,
         history: torch.Tensor | None = None,    # (T, obs_dim)
+        env_props: torch.Tensor | None = None,
         bootstrap_terminal: torch.Tensor | None = None,
     ) -> None:
         self.observations.append(obs.detach().clone())
@@ -68,7 +71,14 @@ class EpisodeTrajectory:
 
         # Store history if given
         if history is not None:
+            if self.history is None:
+                self.history = []
             self.history.append(history.detach().clone())
+
+        if env_props is not None:
+            if self.env_props is None:
+                self.env_props = []
+            self.env_props.append(env_props.detach().clone())
 
         self.episode_return += float(reward.item())
 
@@ -84,6 +94,11 @@ class EpisodeTrajectory:
             dones=torch.stack(self.dones, dim=0).view(-1),
             prev_action=torch.stack(self.prev_actions, dim=0),
             history=torch.stack(self.history, dim=0) if self.history else None,
+            env_props=(
+                torch.stack(self.env_props, dim=0)
+                if self.env_props
+                else None
+            ),
         )
 
         self.reset()
@@ -97,7 +112,14 @@ class EpisodeTrajectory:
         self.dones.clear()
         self.bootstrap_terminals.clear()
         self.prev_actions.clear()
-        self.history.clear()
+        if self.history is None:
+            self.history = []
+        else:
+            self.history.clear()
+        if self.env_props is None:
+            self.env_props = []
+        else:
+            self.env_props.clear()
         self.episode_return = 0.0
 
     def state_dict(self) -> Dict[str, Any]:
@@ -113,7 +135,10 @@ class EpisodeTrajectory:
         }
 
         if self.history:
-            result["history"] = [_cpu_tensor(item) for item in self.history],
+            result["history"] = [_cpu_tensor(item) for item in self.history]
+
+        if self.env_props:
+            result["env_props"] = [_cpu_tensor(item) for item in self.env_props]
 
         return result
 
@@ -156,6 +181,13 @@ class EpisodeTrajectory:
             trajectory.history = [
                 torch.as_tensor(item, dtype=torch.float32, device=device)
                 for item in history_values
+            ]
+
+        env_props_values = state_dict.get("env_props", [])
+        if isinstance(env_props_values, list) and len(env_props_values) > 0:
+            trajectory.env_props = [
+                torch.as_tensor(item, dtype=torch.float32, device=device)
+                for item in env_props_values
             ]
 
         trajectory.episode_return = float(state_dict.get("episode_return", 0.0))

@@ -67,6 +67,27 @@ def validate_args(args) -> None:
     _positive("q_updates", args.q_updates)
     _positive("target_network_frequency", args.target_network_frequency)
     _positive("actor_updates_per_iteration", args.actor_updates_per_iteration)
+    if getattr(args, "use_rma", False):
+        if args.use_transformer:
+            raise ValueError("use_rma=True is incompatible with use_transformer=True.")
+        _positive("total_timesteps", args.total_timesteps)
+        _positive("context_len", args.context_len)
+        _positive("rma_adaptation_timesteps", args.rma_adaptation_timesteps)
+        _positive("rma_latent_dim", args.rma_latent_dim)
+        _positive("rma_encoder_lr", args.rma_encoder_lr)
+        _positive("rma_adaptation_lr", args.rma_adaptation_lr)
+        _positive(
+            "rma_adaptation_updates_per_iteration",
+            args.rma_adaptation_updates_per_iteration,
+        )
+        if not args.rma_encoder_hidden_sizes or any(
+            int(size) <= 0 for size in args.rma_encoder_hidden_sizes
+        ):
+            raise ValueError("rma_encoder_hidden_sizes must contain positive dimensions.")
+        if not args.rma_adaptation_hidden_sizes or any(
+            int(size) <= 0 for size in args.rma_adaptation_hidden_sizes
+        ):
+            raise ValueError("rma_adaptation_hidden_sizes must contain positive dimensions.")
     if args.target_network_frequency > args.q_updates:
         # Polyak gate counts completed critic updates globally (see
         # total_critic_updates), so this still fires — just less often than

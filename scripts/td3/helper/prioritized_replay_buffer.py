@@ -19,6 +19,8 @@ class TD3PrioritizedReplayBuffer:
         use_history=False,
         history_entry_dim=4,
         context_len=0,
+        use_env_props=False,
+        env_prop_dim=0,
     ):
         self.buffer_size = int(buffer_size)
         self.obs_shape = obs_shape
@@ -34,6 +36,8 @@ class TD3PrioritizedReplayBuffer:
         self.use_history = bool(use_history)
         self.context_len = int(context_len)
         self.history_entry_dim = int(history_entry_dim)
+        self.use_env_props = bool(use_env_props)
+        self.env_prop_dim = int(env_prop_dim)
 
 
         self.observations = torch.zeros((buffer_size, *obs_shape), dtype=torch.float32, device=device)
@@ -68,18 +72,34 @@ class TD3PrioritizedReplayBuffer:
                 device=device,
             )
 
+        if self.use_env_props:
+            if self.env_prop_dim <= 0:
+                raise ValueError(
+                    f"env_prop_dim must be positive when use_env_props=True, got {self.env_prop_dim}"
+                )
+            self.env_props = torch.zeros(
+                (buffer_size, self.env_prop_dim),
+                dtype=torch.float32,
+                device=device,
+            )
+        else:
+            self.env_props = None
 
         self.position = 0
         self.size = 0
         self.max_priority = 1.0
 
-    def add(self, obs, next_obs, actions, rewards, dones, prev_action, history=None):
+    def add(self, obs, next_obs, actions, rewards, dones, prev_action, history=None, env_props=None):
         obs = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
         next_obs = torch.as_tensor(next_obs, dtype=torch.float32, device=self.device)
         actions = torch.as_tensor(actions, dtype=torch.float32, device=self.device)
         prev_action = torch.as_tensor(prev_action, dtype=torch.float32, device=self.device)
         rewards = torch.as_tensor(rewards, dtype=torch.float32, device=self.device).reshape(-1)
         dones = torch.as_tensor(dones, dtype=torch.float32, device=self.device).reshape(-1)
+        if self.use_env_props and env_props is None:
+            raise ValueError("env_props are required when use_env_props=True.")
+        if self.use_history and history is None:
+            raise ValueError("history is required when use_history=True.")
 
         batch_size = int(obs.shape[0])
         priority_value = max(self.max_priority, self.priority_eps)
@@ -97,6 +117,10 @@ class TD3PrioritizedReplayBuffer:
         if self.use_history and history is not None:
             self.history[first_slice] = history[:first_chunk]
 
+        if self.use_env_props and env_props is not None and self.env_props is not None:
+            env_props_t = torch.as_tensor(env_props, dtype=torch.float32, device=self.device)
+            self.env_props[first_slice] = env_props_t[:first_chunk]
+
         second_chunk = batch_size - first_chunk
         if second_chunk > 0:
             second_slice = slice(0, second_chunk)
@@ -111,6 +135,10 @@ class TD3PrioritizedReplayBuffer:
             # NEW: wrap-around write for sequences
             if self.use_history and history is not None:
                 self.history[second_slice] = history[first_chunk:]
+
+            if self.use_env_props and env_props is not None and self.env_props is not None:
+                env_props_t = torch.as_tensor(env_props, dtype=torch.float32, device=self.device)
+                self.env_props[second_slice] = env_props_t[first_chunk:]
 
         self.position = (self.position + batch_size) % self.buffer_size
         self.size = min(self.size + batch_size, self.buffer_size)
@@ -160,6 +188,9 @@ class TD3PrioritizedReplayBuffer:
         if self.use_history and self.history is not None:
             result["history"] = self.history[indices]
 
+        if self.use_env_props and self.env_props is not None:
+            result["env_props"] = self.env_props[indices]
+
         return result
 
     def sample_uniform(self, batch_size):
@@ -180,6 +211,9 @@ class TD3PrioritizedReplayBuffer:
 
         if self.use_history and self.history is not None:
             result["history"] = self.history[indices]
+
+        if self.use_env_props and self.env_props is not None:
+            result["env_props"] = self.env_props[indices]
 
         return result
 
@@ -215,6 +249,11 @@ class TD3PrioritizedReplayBuffer:
         if self.use_history and self.history is not None:
             state_dict["history"] = self.history.detach().clone().cpu()
 
+        if self.use_env_props and self.env_props is not None:
+            state_dict["env_props"] = self.env_props.detach().clone().cpu()
+            state_dict["use_env_props"] = True
+            state_dict["env_prop_dim"] = self.env_prop_dim
+
         return state_dict
 
     def load_state_dict(self, state_dict):
@@ -248,5 +287,15 @@ class TD3PrioritizedReplayBuffer:
         if self.use_history and "history" in state_dict and self.history is not None:
             self.history.copy_(state_dict["history"].to(self.device))
 
+        # Backward compatible: older checkpoints omit env_props.
+        if self.use_env_props and self.env_props is not None and "env_props" in state_dict:
+            self.env_props.copy_(state_dict["env_props"].to(self.device))
+
     def __len__(self):
         return self.size
+
+    def clear(self):
+        """Discard all stored transitions and reset PER insertion priority."""
+        self.position = 0
+        self.size = 0
+        self.max_priority = 1.0

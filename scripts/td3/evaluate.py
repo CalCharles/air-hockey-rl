@@ -25,6 +25,7 @@ import numpy as np
 from types import SimpleNamespace
 from scripts.transformer.context_encoder import ContextEncoder
 from scripts.transformer.history_buffer import HistoryBuffer
+from scripts.td3.encoder import AdaptationModule
 
 
 class ReferenceStateWrapper(gym.Wrapper):
@@ -51,13 +52,14 @@ class ReferenceStateWrapper(gym.Wrapper):
 def _save_task_gif_with_last_action(
     n_eps_viz, n_gifs, env_test, policy, renderer, log_dir, action_dim, use_last_action_in_policy_state,
     transformer=None, history_buf=None, use_history=False,
+    use_rma=False, adaptation_module=None,
 ):
     env_test.max_timesteps = 200
     for gif_idx in range(n_gifs):
         frames = []
         for _ in tqdm.tqdm(range(n_eps_viz)):
             
-            if use_history and (history_buf is not None):
+            if (use_history or use_rma) and (history_buf is not None):
                 history_buf.reset_env()
 
             obs, _ = env_test.reset()
@@ -84,12 +86,25 @@ def _save_task_gif_with_last_action(
 
 
                 # TODO: Checked
-                if use_history:
+                if use_history or use_rma:
                     
-                    history_buf.add(obs)
+                    history_buf.add(obs, action=last_action.numpy().squeeze(0))
                     state_history = history_buf.sample()
 
-                    if transformer is not None:
+                    if use_rma:
+                        if adaptation_module is None:
+                            raise ValueError("RMA GIF rollout requires adaptation_module.")
+                        with torch.no_grad():
+                            latent = adaptation_module(state_history)
+                        obs_with_context = torch.cat(
+                            [obs_tensor.unsqueeze(0), latent], dim=-1
+                        )
+                        policy_obs = augment_policy_observation(
+                            obs_with_context,
+                            last_action,
+                            use_last_action_in_policy_state,
+                        )
+                    elif transformer is not None:
                         with torch.no_grad():
                             context_vector = transformer(state_history)  # (1, context_dim)
 
@@ -141,11 +156,17 @@ def evaluate_agent(
     use_last_action_in_policy_state=False,
     policy_type=None,
 
-    HISTORY_ENTRY_DIM=0,
+    HISTORY_ENTRY_DIM=6,
     use_transformer=False,
     use_history=False,
     context_vector_dim=8,
     context_len=7,
+    use_rma=False,
+    rma_latent_dim=8,
+    rma_context_len=None,
+    rma_include_action_history=True,
+    rma_adaptation_hidden_sizes=(256, 128),
+    adaptation_module_path=None,
 ):
     if agent_hidden_size is not None:
         agent_hidden_layer_size = int(agent_hidden_size)
@@ -169,7 +190,18 @@ def evaluate_agent(
     action_dim = int(np.prod(envs.single_action_space.shape))
 
     # TODO: Checked
-    if use_history:
+    if use_rma:
+        raw_obs_dim = int(np.prod(envs.single_observation_space.shape))
+        augmented_obs_dim = raw_obs_dim + rma_latent_dim
+        if use_last_action_in_policy_state:
+            augmented_obs_dim += action_dim
+        policy_env_view = SimpleNamespace(
+            single_observation_space=gym.spaces.Box(
+                low=-np.inf, high=np.inf, shape=(augmented_obs_dim,), dtype=np.float32
+            ),
+            single_action_space=envs.single_action_space,
+        )
+    elif use_history:
 
         raw_obs_dim = int(np.prod(envs.single_observation_space.shape))
         act_dim = int(np.prod(envs.single_action_space.shape))
@@ -205,9 +237,14 @@ def evaluate_agent(
     transformer = None
 
     # TODO: checked
-    if use_history:
+    effective_context_len = (
+        int(rma_context_len) if use_rma and rma_context_len is not None else context_len
+    )
+    if use_history or use_rma:
         history_buf = HistoryBuffer(
-            context_len=context_len,
+            context_len=effective_context_len,
+            include_action=rma_include_action_history if use_rma else False,
+            action_dim=action_dim,
         )
     else:
         history_buf = None
@@ -229,6 +266,28 @@ def evaluate_agent(
             transformer.eval()
         else:
             print(f"Warning: transformer.pth not found at {transformer_path}, using random weights")
+
+    adaptation_module = None
+    if use_rma:
+        history_entry_dim = HISTORY_ENTRY_DIM + (
+            action_dim if rma_include_action_history else 0
+        )
+        adaptation_module = AdaptationModule(
+            history_input_dim=effective_context_len * history_entry_dim,
+            latent_dim=rma_latent_dim,
+            hidden_size=rma_adaptation_hidden_sizes,
+        )
+        path = adaptation_module_path or os.path.join(
+            os.path.dirname(model_path), "adaptation_module.pth"
+        )
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                f"RMA evaluation requires adaptation module checkpoint: {path}"
+            )
+        adaptation_module.load_state_dict(
+            torch.load(path, map_location="cpu", weights_only=False)
+        )
+        adaptation_module.eval()
         
 
     env = envs.envs[0]
@@ -238,7 +297,7 @@ def evaluate_agent(
 
     # create directory if it doesn't exist
     os.makedirs(save_dir, exist_ok=True)
-    if use_last_action_in_policy_state:
+    if use_last_action_in_policy_state or use_history or use_rma:
         _save_task_gif_with_last_action(
             n_eps,
             n_gifs,
@@ -251,6 +310,8 @@ def evaluate_agent(
             transformer=transformer,
             history_buf=history_buf,
             use_history=use_history,
+            use_rma=use_rma,
+            adaptation_module=adaptation_module,
         )
     else:
         save_task_gif(n_eps, n_gifs, env, model, renderer, save_dir)
@@ -275,6 +336,15 @@ if __name__ == '__main__':
 
     # how much base reward scaling to use
     parser.add_argument('--base-reward-scaling', type=float, default=1.0, help='Base reward scaling to use.')
+    parser.add_argument('--use-rma', action='store_true')
+    parser.add_argument('--rma-latent-dim', type=int, default=8)
+    parser.add_argument('--rma-context-len', type=int, default=30)
+    parser.add_argument(
+        '--rma-include-action-history',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument('--adaptation-module-path', type=str, default=None)
     # whether to loop through base reward scaling values
     parser.add_argument('--loop-base-reward-scaling', type=bool, default=False, help='Whether to loop through base reward scaling values.')
 
@@ -301,9 +371,35 @@ if __name__ == '__main__':
         for base_reward_scaling in base_reward_scaling_values:
             save_dir = os.path.join(args.save_dir, f"base_reward_scaling_{base_reward_scaling: .2f}")
             os.makedirs(save_dir, exist_ok=True)
-            evaluate_agent(args.model, save_dir, air_hockey_params, air_hockey_config_path=args.config_path, n_eps=args.n_eps, n_gifs=args.n_gifs, base_reward_scaling=base_reward_scaling)
+            evaluate_agent(
+                args.model,
+                save_dir,
+                air_hockey_params,
+                air_hockey_config_path=args.config_path,
+                n_eps=args.n_eps,
+                n_gifs=args.n_gifs,
+                base_reward_scaling=base_reward_scaling,
+                use_rma=args.use_rma,
+                rma_latent_dim=args.rma_latent_dim,
+                rma_context_len=args.rma_context_len,
+                rma_include_action_history=args.rma_include_action_history,
+                adaptation_module_path=args.adaptation_module_path,
+            )
     else:
-        evaluate_agent(args.model, args.save_dir, air_hockey_params, air_hockey_config_path=args.config_path, n_eps=args.n_eps, n_gifs=args.n_gifs, base_reward_scaling=args.base_reward_scaling)
+        evaluate_agent(
+            args.model,
+            args.save_dir,
+            air_hockey_params,
+            air_hockey_config_path=args.config_path,
+            n_eps=args.n_eps,
+            n_gifs=args.n_gifs,
+            base_reward_scaling=args.base_reward_scaling,
+            use_rma=args.use_rma,
+            rma_latent_dim=args.rma_latent_dim,
+            rma_context_len=args.rma_context_len,
+            rma_include_action_history=args.rma_include_action_history,
+            adaptation_module_path=args.adaptation_module_path,
+        )
 
 
     # save_tensorboard_plots(log_dir, air_hockey_config, 
