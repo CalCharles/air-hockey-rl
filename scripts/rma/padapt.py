@@ -8,6 +8,7 @@ import time
 
 import torch
 
+from scripts.rma.checkpointing import save_checkpoint_dir, save_weight_bundle
 from scripts.rma.misc import AverageScalarMeter, tprint
 from scripts.rma.models import ActorCritic
 from scripts.rma.running_mean_std import RunningMeanStd
@@ -160,19 +161,21 @@ class ProprioAdapt(object):
             self.log_tensorboard()
 
             save_every = int(_cfg_get(self.cfg, 'adaptation_save_interval', 50_000))
-            # This check allows for more frequent checkpointing
             if save_every > 0 and self.agent_steps % save_every < self.batch_size:
-                self.save(os.path.join(self.nn_dir, f'step_{int(self.agent_steps)}'))
-                last_path = os.path.join(self.nn_dir, 'model_last')
-                self.save(last_path)
-                self._maybe_eval_checkpoint(f'{last_path}.ckpt')
+                ckpt_dir = os.path.join(
+                    self.output_dir, 'phase2', f'checkpoint_{int(self.agent_steps)}'
+                )
+                model_path = self.save_checkpoint_bundle(ckpt_dir)
+                self.save(os.path.join(self.nn_dir, 'model_last'))
+                self._maybe_eval_checkpoint(model_path, ckpt_dir)
 
             mean_rewards = self.mean_eps_reward.get_mean()
             if mean_rewards > self.best_rewards:
-                best_path = os.path.join(self.nn_dir, 'model_best')
-                self.save(best_path)
+                best_dir = os.path.join(self.output_dir, 'phase2', 'best')
+                model_path = self.save_checkpoint_bundle(best_dir)
+                self.save(os.path.join(self.nn_dir, 'model_best'))
                 self.best_rewards = mean_rewards
-                self._maybe_eval_checkpoint(f'{best_path}.ckpt')
+                self._maybe_eval_checkpoint(model_path, best_dir)
 
             all_fps = self.agent_steps / (time.time() - _t)
             last_fps = self.batch_size / (time.time() - _last_t)
@@ -185,17 +188,37 @@ class ProprioAdapt(object):
             )
             tprint(info_string)
 
-        # Final snapshot.
+        # Final snapshot (bundle + convenience model_last.ckpt).
+        final_dir = os.path.join(
+            self.output_dir, 'phase2', f'checkpoint_{int(self.agent_steps)}'
+        )
+        model_path = self.save_checkpoint_bundle(final_dir)
         self.save(os.path.join(self.nn_dir, 'model_last'))
+        self._maybe_eval_checkpoint(model_path, final_dir)
 
-    def _maybe_eval_checkpoint(self, checkpoint_path: str):
+    def _maybe_eval_checkpoint(self, checkpoint_path: str, save_dir: str = None):
         cb = _cfg_get(self.cfg, 'eval_callback', None)
         if cb is None:
             return
         try:
-            cb(checkpoint_path=checkpoint_path, stage='phase2')
+            kwargs = {'checkpoint_path': checkpoint_path, 'stage': 'phase2'}
+            if save_dir is not None:
+                kwargs['save_dir'] = save_dir
+            cb(**kwargs)
         except Exception as exc:
             print(f'[ProprioAdapt] eval_callback failed (continuing): {exc}')
+
+    def save_checkpoint_bundle(self, ckpt_dir: str) -> str:
+        """TD3-style checkpoint dir: args.yaml, config.yaml, model.ckpt."""
+        return save_checkpoint_dir(
+            ckpt_dir,
+            model=self.model,
+            args_dict=_cfg_get(self.cfg, 'args_dict', None),
+            air_hockey_cfg=_cfg_get(self.cfg, 'air_hockey_config', None),
+            model_filename='model.ckpt',
+            running_mean_std=self.running_mean_std,
+            sa_mean_std=self.sa_mean_std,
+        )
 
     def log_tensorboard(self):
         mean_rew = self.mean_eps_reward.get_mean()
@@ -236,11 +259,9 @@ class ProprioAdapt(object):
         self.sa_mean_std.load_state_dict(checkpoint['sa_mean_std'])
 
     def save(self, name):
-        weights = {
-            'model': self.model.state_dict(),
-        }
-        if self.running_mean_std:
-            weights['running_mean_std'] = self.running_mean_std.state_dict()
-        if self.sa_mean_std:
-            weights['sa_mean_std'] = self.sa_mean_std.state_dict()
-        torch.save(weights, f'{name}.ckpt')
+        save_weight_bundle(
+            f'{name}.ckpt',
+            model=self.model,
+            running_mean_std=self.running_mean_std,
+            sa_mean_std=self.sa_mean_std,
+        )

@@ -206,15 +206,12 @@ def multi_env_evaluate(
 
 
 def _make_eval_callback(args: rma_training.Args, air_hockey_params: dict, run_dir: str):
-    def _cb(checkpoint_path: str, stage: str):
+    def _cb(checkpoint_path: str, stage: str, save_dir: Optional[str] = None):
         if _EVAL_PARAM_SEED is None:
             return
-        # Phase-1 privileged eval is optional; default to scoring phase-2 only
-        # (deploy-relevant). Set RMA_EVAL_PHASE1=1 to also score stage1.
-        if stage == "phase1" and os.environ.get("RMA_EVAL_PHASE1", "0") != "1":
-            return
-        ckpt_tag = os.path.splitext(os.path.basename(checkpoint_path))[0]
-        save_dir = os.path.join(run_dir, f"eval_{stage}_{ckpt_tag}")
+        # Colocate eval artifacts with the TD3-style checkpoint directory.
+        if save_dir is None:
+            save_dir = os.path.dirname(checkpoint_path) or run_dir
         multi_env_evaluate(
             checkpoint_path=checkpoint_path,
             save_dir=save_dir,
@@ -224,7 +221,7 @@ def _make_eval_callback(args: rma_training.Args, air_hockey_params: dict, run_di
             priv_mlp_units=args.priv_mlp_units,
             prop_hist_len=args.prop_hist_len,
             device=args.device if not args.device.startswith("cuda") else "cpu",
-            n_gifs=1 if stage == "phase2" else 0,
+            n_gifs=1,
         )
 
     return _cb
@@ -233,6 +230,16 @@ def _make_eval_callback(args: rma_training.Args, air_hockey_params: dict, run_di
 def _entrypoint_dr():
     global _EVAL_PARAM_SEED, _EVAL_N_ENVS, _EVAL_EPS_PER_ENV, _LOG_PARENT_DIR
     global _RUN_ARGS, _AIR_HOCKEY_PARAMS
+
+    # Must run before parse_args — bare --sbatch is not an Args field (only
+    # --sbatch-run-name / --sbatch-partition / --sbatch-time are). On submit we
+    # exit here; the cluster job re-invokes this module *without* --sbatch and
+    # then runs the DR setup + rma_training._entrypoint(args) below.
+    # Note: calling _entrypoint(args) after parse_args never hits sbatch either
+    # (that path only fires when args is None).
+    if "--sbatch" in sys.argv:
+        rma_training._submit_sbatch_job()
+        return
 
     args = rma_training.parse_args()
     _RUN_ARGS = args
@@ -259,15 +266,17 @@ def _entrypoint_dr():
     original_build = rma_training._build_trainer_cfg
     run_dir_box: Dict[str, str] = {}
 
-    def _build_with_callback(args_inner, priv_info_dim, proprio_adapt):
-        cfg = original_build(args_inner, priv_info_dim, proprio_adapt)
-        # run_dir is not known yet at first build; callback closes over box.
-        def _lazy_cb(checkpoint_path, stage):
+    def _build_with_callback(args_inner, priv_info_dim, proprio_adapt, air_hockey_cfg=None):
+        cfg = original_build(
+            args_inner, priv_info_dim, proprio_adapt, air_hockey_cfg=air_hockey_cfg
+        )
+
+        def _lazy_cb(checkpoint_path, stage, save_dir=None):
             rd = run_dir_box.get("run_dir")
             if rd is None:
                 return
             _make_eval_callback(args_inner, air_hockey_params, rd)(
-                checkpoint_path=checkpoint_path, stage=stage
+                checkpoint_path=checkpoint_path, stage=stage, save_dir=save_dir
             )
 
         cfg.eval_callback = _lazy_cb
@@ -293,13 +302,19 @@ def _entrypoint_dr():
         rma_training._build_trainer_cfg = original_build
         rma_training._make_output_dir = original_make_output
 
-    # Final multi-env eval on stage2 best (or stage1 best if phase 2 skipped).
-    stage2_best = os.path.join(run_dir, "stage2_nn", "model_best.ckpt")
-    stage1_best = os.path.join(run_dir, "stage1_nn", "best.pth")
+    # Final multi-env eval on phase2 best (or phase1 best if phase 2 skipped).
+    stage2_best = os.path.join(run_dir, "phase2", "best", "model.ckpt")
+    if not os.path.exists(stage2_best):
+        stage2_best = os.path.join(run_dir, "stage2_nn", "model_best.ckpt")
+    stage1_best = os.path.join(run_dir, "phase1", "best", "model.pth")
+    if not os.path.exists(stage1_best):
+        stage1_best = os.path.join(run_dir, "stage1_nn", "best.pth")
+
     if os.path.exists(stage2_best):
+        save_dir = os.path.join(run_dir, "phase2", "best")
         multi_env_evaluate(
             checkpoint_path=stage2_best,
-            save_dir=os.path.join(run_dir, "eval_final_phase2"),
+            save_dir=save_dir,
             air_hockey_params=air_hockey_params,
             stage="phase2",
             actor_units=args.actor_units,
@@ -309,9 +324,10 @@ def _entrypoint_dr():
             n_gifs=1,
         )
     elif os.path.exists(stage1_best):
+        save_dir = os.path.join(run_dir, "phase1", "best")
         multi_env_evaluate(
             checkpoint_path=stage1_best,
-            save_dir=os.path.join(run_dir, "eval_final_phase1"),
+            save_dir=save_dir,
             air_hockey_params=air_hockey_params,
             stage="phase1",
             actor_units=args.actor_units,

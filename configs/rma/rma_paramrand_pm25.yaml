@@ -25,6 +25,10 @@
 #   # or: SBATCH=1 ./scripts/rma/run_rma.sh 0 cuda:0 rma_paramrand_pm25
 
 # --- Paths / run ---
+# Artifacts land under log_parent_dir (TD3-style). A generic parent like
+# "runs/rma/" nests {run_name}_{timestamp}_seed_{seed}/; sbatch injects an
+# explicit folder runs/rma/<run_name>_seed_<seed>/.
+# Each save writes phase{1,2}/checkpoint_<steps>/{args,config,model,eval_*}.
 config: "configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25.yaml"
 log_parent_dir: "runs/rma/"
 run_name: "rma_paramrand_pm25"
@@ -45,7 +49,7 @@ priv_info: true
 # priv_info_dim inferred from air_hockey.random_variables (3)
 
 # --- PPO phase 1 ---
-learning_rate: 5e-3
+learning_rate: 0.005
 weight_decay: 0.0
 gamma: 0.99
 tau: 0.95
@@ -72,7 +76,7 @@ max_agent_steps: 2000000
 
 # --- Phase 2 adaptation ---
 adaptation_max_agent_steps: 500000
-adaptation_lr: 3e-4
+adaptation_lr: 0.0003
 adaptation_save_interval: 50000
 phase1_checkpoint: null
 skip_phase1: false

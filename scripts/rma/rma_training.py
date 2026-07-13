@@ -276,10 +276,20 @@ def _resolve_path(path: str) -> str:
     return os.path.normpath(os.path.join(os.getcwd(), path))
 
 
-def _build_trainer_cfg(args: Args, priv_info_dim: int, proprio_adapt: bool) -> SimpleNamespace:
+def _build_trainer_cfg(
+    args: Args,
+    priv_info_dim: int,
+    proprio_adapt: bool,
+    air_hockey_cfg: Optional[dict] = None,
+) -> SimpleNamespace:
     # Context entry = 6-d paddle/puck pos+valid (HistoryBuffer.HISTORY_ENTRY_DIM).
     from scripts.rma.history_buffer import HISTORY_ENTRY_DIM
 
+    args_dict = {
+        k: getattr(args, k)
+        for k in args.__dataclass_fields__
+        if not k.startswith("_")
+    }
     return SimpleNamespace(
         actor_units=list(args.actor_units),
         priv_mlp_units=list(args.priv_mlp_units),
@@ -315,19 +325,37 @@ def _build_trainer_cfg(args: Args, priv_info_dim: int, proprio_adapt: bool) -> S
         adaptation_lr=float(args.adaptation_lr),
         adaptation_save_interval=int(getattr(args, "adaptation_save_interval", 50_000)),
         wandb_step_offset=int(getattr(args, "wandb_step_offset", 0)),
+        # Used by TD3-style checkpoint dirs (args.yaml / config.yaml).
+        args_dict=args_dict,
+        air_hockey_config=air_hockey_cfg,
     )
 
 
 def _make_output_dir(args: Args) -> str:
+    """Create the run directory (TD3-style: artifacts live under log_parent_dir).
+
+    - If ``log_parent_dir`` is a generic parent (``runs/rma`` / trailing slash),
+      nest ``{run_name}_{timestamp}`` underneath.
+    - If ``log_parent_dir`` is an explicit run folder (e.g. sbatch
+      ``runs/rma/<run_name>``), use it directly.
+    - Always append ``_seed_{seed}`` (unless already present).
+    """
     stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    run_dir = os.path.join(
-        args.log_parent_dir, f"{args.run_name}_{stamp}_seed_{args.seed}"
-    )
+    base = (args.log_parent_dir or "runs/rma").rstrip("/") or "runs/rma"
+    # Generic parents nest {run_name}_{stamp}; explicit folders (sbatch) are used as-is.
+    is_generic_parent = base in {"runs/rma", "runs"} or base.endswith("/runs/rma")
+    if is_generic_parent:
+        run_dir = f"{base}/{args.run_name}_{stamp}"
+    else:
+        run_dir = base
+    seed_suffix = f"_seed_{args.seed}"
+    if not run_dir.endswith(seed_suffix):
+        run_dir = f"{run_dir}{seed_suffix}"
     if os.path.exists(run_dir):
-        base = run_dir
+        original = run_dir
         i = 1
         while os.path.exists(run_dir):
-            run_dir = f"{base}r{i}"
+            run_dir = f"{original}r{i}"
             i += 1
         print(f"[rma_training] Log directory exists. Using alternate: {run_dir}")
     os.makedirs(run_dir, exist_ok=True)
@@ -356,24 +384,15 @@ def _init_wandb(args: Args, air_hockey_cfg: dict, run_dir: str):
 
 
 def _save_run_config(run_dir: str, args: Args, air_hockey_cfg: dict) -> None:
-    out = {
-        "args": {k: getattr(args, k) for k in args.__dataclass_fields__ if not k.startswith("_")},
-        "air_hockey_config": air_hockey_cfg,
-    }
-    # Convert non-YAML-friendly types.
-    def _sanitize(obj):
-        if isinstance(obj, dict):
-            return {k: _sanitize(v) for k, v in obj.items()}
-        if isinstance(obj, (list, tuple)):
-            return [_sanitize(v) for v in obj]
-        if isinstance(obj, (np.integer,)):
-            return int(obj)
-        if isinstance(obj, (np.floating,)):
-            return float(obj)
-        return obj
+    """Write TD3-style args.yaml + config.yaml at the run root."""
+    from scripts.rma.checkpointing import write_args_and_config
 
-    with open(os.path.join(run_dir, "rma_config.yaml"), "w") as f:
-        yaml.dump(_sanitize(out), f, default_flow_style=False)
+    args_dict = {
+        k: getattr(args, k)
+        for k in args.__dataclass_fields__
+        if not k.startswith("_")
+    }
+    write_args_and_config(run_dir, args_dict, air_hockey_cfg)
 
 
 def parse_args() -> Args:
@@ -476,16 +495,21 @@ def _entrypoint(args: Optional[Args] = None) -> str:
         # -------------------- Phase 1: μ + π via PPO --------------------
         if not args.skip_phase1:
             print("[rma_training] === Phase 1: PPO (privileged encoder μ + base policy π) ===")
-            phase1_cfg = _build_trainer_cfg(args, priv_info_dim, proprio_adapt=False)
+            phase1_cfg = _build_trainer_cfg(
+                args, priv_info_dim, proprio_adapt=False, air_hockey_cfg=air_hockey_cfg
+            )
             ppo = PPO(env, run_dir, phase1_cfg, device)
             if args.phase1_checkpoint:
                 print(f"[rma_training] Resuming phase 1 from {args.phase1_checkpoint}")
                 ppo.restore_train(args.phase1_checkpoint)
             ppo.train()
             phase1_steps = int(ppo.agent_steps)
-            # phase1_ckpt = os.path.join(ppo.nn_dir, "best.pth")
-            # if not os.path.exists(phase1_ckpt):
-            phase1_ckpt = os.path.join(ppo.nn_dir, "last.pth")
+            # Prefer TD3-style final bundle; fall back to convenience last.pth.
+            phase1_ckpt = os.path.join(
+                run_dir, "phase1", f"checkpoint_{phase1_steps}", "model.pth"
+            )
+            if not os.path.exists(phase1_ckpt):
+                phase1_ckpt = os.path.join(ppo.nn_dir, "last.pth")
             print(f"[rma_training] Phase 1 complete. Checkpoint: {phase1_ckpt}")
         else:
             if not phase1_ckpt:
@@ -495,12 +519,16 @@ def _entrypoint(args: Optional[Args] = None) -> str:
         # -------------------- Phase 2: φ via supervised L2 --------------------
         if int(args.adaptation_max_agent_steps) > 0:
             print("[rma_training] === Phase 2: ProprioAdapt (freeze μ/π, train φ) ===")
-            phase2_cfg = _build_trainer_cfg(args, priv_info_dim, proprio_adapt=True)
+            phase2_cfg = _build_trainer_cfg(
+                args, priv_info_dim, proprio_adapt=True, air_hockey_cfg=air_hockey_cfg
+            )
             phase2_cfg.wandb_step_offset = phase1_steps
             padapt = ProprioAdapt(env, run_dir, phase2_cfg, device)
             padapt.load_phase1_checkpoint(phase1_ckpt)
             padapt.train()
-            phase2_best = os.path.join(padapt.nn_dir, "model_best.ckpt")
+            phase2_best = os.path.join(run_dir, "phase2", "best", "model.ckpt")
+            if not os.path.exists(phase2_best):
+                phase2_best = os.path.join(padapt.nn_dir, "model_best.ckpt")
             print(f"[rma_training] Phase 2 complete. Best checkpoint: {phase2_best}")
         else:
             print("[rma_training] adaptation_max_agent_steps=0 → skipping phase 2.")

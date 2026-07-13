@@ -142,9 +142,16 @@ class RMAVecEnv:
             for k, v in infos.items():
                 if k == "final_info":
                     continue
-                if isinstance(v, (float, int)):
+                if isinstance(v, (float, int)) and not isinstance(v, bool):
                     flat_infos[k] = v
                 elif isinstance(v, np.ndarray) and v.size == 1:
-                    flat_infos[k] = float(v.reshape(-1)[0])
+                    # SyncVectorEnv packs string infos (e.g. transition_hold_reason
+                    # == "none") as size-1 object arrays when num_envs=1; only
+                    # promote numeric scalars so eval/GIF rollouts don't crash.
+                    x = v.reshape(-1)[0]
+                    if isinstance(x, (float, int, np.floating, np.integer)) and not isinstance(
+                        x, (bool, np.bool_)
+                    ):
+                        flat_infos[k] = float(x)
 
         return obs_dict, rewards_t, dones_t, flat_infos

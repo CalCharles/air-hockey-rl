@@ -8,6 +8,7 @@ import time
 
 import torch
 
+from scripts.rma.checkpointing import save_checkpoint_dir, save_weight_bundle
 from scripts.rma.experience import ExperienceBuffer
 from scripts.rma.misc import AverageScalarMeter
 from scripts.rma.models import ActorCritic
@@ -233,47 +234,63 @@ class PPO(object):
                 step=self.agent_steps,
                 prefix='phase1/',
             )
-            checkpoint_name = (
-                f'ep_{self.epoch_num}_step_{int(self.agent_steps // 1e6):04}M_reward_{mean_rewards:.2f}'
-            )
-
-            if self.save_freq > 0:
-                if self.epoch_num % self.save_freq == 0:
-                    self.save(os.path.join(self.nn_dir, checkpoint_name))
-                    last_path = os.path.join(self.nn_dir, 'last')
-                    self.save(last_path)
-                    self._maybe_eval_checkpoint(f'{last_path}.pth')
+            if self.save_freq > 0 and self.epoch_num % self.save_freq == 0:
+                ckpt_dir = os.path.join(
+                    self.output_dir, 'phase1', f'checkpoint_{int(self.agent_steps)}'
+                )
+                model_path = self.save_checkpoint_bundle(ckpt_dir)
+                # Convenience copy for phase-2 handoff / resume.
+                self.save(os.path.join(self.nn_dir, 'last'))
+                self._maybe_eval_checkpoint(model_path, ckpt_dir)
 
             if mean_rewards > self.best_rewards and self.epoch_num >= self.save_best_after:
                 print(f'save current best reward: {mean_rewards:.2f}')
                 self.best_rewards = mean_rewards
-                best_path = os.path.join(self.nn_dir, 'best')
-                self.save(best_path)
-                self._maybe_eval_checkpoint(f'{best_path}.pth')
+                best_dir = os.path.join(self.output_dir, 'phase1', 'best')
+                model_path = self.save_checkpoint_bundle(best_dir)
+                self.save(os.path.join(self.nn_dir, 'best'))
+                self._maybe_eval_checkpoint(model_path, best_dir)
 
-        # Always persist a final snapshot.
-        final_path = os.path.join(self.nn_dir, 'last')
-        self.save(final_path)
+        # Always persist a final snapshot (bundle + convenience last.pth).
+        final_dir = os.path.join(
+            self.output_dir, 'phase1', f'checkpoint_{int(self.agent_steps)}'
+        )
+        model_path = self.save_checkpoint_bundle(final_dir)
+        self.save(os.path.join(self.nn_dir, 'last'))
+        self._maybe_eval_checkpoint(model_path, final_dir)
         print('max steps achieved')
 
-    def _maybe_eval_checkpoint(self, checkpoint_path: str):
+    def _maybe_eval_checkpoint(self, checkpoint_path: str, save_dir: str = None):
         cb = _cfg_get(self.cfg, 'eval_callback', None)
         if cb is None:
             return
         try:
-            cb(checkpoint_path=checkpoint_path, stage='phase1')
+            kwargs = {'checkpoint_path': checkpoint_path, 'stage': 'phase1'}
+            if save_dir is not None:
+                kwargs['save_dir'] = save_dir
+            cb(**kwargs)
         except Exception as exc:
             print(f'[PPO] eval_callback failed (continuing): {exc}')
 
+    def save_checkpoint_bundle(self, ckpt_dir: str) -> str:
+        """TD3-style checkpoint dir: args.yaml, config.yaml, model.pth."""
+        return save_checkpoint_dir(
+            ckpt_dir,
+            model=self.model,
+            args_dict=_cfg_get(self.cfg, 'args_dict', None),
+            air_hockey_cfg=_cfg_get(self.cfg, 'air_hockey_config', None),
+            model_filename='model.pth',
+            running_mean_std=self.running_mean_std,
+            value_mean_std=self.value_mean_std,
+        )
+
     def save(self, name):
-        weights = {
-            'model': self.model.state_dict(),
-        }
-        if self.running_mean_std:
-            weights['running_mean_std'] = self.running_mean_std.state_dict()
-        if self.value_mean_std:
-            weights['value_mean_std'] = self.value_mean_std.state_dict()
-        torch.save(weights, f'{name}.pth')
+        save_weight_bundle(
+            f'{name}.pth',
+            model=self.model,
+            running_mean_std=self.running_mean_std,
+            value_mean_std=self.value_mean_std,
+        )
 
     def restore_train(self, fn):
         if not fn:
