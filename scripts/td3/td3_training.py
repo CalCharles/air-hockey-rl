@@ -33,6 +33,8 @@ from airhockey import AirHockeyEnv
 from airhockey.renderers import AirHockeyRenderer
 from scripts.td3.deterministic_agent import DeterministicAgent
 from scripts.td3.encoder import AdaptationModule, ObjectPropEncoder
+
+# TODO: look over this and see how necessary these are. Look at original implementation
 from scripts.td3.rma_utils import (
     build_prop_normalizer,
     extract_env_props_from_vec_info,
@@ -40,6 +42,7 @@ from scripts.td3.rma_utils import (
     privileged_keys_from_config,
     read_env_props_from_vector_env,
 )
+
 from scripts.td3.helper.q_network import TD3QNetwork
 from scripts.td3.helper.td3_args_validation import validate_args
 from scripts.td3.helper.td3_cql import cql_penalty, precompute_cql_terms
@@ -297,7 +300,6 @@ class Args:
     rma_encoder_lr: float = 3e-4
     rma_adaptation_lr: float = 3e-4
     rma_adaptation_updates_per_iteration: int = 1
-    rma_include_action_history: bool = True
     rma_base_model_path: str | None = None
     rma_privileged_keys: List[str] = field(default_factory=list)
 
@@ -408,14 +410,8 @@ def _submit_sbatch_job():
     else:
         forward_argv += ["--run-name", sbatch_run_name]
 
-    # Build the python command the slurm job will run.
-    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    project_python = os.path.join(repo_root, ".venv", "bin", "python")
-    python_executable = project_python if os.path.exists(project_python) else sys.executable
-    python_cmd = (
-        f"{shlex.quote(python_executable)} -m scripts.td3.td3_training_dr "
-        f"{shlex.join(forward_argv)}"
-    )
+
+    python_cmd = f"python -m scripts.td3.td3_training_dr {shlex.join(forward_argv)}"
 
     # Load and patch the slurm template
     try:
@@ -440,8 +436,7 @@ def _submit_sbatch_job():
         elif line.startswith("#SBATCH --time="):
             line = f"#SBATCH --time={sbatch_time}"
             time_patched = True
-        elif line.startswith("cd "):
-            line = f'cd "{repo_root}"'
+
         patched_lines.append(line)
 
     # Find where the last #SBATCH line is and insert any missing directives after it
@@ -581,6 +576,7 @@ def _entrypoint():
     if (args.gravity is not None):
         config["air_hockey"]["random_variable_ranges"]["gravity"] = [args.gravity[0], args.gravity[1]]
 
+    # TODO: need to double check how they're getting this and passing it into the object encoder.
     rma_privileged_keys: List[str] = []
     rma_prop_lows = rma_prop_highs = None
     if args.use_rma:
@@ -619,8 +615,7 @@ def _entrypoint():
 
     if args.use_rma:
         policy_obs_dim = raw_obs_dim + args.rma_latent_dim
-        if args.use_last_action_in_policy_state:
-            policy_obs_dim += act_dim
+            
     elif args.use_history:
         
         # Transformer: TD3 input dim: [raw_obs_dim, context_vector_dim]
@@ -707,8 +702,6 @@ def _entrypoint():
         history_buf = HistoryBuffer(
             context_len=args.context_len,
             device=args.device,
-            include_action=args.rma_include_action_history if args.use_rma else False,
-            action_dim=act_dim,
         )
     else:
         history_buf = None
@@ -730,26 +723,28 @@ def _entrypoint():
     adaptation_module = None
     encoder_optimizer = None
     adaptation_optimizer = None
+
     if args.use_rma:
         object_prop_encoder = ObjectPropEncoder(
             env_var_dim=len(rma_privileged_keys),
             latent_dim=args.rma_latent_dim,
             hidden_size=args.rma_encoder_hidden_sizes,
         ).to(args.device)
-        rma_history_entry_dim = HISTORY_ENTRY_DIM + (
-            act_dim if args.rma_include_action_history else 0
-        )
+        
         adaptation_module = AdaptationModule(
-            history_input_dim=args.context_len * rma_history_entry_dim,
+            history_input_dim=args.context_len * HISTORY_ENTRY_DIM,
             latent_dim=args.rma_latent_dim,
             hidden_size=args.rma_adaptation_hidden_sizes,
         ).to(args.device)
+
         encoder_optimizer = optim.Adam(
             object_prop_encoder.parameters(), lr=args.rma_encoder_lr
         )
+
         adaptation_optimizer = optim.Adam(
             adaptation_module.parameters(), lr=args.rma_adaptation_lr
         )
+
 
     if args.model_path is not None:
         if not os.path.exists(args.model_path):
@@ -833,6 +828,7 @@ def _entrypoint():
                 print(f"Warning: use_transformer=True but transformer.pth not found at {transformer_path}")
                 return
 
+    # TODO: Note this is used for evaluating if we used rma, then we need to load it in - also make sure we saved it as well
     def load_rma_modules(checkpoint_path: str, *, require_encoder: bool) -> dict | None:
         if not os.path.exists(checkpoint_path):
             raise FileNotFoundError(f"RMA checkpoint path does not exist: {checkpoint_path}")
@@ -845,10 +841,18 @@ def _entrypoint():
                     "RMA privileged ordering mismatch: checkpoint has "
                     f"{loaded_keys}, config has {rma_privileged_keys}."
                 )
+        
+        
+        # TODO: we need to fix this. It looks like this is from our TD3 implementation but we want their base policy implementation
+        # TODO: come back to this when we look at where we save.
+        # TODO: also come back when we fix all else and we see how they use the base policy. and we change our implementation for that 
+        # Load actor from checkpoint
         actor_state = full_state["actor"] if full_state is not None else loaded
         actor.load_state_dict(extract_deterministic_state_dict(actor_state), strict=False)
         actor_target.load_state_dict(actor.state_dict())
 
+
+        # Load object prop encoder from checkpoint
         encoder_state = full_state.get("object_prop_encoder") if full_state is not None else None
         if encoder_state is None:
             encoder_path = os.path.join(os.path.dirname(checkpoint_path), "object_prop_encoder.pth")
@@ -862,6 +866,8 @@ def _entrypoint():
         if encoder_state is not None:
             object_prop_encoder.load_state_dict(encoder_state)
 
+
+        # Load adaptation module from checkpoint
         adaptation_state = full_state.get("adaptation_module") if full_state is not None else None
         if adaptation_state is None:
             adaptation_path = os.path.join(os.path.dirname(checkpoint_path), "adaptation_module.pth")
@@ -873,9 +879,12 @@ def _entrypoint():
             adaptation_module.load_state_dict(adaptation_state)
         return full_state
 
+
+
     if args.use_rma and args.rma_base_model_path is not None:
         load_rma_modules(args.rma_base_model_path, require_encoder=True)
         print(f"Loaded RMA Phase-1 base from {args.rma_base_model_path}")
+
     elif args.use_rma and args.model_path is not None:
         rma_loaded_state = load_rma_modules(args.model_path, require_encoder=True)
         if rma_loaded_state is not None:
@@ -883,6 +892,7 @@ def _entrypoint():
                 encoder_optimizer.load_state_dict(rma_loaded_state["encoder_optimizer"])
             if "adaptation_optimizer" in rma_loaded_state:
                 adaptation_optimizer.load_state_dict(rma_loaded_state["adaptation_optimizer"])
+            # TODO: also make sure to load and save the base policy. right now they assume it's TD3 but we want base policy
 
 
     q_optimizer = optim.Adam(
@@ -1179,7 +1189,6 @@ def _entrypoint():
             n_eps_per_gif=args.eval_id_ood_n_eps_per_gif,
             use_rma=args.use_rma,
             adaptation_module=adaptation_module,
-            rma_include_action_history=args.rma_include_action_history,
         )
         return  # exit after eval, don't train
             

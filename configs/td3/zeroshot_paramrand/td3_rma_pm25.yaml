@@ -126,7 +126,8 @@ agent_num_hidden_layers: 2
 q_hidden_layer_size: 64
 q_num_hidden_layers: 2
 
-use_last_action_in_policy_state: true
+# TODO: This is because RMA doesn't do this
+use_last_action_in_policy_state: false
 
 # TODO: was 25000 - now trying to save less frequently
 checkpoint_interval: 25000

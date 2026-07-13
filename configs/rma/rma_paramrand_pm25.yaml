@@ -1,0 +1,78 @@
+# Hora-style RMA for air-hockey: one call runs Phase 1 (PPO μ+π) then Phase 2 (φ).
+#
+# Phase 1 jointly trains the privileged object-prop encoder and base policy with
+# PPO on physics-parameter randomization (±25% paddle_density / puck_damping /
+# gravity from sysid).
+#
+# Phase 2 freezes μ and π, then trains the temporal-conv adaptation module φ to
+# match tanh(μ(priv)) from a 30-step paddle/puck history (L2).
+#
+# Policy input is obs ⊕ z (no TD3 last-action). φ context is T×6 paddle/puck
+# (include_action=False inside RMAVecEnv).
+#
+# Launch:
+#   python -m scripts.rma.rma_training_dr \
+#     --args-file configs/rma/rma_paramrand_pm25.yaml
+#
+# Or without multi-env eval hooks:
+#   python -m scripts.rma.rma_training \
+#     --args-file configs/rma/rma_paramrand_pm25.yaml
+
+# --- Paths / run ---
+config: "configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25.yaml"
+log_parent_dir: "runs/rma/"
+run_name: "rma_paramrand_pm25"
+device: "cuda:0"
+seed: 0
+
+# --- Env ---
+num_envs: 8
+prop_hist_len: 30
+# Policy input: obs ⊕ z (no TD3 last-action). φ context: T×6 paddle/puck.
+
+# --- Network (hora-like widths; priv MLP ends at latent z dim = 8) ---
+actor_units: [512, 256, 128]
+priv_mlp_units: [256, 128, 8]
+
+# --- Privileged ---
+priv_info: true
+# priv_info_dim inferred from air_hockey.random_variables (3)
+
+# --- PPO phase 1 ---
+learning_rate: 5e-3
+weight_decay: 0.0
+gamma: 0.99
+tau: 0.95
+e_clip: 0.2
+clip_value: true
+entropy_coef: 0.0
+critic_coef: 4.0
+bounds_loss_coef: 0.0001
+truncate_grads: true
+grad_norm: 1.0
+value_bootstrap: true
+normalize_advantage: true
+normalize_input: true
+normalize_value: true
+reward_scale: 0.01
+# batch_size = horizon_length * num_envs = 128 * 8 = 1024; must divide minibatch_size
+horizon_length: 128
+minibatch_size: 512
+mini_epochs: 5
+kl_threshold: 0.02
+save_frequency: 50
+save_best_after: 0
+max_agent_steps: 2000000
+
+# --- Phase 2 adaptation ---
+adaptation_max_agent_steps: 500000
+adaptation_lr: 3e-4
+adaptation_save_interval: 50000
+phase1_checkpoint: null
+skip_phase1: false
+
+# --- Multi-env eval (rma_training_dr) ---
+eval_param_seed: 12345
+eval_n_envs: 5
+eval_eps_per_env: 4
+checkpoint_eval_episodes: 4
