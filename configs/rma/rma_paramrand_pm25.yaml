@@ -17,6 +17,12 @@
 # Or without multi-env eval hooks:
 #   python -m scripts.rma.rma_training \
 #     --args-file configs/rma/rma_paramrand_pm25.yaml
+#
+# Cluster (sbatch; patches scripts/rma/vista_template.slurm):
+#   python -m scripts.rma.rma_training_dr \
+#     --args-file configs/rma/rma_paramrand_pm25.yaml \
+#     --sbatch --sbatch-run-name rma_paramrand_pm25 --sbatch-time 12:00:00
+#   # or: SBATCH=1 ./scripts/rma/run_rma.sh 0 cuda:0 rma_paramrand_pm25
 
 # --- Paths / run ---
 config: "configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25.yaml"

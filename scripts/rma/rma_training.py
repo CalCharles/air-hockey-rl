@@ -12,11 +12,19 @@ Both phases run from a single call to this module (or via rma_training_dr.py).
 Launch:
   python -m scripts.rma.rma_training --args-file configs/rma/rma_paramrand_pm25.yaml
   python -m scripts.rma.rma_training_dr --args-file configs/rma/rma_paramrand_pm25.yaml
+
+Cluster submit (patches scripts/rma/vista_template.slurm and sbatches):
+  python -m scripts.rma.rma_training_dr \\
+    --args-file configs/rma/rma_paramrand_pm25.yaml \\
+    --sbatch --sbatch-run-name rma_paramrand_pm25 --sbatch-time 12:00:00
 """
 
 from __future__ import annotations
 
+import json
 import os
+import shlex
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -110,9 +118,148 @@ class Args:
     eval_eps_per_env: int = 4
     checkpoint_eval_episodes: int = 4
 
+    # --- sbatch (used only when --sbatch is passed; see _submit_sbatch_job) ---
+    sbatch_run_name: Optional[str] = None  # e.g. "rma_paramrand_pm25_seed0"
+    sbatch_partition: str = "gh"
+    sbatch_time: str = "12:00:00"
+
     # Optional hook: evaluate_agent callable monkey-patched by rma_training_dr.
     # Not a CLI field — set at runtime.
     _evaluate_agent: Optional[object] = None
+
+
+_SLURM_TEMPLATE_PATH = "scripts/rma/vista_template.slurm"
+
+
+def _submit_sbatch_job():
+    """Patch the RMA slurm template and submit via sbatch (mirrors TD3 helper)."""
+    raw_argv = sys.argv[1:]
+    forward_argv = [a for a in raw_argv if a != "--sbatch"]
+
+    def _pop_flag(argv, flag, default=None):
+        argv = list(argv)
+        if flag in argv:
+            idx = argv.index(flag)
+            value = argv[idx + 1] if idx + 1 < len(argv) else default
+            argv.pop(idx)
+            if idx < len(argv):
+                argv.pop(idx)
+            return argv, value
+        return argv, default
+
+    forward_argv, sbatch_run_name = _pop_flag(forward_argv, "--sbatch-run-name")
+    forward_argv, sbatch_partition = _pop_flag(
+        forward_argv, "--sbatch-partition", default="gh"
+    )
+    forward_argv, sbatch_time = _pop_flag(
+        forward_argv, "--sbatch-time", default="12:00:00"
+    )
+
+    if sbatch_run_name is None:
+        if "--run-name" in forward_argv:
+            idx = forward_argv.index("--run-name")
+            sbatch_run_name = forward_argv[idx + 1]
+        else:
+            sbatch_run_name = datetime.now().strftime("run_%Y%m%d_%H%M%S")
+
+    log_parent_dir = f"runs/rma/{sbatch_run_name}"
+    results_dir = f"results/{sbatch_run_name}"
+
+    if "--log-parent-dir" in forward_argv:
+        idx = forward_argv.index("--log-parent-dir")
+        forward_argv[idx + 1] = log_parent_dir
+    else:
+        forward_argv += ["--log-parent-dir", log_parent_dir]
+
+    if "--run-name" in forward_argv:
+        idx = forward_argv.index("--run-name")
+        forward_argv[idx + 1] = sbatch_run_name
+    else:
+        forward_argv += ["--run-name", sbatch_run_name]
+
+    # Always launch the DR wrapper (multi-env eval hooks), matching TD3.
+    python_cmd = f"python -m scripts.rma.rma_training_dr {shlex.join(forward_argv)}"
+
+    try:
+        with open(_SLURM_TEMPLATE_PATH, "r") as f:
+            template = f.read()
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"Slurm template not found at '{_SLURM_TEMPLATE_PATH}'. "
+            "Set _SLURM_TEMPLATE_PATH in rma_training.py."
+        )
+
+    patched_lines = []
+    time_patched = False
+    partition_patched = False
+    for line in template.splitlines():
+        if line.startswith("#SBATCH --job-name="):
+            line = f"#SBATCH --job-name={sbatch_run_name}"
+        elif line.startswith("#SBATCH --partition="):
+            line = f"#SBATCH --partition={sbatch_partition}"
+            partition_patched = True
+        elif line.startswith("#SBATCH --time="):
+            line = f"#SBATCH --time={sbatch_time}"
+            time_patched = True
+        patched_lines.append(line)
+
+    last_sbatch_idx = max(i for i, l in enumerate(patched_lines) if l.startswith("#SBATCH"))
+    if not time_patched:
+        patched_lines.insert(last_sbatch_idx + 1, f"#SBATCH --time={sbatch_time}")
+    if not partition_patched:
+        patched_lines.insert(
+            last_sbatch_idx + 1, f"#SBATCH --partition={sbatch_partition}"
+        )
+
+    slurm_script = "\n".join(patched_lines).rstrip() + f"\n{python_cmd}\n"
+
+    os.makedirs("slurm_jobs", exist_ok=True)
+    tmp_path = "slurm_jobs/temp_submission.slurm"
+    with open(tmp_path, "w") as f:
+        f.write(slurm_script)
+
+    print("=" * 60)
+    print(f"run_name     : {sbatch_run_name}")
+    print(f"partition    : {sbatch_partition}")
+    print(f"time         : {sbatch_time}")
+    print(f"logs (slurm) : slurm_jobs/job_<jid>/")
+    print(f"runs (tb)    : {log_parent_dir}")
+    print(f"results      : {results_dir}")
+    print(f"cmd          : {python_cmd}")
+    print("=" * 60)
+
+    result = subprocess.run(["sbatch", tmp_path], capture_output=True, text=True)
+    print(result.stdout.strip())
+    if result.stderr.strip():
+        print("stderr:", result.stderr.strip())
+
+    if "Submitted batch job" in result.stdout:
+        jid = result.stdout.strip().split()[-1]
+        job_dir = f"slurm_jobs/job_{jid}"
+        os.makedirs(job_dir, exist_ok=True)
+        with open(f"{job_dir}/submission.slurm", "w") as f:
+            f.write(slurm_script)
+        with open(f"{job_dir}/submitted_argv.txt", "w") as f:
+            f.write(" ".join(sys.argv) + "\n")
+        with open(f"{job_dir}/job_info.json", "w") as f:
+            json.dump(
+                {
+                    "job_id": jid,
+                    "run_name": sbatch_run_name,
+                    "partition": sbatch_partition,
+                    "time": sbatch_time,
+                    "log_parent_dir": log_parent_dir,
+                    "results_dir": results_dir,
+                    "python_cmd": python_cmd,
+                },
+                f,
+                indent=2,
+            )
+        print(f"Job artifacts saved to {job_dir}/")
+    else:
+        raise RuntimeError(
+            f"sbatch submission failed:\n{result.stdout}\n{result.stderr}"
+        )
 
 
 def _load_air_hockey_config(path: str) -> dict:
@@ -264,6 +411,11 @@ def parse_args() -> Args:
 
 def _entrypoint(args: Optional[Args] = None) -> str:
     """Run phase 1 then phase 2. Returns the run output directory."""
+    # Submit path must run before tyro/parse_args (sbatch flags are not Args fields).
+    if args is None and "--sbatch" in sys.argv:
+        _submit_sbatch_job()
+        return ""
+
     if args is None:
         args = parse_args()
 
