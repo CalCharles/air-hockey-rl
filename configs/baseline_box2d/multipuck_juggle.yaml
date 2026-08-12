@@ -8,7 +8,20 @@ air_hockey:
   num_paddles: 1
   num_pucks: 2
   num_targets: 0
-  obs_type: multipuck
+  # "multipuck" was not a real obs type (env construction crashed); the
+  # per-puck variants are multipuck_history / multipuck_vel.
+  obs_type: multipuck_history
+  seed: 0
+
+  # Multi-puck staggered spawn: pucks are placed along one ballistic juggle
+  # cycle so their arrival times in the paddle-reachable region are evenly
+  # spaced. See notes/docs/environments/multi-puck-spawning.md.
+  multipuck_stagger: true
+  multipuck_stagger_apex_frac_min: 0.65
+  multipuck_stagger_apex_frac_max: 0.95
+  multipuck_stagger_lateral_speed_max: 0.1
+  multipuck_stagger_phase_jitter: 0.0
+
   simulator: box2d
   simulator_params:
     absorb_target: false
