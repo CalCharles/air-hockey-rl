@@ -105,6 +105,13 @@ already ragged); the spawn logic degrades rather than raising.
 Regression coverage:
 [`scripts/td3/tests/test_multipuck_staggered_spawn.py`](../../../scripts/td3/tests/test_multipuck_staggered_spawn.py).
 
+Qualitative check — before/after MP4s with per-puck trails, velocity arrows and
+an arrival HUD (writes to the gitignored `gifs/multipuck_stagger/`):
+
+```bash
+python scripts/visualization/render_multipuck_spawn.py --pucks 2 3 4 --seed 0
+```
+
 ## Known limitation (pre-existing, not addressed here)
 
 `AirHockeyBaseEnv.has_finished()` inspects `state_info['pucks'][0]` only, so
