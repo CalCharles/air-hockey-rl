@@ -151,6 +151,45 @@ class AirHockeyPuckCatchEnv(AirHockeyBaseEnv):
     #     return obs
     
 class AirHockeyPuckJuggleEnv(AirHockeyBaseEnv):
+    def __init__(self, **kwargs):
+        # Multi-puck (num_pucks > 1) staggered spawn. Pucks are placed along a
+        # single ballistic "juggle cycle" so the times at which they fall into the
+        # paddle-reachable region are evenly spaced, instead of every puck being
+        # dropped from the top edge at once.
+        self.multipuck_stagger = bool(kwargs.get("multipuck_stagger", True))
+        # Apex of the shared cycle, as a fraction of the distance between the
+        # reach line and the top edge (1.0 = puck just grazes the top wall).
+        self.multipuck_stagger_apex_frac_min = float(
+            kwargs.get("multipuck_stagger_apex_frac_min", 0.65)
+        )
+        self.multipuck_stagger_apex_frac_max = float(
+            kwargs.get("multipuck_stagger_apex_frac_max", 0.95)
+        )
+        if self.multipuck_stagger_apex_frac_max < self.multipuck_stagger_apex_frac_min:
+            raise ValueError(
+                "multipuck_stagger_apex_frac_max must be >= multipuck_stagger_apex_frac_min"
+            )
+        # x of the "reachable area" boundary the arrival times are measured to.
+        # Defaults to self.paddle_x_min (the far edge of the paddle's workspace).
+        reach_x = kwargs.get("multipuck_stagger_reach_x", None)
+        self.multipuck_stagger_reach_x = None if reach_x is None else float(reach_x)
+        # Lateral (y) speed given to each puck, sampled from [-max, max].
+        self.multipuck_stagger_lateral_speed_max = float(
+            max(0.0, kwargs.get("multipuck_stagger_lateral_speed_max", 0.1))
+        )
+        # Minimum |dy| between pucks. They share one x corridor at different
+        # times, so separate lanes keep them from colliding mid-flight and
+        # destroying the stagger. ``None`` => 4 puck radii.
+        min_y_separation = kwargs.get("multipuck_stagger_min_y_separation_m", None)
+        self._multipuck_stagger_min_y_separation_m = (
+            None if min_y_separation is None else float(max(0.0, min_y_separation))
+        )
+        # Fraction of one arrival-time slot by which each phase may be jittered.
+        self.multipuck_stagger_phase_jitter = float(
+            np.clip(kwargs.get("multipuck_stagger_phase_jitter", 0.0), 0.0, 0.5)
+        )
+        super().__init__(**kwargs)
+
     def initialize_spaces(self, obs_type):
         # setup observation / action / reward spaces
         low, high = self.init_observation(obs_type)
@@ -159,20 +198,208 @@ class AirHockeyPuckJuggleEnv(AirHockeyBaseEnv):
         self.count_hit = False
         self.hits = 0
         self.reward = AirHockeyPuckJuggleReward(self)
-        
+
     @staticmethod
     def from_dict(state_dict):
         return AirHockeyPuckJuggleEnv(**state_dict)
 
     def create_world_objects(self):
+        if self.num_pucks > 1 and self.multipuck_stagger and self._multipuck_stagger_supported():
+            self._create_world_objects_staggered_multipuck()
+            return
+
         for i in range(self.num_pucks):
             name = 'puck_{}'.format(i)
             pos, vel = self.get_puck_configuration()
             self.simulator.spawn_puck(pos, vel, name)
-        
+
         name = 'paddle_ego'
         pos, vel = self.get_paddle_configuration(name)
         self.simulator.spawn_paddle(pos, vel, name)
+        self._spawn_triangle_obstacles()
+
+    # ------------------------------------------------------------------
+    # Staggered multi-puck spawning
+    # ------------------------------------------------------------------
+    def _multipuck_fall_dynamics(self):
+        """(a, d): down-table acceleration (base +x, m/s^2) and puck linear damping (1/s).
+
+        Base-frame +x points from the goal edge toward the paddle, and Box2D
+        gravity (0, g) maps to base +x acceleration of |g| (see
+        ``base_coord_to_box2d``), so the puck "falls" toward the paddle.
+        """
+        world = getattr(self.simulator, "world", None)
+        gravity = getattr(world, "gravity", None) if world is not None else None
+        if gravity is not None:
+            accel = abs(float(gravity[1]))
+        else:
+            accel = abs(float(np.mean(getattr(self.simulator, "gravity", 0.0))))
+        damping = float(getattr(self.simulator, "puck_damping", 0.0) or 0.0)
+        return accel, max(0.0, damping)
+
+    def _multipuck_stagger_supported(self):
+        accel, _ = self._multipuck_fall_dynamics()
+        return accel > 1e-6 and self._multipuck_reach_x() > (self.table_x_top + 3 * self.puck_radius)
+
+    def _multipuck_reach_x(self):
+        if self.multipuck_stagger_reach_x is not None:
+            return float(self.multipuck_stagger_reach_x)
+        return float(self.paddle_x_min)
+
+    @property
+    def multipuck_stagger_min_y_separation_m(self):
+        if self._multipuck_stagger_min_y_separation_m is not None:
+            return self._multipuck_stagger_min_y_separation_m
+        return 4.0 * self.puck_radius
+
+    @staticmethod
+    def _multipuck_ballistic_state(accel, damping, v0, t):
+        """Displacement / velocity along +x at time ``t`` after launch with ``v0``."""
+        if damping <= 1e-9:
+            return 0.5 * accel * t * t + v0 * t, v0 + accel * t
+        v_terminal = accel / damping
+        decay = math.exp(-damping * t)
+        dx = v_terminal * t + (v0 - v_terminal) * (1.0 - decay) / damping
+        return dx, v_terminal + (v0 - v_terminal) * decay
+
+    def _multipuck_apex(self, accel, damping, v0):
+        """(t_apex, rise) for an upward (v0 < 0) launch; ``rise`` > 0 is against +x."""
+        if v0 >= 0.0:
+            return 0.0, 0.0
+        if damping <= 1e-9:
+            t_apex = -v0 / accel
+        else:
+            t_apex = math.log(1.0 - v0 * damping / accel) / damping
+        dx, _ = self._multipuck_ballistic_state(accel, damping, v0, t_apex)
+        return t_apex, -dx
+
+    def _multipuck_launch_speed_for_rise(self, accel, damping, rise):
+        """Upward launch speed whose apex is ``rise`` metres above the launch point."""
+        lo = 0.0
+        hi = max(math.sqrt(2.0 * accel * rise), 1e-3)  # exact when undamped, low otherwise
+        for _ in range(60):
+            if self._multipuck_apex(accel, damping, -hi)[1] >= rise:
+                break
+            hi *= 1.5
+        for _ in range(60):
+            mid = 0.5 * (lo + hi)
+            if self._multipuck_apex(accel, damping, -mid)[1] < rise:
+                lo = mid
+            else:
+                hi = mid
+        return 0.5 * (lo + hi)
+
+    def _multipuck_cycle_time(self, accel, damping, v0, t_apex):
+        """Time for the launched puck to fall back to its launch x."""
+        lo = t_apex
+        hi = max(2.0 * t_apex, t_apex + 1e-3)
+        for _ in range(60):
+            if self._multipuck_ballistic_state(accel, damping, v0, hi)[0] >= 0.0:
+                break
+            hi *= 1.5
+        for _ in range(60):
+            mid = 0.5 * (lo + hi)
+            if self._multipuck_ballistic_state(accel, damping, v0, mid)[0] < 0.0:
+                lo = mid
+            else:
+                hi = mid
+        return 0.5 * (lo + hi)
+
+    def _multipuck_y_lanes(self, n):
+        """``n`` shuffled y-intervals, one per puck, plus the separation they guarantee.
+
+        The pucks share one x corridor at different times, so they are given
+        separate y lanes rather than merely non-overlapping spawn points — two
+        pucks in the same lane collide mid-flight and destroy the stagger.
+        """
+        y_low = self.table_y_left + self.puck_radius
+        y_high = self.table_y_right - self.puck_radius
+        lane_width = (y_high - y_low) / n
+        # Shrink the request if the table is too narrow to honour it.
+        separation = min(self.multipuck_stagger_min_y_separation_m, 0.8 * lane_width)
+        lanes = [
+            (
+                y_low + i * lane_width + 0.5 * separation,
+                y_low + (i + 1) * lane_width - 0.5 * separation,
+            )
+            for i in range(n)
+        ]
+        order = self.rng.permutation(n)
+        return [lanes[i] for i in order], separation
+
+    def _multipuck_sample_y_in_lane(self, x_pos, lane, paddle_pos):
+        """Sample y inside ``lane``, preferring placements clear of the paddle."""
+        paddle_clearance = self.puck_radius + self.paddle_radius + 0.01
+        best_y, best_margin = None, -np.inf
+        for _ in range(32):
+            y_pos = float(self.rng.uniform(low=lane[0], high=lane[1]))
+            margin = math.hypot(x_pos - paddle_pos[0], y_pos - paddle_pos[1]) - paddle_clearance
+            if margin >= 0.0:
+                return y_pos
+            if margin > best_margin:
+                best_y, best_margin = y_pos, margin
+        return best_y
+
+    def _multipuck_lateral_speed(self, time_to_reach, separation):
+        """Lateral speed bounded so a puck stays in its lane until it arrives."""
+        drift_budget = 0.25 * separation / max(float(time_to_reach), 0.25)
+        speed_max = min(self.multipuck_stagger_lateral_speed_max, drift_budget)
+        return float(self.rng.uniform(low=-speed_max, high=speed_max))
+
+    def _sample_staggered_multipuck_configurations(self, paddle_pos):
+        """Puck states along one juggle cycle, evenly spaced in time-to-reach.
+
+        ``puck_i`` reaches the paddle-reachable region at ``(i + 1) / n`` of the
+        cycle, so ``puck_0`` is the one falling in soonest and ``puck_{n-1}`` was
+        just launched upward. With two pucks that is one rising and one falling;
+        with three, two rising (one near the apex, one just launched) and one
+        falling; and so on.
+        """
+        accel, damping = self._multipuck_fall_dynamics()
+        x_reach = self._multipuck_reach_x()
+
+        rise_max = x_reach - (self.table_x_top + 2.0 * self.puck_radius)
+        apex_frac = float(
+            self.rng.uniform(
+                low=self.multipuck_stagger_apex_frac_min,
+                high=self.multipuck_stagger_apex_frac_max,
+            )
+        )
+        rise = max(1e-3, apex_frac * rise_max)
+        v0 = -self._multipuck_launch_speed_for_rise(accel, damping, rise)
+        t_apex, _ = self._multipuck_apex(accel, damping, v0)
+        cycle_time = self._multipuck_cycle_time(accel, damping, v0, t_apex)
+
+        n = int(self.num_pucks)
+        slot = cycle_time / n
+        lanes, separation = self._multipuck_y_lanes(n)
+        configurations = []
+        for i in range(n):
+            time_to_reach = (i + 1) * slot
+            if self.multipuck_stagger_phase_jitter > 0.0:
+                jitter = self.multipuck_stagger_phase_jitter * slot
+                time_to_reach += float(self.rng.uniform(low=-jitter, high=jitter))
+            phase = float(np.clip(cycle_time - time_to_reach, 0.0, cycle_time))
+            dx, vx = self._multipuck_ballistic_state(accel, damping, v0, phase)
+            x_pos = float(
+                np.clip(
+                    x_reach + dx,
+                    self.table_x_top + self.puck_radius,
+                    self.table_x_bot - self.puck_radius,
+                )
+            )
+            y_pos = self._multipuck_sample_y_in_lane(x_pos, lanes[i], paddle_pos)
+            vy = self._multipuck_lateral_speed(time_to_reach, separation)
+            configurations.append(((x_pos, y_pos), (float(vx), vy)))
+        return configurations
+
+    def _create_world_objects_staggered_multipuck(self):
+        paddle_name = 'paddle_ego'
+        paddle_pos, paddle_vel = self.get_paddle_configuration(paddle_name)
+        configurations = self._sample_staggered_multipuck_configurations(paddle_pos)
+        for i, (pos, vel) in enumerate(configurations):
+            self.simulator.spawn_puck(pos, vel, 'puck_{}'.format(i))
+        self.simulator.spawn_paddle(paddle_pos, paddle_vel, paddle_name)
         self._spawn_triangle_obstacles()
 
     def _spawn_triangle_obstacles(self):
