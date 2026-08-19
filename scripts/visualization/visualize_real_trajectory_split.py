@@ -62,6 +62,11 @@ OPTIONAL_SPLIT_DATASETS = (
     ("policy_action", 2),   # Raw normalized [-1, 1] action executed this step
     ("task_reward", 1),     # Per-step env task reward
     ("done", 1),            # Same no-bootstrap done flag stored in replay buffer
+    # Goal-conditioned tasks only (puck_goal_position*, paddle_reach_position*,
+    # etc.). Layout: [goal_x_table, goal_y_table, goal_radius_m]. Absent on
+    # non-goal HDF5s and on reset-FSM HDF5s. Consumed by episode GIF rendering
+    # to draw a green goal-region ring matching the live cv2 overlay style.
+    ("goal", 3),
 )
 OPTIONAL_ALLOWED_WIDTHS = {
     "timing": (8, 9),

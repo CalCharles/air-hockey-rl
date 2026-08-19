@@ -6,13 +6,9 @@ def clip_limits(x,y,lims, edge_lims):
     top_abs, bot_abs, max_bias_m, max_bias_p = edge_lims
 
     y = np.clip(y, y_min, y_max, )
-    # x_min = x_min_lim  + bot_abs * np.abs(y)
-    x_min = x_min_lim
-    # x_max = x_max_lim - top_abs * np.abs(y)
+    # Midline-adjacent edge: pull back at high |y| (mirrors commented bot_abs rule).
+    x_min = max(x_min_lim, x_min_lim + bot_abs * np.abs(y))
     x_max = min(x_max_lim, max_bias_m - top_abs * y, max_bias_p + top_abs * y)
-    # print(x_max, x_max_lim, max_bias_m, - top_abs * y, max_bias_p, top_abs * y, y)
-    # x_min, x_max = x_min_lim, x_max_lim
-    # print(x_min, x_max,max_bias_m - top_abs * y, max_bias_p + top_abs * y, y)
     x = np.clip(x, x_min, x_max, ) # Workspace limits
     return x,y
 
@@ -20,13 +16,9 @@ def get_clip_limits(x,y,lims, edge_lims):
     x_min_lim, x_max_lim, y_min, y_max = lims
     top_abs, bot_abs, max_bias_m, max_bias_p = edge_lims
     y = np.clip(y, y_min, y_max, )
-    # x_min = x_min_lim  + bot_abs * np.abs(y)
-    x_min = x_min_lim
-    # x_max = x_max_lim - top_abs * np.abs(y)
+    x_min = max(x_min_lim, x_min_lim + bot_abs * np.abs(y))
     x_max = min(x_max_lim, max_bias_m - top_abs * y, max_bias_p + top_abs * y)
-    # x_min, x_max = x_min_lim, x_max_lim
-    # print(x_min, x_max,max_bias_m - top_abs * y, max_bias_p + top_abs * y, y)
-    return x_min,x_max,y_min, y_max
+    return x_min, x_max, y_min, y_max
 
 
 def get_edge(x,y, w, h):

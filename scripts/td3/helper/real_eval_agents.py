@@ -22,6 +22,11 @@ Two implementations ship:
   * ``"sgcrl"`` — wraps ``scripts.real.sgcrl_policy.load_sgcrl_deterministic_policy``
                   behind a tensor-IO adapter. ``TrainArgs`` are synthesized
                   with ``use_last_action_in_policy_state=False``.
+  * ``"iwr"``   — same actor/obs contract as SGCRL; loads IWR checkpoints
+                  (``algorithm_name='interaction_weighted_sampling'``).
+  * ``"crtr"``, ``"sac-gcrl"``, ``"sac-her"``, ``"sac-weighted-her"``, ``"ppo-gcrl"`` — same
+                  GCRL-style contract; load pickled actors from the external
+                  trainer with algorithm-specific ``algorithm_name`` checks.
 
 Adding a new agent = register a builder in ``EVAL_AGENT_BUILDERS``.
 """
@@ -71,7 +76,7 @@ def synthesize_eval_train_args(*, use_last_action: bool = False) -> TrainArgs:
     keep the dataclass happy.
     """
     return TrainArgs(
-        action_scale=1.0,
+        # action_scale=1.0,
         agent_hidden_layer_size=256,
         agent_num_hidden_layers=2,
         q_hidden_layer_size=256,
@@ -159,15 +164,15 @@ def build_td3_eval_agent(
 # ---------------------------------------------------------------------------
 
 
-class _SGCRLActorAdapter:
-    """Wraps ``SGCRLDeterministicPolicy`` to expose the runner's actor contract.
+class _GCRLStyleActorAdapter:
+    """Wraps a GCRL-style ``PolicyAgent`` to expose the runner's actor contract.
 
     The runner calls ``deterministic_actor_action(actor, policy_obs_tensor)``
     which forwards to ``actor.get_action(policy_obs_tensor) -> action_tensor``
-    (see ``real_td3_runtime.deterministic_actor_action``). SGCRL's
-    ``PolicyAgent`` is callable on numpy and returns numpy; this adapter
-    bridges the tensor IO and adds a no-op ``.eval()`` so the runner's
-    standard initialization works unchanged.
+    (see ``real_td3_runtime.deterministic_actor_action``). The underlying
+    policy is callable on numpy and returns numpy; this adapter bridges the
+    tensor IO and adds a no-op ``.eval()`` so the runner's standard
+    initialization works unchanged.
     """
 
     def __init__(self, policy: Any, device: torch.device) -> None:
@@ -178,14 +183,61 @@ class _SGCRLActorAdapter:
         return None
 
     def get_action(self, policy_obs: torch.Tensor) -> torch.Tensor:
-        # policy_obs: (B=1, obs_dim). ``augment_policy_observation`` passes
-        # through unchanged when ``use_last_action_in_policy_state`` is
-        # False — which the SGCRL builder enforces via synthesized TrainArgs.
         obs_np = policy_obs.squeeze(0).detach().cpu().numpy()
         action_np = self._policy(obs_np)
         return torch.as_tensor(
             action_np, dtype=torch.float32, device=self._device
         ).unsqueeze(0)
+
+
+_SGCRLActorAdapter = _GCRLStyleActorAdapter
+
+
+def _build_gcrl_style_eval_agent(
+    *,
+    args: Args,
+    train_args: TrainArgs,
+    obs_dim: int,
+    act_dim: int,
+    action_low_np: np.ndarray,
+    action_high_np: np.ndarray,
+    device: torch.device,
+    agent_kind: str,
+    loader_fn: Callable[..., Any],
+) -> EvalAgent:
+    """Shared eval builder for SGCRL / IWR pickled goal-conditioned actors."""
+    if args.model_path is None:
+        raise SystemExit(
+            f"--agent {agent_kind} requires --model-path pointing to a .pkl "
+            "checkpoint produced by the external GCRL trainer."
+        )
+    if not os.path.exists(args.model_path):
+        raise FileNotFoundError(f"--model-path does not exist: {args.model_path}")
+
+    if train_args.use_last_action_in_policy_state:
+        raise SystemExit(
+            f"--agent {agent_kind} requires use_last_action_in_policy_state=False; "
+            "the actor expects raw env obs."
+        )
+
+    del action_low_np, action_high_np  # tanh-squashed actor; runner re-clamps.
+
+    policy = loader_fn(
+        model_path=args.model_path,
+        env_obs_dim=int(obs_dim),
+        env_act_dim=int(act_dim),
+        device=device,
+    )
+    adapter = _GCRLStyleActorAdapter(policy, device=device)
+    return EvalAgent(
+        actor=adapter,
+        train_args=train_args,
+        metadata={
+            "q_updates":     0,
+            "actor_updates": 0,
+            "model_path":    str(args.model_path),
+        },
+    )
 
 
 def build_sgcrl_eval_agent(
@@ -198,60 +250,111 @@ def build_sgcrl_eval_agent(
     action_high_np: np.ndarray,
     device: torch.device,
 ) -> EvalAgent:
-    """Load an SGCRL ``.pkl`` checkpoint and wrap it as an ``EvalAgent``.
-
-    Imports the loader lazily so the SGCRL dependency tree (which pulls in
-    ``scripts.real.sgcrl_policy`` and its pickle-tolerant unpickler) is
-    only paid for when the SGCRL agent is actually requested.
-    """
-    # Local import so non-SGCRL paths don't pay the import cost.
+    """Load an SGCRL ``.pkl`` checkpoint and wrap it as an ``EvalAgent``."""
     from scripts.real.sgcrl_policy import load_sgcrl_deterministic_policy
 
-    if args.model_path is None:
-        raise SystemExit(
-            "--agent sgcrl requires --model-path pointing to a .pkl "
-            "checkpoint produced by the SGCRL trainer."
-        )
-    if not os.path.exists(args.model_path):
-        raise FileNotFoundError(f"--model-path does not exist: {args.model_path}")
-
-    # SGCRL doesn't augment obs with the last action; the eval loop must
-    # not either. Refuse a synthesized TrainArgs that says otherwise so a
-    # mis-set flag surfaces here instead of as a silent obs-shape mismatch.
-    if train_args.use_last_action_in_policy_state:
-        raise SystemExit(
-            "--agent sgcrl requires use_last_action_in_policy_state=False; "
-            "the SGCRL actor expects raw env obs."
-        )
-
-    del action_low_np, action_high_np  # SGCRL self-clips via tanh; runner re-clamps.
-
-    policy = load_sgcrl_deterministic_policy(
-        model_path=args.model_path,
-        env_obs_dim=int(obs_dim),
-        env_act_dim=int(act_dim),
-        device=device,
-    )
-    adapter = _SGCRLActorAdapter(policy, device=device)
-    return EvalAgent(
-        actor=adapter,
+    return _build_gcrl_style_eval_agent(
+        args=args,
         train_args=train_args,
-        metadata={
-            "q_updates":     0,
-            "actor_updates": 0,
-            "model_path":    str(args.model_path),
-        },
+        obs_dim=obs_dim,
+        act_dim=act_dim,
+        action_low_np=action_low_np,
+        action_high_np=action_high_np,
+        device=device,
+        agent_kind="sgcrl",
+        loader_fn=load_sgcrl_deterministic_policy,
     )
+
+
+def build_iwr_eval_agent(
+    *,
+    args: Args,
+    train_args: TrainArgs,
+    obs_dim: int,
+    act_dim: int,
+    action_low_np: np.ndarray,
+    action_high_np: np.ndarray,
+    device: torch.device,
+) -> EvalAgent:
+    """Load an IWR ``.pkl`` checkpoint and wrap it as an ``EvalAgent``."""
+    from scripts.real.iwr_policy import load_iwr_deterministic_policy
+
+    return _build_gcrl_style_eval_agent(
+        args=args,
+        train_args=train_args,
+        obs_dim=obs_dim,
+        act_dim=act_dim,
+        action_low_np=action_low_np,
+        action_high_np=action_high_np,
+        device=device,
+        agent_kind="iwr",
+        loader_fn=load_iwr_deterministic_policy,
+    )
+
+
+def _make_gcrl_variant_eval_agent_builder(
+    agent_kind: str,
+    loader_fn: Callable[..., Any],
+) -> Callable[..., EvalAgent]:
+    """Factory for GCRL-style eval builders that share the SGCRL/IWR contract."""
+
+    def builder(
+        *,
+        args: Args,
+        train_args: TrainArgs,
+        obs_dim: int,
+        act_dim: int,
+        action_low_np: np.ndarray,
+        action_high_np: np.ndarray,
+        device: torch.device,
+    ) -> EvalAgent:
+        return _build_gcrl_style_eval_agent(
+            args=args,
+            train_args=train_args,
+            obs_dim=obs_dim,
+            act_dim=act_dim,
+            action_low_np=action_low_np,
+            action_high_np=action_high_np,
+            device=device,
+            agent_kind=agent_kind,
+            loader_fn=loader_fn,
+        )
+
+    return builder
 
 
 # ---------------------------------------------------------------------------
 # Registry + dispatcher.
 # ---------------------------------------------------------------------------
 
+from scripts.real.gcrl_variant_policies import (
+    load_crtr_deterministic_policy,
+    load_ppo_gcrl_deterministic_policy,
+    load_sac_gcrl_deterministic_policy,
+    load_sac_her_deterministic_policy,
+    load_sac_weighted_her_deterministic_policy,
+)
+
 
 EVAL_AGENT_BUILDERS: Dict[str, Callable[..., EvalAgent]] = {
     "td3":   build_td3_eval_agent,
     "sgcrl": build_sgcrl_eval_agent,
+    "iwr":   build_iwr_eval_agent,
+    "crtr": _make_gcrl_variant_eval_agent_builder(
+        "crtr", load_crtr_deterministic_policy
+    ),
+    "sac-gcrl": _make_gcrl_variant_eval_agent_builder(
+        "sac-gcrl", load_sac_gcrl_deterministic_policy
+    ),
+    "sac-her": _make_gcrl_variant_eval_agent_builder(
+        "sac-her", load_sac_her_deterministic_policy
+    ),
+    "sac-weighted-her": _make_gcrl_variant_eval_agent_builder(
+        "sac-weighted-her", load_sac_weighted_her_deterministic_policy
+    ),
+    "ppo-gcrl": _make_gcrl_variant_eval_agent_builder(
+        "ppo-gcrl", load_ppo_gcrl_deterministic_policy
+    ),
 }
 
 
@@ -267,11 +370,15 @@ def build_eval_agent(
     device: torch.device,
 ) -> EvalAgent:
     """Dispatch on ``kind`` to the registered builder. ``SystemExit`` on unknown."""
-    builder = EVAL_AGENT_BUILDERS.get(str(kind))
+    from scripts.real.agent_kinds import normalize_agent_kind
+
+    canonical_kind = normalize_agent_kind(kind)
+    builder = EVAL_AGENT_BUILDERS.get(canonical_kind)
     if builder is None:
         raise SystemExit(
             f"--agent {kind!r} not registered; known: "
-            f"{sorted(EVAL_AGENT_BUILDERS.keys())}"
+            f"{sorted(EVAL_AGENT_BUILDERS.keys())} "
+            f"(underscore and hyphen spellings are equivalent)"
         )
     return builder(
         args=args,

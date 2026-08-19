@@ -451,6 +451,20 @@ class RealTrajectoryRenderer:
             color, thickness,
         )
 
+    def draw_goal_region(self, frame, goal_x, goal_y, goal_radius):
+        """Draw goal ring in TABLE frame (``AirHockeyRenderer.draw_region`` circle)."""
+        if goal_x is None or goal_y is None:
+            return
+        if goal_radius is None or not np.isfinite(goal_radius) or float(goal_radius) <= 0:
+            return
+        goal_position = np.array((float(goal_y), -float(goal_x)))
+        center = goal_position + np.array((self.width / 2, self.length / 2))
+        center = np.array((center[1], center[0])) * self.ppm
+        radius_px = max(3, int(round(float(goal_radius) * self.ppm)))
+        center_int = tuple(center.astype(int))
+        cv2.circle(frame, center_int, radius_px + 1, (0, 0, 0), 3)
+        cv2.circle(frame, center_int, radius_px, (0, 255, 0), 2)
+
     def draw_puck(self, frame, puck_x, puck_y, puck_occluded=None):
         """
         Draw puck at table-frame coordinates.
@@ -498,6 +512,7 @@ class RealTrajectoryRenderer:
     def render_frame(self, pos_x, pos_y, vel_x=None, vel_y=None,
                     puck_x=None, puck_y=None, puck_occluded=None,
                     target_x=None, target_y=None,
+                    goal_x=None, goal_y=None, goal_radius=None,
                     timestep=None, total_time=None):
         """
         Render a single frame with paddle at given position.
@@ -512,6 +527,9 @@ class RealTrajectoryRenderer:
             puck_occluded: Optional puck occlusion flag
             target_x: Target X position in table frame (optional)
             target_y: Target Y position in table frame (optional)
+            goal_x: Task goal X position in table frame (optional, goal-conditioned only)
+            goal_y: Task goal Y position in table frame (optional, goal-conditioned only)
+            goal_radius: Goal success radius in meters (optional)
             timestep: Optional timestep number to display
             total_time: Optional total elapsed time to display
             
@@ -519,6 +537,11 @@ class RealTrajectoryRenderer:
             numpy.ndarray: BGR image array
         """
         frame = self.table_img.copy()
+
+        # Draw goal region behind everything else (matches live overlay z-order:
+        # goal ring is the lowest layer, then target marker, then puck/paddle).
+        if goal_x is not None and goal_y is not None:
+            self.draw_goal_region(frame, goal_x, goal_y, goal_radius)
 
         # Draw target first (behind everything else).
         if target_x is not None and target_y is not None:
@@ -577,7 +600,15 @@ class RealTrajectoryRenderer:
         if target_x is not None and target_y is not None:
             text = f"Target: ({target_x:.3f}, {target_y:.3f})m"
             cv2.putText(frame, text, (10, y_offset), font, font_scale, (255, 165, 0), line_type)
-        
+            y_offset += 25
+
+        if goal_x is not None and goal_y is not None:
+            if goal_radius is not None and np.isfinite(goal_radius) and float(goal_radius) > 0:
+                text = f"Goal: ({goal_x:.3f}, {goal_y:.3f})m r={float(goal_radius):.3f}"
+            else:
+                text = f"Goal: ({goal_x:.3f}, {goal_y:.3f})m"
+            cv2.putText(frame, text, (10, y_offset), font, font_scale, (60, 180, 75), line_type)
+
         # Apply orientation rotation if vertical (matching render.py line 487)
         if self.orientation == 'vertical':
             frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
@@ -587,7 +618,7 @@ class RealTrajectoryRenderer:
 
 def create_trajectory_gif(paddle_data, renderer, output_path, 
                          max_frames=None, subsample=1, fps=20,
-                         output_width=160):
+                         output_width=160, goal_data=None):
     """
     Create GIF from trajectory data.
     
@@ -598,6 +629,8 @@ def create_trajectory_gif(paddle_data, renderer, output_path,
         max_frames: Optional maximum number of frames to render
         subsample: Subsample factor (1 = all frames, 2 = every other frame, etc.)
         fps: Frames per second for GIF playback
+        goal_data: Optional (N, 3) array of [goal_x_table, goal_y_table, goal_radius]
+            per timestep (goal-conditioned tasks). When None, no goal is drawn.
     """
     # Extract data
     pos_x = paddle_data['pos_x']
@@ -612,6 +645,7 @@ def create_trajectory_gif(paddle_data, renderer, output_path,
     has_target = paddle_data.get('has_target', False)
     target_x = paddle_data.get('target_x')
     target_y = paddle_data.get('target_y')
+    has_goal = goal_data is not None and len(goal_data) > 0
     
     # Calculate relative time
     relative_time = timestamps - timestamps[0]
@@ -652,6 +686,9 @@ def create_trajectory_gif(paddle_data, renderer, output_path,
             puck_occluded=(puck_occluded[i] if (has_puck and puck_occluded is not None) else None),
             target_x=(target_x[i] if has_target else None),
             target_y=(target_y[i] if has_target else None),
+            goal_x=(float(goal_data[i, 0]) if has_goal else None),
+            goal_y=(float(goal_data[i, 1]) if has_goal else None),
+            goal_radius=(float(goal_data[i, 2]) if has_goal else None),
             timestep=i,
             total_time=relative_time[i]
         )

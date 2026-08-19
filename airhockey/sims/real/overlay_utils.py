@@ -194,73 +194,120 @@ def draw_paddle_marker(
     )
 
 
+def enlarged_goal_marker_radius_m(simulator, reward_radius_m=None):
+    """Visual goal-ring radius on homography overlays.
+
+    Matches the enlarged default used in ``puck_goal_position_velocity`` /
+    ``puck_goal_position_dynamic_negative_regions`` when ``goal_radius_type``
+    is ``fixed`` (``(min + max) / 2 * 0.75``). Falls back to the task reward
+    radius when simulator bounds are unavailable.
+    """
+    min_r = getattr(simulator, "min_goal_radius", None)
+    max_r = getattr(simulator, "max_goal_radius", None)
+    if min_r is not None and max_r is not None:
+        return (float(min_r) + float(max_r)) / 2.0 * 0.75
+    if reward_radius_m is None:
+        return None
+    try:
+        reward_val = float(reward_radius_m)
+    except (TypeError, ValueError):
+        return None
+    return reward_val if reward_val > 0 else None
+
+
+def draw_homography_episode_markers(
+    frame,
+    *,
+    target_xy_robot,
+    puck_state_table,
+    paddle_xy_robot,
+    goal_xy_table=None,
+    goal_radius_m=None,
+    center_offset_constant=0.0,
+    puck_radius_m=0.03175,
+    paddle_radius_m=0.0508,
+    offset_constants=None,
+    visual_downscale_constant=DEFAULT_VISUAL_DOWNSCALE_CONSTANT,
+):
+    """Draw the live robot overlay stack onto a homography-warped BGR frame."""
+    if frame is None:
+        return frame
+
+    if target_xy_robot is not None:
+        draw_target_marker(
+            frame,
+            target_xy_robot,
+            offset_constants=offset_constants,
+            visual_downscale_constant=visual_downscale_constant,
+        )
+
+    if puck_state_table is not None:
+        draw_puck_marker_from_state(
+            frame,
+            puck_state_table,
+            puck_radius_m,
+            x_offset_for_state=center_offset_constant,
+            offset_constants=offset_constants,
+            visual_downscale_constant=visual_downscale_constant,
+            color=(0, 255, 0),
+            require_visible=True,
+        )
+
+    if paddle_xy_robot is not None:
+        draw_paddle_marker(
+            frame,
+            paddle_xy_robot,
+            paddle_radius_m,
+            offset_constants=offset_constants,
+            visual_downscale_constant=visual_downscale_constant,
+            color=(255, 0, 0),
+        )
+
+    if goal_xy_table is not None:
+        goal_robot_x, goal_robot_y = observation_to_robot_xy(
+            goal_xy_table[0],
+            goal_xy_table[1],
+            center_offset_constant,
+        )
+        draw_goal_marker(
+            frame,
+            (goal_robot_x, goal_robot_y),
+            goal_radius_m=goal_radius_m,
+            offset_constants=offset_constants,
+            visual_downscale_constant=visual_downscale_constant,
+        )
+
+    return frame
+
+
 def draw_goal_marker(
     frame,
     goal_xy_robot,
     goal_radius_m=None,
     offset_constants=None,
     visual_downscale_constant=DEFAULT_VISUAL_DOWNSCALE_CONSTANT,
-    color=(0, 255, 255),
-    marker_size=10,
+    color=(0, 255, 0),
     thickness=2,
 ):
-    """Draw a goal marker (success-radius ring + center crosshair) in robot frame.
+    """Draw the task success region as a green ring in robot frame.
 
-    Intended for goal-conditioned tasks (e.g. ``puck_goal_position``) so the
-    operator can see WHERE the puck is being asked to land. ``goal_xy_robot``
-    is expected in robot frame — task code that owns the goal in table frame
-    should subtract ``center_offset_constant`` before calling this.
-
-    Distinct yellow color (BGR ``(0, 255, 255)``) to avoid clashing with the
-    orange paddle-target cross and the green puck dot.
+    Intended for goal-conditioned tasks (e.g. ``puck_goal_position``). Matches
+    the Box2D ``AirHockeyRenderer`` convention (green goal circle at true
+    ``goal_radius``). ``goal_xy_robot`` is in robot frame — callers with a
+    table-frame goal should subtract ``center_offset_constant`` first.
     """
     if frame is None or goal_xy_robot is None or len(goal_xy_robot) < 2:
         return frame
+    if goal_radius_m is None or float(goal_radius_m) <= 0:
+        return frame
 
-    if goal_radius_m is not None and float(goal_radius_m) > 0:
-        draw_robot_circle_marker(
-            frame,
-            float(goal_xy_robot[0]),
-            float(goal_xy_robot[1]),
-            float(goal_radius_m),
-            color,
-            offset_constants=offset_constants,
-            visual_downscale_constant=visual_downscale_constant,
-            thickness=thickness,
-        )
-
-    center = robot_to_display_pixel_int(
-        goal_xy_robot[0],
-        goal_xy_robot[1],
+    return draw_robot_circle_marker(
+        frame,
+        float(goal_xy_robot[0]),
+        float(goal_xy_robot[1]),
+        float(goal_radius_m),
+        color,
         offset_constants=offset_constants,
         visual_downscale_constant=visual_downscale_constant,
+        thickness=thickness,
     )
-    cv2.line(
-        frame,
-        (center[0] - marker_size, center[1]),
-        (center[0] + marker_size, center[1]),
-        (0, 0, 0),
-        thickness + 2,
-    )
-    cv2.line(
-        frame,
-        (center[0], center[1] - marker_size),
-        (center[0], center[1] + marker_size),
-        (0, 0, 0),
-        thickness + 2,
-    )
-    cv2.line(
-        frame,
-        (center[0] - marker_size, center[1]),
-        (center[0] + marker_size, center[1]),
-        color,
-        thickness,
-    )
-    cv2.line(
-        frame,
-        (center[0], center[1] - marker_size),
-        (center[0], center[1] + marker_size),
-        color,
-        thickness,
-    )
-    return frame

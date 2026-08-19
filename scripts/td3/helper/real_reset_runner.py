@@ -75,6 +75,16 @@ def _reset_artifact_partition(done_reason: str) -> str:
     return "success" if str(done_reason) == "success" else "failure"
 
 
+def _rewind_goal_sequence_if_available(env, *, reason: str) -> None:
+    """Undo one scripted goal advance on goal-task envs (no-op otherwise)."""
+    rewind = getattr(env, "rewind_goal_sequence", None)
+    if not callable(rewind):
+        return
+    rewind()
+    idx = int(getattr(env, "_goal_sequence_idx", 0))
+    print(f"[eval_goal_grid] rewound goal sequence {reason} (next_idx={idx})")
+
+
 def _hard_reset_with_pause(
     env: AirHockeyEnv, reason: str, pause_s: float = 3.0
 ) -> tuple[np.ndarray, dict]:
@@ -436,6 +446,7 @@ class ResetRunner:
         episode_end_wall_time: float,
         pending_reset_artifact: PendingResetArtifact | None,
         next_reset_file_id: int,
+        compensate_goal_sequence_before_soft_prime: bool = False,
     ) -> ResetResult:
         """Block until the reset succeeds; return the seeded obs + artifact.
 
@@ -445,6 +456,11 @@ class ResetRunner:
         (``max(0, MIN_RESET_DELAY_S - processing_elapsed_s)``) only on
         ``ResetKind.SOFT``; hard paths use ``_hard_reset_with_pause``'s own
         pause and ignore this field.
+
+        When ``compensate_goal_sequence_before_soft_prime`` is set, the hard-
+        reset path rewinds the scripted goal once more immediately before
+        ``soft_reset`` so eval retries do not double-advance the goal grid
+        (``env.reset`` + ``soft_reset`` each consume one scripted goal).
 
         Threads ``pending_reset_artifact`` and ``next_reset_file_id`` through
         ``merge_reset_fsm_artifact_into_pending`` to preserve the existing
@@ -553,6 +569,11 @@ class ResetRunner:
                     startup_buffered_message=False,
                 )
                 artifact_for_log = fsm_result.artifact
+                if compensate_goal_sequence_before_soft_prime:
+                    _rewind_goal_sequence_if_available(
+                        self._env,
+                        reason="before soft prime after hard reset",
+                    )
                 obs = self._soft_prime()
                 self._counters["bottom"] = 0
                 self._counters["occ"] = 0

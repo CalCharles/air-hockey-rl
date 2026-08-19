@@ -147,6 +147,29 @@ def _force_cpu_tensor_storage() -> Iterator[None]:
         _ts.default_restore_location = original
 
 
+def _infer_hidden_dims_from_actor_sd(actor_sd: dict[str, Any]) -> tuple[int, ...]:
+    """Derive MLP hidden widths from ``backbone.network.*.weight`` keys.
+
+    SAC-family checkpoints omit ``hidden_dims`` in agent metadata but use the
+    same backbone naming convention as SGCRL/IWR.
+    """
+    layer_weights: list[tuple[int, int]] = []
+    prefix = "backbone.network."
+    for key, tensor in actor_sd.items():
+        if not key.startswith(prefix) or not key.endswith(".weight"):
+            continue
+        idx_str = key[len(prefix) : -len(".weight")]
+        if not idx_str.isdigit():
+            continue
+        layer_weights.append((int(idx_str), int(tensor.shape[0])))
+    if not layer_weights:
+        raise ValueError(
+            "Cannot infer hidden_dims: no backbone.network.*.weight keys in actor state_dict."
+        )
+    layer_weights.sort(key=lambda item: item[0])
+    return tuple(width for _, width in layer_weights)
+
+
 def _load_sgcrl_pkl(path: Path) -> dict[str, Any]:
     with open(path, "rb") as handle, _force_cpu_tensor_storage():
         payload = _TolerantUnpickler(handle).load()
@@ -191,18 +214,24 @@ class SGCRLDeterministicPolicy:
 # ---------------------------------------------------------------------------
 
 
-def load_sgcrl_deterministic_policy(
+def load_gcrl_style_deterministic_policy(
     *,
     model_path: str | Path,
     env_obs_dim: int,
     env_act_dim: int,
     device: torch.device,
+    agent_label: str = "gcrl",
+    expected_algorithm_name: str | None = None,
 ) -> SGCRLDeterministicPolicy:
-    """Build a ``SGCRLDeterministicPolicy`` from a saved ``.pkl`` checkpoint.
+    """Build a deterministic policy from a GCRL-style ``.pkl`` checkpoint.
+
+    SGCRL and IWR (interaction-weighted sampling) share the same actor
+    architecture and ``agent`` dict layout; they differ only in the saved
+    ``algorithm_name`` and filename convention from the external trainer.
 
     Reads ``state_dim`` / ``goal_dim`` / ``hidden_dims`` from the embedded
-    ``agent`` metadata so the network topology is derived from the
-    checkpoint itself (no external config required).
+    ``agent`` metadata so the network topology is derived from the checkpoint
+    itself (no external config required).
     """
     model_path = Path(model_path)
     payload = _load_sgcrl_pkl(model_path)
@@ -210,40 +239,59 @@ def load_sgcrl_deterministic_policy(
     agent_state = payload.get("agent")
     if not isinstance(agent_state, dict):
         raise ValueError(
-            f"SGCRL checkpoint at {model_path} is missing 'agent' dict "
+            f"{agent_label} checkpoint at {model_path} is missing 'agent' dict "
             f"(got top-level keys: {list(payload.keys())})."
         )
+
+    actual_algorithm_name = agent_state.get("algorithm_name")
+    if expected_algorithm_name is not None:
+        if actual_algorithm_name != expected_algorithm_name:
+            raise SystemExit(
+                f"--agent {agent_label} expected checkpoint "
+                f"algorithm_name={expected_algorithm_name!r}, "
+                f"got {actual_algorithm_name!r} in {model_path}."
+            )
 
     actor_sd = agent_state.get("actor")
     if not isinstance(actor_sd, dict) or "loc_layer.weight" not in actor_sd:
         raise ValueError(
-            f"SGCRL checkpoint at {model_path} does not contain a recognisable "
-            f"'agent.actor' state_dict."
+            f"{agent_label} checkpoint at {model_path} does not contain a "
+            f"recognisable 'agent.actor' state_dict."
         )
 
     try:
         state_dim = int(agent_state["state_dim"])
         goal_dim = int(agent_state["goal_dim"])
-        hidden_dims = tuple(int(h) for h in agent_state["hidden_dims"])
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(
-            f"SGCRL checkpoint at {model_path} missing required metadata "
-            f"(state_dim / goal_dim / hidden_dims): {exc}"
+            f"{agent_label} checkpoint at {model_path} missing required metadata "
+            f"(state_dim / goal_dim): {exc}"
         )
+
+    raw_hidden_dims = agent_state.get("hidden_dims")
+    if raw_hidden_dims is None:
+        hidden_dims = _infer_hidden_dims_from_actor_sd(actor_sd)
+    else:
+        try:
+            hidden_dims = tuple(int(h) for h in raw_hidden_dims)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{agent_label} checkpoint at {model_path} has invalid hidden_dims: {exc}"
+            )
 
     actor_in_dim = state_dim + goal_dim
     actor_out_dim = int(actor_sd["loc_layer.weight"].shape[0])
 
     if int(env_obs_dim) != actor_in_dim:
         raise SystemExit(
-            f"--agent sgcrl needs env_obs_dim == state_dim + goal_dim "
+            f"--agent {agent_label} needs env_obs_dim == state_dim + goal_dim "
             f"({state_dim} + {goal_dim} = {actor_in_dim}), got env_obs_dim={env_obs_dim}. "
             f"Use a puck_goal_position task with return_goal_obs=False so the env "
             f"appends the 2-D desired_goal to the 30-D state."
         )
     if int(env_act_dim) != actor_out_dim:
         raise SystemExit(
-            f"--agent sgcrl needs env_act_dim == {actor_out_dim} "
+            f"--agent {agent_label} needs env_act_dim == {actor_out_dim} "
             f"(from loc_layer.weight), got env_act_dim={env_act_dim}."
         )
 
@@ -255,9 +303,32 @@ def load_sgcrl_deterministic_policy(
     actor.load_state_dict(actor_sd, strict=True)
     actor.to(device).eval()
 
+    algo_suffix = (
+        f", algorithm_name={actual_algorithm_name!r}"
+        if actual_algorithm_name is not None
+        else ""
+    )
     print(
-        f"[run_policy] loaded sgcrl actor from {model_path} "
+        f"[run_policy] loaded {agent_label} actor from {model_path} "
         f"(state_dim={state_dim}, goal_dim={goal_dim}, "
-        f"hidden_dims={hidden_dims}, action_dim={actor_out_dim})"
+        f"hidden_dims={hidden_dims}, action_dim={actor_out_dim}{algo_suffix})"
     )
     return SGCRLDeterministicPolicy(actor=actor, device=device)
+
+
+def load_sgcrl_deterministic_policy(
+    *,
+    model_path: str | Path,
+    env_obs_dim: int,
+    env_act_dim: int,
+    device: torch.device,
+) -> SGCRLDeterministicPolicy:
+    """Build a ``SGCRLDeterministicPolicy`` from a saved SGCRL ``.pkl`` checkpoint."""
+    return load_gcrl_style_deterministic_policy(
+        model_path=model_path,
+        env_obs_dim=env_obs_dim,
+        env_act_dim=env_act_dim,
+        device=device,
+        agent_label="sgcrl",
+        expected_algorithm_name=None,
+    )

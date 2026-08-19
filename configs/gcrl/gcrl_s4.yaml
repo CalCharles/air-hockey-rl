@@ -47,7 +47,7 @@ air_hockey:
     paddle_radius: 0.0508
     puck_damping: 0.178           # sysid (center of DR distribution)
     puck_density: 3000
-    puck_radius: 1.09145
+    puck_restitution: 1.09145
     render_size: 360
     wall_bounce_scale: 0.02
     width: 0.8636
@@ -62,7 +62,7 @@ air_hockey:
     pid_kd: 50
     pid_ki: 0.0
 
-    hist_len: 2
+    hist_len: 4
 
     # Defaults kept on:
     puck_noise: true

@@ -23,14 +23,10 @@ save_downscale_constant = 2
 offset_constants = np.array((2250, 500))
 
 
-def _effective_xmax(y_m, lims, edge_lims):
-    _, x_max_lim, _, _ = lims
-    top_abs, _, max_bias_p, max_bias_m = edge_lims
-    return min(x_max_lim, max_bias_m - top_abs * y_m, max_bias_p + top_abs * y_m)
-
-
 def draw_robot_edge_limits(frame, lims, edge_lims, color=(0, 255, 255), thickness=2):
-    x_min_lim, _, y_min, y_max = lims
+    from .coordinate_transform import get_clip_limits
+
+    _, _, y_min, y_max = lims
 
     def _to_int_point(x_m, y_m):
         return robot_to_display_pixel_int(
@@ -40,25 +36,16 @@ def draw_robot_edge_limits(frame, lims, edge_lims, color=(0, 255, 255), thicknes
             visual_downscale_constant=visual_downscale_constant,
         )
 
-    # Left edge (x = x_min), top and bottom edges, plus effective right edge.
-    left_top = _to_int_point(x_min_lim, y_max)
-    left_bottom = _to_int_point(x_min_lim, y_min)
-    cv2.line(frame, left_top, left_bottom, color, thickness)
-
-    right_top_x = _effective_xmax(y_max, lims, edge_lims)
-    right_bottom_x = _effective_xmax(y_min, lims, edge_lims)
-    right_top = _to_int_point(right_top_x, y_max)
-    right_bottom = _to_int_point(right_bottom_x, y_min)
-
-    cv2.line(frame, left_top, right_top, color, thickness)
-    cv2.line(frame, left_bottom, right_bottom, color, thickness)
-
     ys = np.linspace(y_min, y_max, num=64)
-    right_points = np.array(
-        [_to_int_point(_effective_xmax(y_val, lims, edge_lims), y_val) for y_val in ys],
-        dtype=np.int32,
-    ).reshape(-1, 1, 2)
-    cv2.polylines(frame, [right_points], isClosed=False, color=color, thickness=thickness)
+    left_points = []
+    right_points = []
+    for y_val in ys:
+        x_min, x_max, _, _ = get_clip_limits(0.0, float(y_val), lims, edge_lims)
+        left_points.append(_to_int_point(x_min, y_val))
+        right_points.append(_to_int_point(x_max, y_val))
+
+    boundary = np.array(left_points + right_points[::-1], dtype=np.int32).reshape(-1, 1, 2)
+    cv2.polylines(frame, [boundary], isClosed=True, color=color, thickness=thickness)
 
 def single_point_homography(matrix, point):
     x,y = point
@@ -84,6 +71,39 @@ def homography_transform(image, get_save=True, rotate=False):
         showdst = cv2.resize(dst, (int(640*upscale_constant / visual_downscale_constant), int(480*upscale_constant / visual_downscale_constant)), 
                 interpolation = cv2.INTER_LINEAR)
     return showdst, save_image
+
+
+def homography_showdst_from_saved_frame(save_image_bgr):
+    """Reconstruct homography-warped ``showdst`` from an episode ``train_img`` tile.
+
+    ``train_img`` is the already-180°-rotated downscaled raw camera frame written
+    by ``homography_transform(..., get_save=True)``. Applies upscale →
+    ``warpPerspective(Mimg)`` → downscale without rotating again.
+    """
+    image = np.asarray(save_image_bgr, dtype=np.uint8)
+    if image.ndim != 3 or image.shape[2] not in (1, 3, 4):
+        raise ValueError(f"Expected H×W×C BGR frame, got shape {image.shape}")
+    if image.shape[2] == 1:
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    elif image.shape[2] == 4:
+        image = image[:, :, :3]
+
+    image = cv2.resize(
+        image,
+        (int(640 * upscale_constant), int(480 * upscale_constant)),
+        interpolation=cv2.INTER_LINEAR,
+    )
+    dst = cv2.warpPerspective(image, Mimg, original_size * upscale_constant)
+    showdst = cv2.resize(
+        dst,
+        (
+            int(640 * upscale_constant / visual_downscale_constant),
+            int(480 * upscale_constant / visual_downscale_constant),
+        ),
+        interpolation=cv2.INTER_LINEAR,
+    )
+    return showdst
+
 
 # Fixed shape of the BGR uint8 frame returned by ``homography_transform`` when
 # ``get_save=True`` (``cv2.resize`` of the rotated raw camera frame to

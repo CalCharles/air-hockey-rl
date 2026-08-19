@@ -34,6 +34,14 @@ import yaml
 from airhockey import AirHockeyEnv
 from airhockey.sims.real.multiprocessing import NonBlockingConsole
 from scripts.real.sgcrl_policy import load_sgcrl_deterministic_policy
+from scripts.real.iwr_policy import load_iwr_deterministic_policy
+from scripts.real.gcrl_variant_policies import (
+    load_crtr_deterministic_policy,
+    load_ppo_gcrl_deterministic_policy,
+    load_sac_gcrl_deterministic_policy,
+    load_sac_her_deterministic_policy,
+    load_sac_weighted_her_deterministic_policy,
+)
 from scripts.td3.deterministic_agent import DeterministicAgent
 from scripts.td3.helper.real_td3_runtime import (
     _load_train_args,
@@ -166,7 +174,7 @@ def load_td3_deterministic_policy(
     policy_env_view = build_policy_env_view(policy_obs_dim, env_act_dim)
     actor = DeterministicAgent(
         policy_env_view,
-        action_scale=1.0,
+        action_scale=train_args.action_scale,
         action_bias=0.0,
         hidden_layer_size=train_args.agent_hidden_layer_size,
         num_hidden_layers=train_args.agent_num_hidden_layers,
@@ -185,6 +193,7 @@ def load_td3_deterministic_policy(
     print(
         f"[run_policy] loaded td3 actor from {model_path} "
         f"(hidden={train_args.agent_hidden_layer_size}x{train_args.agent_num_hidden_layers}, "
+        f"action_scale={train_args.action_scale}, "
         f"use_last_action={train_args.use_last_action_in_policy_state})"
     )
     return TD3DeterministicPolicy(
@@ -211,6 +220,9 @@ def build_agent(
     the ``PolicyAgent`` protocol (callable obs -> action numpy array,
     optional ``reset()``).
     """
+    from scripts.real.agent_kinds import normalize_agent_kind
+
+    kind = normalize_agent_kind(kind)
     if kind == "td3":
         if model_path is None:
             raise SystemExit("--agent td3 requires --model <path/to/model.pth>")
@@ -230,11 +242,80 @@ def build_agent(
             env_act_dim=env_act_dim,
             device=device,
         )
+    if kind == "iwr":
+        if model_path is None:
+            raise SystemExit(
+                "--agent iwr requires --model "
+                "<path/to/interaction_weighted_sampling_checkpoint.pkl>"
+            )
+        return load_iwr_deterministic_policy(
+            model_path=model_path,
+            env_obs_dim=env_obs_dim,
+            env_act_dim=env_act_dim,
+            device=device,
+        )
+    if kind == "crtr":
+        if model_path is None:
+            raise SystemExit("--agent crtr requires --model <path/to/crtr_checkpoint.pkl>")
+        return load_crtr_deterministic_policy(
+            model_path=model_path,
+            env_obs_dim=env_obs_dim,
+            env_act_dim=env_act_dim,
+            device=device,
+        )
+    if kind == "sac-gcrl":
+        if model_path is None:
+            raise SystemExit(
+                "--agent sac-gcrl requires --model <path/to/sac_gcrl_checkpoint.pkl>"
+            )
+        return load_sac_gcrl_deterministic_policy(
+            model_path=model_path,
+            env_obs_dim=env_obs_dim,
+            env_act_dim=env_act_dim,
+            device=device,
+        )
+    if kind == "sac-her":
+        if model_path is None:
+            raise SystemExit(
+                "--agent sac-her requires --model <path/to/sac_her_checkpoint.pkl>"
+            )
+        return load_sac_her_deterministic_policy(
+            model_path=model_path,
+            env_obs_dim=env_obs_dim,
+            env_act_dim=env_act_dim,
+            device=device,
+        )
+    if kind == "sac-weighted-her":
+        if model_path is None:
+            raise SystemExit(
+                "--agent sac-weighted-her requires --model "
+                "<path/to/sac_weighted_her_checkpoint.pkl>"
+            )
+        return load_sac_weighted_her_deterministic_policy(
+            model_path=model_path,
+            env_obs_dim=env_obs_dim,
+            env_act_dim=env_act_dim,
+            device=device,
+        )
+    if kind == "ppo-gcrl":
+        if model_path is None:
+            raise SystemExit(
+                "--agent ppo-gcrl requires --model <path/to/ppo_gcrl_checkpoint.pkl>"
+            )
+        return load_ppo_gcrl_deterministic_policy(
+            model_path=model_path,
+            env_obs_dim=env_obs_dim,
+            env_act_dim=env_act_dim,
+            device=device,
+        )
     if kind == "zero":
         return ZeroPolicy(act_dim=env_act_dim)
     if kind == "random":
         return RandomPolicy(act_dim=env_act_dim, seed=seed)
-    raise SystemExit(f"Unknown --agent {kind!r}; choose from: td3, sgcrl, zero, random")
+    raise SystemExit(
+        f"Unknown --agent {kind!r}; choose from: "
+        "td3, sgcrl, iwr, crtr, sac-gcrl, sac-her, sac-weighted-her, ppo-gcrl, zero, random"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -318,13 +399,18 @@ def main() -> None:
     )
     parser.add_argument(
         "--agent", type=str, default="td3",
-        help="Agent kind. Built-ins: td3 | sgcrl | zero | random. Extend in build_agent().",
+        help=(
+            "Agent kind. Built-ins: td3 | sgcrl | iwr | crtr | sac-gcrl | sac-her | "
+            "sac-weighted-her | ppo-gcrl | zero | random (underscore/hyphen equivalent). "
+            "Extend in build_agent()."
+        ),
     )
     parser.add_argument(
         "--model", type=str, default=None,
         help=(
             "Path to a checkpoint file. For --agent td3: model.pth (raw actor state_dict) "
-            "or training_state.pth. For --agent sgcrl: a .pkl produced by the SGCRL trainer."
+            "or training_state.pth. For --agent sgcrl: a .pkl produced by the SGCRL trainer. "
+            "For --agent iwr: a .pkl with algorithm_name=interaction_weighted_sampling."
         ),
     )
     parser.add_argument(
