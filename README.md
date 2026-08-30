@@ -2,6 +2,8 @@
 
 Reinforcement learning for a physical air-hockey robot (UR5 arm + paddle). The agent learns to juggle a puck in a Box2D simulator, then transfers the policy to the real robot. Active algorithm: TD3 with single-head critic and transformed Bellman targets.
 
+**Blog post: [From Testbed to Robot](https://air-hockey-rl.github.io/)** — a walkthrough of the sim-to-real pipeline: reworking the Box2D environment around the arm's control dynamics, fitting it to the real table with system identification and domain randomization, and running policies on the robot with automatic resets, evaluation, and online learning.
+
 Project context for agents and humans: [`CLAUDE.md`](CLAUDE.md). Formal documentation: [`notes/docs/index.md`](notes/docs/index.md).
 
 ## Repo layout

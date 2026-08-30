@@ -59,6 +59,9 @@ pyrightconfig.json
 /temp/
 /data/
 
+# Blogpost drafts (official + personal)
+/blog/
+
 # Stray outputs
 *.out
 *.log
