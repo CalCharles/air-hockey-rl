@@ -499,8 +499,14 @@ class AirHockeyBox2D:
             # starts, its length is drawn from random_occlusion_length_weights.
             'enable_random_occlusions': False,
             'random_occlusion_rate': 0.05,
-            # Run-length weights for lengths 1..N (N also sets max consecutive occlusions).
-            'random_occlusion_length_weights': [75, 39, 18, 9, 4, 2, 1],
+            # Run lengths 1..random_occlusion_max_run, each one
+            # random_occlusion_decay times as likely as the previous
+            # (0.5 => 1, 1/2, 1/4, ...). Set random_occlusion_length_weights to
+            # an explicit list of weights for lengths 1..N to override it (N then
+            # sets the max consecutive occlusions).
+            'random_occlusion_max_run': 7,
+            'random_occlusion_decay': 0.5,
+            'random_occlusion_length_weights': None,
             # Robust derivative-estimation controls used for accel/jerk readouts.
             'derivative_min_dt': 1e-6,
             'acceleration_ema_alpha': 0.35,
@@ -527,8 +533,8 @@ class AirHockeyBox2D:
             # with a random factor uniformly drawn from [min, max].
             # Factor 1.0 = exact current position; <1 = lagging; >1 = extrapolated.
             'enable_puck_delay_interpolation': False,
-            'puck_delay_interpolation_min': 0.75,
-            'puck_delay_interpolation_max': 1.25,
+            'puck_delay_interpolation_min': 0.9,
+            'puck_delay_interpolation_max': 1.1,
             # Triangle obstacles: isosceles, point-up; base length = 1.5 * this scale.
             'triangle_obstacle_size': 0.08,
             # High vs puck so b2MixRestitution favors bounce on triangle edges (no listener changes).
@@ -657,9 +663,11 @@ class AirHockeyBox2D:
         # run length sampled from random_occlusion_length_weights.
         self.enable_random_occlusions = bool(config.enable_random_occlusions)
         self.random_occlusion_rate = float(np.clip(config.random_occlusion_rate, 0.0, 1.0))
-        self.random_occlusion_length_weights = np.array(config.random_occlusion_length_weights, dtype=float).reshape(-1)
-        if self.random_occlusion_length_weights.size == 0:
-            self.random_occlusion_length_weights = np.array([1.0], dtype=float)
+        self.random_occlusion_max_run = max(1, int(config.random_occlusion_max_run))
+        self.random_occlusion_decay = float(config.random_occlusion_decay)
+        self.random_occlusion_length_weights = self._build_occlusion_length_weights(
+            config.random_occlusion_length_weights
+        )
         self._occlusion_max_run = int(self.random_occlusion_length_weights.size)
         self._occlusion_run_remaining = {}
         self._occlusion_last_visible_base = {}
@@ -810,6 +818,10 @@ class AirHockeyBox2D:
         self._occlusion_run_remaining = {}
         self._occlusion_last_visible_base = {}
         self._occlusion_prev_occluded = {}
+        # Without this the delay interpolation extrapolates the first frame of a
+        # new episode from the *previous* episode's last puck position, which can
+        # place the reported puck outside the table.
+        self._prev_puck_positions_box2d = {}
 
         # Reset PID controller
         if hasattr(self, 'pid_controller'):
@@ -993,6 +1005,21 @@ class AirHockeyBox2D:
         noise = self.rng.normal(loc=0.0, scale=self.puck_noise_std, size=2)
         noisy_position = np.array(position, dtype=float) + noise
         return float(noisy_position[0]), float(noisy_position[1])
+
+    def _build_occlusion_length_weights(self, explicit_weights):
+        """Weights for occlusion run lengths 1..N.
+
+        Geometric by default: length k has weight ``decay ** (k - 1)``, so each
+        extra occluded frame is ``decay`` times as likely as the one before it.
+        An explicit list overrides the scheme and sets N itself.
+        """
+        if explicit_weights is not None:
+            weights = np.array(explicit_weights, dtype=float).reshape(-1)
+            if weights.size:
+                return weights
+        decay = float(np.clip(self.random_occlusion_decay, 0.0, 1.0))
+        exponents = np.arange(self.random_occlusion_max_run, dtype=float)
+        return np.power(decay, exponents)
 
     def _sample_occlusion_run_length(self):
         lengths = np.arange(1, self._occlusion_max_run + 1, dtype=int)
