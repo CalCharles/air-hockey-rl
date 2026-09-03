@@ -21,6 +21,13 @@ def log_scalar_metrics(writer: SummaryWriter, metrics: Dict[str, float], global_
 
 
 def initialize_train_metrics() -> Dict[str, float]:
+    """Reduced metric set (2026-09 throughput cleanup).
+
+    Only the scalars that are actually consulted when diagnosing a run are
+    kept. Everything here is a cheap read of a value the graphed update step
+    already produces; the dropped reward-distribution / sample-count metrics
+    were either constants of the config or never looked at.
+    """
     return {
         "losses/q_loss": 0.0,
         "losses/q_total_loss": 0.0,
@@ -30,25 +37,9 @@ def initialize_train_metrics() -> Dict[str, float]:
         "debug/bellman_target_original_mean": 0.0,
         "debug/next_q_h_mean": 0.0,
         "rewards/sampled_reward_mean": 0.0,
-        "rewards/sampled_reward_min": 0.0,
-        "rewards/sampled_reward_std": 0.0,
-        "rewards/sampled_reward_positive_count": 0.0,
-        "rewards/sampled_reward_positive_fraction": 0.0,
-        "rewards/sampled_reward_positive_mean": 0.0,
-        "rewards/sampled_reward_positive_std": 0.0,
         "replay/per_beta": 0.0,
-        "replay/per_is_weight_mean": 1.0,
-        "replay/per_sampled_priority_mean": 0.0,
         "replay/per_priority_td_error_mean": 0.0,
-        "replay/critic_per_sample_count": 0.0,
-        "replay/critic_uniform_sample_count": 0.0,
-        "replay/critic_per_sample_fraction": 0.0,
         "replay/success_buffer_size": 0.0,
         "replay/failure_buffer_size": 0.0,
-        "replay/critic_success_sample_count": 0.0,
-        "replay/critic_failure_sample_count": 0.0,
-        "replay/critic_success_sample_fraction": 0.0,
-        "replay/critic_failure_sample_fraction": 0.0,
         "replay/episode_return_success_threshold": 0.0,
-        "replay/recent_episode_window_count": 0.0,
     }

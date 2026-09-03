@@ -58,36 +58,60 @@ To direct artifacts to a different location, change **`--data-root-dir`**. The `
 
 Single TensorBoard writer at `log_parent_dir` (created near the top of `_entrypoint()` in `td3_training.py`). Two cadences:
 
-### Per-update (every gradient step)
+> **2026-09-03 throughput cleanup.** Logging was cut to the scalars that get
+> consulted and moved to fixed intervals; see
+> [`training-throughput.md`](training-throughput.md). The tags below are the
+> current set. Older runs on disk carry the previous, larger set.
 
-`log_scalar_metrics(...)` (helper at `helper/td3_metrics.py`; metric bundles built in `helper/td3_loop_logging.py`) writes:
+### Per episode
+
+`charts/episodic_return`, `charts/episodic_length` — one point per finished
+episode (unchanged; the main learning curve).
+
+### Every `train_metrics_log_interval` training cycles (default 20)
+
+A training cycle = the block of `q_updates` critic + `actor_updates_per_iteration`
+actor updates that runs when an episode finishes after `learning_starts`.
+Values are read from the last update of the cycle (`log_scalar_metrics` in
+`helper/td3_metrics.py`):
 
 | Group | Scalars |
 |------|---------|
-| `losses/` | `q_loss`, `q_total_loss`, `q1_mean`, `actor_loss`, `actor_norm_q_mean` (plus `q{i}_mean` / `q_min_mean` / `q_mean_mean` when `num_critics > 2`) |
+| `losses/` | `q_loss` (mean over critics), `q_total_loss`, `q1_mean`, `actor_loss`, `actor_norm_q_mean` |
 | `debug/` | `bellman_target_original_mean`, `next_q_h_mean` |
-| Sampled-batch reward stats | `sampled_reward_mean/std/min`, `sampled_reward_positive_count/fraction/mean/std` |
-| Replay state | PER importance-weight stats, priority TD-error means, success/failure buffer sizes, episode-window counts |
-| `charts/` | `exploration_primitive_chance`, `SPS` |
+| `rewards/` | `sampled_reward_mean` |
+| `replay/` | `per_beta`, `per_priority_td_error_mean`, `success_buffer_size`, `failure_buffer_size`, `episode_return_success_threshold` |
+| `charts/` | `exploration_primitive_chance`, `SPS` (env steps/s since this process started, eval time included) |
 
-### Every 500 env steps
+### Every `stats_log_interval` env steps (default 5000)
 
-`write_periodic_episode_stats` (`helper/td3_loop_logging.py`) emits console print + TB scalars:
+`write_periodic_episode_stats` (`helper/td3_loop_logging.py`) emits one
+console line plus TB scalars:
 
-| Scalar | Console prefix | What it is |
-|--------|---------------|------------|
-| `charts/avg_episodic_return`, `charts/min_episodic_return`, `charts/max_episodic_return` | `Rolling(2k) Avg/Min/Max Return:` | Last ~2k env-steps of finished episodes |
-| `charts/avg_success_rate` | `Success Rate:` | Mean success flag over same window |
-| `charts/rolling2k_avg_episode_return`, `…_avg_episode_length`, `…_episode_count` | (same line) | Same window stats |
-| `charts/rolling2k_puck_hits_total`, `…_estop_events_total`, `…_puck_hits_per_env_step`, `…_estop_rate` | `Rolling(2k) Puck Hits / E-Stop Events / per env-step / E-Stop Rate` | Contact + safety rates |
-| `contacts/interval_paddle_puck_collisions_total`, `…_per_env_step` | `Paddle-Puck Collisions (last interval)` | Contact frequency |
-| `exploration/interval_primitive_*` | `Primitive Actions` | Action source breakdown |
+| Scalar | What it is |
+|--------|-----------|
+| `charts/avg_episodic_return`, `charts/min_episodic_return`, `charts/max_episodic_return` | Finished episodes in the last ~2k env-steps |
+| `charts/avg_success_rate` | Mean success flag over the same window |
+| `charts/rolling2k_avg_episode_length` | Same window |
+| `charts/rolling2k_puck_hits_per_env_step` | Contact rate over the same window |
+| `contacts/interval_paddle_puck_collisions_per_env_step` | Contact rate since the previous line |
+| `exploration/interval_primitive_env_step_fraction`, `…_horizontal_fraction` | Share of env steps under a primitive takeover; share of those that were horizontal-dominant |
+
+Console: `Step N: ret <avg> [<min>, <max>] succ <rate> len <avg> eps <count> | hits/step <rate> | primitive frac <frac>` followed by `Step N: SPS <rate>`. With `TD3_PROFILE_SECTIONS=1` a third line breaks the wall time into `policy / env / bookkeeping / train_update / train_other`.
+
+Dropped in the cleanup (were constants of the config or never read):
+`rewards/sampled_reward_{std,min,positive_*}`, `replay/per_is_weight_mean`,
+`replay/per_sampled_priority_mean`, `replay/critic_*_sample_{count,fraction}`,
+`replay/recent_episode_window_count`, `charts/rolling2k_avg_episode_return`
+(duplicate of `charts/avg_episodic_return`), `charts/rolling2k_episode_count`,
+`charts/rolling2k_puck_hits_total`, `contacts/…_total`,
+`exploration/interval_primitive_env_steps`, `exploration/…_horizontal_env_steps`.
 
 ### Eval loop & artifacts
 
 Every `checkpoint_interval`:
 
-- `evaluate_agent(n_eps=4, n_gifs=1)` — held-out rollouts in a separate eval env
+- `evaluate_agent(n_eps=4, n_gifs=1)` — held-out rollouts in a separate eval env. With `checkpoint_eval_async: true` (default) this runs in a CPU-only subprocess (`scripts/td3/checkpoint_eval.py`); its stdout goes to `checkpoint_<step>/eval.log` and the trainer prints `[eval step N] ok <summary>` when it reaps the process (at the next checkpoint or at the end of training)
 - Live training-episode GIFs are written separately to `samples/step_*.gif` at `sample_gif_interval` (real trajectories with exploration noise + primitives applied; recorded by `helper/td3_gif_recorder.py`)
 - Model checkpoint (`actor.pth`, critics, full training state)
 

@@ -312,3 +312,147 @@ class PrimitiveExplorationSelector:
         self.primitive_id.fill_(-1)
         self.direction.zero_()
         self.magnitude.zero_()
+
+
+class NumpyPrimitiveExplorationSelector:
+    """numpy backend of `PrimitiveExplorationSelector` for the CPU rollout path.
+
+    Same semantics, same public surface (`chance`, `apply`, `reset`,
+    `set_primitive_weights`, `state_dict` / `load_state_dict` with the same
+    keys and CPU-tensor values) so checkpoints interoperate with the torch
+    class. Only the legacy sampling mode is implemented (uniform unit
+    direction with y-weight × uniform magnitude in [0.1, 1]); the trainer
+    falls back to the torch class when the simulator-space range fields are
+    set. The torch class stays the reference implementation (it also serves
+    the real-robot runtime); ~30 tiny torch CPU ops per step cost ~0.14 ms,
+    the numpy version ~0.03 ms.
+    """
+
+    def __init__(
+        self,
+        num_envs: int,
+        chance: float,
+        takeover_steps: int,
+        direction_y_component_weight: float = 1.0,
+        seed: int | None = None,
+    ) -> None:
+        if takeover_steps <= 0:
+            raise ValueError("takeover_steps must be > 0")
+        import numpy as np
+
+        self._np = np
+        self.num_envs = int(num_envs)
+        self.chance = float(chance)
+        self.takeover_steps = int(takeover_steps)
+        self.direction_y_component_weight = float(max(direction_y_component_weight, 1e-6))
+        self.primitive_ids = PrimitiveIds()
+        self.rng = np.random.default_rng(seed)
+        self.primitive_weights = np.array([0.5, 0.5], dtype=np.float64)
+        self.active = np.zeros(self.num_envs, dtype=bool)
+        self.steps_remaining = np.zeros(self.num_envs, dtype=np.int64)
+        self.primitive_id = np.full((self.num_envs,), -1, dtype=np.int64)
+        self.direction = np.zeros((self.num_envs, 2), dtype=np.float32)
+        self.magnitude = np.zeros(self.num_envs, dtype=np.float32)
+
+    def _clear(self, mask) -> None:
+        if not mask.any():
+            return
+        self.active[mask] = False
+        self.steps_remaining[mask] = 0
+        self.primitive_id[mask] = -1
+        self.direction[mask] = 0.0
+        self.magnitude[mask] = 0.0
+
+    def reset(self, done_mask) -> None:
+        mask = self._np.asarray(done_mask, dtype=bool).reshape(-1)
+        self._clear(mask)
+
+    def set_primitive_weights(self, stand_still: float, same_direction: float) -> None:
+        weights = self._np.array([stand_still, same_direction], dtype=self._np.float64)
+        if (weights < 0).any():
+            raise ValueError("Primitive weights must be non-negative.")
+        total = float(weights.sum())
+        if total <= 0.0:
+            raise ValueError("At least one primitive weight must be > 0.")
+        self.primitive_weights = weights / total
+
+    def _activate(self) -> None:
+        np = self._np
+        inactive = ~self.active
+        if not inactive.any():
+            return
+        activate = inactive & (self.rng.random(self.num_envs) < self.chance)
+        if not activate.any():
+            return
+        idx = np.flatnonzero(activate)
+        sampled = self.rng.choice(2, size=idx.size, p=self.primitive_weights)
+        self.active[idx] = True
+        self.steps_remaining[idx] = self.takeover_steps
+        self.primitive_id[idx] = sampled
+        same = idx[sampled == self.primitive_ids.SAME_DIRECTION_SMALL_MAG]
+        if same.size:
+            angles = 2.0 * np.pi * self.rng.random(same.size)
+            d = np.stack((np.cos(angles), np.sin(angles) * self.direction_y_component_weight), axis=-1)
+            d /= np.maximum(np.linalg.norm(d, axis=-1, keepdims=True), 1e-8)
+            self.direction[same] = d.astype(np.float32)
+            self.magnitude[same] = (0.1 + 0.9 * self.rng.random(same.size)).astype(np.float32)
+
+    def apply(self, proposed_actions, action_low, action_high, return_stats: bool = False):
+        """`proposed_actions`: (num_envs, 2) ndarray. Returns ndarray (+ stats)."""
+        np = self._np
+        actions = np.array(proposed_actions, dtype=np.float32, copy=True)
+        if actions.shape[0] != self.num_envs:
+            raise ValueError(f"Expected batch {self.num_envs}, got {actions.shape[0]}")
+        self._activate()
+        active_idx = np.flatnonzero(self.active)
+        applied = int(active_idx.size)
+        horizontal = 0
+        if applied:
+            prim = self.primitive_id[active_idx]
+            stand = active_idx[prim == self.primitive_ids.STAND_STILL]
+            if stand.size:
+                actions[stand] = 0.0
+            same = active_idx[prim == self.primitive_ids.SAME_DIRECTION_SMALL_MAG]
+            if same.size:
+                actions[same] = self.direction[same] * self.magnitude[same][:, None]
+            np.clip(actions, action_low, action_high, out=actions)
+            horizontal = int((np.abs(actions[active_idx, 0]) > np.abs(actions[active_idx, 1])).sum())
+            self.steps_remaining[active_idx] -= 1
+            self._clear(self.active & (self.steps_remaining <= 0))
+        else:
+            np.clip(actions, action_low, action_high, out=actions)
+        if return_stats:
+            return actions, {
+                "primitive_applied_count": applied,
+                "primitive_horizontal_dominant_count": horizontal,
+            }
+        return actions
+
+    def state_dict(self) -> dict:
+        return {
+            "num_envs": self.num_envs,
+            "chance": self.chance,
+            "takeover_steps": self.takeover_steps,
+            "same_direction_min_angle_deg": None,
+            "same_direction_max_angle_deg": None,
+            "same_direction_min_magnitude": None,
+            "same_direction_max_magnitude": None,
+            "primitive_weights": torch.as_tensor(self.primitive_weights, dtype=torch.float32),
+            "active": torch.as_tensor(self.active.copy()),
+            "steps_remaining": torch.as_tensor(self.steps_remaining.copy()),
+            "primitive_id": torch.as_tensor(self.primitive_id.copy()),
+            "direction": torch.as_tensor(self.direction.copy()),
+            "magnitude": torch.as_tensor(self.magnitude.copy()),
+        }
+
+    def load_state_dict(self, state_dict: dict) -> None:
+        if "primitive_weights" in state_dict:
+            w = torch.as_tensor(state_dict["primitive_weights"]).detach().cpu().double().numpy().reshape(-1)
+            if w.size == 2 and w.sum() > 0:
+                self.primitive_weights = w / w.sum()
+        # Mid-episode primitive state is not carried across resume; clear it.
+        self.active[:] = False
+        self.steps_remaining[:] = 0
+        self.primitive_id[:] = -1
+        self.direction[:] = 0.0
+        self.magnitude[:] = 0.0

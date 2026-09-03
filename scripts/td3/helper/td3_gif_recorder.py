@@ -11,6 +11,7 @@ returning a BGR numpy array (e.g. `AirHockeyRenderer`).
 """
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 import cv2
 import imageio
@@ -47,6 +48,18 @@ class GIFEpisodeRecorder:
         self._completed_episodes = 0
         self._watch_ring_idx = 0
         self._last_sample_gif_step = 0
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="gif-encode")
+        self._encode_future = None
+
+    def close(self) -> None:
+        """Flush any pending GIF encode. Safe to call more than once."""
+        if self._encode_future is not None:
+            try:
+                self._encode_future.result()
+            except Exception as exc:  # pragma: no cover - best effort
+                print(f"GIF encode failed: {exc}")
+            self._encode_future = None
+        self._executor.shutdown(wait=True)
 
     @property
     def recording(self) -> bool:
@@ -81,6 +94,17 @@ class GIFEpisodeRecorder:
         self._last_reward = float(reward)
         self._cumulative_reward += self._last_reward
 
+    def _encode(self, frames: list, paths: list, evict: bool) -> None:
+        """GIF palette quantisation costs ~7 ms/frame in Pillow; run it off the
+        training thread (Pillow releases the GIL in its C encoder)."""
+        for path in paths:
+            imageio.mimsave(
+                path, frames, format="GIF",
+                loop=0, duration=self.frame_duration_ms,
+            )
+        if evict:
+            self._evict_old_samples()
+
     def on_episode_end(self, global_step: int) -> None:
         """Call once per terminated/truncated episode.
 
@@ -90,23 +114,21 @@ class GIFEpisodeRecorder:
         episode based on watch_episode_interval.
         """
         if self._recording and self._frames:
-            watch_path = os.path.join(self.watch_dir, f"ep_{self._watch_ring_idx}.gif")
-            imageio.mimsave(
-                watch_path, self._frames, format="GIF",
-                loop=0, duration=self.frame_duration_ms,
-            )
+            paths = [os.path.join(self.watch_dir, f"ep_{self._watch_ring_idx}.gif")]
             self._watch_ring_idx = (self._watch_ring_idx + 1) % self.watch_ring_size
 
+            evict = False
             if global_step - self._last_sample_gif_step >= self.sample_gif_interval:
-                sample_path = os.path.join(self.samples_dir, f"step_{global_step}.gif")
-                imageio.mimsave(
-                    sample_path, self._frames, format="GIF",
-                    loop=0, duration=self.frame_duration_ms,
-                )
+                paths.append(os.path.join(self.samples_dir, f"step_{global_step}.gif"))
                 self._last_sample_gif_step = global_step
-                self._evict_old_samples()
+                evict = True
 
-            self._frames.clear()
+            frames = self._frames
+            self._frames = []
+            # Serialise encodes (one worker) so eviction / ring order stays deterministic.
+            if self._encode_future is not None:
+                self._encode_future.result()
+            self._encode_future = self._executor.submit(self._encode, frames, paths, evict)
             self._recording = False
             self._last_reward = 0.0
             self._cumulative_reward = 0.0

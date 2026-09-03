@@ -18,10 +18,12 @@ class AirHockeyPuckGoalPositionReward(AirHockeyRewardBase):
 
         radius = self.task_env.goal_radius
         # bonus = 10 if self.task_env.current_timestep > self.task_env.falling_time else 0 # this prevents the falling initiliazwed puck from triggering a success
-        reward = -dist ** 2 if dist > radius else self.task_env.puck_goal_success_bonus
-        
-        if single and isinstance(reward, list):
-            reward = reward[0]
+        # Vectorised per-sample select; the single-sample path returns a float
+        # (the old `... if dist > radius else bonus` mixed (1,) arrays and scalars).
+        reward = np.where(dist > radius, -dist ** 2, float(self.task_env.puck_goal_success_bonus))
+
+        if single:
+            reward = float(reward.reshape(-1)[0])
             
         return reward
 

@@ -6,10 +6,27 @@ Compared to SAC+AMP:
 - no entropy term / alpha tuning
 - deterministic actor updates (TD3)
 - twin critics (REDQ-style ensemble when num_critics > 2), single scalar Q head
+
+Throughput layout (2026-09 optimisation — see
+notes/docs/training/training-throughput.md):
+- Rollout runs entirely on the CPU: a CPU replica of the actor drives the
+  env, the exploration selector and the per-episode trajectory staging all
+  live on the CPU, and the finished episode is moved to the GPU replay buffer
+  in one transfer. No per-step host<->device traffic or syncs.
+- The critic / actor updates are CUDA-graph captured (`GraphedTD3Update`):
+  per update we copy the sampled minibatch into static tensors and replay.
+- Per-checkpoint evaluation runs in a background subprocess
+  (`scripts/td3/checkpoint_eval.py`) so rollouts + GIF encoding never block
+  the training loop.
+- Logging is reduced to the metrics that are actually consulted, written on
+  fixed intervals.
 """
 
+import copy
 import os
 import random
+import subprocess
+import sys
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -30,16 +47,17 @@ from airhockey.renderers import AirHockeyRenderer
 from scripts.td3.deterministic_agent import DeterministicAgent
 from scripts.td3.helper.q_network import TD3QNetwork
 from scripts.td3.helper.td3_args_validation import validate_args
-from scripts.td3.helper.td3_cql import cql_penalty, precompute_cql_terms
 from scripts.td3.helper.td3_gif_recorder import GIFEpisodeRecorder
-from scripts.td3.helper.td3_loop_logging import (
-    build_actor_metrics,
-    build_critic_metrics,
-    build_target_q_debug_metrics,
-    write_periodic_episode_stats,
+from scripts.td3.helper.td3_graphed_update import (
+    GraphedTD3Update,
+    deterministic_actor_action,
+    h_inverse,
+    h_transform,
 )
+from scripts.td3.helper.td3_loop_logging import write_periodic_episode_stats
 from scripts.td3.helper.td3_residual import build_residual_training
 from scripts.td3.helper.exploration_selector import (
+    NumpyPrimitiveExplorationSelector,
     PrimitiveExplorationSelector,
 )
 from scripts.td3.helper.replay_buffer import TD3ReplayBuffer
@@ -58,43 +76,26 @@ from scripts.td3.helper.td3_metrics import (
     initialize_train_metrics,
     log_scalar_metrics,
 )
-from scripts.td3.helper.td3_replay_sampling import (
-    concat_replay_samples,
-    critic_success_failure_counts,
-    sample_actor_source_chunk,
-    sample_critic_source_chunk,
-)
+from scripts.td3.helper.td3_replay_sampling import critic_success_failure_counts
 from scripts.td3.evaluate import evaluate_agent
 from scripts.utils import save_tensorboard_plots
 
 ROLLING_STATS_WINDOW_STEPS = 2000
 
-
-def h_transform(x: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
-    return torch.sign(x) * (torch.sqrt(torch.abs(x) + 1) - 1) + eps * x
-
-
-def h_inverse(x: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
-    abs_x = torch.abs(x)
-    inner = 1 + 4 * eps * (abs_x + 1 + eps)
-    sqrt_inner = torch.sqrt(inner)
-    quotient = (sqrt_inner - 1) / (2 * eps)
-    return torch.sign(x) * (quotient**2 - 1)
+__all__ = [
+    "Args",
+    "h_transform",
+    "h_inverse",
+    "deterministic_actor_action",
+    "augment_policy_observation",
+    "make_env",
+]
 
 
 def augment_policy_observation(observation, last_action, use_last_action):
     if not use_last_action:
         return observation
     return torch.cat([observation, last_action], dim=-1)
-
-
-def deterministic_actor_action(actor, policy_obs):
-    if hasattr(actor, "get_action_mean_and_logstd"):
-        action_mean, _ = actor.get_action_mean_and_logstd(policy_obs)
-        return torch.tanh(action_mean) * actor.action_scale + actor.action_bias
-    if hasattr(actor, "get_action"):
-        return actor.get_action(policy_obs)
-    raise TypeError(f"Unsupported actor type for deterministic action: {type(actor)}")
 
 
 def extract_deterministic_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -218,6 +219,9 @@ class Args:
     # --- Checkpointing ---
     checkpoint_interval: int = 25000
     save_replay_buffer: bool = True
+    # Run per-checkpoint evaluation in a background subprocess (CPU only) so
+    # it does not block training. The final evaluation stays in-process.
+    checkpoint_eval_async: bool = True
 
     # --- Paths + checkpoint loading ---
     config: str = "configs/new_juggle/sysid_best_params.yaml"
@@ -238,6 +242,27 @@ class Args:
     # --- Runtime ---
     device: str = "cuda:0"
     seed: int = 0
+    # Device that drives the environment (actor inference at batch=num_envs,
+    # exploration selector, trajectory staging). CPU is ~3x faster than the
+    # GPU for batch-1 inference of the 64-wide actor and avoids per-step syncs.
+    rollout_device: str = "cpu"
+    # Capture the critic/actor updates in CUDA graphs (GPU device only).
+    use_cuda_graphs: bool = True
+    # torch.compile the loss forward/backward inside the graphs (~30% fewer
+    # GPU kernels per update). Falls back automatically if compilation fails.
+    compile_update: bool = True
+    # Intra-op CPU threads. The rollout tensors are tiny; a big OpenMP pool
+    # only adds spin overhead.
+    torch_num_threads: int = 1
+    # torch.compile the CPU rollout actor (falls back to eager on failure).
+    compile_rollout_actor: bool = True
+
+    # --- Logging cadence ---
+    # Training-loss scalars are logged every N training cycles (= episodes
+    # after learning_starts). Episode return/length are always logged.
+    train_metrics_log_interval: int = 20
+    # Rolling-window episode stats + console line every N env steps.
+    stats_log_interval: int = 5000
 
     # --- Network architecture ---
     agent_hidden_layer_size: int = 64
@@ -270,6 +295,112 @@ def make_env(env_id):
     return _thunk
 
 
+class SingleEnvVector:
+    """Minimal stand-in for gym.vector.SyncVectorEnv with one env.
+
+    Same surface as the trainer uses (`step`, `reset`, `close`,
+    `single_*_space`, `num_envs`, `envs`) and the same autoreset semantics
+    (on done: reset, return the reset obs, stash `final_observation` /
+    `final_info`). Skips gymnasium's per-key info-array bookkeeping (~60
+    keys per step for this env) which cost ~0.15 ms/step.
+    """
+
+    def __init__(self, env_fn) -> None:
+        self.env = env_fn()
+        self.envs = [self.env]
+        self.num_envs = 1
+        self.single_observation_space = self.env.observation_space
+        self.single_action_space = self.env.action_space
+        self.observation_space = self.single_observation_space
+        self.action_space = self.single_action_space
+        self._obs_dtype = np.float64
+
+    def reset(self, seed=None, options=None):
+        obs, info = self.env.reset(seed=seed, options=options) if options is not None else self.env.reset(seed=seed)
+        return np.asarray(obs)[None].copy(), info
+
+    def step(self, actions):
+        obs, reward, terminated, truncated, info = self.env.step(actions[0])
+        # Goal tasks return the reward as a 1-element array; normalise to float.
+        reward = float(np.asarray(reward, dtype=np.float64).reshape(-1)[0])
+        infos = {"paddle_puck_collision_count": np.array([info.get("paddle_puck_collision_count", 0)])}
+        if terminated or truncated:
+            final_obs = np.asarray(obs).copy()
+            obs, _ = self.env.reset()
+            infos["final_observation"] = [final_obs]
+            infos["final_info"] = [info]
+            infos["_final_observation"] = np.array([True])
+        return (
+            np.asarray(obs)[None].copy(),
+            np.array([reward], dtype=np.float64),
+            np.array([bool(terminated)]),
+            np.array([bool(truncated)]),
+            infos,
+        )
+
+    def close(self):
+        self.env.close()
+
+
+class AsyncCheckpointEvaluator:
+    """Launches `scripts.td3.checkpoint_eval` as a CPU-only subprocess per
+    checkpoint and reaps finished ones. At most one eval runs at a time; if a
+    new checkpoint arrives while the previous eval is still running we wait
+    for it (bounded backlog, and evals are ~20 s vs minutes per checkpoint)."""
+
+    def __init__(self, checkpoint_interval: int) -> None:
+        self.checkpoint_interval = int(checkpoint_interval)
+        self._running: List[Tuple[subprocess.Popen, int, str, object]] = []
+
+    def launch(self, checkpoint_dir: str, global_step: int) -> None:
+        self.reap(block=True)
+        log_path = os.path.join(checkpoint_dir, "eval.log")
+        log_file = open(log_path, "w")
+        env = os.environ.copy()
+        env["CUDA_VISIBLE_DEVICES"] = ""
+        env.setdefault("OMP_NUM_THREADS", "1")
+        eval_call_index = max(1, global_step // max(self.checkpoint_interval, 1))
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "scripts.td3.checkpoint_eval",
+                "--checkpoint-dir",
+                checkpoint_dir,
+                "--eval-call-index",
+                str(eval_call_index),
+            ],
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            env=env,
+        )
+        self._running.append((proc, int(global_step), checkpoint_dir, log_file))
+
+    def reap(self, block: bool) -> None:
+        still_running = []
+        for proc, step, ckpt_dir, log_file in self._running:
+            if block:
+                proc.wait()
+            if proc.poll() is None:
+                still_running.append((proc, step, ckpt_dir, log_file))
+                continue
+            log_file.close()
+            summary = ""
+            try:
+                with open(os.path.join(ckpt_dir, "eval.log"), "r") as f:
+                    lines = [ln.strip() for ln in f if "Multi-env eval" in ln or "Traceback" in ln]
+                if lines:
+                    summary = lines[-1]
+            except OSError:
+                pass
+            status = "ok" if proc.returncode == 0 else f"exit={proc.returncode}"
+            print(f"[eval step {step}] {status} {summary}", flush=True)
+        self._running = still_running
+
+    def wait_all(self) -> None:
+        self.reap(block=True)
+
+
 def _entrypoint():
     """Entry point exposed so wrapper scripts (e.g. td3_training_dr.py)
     can monkey-patch module-level callables (notably `evaluate_agent`) and
@@ -287,11 +418,11 @@ def _entrypoint():
     args = tyro.cli(Args, default=default_args)
     validate_args(args)
 
+    torch.set_num_threads(max(1, int(args.torch_num_threads)))
+
     # `config` must be a MODULE-LEVEL name because the module-level
-    # `make_env(env_id)._thunk` closure (line ~661) reads it as a free
-    # variable. Before the _entrypoint() refactor, `config` lived at top
-    # level naturally; now we have to declare it global so the assignment
-    # below writes to the module namespace where _thunk can find it.
+    # `make_env(env_id)._thunk` closure reads it as a free variable (and
+    # td3_training_gat.py swaps make_env out wholesale).
     global config
     with open(args.config, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
@@ -319,10 +450,18 @@ def _entrypoint():
     with open(f"{log_parent_dir}/args.yaml", "w") as f:
         yaml.dump(vars(args), f)
 
-    envs = gym.vector.AsyncVectorEnv([make_env(i) for i in range(args.num_envs)])
+    # A single Box2D env is far cheaper to step in-process than through the
+    # AsyncVectorEnv pipe (1440 vs 680 steps/s measured). Only fan out to
+    # subprocesses when there is more than one env to run.
+    if args.num_envs == 1:
+        envs = SingleEnvVector(make_env(0))
+    else:
+        envs = gym.vector.AsyncVectorEnv([make_env(i) for i in range(args.num_envs)])
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
 
     action_scale = 1
+    device = torch.device(args.device)
+    rollout_device = torch.device(args.rollout_device)
 
     raw_obs_dim = int(np.array(envs.single_observation_space.shape).prod())
     act_dim = int(np.prod(envs.single_action_space.shape))
@@ -340,14 +479,14 @@ def _entrypoint():
         action_bias=0.0,
         hidden_layer_size=args.agent_hidden_layer_size,
         num_hidden_layers=args.agent_num_hidden_layers,
-    ).to(args.device)
+    ).to(device)
     actor_target = DeterministicAgent(
         policy_env_view,
         action_scale=action_scale,
         action_bias=0.0,
         hidden_layer_size=args.agent_hidden_layer_size,
         num_hidden_layers=args.agent_num_hidden_layers,
-    ).to(args.device)
+    ).to(device)
     actor_target.load_state_dict(actor.state_dict())
 
     obs_dim = int(np.prod(envs.single_observation_space.shape))
@@ -367,7 +506,7 @@ def _entrypoint():
             act_dim=act_dim,
             hidden_layer_size=args.q_hidden_layer_size,
             num_hidden_layers=args.q_num_hidden_layers,
-        ).to(args.device)
+        ).to(device)
         for _ in range(args.num_critics)
     ]
     qfs_target = [
@@ -376,7 +515,7 @@ def _entrypoint():
             act_dim=act_dim,
             hidden_layer_size=args.q_hidden_layer_size,
             num_hidden_layers=args.q_num_hidden_layers,
-        ).to(args.device)
+        ).to(device)
         for _ in range(args.num_critics)
     ]
     for q, qt in zip(qfs, qfs_target):
@@ -388,6 +527,18 @@ def _entrypoint():
     resume_checkpoint = None
     checkpoint_load_mode = args.full_checkpoint_load
     residual_actor_optimizer: optim.Optimizer | None = None
+
+    action_low = torch.as_tensor(envs.single_action_space.low, dtype=torch.float32, device=device)
+    action_high = torch.as_tensor(envs.single_action_space.high, dtype=torch.float32, device=device)
+    action_low_rollout = action_low.to(rollout_device)
+    action_high_rollout = action_high.to(rollout_device)
+
+    use_cuda_graphs = bool(args.use_cuda_graphs) and device.type == "cuda"
+    if use_cuda_graphs and args.target_critic_subset_size is not None and (
+        args.target_critic_subset_size < args.num_critics
+    ):
+        print("target_critic_subset_size < num_critics: CUDA-graph capture disabled (eager updates).")
+        use_cuda_graphs = False
 
     if args.model_path is not None:
         if not os.path.exists(args.model_path):
@@ -404,17 +555,11 @@ def _entrypoint():
                 )
             base_state = loaded_obj["actor"] if is_full_state else loaded_obj
             actor.load_state_dict(extract_deterministic_state_dict(base_state), strict=False)
-            action_low_tensor = torch.as_tensor(
-                envs.single_action_space.low, dtype=torch.float32, device=args.device
-            )
-            action_high_tensor = torch.as_tensor(
-                envs.single_action_space.high, dtype=torch.float32, device=args.device
-            )
             actor, actor_target, residual_actor_optimizer = build_residual_training(
                 base_actor=actor,
                 policy_env_view=policy_env_view,
-                action_low=action_low_tensor,
-                action_high=action_high_tensor,
+                action_low=action_low,
+                action_high=action_high,
                 device=args.device,
                 residual_scale=args.residual_scale,
                 residual_weight_decay=args.residual_weight_decay,
@@ -422,6 +567,15 @@ def _entrypoint():
                 agent_num_hidden_layers=args.agent_num_hidden_layers,
                 policy_lr=args.policy_lr,
             )
+            if use_cuda_graphs:
+                # Rebuild the residual optimizer capturable (same hyper-params).
+                residual_actor_optimizer = optim.Adam(
+                    actor.residual.parameters(),
+                    lr=args.policy_lr,
+                    weight_decay=args.residual_weight_decay,
+                    capturable=True,
+                    fused=True,
+                )
         elif is_full_state:
             resume_checkpoint = loaded_obj
             if args.eval_mode:
@@ -454,15 +608,18 @@ def _entrypoint():
             actor_target.load_state_dict(actor.state_dict())
             print("Actor-only model loaded successfully.")
 
+    # fused=True: one kernel per optimizer step instead of one per tensor.
+    adam_kwargs = dict(capturable=use_cuda_graphs, fused=(device.type == "cuda"))
     q_optimizer = optim.Adam(
         [p for q in qfs for p in q.parameters()],
         lr=args.q_lr,
         weight_decay=args.q_weight_decay,
+        **adam_kwargs,
     )
     if residual_actor_optimizer is not None:
         actor_optimizer = residual_actor_optimizer
     else:
-        actor_optimizer = optim.Adam(actor.parameters(), lr=args.policy_lr)
+        actor_optimizer = optim.Adam(actor.parameters(), lr=args.policy_lr, **adam_kwargs)
 
     if args.per_enabled:
         success_rb = TD3PrioritizedReplayBuffer(
@@ -512,7 +669,7 @@ def _entrypoint():
         )
 
     obs, _ = envs.reset(seed=args.seed)
-    last_action_for_policy = torch.zeros((args.num_envs, act_dim), dtype=torch.float32, device=args.device)
+    last_action_for_policy = torch.zeros((args.num_envs, act_dim), dtype=torch.float32, device=rollout_device)
     interval_paddle_puck_collisions = 0.0
     interval_env_steps = 0
     interval_primitive_env_steps = 0
@@ -523,20 +680,23 @@ def _entrypoint():
     recent_episode_returns = deque(maxlen=args.recent_episode_window_size)
     episode_return_success_threshold = 0.0
 
-    # --- Live episode GIF recording ---
-    renderer_env = AirHockeyEnv(config["air_hockey"])
-    train_renderer = AirHockeyRenderer(
-        renderer_env, show_target_position=True, show_acceleration_arrow=False
-    )
-    gif_recorder = GIFEpisodeRecorder(
-        log_parent_dir,
-        watch_ring_size=args.watch_ring_size,
-        watch_episode_interval=args.watch_episode_interval,
-        sample_gif_interval=args.sample_gif_interval,
-        sample_gif_max_storage_mb=args.sample_gif_max_storage_mb,
-    )
+    # --- Live episode GIF recording (renders the actual training env) ---
+    gif_recorder = None
+    train_renderer = None
+    if isinstance(envs, SingleEnvVector):
+        train_renderer = AirHockeyRenderer(
+            envs.envs[0], show_target_position=True, show_acceleration_arrow=False
+        )
+        gif_recorder = GIFEpisodeRecorder(
+            log_parent_dir,
+            watch_ring_size=args.watch_ring_size,
+            watch_episode_interval=args.watch_episode_interval,
+            sample_gif_interval=args.sample_gif_interval,
+            sample_gif_max_storage_mb=args.sample_gif_max_storage_mb,
+        )
+    else:
+        print("num_envs > 1: training-episode GIF recording disabled (envs live in subprocesses).")
 
-    start_time = time.time()
     global_step = 0
     iteration = 0
     # Counts completed critic updates across all training cycles. Used to gate
@@ -547,23 +707,43 @@ def _entrypoint():
 
     train_metrics = initialize_train_metrics()
 
-    action_low = torch.as_tensor(envs.single_action_space.low, dtype=torch.float32, device=args.device)
-    action_high = torch.as_tensor(envs.single_action_space.high, dtype=torch.float32, device=args.device)
-
-    primitive_selector = PrimitiveExplorationSelector(
-        num_envs=args.num_envs,
-        chance=primitive_exploration_chance_for_step(args, global_step),
-        takeover_steps=args.exploration_primitive_steps,
-        device=args.device,
-        dtype=torch.float32,
-        direction_y_component_weight=args.exploration_direction_y_component_weight,
-        action_delta_x=args.exploration_action_delta_x,
-        action_delta_y=args.exploration_action_delta_y,
-        same_direction_min_angle_deg=args.exploration_same_direction_min_angle_deg,
-        same_direction_max_angle_deg=args.exploration_same_direction_max_angle_deg,
-        same_direction_min_magnitude=args.exploration_same_direction_min_magnitude,
-        same_direction_max_magnitude=args.exploration_same_direction_max_magnitude,
+    same_direction_range_set = any(
+        v is not None
+        for v in (
+            args.exploration_same_direction_min_angle_deg,
+            args.exploration_same_direction_max_angle_deg,
+            args.exploration_same_direction_min_magnitude,
+            args.exploration_same_direction_max_magnitude,
+        )
     )
+    # numpy backend on the CPU rollout path (53 vs 125 us per step); the torch
+    # class remains for the simulator-space range mode and non-CPU rollouts.
+    use_numpy_selector = rollout_device.type == "cpu" and not same_direction_range_set
+    if use_numpy_selector:
+        primitive_selector = NumpyPrimitiveExplorationSelector(
+            num_envs=args.num_envs,
+            chance=primitive_exploration_chance_for_step(args, global_step),
+            takeover_steps=args.exploration_primitive_steps,
+            direction_y_component_weight=args.exploration_direction_y_component_weight,
+            seed=args.seed,
+        )
+    else:
+        primitive_selector = PrimitiveExplorationSelector(
+            num_envs=args.num_envs,
+            chance=primitive_exploration_chance_for_step(args, global_step),
+            takeover_steps=args.exploration_primitive_steps,
+            device=rollout_device,
+            dtype=torch.float32,
+            direction_y_component_weight=args.exploration_direction_y_component_weight,
+            action_delta_x=args.exploration_action_delta_x,
+            action_delta_y=args.exploration_action_delta_y,
+            same_direction_min_angle_deg=args.exploration_same_direction_min_angle_deg,
+            same_direction_max_angle_deg=args.exploration_same_direction_max_angle_deg,
+            same_direction_min_magnitude=args.exploration_same_direction_min_magnitude,
+            same_direction_max_magnitude=args.exploration_same_direction_max_magnitude,
+        )
+    action_low_np = envs.single_action_space.low.astype(np.float32)
+    action_high_np = envs.single_action_space.high.astype(np.float32)
     primitive_selector.set_primitive_weights(
         stand_still=args.exploration_primitive_weight_stand_still,
         same_direction=args.exploration_primitive_weight_same_direction,
@@ -573,7 +753,7 @@ def _entrypoint():
     if resume_checkpoint is not None:
         restored_state = load_resume_training_state(
             resume_checkpoint,
-            device=args.device,
+            device=str(rollout_device),
             recent_episode_window_size=args.recent_episode_window_size,
             success_rb=success_rb,
             failure_rb=failure_rb,
@@ -596,8 +776,11 @@ def _entrypoint():
         iteration = restored_state["iteration"]
         total_critic_updates = restored_state["total_critic_updates"]
         obs = restored_state["obs"]
-        last_action_for_policy = restored_state["last_action_for_policy"]
-        train_metrics = restored_state["train_metrics"]
+        last_action_for_policy = restored_state["last_action_for_policy"].to(rollout_device)
+        train_metrics = initialize_train_metrics()
+        train_metrics.update(
+            {k: v for k, v in restored_state["train_metrics"].items() if k in train_metrics}
+        )
         interval_paddle_puck_collisions = restored_state["interval_paddle_puck_collisions"]
         interval_env_steps = restored_state["interval_env_steps"]
         interval_primitive_env_steps = restored_state["interval_primitive_env_steps"]
@@ -607,7 +790,89 @@ def _entrypoint():
         episode_return_success_threshold = restored_state["episode_return_success_threshold"]
         rolling_step_stats_window = restored_state["rolling_step_stats_window"]
         rolling_episode_stats_window = restored_state["rolling_episode_stats_window"]
+        # Optimizer.load_state_dict restores the checkpoint's param_groups, so a
+        # checkpoint written by the pre-graph trainer (capturable=False,
+        # fused=False, step on CPU) would break CUDA-graph capture. Re-assert
+        # the runtime flags and move Adam's step counters to the device.
+        for opt in (q_optimizer, actor_optimizer):
+            for group in opt.param_groups:
+                group["capturable"] = bool(adam_kwargs["capturable"])
+                group["fused"] = bool(adam_kwargs["fused"])
+                group["foreach"] = None
+            for state in opt.state.values():
+                step_t = state.get("step")
+                if torch.is_tensor(step_t) and step_t.device != device and adam_kwargs["capturable"]:
+                    state["step"] = step_t.to(device)
         print(f"Resuming training from global_step={global_step}, iteration={iteration}")
+    start_step = global_step
+
+    # --- Update engine (CUDA-graph captured on GPU, eager otherwise) ---
+    updater = GraphedTD3Update(
+        actor=actor,
+        actor_target=actor_target,
+        qfs=qfs,
+        qfs_target=qfs_target,
+        q_optimizer=q_optimizer,
+        actor_optimizer=actor_optimizer,
+        success_rb=success_rb,
+        failure_rb=failure_rb,
+        batch_size=args.batch_size,
+        obs_dim=obs_dim,
+        act_dim=act_dim,
+        device=device,
+        gamma=args.gamma,
+        tau=args.tau,
+        policy_noise=args.policy_noise,
+        noise_clip=args.noise_clip,
+        action_low=action_low,
+        action_high=action_high,
+        h_transform_eps=args.h_transform_eps,
+        use_last_action_in_policy_state=args.use_last_action_in_policy_state,
+        per_enabled=args.per_enabled,
+        per_eps=args.per_eps,
+        critic_per_fraction=args.critic_per_fraction,
+        cql_alpha=args.cql_alpha,
+        cql_n_random=args.cql_n_random,
+        target_critic_subset_size=args.target_critic_subset_size,
+        use_graph=use_cuda_graphs,
+        compile_update=args.compile_update,
+    )
+    print(
+        f"Update engine: {'CUDA graphs' if updater.use_graph else 'eager'}"
+        f"{' + torch.compile' if updater.compile_update else ''} on {device}; rollout on {rollout_device}"
+    )
+
+    # --- CPU replica of the actor that drives the environment ---
+    rollout_actor = copy.deepcopy(actor).to(rollout_device).eval()
+    rollout_actor_params = list(rollout_actor.parameters())
+    train_actor_params = list(actor.parameters())
+    # torch.compile fuses the ~40-op residual-MLP forward into one C++ call
+    # (273 -> 140 us per env step on this box). Params are read by reference
+    # so in-place refreshes are picked up without recompiling.
+    rollout_policy = lambda policy_obs: deterministic_actor_action(rollout_actor, policy_obs)  # noqa: E731
+    if args.compile_rollout_actor and rollout_device.type == "cpu" and not hasattr(rollout_actor, "get_action_mean_and_logstd"):
+        try:
+            _t0 = time.time()
+            _compiled = torch.compile(rollout_actor.get_action, dynamic=False)
+            _probe = torch.zeros((args.num_envs, policy_obs_dim), dtype=torch.float32, device=rollout_device)
+            with torch.no_grad():
+                _err = (_compiled(_probe) - rollout_actor.get_action(_probe)).abs().max().item()
+            if _err > 1e-4:
+                raise RuntimeError(f"compiled actor mismatch {_err:.2e}")
+            rollout_policy = _compiled
+            print(f"Rollout actor compiled in {time.time() - _t0:.1f}s")
+        except Exception as exc:  # pragma: no cover - environment dependent
+            print(f"torch.compile of rollout actor unavailable ({exc}); using eager.")
+
+    def refresh_rollout_actor() -> None:
+        # One flatten kernel + one device->host copy instead of one sync per tensor.
+        with torch.no_grad():
+            flat = torch.nn.utils.parameters_to_vector(train_actor_params).to(rollout_device)
+            torch.nn.utils.vector_to_parameters(flat, rollout_actor_params)
+
+    checkpoint_evaluator = (
+        AsyncCheckpointEvaluator(args.checkpoint_interval) if args.checkpoint_eval_async else None
+    )
 
     def save_full_checkpoint(out_dir: str) -> str:
         os.makedirs(out_dir, exist_ok=True)
@@ -656,11 +921,38 @@ def _entrypoint():
         torch.save(state, f"{out_dir}/training_state.pth")
         return model_path_local
 
-    while global_step < args.total_timesteps:
-        should_update_train_metrics = global_step > 0 and np.random.rand() < 0.1
-        should_refresh_annealing = (not args.eval_mode) and (np.random.rand() < 0.1)
+    def run_checkpoint_eval(model_path: str, checkpoint_dir: str) -> None:
+        if checkpoint_evaluator is not None:
+            checkpoint_evaluator.launch(checkpoint_dir, global_step)
+            return
+        try:
+            evaluate_agent(
+                model_path,
+                checkpoint_dir,
+                config["air_hockey"],
+                n_eps=4,
+                n_gifs=1,
+                action_scale=action_scale,
+                agent_hidden_layer_size=args.agent_hidden_layer_size,
+                agent_num_hidden_layers=args.agent_num_hidden_layers,
+                use_last_action_in_policy_state=args.use_last_action_in_policy_state,
+            )
+        except Exception as e:
+            print(f"Evaluation failed: {e}")
 
-        if should_refresh_annealing:
+    training_cycles = 0
+    next_stats_log_step = ((global_step // args.stats_log_interval) + 1) * args.stats_log_interval
+    # Opt-in per-section wall-clock accounting (TD3_PROFILE_SECTIONS=1):
+    # printed with every stats line. Costs a few perf_counter calls per step.
+    profile_sections = os.environ.get("TD3_PROFILE_SECTIONS", "0") == "1"
+    section_time: Dict[str, float] = {"policy": 0.0, "env": 0.0, "bookkeeping": 0.0, "train_update": 0.0, "train_other": 0.0}
+    _pc = time.perf_counter
+    start_time = time.time()
+    last_critic_out: Dict[str, torch.Tensor] | None = None
+    last_actor_out: Dict[str, torch.Tensor] | None = None
+
+    while global_step < args.total_timesteps:
+        if not args.eval_mode and iteration % 100 == 0:
             annealing_active = global_step < args.exploration_primitive_chance_anneal_steps
             primitive_selector.chance = primitive_exploration_chance_for_step(args, global_step)
             if annealing_active:
@@ -673,41 +965,43 @@ def _entrypoint():
                     stand_still=args.exploration_primitive_weight_stand_still,
                     same_direction=args.exploration_primitive_weight_same_direction,
                 )
+
+        # ------------------------------------------------------------ rollout
+        if profile_sections:
+            _t_sec = _pc()
         prev_action_for_transition = last_action_for_policy.clone()
-        obs_tensor = torch.tensor(obs, dtype=torch.float32, device=args.device)
+        obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=rollout_device)
         policy_obs_tensor = augment_policy_observation(
             obs_tensor, last_action_for_policy, args.use_last_action_in_policy_state
         )
 
-        if global_step < args.learning_starts and not args.eval_mode:
-            if args.exploration_pre_learning_action_source == "random":
-                actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
-            else:
-                with torch.no_grad():
-                    deterministic_actions = deterministic_actor_action(actor, policy_obs_tensor)
-                    exploration = torch.randn_like(deterministic_actions) * args.exploration_noise
-                    deterministic_actions = torch.clamp(
-                        deterministic_actions + exploration, action_low, action_high
-                    )
-                    actions = deterministic_actions.cpu().numpy()
+        if (
+            global_step < args.learning_starts
+            and not args.eval_mode
+            and args.exploration_pre_learning_action_source == "random"
+        ):
+            action_tensor = torch.as_tensor(
+                np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)]),
+                dtype=torch.float32,
+                device=rollout_device,
+            )
         else:
             with torch.no_grad():
-                deterministic_actions = deterministic_actor_action(actor, policy_obs_tensor)
+                action_tensor = rollout_policy(policy_obs_tensor)
                 if not args.eval_mode:
-                    exploration = torch.randn_like(deterministic_actions) * args.exploration_noise
-                    deterministic_actions = torch.clamp(
-                        deterministic_actions + exploration, action_low, action_high
-                    )
-                else:
-                    deterministic_actions = torch.clamp(deterministic_actions, action_low, action_high)
-                actions = deterministic_actions.cpu().numpy()
+                    action_tensor = action_tensor + torch.randn_like(action_tensor) * args.exploration_noise
+                action_tensor = torch.clamp(action_tensor, action_low_rollout, action_high_rollout)
 
-        action_tensor = torch.as_tensor(actions, dtype=torch.float32, device=args.device)
-        if not args.eval_mode:
+        if not args.eval_mode and use_numpy_selector:
+            actions_np, primitive_step_stats = primitive_selector.apply(
+                action_tensor.numpy(), action_low_np, action_high_np, return_stats=True
+            )
+            action_tensor = torch.from_numpy(actions_np)
+        elif not args.eval_mode:
             action_tensor, primitive_step_stats = primitive_selector.apply(
                 action_tensor,
-                action_low=action_low,
-                action_high=action_high,
+                action_low=action_low_rollout,
+                action_high=action_high_rollout,
                 return_stats=True,
             )
         else:
@@ -715,11 +1009,16 @@ def _entrypoint():
                 "primitive_applied_count": 0,
                 "primitive_horizontal_dominant_count": 0,
             }
-        actions = action_tensor.cpu().numpy()
+        actions = action_tensor.numpy()
 
-        gif_recorder.capture_frame(train_renderer, global_step)
+        if gif_recorder is not None:
+            gif_recorder.capture_frame(train_renderer, global_step)
 
+        if profile_sections:
+            _t_now = _pc(); section_time["policy"] += _t_now - _t_sec; _t_sec = _t_now
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
+        if profile_sections:
+            _t_now = _pc(); section_time["env"] += _t_now - _t_sec; _t_sec = _t_now
         dones = np.logical_or(terminations, truncations)
         step_puck_hits = sum_info_metric(infos, "paddle_puck_collision_count")
         interval_paddle_puck_collisions += step_puck_hits
@@ -728,15 +1027,15 @@ def _entrypoint():
         interval_primitive_horizontal_env_steps += int(
             primitive_step_stats["primitive_horizontal_dominant_count"]
         )
-        next_obs_tensor = torch.tensor(next_obs, dtype=torch.float32, device=args.device)
-        done_tensor = torch.tensor(dones, dtype=torch.bool, device=args.device)
+        done_tensor = torch.as_tensor(dones, dtype=torch.bool, device=rollout_device)
         primitive_selector.reset(done_tensor)
         last_action_for_policy = action_tensor.clone()
         last_action_for_policy[done_tensor] = 0
 
-        rewards_tensor = torch.tensor(rewards, dtype=torch.float32, device=args.device)
+        rewards_tensor = torch.as_tensor(rewards, dtype=torch.float32, device=rollout_device)
 
-        gif_recorder.note_reward(float(rewards_tensor[0].item()))
+        if gif_recorder is not None:
+            gif_recorder.note_reward(float(rewards[0]))
 
         if "final_info" in infos:
             for info in infos["final_info"]:
@@ -764,13 +1063,15 @@ def _entrypoint():
         while rolling_episode_stats_window and int(rolling_episode_stats_window[0][0]) <= rolling_cutoff_step:
             rolling_episode_stats_window.popleft()
 
-        real_next_obs = next_obs.copy()
-        for idx, trunc in enumerate(truncations):
-            if trunc:
-                real_next_obs[idx] = infos["final_observation"][idx]
-        real_next_obs_tensor = torch.as_tensor(real_next_obs, dtype=torch.float32, device=args.device)
-        terminations_tensor = torch.as_tensor(terminations, dtype=torch.float32, device=args.device)
+        real_next_obs = next_obs
+        if truncations.any():
+            real_next_obs = next_obs.copy()
+            for idx, trunc in enumerate(truncations):
+                if trunc:
+                    real_next_obs[idx] = infos["final_observation"][idx]
         if not args.eval_mode:
+            real_next_obs_tensor = torch.as_tensor(real_next_obs, dtype=torch.float32, device=rollout_device)
+            terminations_tensor = torch.as_tensor(terminations, dtype=torch.float32, device=rollout_device)
             episode_trajectory.append_step(
                 obs=obs_tensor[0],
                 next_obs=real_next_obs_tensor[0],
@@ -790,12 +1091,25 @@ def _entrypoint():
             )
         episode_finished = bool(dones[0])
 
-        if episode_finished:
+        if episode_finished and gif_recorder is not None:
             gif_recorder.on_episode_end(global_step)
 
         obs = next_obs
+        if profile_sections:
+            _t_now = _pc(); section_time["bookkeeping"] += _t_now - _t_sec; _t_sec = _t_now
 
+        # ----------------------------------------------------------- training
         if global_step > args.learning_starts and episode_finished and not args.eval_mode:
+            if args.per_enabled:
+                per_beta = linear_anneal(
+                    args.per_beta_start,
+                    args.per_beta_end,
+                    global_step,
+                    args.per_beta_anneal_steps,
+                )
+            else:
+                per_beta = 0.0
+
             for q_update_idx in range(args.q_updates):
                 success_batch_count, failure_batch_count = critic_success_failure_counts(
                     batch_size=args.batch_size,
@@ -805,210 +1119,14 @@ def _entrypoint():
                 )
                 if success_batch_count + failure_batch_count == 0:
                     continue
-                if args.per_enabled:
-                    per_beta = linear_anneal(
-                        args.per_beta_start,
-                        args.per_beta_end,
-                        global_step,
-                        args.per_beta_anneal_steps,
-                    )
-                else:
-                    per_beta = 0.0
 
-                replay_chunks: List[Dict[str, torch.Tensor]] = []
-                per_priority_update_slices: List[Tuple[object, torch.Tensor, int, int]] = []
-                per_sample_count = 0
-                uniform_sample_count = 0
-                running_offset = 0
-                for source_buffer, source_count in (
-                    (success_rb, success_batch_count),
-                    (failure_rb, failure_batch_count),
-                ):
-                    if source_count <= 0:
-                        continue
-                    source_chunk = sample_critic_source_chunk(
-                        replay_buffer=source_buffer,
-                        sample_count=source_count,
-                        per_enabled=args.per_enabled,
-                        per_beta=per_beta,
-                        critic_per_fraction=args.critic_per_fraction,
-                    )
-                    source_data = source_chunk["data"]
-                    replay_chunks.append(source_data)
-                    source_batch_size = int(source_data["rewards"].shape[0])
-                    source_per_count = int(source_chunk["per_count"])
-                    source_uniform_count = int(source_chunk["uniform_count"])
-                    per_sample_count += source_per_count
-                    uniform_sample_count += source_uniform_count
-                    if (
-                        args.per_enabled
-                        and source_per_count > 0
-                        and source_chunk["per_indices"] is not None
-                    ):
-                        per_priority_update_slices.append(
-                            (
-                                source_buffer,
-                                source_chunk["per_indices"],
-                                running_offset,
-                                running_offset + source_per_count,
-                            )
-                        )
-                    running_offset += source_batch_size
-
-                if len(replay_chunks) == 1:
-                    data = replay_chunks[0]
-                else:
-                    data = concat_replay_samples(replay_chunks)
-                sampled_observations = data["observations"]
-                sampled_next_observations = data["next_observations"]
-                sampled_actions = data["actions"]
-                sampled_rewards = data["rewards"]
-                sampled_dones = data["dones"]
-                sampled_prev_actions = data["prev_actions"]
-                sampled_weights = data.get("weights")
-                if sampled_weights is None:
-                    sampled_weights = torch.ones_like(sampled_rewards)
-                sampled_weights = sampled_weights.view(-1)
-                sampled_next_prev_actions = sampled_actions * (1.0 - sampled_dones.unsqueeze(-1))
-                sampled_next_policy_observations = augment_policy_observation(
-                    sampled_next_observations,
-                    sampled_next_prev_actions,
-                    args.use_last_action_in_policy_state,
-                )
-
-                with torch.no_grad():
-                    target_next_action = deterministic_actor_action(
-                        actor_target,
-                        sampled_next_policy_observations,
-                    )
-                    noise = torch.randn_like(target_next_action) * args.policy_noise
-                    noise = torch.clamp(noise, -args.noise_clip, args.noise_clip)
-                    target_next_action = torch.clamp(target_next_action + noise, action_low, action_high)
-
-                    # Subset selection for the target Q (REDQ-style; min over a
-                    # sampled M-subset). When target_critic_subset_size is None
-                    # OR equals num_critics, behaves as Maxmin-N.
-                    if (
-                        args.target_critic_subset_size is None
-                        or args.target_critic_subset_size >= args.num_critics
-                    ):
-                        target_indices = list(range(args.num_critics))
-                    else:
-                        target_indices = (
-                            torch.randperm(args.num_critics)[
-                                : args.target_critic_subset_size
-                            ]
-                            .tolist()
-                        )
-                    next_q_h_list = [
-                        qfs_target[ti](sampled_next_observations, target_next_action)
-                        for ti in target_indices
-                    ]
-                    if len(next_q_h_list) == 1:
-                        min_next_q_h = next_q_h_list[0]
-                    elif len(next_q_h_list) == 2:
-                        min_next_q_h = torch.min(next_q_h_list[0], next_q_h_list[1])
-                    else:
-                        min_next_q_h = torch.stack(next_q_h_list, dim=0).min(dim=0).values
-
-                    min_next_q = h_inverse(min_next_q_h, eps=args.h_transform_eps).view(-1)
-
-                    bellman_target_original = sampled_rewards + (
-                        1 - sampled_dones
-                    ) * args.gamma * min_next_q
-
-                    next_q_value_h = h_transform(
-                        bellman_target_original, eps=args.h_transform_eps
-                    )
-
-                    if should_update_train_metrics and q_update_idx == args.q_updates - 1:
-                        train_metrics.update(build_target_q_debug_metrics(
-                            bellman_target_original, next_q_value_h,
-                        ))
-
-                # Forward pass over all N critics; train each against the shared target.
-                qi_h_list = []
-                qi_err_list = []
-                qi_loss_list = []
-                cql_terms = None
-                if args.cql_alpha > 0.0:
-                    cql_policy_obs = augment_policy_observation(
-                        sampled_observations,
-                        sampled_prev_actions,
-                        args.use_last_action_in_policy_state,
-                    )
-                    with torch.no_grad():
-                        cql_policy_action = deterministic_actor_action(
-                            actor, cql_policy_obs
-                        )
-                    cql_terms = precompute_cql_terms(
-                        sampled_observations=sampled_observations,
-                        policy_action=cql_policy_action,
-                        act_dim=act_dim,
-                        n_random=int(args.cql_n_random),
-                    )
-                for q in qfs:
-                    qi_h = q(sampled_observations, sampled_actions)
-                    qi_err = qi_h.view(-1) - next_q_value_h
-                    qi_h_list.append(qi_h)
-                    qi_err_list.append(qi_err)
-                    loss_i = (sampled_weights * qi_err.pow(2)).mean()
-                    if cql_terms is not None:
-                        loss_i = loss_i + args.cql_alpha * cql_penalty(
-                            q, sampled_observations, cql_terms
-                        )
-                    qi_loss_list.append(loss_i)
-                q1_h = qi_h_list[0]
-
-                q_total_loss = sum(qi_loss_list)
-
-                q_optimizer.zero_grad()
-                q_total_loss.backward()
-                q_optimizer.step()
-
-                # PER priority: mean of |TD error| across critics.
-                priority_td_error = sum(e.abs() for e in qi_err_list) / args.num_critics
-                if args.per_enabled and per_sample_count > 0:
-                    for source_buffer, per_indices, start_idx, end_idx in per_priority_update_slices:
-                        source_buffer.update_priorities(
-                            per_indices,
-                            priority_td_error[start_idx:end_idx].detach() + args.per_eps,
-                        )
-
-                if should_update_train_metrics and q_update_idx == args.q_updates - 1:
-                    sampled_priorities = data.get("sampled_priorities")
-                    if sampled_priorities is None:
-                        sampled_priorities = torch.zeros_like(sampled_weights)
-                    train_metrics.update(build_critic_metrics(
-                        qi_h_list=qi_h_list,
-                        qi_loss_list=qi_loss_list,
-                        q_total_loss=q_total_loss,
-                        q1_h=q1_h,
-                        num_critics=args.num_critics,
-                        sampled_rewards=sampled_rewards,
-                        sampled_weights=sampled_weights,
-                        sampled_priorities=sampled_priorities,
-                        priority_td_error=priority_td_error,
-                        per_beta=per_beta,
-                        per_enabled=args.per_enabled,
-                        per_sample_count=per_sample_count,
-                        uniform_sample_count=uniform_sample_count,
-                        batch_size=args.batch_size,
-                        success_batch_count=success_batch_count,
-                        failure_batch_count=failure_batch_count,
-                        len_success_rb=len(success_rb),
-                        len_failure_rb=len(failure_rb),
-                        episode_return_success_threshold=episode_return_success_threshold,
-                        recent_episode_window_count=len(recent_episode_returns),
-                    ))
+                last_critic_out = updater.critic_update(success_batch_count, failure_batch_count, per_beta)
+                if profile_sections:
+                    _t_now = _pc(); section_time["train_update"] += _t_now - _t_sec; _t_sec = _t_now
 
                 total_critic_updates += 1
                 if total_critic_updates % args.target_network_frequency == 0:
-                    for param, target_param in zip(actor.parameters(), actor_target.parameters()):
-                        target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
-                    for q, qt in zip(qfs, qfs_target):
-                        for param, target_param in zip(q.parameters(), qt.parameters()):
-                            target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
+                    updater.polyak()
 
             for actor_update_idx in range(args.actor_updates_per_iteration):
                 actor_success_count, actor_failure_count = critic_success_failure_counts(
@@ -1019,58 +1137,58 @@ def _entrypoint():
                 )
                 if actor_success_count + actor_failure_count == 0:
                     continue
-                actor_data_chunks: List[Dict[str, torch.Tensor]] = []
-                if actor_success_count > 0:
-                    actor_data_chunks.append(
-                        sample_actor_source_chunk(success_rb, actor_success_count, args.per_enabled)
-                    )
-                if actor_failure_count > 0:
-                    actor_data_chunks.append(
-                        sample_actor_source_chunk(failure_rb, actor_failure_count, args.per_enabled)
-                    )
-                if len(actor_data_chunks) == 1:
-                    data = actor_data_chunks[0]
-                else:
-                    data = {
-                        "observations": torch.cat(
-                            [chunk["observations"] for chunk in actor_data_chunks], dim=0
-                        ),
-                        "prev_actions": torch.cat(
-                            [chunk["prev_actions"] for chunk in actor_data_chunks], dim=0
-                        ),
-                    }
-                sampled_observations = data["observations"]
-                sampled_prev_actions = data["prev_actions"]
-                sampled_policy_observations = augment_policy_observation(
-                    sampled_observations, sampled_prev_actions, args.use_last_action_in_policy_state
-                )
+                last_actor_out = updater.actor_update(actor_success_count, actor_failure_count)
+                if profile_sections:
+                    _t_now = _pc(); section_time["train_update"] += _t_now - _t_sec; _t_sec = _t_now
 
-                current_policy_actions = deterministic_actor_action(actor, sampled_policy_observations)
-                q1_h = qf1(sampled_observations, current_policy_actions)
-                q1 = h_inverse(q1_h, eps=args.h_transform_eps).view(-1)
-                norm_q = (1.0 - args.gamma) * q1
-                actor_loss = -norm_q.mean()
-                actor_optimizer.zero_grad()
-                actor_loss.backward()
-                actor_optimizer.step()
-                if should_update_train_metrics and actor_update_idx == args.actor_updates_per_iteration - 1:
-                    train_metrics.update(build_actor_metrics(actor_loss, norm_q))
+            # Push the updated actor weights to the CPU replica that drives the env.
+            refresh_rollout_actor()
+            training_cycles += 1
+            if profile_sections:
+                if device.type == "cuda":
+                    torch.cuda.synchronize(device)
+                _t_now = _pc(); section_time["train_other"] += _t_now - _t_sec; _t_sec = _t_now
 
-            if should_update_train_metrics:
+            if training_cycles % args.train_metrics_log_interval == 0:
+                if last_critic_out is not None:
+                    train_metrics.update(
+                        {
+                            "losses/q_loss": float(last_critic_out["q_loss"].item()),
+                            "losses/q_total_loss": float(last_critic_out["q_total_loss"].item()),
+                            "losses/q1_mean": float(last_critic_out["q1_mean"].item()),
+                            "debug/bellman_target_original_mean": float(
+                                last_critic_out["bellman_target_mean"].item()
+                            ),
+                            "debug/next_q_h_mean": float(last_critic_out["next_q_h_mean"].item()),
+                            "rewards/sampled_reward_mean": float(
+                                last_critic_out["sampled_reward_mean"].item()
+                            ),
+                            "replay/per_priority_td_error_mean": float(
+                                last_critic_out["priority_td_error_mean"].item()
+                            ),
+                        }
+                    )
+                if last_actor_out is not None:
+                    train_metrics.update(
+                        {
+                            "losses/actor_loss": float(last_actor_out["actor_loss"].item()),
+                            "losses/actor_norm_q_mean": float(last_actor_out["actor_norm_q_mean"].item()),
+                        }
+                    )
                 train_metrics.update(
                     {
+                        "replay/per_beta": float(per_beta),
                         "replay/success_buffer_size": float(len(success_rb)),
                         "replay/failure_buffer_size": float(len(failure_rb)),
-                        "replay/episode_return_success_threshold": episode_return_success_threshold,
-                        "replay/recent_episode_window_count": float(len(recent_episode_returns)),
+                        "replay/episode_return_success_threshold": float(episode_return_success_threshold),
                     }
                 )
                 log_scalar_metrics(writer, train_metrics, global_step)
                 writer.add_scalar("charts/exploration_primitive_chance", primitive_selector.chance, global_step)
-                writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+                elapsed = max(time.time() - start_time, 1e-6)
+                writer.add_scalar("charts/SPS", int((global_step - start_step) / elapsed), global_step)
 
-
-        if global_step > 0 and global_step % 500 == 0:
+        if global_step + args.num_envs >= next_stats_log_step:
             write_periodic_episode_stats(
                 writer, global_step,
                 rolling_episode_stats_window=rolling_episode_stats_window,
@@ -1080,34 +1198,38 @@ def _entrypoint():
                 interval_primitive_env_steps=interval_primitive_env_steps,
                 interval_primitive_horizontal_env_steps=interval_primitive_horizontal_env_steps,
             )
+            elapsed = max(time.time() - start_time, 1e-6)
+            print(
+                f"Step {global_step}: SPS {(global_step - start_step) / elapsed:.0f}",
+                flush=True,
+            )
+            if profile_sections:
+                total_sec = max(sum(section_time.values()), 1e-9)
+                print(
+                    "  sections: "
+                    + ", ".join(f"{k} {v:.1f}s ({100 * v / total_sec:.0f}%)" for k, v in section_time.items()),
+                    flush=True,
+                )
             interval_paddle_puck_collisions = 0.0
             interval_env_steps = 0
             interval_primitive_env_steps = 0
             interval_primitive_horizontal_env_steps = 0
+            next_stats_log_step += args.stats_log_interval
 
         if global_step > 0 and global_step % args.checkpoint_interval == 0:
             checkpoint_dir = os.path.join(log_parent_dir, f"checkpoint_{global_step}")
             model_path = save_full_checkpoint(checkpoint_dir)
-            print(f"\nCheckpoint saved at step {global_step}")
-            try:
-                evaluate_agent(
-                    model_path,
-                    checkpoint_dir,
-                    config["air_hockey"],
-                    n_eps=4,
-                    n_gifs=1,
-                    action_scale=action_scale,
-                    agent_hidden_layer_size=args.agent_hidden_layer_size,
-                    agent_num_hidden_layers=args.agent_num_hidden_layers,
-                    use_last_action_in_policy_state=args.use_last_action_in_policy_state,
-                )
-            except Exception as e:
-                print(f"Evaluation failed: {e}")
+            print(f"\nCheckpoint saved at step {global_step}", flush=True)
+            run_checkpoint_eval(model_path, checkpoint_dir)
 
         iteration += 1
         global_step += args.num_envs
 
     envs.close()
+    if gif_recorder is not None:
+        gif_recorder.close()
+    if checkpoint_evaluator is not None:
+        checkpoint_evaluator.wait_all()
 
     if not args.eval_mode:
         save_full_checkpoint(log_parent_dir)
@@ -1136,18 +1258,14 @@ def _entrypoint():
 
     metrics = [
         "charts/episodic_return",
+        "charts/avg_episodic_return",
         "losses/q_loss",
-        "losses/q_total_loss",
         "losses/actor_loss",
-        "rewards/sampled_reward_mean",
-        "replay/per_beta",
-        "replay/per_is_weight_mean",
-        "replay/per_sampled_priority_mean",
+        "losses/q1_mean",
         "replay/per_priority_td_error_mean",
     ]
     save_tensorboard_plots(log_parent_dir, config, metrics=metrics)
     writer.close()
-
 
 
 if __name__ == "__main__":

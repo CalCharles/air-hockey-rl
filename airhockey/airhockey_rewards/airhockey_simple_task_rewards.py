@@ -2,21 +2,54 @@ from .airhockey_reward_base import AirHockeyRewardBase
 import numpy as np
 
 class AirHockeyPuckVelReward(AirHockeyRewardBase):
+    """Per-step upward displacement of the puck, from positions only.
+
+    The real robot's vision stack reports puck positions, not velocities, so the
+    reward is measured the way the robot can measure it: the change in puck
+    position between two consecutive frames.  Base-frame x grows toward the
+    agent, so upward motion is a decreasing x and ``prev_x - x`` is the upward
+    displacement in metres.  Downward motion pays nothing.
+
+    A step scores zero whenever the displacement cannot actually be measured --
+    the first step of an episode, and any step where the puck was occluded at
+    either end, since an occluded reading is a placeholder rather than a
+    position.  Scale the whole thing with the ``base_reward_scaling`` config key
+    if the raw metres are too small (the old velocity-based reward was ~100x
+    this at 20 Hz).
+    """
+
     def __init__(self, task_env):
         super().__init__(task_env)
+        self._prev_puck_x = None
+        self._prev_timestep = None
+
+    @staticmethod
+    def _is_occluded(puck):
+        occluded = puck.get('occluded', 0)
+        return float(np.asarray(occluded).reshape(-1)[0]) > 0.5
 
     def get_base_reward(self, state_info):
-        puck_pos = state_info['pucks'][0]['position']
-        paddle_pos = state_info['paddles']['paddle_ego']['position']
-        min_dist = self.task_env.paddle_radius + self.task_env.puck_radius
-        dist = np.linalg.norm(np.array(puck_pos) - np.array(paddle_pos))
+        puck = state_info['pucks'][0]
+        puck_x = float(puck['position'][0])
+        occluded = self._is_occluded(puck)
+        timestep = self.task_env.current_timestep
 
-        # reward for positive velocity towards the top of the board
-        puck_vel = -state_info['pucks'][0]['velocity'][0]
-        puck_height = -puck_pos[0]
+        prev_x, prev_timestep = self._prev_puck_x, self._prev_timestep
+        # current_timestep restarts at 0 every episode, so a non-consecutive
+        # timestep also covers the episode boundary.
+        self._prev_puck_x = None if occluded else puck_x
+        self._prev_timestep = timestep
 
-        reward = max(puck_vel * 5, 0) # + 0.5 / dist
-        success = puck_height > 0.5 and self.task_env.current_timestep > 25
+        measurable = (
+            not occluded
+            and prev_x is not None
+            and prev_timestep == timestep - 1
+        )
+        upward_displacement = (prev_x - puck_x) if measurable else 0.0
+
+        reward = max(upward_displacement, 0.0)
+        puck_height = -puck_x
+        success = puck_height > 0.5 and timestep > 25
         return reward, success
 
 
@@ -278,29 +311,25 @@ class AirHockeyPuckStrikeReward(AirHockeyRewardBase):
 
 
 class AirHockeyPuckTouchReward(AirHockeyRewardBase):
+    """+1 on the step the paddle touches the puck, 0 otherwise.
+
+    The touch threshold is the one ``terminate_on_puck_hit_paddle`` uses, so with
+    that flag on (the default for the puck_touch configs) the episode ends on the
+    touch and the +1 is the whole episode return.  The bonus is awarded once per
+    episode either way.
+    """
+
     def __init__(self, task_env):
         super().__init__(task_env)
 
     def get_base_reward(self, state_info):
-        # reward for getting close to the puck, but make sure not to displace it
         puck_pos = state_info['pucks'][0]['position']
         paddle_pos = state_info['paddles']['paddle_ego']['position']
-        min_dist = self.task_env.paddle_radius + self.task_env.puck_radius
         dist = np.linalg.norm(np.array(puck_pos) - np.array(paddle_pos))
-        max_dist = 0.16 * self.task_env.width
-        reward = 1 - ((dist - min_dist) / (max_dist - min_dist))
-        reward = max(reward, 0)
-        # let's also make sure puck does not deviate from initial position
-        puck_initial_position = self.task_env.puck_initial_position
-        puck_current_position = state_info['pucks'][0]['position']
-        delta = np.linalg.norm(np.array(puck_initial_position) - np.array(puck_current_position))
-        epsilon = 0.01 + min_dist
+        touch_dist = self.task_env.paddle_radius + self.task_env.puck_radius + 0.02
 
-        success = dist < (self.task_env.paddle_radius + self.task_env.puck_radius + 0.02)
-
-        if reward > 0:
-            reward *= 20  # make it more significant
-
+        success = bool(dist < touch_dist)
+        reward = 1.0 if (success and not self.task_env.success_in_ep) else 0.0
         return reward, success
 
 

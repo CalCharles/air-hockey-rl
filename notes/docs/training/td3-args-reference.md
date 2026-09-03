@@ -92,6 +92,7 @@ When the policy hands off to a scripted primitive (stand-still, same-direction, 
 |---|---|---|
 | `checkpoint_interval` | `25_000` | Save a checkpoint every N env-steps. |
 | `save_replay_buffer` | `True` | Whether to dump the success/failure buffers into the `training_state.pth` file. |
+| `checkpoint_eval_async` | `True` | Run the per-checkpoint `evaluate_agent` in a CPU-only background subprocess (`scripts/td3/checkpoint_eval.py`) instead of blocking the loop. Output files are identical; see [training-throughput.md](training-throughput.md). |
 
 ## Paths and checkpoint loading
 
@@ -124,7 +125,14 @@ Active only when `full_checkpoint_load == "residual"`. See [`residual-rl-recipe.
 
 | Field | Default | Notes |
 |---|---|---|
-| `device` | `"cuda:0"` | Torch device. |
+| `device` | `"cuda:0"` | Torch device for the networks, replay buffers and updates. |
+| `rollout_device` | `"cpu"` | Device that drives the env: batch-`num_envs` actor inference, exploration selector, trajectory staging. CPU is ~3× faster than the GPU for the 64-wide actor at batch 1 and avoids per-step syncs. |
+| `use_cuda_graphs` | `True` | Capture each critic / actor update (replay sampling included) in a CUDA graph (`helper/td3_graphed_update.py`). GPU only; auto-disabled when `target_critic_subset_size < num_critics`. |
+| `compile_update` | `True` | `torch.compile` the loss forward/backward inside the graphs (~30 % fewer kernels). Falls back to uncompiled graphs if compilation fails. One-time ~15 s. |
+| `compile_rollout_actor` | `True` | `torch.compile` the CPU rollout actor (273 → 140 µs per step). Falls back to eager. |
+| `torch_num_threads` | `1` | `torch.set_num_threads` for the process; rollout tensors are tiny. |
+| `train_metrics_log_interval` | `20` | Training cycles between writes of the `losses/`, `debug/`, `replay/`, `charts/SPS` scalars. |
+| `stats_log_interval` | `5000` | Env steps between rolling-window stat writes + the console line. |
 | `seed` | `0` | RNG seed. |
 
 ## Network architecture

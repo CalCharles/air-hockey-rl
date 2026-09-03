@@ -141,6 +141,9 @@ def write_periodic_episode_stats(
 
     Caller is responsible for resetting the interval_* counters after this call.
     """
+    # 2026-09 throughput cleanup: one console line + the handful of scalars
+    # that are actually read. Duplicate tags (avg_episodic_return ==
+    # rolling2k_avg_episode_return) and raw interval counts were dropped.
     if rolling_episode_stats_window:
         rolling_returns = [item[1] for item in rolling_episode_stats_window]
         rolling_lengths = [item[2] for item in rolling_episode_stats_window]
@@ -150,21 +153,18 @@ def write_periodic_episode_stats(
         max_return = float(np.max(rolling_returns))
         avg_success = float(np.mean(rolling_success))
         avg_episode_length = float(np.mean(rolling_lengths))
-        print(
-            f"Step {global_step}: Rolling(2k) Avg Return: {avg_return:.2f}, "
-            f"Min: {min_return:.2f}, Max: {max_return:.2f}, "
-            f"Success Rate: {avg_success:.2f}, Avg Episode Length: {avg_episode_length:.2f}, "
-            f"Episodes: {len(rolling_episode_stats_window)}"
-        )
         writer.add_scalar("charts/avg_episodic_return", avg_return, global_step)
         writer.add_scalar("charts/min_episodic_return", min_return, global_step)
         writer.add_scalar("charts/max_episodic_return", max_return, global_step)
         writer.add_scalar("charts/avg_success_rate", avg_success, global_step)
-        writer.add_scalar("charts/rolling2k_avg_episode_return", avg_return, global_step)
         writer.add_scalar("charts/rolling2k_avg_episode_length", avg_episode_length, global_step)
-        writer.add_scalar("charts/rolling2k_episode_count", len(rolling_episode_stats_window), global_step)
+        episode_summary = (
+            f"ret {avg_return:.1f} [{min_return:.0f}, {max_return:.0f}] "
+            f"succ {avg_success:.2f} len {avg_episode_length:.0f} "
+            f"eps {len(rolling_episode_stats_window)}"
+        )
     else:
-        print(f"Step {global_step}: No episodes in rolling 2k-step window")
+        episode_summary = "no episodes in window"
 
     rolling_window_env_steps = int(sum(item[1] for item in rolling_step_stats_window))
     rolling_window_puck_hits = float(sum(item[2] for item in rolling_step_stats_window))
@@ -173,25 +173,12 @@ def write_periodic_episode_stats(
         if rolling_window_env_steps > 0
         else 0.0
     )
-    print(
-        f"Step {global_step}: Rolling(2k) Puck Hits: {int(rolling_window_puck_hits)}, "
-        f"Puck Hits/env-step: {rolling_puck_hits_per_env_step:.4f}"
-    )
-    writer.add_scalar("charts/rolling2k_puck_hits_total", rolling_window_puck_hits, global_step)
     writer.add_scalar("charts/rolling2k_puck_hits_per_env_step", rolling_puck_hits_per_env_step, global_step)
 
     collisions_per_env_step = (
         interval_paddle_puck_collisions / max(interval_env_steps, 1)
         if interval_env_steps > 0
         else 0.0
-    )
-    print(
-        f"Step {global_step}: Paddle-Puck Collisions (last interval): "
-        f"{int(interval_paddle_puck_collisions)} total, {collisions_per_env_step:.4f} per env-step"
-    )
-    writer.add_scalar(
-        "contacts/interval_paddle_puck_collisions_total",
-        interval_paddle_puck_collisions, global_step,
     )
     writer.add_scalar(
         "contacts/interval_paddle_puck_collisions_per_env_step",
@@ -207,25 +194,16 @@ def write_periodic_episode_stats(
         if interval_primitive_env_steps > 0
         else 0.0
     )
-    print(
-        f"Step {global_step}: Primitive Actions (last interval): "
-        f"{interval_primitive_env_steps}/{interval_env_steps} env-steps ({primitive_fraction:.4f}), "
-        f"horizontal-dominant: {interval_primitive_horizontal_env_steps}/{interval_primitive_env_steps} "
-        f"({primitive_horizontal_fraction:.4f})"
-    )
-    writer.add_scalar(
-        "exploration/interval_primitive_env_steps",
-        interval_primitive_env_steps, global_step,
-    )
     writer.add_scalar(
         "exploration/interval_primitive_env_step_fraction",
         primitive_fraction, global_step,
     )
     writer.add_scalar(
-        "exploration/interval_primitive_horizontal_env_steps",
-        interval_primitive_horizontal_env_steps, global_step,
-    )
-    writer.add_scalar(
         "exploration/interval_primitive_horizontal_fraction",
         primitive_horizontal_fraction, global_step,
+    )
+    print(
+        f"Step {global_step}: {episode_summary} | hits/step {rolling_puck_hits_per_env_step:.3f} "
+        f"| primitive frac {primitive_fraction:.3f}",
+        flush=True,
     )

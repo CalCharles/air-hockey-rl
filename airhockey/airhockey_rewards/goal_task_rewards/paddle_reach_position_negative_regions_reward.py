@@ -17,13 +17,15 @@ class AirHockeyPaddleReachPositionNegRegionsReward(AirHockeyRewardBase):
         dist = np.linalg.norm(achieved_goal[:, :2] - desired_goal[:, :2], axis=1)
         max_euclidean_distance = np.linalg.norm(np.array([self.task_env.table_x_bot, self.task_env.table_y_right]) - np.array([self.task_env.table_x_top, self.task_env.table_y_left]))
         bonus = 10 if self.task_env.current_timestep > self.task_env.falling_time else 0 # this prevents the falling initiliazed puck from triggering a success
-        reward = - (dist / max_euclidean_distance) if dist > radius else bonus
+        # Vectorised per-sample select; the single-sample path returns a float
+        # (the old `... if dist > radius else bonus` mixed (1,) arrays and scalars).
+        reward = np.where(dist > radius, -(dist / max_euclidean_distance), float(bonus))
 
         for nrr in self.task_env.reward_regions:
             reward += nrr.check_reward(achieved_goal)
 
         if single:
-            reward = reward[0]
+            reward = float(reward.reshape(-1)[0])
         return reward
     
     def get_base_reward(self, state_info):

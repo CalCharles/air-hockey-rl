@@ -20,6 +20,7 @@ TD3 is the active training algorithm. PPO/SAC paths exist as legacy (see `archit
 | [`replay-and-episodes.md`](replay-and-episodes.md) | PER, success/failure partitions, episode staging |
 | [`checkpointing.md`](checkpointing.md) | Schema, resume vs fine-tune, migrations, real-world async resume |
 | [`monitoring.md`](monitoring.md) | TensorBoard scalar reference, console layout, rolling windows |
+| [`training-throughput.md`](training-throughput.md) | Where sim-training wall-clock goes, the 2026-09 speedups (CUDA-graph updates, CPU rollout, async eval), knobs, and what is left |
 
 ## Configs
 

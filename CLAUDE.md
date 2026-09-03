@@ -35,7 +35,7 @@ latest_models/ablations/ — CoRL-2026 deployment-ready ablation checkpoints
 
 | What | Where |
 |------|-------|
-| **Training entrypoint (source-sim only)** | `scripts/td3/td3_training.py` |
+| **Training entrypoint (source-sim only)** | `scripts/td3/td3_training.py` — 2026-09-03: CUDA-graph updates, CPU rollout, async checkpoint eval, reduced logging (~10× faster training phase). Read [`notes/docs/training/training-throughput.md`](notes/docs/training/training-throughput.md) before touching the loop. **Batch runner for a set of configs across GPUs (one job per GPU): `scripts/td3/run_experiments.py --mode dr|nodr --configs ... --gpus ...`.** Old-vs-new comparison wrapper: `scripts/td3/extras/throughput_bench.py`. |
 | **Training entrypoint (canonical sim2sim / sim2real)** | `scripts/td3/td3_training_dr.py` — wraps `td3_training.py` with per-reset env-parameter randomization. Used with `configs/td3/zeroshot_paramrand/td3_paramrand_pm25.yaml` (sim config `configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25.yaml`). |
 | **Canonical sim config (sysid ground truth)** | `configs/new_juggle/sysid_best_params.yaml` (or `sysid_best_params_hist2.yaml` for hist_len=2) |
 | **Canonical TD3 args** | `configs/td3/td3_recommended_top50_hist2.yaml` — 2-layer, q=25/a=6, references `sysid_best_params_hist2.yaml` |
@@ -103,6 +103,7 @@ Key docs:
 - Configs: [`training/td3-configs.md`](notes/docs/training/td3-configs.md) · [`training/sim-env-configs.md`](notes/docs/training/sim-env-configs.md)
 - **External trainer quickstart** (someone else bringing their own RL algo, using the same Box2D env / canonical hist2 sim config): [`training/box2d-env-usage.md`](notes/docs/training/box2d-env-usage.md)
 - Monitoring (TensorBoard layout, scalar reference, console output): [`training/monitoring.md`](notes/docs/training/monitoring.md)
+- **Training throughput** (profile of the loop, CUDA-graph / CPU-rollout / async-eval design, knobs, remaining costs): [`training/training-throughput.md`](notes/docs/training/training-throughput.md)
 - Rewards: [`training/reward-shaping.md`](notes/docs/training/reward-shaping.md)
 - Networks: [`training/network-architecture.md`](notes/docs/training/network-architecture.md)
 - Replay / episodes: [`training/replay-and-episodes.md`](notes/docs/training/replay-and-episodes.md)

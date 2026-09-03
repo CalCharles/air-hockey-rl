@@ -39,6 +39,15 @@ class TD3PrioritizedReplayBuffer:
         self.position = 0
         self.size = 0
         self.max_priority = 1.0
+        # Running max of priorities written by update_priorities(), kept on
+        # the buffer's device so priority updates never force a host sync.
+        # Folded into the float `max_priority` lazily (on add / state_dict).
+        self._pending_max_priority = torch.zeros((), dtype=torch.float32, device=device)
+
+    def _sync_max_priority(self):
+        pending = float(self._pending_max_priority.item())
+        if pending > self.max_priority:
+            self.max_priority = pending
 
     def add(self, obs, next_obs, actions, rewards, dones, prev_action):
         obs = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
@@ -49,6 +58,7 @@ class TD3PrioritizedReplayBuffer:
         dones = torch.as_tensor(dones, dtype=torch.float32, device=self.device).reshape(-1)
 
         batch_size = int(obs.shape[0])
+        self._sync_max_priority()
         priority_value = max(self.max_priority, self.priority_eps)
 
         first_chunk = min(batch_size, self.buffer_size - self.position)
@@ -93,10 +103,14 @@ class TD3PrioritizedReplayBuffer:
 
         scaled = valid_priorities.pow(self.alpha)
         scaled_sum = scaled.sum()
-        if not torch.isfinite(scaled_sum) or scaled_sum.item() <= 0.0:
-            probs = torch.full_like(scaled, 1.0 / float(self.size))
-        else:
-            probs = scaled / scaled_sum
+        # Fallback to uniform when the priority mass is degenerate. Done with
+        # torch.where (no `.item()`) so sampling never forces a host sync.
+        sum_ok = torch.isfinite(scaled_sum) & (scaled_sum > 0.0)
+        probs = torch.where(
+            sum_ok,
+            scaled / scaled_sum.clamp_min(1e-30),
+            torch.full_like(scaled, 1.0 / float(self.size)),
+        )
 
         indices = torch.multinomial(probs, num_samples=batch_size, replacement=True)
         sample_probs = probs[indices].clamp_min(1e-12)
@@ -140,9 +154,10 @@ class TD3PrioritizedReplayBuffer:
             return
         priorities = priorities.clamp_min(self.priority_eps)
         self.priorities[indices] = priorities
-        self.max_priority = max(self.max_priority, priorities.max().item())
+        torch.maximum(self._pending_max_priority, priorities.max(), out=self._pending_max_priority)
 
     def state_dict(self):
+        self._sync_max_priority()
         return {
             "buffer_size": self.buffer_size,
             "obs_shape": self.obs_shape,
@@ -168,6 +183,7 @@ class TD3PrioritizedReplayBuffer:
         self.alpha = float(state_dict.get("alpha", self.alpha))
         self.priority_eps = float(state_dict.get("priority_eps", self.priority_eps))
         self.max_priority = float(state_dict.get("max_priority", 1.0))
+        self._pending_max_priority.zero_()
         self.observations.copy_(state_dict["observations"].to(self.device))
         self.next_observations.copy_(state_dict["next_observations"].to(self.device))
         self.actions.copy_(state_dict["actions"].to(self.device))
