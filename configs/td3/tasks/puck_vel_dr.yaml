@@ -1,0 +1,65 @@
+# Task 'puck_vel' (puck_velocity), canonical +-25 % per-reset physics randomization (paddle_density / puck_damping / gravity).
+# Trainer: scripts/td3/td3_training_dr.py; batch: scripts/td3/run_experiments.py --mode auto --configs configs/td3/tasks/*.yaml --gpus ...
+# Recipe = configs/td3/td3_recommended_top50_hist2.yaml + DR eval (eval_param_seed / eval_n_envs / eval_eps_per_env), 2M steps,
+# i.e. q_weight_decay 0 + single flat replay buffer (2026-09-04 recipe change, see
+# notes/scratch/experiments/2026-09-04_01-05_sparse-task-collapse-diagnosis.md).
+# Reward scales live in the task reward classes, not here.
+total_timesteps: 2000000
+num_envs: 1
+buffer_size: 100000
+tau: 0.005
+batch_size: 512
+learning_starts: 20000
+policy_lr: 0.0003
+q_lr: 0.001
+q_weight_decay: 0.0
+q_frequency: 1
+q_updates: 25
+policy_frequency: 1
+target_network_frequency: 10
+actor_updates_per_iteration: 6
+exploration_noise: 0.1
+policy_noise: 0.2
+noise_clip: 0.5
+per_enabled: true
+per_alpha: 0.6
+per_beta_start: 0.4
+per_beta_end: 1.0
+per_beta_anneal_steps: 200000
+per_eps: 1.0e-06
+success_buffer_size: 1000000
+failure_buffer_size: 70000
+success_top_fraction: 0.2
+recent_episode_window_size: 500
+critic_success_sample_fraction: 0.3
+critic_failure_sample_fraction: 0.7
+# One flat replay buffer of success_buffer_size transitions; the success/failure
+# split keys above are inert while this is true.
+single_replay_buffer: true
+exploration_primitive_chance: 0.05
+exploration_primitive_chance_start: 0.15
+exploration_primitive_chance_pre_learning_starts: null
+exploration_primitive_chance_anneal_steps: 200000
+exploration_primitive_steps: 5
+exploration_primitive_weight_stand_still: 0.2
+exploration_primitive_weight_same_direction: 3.0
+exploration_primitive_weight_anneal_stand_still: 0.2
+exploration_primitive_weight_anneal_same_direction: 3.0
+exploration_direction_y_component_weight: 2
+config: configs/new_juggle/tasks/sim_dr_puck_vel.yaml
+args_file: null
+model_path: null
+log_parent_dir: null
+run_name: puck_vel_dr
+device: cuda:0
+seed: 0
+h_transform_eps: 0.001
+agent_hidden_layer_size: 64
+agent_num_hidden_layers: 2
+q_hidden_layer_size: 64
+q_num_hidden_layers: 2
+use_last_action_in_policy_state: true
+checkpoint_interval: 25000
+eval_param_seed: 12345
+eval_n_envs: 5
+eval_eps_per_env: 4

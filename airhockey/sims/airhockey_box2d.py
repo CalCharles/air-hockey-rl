@@ -1080,6 +1080,7 @@ class AirHockeyBox2D:
 
     def spawn_paddle(self, pos, vel, name, affected_by_gravity=False, movable=True):
         assert name == 'paddle_ego' or name == 'paddle_alt'
+        base_pos = (float(pos[0]), float(pos[1]))
         pos = self.base_coord_to_box2d(pos)
         vel = self.base_coord_to_box2d(vel)
         radius = self.paddle_radius
@@ -1105,12 +1106,17 @@ class AirHockeyBox2D:
             self.paddles['paddle_ego_force'] = (0, 0)
             self.paddles['paddle_ego_jerk'] = (0, 0)
         self.object_dict[name] = paddle
-        self.paddle_history += [(-2 + self.center_offset_constant,0,1) for i in range(5)]
+        # Seed the 5-frame history with the actual spawn pose (base frame, flag 0
+        # = observed), exactly as ``step`` appends frames. Until 2026-09-04 this
+        # was a placeholder at (-0.8, 0) flagged 1, so the first observation of
+        # every episode reported the paddle far outside the workspace.
+        self.paddle_history += [(base_pos[0], base_pos[1], 0) for i in range(5)]
         
         if 'paddle_ego' in self.paddles and 'paddle_alt' in self.paddles:
             self.multiagent = True
     
     def spawn_puck(self, pos, vel, name, affected_by_gravity=True, movable=True):
+        base_pos = (float(pos[0]), float(pos[1]))
         pos = self.base_coord_to_box2d(pos)
         vel = self.base_coord_to_box2d(vel)
         radius = self.puck_radius
@@ -1133,7 +1139,10 @@ class AirHockeyBox2D:
             puck.gravityScale = 0
         self.pucks[name] = puck
         self.object_dict[name] = puck
-        self.puck_history += [(-2 + self.center_offset_constant,0,1) for i in range(5)]
+        # Same as the paddle: the camera sees the puck where it was placed, so
+        # the reset history holds the spawn position (flag 0 = not occluded)
+        # rather than an off-table placeholder flagged as occluded.
+        self.puck_history += [(base_pos[0], base_pos[1], 0) for i in range(5)]
         
     def spawn_block(self, pos, vel, name, affected_by_gravity=False, movable=True):
         pos = self.base_coord_to_box2d(pos)

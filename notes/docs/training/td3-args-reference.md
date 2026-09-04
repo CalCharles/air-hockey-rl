@@ -25,7 +25,7 @@ Args are accepted from a YAML via `--args-file` and from the CLI. CLI flags over
 | `learning_starts` | `5000` | Env-steps to collect before any gradient updates. |
 | `policy_lr` | `3e-4` | Adam learning rate for the actor. |
 | `q_lr` | `1e-3` | Adam learning rate for each critic. |
-| `q_weight_decay` | `1e-4` | Adam weight decay on critic parameters. |
+| `q_weight_decay` | `1e-4` | Adam weight decay (coupled L2) on critic parameters. **Recipe value: 0.0** — with sparse rewards the L2 term dominates the Adam-normalised update and flattens Q (2026-09-04). |
 | `q_frequency` | `1` | (Vestigial — `q_updates` and `episode_finished`-gated cadence supersede.) |
 | `q_updates` | `1` | Critic update steps per training cycle (once an episode finishes). |
 | `policy_frequency` | `2` | TD3 delayed-policy-update interval (vestigial under current loop structure). |
@@ -66,6 +66,7 @@ Args are accepted from a YAML via `--args-file` and from the CLI. CLI flags over
 | `critic_uniform_fraction` | `0.3` | Fraction drawn uniformly. Must sum to 1.0 with `critic_per_fraction`. |
 | `critic_success_sample_fraction` | `0.3` | Fraction of each critic minibatch drawn from the success buffer. |
 | `critic_failure_sample_fraction` | `0.7` | Fraction drawn from the failure buffer. Must sum to 1.0 with `critic_success_sample_fraction`. |
+| `single_replay_buffer` | `False` | **Recipe value: `True`.** Route every episode to the success buffer (failure buffer stays empty) so training samples from one flat buffer of `success_buffer_size` transitions; `success_top_fraction`, `recent_episode_window_size` and the sample fractions become inert. |
 
 ## Primitive exploration takeover
 
@@ -161,7 +162,7 @@ Active only when `full_checkpoint_load == "residual"`. See [`residual-rl-recipe.
 
 ## Multi-env evaluation
 
-Used only by the `td3_training_dr.py` wrapper. When `eval_param_seed` is `None`, behavior is unchanged. When set, the wrapper monkey-patches `evaluate_agent` to roll `eval_eps_per_env` episodes through each of `eval_n_envs` fixed seed-sampled environments and aggregate; per-env stats are dumped to `<ckpt_dir>/multi_env_eval.json`.
+Used only by the `td3_training_dr.py` wrapper. When `eval_param_seed` is `None`, behavior is unchanged. When set, the wrapper monkey-patches `evaluate_agent` to roll `eval_eps_per_env` episodes through each of `eval_n_envs` fixed seed-sampled environments and aggregate; per-env stats are dumped to `<ckpt_dir>/multi_env_eval.json`. Episodes run under the task's own `max_timesteps` and termination rules, and `successes` is the task's `info["success"]` flag (the same one behind `charts/avg_success_rate`); before 2026-09-04 the eval forced a 200-step budget and counted surviving to the end as success.
 
 | Field | Default | Notes |
 |---|---|---|

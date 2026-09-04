@@ -164,7 +164,14 @@ def finalize_episode_if_done(
     episode_return_success_threshold: float,
     success_rb,
     failure_rb,
+    single_buffer: bool = False,
 ) -> float:
+    """Flush a finished episode into replay.
+
+    ``single_buffer=True`` sends every episode to ``success_rb`` (the failure
+    buffer is never written, so sampling falls back to the success buffer
+    alone): one flat replay buffer. The threshold is still tracked for logging.
+    """
     if not episode_done:
         return float(episode_return_success_threshold)
     episode_return = float(episode_trajectory.episode_return)
@@ -177,6 +184,9 @@ def finalize_episode_if_done(
                 success_threshold_quantile,
             )
         )
-    target_buffer = success_rb if episode_return >= episode_return_success_threshold else failure_rb
+    if single_buffer:
+        target_buffer = success_rb
+    else:
+        target_buffer = success_rb if episode_return >= episode_return_success_threshold else failure_rb
     episode_trajectory.flush_to_buffer(target_buffer)
     return float(episode_return_success_threshold)

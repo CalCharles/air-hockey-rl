@@ -48,7 +48,6 @@ class ReferenceStateWrapper(gym.Wrapper):
 def _save_task_gif_with_last_action(
     n_eps_viz, n_gifs, env_test, policy, renderer, log_dir, action_dim, use_last_action_in_policy_state
 ):
-    env_test.max_timesteps = 200
     for gif_idx in range(n_gifs):
         frames = []
         for _ in tqdm.tqdm(range(n_eps_viz)):

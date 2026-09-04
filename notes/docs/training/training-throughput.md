@@ -127,7 +127,7 @@ Arguments after `--` are forwarded to every trainer call.
 
 ```bash
 python -m scripts.td3.run_experiments --mode dr \
-    --configs 'configs/td3/throughput_bench/full/*_dr.yaml' --gpus 0 2 3 \
+    --configs 'configs/td3/tasks/*_dr.yaml' --gpus 0 2 3 \
     --out-root runs/td3/full_dr
 ```
 

@@ -1,4 +1,4 @@
-# Full-budget run (no-DR sysid recipe) on task 'reach_vel'.
+# Diagnostic: task reward x10 (base_reward_scaling: 10 in the sim config); TD3 args otherwise = throughput_bench/full/reach_nodr.yaml
 # Identical to configs/td3/td3_recommended_top50_hist2.yaml
 # except config/run_name. Runner: scripts/td3/extras/throughput_bench.py --args-dir configs/td3/throughput_bench/full
 total_timesteps: 1000000
@@ -40,11 +40,11 @@ exploration_primitive_weight_same_direction: 3.0
 exploration_primitive_weight_anneal_stand_still: 0.2
 exploration_primitive_weight_anneal_same_direction: 3.0
 exploration_direction_y_component_weight: 2
-config: configs/new_juggle/throughput_bench/sim_nodr_reach_vel.yaml
+config: configs/new_juggle/diag_sparse/sim_nodr_reach_x10.yaml
 args_file: null
 model_path: null
 log_parent_dir: null
-run_name: full_reach_vel_nodr
+run_name: diag_reach_x10
 device: cuda:0
 seed: 0
 h_transform_eps: 0.001

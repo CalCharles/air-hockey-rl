@@ -56,6 +56,8 @@ Episodes are routed to the success or failure replay buffer based on a rolling q
 
 This adaptive threshold ensures roughly `success_top_fraction` of recent episodes are labeled "success" regardless of absolute reward scale.
 
+**`single_replay_buffer: true` (canonical since 2026-09-04)** bypasses the split: every episode is flushed to the success buffer, the failure buffer stays empty, and `critic_success_failure_counts` therefore draws the whole batch from the success buffer — one flat buffer of `success_buffer_size` transitions (1M in the recipe). The threshold is still computed for the `replay/episode_return_success_threshold` scalar. Reason: on tasks with binary or near-binary returns the quantile threshold snaps between 0 and 1; below 50 % success every episode routes to the 30k success FIFO, the failure buffer freezes, and 70 % of every critic/actor batch comes from stale data (see the 2026-09-04 experiment note).
+
 **Code:** `finalize_episode_if_done` in [`helper/td3_episode_collection.py`](../../../scripts/td3/helper/td3_episode_collection.py).
 
 ## Episode trajectory staging

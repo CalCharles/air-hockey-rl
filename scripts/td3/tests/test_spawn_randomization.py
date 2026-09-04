@@ -77,7 +77,7 @@ class PuckSpawnTests(unittest.TestCase):
             env.close()
 
     def test_puck_velocity_task_uses_the_same_spawn(self):
-        cfg = _load("configs/new_juggle/throughput_bench/sim_nodr_puck_vel.yaml")
+        cfg = _load("configs/new_juggle/tasks/sim_sysid_puck_vel.yaml")
         cfg["simulator_params"]["puck_noise"] = False
         cfg["simulator_params"]["enable_random_occlusions"] = False
         cfg["simulator_params"]["enable_puck_delay_interpolation"] = False
@@ -118,9 +118,9 @@ class PuckSpawnTests(unittest.TestCase):
 class PaddleSpawnTests(unittest.TestCase):
     RANDOM_SPAWN_CONFIGS = [
         "configs/new_juggle/sysid_best_params_hist2.yaml",
-        "configs/new_juggle/throughput_bench/sim_nodr_touch.yaml",
-        "configs/new_juggle/throughput_bench/sim_nodr_reach.yaml",
-        "configs/new_juggle/throughput_bench/sim_nodr_reach_vel.yaml",
+        "configs/new_juggle/tasks/sim_sysid_touch.yaml",
+        "configs/new_juggle/tasks/sim_sysid_reach.yaml",
+        "configs/new_juggle/tasks/sim_sysid_reach_vel.yaml",
     ]
 
     def test_spawns_are_random_and_inside_the_reachable_workspace(self):
@@ -158,3 +158,30 @@ class PaddleSpawnTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FirstObservationTests(unittest.TestCase):
+    """The reset observation must report the paddle (and puck) where they were spawned."""
+
+    def test_reset_history_holds_the_spawn_pose(self):
+        for name in ("sim_sysid_reach.yaml", "sim_sysid_puck_vel.yaml", "sim_sysid_juggle.yaml"):
+            with self.subTest(config=name):
+                config = yaml.safe_load(open(REPO_ROOT / "configs" / "new_juggle" / "tasks" / name))["air_hockey"]
+                env = AirHockeyEnv(config)
+                try:
+                    for seed in range(5):
+                        obs, _ = env.reset(seed=seed)
+                        paddle = np.array(env.current_state["paddles"]["paddle_ego"]["position"][:2])
+                        slots = obs[:15].reshape(5, 3)
+                        np.testing.assert_allclose(slots[:, :2], np.tile(paddle, (5, 1)), atol=1e-6)
+                        self.assertTrue(np.all(slots[:, 2] == 0.0))
+                        self.assertGreater(paddle[0], 0.3)  # inside the workspace, not the old (-0.8, 0) placeholder
+                        if config["num_pucks"] > 0 and not env.current_state["pucks"][0].get("occluded", 0):
+                            # (a 5 %-per-frame occlusion can legitimately hide the puck on the reset frame)
+                            puck = np.array(env.current_state["pucks"][0]["position"][:2])
+                            puck_slots = obs[15:30].reshape(5, 3)
+                            np.testing.assert_allclose(puck_slots[:, :2], np.tile(puck, (5, 1)), atol=0.05)
+                            self.assertTrue(np.all(puck_slots[:, 2] == 0.0))
+                            self.assertLess(puck[0], 0.4)  # top 2/3 of the table, not the old (-0.8, 0) placeholder
+                finally:
+                    env.close()

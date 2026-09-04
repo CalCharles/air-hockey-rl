@@ -12,12 +12,12 @@ Examples
 --------
     # canonical DR recipe on five tasks, GPUs 0/2/3
     python -m scripts.td3.run_experiments --mode dr \
-        --configs configs/td3/throughput_bench/full/*_dr.yaml \
+        --configs configs/td3/tasks/*_dr.yaml \
         --gpus 0 2 3 --out-root runs/td3/full_dr
 
     # a directory of no-DR configs, GPU 1 only
     python -m scripts.td3.run_experiments --mode nodr \
-        --configs configs/td3/throughput_bench/full/*_nodr.yaml \
+        --configs configs/td3/tasks/*_sysid.yaml \
         --gpus 1 --out-root runs/td3/full_nodr
 
     # just regenerate the summary table of a finished batch

@@ -196,6 +196,13 @@ class Args:
     critic_uniform_fraction: float = 0.3
     critic_success_sample_fraction: float = 0.3
     critic_failure_sample_fraction: float = 0.7
+    # True: every episode goes to the success buffer and the failure buffer stays
+    # empty, so training samples from one flat replay buffer of
+    # ``success_buffer_size`` transitions. The success/failure split above is a
+    # juggle-era heuristic; on tasks with sparse or binary returns its threshold
+    # snaps between 0 and 1, the failure buffer freezes and 70 % of every batch
+    # comes from stale data (2026-09-04 diagnosis). Canonical recipe: True.
+    single_replay_buffer: bool = False
 
     # --- Primitive exploration takeover ---
     exploration_primitive_chance: float = 0.05
@@ -1088,6 +1095,7 @@ def _entrypoint():
                 episode_return_success_threshold=episode_return_success_threshold,
                 success_rb=success_rb,
                 failure_rb=failure_rb,
+                single_buffer=args.single_replay_buffer,
             )
         episode_finished = bool(dones[0])
 

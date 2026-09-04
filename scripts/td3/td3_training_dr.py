@@ -153,7 +153,8 @@ def _rollout_returns(
     )
 
     env = envs.envs[0]
-    env.max_timesteps = 200  # match the GIF eval's truncation budget
+    # The env keeps the task's own ``max_timesteps`` and termination rules
+    # (until 2026-09-04 this forced a 200-step budget, juggle-style).
 
     returns: list[float] = []
     successes: list[int] = []
@@ -181,10 +182,9 @@ def _rollout_returns(
             if done:
                 last_action.zero_()
         returns.append(cum_rew)
-        # Use env's episode-length-based success heuristic to match training stats:
-        # an episode with full max_timesteps without termination is a "success"
-        # in the juggle task (the puck stayed alive). Fall back to info if present.
-        success = int(info.get("success", steps >= env.max_timesteps and not term)) if info is not None else 0
+        # The task's own success flag (what charts/avg_success_rate uses in
+        # training): goal reached, puck touched, puck lifted, ...
+        success = int(bool(info.get("success", False))) if info is not None else 0
         successes.append(success)
         episode_lengths.append(steps)
 

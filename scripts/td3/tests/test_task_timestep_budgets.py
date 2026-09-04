@@ -14,7 +14,7 @@ from airhockey import AirHockeyEnv
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-BENCH_DIR = REPO_ROOT / "configs" / "new_juggle" / "throughput_bench"
+BENCH_DIR = REPO_ROOT / "configs" / "new_juggle" / "tasks"
 
 EXPECTED_MAX_TIMESTEPS = {
     "reach": 50,
@@ -28,7 +28,7 @@ EXPECTED_MAX_TIMESTEPS = {
 class TaskTimestepBudgetTests(unittest.TestCase):
     def test_configs_declare_the_expected_budget(self):
         for task, expected in EXPECTED_MAX_TIMESTEPS.items():
-            for variant in ("nodr", "dr"):
+            for variant in ("sysid", "dr"):
                 config_path = BENCH_DIR / f"sim_{variant}_{task}.yaml"
                 with self.subTest(config=config_path.name):
                     with config_path.open("r", encoding="utf-8") as f:
@@ -40,7 +40,7 @@ class TaskTimestepBudgetTests(unittest.TestCase):
         # the full budget and truncate.
         for task in ("reach", "reach_vel"):
             with self.subTest(task=task):
-                config_path = BENCH_DIR / f"sim_nodr_{task}.yaml"
+                config_path = BENCH_DIR / f"sim_sysid_{task}.yaml"
                 with config_path.open("r", encoding="utf-8") as f:
                     cfg = yaml.safe_load(f)["air_hockey"]
                 cfg["seed"] = 3

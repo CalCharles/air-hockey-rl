@@ -1,4 +1,5 @@
-# Full-budget run (no-DR sysid recipe) on task 'puck_vel'.
+# Diagnostic round 2: reward x100 + flat buffer: brings puck_vel returns (scripted intercept ~0.6/ep unscaled) to juggle's scale (~20-60/ep).
+# puck_vel returns are continuous, so float32 rounding of the 1-episode threshold routes ~half of the episodes to 'failure'; two 1M buffers sampled 50/50 are equivalent to one flat buffer.
 # Identical to configs/td3/td3_recommended_top50_hist2.yaml
 # except config/run_name. Runner: scripts/td3/extras/throughput_bench.py --args-dir configs/td3/throughput_bench/full
 total_timesteps: 1000000
@@ -24,12 +25,12 @@ per_beta_start: 0.4
 per_beta_end: 1.0
 per_beta_anneal_steps: 200000
 per_eps: 1.0e-06
-success_buffer_size: 30000
-failure_buffer_size: 70000
+success_buffer_size: 1000000
+failure_buffer_size: 1000000
 success_top_fraction: 0.5
-recent_episode_window_size: 500
-critic_success_sample_fraction: 0.3
-critic_failure_sample_fraction: 0.7
+recent_episode_window_size: 1
+critic_success_sample_fraction: 0.5
+critic_failure_sample_fraction: 0.5
 exploration_primitive_chance: 0.05
 exploration_primitive_chance_start: 0.15
 exploration_primitive_chance_pre_learning_starts: null
@@ -40,11 +41,11 @@ exploration_primitive_weight_same_direction: 3.0
 exploration_primitive_weight_anneal_stand_still: 0.2
 exploration_primitive_weight_anneal_same_direction: 3.0
 exploration_direction_y_component_weight: 2
-config: configs/new_juggle/throughput_bench/sim_nodr_puck_vel.yaml
+config: configs/new_juggle/diag_sparse/sim_nodr_puck_vel_x100.yaml
 args_file: null
 model_path: null
 log_parent_dir: null
-run_name: full_puck_vel_nodr
+run_name: diag_puck_vel_x100flat
 device: cuda:0
 seed: 0
 h_transform_eps: 0.001

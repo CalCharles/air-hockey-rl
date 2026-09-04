@@ -30,7 +30,7 @@ batch_size: 512
 learning_starts: 20000
 policy_lr: 0.0003
 q_lr: 0.001
-q_weight_decay: 0.0001
+q_weight_decay: 0.0  # 2026-09-04: coupled Adam L2 flattened Q on sparse-reward tasks; 0 is the recipe
 q_frequency: 1
 q_updates: 25
 policy_frequency: 1
@@ -47,12 +47,16 @@ per_beta_start: 0.4
 per_beta_end: 1.0
 per_beta_anneal_steps: 200000
 per_eps: 0.000001
-success_buffer_size: 30000
+success_buffer_size: 1000000
 failure_buffer_size: 70000
 success_top_fraction: 0.5
 recent_episode_window_size: 500
 critic_success_sample_fraction: 0.3
 critic_failure_sample_fraction: 0.7
+# 2026-09-04: one flat replay buffer (success_buffer_size transitions). The
+# success/failure split keys above are inert while this is true; the split froze
+# on binary-return tasks and fed 70 % stale data.
+single_replay_buffer: true
 
 # Primitive exploration takeover
 exploration_primitive_chance: 0.05
