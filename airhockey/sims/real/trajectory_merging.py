@@ -55,6 +55,7 @@ def merge_trajectory(image_path, images, vals):
     
 
 def clear_images(folder='./temp/images/'):
+    os.makedirs(folder, exist_ok=True)
     for filename in os.listdir(folder):
         file_path = os.path.join(folder, filename)
         try:

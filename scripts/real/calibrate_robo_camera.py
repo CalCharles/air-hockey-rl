@@ -10,10 +10,10 @@ from airhockey.sims.real.robot_control import apply_negative_z_force
 import imageio
 
 TEMP_CALIB_DIR = "temp/calibration_collect"
-LATEST_POSE_FILE = "temp/calibration_collect/20260218_125147/robot_poses.npz"
+# Stable pointer for optional "reuse" on the next run (not required for Mimg/Mrob).
+LATEST_POSE_FILE = os.path.join(TEMP_CALIB_DIR, "latest_robot_poses.npz")
 # If latest pose record has no stored puck image path, this optional fallback is used.
-# Example: "temp/calibration_collect/final_state/puck_capture_raw.png"
-DEFAULT_REUSE_IMAGE_PATH = "temp/calibration_collect/20260218_125147/puck_capture_raw.png"
+DEFAULT_REUSE_IMAGE_PATH = ""
 
 
 def _ensure_temp_dir(path):
@@ -21,6 +21,9 @@ def _ensure_temp_dir(path):
 
 
 def _save_robot_pose_record(path, data):
+    parent = os.path.dirname(path)
+    if parent:
+        _ensure_temp_dir(parent)
     np.savez(path, **data)
 
 
@@ -77,6 +80,27 @@ def _resolve_reuse_image_path(profile):
         return DEFAULT_REUSE_IMAGE_PATH
     return ""
 
+
+def _load_saved_session(saved_path):
+    """Load the puck capture frame and robot pose record from a previous session."""
+    if os.path.isdir(saved_path):
+        image_path = os.path.join(saved_path, "puck_capture_raw.png")
+        pose_path = os.path.join(saved_path, "robot_poses.npz")
+    else:
+        image_path = saved_path
+        pose_path = os.path.join(os.path.dirname(saved_path), "robot_poses.npz")
+
+    # The stored raw capture is already rotated 180 degrees, so it needs no further rotation.
+    image = cv2.imread(image_path)
+    if image is None:
+        raise RuntimeError(f"Failed to load saved puck capture image at {image_path}")
+
+    profile = _load_robot_pose_record(pose_path)
+    if profile is None:
+        print(f"Warning: no robot pose record at {pose_path}; using script default robot points.")
+    return image, image_path, profile
+
+
 def find_robo_pixel(cap, offset):
     pixels = list()
     _ensure_temp_dir("temp/ar_frames")
@@ -91,6 +115,7 @@ def find_red_dot(image, offset):
     # Load the image
     # image = cv2.imread(image_path)
     image = cv2.rotate(image, cv2.ROTATE_180)
+    # TODO: commented out rotate image
 
     # Convert to HSV color space
     image = cv2.resize(image, (int(image.shape[1]), int(image.shape[0])), 
@@ -280,6 +305,8 @@ def detect_four_red_pucks(cap, sample_frames=60, min_valid_frames=10):
         if not ret:
             continue
         frame = cv2.rotate(frame, cv2.ROTATE_180)
+        # TODO: commented out rotate image
+
         last_frame = frame
 
         centroids, mask = find_red_pucks(frame)
@@ -310,17 +337,55 @@ def detect_four_red_pucks(cap, sample_frames=60, min_valid_frames=10):
     averaged = _order_row_col_points(averaged)
     return averaged, 4, last_frame, last_mask
 
-def calibrate_homography(camera_id, save_homographies):
-    rtde_frequency = 500.0
-    ctrl = RTDEControl("172.22.22.2", rtde_frequency, RTDEControl.FLAG_USE_EXT_UR_CAP)
-    rcv = RTDEReceive("172.22.22.2")
-    # moves the robot to fixed positions, then aligns the homography pixels so that they match those of the robot
-    cap = cv2.VideoCapture(camera_id)
 
-    ret, image = cap.read()
-    if not ret:
-        raise RuntimeError(f"Failed to read from camera_id={camera_id}")
-    image = cv2.rotate(image, cv2.ROTATE_180)
+def detect_four_red_pucks_in_frame(frame):
+    """Same detection as detect_four_red_pucks, but on one already-captured frame."""
+    centroids, mask = find_red_pucks(frame)
+    points_rc = np.array([[row, col] for row, col, _ in centroids], dtype=np.float32)
+
+    preview = frame.copy()
+    if len(points_rc) > 0:
+        _draw_indexed_points(preview, points_rc, color=(0, 255, 255))
+    cv2.imshow("puck-detect", preview)
+    cv2.imshow("puck-mask", mask)
+    cv2.waitKey(1)
+
+    if len(points_rc) != 4:
+        return None, len(points_rc), frame, mask
+
+    return _order_row_col_points(points_rc), 4, frame, mask
+
+
+def calibrate_homography(camera_id, save_homographies, saved_path=None):
+    saved_mode = saved_path is not None
+    ctrl = None
+    rcv = None
+    cap = None
+    saved_profile = None
+    startup_frame = None
+
+    if saved_mode:
+        startup_frame, saved_image_path, saved_profile = _load_saved_session(saved_path)
+        image = startup_frame.copy()
+        print(f"Saved mode: resuming puck detection from {saved_image_path}")
+    else:
+        rtde_frequency = 500.0
+        ctrl = RTDEControl("172.22.22.2", rtde_frequency, RTDEControl.FLAG_USE_EXT_UR_CAP)
+        rcv = RTDEReceive("172.22.22.2")
+        # moves the robot to fixed positions, then aligns the homography pixels so that they match those of the robot
+        cap = cv2.VideoCapture(camera_id)
+
+        ret, image = cap.read()
+        if not ret:
+            raise RuntimeError(f"Failed to read from camera_id={camera_id}")
+
+
+        # TODO: commented out rotate image for calibration
+
+        image = cv2.rotate(image, cv2.ROTATE_180)
+
+
+    
     upscale_constant = 3
     visual_downscale_constant = 2
     image = cv2.resize(
@@ -328,8 +393,9 @@ def calibrate_homography(camera_id, save_homographies):
         (int(640 * upscale_constant), int(480 * upscale_constant)),
         interpolation=cv2.INTER_LINEAR,
     )
-    # cv2.imshow("image", image)
-    # cv2.waitKey(1)
+    cv2.imshow("image", image)
+    # waitKey is required or the HighGUI window stays blank; 0 = wait for a key.
+    cv2.waitKey(0)
 
     original_size = np.array([640, 480])
     offset_constants = np.array((2250, 500), dtype=np.float32)
@@ -344,9 +410,20 @@ def calibrate_homography(camera_id, save_homographies):
 
     reuse_saved_calibration = False
     saved_points_row_col = None
-    loaded_profile = _load_robot_pose_record(LATEST_POSE_FILE)
-    reuse_image_path = _resolve_reuse_image_path(loaded_profile)
-    if loaded_profile is not None:
+    loaded_profile = saved_profile if saved_mode else _load_robot_pose_record(LATEST_POSE_FILE)
+    reuse_image_path = saved_image_path if saved_mode else _resolve_reuse_image_path(loaded_profile)
+    print("hi")
+    if saved_mode:
+        rollout_start_pose = [-0.68, 0.0, 0.33] + angle
+        if loaded_profile is not None:
+            if "rollout_start_pose" in loaded_profile and loaded_profile["rollout_start_pose"].shape[0] >= 6:
+                rollout_start_pose = loaded_profile["rollout_start_pose"].astype(float).tolist()
+            if "robot_points_mm" in loaded_profile and loaded_profile["robot_points_mm"].shape == (4, 2):
+                robot_points_mm = loaded_profile["robot_points_mm"].astype(np.float32)
+                print("Using saved robot_points_mm from the saved session record.")
+            else:
+                print("Saved session has no valid robot_points_mm; using script defaults.")
+    elif loaded_profile is not None:
         use_saved = input(
             "Found saved robot pose record. Type 'reuse' to start from saved calibration poses, or press Enter for rollout default: "
         ).strip().lower()
@@ -399,9 +476,10 @@ def calibrate_homography(camera_id, save_homographies):
         rollout_start_pose = [-0.68, 0.0, 0.33] + angle
 
     # Match rollout default reset pose (AirHockeyReal reset_pos_setting="hitting").
-    print("Moving to rollout initial pose before calibration...")
-    start_success = ctrl.moveL(rollout_start_pose, vel, acc, False)
-    print("move_to_rollout_initial_success:", start_success)
+    if not saved_mode:
+        print("Moving to rollout initial pose before calibration...")
+        start_success = ctrl.moveL(rollout_start_pose, vel, acc, False)
+        print("move_to_rollout_initial_success:", start_success)
 
     def wait_for_recorded_pose(target_pose, timeout_s=6.0, pos_tol_m=0.004, rot_tol_rad=0.06):
         deadline = time.time() + timeout_s
@@ -421,17 +499,28 @@ def calibrate_homography(camera_id, save_homographies):
             time.sleep(0.05)
         return last_pose, False
 
-    initial_pose, pose_recorded = wait_for_recorded_pose(rollout_start_pose)
-    if initial_pose is None:
-        initial_pose = list(rollout_start_pose)
-        print("Warning: TCP pose not recorded from receiver; using rollout target pose for return.")
-    elif not pose_recorded:
-        print("Warning: timed out waiting for rollout pose settle; using latest recorded TCP pose.")
-    print("initial_pose_for_return:", initial_pose)
     mark_pose_targets = []
     mark_pose_actual = []
+    if saved_mode:
+        initial_pose = list(rollout_start_pose)
+        if loaded_profile is not None:
+            if "initial_pose_for_return" in loaded_profile and loaded_profile["initial_pose_for_return"].shape[0] >= 6:
+                initial_pose = loaded_profile["initial_pose_for_return"].astype(float).tolist()
+            # Carry the saved marking poses forward so the new record stays complete.
+            mark_pose_targets = [list(p) for p in loaded_profile.get("target_mark_poses", np.zeros((0, 6)))]
+            mark_pose_actual = [list(p) for p in loaded_profile.get("actual_mark_poses", np.zeros((0, 6)))]
+    else:
+        initial_pose, pose_recorded = wait_for_recorded_pose(rollout_start_pose)
+        if initial_pose is None:
+            initial_pose = list(rollout_start_pose)
+            print("Warning: TCP pose not recorded from receiver; using rollout target pose for return.")
+        elif not pose_recorded:
+            print("Warning: timed out waiting for rollout pose settle; using latest recorded TCP pose.")
+    print("initial_pose_for_return:", initial_pose)
 
     def return_to_initial(tag):
+        if saved_mode:
+            return True
         print(f"Returning robot to initial pose ({tag})...")
         success = ctrl.moveL(initial_pose, vel, acc, False)
         print(f"{tag}_return_to_initial_success:", success)
@@ -465,42 +554,61 @@ def calibrate_homography(camera_id, save_homographies):
         print("Reuse mode enabled: skipping robot mark collection and puck re-detection.")
         accepted_points = np.array(saved_points_row_col, dtype=np.float32)
     else:
-        apply_negative_z_force(ctrl)
-        print("Moving robot through 4 calibration positions...")
-        for idx, robo_pt in enumerate(robot_points_mm):
-            mark_pose = [robo_pt[0] * 0.001, robo_pt[1] * 0.001, 0.33] + angle
-            mark_pose_targets.append(mark_pose)
-            move_success = ctrl.moveL(mark_pose, vel, acc, False)
-            print(f"[{idx}] moved to robot point {robo_pt.tolist()} success={move_success}")
-            time.sleep(15.0)
-            pose_now = rcv.getActualTCPPose()
-            if pose_now is not None and len(pose_now) >= 6:
-                mark_pose_actual.append(list(pose_now[:6]))
-            else:
-                mark_pose_actual.append([np.nan] * 6)
-        persist_pose_record(update_latest=False)
+        if saved_mode:
+            print("Saved mode: skipping robot marking; detecting pucks from the saved capture.")
+        else:
+            apply_negative_z_force(ctrl)
+            print("Moving robot through 4 calibration positions...")
+            for idx, robo_pt in enumerate(robot_points_mm):
+                mark_pose = [robo_pt[0] * 0.001, robo_pt[1] * 0.001, 0.33] + angle
+                mark_pose_targets.append(mark_pose)
+                move_success = ctrl.moveL(mark_pose, vel, acc, False)
+                print(f"[{idx}] moved to robot point {robo_pt.tolist()} success={move_success}")
 
-        return_to_initial("post_marking")
-        time.sleep(1.0)
+                # time.sleep(15.0)
 
-        while True:
-            ready = input(
-                "Place 4 red pucks at the marked positions, then type 'done' and press Enter (or 'q' to quit): "
-            ).strip().lower()
-            if ready in {"done", "d", ""}:
-                break
-            if ready in {"q", "quit", "exit"}:
-                print("Calibration canceled by user.")
-                pose_file = persist_pose_record({"aborted": np.array([1], dtype=np.int32)}, update_latest=False)
-                print(f"Saved robot pose record: {pose_file}")
-                return_to_initial("cancel")
-                cap.release()
-                cv2.destroyAllWindows()
-                return
+                # TODO: make it so we have to press enter to continue
+                ready = input("Press Enter to continue...") 
+                while (ready != "next"):
+                    ready = input("Press Enter to continue...")     
+
+
+
+
+
+
+
+                pose_now = rcv.getActualTCPPose()
+                if pose_now is not None and len(pose_now) >= 6:
+                    mark_pose_actual.append(list(pose_now[:6]))
+                else:
+                    mark_pose_actual.append([np.nan] * 6)
+            persist_pose_record(update_latest=False)
+
+            return_to_initial("post_marking")
+            time.sleep(1.0)
+
+            while True:
+                ready = input(
+                    "Place 4 red pucks at the marked positions, then type 'done' and press Enter (or 'q' to quit): "
+                ).strip().lower()
+                if ready in {"done", "d", ""}:
+                    break
+                if ready in {"q", "quit", "exit"}:
+                    print("Calibration canceled by user.")
+                    pose_file = persist_pose_record({"aborted": np.array([1], dtype=np.int32)}, update_latest=False)
+                    print(f"Saved robot pose record: {pose_file}")
+                    return_to_initial("cancel")
+                    cap.release()
+                    cv2.destroyAllWindows()
+                    return
 
         while True:
             print("Detecting 4 red pucks...")
-            detected_points, detected_count, detect_frame, detect_mask = detect_four_red_pucks(cap)
+            if saved_mode:
+                detected_points, detected_count, detect_frame, detect_mask = detect_four_red_pucks_in_frame(startup_frame)
+            else:
+                detected_points, detected_count, detect_frame, detect_mask = detect_four_red_pucks(cap)
             if detect_frame is not None:
                 preview = detect_frame.copy()
                 if detected_points is not None:
@@ -519,7 +627,8 @@ def calibrate_homography(camera_id, save_homographies):
                     pose_file = persist_pose_record({"aborted": np.array([1], dtype=np.int32)}, update_latest=False)
                     print(f"Saved robot pose record: {pose_file}")
                     return_to_initial("cancel")
-                    cap.release()
+                    if cap is not None:
+                        cap.release()
                     cv2.destroyAllWindows()
                     return
                 continue
@@ -619,6 +728,7 @@ def calibrate_homography(camera_id, save_homographies):
 
     # Save calibration data
     if save_homographies:
+        print("Saving homographies to Mimg.npy and Mrob.npy")
         np.save("Mimg.npy", Mimg)
         np.save("Mrob.npy", Mrob)
 
@@ -642,7 +752,8 @@ def calibrate_homography(camera_id, save_homographies):
 
     # End at startup pose so post-calibration setup is convenient.
     return_to_initial("final")
-    cap.release()
+    if cap is not None:
+        cap.release()
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
@@ -652,4 +763,14 @@ if __name__ == "__main__":
     save_homographies = False
     if "--save-homographies" in sys.argv or "-s" in sys.argv:
         save_homographies = True
-    calibrate_homography(1, save_homographies)
+
+    # --saved <path> resumes from a previous session directory (or capture image),
+    # skipping the robot connection and marking phase.
+    saved_path = None
+    if "--saved" in sys.argv:
+        saved_idx = sys.argv.index("--saved") + 1
+        if saved_idx >= len(sys.argv):
+            raise SystemExit("--saved requires a path to a calibration session directory or capture image.")
+        saved_path = sys.argv[saved_idx]
+
+    calibrate_homography(0, save_homographies, saved_path=saved_path)

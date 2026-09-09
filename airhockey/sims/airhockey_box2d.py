@@ -9,10 +9,9 @@ import inspect
 from types import SimpleNamespace
 from ..utils import dict_to_namespace
 from ..observation_homography import make_sine_y_warp_fn
+from .real.coordinate_transform import effective_x_max
 
 from matplotlib import pyplot as plt
-
-# counter = 0
 
 class PIDController:
     """
@@ -1287,11 +1286,10 @@ class AirHockeyBox2D:
         # Box2D/base observations use centered x, while real clip limits are in raw robot x.
         # Convert to raw-x for clipping, then shift back to centered frame.
         x_min_lim, x_max_lim, y_min, y_max = self.lims
-        top_abs, bot_abs, max_bias_m, max_bias_p = self.edge_lims
         x_raw = x - self.center_offset_constant
         y = np.clip(y, y_min, y_max)
         x_min = x_min_lim
-        x_max = min(x_max_lim, max_bias_m - top_abs * y, max_bias_p + top_abs * y)
+        x_max = effective_x_max(y, self.lims, self.edge_lims)
         x_raw = np.clip(x_raw, x_min, x_max)
         x_centered = x_raw + self.center_offset_constant
         return np.array([x_centered, y], dtype=float)
@@ -1414,15 +1412,22 @@ class AirHockeyBox2D:
                 act = np.copy(self.last_action)
             else:
                 act = np.copy(action)
-
-
             pos = np.array([self.paddles['paddle_ego'].position[0], self.paddles['paddle_ego'].position[1]])
-
-            force = np.array(act, dtype=float) * 1250
-
-            if pos[1] > 0 - 3 * self.paddle_radius:
-                force[1] = min(force[1], 0)
             
+            # Boundary constraint: prevent paddle from going into opponent's side
+            if pos[1] > 0 - 3 * self.paddle_radius:
+                act[1] = min(act[1], 0)
+            
+            # PID controller target uses real-like scaled delta + rect projection + clipping.
+            target_pos = self._compute_pid_target_pos(pos, act)
+            self.pose_hist.append(np.array(pos, dtype=float))
+            self.dpose_hist.append(np.array(target_pos, dtype=float))
+            target_pos = self._filter_update()
+            self.last_target_position = self._box2d_to_base_coords(target_pos)
+            current_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0],
+                                   self.paddles['paddle_ego'].linearVelocity[1]])
+            force = self.pid_controller.compute(target_pos, pos, current_vel)
+
             # Force clipping / normalization
             force_mag = np.linalg.norm(force)
             force_unit = force / (force_mag + 1e-8)
@@ -1434,19 +1439,18 @@ class AirHockeyBox2D:
             if self.force_scaling > 0:
                 force = force * self.force_scaling
             force = force.astype(float)
-
-            force = force * np.array([self.action_x_scaling, self.action_y_scaling])
-
+            if self.paddles['paddle_ego'].position[1] > 0: 
+                new_force = self.force_scaling * self.paddles['paddle_ego'].mass * act[1]
+                if new_force < -self.max_force_timestep:
+                    new_force = -self.max_force_timestep
+                force[1] = min(new_force, 0)
+            else:
+                force = force * np.array([self.action_x_scaling, self.action_y_scaling])
+            
             # Clip force to maximum allowed
             force_mag = np.linalg.norm(force)
             if force_mag > self.max_force_timestep:
                 force = force / force_mag * self.max_force_timestep
-
-            # TODO: Prevent unwanted behavior near max work horizontal line
-            if pos[1] >= -0.35:
-                force[1] = min(force[1], 0)     # only allow paddle to move back towards agent
-                self.paddles['paddle_ego'].linearVelocity[1] = 0.0  # reset velocity by imaginging we hit a wall 
-
 
             # Apply force to paddle
             if 'paddle_ego' in self.paddles:
@@ -1454,8 +1458,6 @@ class AirHockeyBox2D:
 
             self.world.Step(sim_time, 100, 100)
             
-            #########################################################################################
-
             # correct blocks for t=0
             if self.timestep == 0 and len(self.blocks) > 0:
                 for block_name in self.blocks:

@@ -3,12 +3,14 @@ import imageio
 import time, os
 import numpy as np
 from .image_detection import find_red_hockey_paddle, find_red_hockey_puck
+from .coordinate_transform import effective_x_max
 from .draw_regions import visualize_regions
 from .overlay_utils import (
     robot_to_display_pixel_int,
     draw_target_marker,
     draw_puck_marker_from_state,
     draw_paddle_marker,
+    Box2DEnvironmentOverlay,
 )
 
 
@@ -24,9 +26,9 @@ offset_constants = np.array((2250, 500))
 
 
 def _effective_xmax(y_m, lims, edge_lims):
-    _, x_max_lim, _, _ = lims
-    top_abs, _, max_bias_p, max_bias_m = edge_lims
-    return min(x_max_lim, max_bias_m - top_abs * y_m, max_bias_p + top_abs * y_m)
+    # Delegates to the clip path's own formula so the drawn edge always matches
+    # the edge the robot is actually clipped to.
+    return effective_x_max(y_m, lims, edge_lims)
 
 
 def draw_robot_edge_limits(frame, lims, edge_lims, color=(0, 255, 255), thickness=2):
@@ -140,14 +142,28 @@ def camera_callback(
     region_x_offset=1.0,
     shared_camera_frame=None,
     shared_camera_frame_ready=None,
+    camera_index=0,
+    sim_overlay=None,
 ):
-    cap = cv2.VideoCapture(1, cv2.CAP_V4L2)
+    camera_index = int(camera_index)
+    try:
+        cv2.namedWindow("image", cv2.WINDOW_AUTOSIZE)
+        cv2.setMouseCallback("image", move_event)
+    except Exception:
+        pass
+    cap = cv2.VideoCapture(camera_index, cv2.CAP_V4L2)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    if not cap.isOpened():
+        print(f"[camera_callback] failed to open camera index {camera_index}")
     detector_kwargs = puck_detector_kwargs if puck_detector_kwargs is not None else {}
     publish_frames = shared_camera_frame is not None
+    env_overlay = Box2DEnvironmentOverlay.from_config(sim_overlay)
     while True:
         start = time.time()
         ret, image = cap.read()
+        if not ret or image is None or getattr(image, "size", 0) == 0:
+            time.sleep(0.01)
+            continue
         save_image_id = save_image_check[0] == 1
         # Force get_save=True when a main-process consumer is reading frames
         # via shared memory (e.g. control_mode='mouse' for teleop eval) so
@@ -175,6 +191,8 @@ def camera_callback(
         #             interpolation = cv2.INTER_LINEAR)
         # cv2.imshow('image',image)
         puck = puck_detector(showdst, rotate=False, **detector_kwargs)
+        if env_overlay is not None:
+            env_overlay.apply(showdst)
         if lims is not None and edge_lims is not None:
             draw_robot_edge_limits(showdst, lims, edge_lims)
         if region_info is not None:
@@ -239,8 +257,8 @@ def move_event(event, x, y, flags, params):
         mousepos = (x,y,1)
 
 # callback functions for mimic control
-def mimic_control(shared_array):
-    cap = cv2.VideoCapture(1, cv2.CAP_V4L2)
+def mimic_control(shared_array, camera_index=0):
+    cap = cv2.VideoCapture(int(camera_index), cv2.CAP_V4L2)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     Mimg_tele = np.load(os.path.join(base_dir, 'assets', 'real' ,'Mimg_tele.npy'))

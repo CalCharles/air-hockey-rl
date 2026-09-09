@@ -15,7 +15,13 @@ from .real.control_parameters import (
 )
 from .real.trajectory_merging import merge_trajectory, clear_images, write_trajectory, get_trajectory_idx
 from .real.robot_control import MotionPrimitive, apply_negative_z_force, filter_update
-from .real.coordinate_transform import compute_rect, compute_pol, clip_limits
+from .real.coordinate_transform import (
+    compute_rect,
+    compute_pol,
+    clip_limits,
+    corner_cut_biases,
+    CORNER_CUT_Y_EXTENT,
+)
 from .real.proprioceptive_state import get_state_array
 from .real.image_detection import find_red_hockey_puck, find_red_hockey_puck_antiglare
 from .real.overlay_utils import (
@@ -23,6 +29,7 @@ from .real.overlay_utils import (
     draw_puck_marker_from_state,
     draw_paddle_marker,
     draw_goal_marker,
+    Box2DEnvironmentOverlay,
 )
 import multiprocessing
 import cv2
@@ -229,12 +236,16 @@ class AirHockeyReal:
             "zslope": 0.02577,
             "x_offset": 1.2,
             "y_offset": 0.0,
-            "paddle_additional_x_offset": -0.075,
-            "paddle_additional_y_offset": -0.03,
+            "paddle_additional_x_offset": 0, # -0.075,
+            "paddle_additional_y_offset": 0, # -0.03,
             "bot_abs": 0.1,
             "top_abs": 0.8,
-            "max_bias_p": -0.15,
-            "max_bias_m": -0.15,
+            # Corner-cut biases are derived from the cut shape (top_abs slope +
+            # corner_cut_y_extent) against the live y limits. Set these to a
+            # number only to pin a corner to an absolute x-intercept.
+            "max_bias_p": None,
+            "max_bias_m": None,
+            "corner_cut_y_extent": CORNER_CUT_Y_EXTENT,
             "reset_pos_setting": "hitting",
             "xv_min": -0.5,
             "xv_max": 0.5,
@@ -270,6 +281,8 @@ class AirHockeyReal:
             "async_render_sim_view_size": 360,
             "async_render_sim_view_orientation": "vertical",
             "mouse_action_scale": None,
+            "sim_overlay_enabled": False,
+            "sim_overlay_alpha": 0.25,
         }
         kwargs = {**defaults, **kwargs}
         config = dict_to_namespace(kwargs)
@@ -405,6 +418,9 @@ class AirHockeyReal:
         self.async_render_sim_view_size = int(config.async_render_sim_view_size)
         self.async_render_sim_view_orientation = str(config.async_render_sim_view_orientation)
         self._assets_dir = str(Path(__file__).resolve().parent.parent.parent / 'assets')
+        self.sim_overlay_enabled = bool(config.sim_overlay_enabled)
+        self.sim_overlay_alpha = float(config.sim_overlay_alpha)
+        self._box2d_env_overlay = None
         self._async_render_default_frame_shape = (
             int(config.async_render_frame_height),
             int(config.async_render_frame_width),
@@ -493,21 +509,38 @@ class AirHockeyReal:
         # self.y_max = 0.42
 
         # magic numbers representing the boundary
-        self.x_min_lim = -0.79
-        self.x_max_lim = -0.375
-        self.y_min = -0.370 # temporary for right now
+        self.x_min_lim = -0.83
+        self.x_max_lim = -0.42
+
+        
+        self.y_min = -0.35 # temporary for right now
         # Right edge extended +0.02 m (was 0.350) to make the reachable
         # workspace symmetric with y_min and give the reset policy's edge
         # loop the same range on both sides. The FSM picks this up via
         # `simulator.lims` (set below) → ResetPolicyFSM._lims, and the
         # simulator's clip_limits uses the same source so commands at
         # y=+0.370 are no longer clipped back to +0.350.
-        self.y_max = 0.370
+        self.y_max = 0.39
+        # y total working length is approximately 0.74m
 
         self.bot_abs = config.bot_abs
         self.top_abs = config.top_abs
-        self.max_bias_p = config.max_bias_p
-        self.max_bias_m = config.max_bias_m
+        # Both far corners get the SAME chamfer, derived from the cut shape
+        # against the current y limits rather than pinned to absolute
+        # x-intercepts. Change x_max_lim / y_min / y_max above and the cuts slide
+        # with the corners at constant slope and depth, including when y_min and
+        # y_max are asymmetric.
+        self.corner_cut_y_extent = float(config.corner_cut_y_extent)
+        derived_bias_p, derived_bias_m = corner_cut_biases(
+            self.x_max_lim,
+            self.y_min,
+            self.y_max,
+            slope=self.top_abs,
+            y_extent=self.corner_cut_y_extent,
+        )
+        self.max_bias_p = derived_bias_p if config.max_bias_p is None else float(config.max_bias_p)
+        self.max_bias_m = derived_bias_m if config.max_bias_m is None else float(config.max_bias_m)
+        # Slot 2 shapes the +y corner, slot 3 the -y corner (see effective_x_max).
         self.edge_lims = [self.top_abs, self.bot_abs, self.max_bias_p, self.max_bias_m]
 
         # y_min = -0.3482
@@ -891,11 +924,16 @@ class AirHockeyReal:
                     self.x_offset,
                     self.shared_camera_frame,
                     self.shared_camera_frame_ready,
+                    int(self.camera_index),
+                    self._sim_overlay_config(),
                 ),
             )
             self.camera_process.start()
         elif self.control_mode == 'mimic':
-            self.mimic_process = multiprocessing.Process(target=mimic_control, args=(self.protected_mouse_pos,))
+            self.mimic_process = multiprocessing.Process(
+                target=mimic_control,
+                args=(self.protected_mouse_pos, int(self.camera_index)),
+            )
             self.mimic_process.start()
             self.camera_process = multiprocessing.Process(
                 target=save_callback,
@@ -907,8 +945,12 @@ class AirHockeyReal:
             )
             self.camera_process.start()
         else:
-            self.cap = cv2.VideoCapture(1, cv2.CAP_V4L2)
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            # TODO: changed camera to use the camera_index rather than a hardcode of 1
+            # Use configured camera_index (default 0). Index 1 was a lab-specific
+            # hardcode; many machines only expose /dev/video0.
+            self.cap = cv2.VideoCapture(int(self.camera_index), cv2.CAP_V4L2)
+            # self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
             if self._async_render_runtime_enabled and self.control_mode not in ["observe"]:
                 self._start_async_renderer(self._async_render_default_frame_shape)
 
@@ -952,9 +994,35 @@ class AirHockeyReal:
             float(self._goal_marker_pos_table[1]),
         )
 
+    def _sim_overlay_config(self):
+        if not self.sim_overlay_enabled or float(self.sim_overlay_alpha) <= 0.0:
+            return None
+        return {
+            "alpha": float(self.sim_overlay_alpha),
+            "table_length": float(self.length),
+            "table_width": float(self.width),
+            "center_offset": float(self.center_offset_constant),
+            "offset_constants": (
+                float(self.offset_constants[0]),
+                float(self.offset_constants[1]),
+            ),
+            "visual_downscale_constant": float(self.visual_downscale_constant),
+            "assets_dir": self._assets_dir,
+        }
+
+    def _get_box2d_env_overlay(self):
+        if not self.sim_overlay_enabled:
+            return None
+        if self._box2d_env_overlay is None:
+            self._box2d_env_overlay = Box2DEnvironmentOverlay.from_config(self._sim_overlay_config())
+        return self._box2d_env_overlay
+
     def _render_overlay_inline(self, image, target_xy, puck_state, paddle_xy):
         if image is None:
             return
+        env_overlay = self._get_box2d_env_overlay()
+        if env_overlay is not None:
+            env_overlay.apply(image)
         draw_target_marker(
             image,
             target_xy,
