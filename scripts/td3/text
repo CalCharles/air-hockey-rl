@@ -1,0 +1,8 @@
+WANDB_MODE=disabled python -m scripts.td3.td3_training_dr \
+  --args-file runs/td3/sanity_check/checkpoint_1975000/args.yaml \
+  --config runs/td3/sanity_check/checkpoint_1975000/config.yaml \
+  --eval-mode \
+  --model-path runs/td3/sanity_check/checkpoint_1975000/model.pth \
+  --total-timesteps 100 \
+  --num-envs 1 \
+  --log-parent-dir runs/td3/eval_sanity_check_1975000

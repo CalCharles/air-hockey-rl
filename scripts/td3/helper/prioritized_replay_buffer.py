@@ -16,6 +16,9 @@ class TD3PrioritizedReplayBuffer:
         alpha=0.6,
         priority_eps=1e-6,
         age_decay=0.0,
+        use_history=False,
+        history_entry_dim=4,
+        context_len=0,
     ):
         self.buffer_size = int(buffer_size)
         self.obs_shape = obs_shape
@@ -28,6 +31,11 @@ class TD3PrioritizedReplayBuffer:
         # before alpha-scaling at sample time. age_decay=0.0 disables.
         self.age_decay = float(age_decay)
 
+        self.use_history = bool(use_history)
+        self.context_len = int(context_len)
+        self.history_entry_dim = int(history_entry_dim)
+
+
         self.observations = torch.zeros((buffer_size, *obs_shape), dtype=torch.float32, device=device)
         self.next_observations = torch.zeros((buffer_size, *obs_shape), dtype=torch.float32, device=device)
         self.actions = torch.zeros((buffer_size, *action_shape), dtype=torch.float32, device=device)
@@ -35,6 +43,31 @@ class TD3PrioritizedReplayBuffer:
         self.rewards = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
         self.dones = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
         self.priorities = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
+
+        # TODO: we need to think more on how to support using history and normal mode
+        # Maybe we don't worry about it since for now we want to collect history no matter what
+        # if self.use_history:
+        #     # obs_dim = obs_shape[0]
+
+        #     self.history = torch.zeros(
+        #         (buffer_size, self.context_len, self.history_entry_dim),
+        #         dtype=torch.float32,
+        #         device=device,
+        #     )
+        # else:
+        #     self.history = None
+
+        # TODO: Note that we init this unconditionally bc in td3_training.py I choose
+        #       to always gather history.
+
+        # TODO: need to check this
+        if self.use_history:
+            self.history = torch.zeros(
+                (buffer_size, self.context_len, self.history_entry_dim),
+                dtype=torch.float32,
+                device=device,
+            )
+
 
         self.position = 0
         self.size = 0
@@ -49,7 +82,7 @@ class TD3PrioritizedReplayBuffer:
         if pending > self.max_priority:
             self.max_priority = pending
 
-    def add(self, obs, next_obs, actions, rewards, dones, prev_action):
+    def add(self, obs, next_obs, actions, rewards, dones, prev_action, history=None):
         obs = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
         next_obs = torch.as_tensor(next_obs, dtype=torch.float32, device=self.device)
         actions = torch.as_tensor(actions, dtype=torch.float32, device=self.device)
@@ -71,6 +104,9 @@ class TD3PrioritizedReplayBuffer:
         self.dones[first_slice] = dones[:first_chunk]
         self.priorities[first_slice] = priority_value
 
+        if self.use_history and history is not None:
+            self.history[first_slice] = history[:first_chunk]
+
         second_chunk = batch_size - first_chunk
         if second_chunk > 0:
             second_slice = slice(0, second_chunk)
@@ -81,6 +117,10 @@ class TD3PrioritizedReplayBuffer:
             self.rewards[second_slice] = rewards[first_chunk:]
             self.dones[second_slice] = dones[first_chunk:]
             self.priorities[second_slice] = priority_value
+
+            # NEW: wrap-around write for sequences
+            if self.use_history and history is not None:
+                self.history[second_slice] = history[first_chunk:]
 
         self.position = (self.position + batch_size) % self.buffer_size
         self.size = min(self.size + batch_size, self.buffer_size)
@@ -119,7 +159,7 @@ class TD3PrioritizedReplayBuffer:
         weights = (self.size * sample_probs).pow(-beta)
         weights = weights / weights.max().clamp_min(1e-12)
 
-        return {
+        result = {
             "observations": self.observations[indices],
             "next_observations": self.next_observations[indices],
             "actions": self.actions[indices],
@@ -131,11 +171,16 @@ class TD3PrioritizedReplayBuffer:
             "sampled_priorities": valid_priorities[indices],
         }
 
+        if self.use_history and self.history is not None:
+            result["history"] = self.history[indices]
+
+        return result
+
     def sample_uniform(self, batch_size):
         if self.size == 0:
             raise ValueError("Cannot sample from empty buffer")
         indices = torch.randint(0, self.size, (batch_size,), device=self.device)
-        return {
+        result = {
             "observations": self.observations[indices],
             "next_observations": self.next_observations[indices],
             "actions": self.actions[indices],
@@ -146,6 +191,11 @@ class TD3PrioritizedReplayBuffer:
             "weights": torch.ones((batch_size,), dtype=torch.float32, device=self.device),
             "sampled_priorities": self.priorities[: self.size].clamp_min(self.priority_eps)[indices],
         }
+
+        if self.use_history and self.history is not None:
+            result["history"] = self.history[indices]
+
+        return result
 
     def update_priorities(self, indices, priorities):
         indices = torch.as_tensor(indices, dtype=torch.long, device=self.device).reshape(-1)
@@ -177,6 +227,11 @@ class TD3PrioritizedReplayBuffer:
             "priorities": self.priorities.detach().clone().cpu(),
         }
 
+        if self.use_history and self.history is not None:
+            state_dict["history"] = self.history.detach().clone().cpu()
+
+        return state_dict
+
     def load_state_dict(self, state_dict):
         self.position = int(state_dict["position"])
         self.size = int(state_dict["size"])
@@ -205,6 +260,9 @@ class TD3PrioritizedReplayBuffer:
             self.max_priority = max(self.max_priority, self.priorities[: self.size].max().item())
         else:
             self.max_priority = max(self.max_priority, 1.0)
+        
+        if self.use_history and "history" in state_dict and self.history is not None:
+            self.history.copy_(state_dict["history"].to(self.device))
 
     def __len__(self):
         return self.size

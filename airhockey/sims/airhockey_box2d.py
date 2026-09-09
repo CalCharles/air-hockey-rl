@@ -9,6 +9,7 @@ import inspect
 from types import SimpleNamespace
 from ..utils import dict_to_namespace
 from ..observation_homography import make_sine_y_warp_fn
+from .real.coordinate_transform import effective_x_max
 
 class PIDController:
     """
@@ -1283,11 +1284,10 @@ class AirHockeyBox2D:
         # Box2D/base observations use centered x, while real clip limits are in raw robot x.
         # Convert to raw-x for clipping, then shift back to centered frame.
         x_min_lim, x_max_lim, y_min, y_max = self.lims
-        top_abs, bot_abs, max_bias_m, max_bias_p = self.edge_lims
         x_raw = x - self.center_offset_constant
         y = np.clip(y, y_min, y_max)
         x_min = x_min_lim
-        x_max = min(x_max_lim, max_bias_m - top_abs * y, max_bias_p + top_abs * y)
+        x_max = effective_x_max(y, self.lims, self.edge_lims)
         x_raw = np.clip(x_raw, x_min, x_max)
         x_centered = x_raw + self.center_offset_constant
         return np.array([x_centered, y], dtype=float)

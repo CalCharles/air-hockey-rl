@@ -20,12 +20,18 @@ class TD3QNetwork(nn.Module):
         act_dim: int,
         hidden_layer_size: int = 128,
         num_hidden_layers: int = 2,
+        use_context=False,
+        context_vector_dim=0,
     ):
         super().__init__()
         if num_hidden_layers < 1:
             raise ValueError(f"num_hidden_layers must be >= 1, got {num_hidden_layers}")
 
         input_dim = int(obs_dim + act_dim)
+        
+        if use_context:
+            input_dim += context_vector_dim
+
         units_per_residual_block = 4
         num_residual_blocks = int(num_hidden_layers)
 

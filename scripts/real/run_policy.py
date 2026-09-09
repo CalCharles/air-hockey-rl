@@ -281,6 +281,16 @@ def run(
     obs, _info = env.reset()
     _maybe_reset_agent(agent)
     step = 0
+
+    # Add a little code to wait for human to press Enter to start running
+    print("[run_policy] waiting for human to press Enter to start running...")
+    while True:
+        if input() == "":
+            print("[run_policy] human pressed Enter; starting running...")
+            break
+        time.sleep(0.02)
+
+
     print("[run_policy] running. SPACE = pause/return-to-home, Ctrl-C = exit.")
     try:
         with NonBlockingConsole() as nbc:

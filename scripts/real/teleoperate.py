@@ -183,17 +183,15 @@ def run_teleop(
     policy_limits: bool = False,
     render_gifs: bool = False,
     gif_interval: int = 100,
+    sim_overlay: bool = False,
+    sim_overlay_alpha: float = 0.25,
 ):
     air_hockey_params = air_hockey_cfg['air_hockey']
-    air_hockey_params['n_training_steps'] = air_hockey_cfg['n_training_steps']
+    if sim_overlay:
+        air_hockey_params['simulator_params']['sim_overlay_enabled'] = True
+        air_hockey_params['simulator_params']['sim_overlay_alpha'] = float(sim_overlay_alpha)
 
-    if 'sac' == air_hockey_cfg['algorithm']:
-        if 'goal' in air_hockey_cfg['air_hockey']['task']:
-            air_hockey_cfg['air_hockey']['return_goal_obs'] = True
-        else:
-            air_hockey_cfg['air_hockey']['return_goal_obs'] = False
-    else:
-        air_hockey_cfg['air_hockey']['return_goal_obs'] = False
+
     air_hockey_params_cp = air_hockey_params.copy()
     air_hockey_params_cp['seed'] = 42
     air_hockey_params_cp['max_timesteps'] = 200
@@ -208,6 +206,11 @@ def run_teleop(
     if policy_limits:
         scale = getattr(eval_env.simulator, 'mouse_action_scale', None)
         print(f"[teleoperate] Policy-limits mode: action_scale={scale}")
+    if sim_overlay:
+        print(
+            f"[teleoperate] Box2D environment overlay on camera image "
+            f"(alpha={sim_overlay_alpha:.2f})"
+        )
     print("[teleoperate] On each 'y', the previous rollout is written as trajectory_data<N>.hdf5 in that directory.")
 
     segment_renderer: RealTrajectoryRenderer | None = None
@@ -319,6 +322,17 @@ if __name__ == "__main__":
         '--gif-interval', type=int, default=100,
         help='Number of frames per segment GIF when --render-gifs is set.',
     )
+    parser.add_argument(
+        '--sim-overlay', action='store_true',
+        help='Overlay a faint Box2D table image on the live camera feed, '
+             'warped into the homography-rectified display so sim and real '
+             'table geometry correspond.',
+    )
+    parser.add_argument(
+        '--sim-overlay-alpha', type=float, default=0.25,
+        help='Opacity of the Box2D environment overlay in [0, 1] '
+             '(default 0.25, faint). Only used with --sim-overlay.',
+    )
     args = parser.parse_args()
 
     if args.cfg is None:
@@ -349,4 +363,6 @@ if __name__ == "__main__":
         policy_limits=args.policy_limits,
         render_gifs=args.render_gifs,
         gif_interval=args.gif_interval,
+        sim_overlay=args.sim_overlay,
+        sim_overlay_alpha=args.sim_overlay_alpha,
     )

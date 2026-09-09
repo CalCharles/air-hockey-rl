@@ -1,31 +1,75 @@
 import numpy as np
 
+# ---------------------------------------------------------------------------
+# Far-edge corner cuts (chamfers)
+# ---------------------------------------------------------------------------
+# The arm can't reach the two far corners of its workspace, so the x_max edge is
+# chamfered near y_min and y_max. The cut is described as a SHAPE — a slope plus
+# how much y it ramps over — and the per-corner biases below are derived from it
+# against whatever the current limits are. That keeps the cut congruent at both
+# corners when x_max_lim / y_min / y_max move or go asymmetric; the older style
+# of pinning absolute biases silently resized (or deleted) the cut instead.
+#
+# Shape is taken from the measured +y corner: slope 0.8 (dx per dy) ramping in
+# over the last 0.0525 m of y, i.e. 0.042 m deep at the corner itself.
+CORNER_CUT_SLOPE = 0.8
+CORNER_CUT_Y_EXTENT = 0.1
+
+
+def corner_cut_biases(
+    x_max_lim,
+    y_min,
+    y_max,
+    slope=CORNER_CUT_SLOPE,
+    y_extent=CORNER_CUT_Y_EXTENT,
+):
+    """Derive the two corner-cut biases for ``edge_lims`` slots 2 and 3.
+
+    Returns ``(bias_pos_y, bias_neg_y)`` — the x-intercepts of each corner's
+    chamfer line, placed so the cut begins ``y_extent`` before the corner and is
+    ``slope * y_extent`` deep at it, on both sides independently.
+    """
+    slope = float(slope)
+    y_extent = max(0.0, float(y_extent))
+    bias_pos_y = float(x_max_lim) + slope * (abs(float(y_max)) - y_extent)
+    bias_neg_y = float(x_max_lim) + slope * (abs(float(y_min)) - y_extent)
+    return bias_pos_y, bias_neg_y
+
+
+def effective_x_max(y, lims, edge_lims):
+    """x_max at a given y, with both far-corner cuts applied.
+
+    Single source of truth for the chamfered edge so the clip path and the
+    camera overlay can't drift apart. ``edge_lims`` is
+    ``(top_abs, bot_abs, bias_pos_y, bias_neg_y)``: slot 2 shapes the +y corner,
+    slot 3 the -y corner.
+    """
+    _, x_max_lim, _, _ = lims
+    top_abs, _, bias_pos_y, bias_neg_y = edge_lims
+    return min(
+        x_max_lim,
+        bias_pos_y - top_abs * y,
+        bias_neg_y + top_abs * y,
+    )
+
+
 # limit rounding
 def clip_limits(x,y,lims, edge_lims):
     x_min_lim, x_max_lim, y_min, y_max = lims
-    top_abs, bot_abs, max_bias_m, max_bias_p = edge_lims
 
     y = np.clip(y, y_min, y_max, )
     # x_min = x_min_lim  + bot_abs * np.abs(y)
     x_min = x_min_lim
-    # x_max = x_max_lim - top_abs * np.abs(y)
-    x_max = min(x_max_lim, max_bias_m - top_abs * y, max_bias_p + top_abs * y)
-    # print(x_max, x_max_lim, max_bias_m, - top_abs * y, max_bias_p, top_abs * y, y)
-    # x_min, x_max = x_min_lim, x_max_lim
-    # print(x_min, x_max,max_bias_m - top_abs * y, max_bias_p + top_abs * y, y)
+    x_max = effective_x_max(y, lims, edge_lims)
     x = np.clip(x, x_min, x_max, ) # Workspace limits
     return x,y
 
 def get_clip_limits(x,y,lims, edge_lims):
     x_min_lim, x_max_lim, y_min, y_max = lims
-    top_abs, bot_abs, max_bias_m, max_bias_p = edge_lims
     y = np.clip(y, y_min, y_max, )
     # x_min = x_min_lim  + bot_abs * np.abs(y)
     x_min = x_min_lim
-    # x_max = x_max_lim - top_abs * np.abs(y)
-    x_max = min(x_max_lim, max_bias_m - top_abs * y, max_bias_p + top_abs * y)
-    # x_min, x_max = x_min_lim, x_max_lim
-    # print(x_min, x_max,max_bias_m - top_abs * y, max_bias_p + top_abs * y, y)
+    x_max = effective_x_max(y, lims, edge_lims)
     return x_min,x_max,y_min, y_max
 
 

@@ -317,16 +317,20 @@ def _make_teleop_camera_callback(phase_state):
         region_x_offset=1.0,
         shared_camera_frame=None,
         shared_camera_frame_ready=None,
+        camera_index=0,
+        sim_overlay=None,
     ):
         import imageio
 
         from airhockey.sims.real import control_parameters as _cp
         from airhockey.sims.real.image_detection import find_red_hockey_puck
+        from airhockey.sims.real.overlay_utils import Box2DEnvironmentOverlay
 
         if puck_detector is None:
             puck_detector = find_red_hockey_puck
         detector_kwargs = puck_detector_kwargs if puck_detector_kwargs is not None else {}
         publish_frames = shared_camera_frame is not None
+        env_overlay = Box2DEnvironmentOverlay.from_config(sim_overlay)
 
         # Realize the cv2 window once up-front so the very first
         # ``setMouseCallback`` succeeds. Without this, on some cv2
@@ -339,8 +343,10 @@ def _make_teleop_camera_callback(phase_state):
         except Exception:
             pass
 
-        cap = cv2.VideoCapture(1, cv2.CAP_V4L2)
+        cap = cv2.VideoCapture(int(camera_index), cv2.CAP_V4L2)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        if not cap.isOpened():
+            print(f"[teleop_camera_callback] failed to open camera index {camera_index}")
         # Diagnostic: print mousepos + shared cursor every ~3 s (60 frames
         # at the ~20 Hz camera loop) so we can verify cursor events are
         # actually firing on this window. Cheap; safe to leave on while
@@ -349,6 +355,9 @@ def _make_teleop_camera_callback(phase_state):
         diag_every = 60
         while True:
             ret, image = cap.read()
+            if not ret or image is None or getattr(image, "size", 0) == 0:
+                time.sleep(0.01)
+                continue
             save_image_id = save_image_check[0] == 1
             # Force get_save=True when the main process is reading via shared
             # memory so the publish branch below always has a fresh save_image
@@ -364,6 +373,8 @@ def _make_teleop_camera_callback(phase_state):
                 )
             puck = puck_detector(showdst, rotate=False, **detector_kwargs)
 
+            if env_overlay is not None:
+                env_overlay.apply(showdst)
             _draw_phase_overlay(showdst, phase_state)
 
             cv2.imshow("image", showdst)

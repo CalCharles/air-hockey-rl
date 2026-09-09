@@ -29,10 +29,10 @@ import subprocess
 import sys
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from types import SimpleNamespace
-from typing import Dict, List, Literal, Tuple
+from typing import Dict, List, Literal, Tuple, Optional
 
 import gymnasium as gym
 import numpy as np
@@ -40,7 +40,11 @@ import torch
 import torch.optim as optim
 import tyro
 import yaml
-from torch.utils.tensorboard import SummaryWriter
+# from torch.utils.tensorboard import SummaryWriter
+import wandb
+import subprocess
+import shlex
+import sys
 
 from airhockey import AirHockeyEnv
 from airhockey.renderers import AirHockeyRenderer
@@ -284,6 +288,52 @@ class Args:
     eval_n_envs: int = 1
     eval_eps_per_env: int = 4
 
+    # --- Context Vector Generation ---
+    use_transformer: bool = False
+
+    use_history: bool = False
+    context_len: int = 7
+    context_vector_dim: int = 8
+    transformer_lr: float = 0.00005 
+
+    # --- Context Vector OOD Analysis ---
+    analyze_context_vectors: bool = False
+    context_analysis_n_eps: int = 20
+    context_analysis_n_envs: int = 10
+    context_analysis_ood_scale: float = 2.0
+    context_analysis_out_dir: str = "results/context_tsne"
+
+    # --- Compare performance of ID and OOD for baseline and transformer based model
+    eval_id_ood: bool = False
+    eval_id_ood_n_envs: int = 10
+    eval_id_ood_n_eps: int = 8
+    # Path to a *second* model to compare against (the context-vector model when
+    # running on a baseline checkpoint, or vice versa).  Optional — if omitted,
+    # only the model loaded via --model-path is evaluated.
+    eval_id_ood_compare_model_path: str | None = None
+    params_cache_path: str | None = None
+    eval_id_ood_out_dir: str = "results/default"
+
+    # --- Parameters for submitting jobs with sbatch
+    sbatch_run_name: str | None = None          # e.g. "paramrand_pm25_seed0"
+    sbatch_partition: str = "gh"                # vista partition
+    sbatch_time: str = "12:00:00"              # max wall time HH:MM:SS
+
+    paddle_density: List[float] | None = None
+    puck_damping: List[float] | None = None
+    gravity: List[float] | None = None
+
+    # For compare_performance_ID_OOD when we want to generate GIFs of what we see
+    eval_id_ood_save_gifs: bool = False
+    eval_id_ood_n_gifs_per_env: int = 1
+    eval_id_ood_n_eps_per_gif: int = 1
+
+    random_variable_ranges_OOD: Optional[dict[str, tuple[float, float]]] = None
+
+    gravity_OOD: Optional[float] = None             # idk where this arg came from but it's in all the sweep transformer
+    paddle_density_OOD: Optional[float] = None      # idk where this arg came from but it's in all the sweep transformer
+    puck_damping_OOD: Optional[float] = None        # idk where this arg came from but it's in all the sweep transformer
+    # I won't use this ^^^ since we override it when we evaluate but I keep it here bc some args.yaml use it
 
 def make_env(env_id):
     def _thunk():
@@ -407,6 +457,14 @@ def _entrypoint():
     then invoke the full training loop. Behavior is identical to running
     `python -m scripts.td3.td3_training`
     directly."""
+
+    # Introduce changes to support submission of jobs via sbatch flag
+    if "--sbatch" in sys.argv:
+        _submit_sbatch_job()
+        return
+
+
+
     temp_args = tyro.cli(Args)
     if temp_args.args_file is not None:
         with open(temp_args.args_file, "r") as f:
@@ -438,13 +496,26 @@ def _entrypoint():
             log_parent_dir = f"{base_log_parent_dir}r{i}"
             i += 1
         print(f"Log directory exists. Saving to alternate log directory: {log_parent_dir}")
+    
+    log_parent_dir += f"_seed_{args.seed}"
     os.makedirs(log_parent_dir, exist_ok=True)
 
-    writer = SummaryWriter(log_parent_dir)
-    writer.add_text(
-        "hyperparameters",
-        "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{k}|{v}|" for k, v in vars(args).items()])),
+    # Initialize Wandb to log this run
+    full_trackable_config = {"yaml_config": config, "cli_args": vars(args)}
+    
+    wandb_run = wandb.init(
+        entity="rpp689-the-university-of-texas-at-austin",
+        project="meta-rl-air-hockey",
+        group=run_name,
+        name=f"{run_name}" + f"_seed_{args.seed}",
+        config=full_trackable_config,
     )
+
+    # writer = SummaryWriter(log_parent_dir)
+    # writer.add_text(
+    #     "hyperparameters",
+    #     "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{k}|{v}|" for k, v in vars(args).items()])),
+    # )
     with open(f"{log_parent_dir}/config.yaml", "w") as f:
         yaml.dump(config, f)
     with open(f"{log_parent_dir}/args.yaml", "w") as f:
@@ -465,7 +536,28 @@ def _entrypoint():
 
     raw_obs_dim = int(np.array(envs.single_observation_space.shape).prod())
     act_dim = int(np.prod(envs.single_action_space.shape))
-    policy_obs_dim = raw_obs_dim + act_dim if args.use_last_action_in_policy_state else raw_obs_dim
+
+    # TODO: checked this
+    if args.use_history:
+        
+        # Transformer: TD3 input dim: [raw_obs_dim, context_vector_dim]
+        if args.use_transformer:
+            policy_obs_dim = raw_obs_dim + act_dim if args.use_last_action_in_policy_state else raw_obs_dim
+            policy_obs_dim += args.context_vector_dim
+
+
+        else:
+            # context_len only: TD3 input dim: [context_len]
+            policy_obs_dim = (args.context_len * HISTORY_ENTRY_DIM)
+            if args.use_last_action_in_policy_state:
+                policy_obs_dim += act_dim
+
+    else:
+        # Default
+        policy_obs_dim = raw_obs_dim + act_dim if args.use_last_action_in_policy_state else raw_obs_dim
+
+
+
     policy_env_view = SimpleNamespace(
         single_observation_space=gym.spaces.Box(
             low=-np.inf, high=np.inf, shape=(policy_obs_dim,), dtype=np.float32
@@ -621,6 +713,9 @@ def _entrypoint():
     else:
         actor_optimizer = optim.Adam(actor.parameters(), lr=args.policy_lr, **adam_kwargs)
 
+
+
+    # TODO: need to check this
     if args.per_enabled:
         success_rb = TD3PrioritizedReplayBuffer(
             buffer_size=args.success_buffer_size,
@@ -631,6 +726,9 @@ def _entrypoint():
             alpha=args.per_alpha,
             priority_eps=args.per_eps,
             age_decay=args.priority_age_decay,
+            use_history=args.use_history,
+            history_entry_dim=HISTORY_ENTRY_DIM,
+            context_len=args.context_len,
         )
         failure_rb = TD3PrioritizedReplayBuffer(
             buffer_size=args.failure_buffer_size,
@@ -641,6 +739,9 @@ def _entrypoint():
             alpha=args.per_alpha,
             priority_eps=args.per_eps,
             age_decay=args.priority_age_decay,
+            use_history=args.use_history,
+            history_entry_dim=HISTORY_ENTRY_DIM,
+            context_len=args.context_len,
         )
         print(
             "✓ TD3 prioritized replay buffers initialized "
@@ -886,6 +987,10 @@ def _entrypoint():
         for ci, q in enumerate(qfs, start=1):
             torch.save(q.state_dict(), f"{out_dir}/qf{ci}.pth")
             torch.save(qfs_target[ci - 1].state_dict(), f"{out_dir}/qf{ci}_target.pth")
+        
+        if args.use_transformer:
+            torch.save(transformer.state_dict(), f"{out_dir}/transformer.pth")
+
         state = build_training_state(
             global_step=global_step,
             iteration=iteration,
@@ -1020,6 +1125,17 @@ def _entrypoint():
         if profile_sections:
             _t_now = _pc(); section_time["env"] += _t_now - _t_sec; _t_sec = _t_now
         dones = np.logical_or(terminations, truncations)
+
+        # TODO: checked
+        if args.use_history:
+            history_snapshot = history_buf.sample()[0]
+
+            if bool(dones[0]):
+                history_buf.reset_env()
+        else:
+            history_snapshot = None
+
+        
         step_puck_hits = sum_info_metric(infos, "paddle_puck_collision_count")
         interval_paddle_puck_collisions += step_puck_hits
         interval_env_steps += args.num_envs
@@ -1040,8 +1156,14 @@ def _entrypoint():
         if "final_info" in infos:
             for info in infos["final_info"]:
                 if info and "episode_return" in info:
-                    writer.add_scalar("charts/episodic_return", info["episode_return"], global_step)
-                    writer.add_scalar("charts/episodic_length", info["episode_length"], global_step)
+                    # writer.add_scalar("charts/episodic_return", info["episode_return"], global_step)
+                    # writer.add_scalar("charts/episodic_length", info["episode_length"], global_step)
+
+                    wandb.log({
+                        "charts/episodic_return": info["episode_return"],
+                        "charts/episodic_length": info["episode_length"] 
+                    }, step=global_step)
+
                     rolling_episode_stats_window.append(
                         (
                             int(global_step + args.num_envs),
@@ -1050,6 +1172,7 @@ def _entrypoint():
                             1.0 if info.get("success", False) else 0.0,
                         )
                     )
+        
         rolling_step_stats_window.append(
             (
                 int(global_step + args.num_envs),
@@ -1079,7 +1202,10 @@ def _entrypoint():
                 reward=rewards_tensor[0],
                 done=terminations_tensor[0],
                 prev_action=prev_action_for_transition[0],
+                history=history_snapshot,
             )
+
+
             episode_return_success_threshold = finalize_episode_if_done(
                 episode_done=bool(dones[0]),
                 episode_trajectory=episode_trajectory,
@@ -1190,7 +1316,8 @@ def _entrypoint():
 
         if global_step + args.num_envs >= next_stats_log_step:
             write_periodic_episode_stats(
-                writer, global_step,
+                # writer, 
+                global_step,
                 rolling_episode_stats_window=rolling_episode_stats_window,
                 rolling_step_stats_window=rolling_step_stats_window,
                 interval_paddle_puck_collisions=interval_paddle_puck_collisions,
@@ -1216,13 +1343,20 @@ def _entrypoint():
             interval_primitive_horizontal_env_steps = 0
             next_stats_log_step += args.stats_log_interval
 
-        if global_step > 0 and global_step % args.checkpoint_interval == 0:
+        # TODO: Change so that we only start doing evaluation and saving checkpoints after a certain timestep
+        # TODO: This is done to reduce the number of GB of data we produce
+        # change back to >= 1900000
+        if (global_step >= 1900000) and global_step % args.checkpoint_interval == 0:
             checkpoint_dir = os.path.join(log_parent_dir, f"checkpoint_{global_step}")
             model_path = save_full_checkpoint(checkpoint_dir)
             print(f"\nCheckpoint saved at step {global_step}", flush=True)
             run_checkpoint_eval(model_path, checkpoint_dir)
 
         iteration += 1
+        
+        # Flush everything logged at this global_step, regardless of which
+        # conditional blocks above fired.
+        wandb.log({}, step=global_step, commit=True)
         global_step += args.num_envs
 
     envs.close()
@@ -1252,6 +1386,12 @@ def _entrypoint():
             agent_hidden_layer_size=args.agent_hidden_layer_size,
             agent_num_hidden_layers=args.agent_num_hidden_layers,
             use_last_action_in_policy_state=args.use_last_action_in_policy_state,
+
+            HISTORY_ENTRY_DIM=HISTORY_ENTRY_DIM,
+            use_history=args.use_history,
+            use_transformer=args.use_transformer,
+            context_vector_dim=args.context_vector_dim,
+            context_len=args.context_len,
         )
     except Exception as e:
         print(f"Final evaluation failed: {e}")
@@ -1265,8 +1405,35 @@ def _entrypoint():
         "replay/per_priority_td_error_mean",
     ]
     save_tensorboard_plots(log_parent_dir, config, metrics=metrics)
-    writer.close()
+
+
+
+    compare_performance_ID_OOD(
+        actor=actor,
+        air_hockey_base=config["air_hockey"],
+        raw_obs_dim=raw_obs_dim,
+        act_dim=act_dim,
+        use_last_action=args.use_last_action_in_policy_state,
+
+        use_history=args.use_history,
+        use_transformer=args.use_transformer,
+        transformer=transformer if (args.use_history and args.use_transformer) else None,
+
+        context_len=args.context_len,
+        n_envs=args.eval_id_ood_n_envs,
+        n_eps=args.eval_id_ood_n_eps,
+        out_dir=os.path.join("results", args.run_name),
+        device=args.device,
+        seed=args.seed,
+        model_path=args.model_path or "",
+        params_cache_path=args.params_cache_path,
+    )
+
+    # writer.close()
 
 
 if __name__ == "__main__":
-    _entrypoint()
+    try:
+        _entrypoint()
+    finally:
+        wandb_run.finish()

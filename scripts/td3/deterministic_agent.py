@@ -29,6 +29,7 @@ class DeterministicAgent(nn.Module):
     ):
         super().__init__()
         obs_dim = int(np.prod(envs.single_observation_space.shape))
+            
         act_dim = int(np.prod(envs.single_action_space.shape))
 
         # Backward compatibility for existing callers while preferring hidden_layer_size.

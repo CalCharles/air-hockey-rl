@@ -100,7 +100,9 @@ SIMPLE_MIN_PUCK_FILL_RATIO = 0.7
 SIMPLE_LOOSE_MIN_PUCK_FILL_RATIO = 0.55
 
 # Mimg = np.load('assets/real/Mimg.npy')
-Mimg = np.load(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "assets", "real", "Mimg.npy"))
+# Mimg = np.load(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "assets", "real", "Mimg.npy"))
+# ^^^ Do we need this?
+
 upscale_constant = 3
 original_size = np.array([640, 480])
 visual_downscale_constant = 2

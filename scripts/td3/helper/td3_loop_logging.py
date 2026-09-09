@@ -19,6 +19,7 @@ from typing import Dict, List
 
 import numpy as np
 import torch
+import wandb
 
 
 def build_target_q_debug_metrics(
@@ -126,7 +127,7 @@ def build_actor_metrics(
 
 
 def write_periodic_episode_stats(
-    writer,
+    # writer,
     global_step: int,
     *,
     rolling_episode_stats_window: deque,
