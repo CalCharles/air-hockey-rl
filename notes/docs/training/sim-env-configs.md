@@ -14,6 +14,25 @@ Base system-ID physics tuned to match real-world dynamics. Defaults to `hist_len
 ### `sysid_best_params_hist2.yaml` — Sysid + hist_len=2 (canonical source-sim, **active**)
 Identical to `sysid_best_params.yaml` except `simulator_params.hist_len: 2`, which enables a 2-timestep low-pass filter on the PID target (see `_filter_update` in `airhockey/sims/airhockey_box2d.py`). This is the sim config wired into the active [`configs/td3/td3_recommended_top50_hist2.yaml`](../../../configs/td3/td3_recommended_top50_hist2.yaml) for source-sim-only training.
 
+### `sysid_best_params_hist4.yaml` — Sysid + hist_len=4 (**set on the five task configs 2026-09-04; measured WORSE than hist2 — see caveat**)
+
+4-timestep moving-average low-pass on the PID target. Because the filter changes the paddle's effective
+command dynamics, this config carries its **own** paddle sysid fit rather than reusing the hist2 one:
+`pid_kp: 7500`, `pid_kd: 50`, `pid_ki: 0`, `paddle_density: 3500` (hist2: `9000` / `50` / `0` / `3000`),
+from a windowed-10 3D grid search over teleop data **re-recorded under `hist_len: 4`** (2026-05-21; protocol in
+[`real-world/teleop-system-id.md`](../environments/real-world/teleop-system-id.md#re-running-sysid-for-a-new-sim-variant-eg-hist_len-4-action-smoothing)).
+Using the hist2 gains with `hist_len: 4` gives a miscalibrated sim — always pair the two.
+
+All ten `configs/new_juggle/tasks/sim_{sysid,dr}_<task>.yaml` files now inherit these values; the `_dr`
+variants recentre the ±25 % `paddle_density` range on 3500 (2625–4375). `puck_damping` and `gravity` are
+unchanged from the hist2 fit (they are puck-side, not affected by paddle command smoothing).
+
+> **Result caveat.** A like-for-like 10-run head-to-head on 2026-09-04 found hist4 *underperforms* hist2 on
+> every task with reward headroom (juggle, puck_vel), in both sysid and DR, and delays reach's DR saturation
+> from 200k to ~1.8M steps. Tables and trajectories in
+> [`2026-09-04_22-19_hist4-smoothing-five-tasks.md`](../../scratch/experiments/2026-09-04_22-19_hist4-smoothing-five-tasks.md).
+> Don't treat hist4 as a validated default.
+
 ### `zeroshot_ablations/sim_paramrand_pm25.yaml` — Canonical sim2sim / sim2real training env (**active**)
 Same baseline as `sysid_best_params_hist2.yaml` plus per-reset environment-parameter randomization: `paddle_density`, `puck_damping`, `gravity` each drawn uniform within ±25 % of their sysid values. Paired with [`configs/td3/zeroshot_paramrand/td3_paramrand_pm25.yaml`](../../../configs/td3/zeroshot_paramrand/td3_paramrand_pm25.yaml) and launched via `scripts/td3/td3_training_dr.py`. **This is the recommended training env for any new source policy that needs to transfer** (see [`sim2sim.md`](sim2sim.md)).
 

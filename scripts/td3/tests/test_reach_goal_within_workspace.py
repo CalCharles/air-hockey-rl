@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 class ReachGoalWorkspaceTests(unittest.TestCase):
     def _make_env(self, config_name, **overrides):
-        config_path = REPO_ROOT / "configs" / "new_juggle" / "throughput_bench" / config_name
+        config_path = REPO_ROOT / "configs" / "new_juggle" / "tasks" / config_name
         with config_path.open("r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f)["air_hockey"]
         cfg["seed"] = 7
@@ -46,7 +46,7 @@ class ReachGoalWorkspaceTests(unittest.TestCase):
         return np.asarray(goals)
 
     def test_reach_goals_inside_workspace(self):
-        env = self._make_env("sim_nodr_reach.yaml")
+        env = self._make_env("sim_sysid_reach.yaml")
         try:
             x_lo, x_hi, y_lo, y_hi = self._workspace(env)
             goals = self._sample_goals(env)
@@ -61,7 +61,7 @@ class ReachGoalWorkspaceTests(unittest.TestCase):
             env.close()
 
     def test_reach_velocity_goals_inside_workspace_with_runway(self):
-        env = self._make_env("sim_nodr_reach_vel.yaml")
+        env = self._make_env("sim_sysid_reach_vel.yaml")
         try:
             x_lo, x_hi, y_lo, y_hi = self._workspace(env)
             goals = self._sample_goals(env)
@@ -77,7 +77,7 @@ class ReachGoalWorkspaceTests(unittest.TestCase):
             env.close()
 
     def test_reach_velocity_goal_speed_within_paddle_clamp(self):
-        env = self._make_env("sim_nodr_reach_vel.yaml")
+        env = self._make_env("sim_sysid_reach_vel.yaml")
         try:
             goals = self._sample_goals(env)
             speeds = np.linalg.norm(goals[:, 2:], axis=1)
@@ -88,7 +88,7 @@ class ReachGoalWorkspaceTests(unittest.TestCase):
             env.close()
 
     def test_goal_observation_space_contains_sampled_goals(self):
-        for config_name in ("sim_nodr_reach.yaml", "sim_nodr_reach_vel.yaml"):
+        for config_name in ("sim_sysid_reach.yaml", "sim_sysid_reach_vel.yaml"):
             with self.subTest(config=config_name):
                 env = self._make_env(config_name)
                 try:

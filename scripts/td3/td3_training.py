@@ -200,6 +200,13 @@ class Args:
     critic_uniform_fraction: float = 0.3
     critic_success_sample_fraction: float = 0.3
     critic_failure_sample_fraction: float = 0.7
+    # True: every episode goes to the success buffer and the failure buffer stays
+    # empty, so training samples from one flat replay buffer of
+    # ``success_buffer_size`` transitions. The success/failure split above is a
+    # juggle-era heuristic; on tasks with sparse or binary returns its threshold
+    # snaps between 0 and 1, the failure buffer freezes and 70 % of every batch
+    # comes from stale data (2026-09-04 diagnosis). Canonical recipe: True.
+    single_replay_buffer: bool = False
 
     # --- Primitive exploration takeover ---
     exploration_primitive_chance: float = 0.05
@@ -223,6 +230,14 @@ class Args:
     # --- Checkpointing ---
     checkpoint_interval: int = 25000
     save_replay_buffer: bool = True
+    # Serialize the replay buffer into every *intermediate* checkpoint's
+    # training_state.pth, not just the final one. The buffer dominates the file
+    # (~275 MB vs ~150 KB of weights), so leaving this on costs ~11 GB per 1M-step
+    # run and has repeatedly filled the disk. Off means intermediate checkpoints
+    # still carry full weights/optimizer state (enough for per-checkpoint eval and
+    # for warm-starting via model_path) but cannot restore the exact replay buffer;
+    # the final checkpoint still honours save_replay_buffer.
+    save_replay_buffer_intermediate: bool = False
     # Run per-checkpoint evaluation in a background subprocess (CPU only) so
     # it does not block training. The final evaluation stays in-process.
     checkpoint_eval_async: bool = True
@@ -975,7 +990,7 @@ def _entrypoint():
         AsyncCheckpointEvaluator(args.checkpoint_interval) if args.checkpoint_eval_async else None
     )
 
-    def save_full_checkpoint(out_dir: str) -> str:
+    def save_full_checkpoint(out_dir: str, is_final: bool = True) -> str:
         os.makedirs(out_dir, exist_ok=True)
         with open(f"{out_dir}/config.yaml", "w") as f:
             yaml.dump(config, f)
@@ -1021,7 +1036,8 @@ def _entrypoint():
             rolling_step_stats_window=rolling_step_stats_window,
             rolling_episode_stats_window=rolling_episode_stats_window,
             args_dict=vars(args),
-            include_replay_buffer=args.save_replay_buffer,
+            include_replay_buffer=args.save_replay_buffer
+            and (is_final or args.save_replay_buffer_intermediate),
         )
         torch.save(state, f"{out_dir}/training_state.pth")
         return model_path_local
@@ -1214,6 +1230,7 @@ def _entrypoint():
                 episode_return_success_threshold=episode_return_success_threshold,
                 success_rb=success_rb,
                 failure_rb=failure_rb,
+                single_buffer=args.single_replay_buffer,
             )
         episode_finished = bool(dones[0])
 
@@ -1348,7 +1365,7 @@ def _entrypoint():
         # change back to >= 1900000
         if (global_step >= 1900000) and global_step % args.checkpoint_interval == 0:
             checkpoint_dir = os.path.join(log_parent_dir, f"checkpoint_{global_step}")
-            model_path = save_full_checkpoint(checkpoint_dir)
+            model_path = save_full_checkpoint(checkpoint_dir, is_final=False)
             print(f"\nCheckpoint saved at step {global_step}", flush=True)
             run_checkpoint_eval(model_path, checkpoint_dir)
 

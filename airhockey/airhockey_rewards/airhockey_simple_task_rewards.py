@@ -13,10 +13,17 @@ class AirHockeyPuckVelReward(AirHockeyRewardBase):
     A step scores zero whenever the displacement cannot actually be measured --
     the first step of an episode, and any step where the puck was occluded at
     either end, since an occluded reading is a placeholder rather than a
-    position.  Scale the whole thing with the ``base_reward_scaling`` config key
-    if the raw metres are too small (the old velocity-based reward was ~100x
-    this at 20 Hz).
+    position.  The displacement is multiplied by ``DISPLACEMENT_SCALE``.
     """
+
+    # Reward per metre of upward puck travel. Raw metres (scale 1) give
+    # ~0.05 per step after a hit and Q values of ~0.01-0.1, which is not
+    # enough to keep the critic from going flat and the actor from
+    # saturating; x10 brings it to 0.5/step after a hit, the same scale as
+    # the juggle reward, and trains to ~90 % success
+    # (notes/scratch/experiments/2026-09-04_01-05_sparse-task-collapse-diagnosis.md).
+    # A scripted intercept-and-hit controller earns ~6 per episode at this scale.
+    DISPLACEMENT_SCALE = 10.0
 
     def __init__(self, task_env):
         super().__init__(task_env)
@@ -47,7 +54,7 @@ class AirHockeyPuckVelReward(AirHockeyRewardBase):
         )
         upward_displacement = (prev_x - puck_x) if measurable else 0.0
 
-        reward = max(upward_displacement, 0.0)
+        reward = self.DISPLACEMENT_SCALE * max(upward_displacement, 0.0)
         puck_height = -puck_x
         success = puck_height > 0.5 and timestep > 25
         return reward, success

@@ -38,6 +38,24 @@ Real-world code: `_build_async_training_state` / `_save_async_checkpoint` in [`h
 
 Legacy checkpoints may have a single `replay_buffer` key instead -- loaded into the failure buffer for backward compatibility.
 
+#### Intermediate checkpoints omit the replay buffer (sim trainer, since 2026-09-04)
+
+In `scripts/td3/td3_training.py` the replay buffer dominates `training_state.pth`: **~275 MB of
+buffer vs ~150 KB of weights**. With the canonical `checkpoint_interval: 25000`, writing it into
+every checkpoint costs **~11 GB per 1M-step run** and has filled the disk mid-campaign.
+
+`save_full_checkpoint(out_dir, is_final=...)` therefore serializes the buffer **only in the final
+checkpoint**. Intermediate `checkpoint_<step>/training_state.pth` files are ~1.9 MB and still carry
+full network *and* optimizer state -- enough for per-checkpoint eval and for warm-starting via
+`model_path` -- but they cannot restore the exact replay buffer.
+
+| Arg | Default | Effect |
+|-----|---------|--------|
+| `save_replay_buffer` | `true` | Include the buffer in the **final** checkpoint. |
+| `save_replay_buffer_intermediate` | `false` | Set `true` to also include it in every intermediate checkpoint (the old, disk-hungry behaviour). Needed only if you must full-resume from a mid-run checkpoint. |
+
+Real-world async training (`async_td3_real.py`) is unaffected -- it has its own checkpoint path.
+
 ### Exploration and episode state
 
 | Key | Description |
