@@ -1,3 +1,10 @@
+# Canonical smoothing since 2026-09-04: simulator_params.hist_len = 4 (4-timestep
+# moving-average low-pass on the PID target; see _filter_update() in
+# airhockey/sims/airhockey_box2d.py).  The paddle PID/density values below are the
+# hist4-specific sysid refit (kp=7500, kd=50, ki=0, paddle_density=3500) measured
+# against real teleop data re-recorded under hist_len=4 -- NOT the hist2 fit
+# (kp=9000, density=3000).  See configs/new_juggle/sysid_best_params_hist4.yaml and
+# notes/docs/environments/real-world/teleop-system-id.md.
 air_hockey:
   max_timesteps: 50
   num_blocks: 0
@@ -14,8 +21,8 @@ air_hockey:
   - gravity
   random_variable_ranges:
     paddle_density:
-    - 2250.0
-    - 3750.0
+    - 2625.0
+    - 4375.0
     puck_damping:
     - 0.1335
     - 0.2225
@@ -33,7 +40,7 @@ air_hockey:
     paddle_radius: 0.0508
     force_scaling: 0.99
     paddle_damping: 17
-    paddle_density: 3000
+    paddle_density: 3500
     gravity: -0.661
     puck_damping: 0.178
     puck_density: 3000
@@ -45,10 +52,10 @@ air_hockey:
     render_size: 360
     seed: 0
     width: 0.8636
-    pid_kp: 9000
+    pid_kp: 7500
     pid_kd: 50
     pid_ki: 0.0
-    hist_len: 2
+    hist_len: 4
     puck_noise: true
     puck_noise_std: 0.01
     enable_random_occlusions: true

@@ -25,6 +25,7 @@ air_hockey:
   simulator: box2d
   simulator_params:
     absorb_target: false
+    enable_puck_delay_interpolation: true
     block_density: 1000
     block_width: 0.0254
     length: 1.9304

@@ -1,4 +1,6 @@
 # Task 'juggle' (puck_juggle_upper_half_reward (canonical juggle)), canonical +-25 % per-reset physics randomization (paddle_density / puck_damping / gravity).
+# Smoothing: hist_len=4 (canonical since 2026-09-04) + hist4 paddle sysid refit, set in the sim config above.
+# Baseline hist_len=2 results for the same recipe: runs/td3/tasks_20260904/{sysid,dr}/summary.md.
 # Trainer: scripts/td3/td3_training_dr.py; batch: scripts/td3/run_experiments.py --mode auto --configs configs/td3/tasks/*.yaml --gpus ...
 # Recipe = configs/td3/td3_recommended_top50_hist2.yaml + DR eval (eval_param_seed / eval_n_envs / eval_eps_per_env), 2M steps,
 # i.e. q_weight_decay 0 + single flat replay buffer (2026-09-04 recipe change, see

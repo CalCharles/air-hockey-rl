@@ -1,4 +1,6 @@
 # Task 'reach' (paddle_reach_position), system-identification physics, no domain randomization.
+# Smoothing: hist_len=4 (canonical since 2026-09-04) + hist4 paddle sysid refit, set in the sim config above.
+# Baseline hist_len=2 results for the same recipe: runs/td3/tasks_20260904/{sysid,dr}/summary.md.
 # Trainer: scripts/td3/td3_training.py; batch: scripts/td3/run_experiments.py --mode auto --configs configs/td3/tasks/*.yaml --gpus ...
 # Recipe = configs/td3/td3_recommended_top50_hist2.yaml,
 # i.e. q_weight_decay 0 + single flat replay buffer (2026-09-04 recipe change, see
