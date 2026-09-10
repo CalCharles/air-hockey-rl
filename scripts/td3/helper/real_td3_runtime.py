@@ -1121,7 +1121,16 @@ def _build_split_episode_row(
     if not isinstance(state_info, dict):
         state_info = env.simulator.get_current_state()
     paddle = state_info["paddles"]["paddle_ego"]
-    puck_info = state_info["pucks"][0]
+    pucks = state_info.get("pucks") if isinstance(state_info, dict) else None
+    if pucks:
+        puck_info = pucks[0]
+    else:
+        # Puck-less tasks (paddle_reach_position*) on Box2D report no
+        # ``pucks`` entry at all. Write the same occluded placeholder the
+        # simulators use for an unseen puck so the split schema stays fixed
+        # width and downstream contact / occlusion logic ignores the frame.
+        center_offset = float(getattr(env.simulator, "center_offset_constant", 0.0))
+        puck_info = {"position": [-2.0 + center_offset, 0.0], "occluded": [1.0]}
     paddle_pos = np.asarray(paddle.get("position", [0.0, 0.0]), dtype=np.float64).reshape(-1)
     paddle_vel = np.asarray(paddle.get("velocity", [0.0, 0.0]), dtype=np.float64).reshape(-1)
     move_lims = np.asarray(getattr(env.simulator, "move_lims", (1.0, 1.0)), dtype=np.float64).reshape(-1)

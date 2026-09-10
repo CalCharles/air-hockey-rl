@@ -37,7 +37,11 @@ Aggregate captures (see ``helper/real_eval_stats.py``):
     ``readiness_fail_estop``.
   * ``estop_total``: collapsed e-stop count (any class).
 
-The task hooks (``helper/real_task_eval_hooks.py``) also drive the
+The task hooks (``helper/real_task_eval_hooks.py``) also pick the
+between-episode reset: puck tasks (juggle / touch / puck_velocity) run the
+``ResetPolicyFSM`` puck sweep; paddle-only tasks (reach / reach_vel) run
+``PaddleRepositionFSM`` (drive the paddle to a fresh start pose, settle,
+resample the goal) with no reset policy at all. The task hooks also drive the
 ``min_timesteps`` floor passed to ``clean_episode_hdf5`` and per-field
 console precision, so plugging a new task into the eval pipeline only
 requires (optionally) registering a hooks class for it.
@@ -102,8 +106,6 @@ from scripts.td3.helper.run_event_log import (
     run_data_dir_from_args,
     run_events_path,
 )
-from scripts.real.rollout_reset_policy_real import ResetPolicyFSM
-
 from scripts.td3.helper.real_td3_runtime import (
     Args,
     TrainArgs,
@@ -290,10 +292,24 @@ def run_eval(
     # back to GenericEvalHooks for any task not in the registry.
     task_name = str(collector_config.get("task", ""))
     task_hooks = get_task_eval_hooks(task_name)
+    reset_fsm_cls = task_hooks.make_reset_fsm_cls()
+    # Post-reset zero-action hold: task hooks may override the args value
+    # (paddle-only tasks set 0 — the reposition FSM already leaves the paddle
+    # at rest, and the hold would eat into a 50-step reach budget).
+    post_reset_hold_steps = (
+        int(args.transition_hold_steps_post_reset)
+        if task_hooks.post_reset_transition_hold_steps is None
+        else int(task_hooks.post_reset_transition_hold_steps)
+    )
     print(
         f"[eval_run] task={task_name!r} "
         f"hooks={type(task_hooks).__name__} "
-        f"min_timesteps={int(task_hooks.min_timesteps)}"
+        f"min_timesteps={int(task_hooks.min_timesteps)} "
+        f"reset_strategy={task_hooks.reset_strategy} "
+        f"reset_fsm={reset_fsm_cls.__name__} "
+        f"force_fsm_after_hard_reset={int(bool(task_hooks.force_fsm_after_hard_reset))} "
+        f"periodic_hard_reset_every={int(task_hooks.periodic_hard_reset_every)} "
+        f"post_reset_hold_steps={post_reset_hold_steps}"
     )
 
     # Agent + metadata. Dispatched on ``eval_args.agent``: 'td3' rebuilds the
@@ -333,16 +349,21 @@ def run_eval(
 
     # Reset runner. Even in eval we want resets between episodes (matches
     # training-time setup), so the policy starts each episode from a
-    # comparable state.
+    # comparable state. The task hooks supply the between-episode controller
+    # (puck sweep FSM vs. paddle reposition), the post-soft-reset hook (goal
+    # resampling on goal tasks), and whether a physical reset must always be
+    # followed by the FSM.
     next_reset_file_id = _next_available_episode_id(args.reset_artifact_dir)
     reset_rng = np.random.default_rng(args.seed)
     reset_runner = ResetRunner(
         env,
         device=device,
         reset_rng=reset_rng,
-        reset_policy_fsm_cls=ResetPolicyFSM,
+        reset_policy_fsm_cls=reset_fsm_cls,
         build_split_episode_row=_build_split_episode_row,
         latest_camera_frame=_latest_camera_frame,
+        post_soft_reset_hook=task_hooks.on_soft_reset,
+        force_fsm_after_hard_reset=bool(task_hooks.force_fsm_after_hard_reset),
     )
     pending_reset_artifact = None
 
@@ -401,7 +422,7 @@ def run_eval(
     policy_runner.seed_initial(startup_result.obs)
     transition_hold.begin(
         reason=startup_result.transition_reason,
-        hold_steps=int(args.transition_hold_steps_post_reset),
+        hold_steps=post_reset_hold_steps,
         sim_hold=True,
         env=env,
         ctx=ctx,
@@ -430,7 +451,9 @@ def run_eval(
             )
             break
 
-        # 1. Run one policy episode.
+        # 1. Run one policy episode. Hooks snapshot whatever their metrics
+        # need at the start (goal tasks record the goal the env just drew).
+        task_hooks.on_episode_start(env)
         policy_runner.set_artifact_episode_id(next_episode_file_id)
         result = policy_runner.run_episode()
         episode_end_wall_time = time.time()
@@ -475,7 +498,7 @@ def run_eval(
         pending_reset_artifact = None
 
         task_metrics = task_hooks.compute_episode_metrics(
-            result=result, rows=result.rows
+            result=result, rows=result.rows, env=env
         )
         if episode_kept:
             # Note: ``counters["successful_online_episodes_kept"]`` is already
@@ -571,6 +594,7 @@ def run_eval(
                 had_protective_stop=result.terminal.stop_flags.had_protective_stop,
                 had_controller_disconnect=result.terminal.stop_flags.had_controller_disconnect,
             ),
+            periodic_every=int(task_hooks.periodic_hard_reset_every),
         )
         reset_result = reset_runner.run(
             kind=kind,
@@ -590,7 +614,7 @@ def run_eval(
 
         transition_hold.begin(
             reason=reset_result.transition_reason,
-            hold_steps=int(args.transition_hold_steps_post_reset),
+            hold_steps=post_reset_hold_steps,
             sim_hold=True,
             env=env,
             ctx=ctx,
@@ -611,6 +635,12 @@ def run_eval(
 
     run_meta: Dict[str, Any] = {
         "agent": str(eval_args.agent),
+        "task": task_name,
+        "task_hooks": type(task_hooks).__name__,
+        "reset_strategy": str(task_hooks.reset_strategy),
+        "reset_fsm": reset_fsm_cls.__name__,
+        "post_reset_transition_hold_steps": int(post_reset_hold_steps),
+        "min_timesteps": int(task_hooks.min_timesteps),
         "model_path": str(args.model_path) if args.model_path is not None else None,
         "config": str(args.config),
         "args_file": str(args.args_file) if args.args_file is not None else None,

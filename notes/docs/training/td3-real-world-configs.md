@@ -12,7 +12,7 @@ These are the live training configs for sim2real residual fine-tuning. Read [`re
 
 Real-world entrypoints all accept `--args-file <this yaml>`:
 - Training: `scripts/td3/extras/async_td3_real.py`
-- Frozen-policy evaluation: `scripts/td3/extras/async_td3_real_eval.py`
+- Frozen-policy evaluation (all five canonical tasks): `scripts/td3/extras/async_td3_real_eval.py` — see [`real-world-eval-pipeline.md`](real-world-eval-pipeline.md)
 - Human-baseline teleop / user study: `scripts/td3/extras/async_td3_real_teleop_eval.py`
 
 ### `td3_residual_cql.yaml` — Canonical big-gap residual + CQL (default)
@@ -34,6 +34,8 @@ Used when running a sim-pretrained policy on the real robot **without** the resi
 In `configs/real_configs/`:
 - `rollout_config_residual.yaml` — referenced by `td3_residual.yaml` and `td3_residual_cql.yaml`.
 - `rollout_td3_config.yaml` — referenced by `td3_online.yaml`; generic real-world rollout (task `puck_juggle_upper_half_reward`, `simulator: real`).
+- `rollout_td3_config_hist2.yaml` / `rollout_td3_config_hist4.yaml` — juggle rollout / eval configs for hist2 / hist4 checkpoints.
+- `tasks/rollout_td3_{touch,reach,reach_vel,puck_vel}_hist{2,4}.yaml` — per-task real-robot eval configs for the other four canonical tasks (real simulator block + the sim task's budget / puck count / termination flags / goal params). The `task:` key selects the reset strategy and metrics in `async_td3_real_eval.py`; see [`real-world-eval-pipeline.md`](real-world-eval-pipeline.md#five-canonical-tasks).
 - `rollout_config.yaml` — alternate real-world rollout config.
 - `mouse_config.yaml` — mouse-paddle teleop config (used by the teleop eval entrypoint).
 
