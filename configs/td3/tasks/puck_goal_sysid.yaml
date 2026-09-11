@@ -1,11 +1,12 @@
-# puck_goal_her_sysid: TD3 + hindsight experience replay on 'sim_sysid_puck_goal'.
-# Trainer: scripts/td3/td3_training_her.py (python -m scripts.td3.td3_training_her --args-file <this>).
-# Batch: scripts/td3/run_experiments.py --mode her --configs configs/td3/her/*.yaml --gpus ...
-# Recipe = the canonical five-task recipe (configs/td3/tasks/*_sysid.yaml: q=25/a=6 updates per
-# episode, batch 512, PER, single flat 1M buffer, q_weight_decay 0, primitive exploration), with the
-# goal appended to the 30-dim history obs and HER relabelling (her_k copies per transition,
-# 'future' strategy). Networks scaled up to 128 (actor) / 256 (critic) wide, 2 residual blocks.
-# Round 2: her_goal_filter true (hindsight goals restricted to the goal-sampling region).
+# Task 'puck_goal' (puck_goal_position_sparse), system-identification physics, no domain randomization.
+# Smoothing: hist_len=4 (canonical since 2026-09-04) + hist4 paddle sysid refit, set in the sim config above.
+# Trainer: scripts/td3/td3_training_her.py (TD3 + hindsight experience replay; run_experiments --mode auto picks
+# it for YAMLs that set her_k); batch: scripts/td3/run_experiments.py --mode auto --configs configs/td3/tasks/*.yaml --gpus ...
+# Recipe = the five-task recipe (q=25/a=6 updates per episode, batch 512, PER, single flat 1M buffer,
+# q_weight_decay 0, primitive exploration) with the goal appended to the 30-dim history obs and HER
+# relabelling (her_k copies per transition, 'future' strategy, goals restricted to the goal region).
+# Networks 128 (actor) / 256 (critic) wide, 2 residual blocks.
+# Reward scales live in the task reward classes, not here. Read notes/docs/training/her.md.
 total_timesteps: 1000000
 num_envs: 1
 buffer_size: 100000
@@ -50,7 +51,7 @@ config: configs/new_juggle/tasks/sim_sysid_puck_goal.yaml
 args_file: null
 model_path: null
 log_parent_dir: null
-run_name: puck_goal_her_filter_sysid
+run_name: puck_goal_sysid
 device: cuda:0
 seed: 0
 h_transform_eps: 0.001

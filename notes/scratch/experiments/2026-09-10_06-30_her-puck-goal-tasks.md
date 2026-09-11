@@ -6,6 +6,7 @@
 - **Configs**: `configs/td3/her/*.yaml`; sim configs `configs/new_juggle/tasks/sim_sysid_puck_goal*.yaml`
 - **Code**: `scripts/td3/td3_training_her.py`, `scripts/td3/helper/td3_her.py`, `scripts/td3/helper/her_eval.py`, `airhockey/airhockey_tasks/puck_goal_sparse.py`, `airhockey/airhockey_rewards/goal_task_rewards/puck_goal_sparse_reward.py`; doc `notes/docs/training/her.md`; tests `scripts/td3/tests/test_her_relabel.py`
 - **Deployable policies**: `latest_models/her/{puck_goal_position_hist2,puck_goal_position_hist4,puck_goal_speed_hist2}/`
+- **Cleanup (2026-09-11)**: the velocity-vector task, its `box` / `shot` / `intercept_shot` velocity samplers and the per-round variant configs named below were removed from the tree; commit 467da75 has the code and configs exactly as these runs used them (each run dir also keeps its `config.yaml` / `args.yaml`). Kept: `puck_goal_position_sparse` and `puck_goal_position_speed_sparse`, now suite tasks `puck_goal` / `puck_goal_vel` (`configs/td3/tasks/{puck_goal,puck_goal_vel}_{sysid,dr}.yaml`; hist2 variants and the k0 ablation under `configs/td3/her/`).
 
 ## Question
 Can the canonical TD3 recipe learn the goal-conditioned puck tasks (send the

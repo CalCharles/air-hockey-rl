@@ -40,7 +40,6 @@ from airhockey.airhockey_tasks.puck_goal_position_obstacles import (
 )
 from airhockey.airhockey_tasks.puck_goal_sparse import (
     AirHockeyPuckGoalPositionSparseEnv,
-    AirHockeyPuckGoalPositionVelocitySparseEnv,
     AirHockeyPuckGoalPositionSpeedSparseEnv,
 )
 
@@ -105,8 +104,6 @@ def AirHockeyEnv(cfg):
         task_env = AirHockeyPuckGoalPositionVelocityEnv
     elif task == "puck_goal_position_sparse":
         task_env = AirHockeyPuckGoalPositionSparseEnv
-    elif task == "puck_goal_position_velocity_sparse":
-        task_env = AirHockeyPuckGoalPositionVelocitySparseEnv
     elif task == "puck_goal_position_speed_sparse":
         task_env = AirHockeyPuckGoalPositionSpeedSparseEnv
     elif task == "paddle_reach_position":

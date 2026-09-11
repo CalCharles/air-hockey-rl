@@ -1,12 +1,20 @@
-# Task 'puck_goal' (puck_goal_position_sparse): send the puck to a goal position in
-# the upper half of the table. Sparse +10 on the step the puck centre is within
-# base_goal_radius of the goal (episode ends there), 0 otherwise. Goal-conditioned
-# (return_goal_obs: true -> GoalEnv dict obs; the trainer appends desired_goal to the
-# canonical 30-dim history obs). Trainer: scripts/td3/td3_training_her.py (HER).
+# Task 'puck_goal' (puck_goal_position_sparse): hit the puck to a goal position in the upper
+# half of the table. Sparse +10 on the step the puck centre is within base_goal_radius of the
+# goal after a paddle contact in the episode (episode ends there), 0 otherwise. Goal-conditioned
+# (return_goal_obs: true -> GoalEnv dict obs; the trainer appends desired_goal to the canonical
+# 30-dim history obs). Trainer: scripts/td3/td3_training_her.py (HER).
 # Physics / spawn / termination copied from sim_sysid_juggle.yaml.
 # hist2 variant: hist_len 2 + the hist2 paddle sysid fit (pid_kp 9000, paddle_density 3000)
 # instead of the hist4 smoothing of the five task configs (hist4 measured worse for learning,
-# notes/scratch/experiments/2026-09-04_22-19_hist4-smoothing-five-tasks.md).
+# notes/scratch/experiments/2026-09-04_22-19_hist4-smoothing-five-tasks.md). The policies in
+# latest_models/her/ were trained with this variant.
+# Canonical smoothing since 2026-09-04: simulator_params.hist_len = 4 (4-timestep
+# moving-average low-pass on the PID target; see _filter_update() in
+# airhockey/sims/airhockey_box2d.py).  The paddle PID/density values below are the
+# hist4-specific sysid refit (kp=7500, kd=50, ki=0, paddle_density=3500) measured
+# against real teleop data re-recorded under hist_len=4 -- NOT the hist2 fit
+# (kp=9000, density=3000).  See configs/new_juggle/sysid_best_params_hist4.yaml and
+# notes/docs/environments/real-world/teleop-system-id.md.
 air_hockey:
   max_timesteps: 250
   num_blocks: 0

@@ -4,8 +4,9 @@
 # Recipe = the canonical five-task recipe (configs/td3/tasks/*_sysid.yaml: q=25/a=6 updates per
 # episode, batch 512, PER, single flat 1M buffer, q_weight_decay 0, primitive exploration), with the
 # goal appended to the 30-dim history obs and HER relabelling (her_k copies per transition,
-# 'future' strategy). Networks scaled up to 128 (actor) / 256 (critic) wide, 2 residual blocks.
-# Ablation: her_k 0 = no relabelling (goal-conditioned TD3 on the sparse task alone).
+# 'future' strategy, goals restricted to the task's goal region). Networks 128 (actor) / 256
+# (critic) wide, 2 residual blocks. Results: notes/scratch/experiments/2026-09-10_06-30_her-puck-goal-tasks.md
+# Ablation: her_k 0 = no relabelling (goal-conditioned TD3 on the sparse task alone; 3 % success).
 total_timesteps: 1000000
 num_envs: 1
 buffer_size: 100000
@@ -63,7 +64,7 @@ checkpoint_interval: 25000
 her_k: 0
 her_strategy: future
 her_done_on_success: true
-her_goal_filter: false
+her_goal_filter: true
 eval_n_eps: 20
 eval_n_eps_final: 100
 eval_n_gifs: 1

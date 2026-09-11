@@ -190,54 +190,8 @@ class SparsePuckGoalTaskTests(unittest.TestCase):
         finally:
             env.close()
 
-    def test_velocity_goal_needs_both_tolerances(self):
-        env = _make_env("sim_sysid_puck_goal_vel.yaml")
-        try:
-            env.reset()
-            self.assertEqual(env.get_desired_goal().shape, (4,))
-            ag = np.array([-0.5, 0.1, -1.5, 0.2, 1.0])
-            g = ag[:4]
-            self.assertEqual(env.compute_reward(ag, g, {}), 10.0)
-            self.assertEqual(env.compute_reward(ag, g + np.array([0, 0, 0.8, 0]), {}), 0.0)
-            self.assertEqual(env.compute_reward(ag, g + np.array([0.15, 0, 0, 0]), {}), 0.0)
-            self.assertEqual(env.compute_reward(ag, g + np.array([0.05, 0, 0.3, 0.2]), {}), 10.0)
-            no_contact = ag.copy(); no_contact[4] = 0.0
-            self.assertEqual(env.compute_reward(no_contact, g, {}), 0.0)
-            # Sampled goal velocities point up the table and respect the speed cap.
-            for _ in range(50):
-                env.set_goals("fixed")
-                self.assertLess(env.goal_vel[0], 0.0)
-                self.assertLessEqual(np.linalg.norm(env.goal_vel), env.goal_max_speed + 1e-9)
-                self.assertLess(env.goal_pos[0], 0.0)
-        finally:
-            env.close()
-
-    def test_goal_in_distribution_matches_sampling_region(self):
-        env = _make_env("sim_sysid_puck_goal_vel.yaml")
-        try:
-            env.reset()
-            for _ in range(30):
-                env.set_goals("fixed")
-                self.assertTrue(env.goal_in_distribution(env.get_desired_goal()[None])[0])
-            lower_half = np.array([[0.5, 0.0, -1.0, 0.0]])
-            falling = np.array([[-0.5, 0.0, +1.0, 0.0]])
-            too_fast = np.array([[-0.5, 0.0, -3.5, 1.5]])
-            ok = np.array([[-0.5, 0.0, -1.0, 0.0]])
-            self.assertFalse(env.goal_in_distribution(lower_half)[0])
-            self.assertFalse(env.goal_in_distribution(falling)[0])
-            self.assertFalse(env.goal_in_distribution(too_fast)[0])
-            self.assertTrue(env.goal_in_distribution(ok)[0])
-            pos_env = _make_env("sim_sysid_puck_goal.yaml")
-            try:
-                self.assertFalse(pos_env.goal_in_distribution(np.array([[0.5, 0.0]]))[0])
-                self.assertTrue(pos_env.goal_in_distribution(np.array([[-0.5, 0.0]]))[0])
-            finally:
-                pos_env.close()
-        finally:
-            env.close()
-
     def test_speed_task_projects_achieved_to_speed(self):
-        env = _make_env("sim_sysid_puck_goal_speed_shot_hist2.yaml")
+        env = _make_env("sim_sysid_puck_goal_vel_hist2.yaml")
         try:
             env.reset()
             self.assertEqual(env.get_desired_goal().shape, (3,))
@@ -252,6 +206,20 @@ class SparsePuckGoalTaskTests(unittest.TestCase):
             self.assertTrue(env.goal_in_distribution(dg)[0])
             for _ in range(20):
                 env.set_goals("fixed")
+                self.assertTrue(env.goal_in_distribution(env.get_desired_goal()[None])[0])
+                self.assertLess(env.goal_pos[0], 0.0)
+                self.assertGreaterEqual(env.goal_speed, env.goal_shot_min_upward_speed)
+            self.assertFalse(env.goal_in_distribution(np.array([[0.5, 0.0, 1.0]]))[0])
+            self.assertFalse(env.goal_in_distribution(np.array([[-0.5, 0.0, 5.0]]))[0])
+        finally:
+            env.close()
+
+    def test_intercept_shot_goal_conditions_on_the_spawned_puck(self):
+        env = _make_env("sim_sysid_puck_goal_vel_hist2.yaml", goal_sampling="intercept_shot")
+        try:
+            for _ in range(10):
+                obs, _ = env.reset()
+                np.testing.assert_allclose(obs["desired_goal"], env.get_desired_goal())
                 self.assertTrue(env.goal_in_distribution(env.get_desired_goal()[None])[0])
         finally:
             env.close()

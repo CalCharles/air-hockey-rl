@@ -13,9 +13,9 @@ Goal-conditioned env contract (``AirHockeyGoalEnv`` with ``return_goal_obs:
 true``): the env returns ``{"observation", "achieved_goal", "desired_goal"}``;
 ``env.compute_reward(achieved, desired, info)`` is the task's vectorised
 reward and ``env.reward.goal_met`` its success test.  Tasks:
-``puck_goal_position_sparse``, ``puck_goal_position_velocity_sparse``
-(``airhockey/airhockey_tasks/puck_goal_sparse.py``), and the paddle reach
-tasks also qualify.
+``puck_goal_position_sparse``, ``puck_goal_position_speed_sparse``
+(``airhockey/airhockey_tasks/puck_goal_sparse.py``); the paddle reach tasks
+also qualify.
 
 Per episode the trainer stores the T original transitions plus up to
 ``her_k * T`` relabelled copies whose goal is an achieved goal from a later
@@ -61,7 +61,7 @@ from scripts.td3.helper.exploration_selector import (
     NumpyPrimitiveExplorationSelector,
     PrimitiveExplorationSelector,
 )
-from scripts.td3.helper.her_eval import evaluate_goal_policy
+from scripts.td3.helper.her_eval import evaluate_checkpoint
 from scripts.td3.helper.prioritized_replay_buffer import TD3PrioritizedReplayBuffer
 from scripts.td3.helper.q_network import TD3QNetwork
 from scripts.td3.helper.replay_buffer import TD3ReplayBuffer
@@ -190,6 +190,12 @@ class Args:
     eval_n_eps: int = 20            # per checkpoint
     eval_n_eps_final: int = 100     # final in-process eval
     eval_n_gifs: int = 1
+    # DR runs: fixed multi-env eval (same semantics as td3_training_dr —
+    # eval_n_envs dynamics overlays sampled once with eval_param_seed,
+    # eval_eps_per_env episodes each, multi_env_eval.json per checkpoint).
+    eval_param_seed: int | None = None
+    eval_n_envs: int = 1
+    eval_eps_per_env: int = 4
 
     # --- Paths + checkpoint loading ---
     config: str = "configs/new_juggle/tasks/sim_sysid_puck_goal.yaml"
@@ -635,12 +641,10 @@ def _entrypoint() -> None:
             checkpoint_evaluator.launch(checkpoint_dir, global_step)
             return
         try:
-            evaluate_goal_policy(
-                model_path, checkpoint_dir, config["air_hockey"], n_eps=args.eval_n_eps, n_gifs=args.eval_n_gifs,
-                action_scale=action_scale, agent_hidden_layer_size=args.agent_hidden_layer_size,
-                agent_num_hidden_layers=args.agent_num_hidden_layers,
-                use_last_action_in_policy_state=args.use_last_action_in_policy_state,
-                seed=args.seed * 100000 + global_step,
+            evaluate_checkpoint(
+                checkpoint_dir, n_eps=args.eval_n_eps, n_gifs=args.eval_n_gifs,
+                eval_call_index=max(1, global_step // max(args.checkpoint_interval, 1)),
+                log_parent_dir=log_parent_dir,
             )
         except Exception as e:
             print(f"Evaluation failed: {e}")
@@ -851,15 +855,14 @@ def _entrypoint() -> None:
         checkpoint_evaluator.wait_all()
     save_full_checkpoint(log_parent_dir)
     try:
-        summary = evaluate_goal_policy(
-            f"{log_parent_dir}/model.pth", log_parent_dir, config["air_hockey"],
-            n_eps=args.eval_n_eps_final, n_gifs=args.eval_n_gifs, action_scale=action_scale,
-            agent_hidden_layer_size=args.agent_hidden_layer_size, agent_num_hidden_layers=args.agent_num_hidden_layers,
-            use_last_action_in_policy_state=args.use_last_action_in_policy_state,
-            seed=args.seed * 100000 + 424242,
+        summary = evaluate_checkpoint(
+            log_parent_dir, n_eps=args.eval_n_eps_final, n_gifs=args.eval_n_gifs,
+            eval_call_index=1, log_parent_dir=log_parent_dir, final=True,
         )
-        writer.add_scalar("eval/final_success_rate", summary["success_rate"], global_step)
-        writer.add_scalar("eval/final_mean_return", summary["mean_return"], global_step)
+        success = summary.get("success_rate", summary.get("mean_success_across_envs"))
+        mean_return = summary.get("mean_return", summary.get("mean_return_across_envs"))
+        writer.add_scalar("eval/final_success_rate", float(success), global_step)
+        writer.add_scalar("eval/final_mean_return", float(mean_return), global_step)
     except Exception as e:
         print(f"Final evaluation failed: {e}")
     writer.close()

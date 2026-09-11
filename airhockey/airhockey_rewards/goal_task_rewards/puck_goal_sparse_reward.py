@@ -1,8 +1,8 @@
 """Sparse goal-conditioned puck rewards (HER targets).
 
-Both rewards pay ``GOAL_REWARD`` (10) on the step the puck is at the goal and 0
-otherwise, exactly like the sparse paddle-reach rewards
-(``AirHockeyPaddleReachPositionSparseReward`` /
+Both rewards pay ``GOAL_REWARD`` (10) on the step the puck is at the goal
+after a paddle contact and 0 otherwise, exactly like the sparse paddle-reach
+rewards (``AirHockeyPaddleReachPositionSparseReward`` /
 ``AirHockeyPaddleReachPositionVelocityReward``), so the reward scale is the
 one every canonical task uses.  ``compute_reward`` is vectorised over
 ``(N, goal_dim)`` batches because hindsight relabelling calls it on whole
@@ -48,44 +48,6 @@ class AirHockeyPuckGoalPositionSparseReward(AirHockeyRewardBase):
         dist = np.linalg.norm(achieved_goal[:, :2] - desired_goal[:, :2], axis=1)
         contacted = achieved_goal[:, self.CONTACT_COL] > 0.5
         met = (dist <= self.task_env.goal_radius) & contacted
-        return bool(met[0]) if single else met
-
-    def compute_reward(self, achieved_goal, desired_goal, info=None):
-        achieved_goal, desired_goal, single = _as_batch(achieved_goal, desired_goal)
-        reward = np.where(self.goal_met(achieved_goal, desired_goal), self.GOAL_REWARD, 0.0)
-        if single:
-            return float(reward.reshape(-1)[0])
-        return reward
-
-    def get_base_reward(self, state_info):
-        ag = self.task_env.get_achieved_goal(state_info)
-        dg = self.task_env.get_desired_goal()
-        success = bool(self.goal_met(ag, dg))
-        return (self.GOAL_REWARD if success else 0.0), success
-
-
-class AirHockeyPuckGoalPositionVelocitySparseReward(AirHockeyRewardBase):
-    """+10 when the puck is at the goal position *with* the goal velocity, else 0.
-
-    Both tolerances have to hold on the same step: centre within
-    ``goal_radius`` of the goal position and velocity within
-    ``goal_velocity_radius`` (m/s, Euclidean over both components) of the goal
-    velocity — the puck analogue of ``AirHockeyPaddleReachPositionVelocityReward``
-    — and, as for the position task, the paddle must have touched the puck in
-    this episode (``achieved_goal[4]``).
-    """
-
-    GOAL_REWARD = 10.0
-    CONTACT_COL = 4
-
-    def goal_met(self, achieved_goal, desired_goal):
-        achieved_goal, desired_goal, single = _as_batch(achieved_goal, desired_goal)
-        pos_dist = np.linalg.norm(achieved_goal[:, :2] - desired_goal[:, :2], axis=1)
-        vel_dist = np.linalg.norm(achieved_goal[:, 2:4] - desired_goal[:, 2:4], axis=1)
-        contacted = achieved_goal[:, self.CONTACT_COL] > 0.5
-        met = (pos_dist <= self.task_env.goal_radius) & (
-            vel_dist <= self.task_env.goal_velocity_radius
-        ) & contacted
         return bool(met[0]) if single else met
 
     def compute_reward(self, achieved_goal, desired_goal, info=None):

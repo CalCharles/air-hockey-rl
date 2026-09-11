@@ -1,56 +1,30 @@
-"""Sparse, goal-conditioned puck tasks: send the puck to a goal position
-(optionally with a goal velocity) in the upper half of the table.
+"""Sparse, goal-conditioned puck tasks: hit the puck to a goal in the upper
+half of the table (optionally at a goal speed).
 
 ``puck_goal_position_sparse``
-    Goal = puck position ``(x, y)`` sampled uniformly over the upper half of the
-    table.  Reward +10 on the step the puck centre is within ``base_goal_radius``
-    of the goal *after the paddle has touched the puck in this episode* (the
-    episode ends there), 0 otherwise.  The contact condition makes the task
-    "hit the puck to the goal": without it a puck that spawns on the goal, or
-    drifts through it, scores for free (16 % of random-action episodes), and
-    hindsight relabelling then rewards the policy for states its actions did
-    not cause.  (An earlier variant used the repo's older puck-goal convention
-    "puck moving up the table" instead; that still leaves the spawn drift —
-    spawns launch the puck at up to 0.5 m/s in a random heading — as free
-    reward.)  The achieved goal is therefore the puck state plus the contact
-    flag, ``(x, y, vx, vy, contacted)``, while the desired goal is ``(x, y)``;
-    the reward compares the first two components for distance and reads the
-    flag from the achieved goal.
-
-``puck_goal_position_velocity_sparse``
-    Goal = ``(x, y, vx, vy)``: a puck position in the upper half plus the puck
-    velocity there.  Reward +10 when both the position tolerance
-    (``base_goal_radius``) and the velocity tolerance
-    (``base_goal_velocity_radius``, m/s Euclidean) hold on the same step
-    (and the paddle has touched the puck).  Two goal samplers
-    (``goal_velocity_sampling``):
-
-    * ``shot`` (default): the goal is a state of a simulated free flight
-      launched from a random point of the paddle workspace at a random speed
-      (``goal_shot_speed_range``) and angle from straight up
-      (``goal_shot_max_angle_deg``), integrated with the table's gravity /
-      puck damping and elastic side-wall bounces; a random state of that
-      flight inside the upper-half box, still moving up, is the goal.  Every
-      goal is therefore consistent with *some* straight shot from the paddle
-      region.
-    * ``intercept_shot``: like ``shot`` but the launch point is where *this
-      episode's* puck will cross the paddle workspace (its spawn state is
-      integrated forward to a random x inside the workspace), so the goal
-      direction is reachable from the puck the agent actually gets.  The
-      goal is resampled right after the world is spawned, so the goal
-      distribution is conditioned on the initial state.
-    * ``box``: position as above, velocity independent and uniform over
-      ``goal_puck_vx_range`` × ``goal_puck_vy_range`` (clipped to
-      ``goal_puck_max_speed``).  Mostly infeasible — the direction of the
-      puck at the goal is dictated by where it was hit from — and kept only
-      for the round-1/2/3 runs of 2026-09-10.
+    Goal = puck position ``(x, y)`` sampled uniformly over the upper half of
+    the table.  Reward +10 on the step the puck centre is within
+    ``base_goal_radius`` of the goal *after the paddle has touched the puck in
+    this episode* (the episode ends there), 0 otherwise.
 
 ``puck_goal_position_speed_sparse``
-    Goal = ``(x, y, speed)``: a shot-sampled position plus the puck *speed*
-    there (direction left to the shot geometry).  Reward +10 when the
-    position tolerance and the speed tolerance (``base_goal_speed_radius``,
-    m/s) hold on the same step after contact.  The easier sibling of the
-    velocity task: the paddle mostly controls how hard it hits.
+    Goal = ``(x, y, speed)``: a puck position plus the puck's speed there,
+    both taken from a simulated shot launched from the paddle workspace
+    (``goal_sampling: shot``) or from where this episode's puck will cross
+    the workspace (``intercept_shot``), so every goal is consistent with some
+    straight shot.  Reward +10 when the position tolerance
+    (``base_goal_radius``) and the speed tolerance (``base_goal_speed_radius``,
+    m/s) hold on the same step after contact.  The direction of the puck at
+    the goal is left to the shot geometry: a full velocity-vector goal was
+    tried and not learnt (notes/scratch/experiments/2026-09-10_06-30_her-puck-goal-tasks.md;
+    code at commit 467da75).
+
+The contact condition makes both tasks "hit the puck to the goal": without
+it a puck that spawns on the goal, or drifts through it, scores for free,
+and hindsight relabelling then rewards the policy for states its actions did
+not cause.  The achieved goal is therefore the puck state plus the contact
+flag, ``(x, y, vx, vy, contacted)``; ``achieved_to_desired`` maps it to the
+desired-goal space.
 
 Everything else follows the canonical five tasks: ``obs_type: history``
 (30-dim) with the goal appended, canonical puck spawn (uniform over the top
@@ -73,20 +47,20 @@ from gymnasium.spaces import Box
 from airhockey.airhockey_rewards.goal_task_rewards.puck_goal_sparse_reward import (
     AirHockeyPuckGoalPositionSparseReward,
     AirHockeyPuckGoalPositionSpeedSparseReward,
-    AirHockeyPuckGoalPositionVelocitySparseReward,
 )
 
 from .abstract_airhockey_goal_task import AirHockeyGoalEnv
 
 
 class AirHockeyPuckGoalPositionSparseEnv(AirHockeyGoalEnv):
-    """Puck to a goal position in the upper half; +10 on arrival (moving up), episode ends."""
+    """Puck to a goal position in the upper half; +10 on arrival after contact, episode ends."""
 
     random_paddle_spawn_default = True
 
-    # Achieved goal = (x, y, vx, vy, contacted); desired goal = its first GOAL_DIM entries.
+    # Achieved goal = (x, y, vx, vy, contacted); desired goal = achieved_to_desired(achieved).
     GOAL_DIM = 2
     ACHIEVED_DIM = 5
+    CONTACT_COL = 4
 
     # Position tolerance (m).  A puck in the upper half moves 3-15 cm per
     # 20 Hz step (sysid physics, scripted hits), so a 10 cm radius keeps the
@@ -109,9 +83,7 @@ class AirHockeyPuckGoalPositionSparseEnv(AirHockeyGoalEnv):
 
     # ----------------------------------------------------------- spaces
     def _goal_position_bounds(self):
-        low = [self.table_x_top, self.table_y_left]
-        high = [0.0, self.table_y_right]
-        return low, high
+        return [self.table_x_top, self.table_y_left], [0.0, self.table_y_right]
 
     def _achieved_goal_bounds(self):
         low, high = self._goal_position_bounds()
@@ -121,9 +93,8 @@ class AirHockeyPuckGoalPositionSparseEnv(AirHockeyGoalEnv):
         )
 
     def _goal_bounds(self):
-        """Bounds of the *desired* goal (the first GOAL_DIM achieved components)."""
-        low, high = self._achieved_goal_bounds()
-        return low[: self.GOAL_DIM], high[: self.GOAL_DIM]
+        """Bounds of the *desired* goal."""
+        return self._goal_position_bounds()
 
     def initialize_spaces(self, obs_type):
         low, high = self.init_observation(obs_type)
@@ -172,15 +143,17 @@ class AirHockeyPuckGoalPositionSparseEnv(AirHockeyGoalEnv):
         assert self.num_paddles == 1
 
     # ------------------------------------------------------------ goals
+    @staticmethod
+    def _as_rows(goals):
+        goals = np.asarray(goals, dtype=np.float64)
+        return goals.reshape(-1, goals.shape[-1]) if goals.ndim > 1 else goals.reshape(1, -1)
+
     def achieved_to_desired(self, achieved):
         """Map achieved goals ``(N, ACHIEVED_DIM)`` to desired-goal space ``(N, GOAL_DIM)``.
 
         Hindsight relabelling proposes ``achieved_to_desired(ag)`` as goals.
-        Default: the first ``GOAL_DIM`` achieved components.
         """
-        achieved = np.asarray(achieved, dtype=np.float64)
-        achieved = achieved.reshape(-1, achieved.shape[-1]) if achieved.ndim > 1 else achieved.reshape(1, -1)
-        return achieved[:, : self.GOAL_DIM]
+        return self._as_rows(achieved)[:, : self.GOAL_DIM]
 
     def reset(self, seed=None, **kwargs):
         self._puck_contacted = False
@@ -234,15 +207,14 @@ class AirHockeyPuckGoalPositionSparseEnv(AirHockeyGoalEnv):
         )
 
     def goal_in_distribution(self, goals):
-        """Whether desired goals ``(N, GOAL_DIM)`` lie in the goal-sampling region.
+        """Whether desired goals lie in the goal-sampling region (position box
+        widened by the goal radius).
 
         Used by hindsight relabelling to propose only goals the task would
         ever ask for (an achieved puck state in the lower half is a valid
-        *state* but never a sampled goal).  Position goals: inside the
-        sampling box, widened by the goal radius.
+        *state* but never a sampled goal).
         """
-        goals = np.asarray(goals, dtype=np.float64)
-        goals = goals.reshape(-1, goals.shape[-1]) if goals.ndim > 1 else goals.reshape(1, -1)
+        goals = self._as_rows(goals)
         min_x, max_x, min_y, max_y = self._goal_position_sampling_box()
         r = self.goal_radius
         return (
@@ -260,95 +232,68 @@ class AirHockeyPuckGoalPositionSparseEnv(AirHockeyGoalEnv):
             self.goal_pos = self._sample_goal_position()
 
 
-class AirHockeyPuckGoalPositionVelocitySparseEnv(AirHockeyPuckGoalPositionSparseEnv):
-    """Puck to a goal position *with* a goal velocity; +10 when both hold, episode ends."""
+class AirHockeyPuckGoalPositionSpeedSparseEnv(AirHockeyPuckGoalPositionSparseEnv):
+    """Puck to a goal position at a goal *speed*; +10 when both hold after contact, episode ends."""
 
-    # Velocity tolerance (m/s), the same as the paddle reach_vel task.
-    DEFAULT_GOAL_VELOCITY_RADIUS = 0.5
-    # Goal-velocity sampling box (env frame; negative x = towards the top of
-    # the table).  Measured with scripted hits under the sysid physics: the
-    # puck's upward speed in the upper half is 0.6-2.9 m/s (p5-p95, median
-    # 1.7) with |vy| below 1.9 m/s at p95.
-    DEFAULT_GOAL_VX_RANGE = (-2.5, -0.5)
-    DEFAULT_GOAL_VY_RANGE = (-1.5, 1.5)
-    DEFAULT_GOAL_MAX_SPEED = 3.0
-    # ``shot`` sampler: launch speed (m/s) and half-angle from straight up.
+    GOAL_DIM = 3
+
+    # Speed tolerance (m/s), the same as the paddle reach_vel velocity tolerance.
+    DEFAULT_GOAL_SPEED_RADIUS = 0.5
+    # Shot sampler: launch speed (m/s) and half-angle from straight up
+    # (negative x).  Measured with scripted hits under the sysid physics the
+    # puck's upward speed in the upper half is 0.6-2.9 m/s (p5-p95).
     DEFAULT_SHOT_SPEED_RANGE = (1.0, 3.0)
     DEFAULT_SHOT_MAX_ANGLE_DEG = 45.0
     # A shot state counts as a goal while the puck still moves up at least this fast.
     DEFAULT_SHOT_MIN_UPWARD_SPEED = 0.3
     SHOT_DT = 0.05
     SHOT_MAX_TIME = 3.0
+    GOAL_SAMPLERS = ("shot", "intercept_shot")
 
     def __init__(self, **kwargs):
-        self.goal_velocity_radius = float(
-            kwargs.get("base_goal_velocity_radius", self.DEFAULT_GOAL_VELOCITY_RADIUS)
-        )
-        self.goal_vx_range = tuple(float(v) for v in kwargs.get("goal_puck_vx_range", self.DEFAULT_GOAL_VX_RANGE))
-        self.goal_vy_range = tuple(float(v) for v in kwargs.get("goal_puck_vy_range", self.DEFAULT_GOAL_VY_RANGE))
-        self.goal_max_speed = float(kwargs.get("goal_puck_max_speed", self.DEFAULT_GOAL_MAX_SPEED))
-        self.goal_velocity_sampling = str(kwargs.get("goal_velocity_sampling", "shot"))
-        if self.goal_velocity_sampling not in ("shot", "intercept_shot", "box"):
-            raise ValueError("goal_velocity_sampling must be 'shot', 'intercept_shot' or 'box'")
+        self.goal_speed_radius = float(kwargs.get("base_goal_speed_radius", self.DEFAULT_GOAL_SPEED_RADIUS))
+        self.goal_sampling = str(kwargs.get("goal_sampling", kwargs.get("goal_velocity_sampling", "shot")))
+        if self.goal_sampling not in self.GOAL_SAMPLERS:
+            raise ValueError(f"goal_sampling must be one of {self.GOAL_SAMPLERS}, got {self.goal_sampling!r}")
         self.goal_shot_speed_range = tuple(float(v) for v in kwargs.get("goal_shot_speed_range", self.DEFAULT_SHOT_SPEED_RANGE))
         self.goal_shot_max_angle_deg = float(kwargs.get("goal_shot_max_angle_deg", self.DEFAULT_SHOT_MAX_ANGLE_DEG))
         self.goal_shot_min_upward_speed = float(kwargs.get("goal_shot_min_upward_speed", self.DEFAULT_SHOT_MIN_UPWARD_SPEED))
+        # Velocity of the sampled shot at the goal (the goal itself only keeps its norm).
+        self.goal_vel = np.zeros(2, dtype=np.float64)
         super().__init__(**kwargs)
 
-    GOAL_DIM = 4
+    def _goal_bounds(self):
+        low, high = self._goal_position_bounds()
+        return low + [0.0], high + [self.max_puck_vel]
 
     def _build_reward(self):
-        return AirHockeyPuckGoalPositionVelocitySparseReward(self)
+        return AirHockeyPuckGoalPositionSpeedSparseReward(self)
 
     @staticmethod
     def from_dict(state_dict):
-        return AirHockeyPuckGoalPositionVelocitySparseEnv(**state_dict)
+        return AirHockeyPuckGoalPositionSpeedSparseEnv(**state_dict)
+
+    # ------------------------------------------------------------ goals
+    @property
+    def goal_speed(self):
+        return float(np.linalg.norm(self.goal_vel[:2]))
 
     def get_desired_goal(self):
-        return np.concatenate([np.asarray(self.goal_pos[:2]), np.asarray(self.goal_vel[:2])]).astype(np.float64)
+        return np.array([self.goal_pos[0], self.goal_pos[1], self.goal_speed], dtype=np.float64)
 
-    def _velocity_in_goal_set(self, vel, tol=0.0):
-        """Velocity part of the goal set (widened by ``tol``)."""
-        vx, vy = vel[:, 0], vel[:, 1]
-        if self.goal_velocity_sampling in ("shot", "intercept_shot"):
-            lo, hi = self.goal_shot_speed_range
-            ok = vx <= -self.goal_shot_min_upward_speed + tol
-            ok &= np.linalg.norm(vel, axis=1) <= hi + tol
-            return ok
-        ok = (vx >= self.goal_vx_range[0] - tol) & (vx <= self.goal_vx_range[1] + tol)
-        ok &= (vy >= self.goal_vy_range[0] - tol) & (vy <= self.goal_vy_range[1] + tol)
-        if self.goal_max_speed > 0:
-            ok &= np.linalg.norm(vel, axis=1) <= self.goal_max_speed + tol
-        return ok
+    def achieved_to_desired(self, achieved):
+        achieved = self._as_rows(achieved)
+        return np.concatenate([achieved[:, :2], np.linalg.norm(achieved[:, 2:4], axis=1, keepdims=True)], axis=1)
 
     def goal_in_distribution(self, goals):
-        """Position inside the sampling box and velocity inside the goal
-        velocity set, each widened by the matching tolerance."""
-        goals = np.asarray(goals, dtype=np.float64).reshape(-1, self.GOAL_DIM)
+        goals = self._as_rows(goals)
         ok = super().goal_in_distribution(goals[:, :2])
-        ok &= self._velocity_in_goal_set(goals[:, 2:4], tol=self.goal_velocity_radius)
+        tol = self.goal_speed_radius
+        ok &= (goals[:, 2] >= self.goal_shot_min_upward_speed - tol)
+        ok &= (goals[:, 2] <= self.goal_shot_speed_range[1] + tol)
         return ok
 
-    def _sample_goal_shot(self):
-        """Goal = a random upper-half state of a simulated shot from the paddle workspace.
-
-        Launch point uniform over the reachable paddle workspace, speed
-        uniform in ``goal_shot_speed_range``, direction within
-        ``goal_shot_max_angle_deg`` of straight up (negative x).  Free flight
-        under the table's gravity (along +x) and Box2D-style linear damping,
-        with elastic reflections off the side walls, sampled at the control
-        rate.  Among the states inside the position box that still move up
-        at ``goal_shot_min_upward_speed`` one is drawn uniformly; the shot
-        is redrawn if none qualifies.
-        """
-        for _ in range(64):
-            (lx, ly), _ = self.sample_paddle_spawn_in_workspace()
-            goal = self._sample_shot_from(np.array([lx, ly], dtype=np.float64))
-            if goal is not None:
-                return goal
-        # Fallback (should not happen): box sampling.
-        return self._sample_goal_position(), self._sample_goal_velocity()
-
+    # ------------------------------------------------------ shot sampler
     def _flight_params(self):
         g = abs(float(getattr(self.simulator_params, "gravity", 0.661)))
         damping = float(getattr(self.simulator_params, "puck_damping", 0.0) or 0.0)
@@ -356,7 +301,10 @@ class AirHockeyPuckGoalPositionVelocitySparseEnv(AirHockeyPuckGoalPositionSparse
         wall_hi = self.table_y_right - self.puck_radius
         return g, damping, wall_lo, wall_hi
 
-    def _flight_step(self, pos, vel, g, damping, wall_lo, wall_hi, dt):
+    @staticmethod
+    def _flight_step(pos, vel, g, damping, wall_lo, wall_hi, dt):
+        """One step of free flight: gravity along +x, Box2D-style linear
+        damping, elastic reflection off the side walls."""
         vel[0] += g * dt
         vel *= 1.0 / (1.0 + damping * dt)
         pos = pos + vel * dt
@@ -369,7 +317,10 @@ class AirHockeyPuckGoalPositionVelocitySparseEnv(AirHockeyPuckGoalPositionSparse
         return pos, vel
 
     def _sample_shot_from(self, launch_pos):
-        """One simulated shot from ``launch_pos``; a random qualifying state or None."""
+        """One simulated shot from ``launch_pos`` (speed uniform in
+        ``goal_shot_speed_range``, direction within ``goal_shot_max_angle_deg``
+        of straight up); returns a random state of it inside the position box
+        that still moves up at ``goal_shot_min_upward_speed``, or None."""
         g, damping, wall_lo, wall_hi = self._flight_params()
         min_x, max_x, min_y, max_y = self._goal_position_sampling_box()
         dt = self.SHOT_DT
@@ -388,10 +339,20 @@ class AirHockeyPuckGoalPositionVelocitySparseEnv(AirHockeyPuckGoalPositionSparse
             return candidates[self.rng.randint(len(candidates))]
         return None
 
+    def _sample_goal_shot(self):
+        """Goal = a random upper-half state of a shot from a random workspace point."""
+        for _ in range(64):
+            (lx, ly), _ = self.sample_paddle_spawn_in_workspace()
+            goal = self._sample_shot_from(np.array([lx, ly], dtype=np.float64))
+            if goal is not None:
+                return goal
+        # Fallback (should not happen): slowest shot speed at a random position.
+        return self._sample_goal_position(), np.array([-self.goal_shot_speed_range[0], 0.0])
+
     def _predict_intercept_point(self, state_info):
         """Where the spawned puck will be when it reaches a random x inside the
         paddle workspace (free flight from its current state); None if it
-        never gets there within ``SHOT_MAX_TIME``."""
+        never gets there within ``2 * SHOT_MAX_TIME``."""
         g, damping, wall_lo, wall_hi = self._flight_params()
         x_lo, x_hi, _, _ = self.get_paddle_workspace_bounds()
         x_target = self.rng.uniform(x_lo, x_hi)
@@ -416,9 +377,29 @@ class AirHockeyPuckGoalPositionVelocitySparseEnv(AirHockeyPuckGoalPositionSparse
                     return goal
         return self._sample_goal_shot()
 
+    def set_goals(self, goal_radius_type, goal_pos=None, alt_goal_pos=None, goal_set=None):
+        self.goal_set = goal_set
+        if goal_set is not None:
+            goal = np.asarray(goal_set[0], dtype=np.float64)
+            self.goal_pos, self.goal_vel = goal[:2], self._vel_from_goal(goal)
+        elif goal_pos is not None:
+            goal = np.asarray(goal_pos, dtype=np.float64).reshape(-1)
+            self.goal_pos = goal[:2]
+            self.goal_vel = self._vel_from_goal(goal) if goal.shape[0] >= 3 else self._sample_goal_shot()[1]
+        else:
+            # intercept_shot is re-sampled in reset() once the puck exists.
+            self.goal_pos, self.goal_vel = self._sample_goal_shot()
+
+    @staticmethod
+    def _vel_from_goal(goal):
+        """A velocity with the goal's speed (``(x, y, speed)``) or the goal's own velocity (``(x, y, vx, vy)``)."""
+        if goal.shape[0] >= 4:
+            return np.asarray(goal[2:4], dtype=np.float64)
+        return np.array([-float(goal[2]), 0.0], dtype=np.float64)
+
     def reset(self, seed=None, **kwargs):
         obs, success = super().reset(seed, **kwargs)
-        if self.goal_velocity_sampling == "intercept_shot" and self.goal_set is None:
+        if self.goal_sampling == "intercept_shot" and self.goal_set is None:
             # Now that the puck is spawned, condition the goal on its state.
             self.goal_pos, self.goal_vel = self._sample_goal_intercept_shot(self.current_state)
             self._sync_goal_marker_to_simulator()
@@ -428,70 +409,3 @@ class AirHockeyPuckGoalPositionVelocitySparseEnv(AirHockeyPuckGoalPositionSparse
             else:
                 obs = np.concatenate([obs[: -len(desired)], desired])
         return obs, success
-
-    def _sample_goal_velocity(self):
-        vel = np.array(
-            [self.rng.uniform(*self.goal_vx_range), self.rng.uniform(*self.goal_vy_range)],
-            dtype=np.float64,
-        )
-        speed = float(np.linalg.norm(vel))
-        if speed > self.goal_max_speed > 0:
-            vel = vel * (self.goal_max_speed / speed)
-        return vel
-
-    def set_goals(self, goal_radius_type, goal_pos=None, alt_goal_pos=None, goal_set=None):
-        self.goal_set = goal_set
-        if goal_set is not None:
-            goal = np.asarray(goal_set[0], dtype=np.float64)
-            self.goal_pos, self.goal_vel = goal[:2], goal[2:4]
-        elif goal_pos is not None:
-            goal = np.asarray(goal_pos, dtype=np.float64).reshape(-1)
-            self.goal_pos = goal[:2]
-            self.goal_vel = goal[2:4] if goal.shape[0] >= 4 else self._sample_goal_velocity()
-        elif self.goal_velocity_sampling in ("shot", "intercept_shot"):
-            # intercept_shot is re-sampled in reset() once the puck exists.
-            self.goal_pos, self.goal_vel = self._sample_goal_shot()
-        else:
-            self.goal_pos = self._sample_goal_position()
-            self.goal_vel = self._sample_goal_velocity()
-
-
-class AirHockeyPuckGoalPositionSpeedSparseEnv(AirHockeyPuckGoalPositionVelocitySparseEnv):
-    """Puck to a goal position at a goal *speed* (scalar); +10 when both hold, episode ends."""
-
-    GOAL_DIM = 3
-    DEFAULT_GOAL_SPEED_RADIUS = 0.5
-
-    def __init__(self, **kwargs):
-        self.goal_speed_radius = float(kwargs.get("base_goal_speed_radius", self.DEFAULT_GOAL_SPEED_RADIUS))
-        super().__init__(**kwargs)
-
-    def _goal_bounds(self):
-        low, high = self._goal_position_bounds()
-        return low + [0.0], high + [self.max_puck_vel]
-
-    def _build_reward(self):
-        return AirHockeyPuckGoalPositionSpeedSparseReward(self)
-
-    @staticmethod
-    def from_dict(state_dict):
-        return AirHockeyPuckGoalPositionSpeedSparseEnv(**state_dict)
-
-    def get_desired_goal(self):
-        return np.array([self.goal_pos[0], self.goal_pos[1], float(np.linalg.norm(self.goal_vel[:2]))], dtype=np.float64)
-
-    def achieved_to_desired(self, achieved):
-        achieved = np.asarray(achieved, dtype=np.float64)
-        achieved = achieved.reshape(-1, achieved.shape[-1]) if achieved.ndim > 1 else achieved.reshape(1, -1)
-        return np.concatenate([achieved[:, :2], np.linalg.norm(achieved[:, 2:4], axis=1, keepdims=True)], axis=1)
-
-    def goal_in_distribution(self, goals):
-        goals = np.asarray(goals, dtype=np.float64).reshape(-1, self.GOAL_DIM)
-        ok = AirHockeyPuckGoalPositionSparseEnv.goal_in_distribution(self, goals[:, :2])
-        tol = self.goal_speed_radius
-        if self.goal_velocity_sampling in ("shot", "intercept_shot"):
-            lo, hi = self.goal_shot_speed_range
-            ok &= (goals[:, 2] >= self.goal_shot_min_upward_speed - tol) & (goals[:, 2] <= hi + tol)
-        else:
-            ok &= goals[:, 2] <= self.goal_max_speed + tol
-        return ok

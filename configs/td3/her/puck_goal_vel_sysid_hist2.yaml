@@ -1,10 +1,12 @@
-# puck_goal_her_sysid: TD3 + hindsight experience replay on 'sim_sysid_puck_goal'.
+# puck_goal_speed_her_sysid_hist2: TD3 + hindsight experience replay on 'sim_sysid_puck_goal_vel_hist2'.
 # Trainer: scripts/td3/td3_training_her.py (python -m scripts.td3.td3_training_her --args-file <this>).
 # Batch: scripts/td3/run_experiments.py --mode her --configs configs/td3/her/*.yaml --gpus ...
 # Recipe = the canonical five-task recipe (configs/td3/tasks/*_sysid.yaml: q=25/a=6 updates per
 # episode, batch 512, PER, single flat 1M buffer, q_weight_decay 0, primitive exploration), with the
 # goal appended to the 30-dim history obs and HER relabelling (her_k copies per transition,
-# 'future' strategy). Networks scaled up to 128 (actor) / 256 (critic) wide, 2 residual blocks.
+# 'future' strategy, goals restricted to the task's goal region). Networks 128 (actor) / 256
+# (critic) wide, 2 residual blocks. Results: notes/scratch/experiments/2026-09-10_06-30_her-puck-goal-tasks.md
+# hist2 physics variant (40 % final / 60 % best-checkpoint success on 2026-09-10; latest_models/her/puck_goal_speed_hist2).
 total_timesteps: 1000000
 num_envs: 1
 buffer_size: 100000
@@ -45,11 +47,11 @@ exploration_primitive_weight_same_direction: 3.0
 exploration_primitive_weight_anneal_stand_still: 0.2
 exploration_primitive_weight_anneal_same_direction: 3.0
 exploration_direction_y_component_weight: 2
-config: configs/new_juggle/tasks/sim_sysid_puck_goal.yaml
+config: configs/new_juggle/tasks/sim_sysid_puck_goal_vel_hist2.yaml
 args_file: null
 model_path: null
 log_parent_dir: null
-run_name: puck_goal_her_sysid
+run_name: puck_goal_speed_her_sysid_hist2
 device: cuda:0
 seed: 0
 h_transform_eps: 0.001
@@ -62,7 +64,7 @@ checkpoint_interval: 25000
 her_k: 4
 her_strategy: future
 her_done_on_success: true
-her_goal_filter: false
+her_goal_filter: true
 eval_n_eps: 20
 eval_n_eps_final: 100
 eval_n_gifs: 1

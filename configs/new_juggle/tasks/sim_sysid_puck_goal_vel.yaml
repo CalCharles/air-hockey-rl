@@ -1,9 +1,9 @@
-# Task 'puck_goal_vel' (puck_goal_position_velocity_sparse): send the puck through a
-# goal position in the upper half *with* a goal velocity. Sparse +10 when the puck is
-# within base_goal_radius of the goal position AND within base_goal_velocity_radius
-# (m/s) of the goal velocity on the same step (episode ends there), 0 otherwise.
-# Goal velocity sampled from goal_puck_vx_range x goal_puck_vy_range (negative x = up
-# the table), clipped to goal_puck_max_speed. Goal-conditioned (return_goal_obs: true).
+# Task 'puck_goal_vel' (puck_goal_position_speed_sparse): hit the puck through a goal position
+# in the upper half at a goal *speed*. Goal (x, y, speed) is a state of a simulated shot from the
+# paddle workspace (goal_sampling: shot; intercept_shot launches from this episode's puck
+# intercept point). Sparse +10 when the puck is within base_goal_radius of the goal position AND
+# its speed within base_goal_speed_radius (m/s) of the goal speed on the same step after a paddle
+# contact (episode ends there), 0 otherwise. Goal-conditioned (return_goal_obs: true).
 # Trainer: scripts/td3/td3_training_her.py (HER).
 # Physics / spawn / termination copied from sim_sysid_juggle.yaml.
 # Canonical smoothing since 2026-09-04: simulator_params.hist_len = 4 (4-timestep
@@ -56,7 +56,7 @@ air_hockey:
     enable_action_delay: false
     enable_observation_delay: true
     delay_seconds: 0.025
-  task: puck_goal_position_velocity_sparse
+  task: puck_goal_position_speed_sparse
   terminate_on_enemy_goal: true
   terminate_on_out_of_bounds: false
   terminate_on_puck_hit_bottom: true
@@ -68,13 +68,10 @@ air_hockey:
   base_goal_radius: 0.1
   goal_position_margin: 0.1
   terminate_on_goal_reached: true
-  base_goal_velocity_radius: 0.5
-  goal_puck_vx_range:
-  - -2.5
-  - -0.5
-  goal_puck_vy_range:
-  - -1.5
-  - 1.5
-  goal_puck_max_speed: 3.0
-  # Independent uniform velocity goals (rounds 1-3 of 2026-09-10); mostly infeasible, see her.md.
-  goal_velocity_sampling: box
+  base_goal_speed_radius: 0.5
+  goal_sampling: shot
+  goal_shot_speed_range:
+  - 1.0
+  - 3.0
+  goal_shot_max_angle_deg: 45.0
+  goal_shot_min_upward_speed: 0.3

@@ -18,6 +18,13 @@ Runnable as a subprocess for the trainer's async per-checkpoint eval::
 
 ``--eval-call-index`` shifts the env seed so successive checkpoints see
 different start states / goals.
+
+DR configs (``eval_param_seed`` set in ``args.yaml``) get the same fixed
+multi-env evaluation as ``td3_training_dr``: ``eval_n_envs`` dynamics
+overlays sampled once from the sim config's ``random_variable_ranges`` with
+``eval_param_seed``, ``eval_eps_per_env`` episodes each, aggregated into
+``multi_env_eval.json`` (same schema, so ``run_experiments`` summarises it)
+next to a ``goal_eval.json`` for env 0.
 """
 
 from __future__ import annotations
@@ -69,6 +76,7 @@ def evaluate_goal_policy(
     use_last_action_in_policy_state: bool = True,
     seed: Optional[int] = None,
     fps: int = 20,
+    verbose: bool = True,
 ) -> Dict[str, Any]:
     params = dict(air_hockey_params)
     params["return_goal_obs"] = True
@@ -149,13 +157,134 @@ def evaluate_goal_policy(
     }
     with open(os.path.join(save_dir, "goal_eval.json"), "w") as f:
         json.dump(summary, f, indent=2)
+    if verbose:
+        print(
+            f"[her_eval] {os.path.basename(save_dir)}: success {summary['success_rate']:.3f} "
+            f"return {summary['mean_return']:.2f} len {summary['mean_length']:.1f} "
+            f"contacts {summary['mean_contacts']:.2f} ends {end_reasons} (n={len(episodes)})",
+            flush=True,
+        )
+    return summary
+
+
+def evaluate_goal_policy_multi_env(
+    model_path: str,
+    save_dir: str,
+    air_hockey_params: Dict[str, Any],
+    *,
+    eval_param_seed: int,
+    eval_n_envs: int,
+    eval_eps_per_env: int,
+    n_gifs: int = 1,
+    seed: Optional[int] = None,
+    log_parent_dir: Optional[str] = None,
+    **policy_kwargs: Any,
+) -> Dict[str, Any]:
+    """Fixed multi-env evaluation for DR runs (mirrors ``td3_training_dr``).
+
+    Samples ``eval_n_envs`` dynamics overlays once with ``eval_param_seed``
+    (written to ``<log_parent_dir>/eval_envs.json`` on first use), rolls
+    ``eval_eps_per_env`` goal-conditioned episodes on each with per-reset
+    randomization off, writes ``multi_env_eval.json`` (``aggregate`` +
+    ``per_env``) and returns the aggregate.  Env 0 also gets the GIF and
+    ``goal_eval.json``.
+    """
+    from scripts.td3.td3_training_dr import (
+        _apply_overrides_to_air_hockey_params,
+        _sample_eval_env_overrides,
+    )
+
+    random_variables = list(air_hockey_params.get("random_variables", []))
+    random_variable_ranges = dict(air_hockey_params.get("random_variable_ranges", {}))
+    if not random_variables or not random_variable_ranges:
+        raise ValueError("multi-env eval needs `random_variables` / `random_variable_ranges` in the air_hockey config")
+    overrides = _sample_eval_env_overrides(
+        seed=int(eval_param_seed), n_envs=int(eval_n_envs),
+        random_variable_ranges=random_variable_ranges, random_variables=random_variables,
+    )
+    if log_parent_dir is not None:
+        path = os.path.join(log_parent_dir, "eval_envs.json")
+        if not os.path.exists(path):
+            os.makedirs(log_parent_dir, exist_ok=True)
+            with open(path, "w") as f:
+                json.dump({"eval_param_seed": int(eval_param_seed), "n_envs": int(eval_n_envs),
+                           "eps_per_env": int(eval_eps_per_env), "random_variables": random_variables,
+                           "random_variable_ranges": {k: list(v) for k, v in random_variable_ranges.items()},
+                           "overrides": overrides}, f, indent=2)
+    per_env = []
+    for env_idx, override in enumerate(overrides):
+        cfg = _apply_overrides_to_air_hockey_params(air_hockey_params, override)
+        env_seed = None if seed is None else int(seed) + 1000 * env_idx
+        summary = evaluate_goal_policy(
+            model_path, save_dir if env_idx == 0 else os.path.join(save_dir, f"env{env_idx}_tmp"), cfg,
+            n_eps=int(eval_eps_per_env), n_gifs=int(n_gifs) if env_idx == 0 else 0, seed=env_seed,
+            verbose=(env_idx == 0), **policy_kwargs,
+        )
+        if env_idx > 0:
+            # Only env 0 keeps a goal_eval.json / GIF; drop the scratch dir.
+            import shutil
+            shutil.rmtree(os.path.join(save_dir, f"env{env_idx}_tmp"), ignore_errors=True)
+        per_env.append({
+            "env_idx": env_idx, "override": override,
+            "returns": [e["return"] for e in summary["episodes"]],
+            "successes": [e["success"] for e in summary["episodes"]],
+            "episode_lengths": [e["length"] for e in summary["episodes"]],
+            "mean_return": summary["mean_return"], "mean_success_rate": summary["success_rate"],
+            "mean_episode_length": summary["mean_length"], "mean_contacts": summary["mean_contacts"],
+        })
+    aggregate = {
+        "n_envs_used": len(per_env), "eps_per_env": int(eval_eps_per_env),
+        "mean_return_across_envs": float(np.mean([r["mean_return"] for r in per_env])),
+        "mean_success_across_envs": float(np.mean([r["mean_success_rate"] for r in per_env])),
+        "mean_ep_length_across_envs": float(np.mean([r["mean_episode_length"] for r in per_env])),
+        "per_env_mean_return": [r["mean_return"] for r in per_env],
+        "per_env_mean_success": [r["mean_success_rate"] for r in per_env],
+    }
+    with open(os.path.join(save_dir, "multi_env_eval.json"), "w") as f:
+        json.dump({"aggregate": aggregate, "per_env": per_env}, f, indent=2)
     print(
-        f"[her_eval] {os.path.basename(save_dir)}: success {summary['success_rate']:.3f} "
-        f"return {summary['mean_return']:.2f} len {summary['mean_length']:.1f} "
-        f"contacts {summary['mean_contacts']:.2f} ends {end_reasons} (n={len(episodes)})",
+        f"[her_eval] {os.path.basename(save_dir)} multi-env (n_envs={len(per_env)}, eps/env={eval_eps_per_env}): "
+        f"mean_success={aggregate['mean_success_across_envs']:.3f} mean_return={aggregate['mean_return_across_envs']:.2f} "
+        f"per_env_success={[round(x, 2) for x in aggregate['per_env_mean_success']]}",
         flush=True,
     )
-    return summary
+    return aggregate
+
+
+def evaluate_checkpoint(ckpt_dir: str, *, n_eps: Optional[int], n_gifs: int, eval_call_index: int,
+                        log_parent_dir: Optional[str] = None, final: bool = False) -> Dict[str, Any]:
+    """Evaluate ``<ckpt_dir>/model.pth`` with the settings in its ``args.yaml`` /
+    ``config.yaml``: plain goal eval, or the fixed multi-env eval when
+    ``eval_param_seed`` is set."""
+    ckpt_dir = os.path.abspath(ckpt_dir)
+    with open(os.path.join(ckpt_dir, "args.yaml"), "r") as f:
+        args = yaml.load(f, Loader=yaml.FullLoader)
+    with open(os.path.join(ckpt_dir, "config.yaml"), "r") as f:
+        config = yaml.load(f, Loader=yaml.FullLoader)
+    policy_kwargs = dict(
+        action_scale=1.0,
+        agent_hidden_layer_size=int(args["agent_hidden_layer_size"]),
+        agent_num_hidden_layers=int(args["agent_num_hidden_layers"]),
+        use_last_action_in_policy_state=bool(args["use_last_action_in_policy_state"]),
+    )
+    seed = int(args.get("seed", 0)) * 100000 + (424242 if final else 7919 * int(eval_call_index))
+    model_path = os.path.join(ckpt_dir, "model.pth")
+    if args.get("eval_param_seed") is not None:
+        eps_per_env = int(args.get("eval_eps_per_env", 4))
+        if final:
+            n_final = int(n_eps if n_eps is not None else args.get("eval_n_eps_final", 100))
+            eps_per_env = max(eps_per_env, n_final // max(int(args.get("eval_n_envs", 1)), 1))
+        return evaluate_goal_policy_multi_env(
+            model_path, ckpt_dir, config["air_hockey"],
+            eval_param_seed=int(args["eval_param_seed"]), eval_n_envs=int(args.get("eval_n_envs", 1)),
+            eval_eps_per_env=eps_per_env, n_gifs=n_gifs, seed=seed,
+            log_parent_dir=log_parent_dir or os.path.dirname(ckpt_dir), **policy_kwargs,
+        )
+    default_n = args.get("eval_n_eps_final", 100) if final else args.get("eval_n_eps", 20)
+    return evaluate_goal_policy(
+        model_path, ckpt_dir, config["air_hockey"],
+        n_eps=int(n_eps if n_eps is not None else default_n), n_gifs=n_gifs, seed=seed, **policy_kwargs,
+    )
 
 
 def main() -> None:
@@ -164,25 +293,10 @@ def main() -> None:
     parser.add_argument("--n-eps", type=int, default=None)
     parser.add_argument("--n-gifs", type=int, default=1)
     parser.add_argument("--eval-call-index", type=int, default=1)
+    parser.add_argument("--final", action="store_true", help="use eval_n_eps_final and the final-eval seed")
     cli = parser.parse_args()
-    ckpt_dir = os.path.abspath(cli.checkpoint_dir)
-    with open(os.path.join(ckpt_dir, "args.yaml"), "r") as f:
-        args = yaml.load(f, Loader=yaml.FullLoader)
-    with open(os.path.join(ckpt_dir, "config.yaml"), "r") as f:
-        config = yaml.load(f, Loader=yaml.FullLoader)
-    n_eps = int(cli.n_eps if cli.n_eps is not None else args.get("eval_n_eps", 20))
-    evaluate_goal_policy(
-        os.path.join(ckpt_dir, "model.pth"),
-        ckpt_dir,
-        config["air_hockey"],
-        n_eps=n_eps,
-        n_gifs=int(cli.n_gifs),
-        action_scale=1.0,
-        agent_hidden_layer_size=int(args["agent_hidden_layer_size"]),
-        agent_num_hidden_layers=int(args["agent_num_hidden_layers"]),
-        use_last_action_in_policy_state=bool(args["use_last_action_in_policy_state"]),
-        seed=int(args.get("seed", 0)) * 100000 + 7919 * int(cli.eval_call_index),
-    )
+    evaluate_checkpoint(cli.checkpoint_dir, n_eps=cli.n_eps, n_gifs=int(cli.n_gifs),
+                        eval_call_index=int(cli.eval_call_index), final=bool(cli.final))
     sys.stdout.flush()
 
 

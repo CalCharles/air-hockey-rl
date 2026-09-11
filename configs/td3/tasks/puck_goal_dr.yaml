@@ -1,11 +1,12 @@
-# puck_goal_vel_her_sysid: TD3 + hindsight experience replay on 'sim_sysid_puck_goal_vel'.
-# Trainer: scripts/td3/td3_training_her.py (python -m scripts.td3.td3_training_her --args-file <this>).
-# Batch: scripts/td3/run_experiments.py --mode her --configs configs/td3/her/*.yaml --gpus ...
-# Recipe = the canonical five-task recipe (configs/td3/tasks/*_sysid.yaml: q=25/a=6 updates per
-# episode, batch 512, PER, single flat 1M buffer, q_weight_decay 0, primitive exploration), with the
-# goal appended to the 30-dim history obs and HER relabelling (her_k copies per transition,
-# 'future' strategy). Networks scaled up to 128 (actor) / 256 (critic) wide, 2 residual blocks.
-# Round 4: shot-sampled velocity goals, hist2, 2M steps.
+# Task 'puck_goal' (puck_goal_position_sparse), canonical +-25 % per-reset physics randomization (paddle_density / puck_damping / gravity).
+# Smoothing: hist_len=4 (canonical since 2026-09-04) + hist4 paddle sysid refit, set in the sim config above.
+# Trainer: scripts/td3/td3_training_her.py (TD3 + hindsight experience replay; run_experiments --mode auto picks
+# it for YAMLs that set her_k); batch: scripts/td3/run_experiments.py --mode auto --configs configs/td3/tasks/*.yaml --gpus ...
+# Recipe = the five-task recipe (q=25/a=6 updates per episode, batch 512, PER, single flat 1M buffer,
+# q_weight_decay 0, primitive exploration) with the goal appended to the 30-dim history obs and HER
+# relabelling (her_k copies per transition, 'future' strategy, goals restricted to the goal region).
+# Networks 128 (actor) / 256 (critic) wide, 2 residual blocks + DR eval (eval_param_seed / eval_n_envs / eval_eps_per_env), 2M steps.
+# Reward scales live in the task reward classes, not here. Read notes/docs/training/her.md.
 total_timesteps: 2000000
 num_envs: 1
 buffer_size: 100000
@@ -31,7 +32,7 @@ per_beta_anneal_steps: 200000
 per_eps: 1.0e-06
 success_buffer_size: 1000000
 failure_buffer_size: 70000
-success_top_fraction: 0.5
+success_top_fraction: 0.2
 recent_episode_window_size: 500
 critic_success_sample_fraction: 0.3
 critic_failure_sample_fraction: 0.7
@@ -46,11 +47,11 @@ exploration_primitive_weight_same_direction: 3.0
 exploration_primitive_weight_anneal_stand_still: 0.2
 exploration_primitive_weight_anneal_same_direction: 3.0
 exploration_direction_y_component_weight: 2
-config: configs/new_juggle/tasks/sim_sysid_puck_goal_vel_shot_hist2.yaml
+config: configs/new_juggle/tasks/sim_dr_puck_goal.yaml
 args_file: null
 model_path: null
 log_parent_dir: null
-run_name: puck_goal_vel_her_shot_hist2_2M
+run_name: puck_goal_dr
 device: cuda:0
 seed: 0
 h_transform_eps: 0.001
@@ -67,3 +68,6 @@ her_goal_filter: true
 eval_n_eps: 20
 eval_n_eps_final: 100
 eval_n_gifs: 1
+eval_param_seed: 12345
+eval_n_envs: 5
+eval_eps_per_env: 4
