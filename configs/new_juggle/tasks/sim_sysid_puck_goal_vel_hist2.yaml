@@ -1,0 +1,76 @@
+# Task 'puck_goal_vel' (puck_goal_position_velocity_sparse): send the puck through a
+# goal position in the upper half *with* a goal velocity. Sparse +10 when the puck is
+# within base_goal_radius of the goal position AND within base_goal_velocity_radius
+# (m/s) of the goal velocity on the same step (episode ends there), 0 otherwise.
+# Goal velocity sampled from goal_puck_vx_range x goal_puck_vy_range (negative x = up
+# the table), clipped to goal_puck_max_speed. Goal-conditioned (return_goal_obs: true).
+# Trainer: scripts/td3/td3_training_her.py (HER).
+# Physics / spawn / termination copied from sim_sysid_juggle.yaml.
+# hist2 variant: hist_len 2 + the hist2 paddle sysid fit (pid_kp 9000, paddle_density 3000)
+# instead of the hist4 smoothing of the five task configs (hist4 measured worse for learning,
+# notes/scratch/experiments/2026-09-04_22-19_hist4-smoothing-five-tasks.md).
+air_hockey:
+  max_timesteps: 250
+  num_blocks: 0
+  num_obstacles: 0
+  num_paddles: 1
+  num_pucks: 1
+  num_targets: 0
+  obs_type: history
+  seed: 0
+  simulator: box2d
+  simulator_params:
+    absorb_target: false
+    enable_puck_delay_interpolation: true
+    block_density: 1000
+    block_width: 0.0254
+    length: 1.9304
+    max_force_timestep: 10000
+    paddle_radius: 0.0508
+    force_scaling: 0.99
+    paddle_damping: 17
+    paddle_density: 3000
+    gravity: -0.661
+    puck_damping: 0.178
+    puck_density: 3000
+    puck_restitution: 1.09145
+    paddle_restitution: 1.0
+    side_wall_restitution: 0.99
+    end_wall_restitution: 0.7
+    puck_radius: 0.03175
+    render_size: 360
+    seed: 0
+    width: 0.8636
+    pid_kp: 9000
+    pid_kd: 50
+    pid_ki: 0.0
+    hist_len: 2
+    puck_noise: true
+    puck_noise_std: 0.01
+    enable_random_occlusions: true
+    random_occlusion_rate: 0.05
+    enable_action_delay: false
+    enable_observation_delay: true
+    delay_seconds: 0.025
+  task: puck_goal_position_velocity_sparse
+  terminate_on_enemy_goal: true
+  terminate_on_out_of_bounds: false
+  terminate_on_puck_hit_bottom: true
+  terminate_on_puck_hit_paddle: false
+  terminate_on_puck_pass_paddle: true
+  terminate_on_puck_stop: false
+  return_goal_obs: true
+  goal_radius_type: fixed
+  base_goal_radius: 0.1
+  goal_position_margin: 0.1
+  terminate_on_goal_reached: true
+  base_goal_velocity_radius: 0.5
+  goal_puck_vx_range:
+  - -2.5
+  - -0.5
+  goal_puck_vy_range:
+  - -1.5
+  - 1.5
+  goal_puck_max_speed: 3.0
+  # Independent uniform velocity goals (rounds 1-3 of 2026-09-10); mostly infeasible, see her.md.
+  goal_velocity_sampling: box

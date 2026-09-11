@@ -1,0 +1,69 @@
+# puck_goal_her_sysid: TD3 + hindsight experience replay on 'sim_sysid_puck_goal'.
+# Trainer: scripts/td3/td3_training_her.py (python -m scripts.td3.td3_training_her --args-file <this>).
+# Batch: scripts/td3/run_experiments.py --mode her --configs configs/td3/her/*.yaml --gpus ...
+# Recipe = the canonical five-task recipe (configs/td3/tasks/*_sysid.yaml: q=25/a=6 updates per
+# episode, batch 512, PER, single flat 1M buffer, q_weight_decay 0, primitive exploration), with the
+# goal appended to the 30-dim history obs and HER relabelling (her_k copies per transition,
+# 'future' strategy). Networks scaled up to 128 (actor) / 256 (critic) wide, 2 residual blocks.
+# Round 2: her_goal_filter true (hindsight goals restricted to the goal-sampling region).
+total_timesteps: 1000000
+num_envs: 1
+buffer_size: 100000
+tau: 0.005
+batch_size: 512
+learning_starts: 20000
+policy_lr: 0.0003
+q_lr: 0.001
+q_weight_decay: 0.0
+q_frequency: 1
+q_updates: 25
+policy_frequency: 1
+target_network_frequency: 10
+actor_updates_per_iteration: 6
+exploration_noise: 0.1
+policy_noise: 0.2
+noise_clip: 0.5
+per_enabled: true
+per_alpha: 0.6
+per_beta_start: 0.4
+per_beta_end: 1.0
+per_beta_anneal_steps: 200000
+per_eps: 1.0e-06
+success_buffer_size: 1000000
+failure_buffer_size: 70000
+success_top_fraction: 0.5
+recent_episode_window_size: 500
+critic_success_sample_fraction: 0.3
+critic_failure_sample_fraction: 0.7
+single_replay_buffer: true
+exploration_primitive_chance: 0.05
+exploration_primitive_chance_start: 0.15
+exploration_primitive_chance_pre_learning_starts: null
+exploration_primitive_chance_anneal_steps: 200000
+exploration_primitive_steps: 5
+exploration_primitive_weight_stand_still: 0.2
+exploration_primitive_weight_same_direction: 3.0
+exploration_primitive_weight_anneal_stand_still: 0.2
+exploration_primitive_weight_anneal_same_direction: 3.0
+exploration_direction_y_component_weight: 2
+config: configs/new_juggle/tasks/sim_sysid_puck_goal.yaml
+args_file: null
+model_path: null
+log_parent_dir: null
+run_name: puck_goal_her_filter_sysid
+device: cuda:0
+seed: 0
+h_transform_eps: 0.001
+agent_hidden_layer_size: 128
+agent_num_hidden_layers: 2
+q_hidden_layer_size: 256
+q_num_hidden_layers: 2
+use_last_action_in_policy_state: true
+checkpoint_interval: 25000
+her_k: 4
+her_strategy: future
+her_done_on_success: true
+her_goal_filter: true
+eval_n_eps: 20
+eval_n_eps_final: 100
+eval_n_gifs: 1
