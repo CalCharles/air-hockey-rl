@@ -35,7 +35,7 @@ is *not* stepping the env.
 
 Phases where `get_transition` does not run for >2 s:
 
-- **Inside `reset()` itself**, between the main_stage `apply_negative_z_force` call and the next `get_transition` of the new episode. The intervening sequence — `time.sleep(0.7)`, optional space-bar wait, blocking final-stage `moveL`, `time.sleep(0.2)`, `time.sleep(0.7)` — usually exceeds 2 s. In particular, the explicit `forceModeStop()` at the very start of the next reset cancels any force still in flight.
+- ~~**Inside `reset()` itself**~~ — **closed as of the post-reset seat check (below), which is on by default.** Historically: between the main_stage `apply_negative_z_force` call and the next `get_transition` of the new episode. The intervening sequence — `time.sleep(0.7)`, optional space-bar wait, blocking final-stage `moveL`, `time.sleep(0.2)`, `time.sleep(0.7)` — usually exceeds 2 s. In particular, the explicit `forceModeStop()` at the very start of the next reset cancels any force still in flight.
 - **Between episodes**, while the orchestrator runs reset-FSM stop checks, episode-artifact handling, transition holds after a protective-stop clear, and any "wait for N consecutive puck detections" gates before kicking off the next policy episode.
 - **Long blocking `moveL` calls inside reset** (the high-reset pre-stage, main-stage, and final-stage moves are all `asynchronous=False`).
 - **Any training-side stall** that pauses the collector — learner backpressure, slow checkpoint write, slow camera frame fetch.
@@ -57,11 +57,56 @@ re-establish it.
 
 In rough increasing-effort order:
 
-1. **Pump `apply_negative_z_force` after every blocking `moveL` inside `reset()`** — there's currently only one such call (after the main_stage `moveL`); add one after the final-stage `moveL` and one immediately before `reset()` returns. Cheap, makes the post-reset gap shorter than 2 s in the common case.
+1. ~~**Pump `apply_negative_z_force` after every blocking `moveL` inside `reset()`**~~ — **done, and superseded by the closed-loop seat check below**, which pumps the clamp *and* verifies the paddle actually arrived instead of assuming it.
 2. **Pump it from any orchestrator-side wait loop that can run >1.5 s** — the reset-FSM stop-clear poll, the puck-detection gate, transition-hold loops. Either expose a public `AirHockeyReal.refresh_z_clamp()` and call it from the wait loop, or have the orchestrator call `env.simulator.air_hockey_env.ctrl.forceMode(...)` directly with the same args (the latter ties the orchestrator to the RTDE handle, so the public method is preferable).
 3. **Sleep cadence**: any deliberate `time.sleep(s)` with `s >= 1.5` near the control path should be replaced with a poll loop that pumps the force every ~500 ms.
 
 These keep the single-process, single-`RTDEControl` design and just plug holes.
+
+## Implemented: closed-loop post-reset seat check (on by default)
+
+`AirHockeyReal._verify_paddle_seated()` runs at the end of `reset()`, before the
+command target is anchored, and is **enabled by default**
+(`reset_verify_seated: true` in the simulator params). It closes the
+reset-internal half of the gap and, unlike a blind pump, it *checks*.
+
+It holds the clamp on — refreshing every 250 ms, well inside the ~2 s timeout —
+and polls `getActualTCPPose()[2]` at 50 Hz until one of:
+
+| Outcome | Meaning |
+|---|---|
+| `z_settled` | z stayed inside `reset_verify_range_m` for a full `reset_verify_window_s`. Tuned: **1 cm over 1 s**. |
+| `contact_force` | `abs(getActualTCPForce()[2])` crossed `reset_verify_force_n`. Off by default (`0.0`) — the threshold is table-specific and unmeasured. |
+| `timeout` | `reset_verify_timeout_s` (5 s) elapsed. Tears the clamp down with `forceModeStop()`, re-establishes it, restarts the window, up to `reset_verify_max_retries` (1). |
+| `clamp_unavailable` | Not one `forceMode` call landed during the attempt, so the reading proves nothing (see below). |
+
+A final failure warns loudly but never raises; the verdict dict is stashed on
+`simulator.last_reset_verify_info`.
+
+Three properties worth knowing before you trust or tune it:
+
+- **The clamp must be live or the test is vacuous.** A paddle stuck in mid-air
+  has a perfectly constant z — indistinguishable from a seated one. That is why
+  the loop refreshes the clamp while polling and reports `clamp_unavailable`
+  rather than "settled" when no clamp call succeeded.
+- **The band is a velocity bound.** `range / window` = 1 cm / 1 s accepts any
+  residual creep slower than **1 cm/s**. Tighten `reset_verify_range_m` if a slow
+  drag shows up on this table.
+- **Settling at the parked height is flagged.** Per the failure mode described
+  above, once the paddle is airborne a `forceMode` call only re-establishes
+  contact if the commanded z is at or below the table. If the settled z is within
+  2 mm of the reset pose's own z, `settled_at_parked_height` is set and a warning
+  printed: the clamp probably found nothing to press into.
+
+**Still open:** the *between-episodes* gap. Orchestrator bookkeeping, reset-FSM
+stop checks, puck-detection gates and training-side stalls all still run with no
+clamp. The seat check only covers the tail of `reset()` itself.
+
+To measure any of this on hardware, use
+`scripts/robot_data_collection/diagnose_reset_descent.py`, which logs actual TCP
+z the instant `reset()` returns, during an idle watch, and once per `env.step`,
+and prints what `reset()` itself concluded. `--no-verify` restores the old
+behaviour for an A/B.
 
 ## Real fix (when there's appetite for it)
 

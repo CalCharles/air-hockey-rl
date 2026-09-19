@@ -52,6 +52,17 @@ reset_positions = {
 
 _ASYNC_RENDER_METADATA_WIDTH = 11
 
+# forceMode expires ~2 s after the last call; refresh well inside that while
+# the post-reset seat check is polling.
+_CLAMP_REFRESH_PERIOD_S = 0.25
+
+# How close to the reset pose's z counts as "never left the parked height".
+_PARKED_HEIGHT_EPS_M = 0.002
+
+# Paddle workspace in ROBOT frame: (x_min, x_max, y_min, y_max).
+# See AirHockeyReal.__init__ for the y_max history.
+REAL_WORKSPACE_LIMS = (-0.83, -0.42, -0.35, 0.39)
+
 
 def _async_render_worker(
     frame_shm_name,
@@ -261,6 +272,21 @@ class AirHockeyReal:
             "transition_hold_steps_on_estop_clear": 8,
             "transition_hold_steps_on_safety_rearm": 3,
             "transition_hold_debug": False,
+            # Closed-loop post-reset seat check (see _verify_paddle_seated).
+            # ON by default: a reset that returns with the paddle still airborne
+            # silently corrupts the first steps of every episode, so opting IN to
+            # correctness is the wrong default. Set False to restore the old
+            # unverified reset.
+            "reset_verify_seated": True,
+            "reset_verify_window_s": 1.0,
+            "reset_verify_range_m": 0.01,
+            "reset_verify_timeout_s": 5.0,
+            "reset_verify_poll_hz": 50.0,
+            "reset_verify_max_retries": 1,
+            # 0 disables the contact-force early exit; the right threshold is
+            # table-specific, so leave it off until measured (the diagnostic
+            # script prints force_z alongside z).
+            "reset_verify_force_n": 0.0,
 
             # The current state prediction algorithm uses true current position
             # and adds a predictive horizon on top
@@ -508,19 +534,21 @@ class AirHockeyReal:
         # self.y_min = -0.42
         # self.y_max = 0.42
 
-        # magic numbers representing the boundary
-        self.x_min_lim = -0.83
-        self.x_max_lim = -0.42
+        # magic numbers representing the boundary (module constant so offline
+        # tooling -- e.g. the data-collection dry runs -- can preview the same
+        # geometry without constructing an env / connecting to the robot)
+        self.x_min_lim = REAL_WORKSPACE_LIMS[0]
+        self.x_max_lim = REAL_WORKSPACE_LIMS[1]
 
         
-        self.y_min = -0.35 # temporary for right now
+        self.y_min = REAL_WORKSPACE_LIMS[2] # temporary for right now
         # Right edge extended +0.02 m (was 0.350) to make the reachable
         # workspace symmetric with y_min and give the reset policy's edge
         # loop the same range on both sides. The FSM picks this up via
         # `simulator.lims` (set below) → ResetPolicyFSM._lims, and the
         # simulator's clip_limits uses the same source so commands at
         # y=+0.370 are no longer clipped back to +0.350.
-        self.y_max = 0.39
+        self.y_max = REAL_WORKSPACE_LIMS[3]
         # y total working length is approximately 0.74m
 
         self.bot_abs = config.bot_abs
@@ -617,6 +645,14 @@ class AirHockeyReal:
         self.transition_hold_steps_on_estop_clear = max(0, int(config.transition_hold_steps_on_estop_clear))
         self.transition_hold_steps_on_safety_rearm = max(0, int(config.transition_hold_steps_on_safety_rearm))
         self.transition_hold_debug = bool(config.transition_hold_debug)
+        self.reset_verify_seated = bool(config.reset_verify_seated)
+        self.reset_verify_window_s = max(0.0, float(config.reset_verify_window_s))
+        self.reset_verify_range_m = max(0.0, float(config.reset_verify_range_m))
+        self.reset_verify_timeout_s = max(0.0, float(config.reset_verify_timeout_s))
+        self.reset_verify_poll_hz = max(1.0, float(config.reset_verify_poll_hz))
+        self.reset_verify_max_retries = max(0, int(config.reset_verify_max_retries))
+        self.reset_verify_force_n = max(0.0, float(config.reset_verify_force_n))
+        self.last_reset_verify_info = None
         self.use_actual_tcp_for_state = bool(config.use_actual_tcp_for_state)
         self.state_prediction_horizon_s = float(config.state_prediction_horizon_s)
         self.state_prediction_blend = float(np.clip(config.state_prediction_blend, 0.0, 1.0))
@@ -901,6 +937,197 @@ class AirHockeyReal:
                 f"begin_transition_hold reason={self._transition_hold_reason} "
                 f"steps={self._transition_hold_steps_remaining}"
             )
+
+    def _refresh_table_clamp(self, context="reset"):
+        """Re-apply the downward z force once. Returns whether it was sent."""
+        if self.control_off or self.above_table:
+            return False
+        try:
+            if not bool(self.robot_command_readiness()["command_ready"]):
+                return False
+            apply_negative_z_force(self.ctrl, self.rcv)
+            return True
+        except Exception as exc:
+            print(f"[control_gate] {context} forceMode refresh skipped: {exc}")
+            return False
+
+    def _read_tcp_z_force_z(self):
+        """(actual TCP z, actual TCP force z), NaN where the RTDE read fails."""
+        z = float("nan")
+        force_z = float("nan")
+        try:
+            z = float(np.asarray(self.rcv.getActualTCPPose(), dtype=float)[2])
+        except Exception:
+            pass
+        try:
+            force_z = float(np.asarray(self.rcv.getActualTCPForce(), dtype=float)[2])
+        except Exception:
+            pass
+        return z, force_z
+
+    def _verify_paddle_seated(self):
+        """Poll TCP z after a reset until the paddle has actually settled on the table.
+
+        Nothing else in the stack checks this. ``apply_negative_z_force`` is
+        open-loop, and reset's final ``moveL`` parks the tool at the reset pose's
+        z -- above the table -- with the clamp long expired (forceMode times out
+        ~2 s after the last call, and reset's tail is longer than that). The
+        paddle therefore used to finish its descent during the first steps of the
+        next episode, while the policy was already commanding x/y.
+
+        Settled means: z stayed inside a ``reset_verify_range_m`` band for a full
+        ``reset_verify_window_s``, *while the clamp is being actively refreshed*.
+        The refresh is what makes the test meaningful -- an unclamped paddle
+        hanging motionless in mid-air also has a perfectly constant z, so a settle
+        check without a live downward push would pass on exactly the failure it
+        exists to catch. If not a single clamp call lands during an attempt the
+        result is rejected outright (``clamp_unavailable``) rather than reported
+        as settled.
+
+        Note what the band actually bounds: range / window is a *vertical speed*
+        limit. The tuned 1 cm / 1 s therefore accepts any residual creep slower
+        than 1 cm/s. Tighten ``reset_verify_range_m`` (or lengthen the window) if
+        a slow drag turns out to matter on this table.
+
+        ``reset_verify_force_n > 0`` adds an early exit once |TCP force z| crosses
+        that threshold, a direct contact signal. Left at 0 the z criterion alone
+        decides, because the right force threshold is table-specific and as yet
+        unmeasured.
+
+        On timeout the clamp is torn down and re-established (forceMode can be
+        refused while the controller is busy) and the window restarts, up to
+        ``reset_verify_max_retries`` times. A final failure is reported loudly but
+        does not raise: a stuck reset should not take down a data-collection run.
+
+        Returns a dict describing the attempt (also stashed on
+        ``self.last_reset_verify_info``), or None when disabled / not applicable.
+        """
+        self.last_reset_verify_info = None
+        if not self.reset_verify_seated or self.control_off or self.above_table:
+            return None
+
+        poll_period = 1.0 / self.reset_verify_poll_hz
+        z_start, force_start = self._read_tcp_z_force_z()
+        info = {
+            "settled": False,
+            "reason": "unknown",
+            "z_start": z_start,
+            "force_z_start": force_start,
+            "z_settled": float("nan"),
+            "force_z_settled": float("nan"),
+            "descent_m": float("nan"),
+            "elapsed_s": 0.0,
+            "attempts": 0,
+            "clamp_applied": False,
+            "window_s": self.reset_verify_window_s,
+            "range_m": self.reset_verify_range_m,
+            "parked_z": float(self.reset_pose[0][2]),
+            "settled_at_parked_height": False,
+        }
+        t_begin = time.time()
+
+        for attempt in range(self.reset_verify_max_retries + 1):
+            info["attempts"] = attempt + 1
+            if attempt > 0:
+                # forceMode can be refused while the controller is busy; tear the
+                # clamp down and re-establish it rather than polling a dead one.
+                print(f"[reset_verify] retry {attempt}: re-establishing clamp")
+                try:
+                    self.ctrl.forceModeStop()
+                except Exception as exc:
+                    print(f"[reset_verify] forceModeStop skipped: {exc}")
+            any_clamp = self._refresh_table_clamp("reset_verify")
+            last_clamp_s = time.time()
+
+            samples = deque()  # (t, z) inside the trailing window
+            t_attempt = time.time()
+            while True:
+                now = time.time()
+                elapsed = now - t_attempt
+                if now - last_clamp_s >= _CLAMP_REFRESH_PERIOD_S:
+                    any_clamp = self._refresh_table_clamp("reset_verify") or any_clamp
+                    last_clamp_s = now
+
+                z, force_z = self._read_tcp_z_force_z()
+                if np.isfinite(z):
+                    samples.append((now, z))
+                    # Retain the newest sample that is still at least a full window
+                    # old, by only dropping the head once the one behind it also
+                    # covers the window. Dropping everything older than the window
+                    # instead would leave the head strictly younger than window_s,
+                    # so the coverage test below could never fire.
+                    while len(samples) >= 2 and (now - samples[1][0]) >= self.reset_verify_window_s:
+                        samples.popleft()
+
+                if self.reset_verify_force_n > 0.0 and np.isfinite(force_z) \
+                        and abs(force_z) >= self.reset_verify_force_n:
+                    info.update(settled=True, reason="contact_force", z_settled=z,
+                                force_z_settled=force_z)
+                    break
+
+                # Require a full window's worth of history, not just a narrow band
+                # across the two samples collected so far.
+                window_covered = bool(samples) and (now - samples[0][0]) >= self.reset_verify_window_s
+                if window_covered:
+                    zs = [z_i for _, z_i in samples]
+                    if (max(zs) - min(zs)) <= self.reset_verify_range_m:
+                        if any_clamp:
+                            info.update(settled=True, reason="z_settled", z_settled=z,
+                                        force_z_settled=force_z)
+                        else:
+                            # A constant z with nothing pushing down proves nothing:
+                            # a paddle stuck in mid-air looks identical to a seated one.
+                            info.update(settled=False, reason="clamp_unavailable",
+                                        z_settled=z, force_z_settled=force_z)
+                        break
+
+                if elapsed >= self.reset_verify_timeout_s:
+                    info.update(reason="timeout", z_settled=z, force_z_settled=force_z)
+                    break
+                time.sleep(poll_period)
+
+            info["clamp_applied"] = bool(info["clamp_applied"] or any_clamp)
+            if info["settled"]:
+                break
+
+        info["elapsed_s"] = time.time() - t_begin
+        if np.isfinite(info["z_start"]) and np.isfinite(info["z_settled"]):
+            info["descent_m"] = info["z_start"] - info["z_settled"]
+
+        info["settled_at_parked_height"] = bool(
+            info["settled"]
+            and np.isfinite(info["z_settled"])
+            and abs(info["z_settled"] - info["parked_z"]) <= _PARKED_HEIGHT_EPS_M
+        )
+
+        if info["settled"]:
+            print(
+                f"[reset_verify] seated via {info['reason']} after {info['elapsed_s']:.2f} s "
+                f"(attempt {info['attempts']}): z {info['z_start']:.4f} -> {info['z_settled']:.4f} "
+                f"(descent {info['descent_m'] * 1000:+.1f} mm, force_z {info['force_z_settled']:.2f} N)"
+            )
+            if info["settled_at_parked_height"]:
+                # Documented failure mode: once the paddle is airborne, a forceMode
+                # call only re-establishes contact if the commanded z is at or below
+                # the table. Settling exactly where the reset moveL parked it means
+                # the clamp likely found nothing to press into.
+                # See notes/docs/environments/real-world/paddle-clamping-coverage-gap.md.
+                print(
+                    f"[reset_verify] WARNING: settled at the reset pose's own z "
+                    f"({info['parked_z']:.4f}); the paddle may not have descended at all. "
+                    "Check the table height against the commanded reset z."
+                )
+        else:
+            print(
+                f"[reset_verify] WARNING: paddle never settled within "
+                f"{self.reset_verify_timeout_s:.1f} s x {info['attempts']} attempt(s) "
+                f"[{info['reason']}, clamp_applied={info['clamp_applied']}] "
+                f"(z {info['z_start']:.4f} -> {info['z_settled']:.4f}, "
+                f"band {self.reset_verify_range_m * 1000:.0f} mm / {self.reset_verify_window_s:.1f} s). "
+                "Episode is starting with the paddle possibly still moving."
+            )
+        self.last_reset_verify_info = info
+        return info
 
     def start_callbacks(self, **kwargs):
         self.region_info = kwargs["region_info"] if "region_info" in kwargs else None
@@ -1518,13 +1745,13 @@ class AirHockeyReal:
         count = 0
         time.sleep(0.7)
 
-        # TODO: Add explicit post-reset verification (actual TCP z / contact checks + retry policy)
-        # in a future behavior-changing pass.
-        tcp_target_pose, tcp_target_speed = self._safe_target_pose_speed()
-        state_pose, state_speed, _ = self._resolve_state_pose_speed(tcp_target_pose, tcp_target_speed)
-        self._anchor_command_target_to_pose(state_pose)
-        readiness = self.robot_command_readiness()
-        self._protective_stop_prev = bool(readiness["protective_stop"])
+        # Clear the previous episode's transition-hold / e-stop-hold flags BEFORE
+        # verifying. robot_command_readiness()'s command_ready is gated on them, so
+        # an episode that ended in a hold (or after a protective stop) would block
+        # the clamp for the whole verification window and time it out -- precisely
+        # the case where a clean reset matters most. Nothing between here and the
+        # readiness read below consumes these flags, so the earlier clear is inert
+        # when verification is disabled.
         self._hold_current_target_after_estop = False
         self._transition_hold_steps_remaining = 0
         self._transition_hold_reason = "none"
@@ -1532,6 +1759,19 @@ class AirHockeyReal:
         self._command_rearm_event = False
         self._rearm_pending = False
         self._rearm_pending_reason = "none"
+
+        # Post-reset verification: hold the clamp on and wait until the paddle has
+        # actually reached the table, so the next episode does not start mid-descent.
+        # No-op unless reset_verify_seated is set. Runs before the command target is
+        # anchored below, so the anchor and the returned observation reflect the
+        # settled pose rather than the pre-descent one.
+        self._verify_paddle_seated()
+
+        tcp_target_pose, tcp_target_speed = self._safe_target_pose_speed()
+        state_pose, state_speed, _ = self._resolve_state_pose_speed(tcp_target_pose, tcp_target_speed)
+        self._anchor_command_target_to_pose(state_pose)
+        readiness = self.robot_command_readiness()
+        self._protective_stop_prev = bool(readiness["protective_stop"])
         state_info = self._compute_state(state_pose, state_speed, -1, self.puck_history)
 
         print("To exit press 'q'") # TODO: make this actually usable
