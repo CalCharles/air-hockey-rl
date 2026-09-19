@@ -1,0 +1,3 @@
+Source run: runs/her/round2_20260910/puck_goal_sysid_filter (final checkpoint, 1M steps, 2026-09-10)
+Trainer: scripts/td3/td3_training_her.py; eval: python -m scripts.td3.helper.her_eval --checkpoint-dir latest_models/her/puck_goal_position_hist4 --n-eps 100
+Final 100-episode eval: see goal_eval.json. Experiment note: notes/scratch/experiments/2026-09-10_06-30_her-puck-goal-tasks.md

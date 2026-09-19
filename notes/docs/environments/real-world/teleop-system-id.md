@@ -1,5 +1,10 @@
 # Teleop System-ID Trajectories
 
+> **Archived (2026-09-18).** The data, outputs and scripts this page describes were moved out of the repo to
+> `/data2/air_hockey/sysid_legacy_20260918/` (same sub-folder names; the tracked `scripts/sysid/grid_search_*.py`,
+> `render_best_config_all.py`, `_sysid_paths.py` are in `legacy_scripts_from_scripts_sysid/` there and in git history
+> before 2026-09-18). The live sysid tree is `sysid/` — see [`sysid/README.md`](../../../../sysid/README.md).
+
 Mouse teleoperation recordings for sim-to-real system identification. Trajectories
 are stored under `sysid/teleop/` in the split-schema HDF5 format.
 

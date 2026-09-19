@@ -44,7 +44,9 @@ pyrightconfig.json
 /eval_gifs/
 /real_runs/
 /shared/
-/sysid/
+/sysid/*/data/
+/sysid/*/results/
+/sysid/common/runs/
 /dataset_management/
 /tests/                      # local pytest scratch dir (not airhockey/.../tests/)
 /wandb/

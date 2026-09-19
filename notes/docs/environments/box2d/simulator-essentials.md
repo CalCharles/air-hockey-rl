@@ -85,13 +85,13 @@ canonical training density.
 Empirically in this Box2D setup, paddle-puck outcomes are often less stable than expected from ideal rigid-body intuition:
 
 - Contact behavior is highly sensitive to **relative velocity at impact** (especially along the collision normal).
-- Changing `paddle_density` / `puck_density` can matter, but in many practical runs it has a weaker effect than impact timing and approach speed.
+- Changing `paddle_density` / `puck_density` changes the puck's launch speed directly and by a large amount — see [Body masses](#body-masses-and-the-real-world-reference) below. What is *weak* is any effect beyond the mass ratio: the absolute masses cancel out of the contact.
 - Small differences in pre-contact motion (controller force limits, damping, jitter cadence, action lag, and step timing) can dominate the post-contact result.
 
 Practical guidance:
 
-- Treat density sweeps as a secondary knob for tuning contact behavior.
-- First tune and compare pre-contact velocity profiles and impact timing, then use density for finer adjustment.
+- Densities are **not** a free tuning knob: `paddle_density` is the PID plant inertia fitted jointly with `pid_kp` / `pid_kd` against real teleop trajectories, and the paddle/puck mass ratio sets the launch speed. Do not move either without re-running the corresponding fit.
+- First tune and compare pre-contact velocity profiles and impact timing.
 
 ## Collision physics
 
@@ -118,6 +118,14 @@ Friction is 0.0 everywhere. Gravity is a downward `gravity` value (e.g. `-0.65 m
 
 The impulse is `J = mass * (target_outgoing - current_outgoing)` applied along the inward normal.
 
+**This branch is mass-independent.** The wall is a static body (infinite mass), and the
+corrective impulse is scaled by the puck's own mass, so `Δv = J/m` cancels it exactly:
+`v_out = e · v_in` (or the fixed min-rebound below threshold) whatever `puck_density` is.
+Verified in-sim across `puck_density` 30 → 30000 (0.095 → 95 kg): side wall out/in = 0.9900
+and end wall 0.7000 at every mass, and 0.1 m/s in the low-speed branch. `puck_damping` is a
+velocity decay (`v *= 1/(1+dt·damping)`) and gravity is an acceleration, so neither
+reintroduces mass. **The paddle collision is the only place puck mass enters the dynamics.**
+
 ### Puck ↔ paddle
 
 **PreSolve:** computes relative approach speed of puck w.r.t. paddle along the contact normal. Uses `combined_e = max(puck_restitution, paddle_restitution)`. Disables Box2D restitution and stores state in `_pending_paddle_puck`.
@@ -131,6 +139,58 @@ j = (v_rel_desired - v_rel_post) * m_paddle * m_puck / (m_paddle + m_puck)
 Applied as `+j` to puck and `-j` to paddle along the contact normal.
 
 A `puck_restitution > 1.0` (e.g. 1.09145) means the puck leaves slightly faster than it arrived — simulating a springy puck.
+
+### Body masses and the real-world reference
+
+Masses are derived, not configured: `mass = density · π · radius²`
+(`airhockey_box2d.py:700-701`, Box2D densities are 2-D, kg/m²).
+
+| | canonical sim (`sysid_best_params_hist2.yaml`) | real hardware |
+|---|---|---|
+| Paddle | `paddle_density` 3000 × π × 0.0508² = **24.32 kg** | **58 g** |
+| Puck | `puck_density` 3000 × π × 0.03175² = **9.50 kg** | **13 g** |
+| Ratio `m_pad / m_puck` | **2.56** (purely geometric — equal densities) | **4.46** |
+
+The paddle contact is the **only** place these masses affect the dynamics — puck–wall
+bounces cancel the mass exactly (see [Puck ↔ wall](#puck--wall) above), and gravity and
+damping are mass-free. Because PostSolve pins only the *relative* normal velocity, the mass
+ratio alone decides how that relative speed splits between the bodies. Paddle at speed `v` into a resting puck:
+
+```
+v_puck_out = (1 + e) · m_pad / (m_pad + m_puck) · v
+```
+
+Measured in-sim (matches the closed form to 4 decimals; `e = 1.09145`), and invariant to
+scaling both densities together — only the ratio matters:
+
+| `m_pad/m_puck` | 0.26 | 2.56 (canonical) | 4.46 (58 g / 13 g) | 30.7 | → ∞ |
+|---|---|---|---|---|---|
+| `v_puck_out / v` | 0.43 | **1.504** | 1.709 | 2.026 | 2.091 |
+
+**Do not port the 58 g / 13 g ratio into the config.** Two reasons:
+
+- `paddle_density` is the **PID plant inertia**, not the paddle head's weight — the paddle
+  is a dynamic body driven by `ApplyForceToCenter`, so `a = F/m`, and 3000 was fitted
+  *jointly with* `pid_kp` / `pid_kd` against real teleop trajectories
+  ([teleop-system-id](../real-world/teleop-system-id.md)). On the real robot the
+  collision-relevant inertia is the UR5's reflected inertia at the tool (kilograms), not
+  the 58 g plastic head — a near-rigid paddle is the `m_pad/m_puck → ∞` column above, 39 %
+  above what the sim delivers today.
+- `puck_restitution = 1.09145` has **never been fitted** against real paddle collisions
+  ([sysid-pipeline](../real-world/sysid-pipeline.md) lists paddle–puck restitution as
+  not yet identified). For head-on hits only the product `(1+e) · m_pad/(m_pad+m_puck)` is
+  observable, so `e` and the mass ratio are degenerate — the superelastic `e > 1` may be
+  absorbing a paddle that recoils far more than the real arm does (currently 1.0 → 0.41 m/s
+  on a head-on hit, versus essentially no recoil on hardware).
+
+One further consumer, inert under the canonical config: `max_puck_vel` is derived as
+`(m_pad/m_puck) · max_paddle_vel` (`airhockey_box2d.py:704-710`) and used only as an
+observation-space bound for the velocity-carrying obs types. The active `history` obs type
+carries positions and flags only, so it never sees it.
+
+The clean fix is the missing sysid stage: fit `(e, mass ratio)` jointly on the real
+paddle-collision segments that `sysid/common/segment_trajectories.py` already harvests.
+Full measurements: [`2026-09-10_02-49_paddle-puck-mass-ratio.md`](../../../scratch/experiments/2026-09-10_02-49_paddle-puck-mass-ratio.md).
 
 ### Paddle force model
 

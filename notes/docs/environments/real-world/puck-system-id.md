@@ -1,5 +1,12 @@
 # Puck System Identification
 
+> **Archived (2026-09-18).** The data, outputs and scripts this page describes were moved out of the repo to
+> `/data2/air_hockey/sysid_legacy_20260918/` (same sub-folder names; the tracked `scripts/sysid/grid_search_*.py`,
+> `render_best_config_all.py`, `_sysid_paths.py` are in `legacy_scripts_from_scripts_sysid/` there and in git history
+> before 2026-09-18). The live sysid tree is `sysid/` — see [`sysid/README.md`](../../../../sysid/README.md).
+
+> **Superseded (2026-09-10)** by the train/val pipeline section [`sysid/puck-free-flight.md`](sysid/puck-free-flight.md) (542 auto-harvested clips, recordings held out, percentile-validated grid: g = −0.73, γ = 0.11). Kept for the history of the 10-clip in-sample fit and the raw-frame sign convention.
+
 Fitting the Box2D simulator's puck physics (gravity, damping) to real-world puck trajectory data.
 
 ## Data pipeline

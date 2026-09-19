@@ -1,0 +1,73 @@
+# RMA baseline, phase 1: base policy pi(x_t, a_{t-1}, mu(e_t)) + privileged encoder mu.
+# Trainer: scripts/rma/train_base_policy.py
+#   .venv/bin/python -m scripts.rma.train_base_policy --args-file configs/rma/rma_juggle_dr_phase1.yaml
+#
+# Recipe = the canonical juggle DR recipe (configs/td3/tasks/juggle_dr.yaml, i.e.
+# td3_recommended_top50_hist2 + DR eval, 2M steps, q_weight_decay 0, single flat
+# 1M replay buffer) on the canonical +-25 % physics-randomized sim
+# (configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25.yaml, hist_len 2 —
+# the same sim config / recipe as the on-disk DR baseline
+# runs/td3/tasks_20260904/dr/juggle_dr, so the comparison is like-for-like).
+# The only additions are the two `rma_*` keys at the bottom.
+total_timesteps: 2000000
+num_envs: 1
+buffer_size: 100000
+tau: 0.005
+batch_size: 512
+learning_starts: 20000
+policy_lr: 0.0003
+q_lr: 0.001
+q_weight_decay: 0.0
+q_frequency: 1
+q_updates: 25
+policy_frequency: 1
+target_network_frequency: 10
+actor_updates_per_iteration: 6
+exploration_noise: 0.1
+policy_noise: 0.2
+noise_clip: 0.5
+per_enabled: true
+per_alpha: 0.6
+per_beta_start: 0.4
+per_beta_end: 1.0
+per_beta_anneal_steps: 200000
+per_eps: 1.0e-06
+success_buffer_size: 1000000
+failure_buffer_size: 70000
+success_top_fraction: 0.2
+recent_episode_window_size: 500
+critic_success_sample_fraction: 0.3
+critic_failure_sample_fraction: 0.7
+single_replay_buffer: true
+exploration_primitive_chance: 0.05
+exploration_primitive_chance_start: 0.15
+exploration_primitive_chance_pre_learning_starts: null
+exploration_primitive_chance_anneal_steps: 200000
+exploration_primitive_steps: 5
+exploration_primitive_weight_stand_still: 0.2
+exploration_primitive_weight_same_direction: 3.0
+exploration_primitive_weight_anneal_stand_still: 0.2
+exploration_primitive_weight_anneal_same_direction: 3.0
+exploration_direction_y_component_weight: 2
+config: configs/new_juggle/zeroshot_ablations/sim_paramrand_pm25.yaml
+args_file: null
+model_path: null
+log_parent_dir: null
+run_name: rma_juggle_dr_phase1
+device: cuda:0
+seed: 0
+h_transform_eps: 0.001
+agent_hidden_layer_size: 64
+agent_num_hidden_layers: 2
+q_hidden_layer_size: 64
+q_num_hidden_layers: 2
+use_last_action_in_policy_state: true
+checkpoint_interval: 25000
+# Fixed DR eval-env set (same seed as the canonical DR runs -> same 5 physics overrides).
+eval_param_seed: 12345
+eval_n_envs: 5
+eval_eps_per_env: 4
+
+# --- RMA ---
+rma_latent_dim: 8            # z_t = mu(e_t), paper: 8
+rma_encoder_hidden: [256, 128]  # mu hidden widths, paper: 256, 128

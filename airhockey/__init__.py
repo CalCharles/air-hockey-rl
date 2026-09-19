@@ -38,6 +38,10 @@ from airhockey.airhockey_tasks.puck_goal_position_dynamic_negative_regions impor
 from airhockey.airhockey_tasks.puck_goal_position_obstacles import (
     AirHockeyPuckGoalPositionObstaclesEnv,
 )
+from airhockey.airhockey_tasks.puck_goal_sparse import (
+    AirHockeyPuckGoalPositionSparseEnv,
+    AirHockeyPuckGoalPositionSpeedSparseEnv,
+)
 
 
 ASSETS_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../assets"))
@@ -98,6 +102,10 @@ def AirHockeyEnv(cfg):
         task_env = AirHockeyPuckGoalPositionEnv
     elif task == "puck_goal_position_velocity":
         task_env = AirHockeyPuckGoalPositionVelocityEnv
+    elif task == "puck_goal_position_sparse":
+        task_env = AirHockeyPuckGoalPositionSparseEnv
+    elif task == "puck_goal_position_speed_sparse":
+        task_env = AirHockeyPuckGoalPositionSpeedSparseEnv
     elif task == "paddle_reach_position":
         task_env = AirHockeyPaddleReachPositionEnv
     elif task == "paddle_reach_position_velocity":

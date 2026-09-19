@@ -2,7 +2,7 @@
 
 Each task gets the horizon its reward needs: reach is a short point-to-point
 move, the velocity / touch tasks need room to line a stroke up, and juggling
-needs a long enough episode to chain several hits.
+and the two puck-goal tasks need a long enough episode to chain several hits.
 """
 
 import unittest
@@ -22,6 +22,8 @@ EXPECTED_MAX_TIMESTEPS = {
     "puck_vel": 100,
     "touch": 100,
     "juggle": 250,
+    "puck_goal": 250,
+    "puck_goal_vel": 250,
 }
 
 

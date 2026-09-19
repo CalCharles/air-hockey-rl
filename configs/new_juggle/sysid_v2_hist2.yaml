@@ -1,0 +1,77 @@
+# Sysid v2 (2026-09-19) — the compiled result of the four fits in sysid/ (start at sysid/README.md).
+# This is THE sim config to work off from now on; the task configs under
+# configs/new_juggle/tasks_v2/ are generated from it by scripts/td3/extras/make_sysid_v2_configs.py.
+#
+#   parameter               v1 (sysid_best_params_hist2)   v2        source
+#   gravity                 -0.661                         -0.73     sysid/puck_dynamics  (mouse_dataset, 542 free-flight clips, held-out 1.82 -> 1.51 cm / 0.5 s)
+#   puck_damping             0.178                          0.11     sysid/puck_dynamics
+#   side_wall_restitution    0.99                           0.90     sysid/wall_collision (val exit-speed error 20 % -> 16 %)
+#   end_wall_restitution     0.70                           0.55     sysid/wall_collision (weakly identified: 17 / 6 bounces, val 51 % -> 45 %)
+#   puck_restitution         1.09145                        1.2626   sysid/paddle_puck_collision: head-on gain (1+e)*r/(r+1) = 1.627 at the
+#                                                                    canonical mass ratio r = 2.56 (masses unchanged; e and r are degenerate)
+#   paddle_restitution       1.0                            0.0      the paddle-puck listener uses max(puck_restitution, paddle_restitution);
+#                                                                    0 makes puck_restitution the single knob (also under DR)
+#   pid_kp / pid_ki / pid_kd 9000 / 0 / 50                  7531.5 / 1928.7 / 0
+#                                                                    sysid/paddle_pid, CMA-ES on the pooled paddle_motion (81 trials) +
+#                                                                    reversal_jerk (63 trials) sessions: val per-step error 23.2 -> 17.4 mm
+#   paddle_density           3000                           3000     unchanged (masses are not identified; the PID plant inertia)
+#   hist_len                 2                              2        the real rollout config (configs/real_configs/rollout_td3_config_hist2.yaml)
+#
+# Fit runs: sysid/puck_dynamics/results/mouse_dataset, sysid/wall_collision/results/mouse_dataset,
+# sysid/paddle_puck_collision/results/cmaes_20260910_puck_collision, sysid/paddle_pid/results/cmaes_20260919_paddle_motion_and_jerk.
+# Note: notes/scratch/experiments/2026-09-19_01-50_sysid-v2-compiled-params-policy-campaign.md
+
+air_hockey:
+  max_timesteps: 250
+  num_blocks: 0
+  num_obstacles: 0
+  num_paddles: 1
+  num_pucks: 1
+  num_targets: 0
+  obs_type: history
+  seed: 0
+
+  simulator: box2d
+  simulator_params:
+    absorb_target: false
+    enable_puck_delay_interpolation: true
+    block_density: 1000
+    block_width: 0.0254
+    length: 1.9304
+    max_force_timestep: 10000
+    paddle_radius: 0.0508
+    force_scaling: 0.99
+    paddle_damping: 17
+    paddle_density: 3000
+    gravity: -0.73
+    puck_damping: 0.11
+    puck_density: 3000
+    puck_restitution: 1.2626
+    paddle_restitution: 0.0
+    side_wall_restitution: 0.90
+    end_wall_restitution: 0.55
+    puck_radius: 0.03175
+    render_size: 360
+    seed: 0
+    width: 0.8636
+    pid_kp: 7531.5
+    pid_ki: 1928.7
+    pid_kd: 0.0
+
+    hist_len: 2
+
+    puck_noise: true
+    puck_noise_std: 0.01
+    enable_random_occlusions: true
+    random_occlusion_rate: 0.05
+    enable_action_delay: false
+    enable_observation_delay: true
+    delay_seconds: 0.025
+
+  task: puck_juggle_upper_half_reward
+  terminate_on_enemy_goal: true
+  terminate_on_out_of_bounds: false
+  terminate_on_puck_hit_bottom: true
+  terminate_on_puck_hit_paddle: false
+  terminate_on_puck_pass_paddle: true
+  terminate_on_puck_stop: false

@@ -1,0 +1,1215 @@
+{
+  "n_eps": 100,
+  "success_rate": 0.4,
+  "mean_return": 4.0,
+  "mean_length": 116.65,
+  "mean_contacts": 4.76,
+  "end_reasons": {
+    "puck_passed_paddle": 28,
+    "puck_hit_bottom": 25,
+    "goal_reached": 40,
+    "max_timesteps_exceeded": 7
+  },
+  "episodes": [
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 57,
+      "contacts": 3,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.24124499977754138,
+        0.19712000226104306,
+        1.9235502989492492
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 148,
+      "contacts": 6,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.7472357154608895,
+        0.24224733528865713,
+        0.977853589745366
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 225,
+      "contacts": 13,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.5723773073071384,
+        0.08173667173828321,
+        1.6918815966281169
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 130,
+      "contacts": 5,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.1278060535340732,
+        -0.26999843458959455,
+        0.8312115946328423
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 90,
+      "contacts": 5,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.35229455488291256,
+        -0.20616810555472517,
+        1.238268812466913
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 24,
+      "contacts": 2,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.3346361815402628,
+        0.19340552922902227,
+        2.5728206899614228
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 105,
+      "contacts": 3,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.7120406915468594,
+        -0.25225002302343313,
+        2.0352768935579872
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 220,
+      "contacts": 12,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.41885859162433836,
+        0.07376789558195891,
+        1.8646686862484747
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 77,
+      "contacts": 1,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.2005350905790655,
+        -0.10251453960004947,
+        1.563665821790294
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 182,
+      "contacts": 5,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.6110198943587778,
+        0.07430033507644455,
+        2.149689976869993
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 26,
+      "contacts": 2,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.2408403551560099,
+        -0.15320490567018322,
+        2.5067551144786457
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 93,
+      "contacts": 3,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.18770613845068548,
+        -0.10840477876918787,
+        2.536532085526019
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 27,
+      "contacts": 2,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.817432250347345,
+        -0.13741038603758104,
+        1.918351947119702
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 49,
+      "contacts": 2,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.11540734069322957,
+        -0.26329673270870807,
+        0.959108690716335
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 252,
+      "contacts": 11,
+      "end_reason": "max_timesteps_exceeded",
+      "goal": [
+        -0.632157793955149,
+        0.14688128124915134,
+        1.433212853794994
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 35,
+      "contacts": 2,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.4122073553657671,
+        -0.21275499399055697,
+        2.2294702232471946
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 42,
+      "contacts": 4,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.21011273599445993,
+        -0.17066411172900503,
+        0.6279841420678807
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 252,
+      "contacts": 7,
+      "end_reason": "max_timesteps_exceeded",
+      "goal": [
+        -0.2011322640918594,
+        0.13991126523032668,
+        0.9361933699052188
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 34,
+      "contacts": 1,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.4797806365755675,
+        0.13185640397570997,
+        1.0808871482459854
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 141,
+      "contacts": 7,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.5314185687855071,
+        -0.16204543595167242,
+        1.988419379523665
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 208,
+      "contacts": 12,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.162138190896072,
+        -0.27914007554484965,
+        0.924610575105629
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 252,
+      "contacts": 12,
+      "end_reason": "max_timesteps_exceeded",
+      "goal": [
+        -0.37709221442337837,
+        -0.1651238402971073,
+        0.5907128402525135
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 119,
+      "contacts": 5,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.15287549013166477,
+        0.20158444442971699,
+        0.7029294200972394
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 61,
+      "contacts": 1,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.7947618882594136,
+        0.10656370997327741,
+        2.1483794620920995
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 67,
+      "contacts": 1,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.42182954694100866,
+        0.08038794643212968,
+        1.5133823410293776
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 79,
+      "contacts": 3,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.7195817038278155,
+        -0.21497879209848308,
+        2.343776113860786
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 140,
+      "contacts": 6,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.5169509103501406,
+        0.22155216766101873,
+        1.4535835860618045
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 21,
+      "contacts": 1,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.23602525467463228,
+        -0.22354766980877935,
+        1.7175703310886317
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 252,
+      "contacts": 9,
+      "end_reason": "max_timesteps_exceeded",
+      "goal": [
+        -0.6000564182950837,
+        0.14988588942484213,
+        1.6174650595396263
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 50,
+      "contacts": 2,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.18462328208783224,
+        -0.10577624857770668,
+        2.3684648266775
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 97,
+      "contacts": 5,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.37188366801948775,
+        -0.020936358325613323,
+        1.9405341902434303
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 78,
+      "contacts": 3,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.6586512817704817,
+        0.250492101534385,
+        0.43735536251629736
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 132,
+      "contacts": 6,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.4319958729272756,
+        -0.02135296266487497,
+        1.1630648331030315
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 184,
+      "contacts": 7,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.10430424741998087,
+        0.047843964317969404,
+        0.402578347344941
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 123,
+      "contacts": 4,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.6565764145951365,
+        -0.09674467347624573,
+        1.869553872445363
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 31,
+      "contacts": 1,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.48483933390280765,
+        -0.13104433318210904,
+        0.7540930052024459
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 19,
+      "contacts": 1,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.8130788837004096,
+        -0.1616782606442876,
+        2.2555390665903747
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 51,
+      "contacts": 1,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.5931007825779173,
+        -0.13055936989848177,
+        1.848936657902689
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 144,
+      "contacts": 3,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.1788621694068149,
+        -0.268556302692401,
+        0.8017157817414581
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 173,
+      "contacts": 5,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.11724260627163893,
+        -0.2684267024813423,
+        1.5868635934857975
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 85,
+      "contacts": 5,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.5829535019965064,
+        -0.23139308084282562,
+        2.067418383037784
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 127,
+      "contacts": 4,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.2423097327391952,
+        0.27820002785195436,
+        2.1083075586898086
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 146,
+      "contacts": 8,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.7515095316867536,
+        -0.2040331428112143,
+        1.0857959061168452
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 193,
+      "contacts": 4,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.15467334669141314,
+        -0.16337374683959768,
+        1.8802427880784522
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 13,
+      "contacts": 2,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.8057959957634049,
+        0.13189214123280119,
+        2.083508354736383
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 164,
+      "contacts": 3,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.15816918694726562,
+        0.019667325220456652,
+        2.2052892565990643
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 53,
+      "contacts": 5,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.20332130591285807,
+        -0.05756680592084522,
+        2.454936652708861
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 239,
+      "contacts": 6,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.38622398918828704,
+        -0.005497066152528277,
+        2.234373703526403
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 103,
+      "contacts": 5,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.3472148340791374,
+        0.20996269164002151,
+        0.7552173812678452
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 72,
+      "contacts": 3,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.7295483034659168,
+        -0.22348107246576832,
+        2.0255926091840335
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 182,
+      "contacts": 5,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.3131190883879731,
+        0.16678686745757434,
+        0.41184960360406686
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 56,
+      "contacts": 3,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.49599638969483406,
+        -0.2753027956233988,
+        2.107341160391493
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 27,
+      "contacts": 1,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.36777048349372066,
+        -0.20114707586951905,
+        2.5424099199582715
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 203,
+      "contacts": 6,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.20201083500842598,
+        0.2691806957731667,
+        1.4599065115140557
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 148,
+      "contacts": 5,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.7345427160447412,
+        0.006385494562908545,
+        1.0543102508419302
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 86,
+      "contacts": 3,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.6345526821632967,
+        0.23868864949711263,
+        2.250270011361257
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 252,
+      "contacts": 9,
+      "end_reason": "max_timesteps_exceeded",
+      "goal": [
+        -0.7312652106378448,
+        -0.18441530455697813,
+        0.7463729336061481
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 183,
+      "contacts": 11,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.8037879600126376,
+        -0.210925003784878,
+        0.4333093580133285
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 46,
+      "contacts": 2,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.21029635746931968,
+        -0.29368782593489623,
+        1.981709031255266
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 110,
+      "contacts": 4,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.8110129438179893,
+        -0.10022948033279006,
+        2.0858400545886533
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 80,
+      "contacts": 2,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.44245576978087775,
+        -0.06279272868152333,
+        1.4134084355504313
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 185,
+      "contacts": 4,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.7175675996629727,
+        -0.14624175223841732,
+        0.9527179684092214
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 208,
+      "contacts": 8,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.25243522000631524,
+        0.1775447110214281,
+        0.6651502900665666
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 197,
+      "contacts": 9,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.8296451813345573,
+        0.035993527133138636,
+        2.0929469876193694
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 53,
+      "contacts": 1,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.6637227284665789,
+        0.13682145717465916,
+        2.317768852591939
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 75,
+      "contacts": 5,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.7107964074293036,
+        -0.05608794994748195,
+        0.9447660390294572
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 83,
+      "contacts": 9,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.4560811091239145,
+        -0.24823307186642973,
+        0.6871622373648836
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 200,
+      "contacts": 7,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.3338531606804457,
+        -0.004800394082944727,
+        1.5991050164907583
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 243,
+      "contacts": 13,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.1775569441250119,
+        -0.26140756078418403,
+        0.5072580591041517
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 49,
+      "contacts": 1,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.4178642596969125,
+        -0.022084845976960976,
+        1.5912871669691069
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 45,
+      "contacts": 2,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.21076435246492253,
+        -0.2500859007547445,
+        1.7667479292035149
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 193,
+      "contacts": 6,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.6216852264222774,
+        0.2708433685104953,
+        1.0770936963014741
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 41,
+      "contacts": 2,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.7968014687239428,
+        -0.08825994260933348,
+        1.6277184368984576
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 31,
+      "contacts": 1,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.37703298604709,
+        -0.17904067421189607,
+        1.1847818405676298
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 101,
+      "contacts": 4,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.2677870485473441,
+        0.0737381935541127,
+        1.1437758824664581
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 119,
+      "contacts": 3,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.15202481405820478,
+        -0.20312901942915482,
+        2.5903936069622215
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 122,
+      "contacts": 6,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.47961745670299594,
+        -0.023770080972834437,
+        2.524971791822268
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 230,
+      "contacts": 5,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.10851948753399303,
+        0.273939035966199,
+        0.8977703323925521
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 94,
+      "contacts": 4,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.12092566624232509,
+        -0.10301158793627435,
+        0.3424509761101801
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 159,
+      "contacts": 6,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.1312626092959581,
+        -0.06712366117016007,
+        0.5138271575970372
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 252,
+      "contacts": 10,
+      "end_reason": "max_timesteps_exceeded",
+      "goal": [
+        -0.11187523513680883,
+        0.2749882696313014,
+        0.3498888243985204
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 70,
+      "contacts": 2,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.30205301441024546,
+        -0.1588761745129288,
+        0.7889037997510503
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 94,
+      "contacts": 8,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.4888312128571001,
+        -0.16040897576476804,
+        1.0703734766791968
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 87,
+      "contacts": 3,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.26447054973470707,
+        0.2904002255964003,
+        2.537499086034805
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 58,
+      "contacts": 3,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.5127020379785363,
+        0.22059218799184857,
+        0.7972935163733242
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 252,
+      "contacts": 8,
+      "end_reason": "max_timesteps_exceeded",
+      "goal": [
+        -0.4414480572429048,
+        0.19120040524434892,
+        0.48269946653656237
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 20,
+      "contacts": 2,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.495707194850429,
+        0.03196340241974513,
+        1.8209520381188573
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 75,
+      "contacts": 2,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.5221746513356991,
+        -0.09793583379897478,
+        2.2196434557553726
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 185,
+      "contacts": 9,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.585666407208957,
+        -0.2608962229168422,
+        1.0011016324824695
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 61,
+      "contacts": 3,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.562246431022119,
+        -0.2913520421315217,
+        1.2753924726938135
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 186,
+      "contacts": 13,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.45936974297906064,
+        -0.08543402626646893,
+        0.8263171132760629
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 47,
+      "contacts": 3,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.15768794846477047,
+        0.24760396290203363,
+        0.9166333241975966
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 60,
+      "contacts": 2,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.18552581443307814,
+        0.2604450027431574,
+        0.7167150374826846
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 73,
+      "contacts": 2,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.16633366594709356,
+        -0.27831108077668526,
+        1.854107129819903
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 97,
+      "contacts": 3,
+      "end_reason": "puck_passed_paddle",
+      "goal": [
+        -0.3012950952799841,
+        0.24334700582814575,
+        1.8844246564123301
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 187,
+      "contacts": 6,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.14886408328944012,
+        0.2673788624635728,
+        1.946622282042781
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 106,
+      "contacts": 5,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.2774920877671043,
+        -0.28930782782698056,
+        1.3429646752699935
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 69,
+      "contacts": 2,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.4275591532602804,
+        -0.1275821916740997,
+        1.6276092528434607
+      ]
+    },
+    {
+      "return": 0.0,
+      "success": 0,
+      "length": 51,
+      "contacts": 3,
+      "end_reason": "puck_hit_bottom",
+      "goal": [
+        -0.122257713156666,
+        -0.19179359142221114,
+        0.4884678733675915
+      ]
+    },
+    {
+      "return": 10.0,
+      "success": 1,
+      "length": 149,
+      "contacts": 11,
+      "end_reason": "goal_reached",
+      "goal": [
+        -0.2578314161952075,
+        -0.05269518067491959,
+        1.0152554492481833
+      ]
+    }
+  ]
+}
