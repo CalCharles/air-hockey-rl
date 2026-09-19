@@ -13,6 +13,7 @@ import numpy as np
 import yaml
 
 from airhockey import AirHockeyEnv
+from airhockey.airhockey_rewards.airhockey_simple_task_rewards import AirHockeyPuckVelReward
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -20,7 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 def _make_env(**sim_overrides):
     config_path = (
-        REPO_ROOT / "configs" / "new_juggle" / "throughput_bench" / "sim_nodr_puck_vel.yaml"
+        REPO_ROOT / "configs" / "new_juggle" / "tasks" / "sim_sysid_puck_vel.yaml"
     )
     with config_path.open("r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)["air_hockey"]
@@ -52,7 +53,7 @@ class PuckVelocityDisplacementRewardTests(unittest.TestCase):
                         # Nothing to difference against yet.
                         expected = 0.0
                     else:
-                        expected = max(prev_x - puck_x, 0.0)
+                        expected = AirHockeyPuckVelReward.DISPLACEMENT_SCALE * max(prev_x - puck_x, 0.0)
                     self.assertAlmostEqual(reward, expected, places=9)
                     prev_x = puck_x
                     step += 1
@@ -94,7 +95,7 @@ class PuckVelocityDisplacementRewardTests(unittest.TestCase):
                     "paddles": env.current_state["paddles"],
                 }
             )
-            self.assertAlmostEqual(reward, 0.07, places=9)
+            self.assertAlmostEqual(reward, AirHockeyPuckVelReward.DISPLACEMENT_SCALE * 0.07, places=9)
         finally:
             env.close()
 

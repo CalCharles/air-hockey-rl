@@ -33,7 +33,7 @@ High-level map of the repository. Paths are relative to the repo root.
 | [`scripts/real/`](../../../scripts/real/) | Real-robot rollout helpers (calibration, teleop, ArUco, homography, frozen-policy rollout, `run_policy.py`, `sgcrl_policy.py`). |
 | [`scripts/visualization/`](../../../scripts/visualization/) | Trajectory rendering, teleop-segment visualization, real-trajectory-in-sim replay (`replay_real_in_sim.py`). |
 | [`scripts/analysis/`](../../../scripts/analysis/) | Standalone analysis tools (e.g., occlusion-pattern analysis). |
-| [`scripts/sysid/`](../../../scripts/sysid/) | Paddle / puck system-ID grid searches (PID, density, Ki sweep, fine/windowed variants). |
+| [`sysid/`](../../../sysid/) | System identification, one folder per fit — `puck_dynamics/`, `wall_collision/`, `paddle_pid/`, `paddle_puck_collision/` — each with `code/` (tracked), `data/` and `results/` (gitignored); `common/` holds the shared library + the recordings → sections tools and the puck + wall orchestrator. Start at [`sysid/README.md`](../../../sysid/README.md). The 2026-05 grid searches that produced the canonical values were archived (2026-09-18) to `/data2/air_hockey/sysid_legacy_20260918/`. |
 | [`scripts/utils.py`](../../../scripts/utils.py) | Shared utilities (e.g., `save_tensorboard_plots`). |
 
 ## Configs
@@ -73,4 +73,4 @@ All YAMLs at the repo root under `configs/`:
 
 ## Run artifacts (gitignored)
 
-These directories live on disk for local runs but are not tracked: `runs/`, `results/`, `trained_models/`, `eval_gifs/`, `real_runs/`, `shared/`, `sysid/`, `dataset_management/`, `tests/`, `wandb/`, `gifs/`, `plots/`, `datasets/`.
+These directories live on disk for local runs but are not tracked: `runs/`, `results/`, `trained_models/`, `eval_gifs/`, `real_runs/`, `shared/`, `sysid/*/data/`, `sysid/*/results/`, `sysid/common/runs/`, `dataset_management/`, `tests/`, `wandb/`, `gifs/`, `plots/`, `datasets/`.

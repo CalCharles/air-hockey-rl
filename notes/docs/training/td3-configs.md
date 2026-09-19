@@ -30,7 +30,9 @@ Key choices and why:
 | `actor_updates_per_iteration` | **6** | Holds actor:Q ratio ≈ 0.24, which clearly beats 0.07 / 0.48 / 2.10 on peak return (156 vs 129–141). |
 | `target_network_frequency` | 10 | Standard. |
 | `total_timesteps` | **1_000_000** | Peaks typically land between 500k–700k. |
-| `success_top_fraction` | **0.5** | Median-split PER mix; from-scratch ablation in [`residual-rl-recipe.md`](residual-rl-recipe.md). |
+| `q_weight_decay` | **0.0** | 2026-09-04: the critic's Adam L2 (was 1e-4, coupled) flattened Q on sparse-reward tasks (reach / reach_vel / puck_vel) until the actor saturated; 0 is required for `paddle_reach_position_velocity` and harmless on juggle. See [`notes/scratch/experiments/2026-09-04_01-05_sparse-task-collapse-diagnosis.md`](../../scratch/experiments/2026-09-04_01-05_sparse-task-collapse-diagnosis.md). |
+| `single_replay_buffer` | **true** | 2026-09-04: one flat 1M-transition replay buffer (`success_buffer_size`). The success/failure split's threshold snaps between 0 and 1 on binary returns, freezes the failure buffer and feeds 70 % stale data; `success_top_fraction` & co. are inert while this is true. |
+| `success_top_fraction` | 0.5 (inert) | Median-split PER mix, only used when `single_replay_buffer: false`; from-scratch ablation in [`residual-rl-recipe.md`](residual-rl-recipe.md). |
 | `exploration_primitive_chance_pre_learning_starts` | `null` | Bootstrap-forcing (`=1.0`) was actively harmful; leaving null uses the annealing schedule. |
 
 Launch:

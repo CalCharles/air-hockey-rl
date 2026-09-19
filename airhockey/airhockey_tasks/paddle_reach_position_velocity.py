@@ -5,6 +5,10 @@ from .abstract_airhockey_goal_task import AirHockeyGoalEnv
 from airhockey.airhockey_rewards import AirHockeyPaddleReachPositionVelocityReward
 
 class AirHockeyPaddleReachPositionVelocityEnv(AirHockeyGoalEnv):
+    # Start the paddle anywhere it can actually reach, so the task is not
+    # always the same stroke from the same pose.
+    random_paddle_spawn_default = True
+
     # Distance the paddle needs to accelerate to (or decelerate from) the top
     # speed of 2 m/s: measured at ~0.12 m along x and ~0.10 m along y in Box2D
     # with the sysid PID.  Goals are kept at least this far from the workspace

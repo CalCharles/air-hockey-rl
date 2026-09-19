@@ -1,5 +1,12 @@
 # Wall-Collision System Identification
 
+> **Archived (2026-09-18).** The data, outputs and scripts this page describes were moved out of the repo to
+> `/data2/air_hockey/sysid_legacy_20260918/` (same sub-folder names; the tracked `scripts/sysid/grid_search_*.py`,
+> `render_best_config_all.py`, `_sysid_paths.py` are in `legacy_scripts_from_scripts_sysid/` there and in git history
+> before 2026-09-18). The live sysid tree is `sysid/` — see [`sysid/README.md`](../../../../sysid/README.md).
+
+> **Superseded (2026-09-10)** by the train/val pipeline section [`sysid/puck-wall-collision.md`](sysid/puck-wall-collision.md) (110 auto-harvested side-wall bounces, Box2D replay, percentile validation: `side_wall_restitution` ≈ 0.90, normal-speed retention 0.90–0.95, not ~0.65). Kept for the history of the hand-curated fit.
+
 Fitting Box2D's `side_wall_restitution` against real-world side-wall puck bounces (the y± table boundaries in the table-frame convention — despite the parameter name, `side_wall_restitution` is applied to the `table_x_min/max` walls in `airhockey_box2d.py`, which map to the y± walls the puck actually hits).
 
 ## Motivation

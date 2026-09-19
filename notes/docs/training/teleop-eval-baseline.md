@@ -30,7 +30,7 @@ overriding args.config …` line on launch confirming it.
 | Surface | Source |
 |---|---|
 | Task / termination | `configs/real_configs/rollout_td3_config.yaml` |
-| Autonomous reset between episodes | `ResetPolicyFSM` (same as `async_td3_real_eval.py`) |
+| Autonomous reset between episodes | `ResetPolicyFSM` (same as `async_td3_real_eval.py` on puck tasks; the policy eval switches to `PaddleRepositionFSM` for the puck-less reach tasks — see [`real-world-eval-pipeline.md`](real-world-eval-pipeline.md#reset-strategies)) |
 | Per-step HDF5 row format | `_build_split_episode_row` |
 | Juggle counter, eval aggregate, JSON output | `helper/juggle_counter.py`, `helper/real_eval_stats.py` |
 

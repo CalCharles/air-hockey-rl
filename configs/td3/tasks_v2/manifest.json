@@ -1,0 +1,570 @@
+{
+ "v2_base": "configs/new_juggle/sysid_v2_hist2.yaml",
+ "v2_params": {
+  "paddle_density": 3000,
+  "puck_damping": 0.11,
+  "gravity": -0.73,
+  "side_wall_restitution": 0.9,
+  "end_wall_restitution": 0.55,
+  "puck_restitution": 1.2626,
+  "pid_kp": 7531.5,
+  "pid_ki": 1928.7,
+  "pid_kd": 0.0,
+  "paddle_restitution": 0.0,
+  "puck_density": 3000,
+  "hist_len": 2
+ },
+ "dr_fraction": 0.25,
+ "dr_3p": [
+  "paddle_density",
+  "puck_damping",
+  "gravity"
+ ],
+ "dr_full": [
+  "paddle_density",
+  "puck_damping",
+  "gravity",
+  "side_wall_restitution",
+  "end_wall_restitution",
+  "puck_restitution",
+  "pid_kp",
+  "pid_ki"
+ ],
+ "dr_ranges_3p": {
+  "paddle_density": [
+   2250.0,
+   3750.0
+  ],
+  "puck_damping": [
+   0.0825,
+   0.1375
+  ],
+  "gravity": [
+   -0.9125,
+   -0.5475
+  ]
+ },
+ "dr_ranges_full": {
+  "paddle_density": [
+   2250.0,
+   3750.0
+  ],
+  "puck_damping": [
+   0.0825,
+   0.1375
+  ],
+  "gravity": [
+   -0.9125,
+   -0.5475
+  ],
+  "side_wall_restitution": [
+   0.675,
+   1.0
+  ],
+  "end_wall_restitution": [
+   0.4125,
+   0.6875
+  ],
+  "puck_restitution": [
+   0.94695,
+   1.57825
+  ],
+  "pid_kp": [
+   5648.625,
+   9414.375
+  ],
+  "pid_ki": [
+   1446.525,
+   2410.875
+  ]
+ },
+ "low25_params": [
+  "paddle_density",
+  "puck_damping",
+  "gravity",
+  "side_wall_restitution",
+  "end_wall_restitution",
+  "puck_restitution",
+  "pid_kp",
+  "pid_ki"
+ ],
+ "low_fractions": {
+  "low05": 0.05,
+  "low10": 0.1,
+  "low25": 0.25
+ },
+ "tasks": [
+  "juggle",
+  "puck_vel",
+  "puck_goal",
+  "puck_goal_vel"
+ ],
+ "methods": [
+  "sysid",
+  "low05",
+  "low10",
+  "low25",
+  "dr5_3p",
+  "dr5_full",
+  "drlong_3p",
+  "drlong_full",
+  "rma_3p",
+  "rma_full"
+ ],
+ "method_desc": {
+  "sysid": "sysid v2 physics, no randomization, 1M steps",
+  "low05": "sysid v2 physics with every identified parameter 5 % lower (wrong-sysid baseline), 1M steps",
+  "low10": "sysid v2 physics with every identified parameter 10 % lower (wrong-sysid baseline), 1M steps",
+  "low25": "sysid v2 physics with every identified parameter 25 % lower (wrong-sysid baseline), 1M steps",
+  "dr5_3p": "+-25 % per-reset DR on paddle_density / puck_damping / gravity, 5-frame history TD3, 2M steps",
+  "dr5_full": "+-25 % per-reset DR on the full identified set (3 canonical + wall / paddle-puck restitution + pid_kp / pid_ki), 5-frame history TD3, 2M steps",
+  "drlong_3p": "+-25 % DR on the 3 canonical parameters, long-history TD3 (50-step window, no privileged input), 2M steps",
+  "drlong_full": "+-25 % DR on the full identified set, long-history TD3 (50-step window, no privileged input), 2M steps",
+  "rma_3p": "+-25 % DR on the 3 canonical parameters, RMA phase 1 (privileged encoder) 2M + phase 2 adaptation module 400k",
+  "rma_full": "+-25 % DR on the full identified set, RMA phase 1 (privileged encoder) 2M + phase 2 adaptation module 400k"
+ },
+ "sim_configs": {
+  "juggle": {
+   "sysid": "configs/new_juggle/tasks_v2/sim_sysid_juggle.yaml",
+   "low05": "configs/new_juggle/tasks_v2/sim_low05_juggle.yaml",
+   "low10": "configs/new_juggle/tasks_v2/sim_low10_juggle.yaml",
+   "low25": "configs/new_juggle/tasks_v2/sim_low25_juggle.yaml",
+   "dr3": "configs/new_juggle/tasks_v2/sim_dr3_juggle.yaml",
+   "drfull": "configs/new_juggle/tasks_v2/sim_drfull_juggle.yaml"
+  },
+  "puck_vel": {
+   "sysid": "configs/new_juggle/tasks_v2/sim_sysid_puck_vel.yaml",
+   "low05": "configs/new_juggle/tasks_v2/sim_low05_puck_vel.yaml",
+   "low10": "configs/new_juggle/tasks_v2/sim_low10_puck_vel.yaml",
+   "low25": "configs/new_juggle/tasks_v2/sim_low25_puck_vel.yaml",
+   "dr3": "configs/new_juggle/tasks_v2/sim_dr3_puck_vel.yaml",
+   "drfull": "configs/new_juggle/tasks_v2/sim_drfull_puck_vel.yaml"
+  },
+  "puck_goal": {
+   "sysid": "configs/new_juggle/tasks_v2/sim_sysid_puck_goal.yaml",
+   "low05": "configs/new_juggle/tasks_v2/sim_low05_puck_goal.yaml",
+   "low10": "configs/new_juggle/tasks_v2/sim_low10_puck_goal.yaml",
+   "low25": "configs/new_juggle/tasks_v2/sim_low25_puck_goal.yaml",
+   "dr3": "configs/new_juggle/tasks_v2/sim_dr3_puck_goal.yaml",
+   "drfull": "configs/new_juggle/tasks_v2/sim_drfull_puck_goal.yaml"
+  },
+  "puck_goal_vel": {
+   "sysid": "configs/new_juggle/tasks_v2/sim_sysid_puck_goal_vel.yaml",
+   "low05": "configs/new_juggle/tasks_v2/sim_low05_puck_goal_vel.yaml",
+   "low10": "configs/new_juggle/tasks_v2/sim_low10_puck_goal_vel.yaml",
+   "low25": "configs/new_juggle/tasks_v2/sim_low25_puck_goal_vel.yaml",
+   "dr3": "configs/new_juggle/tasks_v2/sim_dr3_puck_goal_vel.yaml",
+   "drfull": "configs/new_juggle/tasks_v2/sim_drfull_puck_goal_vel.yaml"
+  }
+ },
+ "cells": [
+  {
+   "task": "juggle",
+   "method": "sysid",
+   "name": "juggle_sysid",
+   "args_file": "configs/td3/tasks_v2/juggle_sysid.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_sysid_juggle.yaml",
+   "trainer": "scripts.td3.td3_training",
+   "total_timesteps": 1000000,
+   "goal_task": false
+  },
+  {
+   "task": "juggle",
+   "method": "low05",
+   "name": "juggle_low05",
+   "args_file": "configs/td3/tasks_v2/juggle_low05.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_low05_juggle.yaml",
+   "trainer": "scripts.td3.td3_training",
+   "total_timesteps": 1000000,
+   "goal_task": false
+  },
+  {
+   "task": "juggle",
+   "method": "low10",
+   "name": "juggle_low10",
+   "args_file": "configs/td3/tasks_v2/juggle_low10.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_low10_juggle.yaml",
+   "trainer": "scripts.td3.td3_training",
+   "total_timesteps": 1000000,
+   "goal_task": false
+  },
+  {
+   "task": "juggle",
+   "method": "low25",
+   "name": "juggle_low25",
+   "args_file": "configs/td3/tasks_v2/juggle_low25.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_low25_juggle.yaml",
+   "trainer": "scripts.td3.td3_training",
+   "total_timesteps": 1000000,
+   "goal_task": false
+  },
+  {
+   "task": "juggle",
+   "method": "dr5_3p",
+   "name": "juggle_dr5_3p",
+   "args_file": "configs/td3/tasks_v2/juggle_dr5_3p.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_dr3_juggle.yaml",
+   "trainer": "scripts.td3.td3_training_dr",
+   "total_timesteps": 2000000,
+   "goal_task": false
+  },
+  {
+   "task": "juggle",
+   "method": "dr5_full",
+   "name": "juggle_dr5_full",
+   "args_file": "configs/td3/tasks_v2/juggle_dr5_full.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_drfull_juggle.yaml",
+   "trainer": "scripts.td3.td3_training_dr",
+   "total_timesteps": 2000000,
+   "goal_task": false
+  },
+  {
+   "task": "juggle",
+   "method": "drlong_3p",
+   "name": "juggle_drlong_3p",
+   "args_file": "configs/td3/tasks_v2/juggle_drlong_3p.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_dr3_juggle.yaml",
+   "trainer": "scripts.rma.train_base_policy",
+   "total_timesteps": 2000000,
+   "goal_task": false
+  },
+  {
+   "task": "juggle",
+   "method": "drlong_full",
+   "name": "juggle_drlong_full",
+   "args_file": "configs/td3/tasks_v2/juggle_drlong_full.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_drfull_juggle.yaml",
+   "trainer": "scripts.rma.train_base_policy",
+   "total_timesteps": 2000000,
+   "goal_task": false
+  },
+  {
+   "task": "juggle",
+   "method": "rma_3p",
+   "name": "juggle_rma_3p",
+   "args_file": "configs/td3/tasks_v2/juggle_rma_3p.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_dr3_juggle.yaml",
+   "trainer": "scripts.rma.train_base_policy",
+   "total_timesteps": 2000000,
+   "goal_task": false,
+   "phase2_args_file": "configs/rma/tasks_v2/juggle_rma_3p_phase2.yaml"
+  },
+  {
+   "task": "juggle",
+   "method": "rma_full",
+   "name": "juggle_rma_full",
+   "args_file": "configs/td3/tasks_v2/juggle_rma_full.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_drfull_juggle.yaml",
+   "trainer": "scripts.rma.train_base_policy",
+   "total_timesteps": 2000000,
+   "goal_task": false,
+   "phase2_args_file": "configs/rma/tasks_v2/juggle_rma_full_phase2.yaml"
+  },
+  {
+   "task": "puck_vel",
+   "method": "sysid",
+   "name": "puck_vel_sysid",
+   "args_file": "configs/td3/tasks_v2/puck_vel_sysid.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_sysid_puck_vel.yaml",
+   "trainer": "scripts.td3.td3_training",
+   "total_timesteps": 1000000,
+   "goal_task": false
+  },
+  {
+   "task": "puck_vel",
+   "method": "low05",
+   "name": "puck_vel_low05",
+   "args_file": "configs/td3/tasks_v2/puck_vel_low05.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_low05_puck_vel.yaml",
+   "trainer": "scripts.td3.td3_training",
+   "total_timesteps": 1000000,
+   "goal_task": false
+  },
+  {
+   "task": "puck_vel",
+   "method": "low10",
+   "name": "puck_vel_low10",
+   "args_file": "configs/td3/tasks_v2/puck_vel_low10.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_low10_puck_vel.yaml",
+   "trainer": "scripts.td3.td3_training",
+   "total_timesteps": 1000000,
+   "goal_task": false
+  },
+  {
+   "task": "puck_vel",
+   "method": "low25",
+   "name": "puck_vel_low25",
+   "args_file": "configs/td3/tasks_v2/puck_vel_low25.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_low25_puck_vel.yaml",
+   "trainer": "scripts.td3.td3_training",
+   "total_timesteps": 1000000,
+   "goal_task": false
+  },
+  {
+   "task": "puck_vel",
+   "method": "dr5_3p",
+   "name": "puck_vel_dr5_3p",
+   "args_file": "configs/td3/tasks_v2/puck_vel_dr5_3p.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_dr3_puck_vel.yaml",
+   "trainer": "scripts.td3.td3_training_dr",
+   "total_timesteps": 2000000,
+   "goal_task": false
+  },
+  {
+   "task": "puck_vel",
+   "method": "dr5_full",
+   "name": "puck_vel_dr5_full",
+   "args_file": "configs/td3/tasks_v2/puck_vel_dr5_full.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_drfull_puck_vel.yaml",
+   "trainer": "scripts.td3.td3_training_dr",
+   "total_timesteps": 2000000,
+   "goal_task": false
+  },
+  {
+   "task": "puck_vel",
+   "method": "drlong_3p",
+   "name": "puck_vel_drlong_3p",
+   "args_file": "configs/td3/tasks_v2/puck_vel_drlong_3p.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_dr3_puck_vel.yaml",
+   "trainer": "scripts.rma.train_base_policy",
+   "total_timesteps": 2000000,
+   "goal_task": false
+  },
+  {
+   "task": "puck_vel",
+   "method": "drlong_full",
+   "name": "puck_vel_drlong_full",
+   "args_file": "configs/td3/tasks_v2/puck_vel_drlong_full.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_drfull_puck_vel.yaml",
+   "trainer": "scripts.rma.train_base_policy",
+   "total_timesteps": 2000000,
+   "goal_task": false
+  },
+  {
+   "task": "puck_vel",
+   "method": "rma_3p",
+   "name": "puck_vel_rma_3p",
+   "args_file": "configs/td3/tasks_v2/puck_vel_rma_3p.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_dr3_puck_vel.yaml",
+   "trainer": "scripts.rma.train_base_policy",
+   "total_timesteps": 2000000,
+   "goal_task": false,
+   "phase2_args_file": "configs/rma/tasks_v2/puck_vel_rma_3p_phase2.yaml"
+  },
+  {
+   "task": "puck_vel",
+   "method": "rma_full",
+   "name": "puck_vel_rma_full",
+   "args_file": "configs/td3/tasks_v2/puck_vel_rma_full.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_drfull_puck_vel.yaml",
+   "trainer": "scripts.rma.train_base_policy",
+   "total_timesteps": 2000000,
+   "goal_task": false,
+   "phase2_args_file": "configs/rma/tasks_v2/puck_vel_rma_full_phase2.yaml"
+  },
+  {
+   "task": "puck_goal",
+   "method": "sysid",
+   "name": "puck_goal_sysid",
+   "args_file": "configs/td3/tasks_v2/puck_goal_sysid.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_sysid_puck_goal.yaml",
+   "trainer": "scripts.td3.td3_training_her",
+   "total_timesteps": 1000000,
+   "goal_task": true
+  },
+  {
+   "task": "puck_goal",
+   "method": "low05",
+   "name": "puck_goal_low05",
+   "args_file": "configs/td3/tasks_v2/puck_goal_low05.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_low05_puck_goal.yaml",
+   "trainer": "scripts.td3.td3_training_her",
+   "total_timesteps": 1000000,
+   "goal_task": true
+  },
+  {
+   "task": "puck_goal",
+   "method": "low10",
+   "name": "puck_goal_low10",
+   "args_file": "configs/td3/tasks_v2/puck_goal_low10.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_low10_puck_goal.yaml",
+   "trainer": "scripts.td3.td3_training_her",
+   "total_timesteps": 1000000,
+   "goal_task": true
+  },
+  {
+   "task": "puck_goal",
+   "method": "low25",
+   "name": "puck_goal_low25",
+   "args_file": "configs/td3/tasks_v2/puck_goal_low25.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_low25_puck_goal.yaml",
+   "trainer": "scripts.td3.td3_training_her",
+   "total_timesteps": 1000000,
+   "goal_task": true
+  },
+  {
+   "task": "puck_goal",
+   "method": "dr5_3p",
+   "name": "puck_goal_dr5_3p",
+   "args_file": "configs/td3/tasks_v2/puck_goal_dr5_3p.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_dr3_puck_goal.yaml",
+   "trainer": "scripts.td3.td3_training_her",
+   "total_timesteps": 2000000,
+   "goal_task": true
+  },
+  {
+   "task": "puck_goal",
+   "method": "dr5_full",
+   "name": "puck_goal_dr5_full",
+   "args_file": "configs/td3/tasks_v2/puck_goal_dr5_full.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_drfull_puck_goal.yaml",
+   "trainer": "scripts.td3.td3_training_her",
+   "total_timesteps": 2000000,
+   "goal_task": true
+  },
+  {
+   "task": "puck_goal",
+   "method": "drlong_3p",
+   "name": "puck_goal_drlong_3p",
+   "args_file": "configs/td3/tasks_v2/puck_goal_drlong_3p.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_dr3_puck_goal.yaml",
+   "trainer": "scripts.rma.train_base_policy",
+   "total_timesteps": 2000000,
+   "goal_task": true
+  },
+  {
+   "task": "puck_goal",
+   "method": "drlong_full",
+   "name": "puck_goal_drlong_full",
+   "args_file": "configs/td3/tasks_v2/puck_goal_drlong_full.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_drfull_puck_goal.yaml",
+   "trainer": "scripts.rma.train_base_policy",
+   "total_timesteps": 2000000,
+   "goal_task": true
+  },
+  {
+   "task": "puck_goal",
+   "method": "rma_3p",
+   "name": "puck_goal_rma_3p",
+   "args_file": "configs/td3/tasks_v2/puck_goal_rma_3p.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_dr3_puck_goal.yaml",
+   "trainer": "scripts.rma.train_base_policy",
+   "total_timesteps": 2000000,
+   "goal_task": true,
+   "phase2_args_file": "configs/rma/tasks_v2/puck_goal_rma_3p_phase2.yaml"
+  },
+  {
+   "task": "puck_goal",
+   "method": "rma_full",
+   "name": "puck_goal_rma_full",
+   "args_file": "configs/td3/tasks_v2/puck_goal_rma_full.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_drfull_puck_goal.yaml",
+   "trainer": "scripts.rma.train_base_policy",
+   "total_timesteps": 2000000,
+   "goal_task": true,
+   "phase2_args_file": "configs/rma/tasks_v2/puck_goal_rma_full_phase2.yaml"
+  },
+  {
+   "task": "puck_goal_vel",
+   "method": "sysid",
+   "name": "puck_goal_vel_sysid",
+   "args_file": "configs/td3/tasks_v2/puck_goal_vel_sysid.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_sysid_puck_goal_vel.yaml",
+   "trainer": "scripts.td3.td3_training_her",
+   "total_timesteps": 1000000,
+   "goal_task": true
+  },
+  {
+   "task": "puck_goal_vel",
+   "method": "low05",
+   "name": "puck_goal_vel_low05",
+   "args_file": "configs/td3/tasks_v2/puck_goal_vel_low05.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_low05_puck_goal_vel.yaml",
+   "trainer": "scripts.td3.td3_training_her",
+   "total_timesteps": 1000000,
+   "goal_task": true
+  },
+  {
+   "task": "puck_goal_vel",
+   "method": "low10",
+   "name": "puck_goal_vel_low10",
+   "args_file": "configs/td3/tasks_v2/puck_goal_vel_low10.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_low10_puck_goal_vel.yaml",
+   "trainer": "scripts.td3.td3_training_her",
+   "total_timesteps": 1000000,
+   "goal_task": true
+  },
+  {
+   "task": "puck_goal_vel",
+   "method": "low25",
+   "name": "puck_goal_vel_low25",
+   "args_file": "configs/td3/tasks_v2/puck_goal_vel_low25.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_low25_puck_goal_vel.yaml",
+   "trainer": "scripts.td3.td3_training_her",
+   "total_timesteps": 1000000,
+   "goal_task": true
+  },
+  {
+   "task": "puck_goal_vel",
+   "method": "dr5_3p",
+   "name": "puck_goal_vel_dr5_3p",
+   "args_file": "configs/td3/tasks_v2/puck_goal_vel_dr5_3p.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_dr3_puck_goal_vel.yaml",
+   "trainer": "scripts.td3.td3_training_her",
+   "total_timesteps": 2000000,
+   "goal_task": true
+  },
+  {
+   "task": "puck_goal_vel",
+   "method": "dr5_full",
+   "name": "puck_goal_vel_dr5_full",
+   "args_file": "configs/td3/tasks_v2/puck_goal_vel_dr5_full.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_drfull_puck_goal_vel.yaml",
+   "trainer": "scripts.td3.td3_training_her",
+   "total_timesteps": 2000000,
+   "goal_task": true
+  },
+  {
+   "task": "puck_goal_vel",
+   "method": "drlong_3p",
+   "name": "puck_goal_vel_drlong_3p",
+   "args_file": "configs/td3/tasks_v2/puck_goal_vel_drlong_3p.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_dr3_puck_goal_vel.yaml",
+   "trainer": "scripts.rma.train_base_policy",
+   "total_timesteps": 2000000,
+   "goal_task": true
+  },
+  {
+   "task": "puck_goal_vel",
+   "method": "drlong_full",
+   "name": "puck_goal_vel_drlong_full",
+   "args_file": "configs/td3/tasks_v2/puck_goal_vel_drlong_full.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_drfull_puck_goal_vel.yaml",
+   "trainer": "scripts.rma.train_base_policy",
+   "total_timesteps": 2000000,
+   "goal_task": true
+  },
+  {
+   "task": "puck_goal_vel",
+   "method": "rma_3p",
+   "name": "puck_goal_vel_rma_3p",
+   "args_file": "configs/td3/tasks_v2/puck_goal_vel_rma_3p.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_dr3_puck_goal_vel.yaml",
+   "trainer": "scripts.rma.train_base_policy",
+   "total_timesteps": 2000000,
+   "goal_task": true,
+   "phase2_args_file": "configs/rma/tasks_v2/puck_goal_vel_rma_3p_phase2.yaml"
+  },
+  {
+   "task": "puck_goal_vel",
+   "method": "rma_full",
+   "name": "puck_goal_vel_rma_full",
+   "args_file": "configs/td3/tasks_v2/puck_goal_vel_rma_full.yaml",
+   "sim_config": "configs/new_juggle/tasks_v2/sim_drfull_puck_goal_vel.yaml",
+   "trainer": "scripts.rma.train_base_policy",
+   "total_timesteps": 2000000,
+   "goal_task": true,
+   "phase2_args_file": "configs/rma/tasks_v2/puck_goal_vel_rma_full_phase2.yaml"
+  }
+ ]
+}

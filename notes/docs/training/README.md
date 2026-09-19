@@ -38,7 +38,8 @@ A reader picking which YAML to use should start with the doc closest to their go
 |-----|-------------|
 | [`residual-rl-recipe.md`](residual-rl-recipe.md) | Residual fine-tune for sim2sim or sim2real (must read before launching) |
 | [`sim2sim.md`](sim2sim.md) | Cross-sim transfer testing protocol |
-| [`real-world-eval-pipeline.md`](real-world-eval-pipeline.md) | Frozen-policy eval: agent dispatch (`--agent td3 / sgcrl`), task hooks, output schema |
+| [`rma-baseline.md`](rma-baseline.md) | RMA (Rapid Motor Adaptation) sim2real baseline on the canonical DR with TD3: two-phase recipe, fidelity to the paper, TD3-vs-PPO assessment, latent-fit + paired policy metrics (`scripts/rma/`) |
+| [`real-world-eval-pipeline.md`](real-world-eval-pipeline.md) | Frozen-policy eval for all five canonical tasks: agent dispatch (`--agent td3 / sgcrl`), task hooks (per-task reset strategy — puck FSM vs paddle reposition — plus metrics), per-task real configs, output schema |
 | [`teleop-eval-baseline.md`](teleop-eval-baseline.md) | Human-baseline mouse-paddle eval for the paper user study |
 
 ## Ablation reports

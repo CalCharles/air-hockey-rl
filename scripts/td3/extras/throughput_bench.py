@@ -7,7 +7,7 @@ plain batches of experiments use `scripts/td3/run_experiments.py` directly.
 
 Usage:
     python -m scripts.td3.extras.throughput_bench \
-        --args-dir configs/td3/throughput_bench \
+        --args-dir configs/td3/tasks \
         --out-root runs/td3/throughput_bench \
         --old-worktree runs/td3/throughput_opt/_work/baseline_wt \
         --gpus 0 2 3 [--versions old new] [--only touch_dr ...] [--summarise-only]
@@ -28,7 +28,7 @@ from scripts.td3.run_experiments import REPO_ROOT, build_jobs, run_jobs, summari
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--args-dir", default="configs/td3/throughput_bench")
+    ap.add_argument("--args-dir", default="configs/td3/tasks")
     ap.add_argument("--out-root", default="runs/td3/throughput_bench")
     ap.add_argument("--old-worktree", default="runs/td3/throughput_opt/_work/baseline_wt")
     ap.add_argument("--gpus", nargs="+", type=int, default=[0, 2, 3])

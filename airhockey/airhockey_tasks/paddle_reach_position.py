@@ -5,6 +5,10 @@ from .abstract_airhockey_goal_task import AirHockeyGoalEnv
 from airhockey.airhockey_rewards import AirHockeyPaddleReachPositionSparseReward
 
 class AirHockeyPaddleReachPositionEnv(AirHockeyGoalEnv):
+    # Start the paddle anywhere it can actually reach, so the task is not
+    # always the same stroke from the same pose.
+    random_paddle_spawn_default = True
+
     def __init__(self, **kwargs):
         self.goal_radius_type = kwargs['goal_radius_type']
         self.base_goal_radius = kwargs['base_goal_radius']

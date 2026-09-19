@@ -12,12 +12,12 @@ Examples
 --------
     # canonical DR recipe on five tasks, GPUs 0/2/3
     python -m scripts.td3.run_experiments --mode dr \
-        --configs configs/td3/throughput_bench/full/*_dr.yaml \
+        --configs configs/td3/tasks/*_dr.yaml \
         --gpus 0 2 3 --out-root runs/td3/full_dr
 
     # a directory of no-DR configs, GPU 1 only
     python -m scripts.td3.run_experiments --mode nodr \
-        --configs configs/td3/throughput_bench/full/*_nodr.yaml \
+        --configs configs/td3/tasks/*_sysid.yaml \
         --gpus 1 --out-root runs/td3/full_nodr
 
     # just regenerate the summary table of a finished batch
@@ -28,7 +28,9 @@ Anything after `--` is forwarded verbatim to every trainer invocation
 (e.g. `-- --total-timesteps 100000`). `--device` and `--log-parent-dir` are
 always set by this script.
 
-`--mode auto` picks DR for YAMLs that set `eval_param_seed`, plain otherwise.
+`--mode auto` picks HER (`td3_training_her`) for YAMLs that set `her_k`, the RMA
+baseline phase-1 trainer (`scripts.rma.train_base_policy`) for YAMLs that set
+`rma_latent_dim`, DR for YAMLs that set `eval_param_seed`, plain otherwise.
 `--cwd` runs the jobs from another checkout (used by
 `scripts/td3/extras/throughput_bench.py` for old-vs-new comparisons); the
 `config:` path inside each YAML is resolved against *this* repo.
@@ -75,8 +77,19 @@ def expand_configs(items: List[str]) -> List[str]:
 
 def trainer_module(mode: str, args_file: str) -> str:
     if mode == "auto":
-        mode = "dr" if yaml.safe_load(open(args_file)).get("eval_param_seed") is not None else "nodr"
-    return {"dr": "scripts.td3.td3_training_dr", "nodr": "scripts.td3.td3_training"}[mode]
+        cfg = yaml.safe_load(open(args_file))
+        if "rma_latent_dim" in cfg:
+            mode = "rma"      # RMA / long-history trainer (handles HER itself for goal tasks)
+        elif "her_k" in cfg:
+            mode = "her"
+        else:
+            mode = "dr" if cfg.get("eval_param_seed") is not None else "nodr"
+    return {
+        "dr": "scripts.td3.td3_training_dr",
+        "nodr": "scripts.td3.td3_training",
+        "her": "scripts.td3.td3_training_her",
+        "rma": "scripts.rma.train_base_policy",  # RMA baseline phase 1 (scripts/rma/README.md)
+    }[mode]
 
 
 def build_jobs(configs: List[str], mode: str, out_root: str, cwd: str, name_prefix: str = "") -> List[Dict]:
@@ -184,8 +197,12 @@ def summarise_job(job: Dict) -> Dict:
         evals = sorted(glob.glob(os.path.join(run_dir, "checkpoint_*", "multi_env_eval.json")))
         if os.path.exists(os.path.join(run_dir, "multi_env_eval.json")):
             evals.append(os.path.join(run_dir, "multi_env_eval.json"))
+        goal_eval = os.path.join(run_dir, "goal_eval.json")
         if evals:
             row["final_eval"] = float(json.load(open(evals[-1]))["aggregate"]["mean_return_across_envs"])
+        elif os.path.exists(goal_eval):
+            # HER runs: final in-process goal-conditioned eval (mean return; success = return / 10).
+            row["final_eval"] = float(json.load(open(goal_eval))["mean_return"])
         elif tail_ret:
             tail = [v for s, v in tail_ret if s >= 0.9 * total]
             if tail:
@@ -218,8 +235,9 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--configs", nargs="+", required=True, help="TD3 args YAML files, directories or globs")
-    ap.add_argument("--mode", choices=["dr", "nodr", "auto"], default="auto",
-                    help="dr -> td3_training_dr, nodr -> td3_training, auto -> by eval_param_seed")
+    ap.add_argument("--mode", choices=["dr", "nodr", "her", "rma", "auto"], default="auto",
+                    help="dr -> td3_training_dr, nodr -> td3_training, her -> td3_training_her, "
+                         "rma -> scripts.rma.train_base_policy (RMA baseline phase 1), auto -> by YAML keys")
     ap.add_argument("--gpus", nargs="+", type=int, required=True, help="GPU ids; one job per GPU at a time")
     ap.add_argument("--out-root", required=True, help="parent directory for all run dirs")
     ap.add_argument("--cwd", default=REPO_ROOT, help="checkout to run the trainer from (default: this repo)")

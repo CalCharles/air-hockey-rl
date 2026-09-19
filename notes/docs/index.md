@@ -9,6 +9,7 @@ Formal docs for the air-hockey TD3 stack — sim and real robot. Active code pat
 - New to training — [`training/README.md`](training/README.md), then [`training/architecture.md`](training/architecture.md) and [`training/td3-algorithm.md`](training/td3-algorithm.md).
 - About to launch a real-robot run — [`environments/real-world/overview.md`](environments/real-world/overview.md) and [`environments/real-world/episode-lifecycle.md`](environments/real-world/episode-lifecycle.md).
 - Planning a residual fine-tune — [`training/residual-rl-recipe.md`](training/residual-rl-recipe.md).
+- Evaluating a frozen policy on the real robot (any of the five canonical tasks: juggle, touch, puck_vel, reach, reach_vel) — [`training/real-world-eval-pipeline.md`](training/real-world-eval-pipeline.md); human-baseline teleop eval — [`training/teleop-eval-baseline.md`](training/teleop-eval-baseline.md).
 
 ## Sections
 

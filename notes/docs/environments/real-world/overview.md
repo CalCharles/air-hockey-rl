@@ -35,6 +35,10 @@ The high-level env/task layering is the same as for Box2D; see [`../README.md`](
 | [`puck-system-id.md`](puck-system-id.md) | Puck dynamics (gravity, damping) grid search |
 | [`teleop-system-id.md`](teleop-system-id.md) | Paddle dynamics (PID, density) grid search across teleop categories |
 | [`wall-collision-system-id.md`](wall-collision-system-id.md) | Wall restitution / collision tuning |
+| [`trajectory-auto-segmentation.md`](trajectory-auto-segmentation.md) | Automatic chunking of recordings into free-fall / wall / paddle segments (+ the puck-vs-`pose` frame calibration) |
+| [`sysid-pipeline.md`](sysid-pipeline.md) | **Pipeline (general)**: recordings → sections → train/val split → parameters, percentile validation of each search, replication checklist |
+| [`sysid/puck-free-flight.md`](sysid/puck-free-flight.md) | Section: free-fall clips → fixed-length windows → (g, γ) grid on train + val, absolute + distance-normalised metrics |
+| [`sysid/puck-wall-collision.md`](sysid/puck-wall-collision.md) | Section: wall bounces replayed in Box2D → side / end wall restitution, speed / relative / exit-angle errors |
 
 **Diagnostics & ops:**
 

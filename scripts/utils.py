@@ -103,7 +103,6 @@ def save_tensorboard_plots(log_dir, air_hockey_cfg, metrics=None):
         plt.close()
 
 def save_evaluation_gifs(n_eps_viz, n_gifs, env_test, model, renderer, log_dir, use_wandb, wandb_run=None):
-    env_test.max_timesteps = 200
     for gif_idx in range(n_gifs):
         frames = []
         for i in tqdm.tqdm(range(n_eps_viz)):
@@ -128,7 +127,6 @@ def save_evaluation_gifs(n_eps_viz, n_gifs, env_test, model, renderer, log_dir, 
         wandb_run.log({"Evaluation Video": wandb.Video(gif_savepath, fps=20)})
 
 def save_task_gif(n_eps_viz, n_gifs, env_test, policy, renderer, log_dir):
-    env_test.max_timesteps = 200
     for gif_idx in range(n_gifs):
         frames = []
         for i in tqdm.tqdm(range(n_eps_viz)):

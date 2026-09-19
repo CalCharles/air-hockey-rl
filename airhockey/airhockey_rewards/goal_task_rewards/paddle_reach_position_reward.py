@@ -53,9 +53,17 @@ class AirHockeyPaddleReachPositionSparseReward(AirHockeyRewardBase):
     """+1 on the step the paddle reaches the goal, 0 on every other step.
 
     The episode ends on arrival (``terminate_on_goal_reached``), so an episode
-    returns 1 if the paddle got within ``goal_radius`` of the goal inside the
-    ``max_timesteps`` budget and 0 if it ran out of time.
+    returns ``GOAL_REWARD`` (10) if the paddle got within ``goal_radius`` of the
+    goal inside the ``max_timesteps`` budget and 0 if it ran out of time.
     """
+
+    # Reward paid on the single step the goal is reached. 10 rather than 1: with
+    # a reward of 1 the critic's Q values sit at ~0.01-0.1, the same size as
+    # the clipped-double-Q bias and the optimizer's regularisation pull, and
+    # the actor saturates on a flat critic (2026-09-04 diagnosis,
+    # notes/scratch/experiments/2026-09-04_01-05_sparse-task-collapse-diagnosis.md).
+    # x10 alone took the task from 9 % to 100 % success.
+    GOAL_REWARD = 10.0
 
     def __init__(self, task_env):
         super().__init__(task_env)
@@ -67,7 +75,7 @@ class AirHockeyPaddleReachPositionSparseReward(AirHockeyRewardBase):
             desired_goal = desired_goal.reshape(1, -1)
 
         dist = np.linalg.norm(achieved_goal[:, :2] - desired_goal[:, :2], axis=1)
-        reward = np.where(dist > self.task_env.goal_radius, 0.0, 1.0)
+        reward = np.where(dist > self.task_env.goal_radius, 0.0, self.GOAL_REWARD)
 
         if single:
             return float(reward.reshape(-1)[0])
@@ -78,4 +86,4 @@ class AirHockeyPaddleReachPositionSparseReward(AirHockeyRewardBase):
         dg = self.task_env.get_desired_goal()
         dist = float(np.linalg.norm(ag[:2] - dg[:2]))
         success = dist <= self.task_env.goal_radius
-        return (1.0 if success else 0.0), success
+        return (self.GOAL_REWARD if success else 0.0), success

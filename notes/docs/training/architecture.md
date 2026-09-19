@@ -51,7 +51,8 @@ scripts/td3/
 │   ├── exploration_primitives.py
 │   ├── exploration_selector.py
 │   ├── juggle_counter.py
-│   ├── real_task_eval_hooks.py         # per-task eval metrics + min_timesteps (juggle vs generic)
+│   ├── real_task_eval_hooks.py         # per-task eval hooks: reset strategy + metrics (5 canonical tasks)
+│   ├── real_paddle_reposition_fsm.py   # paddle-only between-episode reset (reach tasks; no puck)
 │   ├── episode_artifacts.py
 │   └── run_event_log.py
 ├── extras/                # CLI entrypoints (real-world)
@@ -67,7 +68,7 @@ All canonical YAMLs are at the repo root under [`configs/`](../../../configs/):
 | [`configs/new_juggle/`](../../../configs/new_juggle/) | Sim env configs (sysid_best_params*, sim2sim warp targets) |
 | [`configs/td3/`](../../../configs/td3/) | TD3 sim training args + residual recipes |
 | [`configs/td3_real_world/`](../../../configs/td3_real_world/) | Real-robot residual fine-tune args |
-| [`configs/real_configs/`](../../../configs/real_configs/) | Real-robot rollout / mouse-teleop configs |
+| [`configs/real_configs/`](../../../configs/real_configs/) | Real-robot rollout / mouse-teleop configs; `tasks/` holds the per-task eval configs (touch / reach / reach_vel / puck_vel) |
 
 See [`td3-configs.md`](td3-configs.md) and [`sim-env-configs.md`](sim-env-configs.md) for per-file details.
 
