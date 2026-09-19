@@ -1,0 +1,88 @@
+# Real-robot env config for open-loop paddle-motion data collection.
+#
+# Driven by scripts/robot_data_collection/collect_paddle_motion.py. This is the
+# canonical real-world rollout config (configs/real_configs/rollout_td3_config_hist2.yaml)
+# with three deliberate differences:
+#
+#   1. hist_len: 1          -> NO timestep smoothing. filter_update() averages the
+#                              last `hist_len` (target - pose) deltas; with a window
+#                              of 1 it degenerates to "command the raw clipped
+#                              target", so the servoL target is exactly what
+#                              compute_rect() produced from the action.
+#   2. wait_for_space_to_start: false
+#                           -> the collection script gates the session itself; the
+#                              per-reset space prompt would stall all 36 trials.
+#   3. save_path: ''        -> the script writes one HDF5 per trial with its own
+#                              descriptive filename; the env's built-in
+#                              trajectory_data{N}.hdf5 writer stays off.
+#
+# Everything else (physics params, workspace limits, servoL gains) matches the
+# rollout config so the collected response is the response policies actually see.
+air_hockey:
+  max_timesteps: 1000
+  num_blocks: 0
+  num_obstacles: 0
+  num_paddles: 1
+  num_pucks: 1
+  num_targets: 0
+  obs_type: history
+  simulator: real
+  simulator_params:
+    absorb_target: false
+    block_density: 500
+    block_width: 0.0254
+    force_scaling: 1000
+    gravity: -0.5
+    hist_len: 1 # no timestep smoothing (see header)
+    length: 1.9304
+    max_force_timestep: 100
+    paddle_damping: 3
+    paddle_density: 2500
+    paddle_radius: 0.0508
+    puck_damping: 0.5
+    puck_density: 250
+    puck_hit_bottom_boundary_m: 0.2
+    puck_radius: 0.03175
+    render_size: 360
+    wall_bounce_scale: 0.02
+    width: 0.8636
+    control_mode: RL
+    control_type: rect
+    # Base reset pose = robot (x, y, z) = (-0.68, 0.0, 0.33). The collector rewrites
+    # reset_pose[0][:2] per trial (--start-mode max-room parks the paddle at the far
+    # end of the axis it is about to travel), so this sets the z / orientation and
+    # the x used for the y-axis trials, not the x/y of every trial.
+    reset_pos_setting: hitting
+    wait_for_space_to_start: false
+    save_path: ''
+    debug_control: false
+    debug_control_every: 10
+    # No recovery smoothing either: a transition hold would silently replace the
+    # commanded action with a hold-in-place target for several steps.
+    transition_hold_steps_on_estop_enter: 0
+    transition_hold_steps_on_estop_clear: 0
+    transition_hold_steps_on_safety_rearm: 0
+    transition_hold_debug: false
+    # Closed-loop post-reset seat check: hold the clamp on and poll actual TCP z
+    # until the paddle has really reached the table, so a trial never starts
+    # mid-descent. Tuned criterion: z inside a 1 cm band for a full 1 s.
+    # These now restate the simulator defaults; kept explicit so the collection
+    # protocol's thresholds are readable without chasing the env source.
+    # See notes/docs/environments/real-world/paddle-clamping-coverage-gap.md.
+    reset_verify_seated: true
+    reset_verify_window_s: 1.0
+    reset_verify_range_m: 0.01
+    reset_verify_timeout_s: 5.0
+    reset_verify_max_retries: 1
+    # 0 = no contact-force early exit; raise once a threshold has been measured
+    # (diagnose_reset_descent.py prints force_z next to z).
+    reset_verify_force_n: 0.0
+    async_render_enabled: true
+    async_render_sim_view_enabled: false
+  task: puck_juggle_upper_half_reward
+  terminate_on_enemy_goal: true
+  terminate_on_out_of_bounds: false
+  terminate_on_puck_hit_bottom: true
+  terminate_on_puck_hit_paddle: false
+  terminate_on_puck_pass_paddle: true
+  terminate_on_puck_stop: true
