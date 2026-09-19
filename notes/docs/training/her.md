@@ -1,6 +1,6 @@
 # TD3 + hindsight experience replay (goal-conditioned puck tasks)
 
-**Trainer**: `scripts/td3/td3_training_her.py` · **HER core**: `scripts/td3/helper/td3_her.py` ·
+**Trainer**: `scripts/td3/td3_training_her.py` (the long-history / RMA trainer `scripts/rma/train_base_policy.py` runs the same relabelling for goal configs since 2026-09-19, see [`rma-baseline.md`](rma-baseline.md#goal-conditioned-tasks-her-2026-09-19)) · **HER core**: `scripts/td3/helper/td3_her.py` ·
 **Eval**: `scripts/td3/helper/her_eval.py` · **Tasks**: `airhockey/airhockey_tasks/puck_goal_sparse.py` ·
 **Configs**: suite `configs/td3/tasks/{puck_goal,puck_goal_vel}_{sysid,dr}.yaml` (sim configs `configs/new_juggle/tasks/sim_{sysid,dr}_{puck_goal,puck_goal_vel}.yaml`), variants `configs/td3/her/*.yaml` ·
 **Tests**: `scripts/td3/tests/test_her_relabel.py`

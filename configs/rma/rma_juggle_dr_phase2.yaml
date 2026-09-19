@@ -1,0 +1,46 @@
+# RMA baseline, phase 2: adaptation module phi(x_{t-50:t-1}, a_{t-50:t-1}) -> z_hat_t.
+# Trainer: scripts/rma/train_adaptation_module.py
+#   .venv/bin/python -m scripts.rma.train_adaptation_module --args-file configs/rma/rma_juggle_dr_phase2.yaml \
+#       --phase1-dir runs/rma/<phase-1 run dir>
+#
+# On-policy iterative regression (paper Sec. 3.2): each iteration rolls the base
+# policy with the *current* phi's estimate in the same +-25 % randomized sim,
+# then regresses phi to the frozen encoder's z_t = mu(e_t).  20 x 20k = 400k env
+# steps; rolling dataset of the last 400k steps, 10 % of episodes held out.
+phase1_dir: ""            # pass on the CLI: --phase1-dir runs/rma/...
+config: null              # default: the phase-1 sim config (DR on)
+log_parent_dir: null      # default: <phase1_dir>/rma_phase2_<timestamp>
+run_name: rma_phase2
+device: cuda:0
+seed: 0
+
+history_len: 50           # paper: 50 past (x, a) pairs
+step_features: latest_frame   # 6-dim newest frame (paddle xy+valid, puck xy+valid) + 2-dim action per step
+embed_dim: 32
+conv_channels: 32
+
+n_iterations: 20
+steps_per_iteration: 20000
+dataset_max_steps: 400000
+holdout_episode_fraction: 0.1
+rollout_action_noise: 0.0     # deployed (deterministic) policy, exactly on-policy
+privileged_warmup_iterations: 0
+
+epochs_per_iteration: 4
+batch_size: 256
+lr: 0.0005
+weight_decay: 0.0
+grad_clip: 1.0
+
+eval_every_iterations: 5
+eval_param_seed: null     # default: phase-1 args (12345 -> the canonical 5 eval envs)
+eval_n_envs: null
+eval_eps_per_env: null
+final_eval_eps_per_env: 10
+eval_ood: true            # also the 5 OOD envs from random_variable_ranges_OOD (sim_paramrand_pm25.yaml)
+eval_ood_n_envs: 5
+# Plain DR TD3 actor for the paired comparison (same envs / seeds); the on-disk baseline:
+baseline_model_path: runs/td3/tasks_20260904/dr/juggle_dr/model.pth
+baseline_hidden_layer_size: 64
+baseline_num_hidden_layers: 2
+gifs: true

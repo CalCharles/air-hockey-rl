@@ -4,7 +4,23 @@ These files define the Box2D simulator parameters, task, and spawn settings for 
 
 ## Source-sim configs
 
-### `sysid_best_params.yaml` — System-ID best-fit
+### `sysid_v2_hist2.yaml` — **sysid v2 (2026-09-19), the canonical source sim from now on**
+
+The four fits of `sysid/` compiled into one config (provenance table in the file header and in
+[`sysid/README.md`](../../../sysid/README.md)): `gravity −0.73`, `puck_damping 0.11`,
+`side_wall_restitution 0.90`, `end_wall_restitution 0.55`, paddle–puck `puck_restitution 1.2626`
+(with `paddle_restitution 0` so the contact — which uses `max()` of the two — has a single knob, also
+under DR), `pid_kp 7531.5 / pid_ki 1928.7 / pid_kd 0` (pooled lines / arcs + reversal-jerk paddle fit),
+masses unchanged, `hist_len 2` (the real rollout config). Task variants are **generated** into
+`configs/new_juggle/tasks_v2/sim_{sysid,low05,low10,low25,dr3,drfull}_<task>.yaml` (juggle, puck_vel, puck_goal, puck_goal_vel) by
+`scripts/td3/extras/make_sysid_v2_configs.py` (`low05` / `low10` / `low25` = every identified parameter × 0.95 / 0.90 / 0.75, the
+wrong-sysid baselines; `dr3` = ±25 % per-reset DR on paddle_density / puck_damping / gravity; `drfull`
+= ±25 % on those plus the wall and paddle–puck restitutions and pid_kp / pid_ki, side-wall upper bound
+capped at 1.0) with the trainer args in `configs/td3/tasks_v2/`. Campaign / results:
+[`2026-09-19_01-50`](../../scratch/experiments/2026-09-19_01-50_sysid-v2-compiled-params-policy-campaign.md).
+Everything below this section is the pre-v2 (v1) family.
+
+### `sysid_best_params.yaml` — System-ID best-fit (v1)
 Base system-ID physics tuned to match real-world dynamics. Defaults to `hist_len: 1` (no PID-target smoothing).
 - **Puck**: `gravity: -0.661`, `puck_damping: 0.178`, `puck_density: 3000` (grid search over 10 real-world puck trajectory segments; see [`real-world/puck-system-id.md`](../environments/real-world/puck-system-id.md)).
 - **Paddle**: `pid_kp: 9000`, `pid_kd: 50`, `pid_ki: 0`, `paddle_density: 3000` (multi-round 3D grid search over 8 teleop categories; see [`real-world/teleop-system-id.md`](../environments/real-world/teleop-system-id.md)).
