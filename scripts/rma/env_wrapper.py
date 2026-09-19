@@ -27,7 +27,10 @@ from typing import Any, Dict, List, Sequence
 import gymnasium as gym
 import numpy as np
 
-from scripts.td3.td3_training import SingleEnvVector
+# ``SingleEnvVector`` is imported lazily in ``make_inner_vector``: pulling in the
+# trainer at module scope would drag its whole dependency tree into every
+# consumer of ``EnvParamNormalizer``, including the deployment path that only
+# loads a policy bundle and never builds a training env.
 
 
 class EnvParamNormalizer:
@@ -101,6 +104,8 @@ def make_inner_vector(env_fn, goal: bool):
         from scripts.td3.helper.td3_her import GoalEnvVector
 
         return GoalEnvVector(env_fn)
+    from scripts.td3.td3_training import SingleEnvVector
+
     return SingleEnvVector(env_fn)
 
 

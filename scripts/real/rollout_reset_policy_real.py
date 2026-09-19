@@ -52,6 +52,21 @@ class ResetPolicyFSM:
       3. upward_burst  -- flick paddle upward (negative x) for burst_steps
       4. wait_for_puck -- hold position until puck falls within puck_proximity_m
       5. strike        -- ramping upward strike [-0.3, -0.6, -1.0, -1.0, -1.0]
+
+    Broken table corner (``broken_corner_side``):
+      One corner of the bottom wall is physically cracked, so the paddle
+      can't apply meaningful force there -- the puck just glides past it
+      instead of getting scooped/launched. The edge-loop waypoints and
+      range are UNCHANGED (the sweep still covers the entire bottom edge,
+      including a pass through the broken corner), but ``start_side`` is
+      pinned so the sweep always *starts* at the broken corner (just a
+      transit waypoint, no force needed to get there) and always *ends* --
+      i.e. where ``upward_burst`` fires -- at the opposite, unbroken
+      corner. That's the corner that actually needs to hold the puck
+      against the wall for the burst/strike to work, so it's the only one
+      the FSM relies on for the reset to succeed. Set to ``None`` to
+      restore the original random-side behavior (e.g. once the table is
+      fixed).
     """
 
     def __init__(
@@ -73,7 +88,13 @@ class ResetPolicyFSM:
         capture_second_hit_frame: bool = True,
         async_second_hit_write: bool = False,
         show_second_hit_window: bool = False,
+        broken_corner_side: str = "right",
     ):
+        if broken_corner_side not in (None, "left", "right"):
+            raise ValueError(
+                f"broken_corner_side must be None, 'left', or 'right'; got {broken_corner_side!r}"
+            )
+        self.broken_corner_side = broken_corner_side
         self.env = env
         self.rng = rng
         self.loop_max_delta_m = float(loop_max_delta_m)
@@ -237,9 +258,20 @@ class ResetPolicyFSM:
         return (normalized / projection_div).astype(np.float32)
 
     def _build_edge_loop_path(self) -> None:
-        """Build waypoints tracing the bottom edge of the trapezoidal workspace."""
+        """Build waypoints tracing the bottom edge of the trapezoidal workspace.
+
+        Waypoint geometry/range is identical regardless of ``broken_corner_side``
+        -- the full bottom edge is always swept. What changes is which end
+        ``start_side`` resolves to: with a broken corner set, the sweep is
+        pinned to always start there (transit only) and end -- where the
+        burst/strike actually fires -- at the unbroken corner. See the class
+        docstring for the rationale.
+        """
         _, _, y_min_lim, y_max_lim = self._lims
-        self.start_side = "left" if self.rng.random() < 0.5 else "right"
+        if self.broken_corner_side in ("left", "right"):
+            self.start_side = self.broken_corner_side
+        else:
+            self.start_side = "left" if self.rng.random() < 0.5 else "right"
 
         y_margin = 0.00
         y_min = float(y_min_lim + y_margin)
@@ -937,6 +969,7 @@ def enter_reset_mode(
     async_second_hit_write: bool,
     show_second_hit_window: bool,
     fsm_cls=ResetPolicyFSM,
+    broken_corner_side: str = "right",
 ) -> tuple[str, ResetPolicyFSM]:
     reset_fsm = fsm_cls(
         eval_env,
@@ -948,6 +981,7 @@ def enter_reset_mode(
         capture_second_hit_frame=capture_second_hit_frame,
         async_second_hit_write=async_second_hit_write,
         show_second_hit_window=show_second_hit_window,
+        broken_corner_side=broken_corner_side,
     )
     reset_fsm._log_new_round_start(reason=reason)
     if show_reset_path_overlay:
@@ -1197,6 +1231,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Continuous reset testing: immediately start a new reset cycle after each FSM completion (success or hard_reset_required), instead of returning to normal mode and risking the episode_done hard-reset loop. Pauses 1s between cycles.",
     )
+    parser.add_argument(
+        "--broken-corner-side",
+        choices=("left", "right", "none"),
+        default="right",
+        help="Which bottom-edge corner is physically broken (paddle can't apply force there; puck just glides past). The edge-loop sweep still covers the full bottom edge, but is pinned to always START at this corner (transit only) and always END -- where the burst/strike fires -- at the opposite, unbroken corner. Default 'right' matches the currently-known damaged corner. Use 'none' to restore the original random-side behavior. Ignored (forced to 'none') when --force-end-side is explicitly set, since that flag already picks a deterministic end-side for debugging.",
+    )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
     if args.use_hybrid_fsm:
@@ -1208,6 +1248,14 @@ if __name__ == "__main__":
         parser.error("--shared-success-threshold-proportion-from-bottom must be in [0.0, 1.0].")
     if int(args.timing_log_every) < 0:
         parser.error("--timing-log-every must be >= 0.")
+    broken_corner_side = None if args.broken_corner_side == "none" else args.broken_corner_side
+    if args.force_end_side != "random" and broken_corner_side is not None:
+        print(
+            f"[broken_corner] --force-end-side='{args.force_end_side}' overrides "
+            f"--broken-corner-side='{broken_corner_side}'; disabling broken-corner pinning "
+            "for this debug run."
+        )
+        broken_corner_side = None
 
     timing_flags = resolve_timing_optimization_flags(args)
 
@@ -1223,6 +1271,12 @@ if __name__ == "__main__":
     if args.quiet and args.verbose:
         print("[quiet_mode] --quiet supersedes --verbose; suppressing per-step output.")
         args.verbose = False
+    if broken_corner_side is not None:
+        print(
+            f"[broken_corner] pinning edge-loop sweep: start_side='{broken_corner_side}' "
+            f"(transit only, broken) -> burst/strike at the opposite, unbroken corner. "
+            "Pass --broken-corner-side=none to disable."
+        )
     params["max_timesteps"] = max(400, int(params.get("max_timesteps", 300)))
     eval_env = AirHockeyEnv(params)
     model, use_last_action, last_action_for_policy = build_model_if_requested(args, eval_env)
@@ -1330,6 +1384,7 @@ if __name__ == "__main__":
                     async_second_hit_write=timing_flags["async_second_hit_write"],
                     show_second_hit_window=timing_flags["show_second_hit_window"],
                     fsm_cls=reset_fsm_cls,
+                    broken_corner_side=broken_corner_side,
                 )
                 if args.quiet and reset_fsm is not None:
                     reset_fsm.force_log_interval_steps = 0
@@ -1418,6 +1473,7 @@ if __name__ == "__main__":
                     async_second_hit_write=timing_flags["async_second_hit_write"],
                     show_second_hit_window=timing_flags["show_second_hit_window"],
                     fsm_cls=reset_fsm_cls,
+                    broken_corner_side=broken_corner_side,
                 )
                 if args.quiet and reset_fsm is not None:
                     reset_fsm.force_log_interval_steps = 0
@@ -1489,6 +1545,7 @@ if __name__ == "__main__":
                     async_second_hit_write=timing_flags["async_second_hit_write"],
                     show_second_hit_window=timing_flags["show_second_hit_window"],
                     fsm_cls=reset_fsm_cls,
+                    broken_corner_side=broken_corner_side,
                 )
                 if args.quiet and reset_fsm is not None:
                     reset_fsm.force_log_interval_steps = 0

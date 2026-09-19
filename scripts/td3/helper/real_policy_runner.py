@@ -214,13 +214,27 @@ class PolicyRunner:
     def total_steps(self) -> int:
         return int(self._total_steps)
 
+    def _notify_actor_episode_start(self, obs: np.ndarray) -> None:
+        """Tell a stateful actor that a new episode begins at ``obs``.
+
+        Stateless actors (``DeterministicAgent`` / ``ResidualActor``) do not
+        implement the hook. Policies carrying per-episode state — an RMA
+        adaptation-module history window, for instance — must clear it here or
+        they would start each episode primed with the previous one's tail.
+        """
+        hook = getattr(self._actor, "on_episode_start", None)
+        if callable(hook):
+            hook(np.asarray(obs, dtype=np.float32))
+
     def seed_initial(self, obs: np.ndarray) -> None:
         """Initial seeding from startup reset (before main loop)."""
         self._obs = obs
+        self._notify_actor_episode_start(obs)
 
     def seed_after_reset(self, obs: np.ndarray) -> None:
         """Reset all per-episode state for the next episode."""
         self._obs = obs
+        self._notify_actor_episode_start(obs)
         self._episode_rows = []
         self._episode_puck_detection_latency_ms = []
         self._episode_model_inference_latency_ms = []

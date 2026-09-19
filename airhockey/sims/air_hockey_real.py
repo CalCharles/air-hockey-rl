@@ -10,6 +10,7 @@ from .real.control_parameters import (
     mimic_control,
     save_collect,
     observe_collect,
+    draw_robot_edge_limits,
     visual_downscale_constant,
     SHARED_CAMERA_FRAME_SHAPE,
 )
@@ -61,7 +62,7 @@ _PARKED_HEIGHT_EPS_M = 0.002
 
 # Paddle workspace in ROBOT frame: (x_min, x_max, y_min, y_max).
 # See AirHockeyReal.__init__ for the y_max history.
-REAL_WORKSPACE_LIMS = (-0.83, -0.42, -0.35, 0.39)
+REAL_WORKSPACE_LIMS = (-0.83, -0.45, -0.33, 0.39)
 
 
 def _async_render_worker(
@@ -87,6 +88,8 @@ def _async_render_worker(
     assets_dir=None,
     table_length=1.9304,
     table_width=0.8636,
+    workspace_lims=None,
+    workspace_edge_lims=None,
 ):
     frame_shm = None
     sim_renderer = None
@@ -135,6 +138,15 @@ def _async_render_worker(
                 else None
             )
             goal_radius = float(data[10]) if data[10] > 0 else None
+            if workspace_lims is not None and workspace_edge_lims is not None:
+                draw_robot_edge_limits(
+                    frame,
+                    workspace_lims,
+                    workspace_edge_lims,
+                    offset_constants_xy=offset_constants,
+                    visual_downscale=visual_downscale_constant,
+                    annotate=True,
+                )
             draw_target_marker(
                 frame,
                 target_xy,
@@ -1250,6 +1262,14 @@ class AirHockeyReal:
         env_overlay = self._get_box2d_env_overlay()
         if env_overlay is not None:
             env_overlay.apply(image)
+        draw_robot_edge_limits(
+            image,
+            self.lims,
+            self.edge_lims,
+            offset_constants_xy=self.offset_constants,
+            visual_downscale=self.visual_downscale_constant,
+            annotate=True,
+        )
         draw_target_marker(
             image,
             target_xy,
@@ -1399,6 +1419,8 @@ class AirHockeyReal:
                     self._assets_dir,
                     self.length,
                     self.width,
+                    tuple(float(v) for v in self.lims),
+                    tuple(float(v) for v in self.edge_lims),
                 ),
                 daemon=True,
             )

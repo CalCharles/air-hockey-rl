@@ -22,6 +22,8 @@ notes/docs/training/training-throughput.md):
   fixed intervals.
 """
 
+from __future__ import annotations
+
 import copy
 import os
 import random

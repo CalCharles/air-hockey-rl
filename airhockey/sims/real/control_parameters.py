@@ -31,15 +31,32 @@ def _effective_xmax(y_m, lims, edge_lims):
     return effective_x_max(y_m, lims, edge_lims)
 
 
-def draw_robot_edge_limits(frame, lims, edge_lims, color=(0, 255, 255), thickness=2):
-    x_min_lim, _, y_min, y_max = lims
+def draw_robot_edge_limits(
+    frame,
+    lims,
+    edge_lims,
+    color=(0, 255, 255),
+    thickness=2,
+    offset_constants_xy=None,
+    visual_downscale=None,
+    annotate=False,
+):
+    """Draw the paddle-center clip polygon (the box servoL actually uses).
+
+    Cyan by default. This is the paddle *center* workspace, not the mallet
+    rim — a 5 cm paddle sitting on this line already overlaps the table
+    rails at the bottom corners.
+    """
+    x_min_lim, x_max_lim, y_min, y_max = lims
+    oc = offset_constants if offset_constants_xy is None else offset_constants_xy
+    vds = visual_downscale_constant if visual_downscale is None else visual_downscale
 
     def _to_int_point(x_m, y_m):
         return robot_to_display_pixel_int(
             x_m,
             y_m,
-            offset_constants=offset_constants,
-            visual_downscale_constant=visual_downscale_constant,
+            offset_constants=oc,
+            visual_downscale_constant=vds,
         )
 
     # Left edge (x = x_min), top and bottom edges, plus effective right edge.
@@ -61,6 +78,21 @@ def draw_robot_edge_limits(frame, lims, edge_lims, color=(0, 255, 255), thicknes
         dtype=np.int32,
     ).reshape(-1, 1, 2)
     cv2.polylines(frame, [right_points], isClosed=False, color=color, thickness=thickness)
+    if annotate:
+        label = (
+            f"clip x[{float(x_min_lim):+.2f},{float(x_max_lim):+.2f}] "
+            f"y[{float(y_min):+.2f},{float(y_max):+.2f}] (paddle center)"
+        )
+        cv2.putText(
+            frame,
+            label,
+            (12, 28),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            color,
+            2,
+            cv2.LINE_AA,
+        )
 
 def single_point_homography(matrix, point):
     x,y = point
@@ -194,7 +226,7 @@ def camera_callback(
         if env_overlay is not None:
             env_overlay.apply(showdst)
         if lims is not None and edge_lims is not None:
-            draw_robot_edge_limits(showdst, lims, edge_lims)
+            draw_robot_edge_limits(showdst, lims, edge_lims, annotate=True)
         if region_info is not None:
             showdst = visualize_regions(
                 showdst,

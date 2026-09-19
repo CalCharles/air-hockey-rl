@@ -38,7 +38,11 @@ from scripts.rma.env_wrapper import EnvParamNormalizer, raw_env_params
 from scripts.rma.history import StepHistoryBuffer
 from scripts.rma.networks import AdaptationModule, HistoryActor, RMAActor, step_feature_dim, step_state_features
 from scripts.td3.eval_utils import build_policy_env_view, load_policy_for_evaluation
-from scripts.td3.td3_training_dr import _apply_overrides_to_air_hockey_params, _sample_eval_env_overrides
+
+# The DR-trainer helpers below are imported lazily by the multi-env functions
+# that use them. Importing the trainer at module scope would make the agent
+# classes — which deployment loads to run a single policy — depend on the whole
+# training stack.
 
 GIF_WIDTH = 160
 GIF_FPS = 20
@@ -118,11 +122,18 @@ class AdaptedRMAAgent(EvalAgent):
         self._sq_err: List[float] = []
         self._latest_latent = None
 
-    def reset(self, obs, env_params_norm):
+    def reset(self, obs, env_params_norm=None):
+        # ``env_params_norm=None`` is the deployment case (real robot): the true
+        # physics are unknown, so there is no target latent to compare against
+        # and ``latent_mse`` is simply not reported. ``act`` already guards on
+        # ``_target_latent is None``.
         obs_t = torch.as_tensor(obs, dtype=torch.float32)
         self.history.reset(step_state_features(obs_t, self.step_features).numpy())
-        with torch.no_grad():
-            self._target_latent = self.actor.encoder(torch.as_tensor(env_params_norm, dtype=torch.float32).reshape(1, -1))
+        if env_params_norm is None:
+            self._target_latent = None
+        else:
+            with torch.no_grad():
+                self._target_latent = self.actor.encoder(torch.as_tensor(env_params_norm, dtype=torch.float32).reshape(1, -1))
         self._sq_err = []
 
     @torch.no_grad()
@@ -161,7 +172,7 @@ class HistoryAgent(EvalAgent):
         self.step_features = str(step_features or getattr(actor, "step_features", "latest_frame"))
         self.history = StepHistoryBuffer(actor.history_len, actor.feature_dim, actor.act_dim)
 
-    def reset(self, obs, env_params_norm):
+    def reset(self, obs, env_params_norm=None):
         self.history.reset(step_state_features(torch.as_tensor(obs, dtype=torch.float32), self.step_features).numpy())
 
     @torch.no_grad()
@@ -334,6 +345,8 @@ def eval_env_overrides(air_hockey_params: Dict[str, Any], eval_param_seed: int, 
     ranges = dict(air_hockey_params.get(ranges_key, {}))
     if not random_variables or not ranges:
         raise ValueError(f"air_hockey config needs `random_variables` and `{ranges_key}` to sample eval envs")
+    from scripts.td3.td3_training_dr import _sample_eval_env_overrides
+
     return _sample_eval_env_overrides(seed=int(eval_param_seed), n_envs=int(n_envs), random_variable_ranges=ranges, random_variables=random_variables)
 
 
@@ -382,6 +395,8 @@ def evaluate_multi_env(
     schema) plus the full ``agents`` block.  ``call_index`` shifts the
     episode seeds exactly like ``td3_training_dr`` does per checkpoint.
     """
+    from scripts.td3.td3_training_dr import _apply_overrides_to_air_hockey_params
+
     overrides = eval_env_overrides(air_hockey_params, eval_param_seed, n_envs, ranges_key=ranges_key)
     primary = primary or next(iter(agents))
     results: Dict[str, Dict[str, Any]] = {name: {"per_env": []} for name in agents}

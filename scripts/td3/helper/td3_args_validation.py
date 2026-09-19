@@ -4,6 +4,7 @@ Kept separate from the dataclass so the `Args` definition stays a clean
 schema. The validator duck-types `args` — any object with the right
 attribute names works.
 """
+from __future__ import annotations
 
 
 def validate_optional_exploration_range(
