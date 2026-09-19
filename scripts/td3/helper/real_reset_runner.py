@@ -60,6 +60,10 @@ def _reset_stage_id_from_phase(phase: str) -> int:
     phase_name = str(phase)
     if phase_name in ("goto_start", "edge_loop", "upward_burst", "post_first_upward_check"):
         return 0
+    if phase_name == "settle":
+        # PaddleRepositionFSM (paddle-only tasks): the hold-still tail of the
+        # single reposition stage. Same stage id as its ``goto_start`` phase.
+        return 0
     if phase_name in ("wait_for_puck", "strike", "post_second_upward_check"):
         return 1
     if phase_name == "policy_handoff":
@@ -236,7 +240,10 @@ def run_reset_fsm(
     reset_rows: list = []
     reset_images: list = []
     reset_camera_null_frames = 0
-    print(f"[reset_fsm] starting (side={fsm.start_side})")
+    print(
+        f"[reset_fsm] starting ({type(fsm).__name__} "
+        f"side={getattr(fsm, 'start_side', 'n/a')})"
+    )
     try:
         while not fsm.done:
             # Operator interrupt mid-FSM: abort and re-enter the wait-for-clear
@@ -374,6 +381,22 @@ class ResetRunner:
 
     Does NOT own: actor, replay, learner, transition_hold (returns the
     reason string for the orchestrator to call ``transition_hold.begin``).
+
+    Task plug-ins (all optional; defaults reproduce the historical juggle
+    behaviour exactly):
+
+    * ``reset_policy_fsm_cls`` — any ``(env, rng)`` factory whose instances
+      expose ``step`` / ``done`` / ``done_reason`` / ``phase`` /
+      ``total_steps`` / ``close``. ``ResetPolicyFSM`` for puck tasks,
+      ``PaddleRepositionFSM`` for paddle-only tasks.
+    * ``post_soft_reset_hook`` — called with the env after every
+      ``env.soft_reset()`` and before the paddle-history priming, so the
+      primed obs reflects e.g. a freshly sampled goal.
+    * ``force_fsm_after_hard_reset`` — always run the FSM after a hard
+      (physical ``env.reset()``) reset instead of consulting the puck
+      bottom/occluded heuristic. Paddle-only tasks set this: the heuristic
+      is meaningless without a puck and the FSM is what randomises the
+      start pose.
     """
 
     MIN_RESET_DELAY_S: float = 3.0
@@ -390,6 +413,8 @@ class ResetRunner:
         episode_start_reset_bottom_margin: float = 0.25,
         episode_start_reset_bottom_fail_count: int = 2,
         episode_start_reset_occluded_fail_count: int = 6,
+        post_soft_reset_hook: Callable | None = None,
+        force_fsm_after_hard_reset: bool = False,
     ) -> None:
         self._env = env
         self._device = device
@@ -401,6 +426,8 @@ class ResetRunner:
         self._bottom_fail_count = int(episode_start_reset_bottom_fail_count)
         self._occluded_fail_count = int(episode_start_reset_occluded_fail_count)
         self._counters: dict = {"bottom": 0, "occ": 0}
+        self._post_soft_reset_hook = post_soft_reset_hook
+        self._force_fsm_after_hard_reset = bool(force_fsm_after_hard_reset)
 
     # ------------------------------------------------------------------
     # Internal helpers (each maps 1:1 to a call-site in collector_process).
@@ -421,6 +448,7 @@ class ResetRunner:
             self._env,
             prime_paddle_history_stand_still_non_occluded=
                 _prime_paddle_history_stand_still_non_occluded,
+            post_soft_reset_hook=self._post_soft_reset_hook,
         )
 
     # ------------------------------------------------------------------
@@ -522,7 +550,7 @@ class ResetRunner:
             # HARD_SKIP_FSM here also returns the dummy-history obs from
             # env.reset() to the policy, which is what produced the
             # "policy jitters as if continuing the previous episode" symptom.
-            if episode_had_stop_flags.had_stop:
+            if episode_had_stop_flags.had_stop or self._force_fsm_after_hard_reset:
                 run_reset_policy = True
             else:
                 run_reset_policy = _should_run_reset_policy_at_episode_start(
@@ -540,7 +568,8 @@ class ResetRunner:
                 f"hard_reset_start_decision={decision} "
                 f"bottom_counter={self._counters['bottom']} "
                 f"occ_counter={self._counters['occ']} "
-                f"forced_by_stop={int(bool(episode_had_stop_flags.had_stop))}"
+                f"forced_by_stop={int(bool(episode_had_stop_flags.had_stop))} "
+                f"forced_by_task={int(self._force_fsm_after_hard_reset)}"
             )
             if run_reset_policy:
                 kind_actual = ResetKind.HARD_WITH_FSM
@@ -578,16 +607,24 @@ class ResetRunner:
         )
 
 
-def pick_reset_kind(total_episodes: int, stop_flags: StopFlags) -> ResetKind:
+def pick_reset_kind(
+    total_episodes: int,
+    stop_flags: StopFlags,
+    periodic_every: int = 3,
+) -> ResetKind:
     """Pick the reset kind for a normal post-episode boundary.
 
     Source mapping (L2156–L2200):
-      - ``periodic_every_3 OR stop`` → hard reset path
+      - ``periodic_every_N OR stop`` → hard reset path
         (orchestrator picks ``HARD_WITH_FSM``; ResetRunner may downgrade
         to ``HARD_SKIP_FSM`` based on env state)
       - else → ``SOFT``
+
+    ``periodic_every`` defaults to the historical 3; ``0`` disables the
+    periodic hard reset (stop-driven hard resets still happen).
     """
-    periodic_hard_reset = (int(total_episodes) % 3) == 0
+    periodic_every = int(periodic_every)
+    periodic_hard_reset = periodic_every > 0 and (int(total_episodes) % periodic_every) == 0
     if periodic_hard_reset or stop_flags.had_stop:
         return ResetKind.HARD_WITH_FSM
     return ResetKind.SOFT

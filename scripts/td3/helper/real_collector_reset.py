@@ -59,7 +59,17 @@ def soft_reset_and_prime_paddle(
     env: Any,
     *,
     prime_paddle_history_stand_still_non_occluded: Callable[[Any], Any],
+    post_soft_reset_hook: Callable[[Any], None] | None = None,
 ) -> Any:
-    """env.soft_reset, then prime paddle history; returns the primed observation."""
+    """env.soft_reset, then prime paddle history; returns the primed observation.
+
+    ``post_soft_reset_hook`` (optional) runs between ``env.soft_reset()`` and
+    the priming call — the slot task-specific eval hooks use to resample a
+    goal, so the primed observation already carries the new goal. ``None``
+    (the default, and what the training collector passes) keeps the
+    historical two-step sequence bit-identical.
+    """
     env.soft_reset()
+    if post_soft_reset_hook is not None:
+        post_soft_reset_hook(env)
     return prime_paddle_history_stand_still_non_occluded(env)
