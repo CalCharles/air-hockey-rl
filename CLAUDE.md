@@ -21,6 +21,7 @@ scripts/
 ├── real/          — real-robot rollout / teleop / calibration helpers
 ├── visualization/ — trajectory rendering / teleop-segment helpers
 ├── analysis/      — standalone analysis tools (occlusion patterns, etc.)
+├── rma/           — RMA sim2real baseline
 └── utils.py       — small shared helpers (e.g., save_tensorboard_plots)
 configs/           — all YAMLs
 ├── new_juggle/    — sim env configs (sysid_best_params*, sim2sim targets)
