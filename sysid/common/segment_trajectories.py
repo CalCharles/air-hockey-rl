@@ -31,8 +31,8 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from sysid.common.trajectory_segmentation import (  # noqa: E402
-    LABELS, SegmentationConfig, estimate_axis_transforms, segment_trajectory,
-    write_segment_hdf5s, write_segments_json,
+    LABELS, SegmentationConfig, estimate_axis_transforms, is_split_schema_recording,
+    list_split_schema_recordings, segment_trajectory, write_segment_hdf5s, write_segments_json,
 )
 from sysid.common.segment_rendering import render_gif, render_plot  # noqa: E402
 
@@ -40,7 +40,7 @@ from sysid.common.segment_rendering import render_gif, render_plot  # noqa: E402
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     src = p.add_mutually_exclusive_group(required=True)
-    src.add_argument("--input-dir", type=Path, help="directory searched recursively for *.hdf5")
+    src.add_argument("--input-dir", type=Path, help="directory searched recursively for split-schema *.hdf5")
     src.add_argument("--inputs", type=Path, nargs="+", help="explicit HDF5 files")
     p.add_argument("--sample", type=int, default=None, help="randomly pick this many files")
     p.add_argument("--seed", type=int, default=0)
@@ -80,10 +80,16 @@ def main():
     cfg = build_config(args.cfg)
     if args.inputs:
         files = [Path(f) for f in args.inputs]
+        skipped = [p for p in files if not is_split_schema_recording(p)]
+        if skipped:
+            print(f"skipped {len(skipped)} non-split-schema input(s): "
+                  + ", ".join(str(p) for p in skipped[:5]))
+        files = [p for p in files if is_split_schema_recording(p)]
     else:
-        files = sorted(args.input_dir.rglob("*.hdf5"))
+        files = list_split_schema_recordings(args.input_dir)
     if not files:
-        raise SystemExit("no HDF5 files found")
+        raise SystemExit("no split-schema HDF5 recordings found "
+                         "(need datasets puck / pose / cur_time; old train_vals dumps are skipped)")
     if args.sample is not None and args.sample < len(files):
         rng = random.Random(args.seed)
         files = sorted(rng.sample(files, args.sample))

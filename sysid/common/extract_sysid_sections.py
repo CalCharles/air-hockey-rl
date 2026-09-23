@@ -48,7 +48,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from sysid.common.trajectory_segmentation import (  # noqa: E402
     SPLIT_DATASETS, SegmentationConfig, _json_default, estimate_axis_transforms,
-    fit_damped, model_state, segment_trajectory,
+    fit_damped, list_split_schema_recordings, model_state, segment_trajectory,
 )
 
 
@@ -98,9 +98,13 @@ def side_fit(traj, frames, cfg, t0):
 def main():
     args = parse_args()
     cfg = build_config(args.cfg)
-    files = sorted(args.input_dir.rglob("*.hdf5"))
+    files = list_split_schema_recordings(args.input_dir)
     if not files:
-        raise SystemExit("no HDF5 files found")
+        raise SystemExit("no split-schema HDF5 recordings found "
+                         "(need datasets puck / pose / cur_time; old train_vals dumps are skipped)")
+    n_all = len(list(args.input_dir.rglob("*.hdf5")))
+    if n_all > len(files):
+        print(f"skipped {n_all - len(files)} non-split-schema HDF5 file(s) under {args.input_dir}")
     cal = estimate_axis_transforms(files, cfg)
     print(f"calibration: puck_x_sign={cal['puck_x_sign']} paddle x = {cal['paddle_x_sign']:+d}*pose_x {cal['paddle_x_offset']:+.3f} "
           f"({cal['hits']}/{cal['n_impulses']} impulses explained)")

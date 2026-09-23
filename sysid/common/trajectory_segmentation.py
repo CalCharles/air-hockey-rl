@@ -83,6 +83,24 @@ SPLIT_DATASETS = (
     "cur_time", "tidx", "i", "estop", "safety", "pose", "speed", "force",
     "acc", "desired_pose", "puck", "action", "paddle",
 )
+# Minimum keys for ``load_trajectory`` (older ``train_vals`` dumps lack these).
+_REQUIRED_RECORDING_KEYS = ("puck", "pose", "cur_time")
+
+
+def is_split_schema_recording(path: str | Path) -> bool:
+    """True if ``path`` is a split-schema episode HDF5 (has ``puck`` / ``pose`` / ``cur_time``)."""
+    try:
+        with h5py.File(path, "r") as f:
+            return all(k in f for k in _REQUIRED_RECORDING_KEYS)
+    except OSError:
+        return False
+
+
+def list_split_schema_recordings(root: str | Path) -> list[Path]:
+    """Recursive ``*.hdf5`` under ``root``, skipping non-split-schema files (e.g. old ``train_vals``)."""
+    root = Path(root)
+    files = sorted(p for p in root.rglob("*.hdf5") if is_split_schema_recording(p))
+    return files
 
 
 @dataclass
