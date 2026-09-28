@@ -274,11 +274,11 @@ def _convert_raw_bounds_to_detector_bounds(
     )
 
 
-def _history_to_detector_pixel(puck_history, center_offset_constant):
+def _history_to_detector_pixel(puck_history, center_offset_constant, center_offset_constant_y=0.0):
     if puck_history is None or len(puck_history) == 0:
         return None
     prev_x = float(puck_history[-1][0]) - float(center_offset_constant)
-    prev_y = float(puck_history[-1][1])
+    prev_y = float(puck_history[-1][1]) - float(center_offset_constant_y)
     pred_x = (prev_x * 1000.0 + float(offset_constants[0])) / 4.0
     pred_y = (-prev_y * 1000.0 + float(offset_constants[1])) / 4.0
     return pred_x, pred_y
@@ -288,6 +288,7 @@ def _select_component_centroid(
     mask,
     puck_history=None,
     center_offset_constant=0.0,
+    center_offset_constant_y=0.0,
     min_radius_px=None,
     max_radius_px=None,
     min_circularity=None,
@@ -295,7 +296,7 @@ def _select_component_centroid(
     loose_min_fill_ratio=None,
     max_area=2500,
 ):
-    pred = _history_to_detector_pixel(puck_history, center_offset_constant)
+    pred = _history_to_detector_pixel(puck_history, center_offset_constant, center_offset_constant_y)
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     strict_candidates = []
     loose_candidates = []
@@ -354,6 +355,7 @@ def find_red_hockey_puck(
     puck_history=None,
     rotate=True,
     center_offset_constant=0.0,
+    center_offset_constant_y=0.0,
     **_ignored_kwargs,
 ):
     image = _preprocess_puck_image(image, rotate=rotate)
@@ -385,6 +387,7 @@ def find_red_hockey_puck(
         mask,
         puck_history=puck_history,
         center_offset_constant=center_offset_constant,
+        center_offset_constant_y=center_offset_constant_y,
         min_radius_px=SIMPLE_MIN_PUCK_RADIUS_PX,
         max_radius_px=SIMPLE_MAX_PUCK_RADIUS_PX,
         min_circularity=SIMPLE_MIN_PUCK_CIRCULARITY,
@@ -409,6 +412,7 @@ def find_red_hockey_puck_antiglare(
     antiglare_min_y_px=None,
     antiglare_max_y_px=None,
     center_offset_constant=0.0,
+    center_offset_constant_y=0.0,
     **_ignored_kwargs,
 ):
     raw_shape = image.shape
@@ -455,6 +459,7 @@ def find_red_hockey_puck_antiglare(
         mask,
         puck_history=puck_history,
         center_offset_constant=center_offset_constant,
+        center_offset_constant_y=center_offset_constant_y,
     )
     if center is None:
         return _fallback_puck(puck_history)

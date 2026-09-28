@@ -13,13 +13,14 @@ def visualize_regions(
     offset_constants=None,
     visual_downscale_constant=2,
     draw_paddle=True,
+    y_offset=0.0,
 ):
     # frame is the image frame
     # reward regions defined: [x y rx ry, ...]
     # goals defined: x y r
     # paddle defined: x y r
     for r in reward_region_info:
-        rx, ry = observation_to_robot_xy(r[0], r[1], x_offset)
+        rx, ry = observation_to_robot_xy(r[0], r[1], x_offset, y_offset)
         center_coordinates = robot_to_display_pixel_int(
             rx,
             ry,
@@ -37,7 +38,7 @@ def visualize_regions(
 
     goal = goal_info[:2]
     goal = copy.deepcopy(goal)
-    goal_x, goal_y = observation_to_robot_xy(goal[0], goal[1], x_offset)
+    goal_x, goal_y = observation_to_robot_xy(goal[0], goal[1], x_offset, y_offset)
     goal_center_coordinates = robot_to_display_pixel_int(
         goal_x,
         goal_y,

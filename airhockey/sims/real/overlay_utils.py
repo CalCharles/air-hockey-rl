@@ -3,12 +3,15 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from airhockey.renderers.table_image import table_image_path
+
 DEFAULT_VISUAL_DOWNSCALE_CONSTANT = 2.0
-DEFAULT_OFFSET_CONSTANTS = np.array((2100.0, 500.0), dtype=float)
+DEFAULT_OFFSET_CONSTANTS = np.array((2250.0, 500.0), dtype=float)  # = image_detection.offset_constants
 DEFAULT_SIM_OVERLAY_ALPHA = 0.25
 DEFAULT_TABLE_LENGTH = 1.9304
 DEFAULT_TABLE_WIDTH = 0.8636
 DEFAULT_CENTER_OFFSET = 1.2
+DEFAULT_CENTER_OFFSET_Y = 0.0
 
 
 def _coerce_offset_constants(offset_constants):
@@ -66,8 +69,8 @@ def display_pixel_to_robot(
     return float(robot_xy[0]), float(-robot_xy[1])
 
 
-def observation_to_robot_xy(x_obs, y_obs, x_offset):
-    return float(x_obs) - float(x_offset), float(y_obs)
+def observation_to_robot_xy(x_obs, y_obs, x_offset, y_offset=0.0):
+    return float(x_obs) - float(x_offset), float(y_obs) - float(y_offset)
 
 
 def draw_target_marker(
@@ -159,6 +162,7 @@ def draw_puck_marker_from_state(
     visual_downscale_constant=DEFAULT_VISUAL_DOWNSCALE_CONSTANT,
     color=(0, 255, 0),
     require_visible=True,
+    y_offset_for_state=0.0,
 ):
     if frame is None or puck_state is None or len(puck_state) < 3:
         return frame
@@ -166,7 +170,7 @@ def draw_puck_marker_from_state(
         return frame
 
     puck_x_robot, puck_y_robot = observation_to_robot_xy(
-        puck_state[0], puck_state[1], x_offset_for_state
+        puck_state[0], puck_state[1], x_offset_for_state, y_offset_for_state
     )
     return draw_robot_circle_marker(
         frame,
@@ -279,13 +283,14 @@ def _assets_dir_from_overlay_utils():
 def load_box2d_environment_image(assets_dir=None):
     """Load the Box2D table bitmap in the same orientation as ``AirHockeyRenderer``.
 
-    ``AirHockeyRenderer`` rotates ``air_hockey_table.png`` 90° clockwise and then
+    ``AirHockeyRenderer`` rotates the table image (see
+    ``airhockey/renderers/table_image.py``) 90° clockwise and then
     stretches it to the table rectangle. The four image corners therefore correspond
     to the four physical table corners; we keep the rotated image at native
     resolution and let the display homography do the stretch into camera space.
     """
     folder = Path(assets_dir) if assets_dir is not None else _assets_dir_from_overlay_utils()
-    table_path = folder / "air_hockey_table.png"
+    table_path = table_image_path(folder)
     img = cv2.imread(str(table_path))
     if img is None:
         return None
@@ -299,6 +304,7 @@ def box2d_table_src_dst_points(
     center_offset=DEFAULT_CENTER_OFFSET,
     offset_constants=None,
     visual_downscale_constant=DEFAULT_VISUAL_DOWNSCALE_CONSTANT,
+    center_offset_y=DEFAULT_CENTER_OFFSET_Y,
 ):
     """Pixel correspondences from the Box2D table image to the homography display.
 
@@ -334,7 +340,7 @@ def box2d_table_src_dst_points(
         [
             robot_to_display_pixel(
                 tx - float(center_offset),
-                ty,
+                ty - float(center_offset_y),
                 offset_constants=offset_constants,
                 visual_downscale_constant=visual_downscale_constant,
             )
@@ -353,6 +359,7 @@ def warp_box2d_environment_to_display(
     center_offset=DEFAULT_CENTER_OFFSET,
     offset_constants=None,
     visual_downscale_constant=DEFAULT_VISUAL_DOWNSCALE_CONSTANT,
+    center_offset_y=DEFAULT_CENTER_OFFSET_Y,
 ):
     """Warp a Box2D table image into a homography-rectified camera frame.
 
@@ -372,6 +379,7 @@ def warp_box2d_environment_to_display(
         center_offset=center_offset,
         offset_constants=offset_constants,
         visual_downscale_constant=visual_downscale_constant,
+        center_offset_y=center_offset_y,
     )
     homography = cv2.getPerspectiveTransform(src, dst)
     dsize = (dst_w, dst_h)
@@ -410,11 +418,13 @@ class Box2DEnvironmentOverlay:
         visual_downscale_constant=DEFAULT_VISUAL_DOWNSCALE_CONSTANT,
         assets_dir=None,
         table_image=None,
+        center_offset_y=DEFAULT_CENTER_OFFSET_Y,
     ):
         self.alpha = float(alpha)
         self.table_length = float(table_length)
         self.table_width = float(table_width)
         self.center_offset = float(center_offset)
+        self.center_offset_y = float(center_offset_y)
         self.offset_constants = _coerce_offset_constants(offset_constants)
         self.visual_downscale_constant = _coerce_downscale(visual_downscale_constant)
         self._table_bgr = table_image if table_image is not None else load_box2d_environment_image(assets_dir)
@@ -436,6 +446,7 @@ class Box2DEnvironmentOverlay:
                 table_length=sim_overlay.get("table_length", DEFAULT_TABLE_LENGTH),
                 table_width=sim_overlay.get("table_width", DEFAULT_TABLE_WIDTH),
                 center_offset=sim_overlay.get("center_offset", DEFAULT_CENTER_OFFSET),
+                center_offset_y=sim_overlay.get("center_offset_y", DEFAULT_CENTER_OFFSET_Y),
                 offset_constants=sim_overlay.get("offset_constants"),
                 visual_downscale_constant=sim_overlay.get(
                     "visual_downscale_constant", DEFAULT_VISUAL_DOWNSCALE_CONSTANT
@@ -453,7 +464,7 @@ class Box2DEnvironmentOverlay:
         if self._table_bgr is None:
             if not self._load_warned:
                 print(
-                    "[sim_overlay] Could not load assets/air_hockey_table.png; "
+                    "[sim_overlay] Could not load the table image (airhockey/renderers/table_image.py); "
                     "Box2D environment overlay disabled."
                 )
                 self._load_warned = True
@@ -468,6 +479,7 @@ class Box2DEnvironmentOverlay:
                 center_offset=self.center_offset,
                 offset_constants=self.offset_constants,
                 visual_downscale_constant=self.visual_downscale_constant,
+                center_offset_y=self.center_offset_y,
             )
             self._dst_hw = dst_hw
         return blend_masked_overlay(frame, self._warped, self._mask, self.alpha)

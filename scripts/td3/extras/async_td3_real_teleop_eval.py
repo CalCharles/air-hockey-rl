@@ -319,6 +319,7 @@ def _make_teleop_camera_callback(phase_state):
         shared_camera_frame_ready=None,
         camera_index=0,
         sim_overlay=None,
+        region_y_offset=0.0,
     ):
         import imageio
 

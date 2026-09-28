@@ -19,6 +19,8 @@ import h5py
 import imageio
 import numpy as np
 
+from airhockey.renderers.table_image import table_image_path
+
 try:
     import cv2
 except ModuleNotFoundError as exc:
@@ -70,7 +72,7 @@ def robot_to_pixel(robot_x: float, robot_y: float, ppm: float) -> tuple[int, int
 def load_table_background(frame_h: int, frame_w: int) -> np.ndarray:
     script_dir = Path(__file__).resolve().parent
     assets_dir = script_dir.parent.parent / "assets"
-    table_path = assets_dir / "air_hockey_table.png"
+    table_path = table_image_path(assets_dir)
 
     table_img = cv2.imread(str(table_path))
     if table_img is None:

@@ -36,6 +36,7 @@ import yaml
 from torch.utils.tensorboard import SummaryWriter
 
 from airhockey import AirHockeyEnv
+from airhockey.sims.real.table_calibration import OCCLUDED_PLACEHOLDER_TABLE_X
 from scripts.td3.helper.episode_artifacts import (
     clean_episode_hdf5,
     generate_episode_camera_video,
@@ -1129,8 +1130,7 @@ def _build_split_episode_row(
         # ``pucks`` entry at all. Write the same occluded placeholder the
         # simulators use for an unseen puck so the split schema stays fixed
         # width and downstream contact / occlusion logic ignores the frame.
-        center_offset = float(getattr(env.simulator, "center_offset_constant", 0.0))
-        puck_info = {"position": [-2.0 + center_offset, 0.0], "occluded": [1.0]}
+        puck_info = {"position": [OCCLUDED_PLACEHOLDER_TABLE_X, 0.0], "occluded": [1.0]}
     paddle_pos = np.asarray(paddle.get("position", [0.0, 0.0]), dtype=np.float64).reshape(-1)
     paddle_vel = np.asarray(paddle.get("velocity", [0.0, 0.0]), dtype=np.float64).reshape(-1)
     move_lims = np.asarray(getattr(env.simulator, "move_lims", (1.0, 1.0)), dtype=np.float64).reshape(-1)

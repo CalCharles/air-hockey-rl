@@ -27,6 +27,8 @@ import argparse
 import os
 import sys
 
+from airhockey.renderers.table_image import table_image_path
+
 
 def load_trajectory_data(filepath):
     """
@@ -131,6 +133,7 @@ class RealTrajectoryRenderer:
                  render_size=360,
                  robot_x_offset=1.2,
                  orientation='vertical',
+                 robot_y_offset=0.0,
                  paddle_input_frame='robot',
                  assets_dir=None,
                  quiet=False):
@@ -143,7 +146,8 @@ class RealTrajectoryRenderer:
             paddle_radius: Radius of paddle in meters (0.0508m)
             puck_radius: Radius of puck in meters (simulation default: 0.03175m)
             render_size: Render size in pixels (default: 360, matching simulation)
-            robot_x_offset: Robot base offset from table center in X (real world: ~1.2m)
+            robot_x_offset: table_x = robot_x + robot_x_offset (see airhockey/sims/real/table_calibration.py)
+            robot_y_offset: table_y = robot_y + robot_y_offset
             orientation: Render orientation ('vertical' or 'horizontal')
             paddle_input_frame: Coordinate frame for paddle x/y inputs.
                 - 'robot': inputs are robot-frame and require robot_x_offset transform.
@@ -162,6 +166,7 @@ class RealTrajectoryRenderer:
         self.paddle_radius = paddle_radius
         self.puck_radius = puck_radius
         self.robot_x_offset = robot_x_offset
+        self.robot_y_offset = robot_y_offset
         self.orientation = orientation
         self.paddle_input_frame = paddle_input_frame
         self.quiet = quiet
@@ -204,7 +209,7 @@ class RealTrajectoryRenderer:
             print(f"  Loading assets from: {assets_folder}")
         
         # Load table image
-        table_path = assets_folder / 'air_hockey_table.png'
+        table_path = table_image_path(assets_folder)
         self.table_img = cv2.imread(str(table_path))
         if self.table_img is None:
             raise FileNotFoundError(f"Could not load table image from {table_path}")
@@ -253,7 +258,7 @@ class RealTrajectoryRenderer:
         """
         # Apply X offset to transform from robot frame to table frame
         table_x = pos_x + self.robot_x_offset
-        table_y = pos_y
+        table_y = pos_y + self.robot_y_offset
         return table_x, table_y
 
     def table_position_to_pixel_coords(self, table_x, table_y):

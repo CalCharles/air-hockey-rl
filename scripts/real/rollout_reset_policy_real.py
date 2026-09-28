@@ -141,7 +141,7 @@ class ResetPolicyFSM:
         self._paddle_x_off = float(getattr(simulator, "paddle_additional_x_offset", 0.0))
         self._paddle_y_off = float(getattr(simulator, "paddle_additional_y_offset", 0.0))
         self._center_offset = float(getattr(simulator, "center_offset_constant", 0.0))
-        self._x_offset = float(getattr(simulator, "x_offset", 0.0))
+        self._center_offset_y = float(getattr(simulator, "center_offset_constant_y", 0.0))
 
         self.phase = "goto_start"
         self.phase_steps = 0
@@ -198,8 +198,8 @@ class ResetPolicyFSM:
         paddle_obs = np.array(state_info["paddles"]["paddle_ego"]["position"], dtype=np.float32)
         return np.array(
             [
-                paddle_obs[0] - self._x_offset - self._paddle_x_off,
-                paddle_obs[1] - self._paddle_y_off,
+                paddle_obs[0] - self._center_offset - self._paddle_x_off,
+                paddle_obs[1] - self._center_offset_y - self._paddle_y_off,
             ],
             dtype=np.float32,
         )
@@ -207,7 +207,9 @@ class ResetPolicyFSM:
     def _get_puck_pos(self, state_info: dict) -> np.ndarray:
         """Puck position in TCP-aligned frame (center_offset removed)."""
         puck_obs = np.array(state_info["pucks"][0]["position"], dtype=np.float32)
-        return np.array([puck_obs[0] - self._center_offset, puck_obs[1]], dtype=np.float32)
+        return np.array(
+            [puck_obs[0] - self._center_offset, puck_obs[1] - self._center_offset_y], dtype=np.float32
+        )
 
     def _read_robot_wrench(self) -> np.ndarray:
         """Read the current TCP wrench from the real robot receiver when available."""

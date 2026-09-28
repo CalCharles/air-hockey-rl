@@ -55,7 +55,10 @@ class AirHockeyBaseEnv(ABC, Env):
             'table_xml': "arenas/air_hockey_table.xml",
             'paddle_bounds': [],
             'paddle_edge_bounds': [],
-            'center_offset_constant': 1.2,
+            # robot -> table frame offset (table = robot + offset). None: Box2D keeps
+            # 1.2 / 0; the real env uses sims/real/table_calibration.py.
+            'center_offset_constant': None,
+            'center_offset_constant_y': None,
             'action_x_ratio': 0.26,
             'action_y_ratio': 0.12,
             'num_positive_reward_regions': 0,
@@ -136,7 +139,18 @@ class AirHockeyBaseEnv(ABC, Env):
         simulator_params.seed = config.seed
         simulator_params.paddle_bounds = config.paddle_bounds
         simulator_params.paddle_edge_bounds = config.paddle_edge_bounds
+        if config.simulator == 'real':
+            from .sims.real.table_calibration import TABLE_CENTER_OFFSET_X, TABLE_CENTER_OFFSET_Y
+            default_offset = (TABLE_CENTER_OFFSET_X, TABLE_CENTER_OFFSET_Y)
+        else:
+            default_offset = (1.2, 0.0)
+        if config.center_offset_constant is None:
+            config.center_offset_constant = default_offset[0]
+        if config.center_offset_constant_y is None:
+            config.center_offset_constant_y = default_offset[1]
         simulator_params.center_offset_constant = config.center_offset_constant
+        if config.simulator == 'real':
+            simulator_params.center_offset_constant_y = config.center_offset_constant_y
         self.simulator_name = config.simulator
         self.simulator = simulator_fn.from_dict(vars(simulator_params))
         self.render_length = self.simulator.render_length
@@ -239,6 +253,7 @@ class AirHockeyBaseEnv(ABC, Env):
         self.table_y_right = self.width / 2
         self.table_y_left = -self.width / 2
         self.center_offset_constant = config.center_offset_constant
+        self.center_offset_constant_y = config.center_offset_constant_y
         self.action_x_ratio = config.action_x_ratio
         self.action_y_ratio = config.action_y_ratio
         # import pdb; pdb.set_trace()
@@ -523,6 +538,7 @@ class AirHockeyBaseEnv(ABC, Env):
         """
         sim = self.simulator
         offset = float(getattr(sim, "center_offset_constant", 0.0))
+        offset_y = float(getattr(sim, "center_offset_constant_y", 0.0))
         x_min_lim = getattr(sim, "x_min_lim", None)
         x_max_lim = getattr(sim, "x_max_lim", None)
         y_min_lim = getattr(sim, "y_min", None)
@@ -538,7 +554,7 @@ class AirHockeyBaseEnv(ABC, Env):
         else:
             x_lo = float(x_min_lim) + offset
             x_hi = float(x_max_lim) + offset
-            y_lo, y_hi = float(y_min_lim), float(y_max_lim)
+            y_lo, y_hi = float(y_min_lim) + offset_y, float(y_max_lim) + offset_y
             if y is not None:
                 x_hi = min(x_hi, self._workspace_x_max_at_y(y))
 
@@ -562,11 +578,13 @@ class AirHockeyBaseEnv(ABC, Env):
         """
         sim = self.simulator
         offset = float(getattr(sim, "center_offset_constant", 0.0))
+        offset_y = float(getattr(sim, "center_offset_constant_y", 0.0))
         top_abs = getattr(sim, "top_abs", None)
         biases = [b for b in (getattr(sim, "max_bias_p", None), getattr(sim, "max_bias_m", None)) if b is not None]
         if not top_abs or not biases:
             return float("inf")
-        return float(min(biases)) - float(top_abs) * abs(float(y)) + offset
+        # The corner cut is defined in robot y.
+        return float(min(biases)) - float(top_abs) * abs(float(y) - offset_y) + offset
 
     def sample_paddle_spawn_in_workspace(self, margin=0.0):
         """Uniform paddle-ego spawn (position, velocity) inside the workspace."""

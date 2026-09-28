@@ -714,7 +714,8 @@ def poll_puck_once(sim, keep_frame: bool = False):
     """
     image, _save_img, frame_received_s = save_collect(
         sim.cap, None, None, None,
-        show=False, lims=None, edge_lims=None, region_x_offset=sim.x_offset,
+        show=False, lims=None, edge_lims=None, region_x_offset=sim.center_offset_constant,
+        region_y_offset=sim.center_offset_constant_y,
     )
     puck = np.array(
         sim.puck_detector(image, sim.puck_history, rotate=False, **sim.puck_detector_kwargs),
@@ -724,6 +725,7 @@ def poll_puck_once(sim, keep_frame: bool = False):
     # offset; the occlusion fallback already comes back in state frame.
     if int(puck[2]) == 0:
         puck[0] += sim.center_offset_constant
+        puck[1] += sim.center_offset_constant_y
     sim.puck_history.append(puck)
     sim.puck = puck[:2]
 
@@ -1409,6 +1411,7 @@ def run_puck_collision_session(args, config_path: Path) -> None:
         "control_mode": str(sim.control_mode),
         "block_time": float(sim.block_time),
         "center_offset_constant": float(sim.center_offset_constant),
+        "center_offset_constant_y": float(sim.center_offset_constant_y),
         "session_start_iso": datetime.now().astimezone().isoformat(),
     }
 
@@ -1513,6 +1516,7 @@ def run_puck_collision_session(args, config_path: Path) -> None:
             "move_lims": [float(v) for v in move_lims],
             "workspace_lims": [float(v) for v in sim.lims],
             "center_offset_constant": session_meta["center_offset_constant"],
+            "center_offset_constant_y": session_meta["center_offset_constant_y"],
             "hist_len": session_meta["hist_len"],
             "vals_column_names": VALS_COLUMN_NAMES,
             "trials": manifest_entries,
@@ -2456,6 +2460,7 @@ def run_jerk_session(args, config_path: Path) -> None:
         "control_mode": str(sim.control_mode),
         "block_time": float(sim.block_time),
         "center_offset_constant": float(sim.center_offset_constant),
+        "center_offset_constant_y": float(sim.center_offset_constant_y),
         "session_start_iso": datetime.now().astimezone().isoformat(),
     }
 
@@ -2572,6 +2577,7 @@ def run_jerk_session(args, config_path: Path) -> None:
             "move_lims": [float(v) for v in move_lims],
             "workspace_lims": [float(v) for v in sim.lims],
             "center_offset_constant": session_meta["center_offset_constant"],
+            "center_offset_constant_y": session_meta["center_offset_constant_y"],
             "hist_len": session_meta["hist_len"],
             "vals_column_names": VALS_COLUMN_NAMES,
             "trials": manifest_entries,

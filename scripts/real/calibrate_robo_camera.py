@@ -188,7 +188,7 @@ def find_red_dot(image, offset):
     return x,y
 
 
-def find_red_pucks(image, min_area=60.0, max_area=6000.0):
+def find_red_pucks(image, min_area=60.0, max_area=6000.0, target_count=4):
     """Return red blob centroids as (row, col, area) tuples."""
     hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
@@ -219,7 +219,7 @@ def find_red_pucks(image, min_area=60.0, max_area=6000.0):
         row = float(moments["m01"] / moments["m00"])
         blobs.append((row, col, area))
 
-    centroids = _filter_size_consistent_blobs(blobs, target_count=4)
+    centroids = _filter_size_consistent_blobs(blobs, target_count=target_count)
 
     return centroids, mask
 
@@ -393,9 +393,7 @@ def calibrate_homography(camera_id, save_homographies, saved_path=None):
         (int(640 * upscale_constant), int(480 * upscale_constant)),
         interpolation=cv2.INTER_LINEAR,
     )
-    cv2.imshow("image", image)
-    # waitKey is required or the HighGUI window stays blank; 0 = wait for a key.
-    cv2.waitKey(0)
+    
 
     original_size = np.array([640, 480])
     offset_constants = np.array((2250, 500), dtype=np.float32)
@@ -558,6 +556,9 @@ def calibrate_homography(camera_id, save_homographies, saved_path=None):
             print("Saved mode: skipping robot marking; detecting pucks from the saved capture.")
         else:
             apply_negative_z_force(ctrl)
+            print("Holding initial pose before calibration moves...")
+            time.sleep(10.0)
+
             print("Moving robot through 4 calibration positions...")
             for idx, robo_pt in enumerate(robot_points_mm):
                 mark_pose = [robo_pt[0] * 0.001, robo_pt[1] * 0.001, 0.33] + angle
@@ -773,4 +774,4 @@ if __name__ == "__main__":
             raise SystemExit("--saved requires a path to a calibration session directory or capture image.")
         saved_path = sys.argv[saved_idx]
 
-    calibrate_homography(0, save_homographies, saved_path=saved_path)
+    calibrate_homography(1, save_homographies, saved_path=saved_path)

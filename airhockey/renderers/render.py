@@ -1,6 +1,7 @@
 import numpy as np
 import cv2
 import os
+from .table_image import table_image_path
 try:
     from collections.abc import Iterable
 except ImportError:
@@ -49,7 +50,7 @@ class AirHockeyRenderer:
         assets_folder = os.path.abspath(os.path.join(dir_path, '../../assets'))
         assert os.path.exists(assets_folder), f"Could not find assets folder at {assets_folder}"
         
-        air_hockey_table_fp = os.path.join(assets_folder, 'air_hockey_table.png')
+        air_hockey_table_fp = str(table_image_path(assets_folder))
         puck_fp = os.path.join(assets_folder, 'puck.png')
         paddle_fp = os.path.join(assets_folder, 'paddle.png')
         block_fp = os.path.join(assets_folder, 'block.png')

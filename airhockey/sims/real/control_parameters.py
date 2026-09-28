@@ -176,6 +176,7 @@ def camera_callback(
     shared_camera_frame_ready=None,
     camera_index=0,
     sim_overlay=None,
+    region_y_offset=0.0,
 ):
     camera_index = int(camera_index)
     try:
@@ -237,6 +238,7 @@ def camera_callback(
                 offset_constants=offset_constants,
                 visual_downscale_constant=visual_downscale_constant,
                 draw_paddle=False,
+                y_offset=region_y_offset,
             )
         if target_info[2] > 0:
             draw_target_marker(
@@ -349,7 +351,7 @@ def save_callback(
         cv2.waitKey(1)
 
 # performs saving without multiprocessing
-def save_collect(cap, paddle_info, region_info, goal_info, show=True, lims=None, edge_lims=None, region_x_offset=1.0):
+def save_collect(cap, paddle_info, region_info, goal_info, show=True, lims=None, edge_lims=None, region_x_offset=1.0, region_y_offset=0.0):
     start = time.time()
     ret, image = cap.read()
     frame_received_s = time.time()
@@ -366,6 +368,7 @@ def save_collect(cap, paddle_info, region_info, goal_info, show=True, lims=None,
             offset_constants=offset_constants,
             visual_downscale_constant=visual_downscale_constant,
             draw_paddle=False,
+            y_offset=region_y_offset,
         )
     if show:
         cv2.imshow('showdst',showdst)
