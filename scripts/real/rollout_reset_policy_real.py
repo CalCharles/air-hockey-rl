@@ -49,6 +49,8 @@ class ResetPolicyFSM:
     Phases:
       1. goto_start    -- move paddle to the starting corner of the edge loop
       2. edge_loop     -- sweep along the bottom boundary from one side to the other
+         nudge / nudge_gap -- small upward tap, then hold still so the puck slides
+                          off the paddle; the burst then hits it instead of pushing it
       3. upward_burst  -- flick paddle upward (negative x) for burst_steps
       4. wait_for_puck -- hold position until puck falls within puck_proximity_m
       5. strike        -- ramping upward strike [-0.3, -0.6, -1.0, -1.0, -1.0]
@@ -69,13 +71,30 @@ class ResetPolicyFSM:
       fixed).
     """
 
+    # run_reset_fsm widens the bottom limit (AirHockeyReal.set_reset_workspace) while
+    # this FSM runs, so the wall sweep can reach a puck resting on the wall.
+    uses_reset_workspace = True
+
     def __init__(
         self,
         env: AirHockeyEnv,
         rng: np.random.Generator,
-        loop_max_delta_m: float = 0.1,
-        burst_action_m: float = 0.2,
+        # Max paddle-target step per control step (20 Hz) while travelling to the start
+        # corner and sweeping the bottom wall: 0.05 m ~ 1 m/s (was 0.1 ~ 2 m/s). The
+        # upward burst / strike keep their own magnitudes.
+        loop_max_delta_m: float = 0.05,
+        loop_lookahead_m: float = 0.1,
+        # Upward flick off the wall, m per step (move box max is rmax_x = 0.26):
+        # 0.24 ~ 92 % of max (was 0.20 ~ 77 %).
+        burst_action_m: float = 0.24,
         burst_steps: int = 5,
+        # Before the burst: tap the puck up the table (nudge_action_m per step for
+        # nudge_steps), then hold still for nudge_gap_steps so a gap opens between
+        # the puck and the paddle. nudge_steps=0 goes straight to the burst (old
+        # behaviour).
+        nudge_action_m: float = 0.04,
+        nudge_steps: int = 2,
+        nudge_gap_steps: int = 3,
         goto_start_arrive_m: float = 0.05,
         waypoint_advance_m: float = 0.05,
         puck_proximity_m: float = 0.5,
@@ -83,6 +102,9 @@ class ResetPolicyFSM:
         post_window_debug_log: bool = False,
         shared_success_threshold_proportion_from_bottom: float = 0.5,
         off_wall_abs_y_m: float = 0.35,
+        # True: a hit succeeds as soon as the puck crosses the success line, with
+        # no "away from the side walls" requirement (min_off_wall_window_steps).
+        success_ignore_wall: bool = False,
         min_off_wall_window_steps: int = 5,
         max_stage2_cycles: int = 5,
         capture_second_hit_frame: bool = True,
@@ -98,8 +120,12 @@ class ResetPolicyFSM:
         self.env = env
         self.rng = rng
         self.loop_max_delta_m = float(loop_max_delta_m)
+        self.loop_lookahead_m = float(loop_lookahead_m)
         self.burst_action_m = float(burst_action_m)
         self.burst_steps = int(burst_steps)
+        self.nudge_action_m = float(nudge_action_m)
+        self.nudge_steps = max(0, int(nudge_steps))
+        self.nudge_gap_steps = max(0, int(nudge_gap_steps))
         self.goto_start_arrive_m = float(goto_start_arrive_m)
         self.waypoint_advance_m = float(waypoint_advance_m)
         self.post_upward_check_steps = max(1, int(post_upward_check_steps))
@@ -110,8 +136,11 @@ class ResetPolicyFSM:
         self.off_wall_abs_y_m = float(off_wall_abs_y_m)
         self.min_height_window_steps = 1
         self.min_off_wall_window_steps = max(1, int(min_off_wall_window_steps))
+        self.success_ignore_wall = bool(success_ignore_wall)
+        self._required_off_wall_steps = 0 if self.success_ignore_wall else self.min_off_wall_window_steps
         self.max_stage2_cycles = max(1, int(max_stage2_cycles))
-        strike_mag = float(self.rng.uniform(0.8, 1.0))
+        # Second hit strength (fraction of the max step); was uniform(0.8, 1.0).
+        strike_mag = float(self.rng.uniform(0.9, 1.0))
         self._strike_actions = [
             -0.3 * strike_mag,
             -0.6 * strike_mag,
@@ -334,6 +363,11 @@ class ResetPolicyFSM:
             return np.zeros(2, dtype=np.float32)
         scaled_delta = delta * min(1.0, max_delta_m / norm)
         return self._meters_delta_to_action(scaled_delta)
+
+    def _begin_upward_burst(self) -> np.ndarray:
+        self.phase = "upward_burst"
+        self.phase_steps = self.burst_steps
+        return self._upward_burst_action()
 
     def _upward_burst_action(self) -> np.ndarray:
         """Upward on the table = negative x in TCP frame."""
@@ -619,7 +653,7 @@ class ResetPolicyFSM:
         action = self._current_window_downward_action(state_info, cached_tcp=cached_tcp)
         passed_now = bool(
             (self._window_height_count >= self.min_height_window_steps)
-            and (self._window_off_wall_count >= self.min_off_wall_window_steps)
+            and (self._window_off_wall_count >= self._required_off_wall_steps)
         )
         if passed_now:
             self._pending_window_finalize = {
@@ -631,7 +665,7 @@ class ResetPolicyFSM:
                 "off_wall_steps": int(self._window_off_wall_count),
                 "height_steps": int(self._window_height_count),
                 "required_height_steps": int(self.min_height_window_steps),
-                "required_steps": int(self.min_off_wall_window_steps),
+                "required_steps": int(self._required_off_wall_steps),
                 "early_exit": True,
             }
             return self._finalize_post_upward_window(state_info)
@@ -639,7 +673,7 @@ class ResetPolicyFSM:
         if self._window_steps_left <= 0:
             passed = bool(
                 (self._window_height_count >= self.min_height_window_steps)
-                and (self._window_off_wall_count >= self.min_off_wall_window_steps)
+                and (self._window_off_wall_count >= self._required_off_wall_steps)
             )
             self._pending_window_finalize = {
                 "kind": self._window_kind,
@@ -650,7 +684,7 @@ class ResetPolicyFSM:
                 "off_wall_steps": int(self._window_off_wall_count),
                 "height_steps": int(self._window_height_count),
                 "required_height_steps": int(self.min_height_window_steps),
-                "required_steps": int(self.min_off_wall_window_steps),
+                "required_steps": int(self._required_off_wall_steps),
                 "early_exit": False,
             }
         return action
@@ -785,14 +819,32 @@ class ResetPolicyFSM:
 
         if self.phase == "edge_loop":
             self.phase_steps += 1
-            target = self._lookahead_target_on_path(paddle_tcp, self.loop_max_delta_m)
+            target = self._lookahead_target_on_path(paddle_tcp, self.loop_lookahead_m)
             end_dist = float(np.linalg.norm(self.path_waypoints[-1] - paddle_tcp))
             at_end = self.path_idx >= len(self.path_waypoints) - 2 and end_dist < 0.05
             if at_end:
-                self.phase = "upward_burst"
-                self.phase_steps = self.burst_steps
-                return self._upward_burst_action()
+                if self.nudge_steps > 0:
+                    self.phase = "nudge"
+                    self.phase_steps = self.nudge_steps - 1
+                    return self._meters_delta_to_action(np.array([-self.nudge_action_m, 0.0], dtype=np.float32))
+                return self._begin_upward_burst()
             return self._toward_target(paddle_tcp, target, self.loop_max_delta_m)
+
+        if self.phase == "nudge":
+            if self.phase_steps > 0:
+                self.phase_steps -= 1
+                return self._meters_delta_to_action(np.array([-self.nudge_action_m, 0.0], dtype=np.float32))
+            if self.nudge_gap_steps > 0:
+                self.phase = "nudge_gap"
+                self.phase_steps = self.nudge_gap_steps - 1
+                return np.zeros(2, dtype=np.float32)
+            return self._begin_upward_burst()
+
+        if self.phase == "nudge_gap":
+            if self.phase_steps > 0:
+                self.phase_steps -= 1
+                return np.zeros(2, dtype=np.float32)
+            return self._begin_upward_burst()
 
         if self.phase == "upward_burst":
             self.phase_steps -= 1
@@ -847,6 +899,25 @@ class ResetPolicyFSM:
 
         self._set_terminal_reason("unknown_phase")
         return np.zeros(2, dtype=np.float32)
+
+
+def configure_reset_fsm_cls(base_cls, **overrides):
+    """``(env, rng)`` factory for ``base_cls`` with some constructor defaults changed.
+
+    Returns ``base_cls`` itself when there is nothing to override. A subclass (not
+    a partial) keeps class attributes such as ``uses_reset_workspace`` and the
+    name that the reset runner logs.
+    """
+    if not overrides:
+        return base_cls
+
+    class _Configured(base_cls):
+        def __init__(self, env, rng, **kwargs):
+            super().__init__(env, rng, **{**overrides, **kwargs})
+
+    _Configured.__name__ = base_cls.__name__
+    _Configured.__qualname__ = base_cls.__qualname__
+    return _Configured
 
 
 def build_model_if_requested(args, eval_env):

@@ -58,11 +58,15 @@ class ResetFSMRunResult:
 
 def _reset_stage_id_from_phase(phase: str) -> int:
     phase_name = str(phase)
-    if phase_name in ("goto_start", "edge_loop", "upward_burst", "post_first_upward_check"):
+    if phase_name in ("goto_start", "edge_loop", "nudge", "nudge_gap", "upward_burst", "post_first_upward_check"):
         return 0
     if phase_name == "settle":
         # PaddleRepositionFSM (paddle-only tasks): the hold-still tail of the
         # single reposition stage. Same stage id as its ``goto_start`` phase.
+        return 0
+    if phase_name in ("wait_for_puck_placement", "wait_for_release", "wait_for_flick"):
+        # ManualPuckDropFSM: paddle parked at the start pose, operator places, drops or
+        # flicks the puck.
         return 0
     if phase_name in ("wait_for_puck", "strike", "post_second_upward_check"):
         return 1
@@ -236,7 +240,22 @@ def run_reset_fsm(
     if wait_logged:
         print("[reset_fsm] stop cleared; resuming reset FSM.")
 
-    fsm = reset_policy_fsm_cls(env, rng)
+    # Puck reset only: reach slightly further toward the robot-end wall (see
+    # AirHockeyReal.set_reset_workspace). Enabled before the FSM is built so its
+    # sweep path uses the widened limit; always restored in the finally below.
+    set_reset_workspace = (
+        getattr(env.simulator, "set_reset_workspace", None)
+        if getattr(reset_policy_fsm_cls, "uses_reset_workspace", False)
+        else None
+    )
+    if set_reset_workspace is not None:
+        set_reset_workspace(True)
+    try:
+        fsm = reset_policy_fsm_cls(env, rng)
+    except BaseException:
+        if set_reset_workspace is not None:
+            set_reset_workspace(False)
+        raise
     reset_rows: list = []
     reset_images: list = []
     reset_camera_null_frames = 0
@@ -286,6 +305,8 @@ def run_reset_fsm(
             )
     finally:
         fsm.close()
+        if set_reset_workspace is not None:
+            set_reset_workspace(False)
     done_reason = getattr(fsm, "done_reason", "unknown")
     fsm_end_wall_time = time.time()
     artifact = None

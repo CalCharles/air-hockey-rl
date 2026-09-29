@@ -18,6 +18,8 @@ Previous setup: X = 1.2, Y = 0.
 """
 
 TABLE_CENTER_OFFSET_X = 1.3359
+# TCP x with the paddle touching the robot-end wall (same 2026-09-27 measurement).
+ROBOT_END_WALL_TCP_X = -0.42154
 TABLE_CENTER_OFFSET_Y = -0.0376
 
 # Box2D's offset (airhockey_box2d / airhockey_base default). The sim frame does not

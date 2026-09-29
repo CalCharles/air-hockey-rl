@@ -60,7 +60,7 @@ import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -176,6 +176,36 @@ class EvalSpecificArgs:
     # synthesize a minimal ``TrainArgs`` and skip the args-file step.
     agent: str = "td3"
 
+    # Reset -> policy hand-off knobs (puck tasks). Defaults keep the historical
+    # behaviour; the reset FSM's defaults are used whenever a value is None / False.
+    #
+    # reset_success_ignore_wall: the reset hands over as soon as the puck crosses
+    # the success line, without the "away from the side walls" requirement.
+    reset_success_ignore_wall: bool = False
+    # reset_success_line: where that line is, as a fraction of the table length
+    # from the robot-end wall (0.5 = centre line, the FSM default; smaller = closer
+    # to the robot). None keeps the FSM default.
+    reset_success_line: Optional[float] = None
+
+    # manual_drop_reset: replace the automatic puck reset with
+    # ``ManualPuckDropFSM`` -- before every episode the paddle parks at the start
+    # pose and the operator places the puck at the top of the table and drops it
+    # (runs after hard resets too). The reset_success_* flags do not apply.
+    manual_drop_reset: bool = False
+    # Top line for "puck placed", fraction of the table length from the robot
+    # wall (0.75 = the far quarter).
+    manual_drop_line: float = 0.75
+    # Consecutive visible frames above the line that count as "placed".
+    manual_drop_detect_steps: int = 5
+    # Start the policy as soon as the puck is detected instead of when it drops.
+    manual_drop_start_on_detect: bool = False
+    # manual_flick_reset: same parking, but the operator flicks the puck up from
+    # the bottom and the policy starts once it crosses manual_flick_line going up
+    # (fraction of the table length from the robot wall; 0.34 = the line nearest
+    # the robot, table x ~ +0.31 m; 0.5 = centre line).
+    manual_flick_reset: bool = False
+    manual_flick_line: float = 0.34
+
 
 def _parse_eval_specific_args() -> EvalSpecificArgs:
     """Strip eval-specific flags from ``sys.argv`` before tyro sees it.
@@ -207,8 +237,76 @@ def _parse_eval_specific_args() -> EvalSpecificArgs:
             "See scripts/td3/helper/real_eval_agents.EVAL_AGENT_BUILDERS."
         ),
     )
+    parser.add_argument(
+        "--reset-success-ignore-wall",
+        action="store_true",
+        help="Reset succeeds as soon as the puck crosses the success line (no side-wall condition).",
+    )
+    parser.add_argument(
+        "--reset-success-line",
+        type=float,
+        default=None,
+        help=(
+            "Success line as a fraction of the table length from the robot-end wall "
+            "(0.5 = centre line, the default; smaller = closer to the robot)."
+        ),
+    )
+    parser.add_argument(
+        "--manual-drop-reset",
+        action="store_true",
+        help=(
+            "Instead of the reset policy, park the paddle at the start pose before every "
+            "episode and wait for the operator to place and drop the puck at the top."
+        ),
+    )
+    parser.add_argument(
+        "--manual-drop-line",
+        type=float,
+        default=0.75,
+        help="'Top of the table' line for --manual-drop-reset, as a fraction of the table length from the robot wall (default 0.75).",
+    )
+    parser.add_argument(
+        "--manual-drop-detect-steps",
+        type=int,
+        default=5,
+        help="Consecutive detections above the line that count as the puck being placed (default 5).",
+    )
+    parser.add_argument(
+        "--manual-drop-start-on-detect",
+        action="store_true",
+        help="With --manual-drop-reset: start the policy once the puck is detected, not when it is dropped.",
+    )
+    parser.add_argument(
+        "--manual-flick-reset",
+        action="store_true",
+        help=(
+            "Instead of the reset policy, park the paddle at the start pose and start the "
+            "policy once the operator flicks the puck up past --manual-flick-line."
+        ),
+    )
+    parser.add_argument(
+        "--manual-flick-line",
+        type=float,
+        default=0.34,
+        help=(
+            "Line for --manual-flick-reset, fraction of the table length from the robot wall "
+            "(default 0.34 = the horizontal line nearest the robot; 0.5 = centre line)."
+        ),
+    )
     parsed, remaining = parser.parse_known_args(sys.argv[1:])
     sys.argv = [sys.argv[0]] + remaining
+    if parsed.manual_drop_reset and parsed.manual_flick_reset:
+        raise SystemExit("--manual-drop-reset and --manual-flick-reset are mutually exclusive")
+    if not 0.0 < float(parsed.manual_flick_line) < 1.0:
+        raise SystemExit(f"--manual-flick-line must be between 0 and 1 (exclusive), got {parsed.manual_flick_line}")
+    if not 0.0 < float(parsed.manual_drop_line) < 1.0:
+        raise SystemExit(f"--manual-drop-line must be between 0 and 1 (exclusive), got {parsed.manual_drop_line}")
+    if int(parsed.manual_drop_detect_steps) < 1:
+        raise SystemExit(f"--manual-drop-detect-steps must be >= 1, got {parsed.manual_drop_detect_steps}")
+    if parsed.reset_success_line is not None and not 0.0 < float(parsed.reset_success_line) < 1.0:
+        raise SystemExit(
+            f"--reset-success-line must be between 0 and 1 (exclusive), got {parsed.reset_success_line}"
+        )
     return EvalSpecificArgs(
         eval_episodes=int(parsed.eval_episodes),
         eval_max_attempts=int(parsed.eval_max_attempts),
@@ -216,6 +314,16 @@ def _parse_eval_specific_args() -> EvalSpecificArgs:
         eval_per_episode_filename=str(parsed.eval_per_episode_filename),
         quiet=not bool(parsed.verbose),
         agent=str(parsed.agent),
+        reset_success_ignore_wall=bool(parsed.reset_success_ignore_wall),
+        reset_success_line=(
+            None if parsed.reset_success_line is None else float(parsed.reset_success_line)
+        ),
+        manual_drop_reset=bool(parsed.manual_drop_reset),
+        manual_drop_line=float(parsed.manual_drop_line),
+        manual_drop_detect_steps=int(parsed.manual_drop_detect_steps),
+        manual_drop_start_on_detect=bool(parsed.manual_drop_start_on_detect),
+        manual_flick_reset=bool(parsed.manual_flick_reset),
+        manual_flick_line=float(parsed.manual_flick_line),
     )
 
 
@@ -249,6 +357,28 @@ def _force_eval_mode(args: Args) -> None:
 # Eval loop. Mirrors the structure of `collector_process_modular` but with
 # every learning / replay / checkpoint hook stripped out.
 # ---------------------------------------------------------------------------
+
+
+def _configure_eval_reset_fsm_cls(base_cls, eval_args: EvalSpecificArgs):
+    """Apply the reset hand-off flags to the puck reset FSM (others unchanged)."""
+    from scripts.real.rollout_reset_policy_real import ResetPolicyFSM, configure_reset_fsm_cls
+
+    overrides: Dict[str, Any] = {}
+    if eval_args.reset_success_ignore_wall:
+        overrides["success_ignore_wall"] = True
+    if eval_args.reset_success_line is not None:
+        overrides["shared_success_threshold_proportion_from_bottom"] = float(
+            eval_args.reset_success_line
+        )
+    if not overrides:
+        return base_cls
+    if not (isinstance(base_cls, type) and issubclass(base_cls, ResetPolicyFSM)):
+        print(
+            f"[eval_run] reset success flags ignored: reset FSM {getattr(base_cls, '__name__', base_cls)} "
+            "is not a puck reset FSM"
+        )
+        return base_cls
+    return configure_reset_fsm_cls(base_cls, **overrides)
 
 
 def run_eval(
@@ -292,7 +422,31 @@ def run_eval(
     # back to GenericEvalHooks for any task not in the registry.
     task_name = str(collector_config.get("task", ""))
     task_hooks = get_task_eval_hooks(task_name)
-    reset_fsm_cls = task_hooks.make_reset_fsm_cls()
+    force_fsm_after_hard_reset = bool(task_hooks.force_fsm_after_hard_reset)
+    if eval_args.manual_drop_reset or eval_args.manual_flick_reset:
+        manual_flag = "--manual-flick-reset" if eval_args.manual_flick_reset else "--manual-drop-reset"
+        if task_hooks.reset_strategy != "puck_reset_fsm":
+            raise SystemExit(
+                f"{manual_flag} needs a puck task; {task_name!r} uses reset "
+                f"strategy {task_hooks.reset_strategy!r}"
+            )
+        if eval_args.reset_success_ignore_wall or eval_args.reset_success_line is not None:
+            print(f"[eval_run] --reset-success-* flags are ignored with {manual_flag}")
+        from scripts.real.rollout_reset_policy_real import configure_reset_fsm_cls
+        from scripts.td3.helper.real_manual_drop_fsm import ManualPuckDropFSM
+
+        reset_fsm_cls = configure_reset_fsm_cls(
+            ManualPuckDropFSM,
+            mode="flick" if eval_args.manual_flick_reset else "drop",
+            flick_line_from_robot=float(eval_args.manual_flick_line),
+            top_line_from_robot=float(eval_args.manual_drop_line),
+            detect_steps=int(eval_args.manual_drop_detect_steps),
+            start_on_detect=bool(eval_args.manual_drop_start_on_detect),
+        )
+        # Always wait for the operator, also after a hard reset.
+        force_fsm_after_hard_reset = True
+    else:
+        reset_fsm_cls = _configure_eval_reset_fsm_cls(task_hooks.make_reset_fsm_cls(), eval_args)
     # Post-reset zero-action hold: task hooks may override the args value
     # (paddle-only tasks set 0 — the reposition FSM already leaves the paddle
     # at rest, and the hold would eat into a 50-step reach budget).
@@ -302,12 +456,18 @@ def run_eval(
         else int(task_hooks.post_reset_transition_hold_steps)
     )
     print(
+        f"[eval_run] reset_success_ignore_wall={int(eval_args.reset_success_ignore_wall)} "
+        f"reset_success_line={eval_args.reset_success_line} "
+        f"manual_drop_reset={int(eval_args.manual_drop_reset)} "
+        f"manual_flick_reset={int(eval_args.manual_flick_reset)}"
+    )
+    print(
         f"[eval_run] task={task_name!r} "
         f"hooks={type(task_hooks).__name__} "
         f"min_timesteps={int(task_hooks.min_timesteps)} "
         f"reset_strategy={task_hooks.reset_strategy} "
         f"reset_fsm={reset_fsm_cls.__name__} "
-        f"force_fsm_after_hard_reset={int(bool(task_hooks.force_fsm_after_hard_reset))} "
+        f"force_fsm_after_hard_reset={int(force_fsm_after_hard_reset)} "
         f"periodic_hard_reset_every={int(task_hooks.periodic_hard_reset_every)} "
         f"post_reset_hold_steps={post_reset_hold_steps}"
     )
@@ -363,7 +523,7 @@ def run_eval(
         build_split_episode_row=_build_split_episode_row,
         latest_camera_frame=_latest_camera_frame,
         post_soft_reset_hook=task_hooks.on_soft_reset,
-        force_fsm_after_hard_reset=bool(task_hooks.force_fsm_after_hard_reset),
+        force_fsm_after_hard_reset=force_fsm_after_hard_reset,
     )
     pending_reset_artifact = None
 
@@ -640,6 +800,14 @@ def run_eval(
         "reset_strategy": str(task_hooks.reset_strategy),
         "reset_fsm": reset_fsm_cls.__name__,
         "post_reset_transition_hold_steps": int(post_reset_hold_steps),
+        "reset_success_ignore_wall": bool(eval_args.reset_success_ignore_wall),
+        "reset_success_line": eval_args.reset_success_line,
+        "manual_drop_reset": bool(eval_args.manual_drop_reset),
+        "manual_drop_line": float(eval_args.manual_drop_line),
+        "manual_drop_detect_steps": int(eval_args.manual_drop_detect_steps),
+        "manual_drop_start_on_detect": bool(eval_args.manual_drop_start_on_detect),
+        "manual_flick_reset": bool(eval_args.manual_flick_reset),
+        "manual_flick_line": float(eval_args.manual_flick_line),
         "min_timesteps": int(task_hooks.min_timesteps),
         "model_path": str(args.model_path) if args.model_path is not None else None,
         "config": str(args.config),

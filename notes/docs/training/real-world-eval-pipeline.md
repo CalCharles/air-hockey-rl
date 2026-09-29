@@ -404,3 +404,41 @@ names.
   always use their canonical names).
 * `--verbose` — restore noisy per-step / per-reset debug prints (the
   eval entrypoint installs a quiet filter by default).
+
+Reset → policy hand-off (puck tasks; all off by default, eval only — training and
+the teleop eval keep the historical behaviour):
+
+* `--reset-success-ignore-wall` — the reset hands over the moment the puck
+  crosses the success line; drops the "5 steps with |y| ≤ 0.35 m" side-wall
+  condition (`ResetPolicyFSM(success_ignore_wall=True)`).
+* `--reset-success-line F` — the success line as a fraction of the table length
+  from the robot-end wall: 0.5 = centre line (default), smaller = closer to the
+  robot (`shared_success_threshold_proportion_from_bottom`).
+
+Both are recorded in `eval_summary.json` → `run_meta`.
+
+Manual puck drop instead of the reset policy (puck tasks, off by default):
+
+* `--manual-drop-reset` — replaces `ResetPolicyFSM` with `ManualPuckDropFSM`
+  (`scripts/td3/helper/real_manual_drop_fsm.py`). Before every episode (also after
+  hard resets: `force_fsm_after_hard_reset` is forced on) the paddle drives back to
+  the start pose (`simulator.reset_pose`, TCP (−0.68, 0)) and holds still; a
+  terminal prompt asks the operator to place the puck at the top of the table.
+  Once it is seen above the line for N consecutive frames, the policy starts **when
+  the puck is dropped** (it moves 2 cm toward the robot) — not while it is held,
+  because a still puck trips `terminate_on_puck_stop` after 20 steps. The
+  `--reset-success-*` flags do not apply.
+* `--manual-drop-line F` — "top of the table" line, fraction of the table length
+  from the robot wall (default 0.75, the far quarter).
+* `--manual-drop-detect-steps N` — consecutive detections that count as placed
+  (default 5).
+* `--manual-drop-start-on-detect` — start the policy as soon as the puck is
+  detected instead of on the drop.
+* `--manual-flick-reset` — same parking, but the operator flicks the puck up from
+  the bottom of the table; the policy starts on the first frame the puck is seen
+  past `--manual-flick-line` while moving up, after having been seen below it
+  (`ManualPuckDropFSM(mode="flick")`). Mutually exclusive with
+  `--manual-drop-reset`.
+* `--manual-flick-line F` — default 0.34 = the horizontal line nearest the robot
+  (table x ≈ +0.31 m, measured on `assets/air_hockey_table_real.png`); 0.5 = the
+  centre line.

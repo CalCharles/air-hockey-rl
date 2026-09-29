@@ -27,6 +27,7 @@ from .real.proprioceptive_state import get_state_array
 from .real.image_detection import find_red_hockey_puck, find_red_hockey_puck_antiglare
 from .real.table_calibration import (
     OCCLUDED_PLACEHOLDER_TABLE_X,
+    ROBOT_END_WALL_TCP_X,
     TABLE_CENTER_OFFSET_X,
     TABLE_CENTER_OFFSET_Y,
 )
@@ -280,6 +281,10 @@ class AirHockeyReal:
             "max_bias_p": None,
             "max_bias_m": None,
             "corner_cut_y_extent": CORNER_CUT_Y_EXTENT,
+            # Extra reach toward the robot-end wall while the reset FSM runs
+            # (set_reset_workspace): moves x_max_lim and both corner cuts by this
+            # much so the sweep can touch a puck resting on the wall. 0 disables.
+            "reset_x_max_extension_m": 0.015,
             "reset_pos_setting": "hitting",
             "xv_min": -0.5,
             "xv_max": 0.5,
@@ -654,6 +659,8 @@ class AirHockeyReal:
         self.control_off = self.control_mode in ["observe"]
         self.lims = (self.x_min_lim, self.x_max_lim, self.y_min, self.y_max)
         self.move_lims = (self.rmax_x, self.rmax_y)
+        self.reset_x_max_extension_m = float(getattr(config, "reset_x_max_extension_m", 0.0) or 0.0)
+        self._normal_workspace = None  # (lims, edge_lims) saved while the reset workspace is active
         self.mouse_action_scale = getattr(config, "mouse_action_scale", None)
         self._last_teleop_policy_action = np.zeros(2)
         # Runtime toggle for control_mode='mouse'. When True (default for
@@ -846,6 +853,35 @@ class AirHockeyReal:
             ),
             dtype=float,
         )
+
+    # Paddle centre never gets closer than this to touching the robot-end wall.
+    RESET_WALL_CLEARANCE_M = 0.01
+
+    def set_reset_workspace(self, active):
+        """Widen the bottom (robot-end) limit by ``reset_x_max_extension_m`` while the
+        reset FSM runs, so its wall sweep reaches a puck resting against the wall.
+
+        x_max_lim and both corner-cut biases move together, so the whole bottom
+        boundary (chamfered corners included) shifts toward the wall; the other limits
+        are untouched. Capped so the paddle stays ``RESET_WALL_CLEARANCE_M`` short of
+        the wall. ``active=False`` restores the normal limits exactly.
+        """
+        if not active:
+            if self._normal_workspace is not None:
+                self.lims, self.edge_lims = self._normal_workspace
+                self._normal_workspace = None
+            return
+        if self._normal_workspace is not None or self.reset_x_max_extension_m <= 0.0:
+            return
+        x_min, x_max, y_min, y_max = self.lims
+        cap = ROBOT_END_WALL_TCP_X - self.RESET_WALL_CLEARANCE_M
+        ext = max(0.0, min(self.reset_x_max_extension_m, cap - x_max))
+        if ext <= 0.0:
+            return
+        self._normal_workspace = (self.lims, self.edge_lims)
+        top_abs, bot_abs, bias_p, bias_m = self.edge_lims
+        self.lims = (x_min, x_max + ext, y_min, y_max)
+        self.edge_lims = [top_abs, bot_abs, bias_p + ext, bias_m + ext]
 
     def _paddle_observation_xy_from_pose(self, pose_xy):
         """Convert robot TCP XY to observation-frame paddle XY."""
