@@ -246,6 +246,9 @@ class Args:
     model_path: str | None = None
     full_checkpoint_load: Literal["full_resume", "weights_only", "residual"] = "full_resume"
     log_parent_dir: str | None = None
+    # Write into an existing log_parent_dir instead of a new `<dir>r<N>` (resuming a
+    # run with model_path so TensorBoard continues the same curves).
+    resume_in_place: bool = False
     run_name: str = "default"
 
     # --- Residual RL (active when full_checkpoint_load == "residual") ---
@@ -448,7 +451,7 @@ def _entrypoint():
     task_name = config["air_hockey"].get("task")
     run_name = args.run_name
     log_parent_dir = args.log_parent_dir or f"runs/default_training/{task_name}/{run_name}_{timestamp}"
-    if os.path.exists(log_parent_dir):
+    if os.path.exists(log_parent_dir) and not args.resume_in_place:
         base_log_parent_dir = log_parent_dir
         i = 1
         while os.path.exists(log_parent_dir):

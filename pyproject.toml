@@ -17,29 +17,31 @@ requires-python = ">=3.10"
 dependencies = [
     "gymnasium",
     "gym==0.25.1",
-    "swig",
-    "box2d",
-    "tqdm",
-    "h5py",
-    "xmltodict",
-    "pyyaml",
+    "swig==4.3.1.post0",
+    "box2d==2.3.10",
+    "tqdm==4.67.1",
+    "h5py==3.14.0",
+    "xmltodict==1.0.2",
+    "pyyaml==6.0.3",
+    "matplotlib>=3.10.9",
+    "imageio>=2.37.3",
+    "transformers>=5.12.0",
 ]
 
 [project.optional-dependencies]
 real = [
     "ur-rtde",
 ]
+
 train = [
-    "opencv-python",
-    "tensorboard",
-    "wandb",
-    "pyrallis",
-    "torch",
-    "scikit-learn",
-    "tyro",
-    "imageio>=2.37.3",
-    "matplotlib>=3.10.9",
-    "stable-baselines3",
+    "opencv-python==4.12.0.88",
+    "tensorboard==2.20.0",
+    "wandb==0.22.2",
+    "pyrallis==0.3.1",
+    "torch==2.11.0",
+    "stable-baselines3==2.2.1",
+    "scikit-learn==1.7.2",
+    "tyro==0.9.35",
 ]
 
 [project.urls]
