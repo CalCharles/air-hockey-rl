@@ -758,10 +758,23 @@ def collector_process_modular(
     action_low_np: np.ndarray,
     action_high_np: np.ndarray,
     tb_log_dir: str,
+    *,
+    add_episode_to_replay_fn=None,
+    learner_step_fn=None,
 ) -> None:
     """Orchestrator. Drives PolicyRunner + ResetRunner around the learner,
     replay push, and artifact saves. Replaces the original monolithic
-    ``collector_process`` that the refactor split into per-concern runners."""
+    ``collector_process`` that the refactor split into per-concern runners.
+
+    ``add_episode_to_replay_fn`` / ``learner_step_fn`` override the replay
+    push (``_add_episode_to_shared_replay``) and the post-episode learner
+    step (``_run_sync_learner_iteration``) with same-signature callables.
+    Both default to the canonical ones; ``scripts/td3/td3_online_real_finetune.py``
+    uses them to swap in its single-buffer push and η / M learner."""
+    if add_episode_to_replay_fn is None:
+        add_episode_to_replay_fn = _add_episode_to_shared_replay
+    if learner_step_fn is None:
+        learner_step_fn = _run_sync_learner_iteration
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -1217,7 +1230,7 @@ def collector_process_modular(
                 juggle_counts=episode_juggle_counts,
             )
 
-            partition, ep_return, episode_return_success_threshold, _ = _add_episode_to_shared_replay(
+            partition, ep_return, episode_return_success_threshold, _ = add_episode_to_replay_fn(
                 replay=replay,
                 episode_trajectory=result.trajectory,
                 recent_episode_returns=recent_episode_returns,
@@ -1226,7 +1239,7 @@ def collector_process_modular(
             replay_partition = partition
             replay_threshold_at_episode = float(episode_return_success_threshold)
             rolling_state["recent_episode_window_count"] = len(recent_episode_returns)
-            actor_updated = _run_sync_learner_iteration(
+            actor_updated = learner_step_fn(
                 args=args,
                 train_args=train_args,
                 replay=replay,

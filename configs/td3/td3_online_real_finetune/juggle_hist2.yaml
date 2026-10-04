@@ -1,0 +1,51 @@
+# Online real-robot fine-tuning of the sim-trained hist2 juggle policy.
+# Entrypoint: scripts/td3/td3_online_real_finetune.py (read its header first).
+# Recipe: As et al., "What Matters for Simulation-to-Online RL on Real Robots"
+# (arXiv:2602.20220) — in-place load of the sim actor / critics / Adam states,
+# one real replay buffer (no sim data, no mixing), 20-episode warm start,
+# K = η·T critic updates per episode, one actor update per M critic updates.
+#
+#   python -m scripts.td3.td3_online_real_finetune \
+#     --checkpoint runs/td3/sysid_v2_hist_len_2_train_2M/juggle_sysid_v2_hist2/training_state.pth \
+#     --args-file  configs/td3/td3_online_real_finetune/juggle_hist2.yaml
+#
+# Network architecture comes from the checkpoint, not this file. Sibling:
+# juggle_hist4.yaml (identical except the real rollout config / run name).
+
+# Real rollout config — hist_len must match the sim policy (checked at start).
+config: configs/real_configs/rollout_td3_config_hist2.yaml
+
+# --- Sim-to-online recipe ----------------------------------------------------
+warm_start_episodes: 20     # N*: kept episodes of the loaded sim actor, stored, no updates
+utd_ratio: 5.0              # η: K = round(η · T) critic updates after each later episode
+actor_update_every: 20      # M: one actor update after every 20th critic update (⌊K/M⌋ per episode)
+policy_lr: 1.0e-5           # actor LR, re-applied after loading the sim Adam state (sim: 3e-4)
+q_lr: 1.0e-3                # critic LR, unchanged from sim
+q_weight_decay: 0.0         # matches sim training (canonical recipe since 2026-09-04)
+online_buffer_size: 100000  # single real-transition buffer, starts empty
+cql_alpha: 0.0              # no CQL in this recipe (non-zero is rejected)
+
+# --- TD3 (matches the sim pretraining run) --------------------------------------
+gamma: 0.975
+tau: 0.005
+target_network_frequency: 1 # Polyak every critic update (paper Eq. 4); sim used 10
+batch_size: 512
+policy_noise: 0.2
+noise_clip: 0.5
+h_transform_eps: 0.001
+
+# --- Collector --------------------------------------------------------------
+exploration_noise: 0.1      # Gaussian action noise on the robot (sim training value)
+exploration_primitive_chance: 0.0
+exploration_primitive_chance_start: 0.0
+collector_device: cpu
+learner_device: cuda:0
+seed: 0
+
+# --- Run length / artifacts / checkpoints ------------------------------------
+total_timesteps: 60000      # kept-episode policy steps incl. warm start; 0 = until Ctrl-C
+data_root_dir: real_runs/td3_online_real_finetune/hist2
+run_name: td3_online_real_finetune_hist2
+enable_periodic_checkpointing: true
+checkpoint_every_collector_steps: 5000
+include_non_vital_training_state_fields: true   # keeps Adam state so a checkpoint can be reloaded with --checkpoint
