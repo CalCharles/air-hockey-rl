@@ -24,7 +24,7 @@ air_hockey:
     paddle_radius: 0.0508
     puck_damping: 0.5
     puck_density: 250
-    puck_hit_bottom_boundary_m: 0.2
+    puck_hit_bottom_boundary_m: 0.03  # = sim default (airhockey_base.py); was 0.2, which ended episodes 17 cm early
     puck_radius: 0.03175
     render_size: 360
     wall_bounce_scale: 0.02

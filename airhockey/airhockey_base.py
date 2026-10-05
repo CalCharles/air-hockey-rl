@@ -196,6 +196,13 @@ class AirHockeyBaseEnv(ABC, Env):
         self.puck_low_motion_radius_m = 0.03
         self.puck_low_motion_window_clean = 20
         self.puck_low_motion_window_occluded = 20
+        if self.simulator_name == "real":
+            # The overhead camera can't see the top ~9 cm of the table, and an unseen
+            # puck is held at its last seen position, so a puck in that blind spot
+            # looks stationary. It stays hidden for up to ~20 steps there, so with
+            # occlusion in the recent history require 60 steps (3 s at 20 Hz) of no
+            # motion; a puck that never reappears still ends the episode.
+            self.puck_low_motion_window_occluded = 60
         
         # reward function
         self.compute_online_rewards = config.compute_online_rewards

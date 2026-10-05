@@ -97,6 +97,7 @@ from scripts.td3.helper.real_transition_hold import (
     TransitionHoldState,
     normalize_transition_last_action_mode,
 )
+from scripts.td3.helper.real_step_timing_tb import log_episode_step_timing
 from scripts.td3.helper.run_event_log import (
     append_episode_summary,
     append_reset_summary,
@@ -656,6 +657,19 @@ def run_eval(
             min_timesteps=int(task_hooks.min_timesteps),
         )
         pending_reset_artifact = None
+
+        # Per-step loop timing -> TensorBoard, one run per attempt (kept or not),
+        # named by ``run_episode_index`` in episode_summaries.jsonl. Runs after the
+        # episode, so it adds nothing to the control loop.
+        try:
+            log_episode_step_timing(
+                run_data_dir_from_args(args),
+                total_attempts,
+                result.rows,
+                policy_inference_ms=result.metrics.model_inference_latency_ms,
+            )
+        except Exception as exc:
+            print(f"[eval] step-timing TensorBoard logging failed: {exc}")
 
         task_metrics = task_hooks.compute_episode_metrics(
             result=result, rows=result.rows, env=env

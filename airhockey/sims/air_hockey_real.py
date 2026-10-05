@@ -284,7 +284,9 @@ class AirHockeyReal:
             # Extra reach toward the robot-end wall while the reset FSM runs
             # (set_reset_workspace): moves x_max_lim and both corner cuts by this
             # much so the sweep can touch a puck resting on the wall. 0 disables.
-            "reset_x_max_extension_m": 0.015,
+            "reset_x_max_extension_m": 0.005,
+            # Command-filter window while the reset FSM runs: the FSM was tuned under hist_len 2, and a longer window delays its burst and makes it overshoot into the corners.
+            "reset_hist_len": 2,
             "reset_pos_setting": "hitting",
             "xv_min": -0.5,
             "xv_max": 0.5,
@@ -674,6 +676,9 @@ class AirHockeyReal:
 
         # smooth_history
         self.hist_len = config.hist_len
+        # Active command-filter window: hist_len for the policy, reset_hist_len while the reset FSM runs (set_reset_workspace).
+        self.reset_hist_len = int(getattr(config, "reset_hist_len", self.hist_len) or self.hist_len)
+        self._filter_window = self.hist_len
         self.camera_index = config.camera_index
         self.wait_for_space_to_start = config.wait_for_space_to_start
         self.debug_control = bool(config.debug_control)
@@ -865,7 +870,12 @@ class AirHockeyReal:
         boundary (chamfered corners included) shifts toward the wall; the other limits
         are untouched. Capped so the paddle stays ``RESET_WALL_CLEARANCE_M`` short of
         the wall. ``active=False`` restores the normal limits exactly.
+
+        Also switches the command-filter window to ``reset_hist_len`` while active and
+        back to ``hist_len`` on exit.
         """
+        # The reset FSM was tuned under a 2-step filter; hist4's 4-step average weakens its burst and pushes the paddle into the corner curves.
+        self._set_filter_window(self.reset_hist_len if active else self.hist_len)
         if not active:
             if self._normal_workspace is not None:
                 self.lims, self.edge_lims = self._normal_workspace
@@ -882,6 +892,14 @@ class AirHockeyReal:
         top_abs, bot_abs, bias_p, bias_m = self.edge_lims
         self.lims = (x_min, x_max + ext, y_min, y_max)
         self.edge_lims = [top_abs, bot_abs, bias_p + ext, bias_m + ext]
+
+    def _set_filter_window(self, window):
+        """Resize the command-filter history to ``window`` steps, keeping the newest entries."""
+        window = max(1, int(window))
+        self._filter_window = window
+        if hasattr(self, "pose_hist") and self.pose_hist.maxlen != window:
+            self.pose_hist = deque(self.pose_hist, maxlen=window)
+            self.dpose_hist = deque(self.dpose_hist, maxlen=window)
 
     def _paddle_observation_xy_from_pose(self, pose_xy):
         """Convert robot TCP XY to observation-frame paddle XY."""
@@ -954,9 +972,9 @@ class AirHockeyReal:
             [float(anchor_pose[0]), float(anchor_pose[1]), hold_z] + self.angle,
             dtype=float,
         )
-        self.pose_hist = deque(maxlen=self.hist_len)
-        self.dpose_hist = deque(maxlen=self.hist_len)
-        for _ in range(max(1, int(self.hist_len))):
+        self.pose_hist = deque(maxlen=self._filter_window)
+        self.dpose_hist = deque(maxlen=self._filter_window)
+        for _ in range(max(1, int(self._filter_window))):
             self.pose_hist.append(anchor_pose.copy())
             self.dpose_hist.append(hold_cmd_pose.copy())
         self.protected_target_pos[0] = hold_cmd_pose[0]
@@ -1702,7 +1720,7 @@ class AirHockeyReal:
         self.images = list()
         self.vals = list()
         self.timestep = 0
-        self.pose_hist, self.dpose_hist = deque(maxlen=self.hist_len), deque(maxlen=self.hist_len)
+        self.pose_hist, self.dpose_hist = deque(maxlen=self._filter_window), deque(maxlen=self._filter_window)
         self.puck_history = [(OCCLUDED_PLACEHOLDER_TABLE_X,0,1) for i in range(5)] # pretend that the puck starts at the other end of the table, but is occluded, for 5 frames
         self.paddle_history = [
             (
@@ -1867,7 +1885,7 @@ class AirHockeyReal:
         self.images = list()
         self.vals = list()
         self.timestep = 0
-        self.pose_hist, self.dpose_hist = deque(maxlen=self.hist_len), deque(maxlen=self.hist_len)
+        self.pose_hist, self.dpose_hist = deque(maxlen=self._filter_window), deque(maxlen=self._filter_window)
         self.puck_history = [(OCCLUDED_PLACEHOLDER_TABLE_X, 0, 1) for i in range(5)]
         self.paddle_history = [
             (

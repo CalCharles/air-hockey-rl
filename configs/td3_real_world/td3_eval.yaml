@@ -1,0 +1,13 @@
+# --args-file for frozen-policy real eval (scripts/td3/extras/async_td3_real_eval.py)
+# of a plain (non-residual) TD3 actor trained in sim.
+#
+# The eval script requires an --args-file for --agent td3, but in eval it only
+# needs the checkpoint-load mode: exploration is forced off and the learner /
+# replay / checkpoint settings are never used, so every other field keeps the
+# Args defaults in scripts/td3/helper/real_td3_runtime.py. Don't pass the sim
+# run's args.yaml here: it carries nulls for exploration_same_direction_*,
+# which crash the real collector.
+#
+# Architecture still comes from --train-args (the policy's own args.yaml).
+
+full_checkpoint_load: "weights_only"
