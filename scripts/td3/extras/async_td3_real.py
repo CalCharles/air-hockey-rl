@@ -761,6 +761,8 @@ def collector_process_modular(
     *,
     add_episode_to_replay_fn=None,
     learner_step_fn=None,
+    should_stop_fn=None,
+    episode_report_fn=None,
 ) -> None:
     """Orchestrator. Drives PolicyRunner + ResetRunner around the learner,
     replay push, and artifact saves. Replaces the original monolithic
@@ -770,7 +772,13 @@ def collector_process_modular(
     push (``_add_episode_to_shared_replay``) and the post-episode learner
     step (``_run_sync_learner_iteration``) with same-signature callables.
     Both default to the canonical ones; ``scripts/td3/td3_online_real_finetune.py``
-    uses them to swap in its single-buffer push and η / M learner."""
+    uses them to swap in its single-buffer push and η / M learner.
+    ``should_stop_fn(stats) -> str | None`` is polled at every episode
+    boundary; a non-empty return value ends the run with that reason.
+    ``episode_report_fn(result=, episode_kept=, clean_reason=, juggle_counts=,
+    episode_id=)`` is called after every episode (kept or discarded), after the
+    learner step and the standard progress lines; td3_online_real_finetune.py
+    uses it for its one-line episode summary."""
     if add_episode_to_replay_fn is None:
         add_episode_to_replay_fn = _add_episode_to_shared_replay
     if learner_step_fn is None:
@@ -1098,6 +1106,13 @@ def collector_process_modular(
             )
             break
 
+        if should_stop_fn is not None:
+            stop_reason = should_stop_fn(stats)
+            if stop_reason:
+                print(f"[collector] stop requested: {stop_reason}")
+                append_run_event(args, "stop_requested", reason=str(stop_reason), total_steps=int(total_steps))
+                break
+
         # 1. Run one policy episode.
         policy_runner.set_artifact_episode_id(next_episode_file_id)
         result = policy_runner.run_episode()
@@ -1230,6 +1245,24 @@ def collector_process_modular(
                 juggle_counts=episode_juggle_counts,
             )
 
+            # Per-episode metrics the replay push / learner hooks can't see
+            # from the trajectory alone (read by td3_online_real_finetune.py).
+            stats["last_episode_juggles"] = float(episode_juggle_counts.n_juggles)
+            stats["last_episode_contacts"] = float(episode_juggle_counts.n_contacts)
+            stats["last_episode_estop_flag"] = float(result.metrics.episode_estop_flag)
+            episode_stop_reasons = [
+                name
+                for name, hit in (
+                    ("protective_stop", result.metrics.had_protective_stop),
+                    ("readiness_fail_estop", result.terminal.readiness_fail_estop),
+                    ("controller_disconnect", result.metrics.had_controller_disconnect),
+                    ("human_interrupt", result.metrics.had_human_interrupt),
+                    ("stop", result.terminal.stop_flags.had_stop),
+                )
+                if hit
+            ]
+            stats["last_episode_stop_reason"] = ",".join(episode_stop_reasons)
+            stats["last_episode_id"] = float(saved_episode_id)
             partition, ep_return, episode_return_success_threshold, _ = add_episode_to_replay_fn(
                 replay=replay,
                 episode_trajectory=result.trajectory,
@@ -1323,6 +1356,17 @@ def collector_process_modular(
             rolling_state=rolling_state,
             juggle_counts=episode_juggle_counts,
         )
+        if episode_report_fn is not None:
+            try:
+                episode_report_fn(
+                    result=result,
+                    episode_kept=bool(episode_kept),
+                    clean_reason=str(clean_reason),
+                    juggle_counts=episode_juggle_counts,
+                    episode_id=int(saved_episode_id),
+                )
+            except Exception:
+                print(f"[collector] episode report FAILED:\n{traceback.format_exc()}")
 
         # Append one JSONL row covering this episode (kept *or* discarded)
         # so the full episode-by-episode return / metric history is on

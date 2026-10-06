@@ -23,6 +23,8 @@ policy_lr: 1.0e-5           # actor LR, re-applied after loading the sim Adam st
 q_lr: 1.0e-3                # critic LR, unchanged from sim
 q_weight_decay: 0.0         # matches sim training (canonical recipe since 2026-09-04)
 online_buffer_size: 100000  # single real-transition buffer, starts empty
+no_warmup_no_sim_data: false  # true / --no-warmup-no-sim-data: warm_start_episodes -> 0, learn from episode 1
+checkpoint_every_online_episodes: 1  # checkpoint_ep<i>/ after every training round (resume / per-episode eval)
 cql_alpha: 0.0              # no CQL in this recipe (non-zero is rejected)
 
 # --- TD3 (matches the sim pretraining run) --------------------------------------
@@ -44,7 +46,8 @@ seed: 0
 
 # --- Run length / artifacts / checkpoints ------------------------------------
 total_timesteps: 60000      # kept-episode policy steps incl. warm start; 0 = until Ctrl-C
-data_root_dir: real_runs/td3_online_real_finetune/hist2
+# Results go to <data_root_dir>/<experiment_name>/hist<H>/seed<S>/ (see the script header).
+data_root_dir: real_runs/td3_online_real_finetune
 run_name: td3_online_real_finetune_hist2
 enable_periodic_checkpointing: true
 checkpoint_every_collector_steps: 5000

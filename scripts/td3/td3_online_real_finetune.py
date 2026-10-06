@@ -17,8 +17,16 @@ Reinforcement Learning on Real Robots" (arXiv:2602.20220):
 2. **One real replay buffer, no sim data.** Transitions go into a single
    online buffer that starts empty; the sim replay buffer in the checkpoint is
    ignored. No D0 mixing, no α annealing, no success / failure split, no CQL.
-3. **Warm start.** The first ``warm_start_episodes`` kept episodes (20) run
-   the loaded sim actor unchanged and are only stored — the learner is idle.
+   Only usable episodes enter it: at least 50 steps with valid data
+   (``clean_episode_hdf5``) and, unless ``train_on_stop_episodes``, no stop
+   (protective / readiness-fail e-stop, controller disconnect, human
+   interrupt). Excluded episodes trigger no update and the same policy runs
+   the next episode.
+3. **Warm start (optional).** The first ``warm_start_episodes`` kept episodes
+   (20) run the loaded sim actor unchanged and are only stored — the learner
+   is idle. ``--no-warmup-no-sim-data`` sets it to 0: learning starts after
+   the first real episode, from an empty buffer (the paper's Franka setting
+   learns without a warm start).
 4. **Per-episode UTD.** After every later kept episode of T transitions the
    learner runs K = round(``utd_ratio`` × T) critic updates (η = 5, so a
    180-step episode → 900 critic updates), sampling the online buffer only.
@@ -38,6 +46,15 @@ existing real-world stack: this file reuses the
 ``scripts/td3/extras/async_td3_real.py`` orchestrator and swaps in its own
 replay push and learner step through that orchestrator's hooks.
 
+Results layout (one curve per hist / sim seed; see "Results layout" below):
+``<data_root_dir>/<experiment_name>/hist<H>/seed<S>/`` holds
+``online_progress.jsonl`` + ``online_tb/`` (per-episode return and losses,
+x = episodes, appended across launches) and one ``data_<timestamp>/`` folder
+per launch. ``tensorboard --logdir <data_root_dir>/<experiment_name>`` shows
+every curve under ``online_finetune/``; ``scripts/td3/extras/plot_online_finetune.py``
+draws the return / loss figure. ``--resume-online`` continues a curve from its
+latest ``checkpoint_ep<i>/`` (networks, optimizers, online buffer, counter).
+
 Checkpoints written here use the standard real-world layout (``model.pth``,
 ``qf*.pth``, ``training_state.pth`` with optimizer state when
 ``include_non_vital_training_state_fields: true``), so a saved checkpoint can
@@ -47,17 +64,15 @@ online buffer and the warm start start fresh) or evaluated with
 
 Usage (on the real-robot machine, from the repo root)
 -----------------------------------------------------
-hist2 sim policy:
+hist2, sim seed 0, 20 episodes, no warm start:
 
     python -m scripts.td3.td3_online_real_finetune \\
-        --checkpoint runs/td3/sysid_v2_hist_len_2_train_2M/juggle_sysid_v2_hist2/training_state.pth \\
-        --args-file  configs/td3/td3_online_real_finetune/juggle_hist2.yaml
+        --checkpoint runs/td3/sysid_v2_real_workspace/hist2_seed0/juggle_sysid_v2_hist2/checkpoint_1975000/training_state.pth \\
+        --args-file  configs/td3/td3_online_real_finetune/juggle_hist2.yaml \\
+        --no-warmup-no-sim-data --num-online-episodes 20
 
-hist4 sim policy:
-
-    python -m scripts.td3.td3_online_real_finetune \\
-        --checkpoint runs/td3/sysid_v2_hist_len_4_train_step_2M/juggle_sysid_v2_hist4/training_state.pth \\
-        --args-file  configs/td3/td3_online_real_finetune/juggle_hist4.yaml
+hist4: same with ``hist4_seed<S>/juggle_sysid_v2_hist4`` and ``juggle_hist4.yaml``.
+Add ``--resume-online`` to the same command to continue that curve.
 
 ``--checkpoint`` must be a full ``training_state.pth`` (not ``model.pth``):
 the critics and optimizer states are needed. The args file carries the recipe
@@ -70,12 +85,15 @@ per-step robot debug prints.
 """
 from __future__ import annotations
 
+import json
+import math
 import os
+import re
 import time
 import traceback
 from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Literal, Tuple  # Literal / Tuple: evaluate the Args annotations merged into OnlineFinetuneArgs
 
 import numpy as np
 import torch
@@ -86,6 +104,7 @@ import yaml
 from airhockey import AirHockeyEnv
 from scripts.td3.deterministic_agent import DeterministicAgent
 from scripts.td3.extras.async_td3_real import (
+    EPISODE_MIN_TIMESTEPS,
     _parse_modular_specific_args,
     collector_process_modular,
 )
@@ -164,6 +183,37 @@ class OnlineFinetuneArgs(Args):
     warm_start_episodes: int = 20
     # Capacity of the single online replay buffer (transitions).
     online_buffer_size: int = 100_000
+    # Skip the warm start (warm_start_episodes -> 0) and start learning after
+    # the very first real episode, from an empty online buffer with no sim
+    # data. The paper's Franka setting learns fine without a warm start.
+    no_warmup_no_sim_data: bool = False
+    # Results layout: <data_root_dir>/<experiment_name>/hist<H>/seed<S>/, with
+    # S the sim policy's training seed. Default: "no_warmup_no_sim_data" with
+    # the flag above, else "warm_start_<N>".
+    experiment_name: str | None = None
+    # Stop after this many usable episodes in this launch (warm-start episodes
+    # included); 0 = no limit (total_timesteps / Ctrl-C end the run).
+    num_online_episodes: int = 0
+    # Also store / train on episodes that ended in a stop (protective stop,
+    # readiness-fail e-stop, controller disconnect, human interrupt). Off: such
+    # episodes are excluded from the buffer, the learner and the curves, and
+    # don't count toward num_online_episodes. Episodes under 50 steps or with
+    # invalid data are always dropped (clean_episode_hdf5).
+    train_on_stop_episodes: bool = False
+    # Continue the latest online checkpoint in this experiment / hist / seed
+    # folder (networks, optimizers, online buffer, episode counter) instead of
+    # starting from the sim checkpoint. --checkpoint still names the sim
+    # policy; it picks the folder and the architecture.
+    resume_online: bool = False
+    # Full checkpoint (checkpoint_ep<i>/) after every N-th training round.
+    checkpoint_every_online_episodes: int = 1
+
+
+# On Python 3.9, typing.get_type_hints can't evaluate the inherited ``X | None``
+# annotations of ``Args``; tyro then falls back to this class's own
+# ``__annotations__`` and fails on the first inherited field (KeyError:
+# 'train_args'). Give that fallback the merged base + subclass set.
+OnlineFinetuneArgs.__annotations__ = {**Args.__annotations__, **OnlineFinetuneArgs.__annotations__}
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +309,24 @@ def _resolve_train_args(args: OnlineFinetuneArgs, checkpoint: Dict[str, object])
     )
 
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _resolve_repo_path(path: str | None) -> str | None:
+    """Map a path recorded on another machine (e.g. ``/home/<user>/air-hockey-rl/
+    configs/...`` in a sim checkpoint's args) onto this checkout."""
+    if not path or os.path.exists(path):
+        return path
+    marker = "configs/"
+    if marker in str(path):
+        candidate = _REPO_ROOT / str(path)[str(path).index(marker):]
+        if candidate.exists():
+            return str(candidate)
+    return path
+
+
 def _hist_len_of(config_path: str | None) -> int | None:
+    config_path = _resolve_repo_path(config_path)
     if not config_path or not os.path.exists(config_path):
         return None
     with open(config_path, "r") as f:
@@ -296,6 +363,17 @@ def _validate_args(args: OnlineFinetuneArgs) -> None:
         raise ValueError("actor_update_every must be > 0.")
     if args.warm_start_episodes < 0:
         raise ValueError("warm_start_episodes must be >= 0.")
+    if args.no_warmup_no_sim_data and args.warm_start_episodes != 0:
+        raise ValueError("--no-warmup-no-sim-data requires warm_start_episodes == 0 (set in main).")
+    if args.num_online_episodes < 0:
+        raise ValueError("num_online_episodes must be >= 0.")
+    if args.checkpoint_every_online_episodes < 0:
+        raise ValueError("checkpoint_every_online_episodes must be >= 0 (0 = off).")
+    if args.checkpoint_every_online_episodes > 0 and not args.include_non_vital_training_state_fields:
+        raise ValueError(
+            "checkpoint_every_online_episodes needs include_non_vital_training_state_fields: true "
+            "(optimizer state is required to resume)."
+        )
     if args.online_buffer_size <= 0:
         raise ValueError("online_buffer_size must be > 0.")
     if args.target_network_frequency <= 0:
@@ -316,6 +394,116 @@ def _validate_args(args: OnlineFinetuneArgs) -> None:
             "[online_finetune] WARNING: include_non_vital_training_state_fields=False — checkpoints "
             "will not contain optimizer state, so they cannot be passed back as --checkpoint."
         )
+
+
+# ---------------------------------------------------------------------------
+# Results layout, per-episode progress log, resume
+# ---------------------------------------------------------------------------
+#
+#   <data_root_dir>/<experiment_name>/
+#     hist<H>/seed<S>/
+#       online_progress.jsonl   one row per kept episode, appended across launches
+#       online_tb/              per-episode TensorBoard (x = episodes), appended across launches
+#       data_<timestamp>/       one folder per launch (HDF5 / GIFs / collector_tb /
+#                               learner_tb / checkpoint_ep<i>/ ...)
+#     plots/                    scripts/td3/extras/plot_online_finetune.py output
+#
+# Episode index convention: the return of an episode is logged at x = i, the
+# number of training rounds the acting policy had received (x = 0 is the
+# unchanged sim policy); the losses of the round that follows are logged at
+# x = i + 1, the number of rounds completed after it.
+
+_PROGRESS_FILE = "online_progress.jsonl"
+_PROGRESS_TB_DIR = "online_tb"
+_ONLINE_STATE_FILE = "online_state.json"
+
+
+def _sim_seed_of(checkpoint: Dict[str, object], checkpoint_path: str) -> int:
+    ckpt_args = checkpoint.get("args") if isinstance(checkpoint.get("args"), dict) else {}
+    if ckpt_args.get("seed") is not None:
+        return int(ckpt_args["seed"])
+    match = re.search(r"seed(\d+)", str(checkpoint_path))
+    if match:
+        return int(match.group(1))
+    raise ValueError(f"Cannot tell the sim training seed of {checkpoint_path} (no args['seed'], no 'seed<N>' in the path).")
+
+
+def _configure_results_layout(args: OnlineFinetuneArgs, sim_checkpoint: Dict[str, object]) -> tuple[Path, int, int]:
+    """Point ``args.data_root_dir`` at ``<root>/<experiment>/hist<H>/seed<S>``."""
+    hist_len = _hist_len_of(args.config)
+    if hist_len is None:
+        raise ValueError(f"Real config {args.config!r} has no air_hockey.simulator_params.hist_len.")
+    sim_seed = _sim_seed_of(sim_checkpoint, str(args.checkpoint))
+    if not args.experiment_name:
+        args.experiment_name = (
+            "no_warmup_no_sim_data" if args.no_warmup_no_sim_data else f"warm_start_{args.warm_start_episodes}"
+        )
+    seed_dir = Path(args.data_root_dir).expanduser().resolve() / args.experiment_name / f"hist{hist_len}" / f"seed{sim_seed}"
+    if (seed_dir / _PROGRESS_FILE).exists() and not args.resume_online:
+        raise SystemExit(
+            f"{seed_dir} already holds an online fine-tuning run. Pass --resume-online to continue it, "
+            "or a different --experiment-name to start a new curve."
+        )
+    seed_dir.mkdir(parents=True, exist_ok=True)
+    args.data_root_dir = str(seed_dir)
+    print(f"[online_finetune] results folder: {seed_dir} (experiment={args.experiment_name}, hist{hist_len}, sim seed {sim_seed})")
+    return seed_dir, hist_len, sim_seed
+
+
+def _find_resume_checkpoint(seed_dir: Path) -> tuple[Path, dict]:
+    """Latest online checkpoint (most training rounds, then newest) in a seed folder."""
+    best: tuple[int, float, Path, dict] | None = None
+    for state_path in seed_dir.glob(f"data_*/checkpoint_*/{_ONLINE_STATE_FILE}"):
+        if not (state_path.parent / "training_state.pth").exists():
+            continue
+        with open(state_path, "r") as f:
+            online_state = json.load(f)
+        key = (int(online_state.get("episodes_trained", 0)), state_path.stat().st_mtime)
+        if best is None or key > best[:2]:
+            best = (*key, state_path.parent, online_state)
+    if best is None:
+        raise FileNotFoundError(f"--resume-online: no checkpoint with {_ONLINE_STATE_FILE} under {seed_dir}/data_*/.")
+    return best[2], best[3]
+
+
+class _OnlineProgress:
+    """Per-episode return / loss log of one hist / seed curve (JSONL + TensorBoard)."""
+
+    def __init__(self, *, seed_dir: Path, experiment: str, hist_len: int, sim_seed: int, episodes_trained: int = 0):
+        from torch.utils.tensorboard import SummaryWriter
+
+        self.seed_dir = seed_dir
+        self.experiment = experiment
+        self.hist_len = int(hist_len)
+        self.sim_seed = int(sim_seed)
+        # Training rounds completed so far (carried over on --resume-online).
+        self.episodes_trained = int(episodes_trained)
+        # Usable (stored) episodes / stop-excluded episodes in this launch.
+        self.launch_kept_episodes = 0
+        self.launch_excluded_episodes = 0
+        self.warm_start_episodes_done = 0
+        self.writer = SummaryWriter(str(seed_dir / _PROGRESS_TB_DIR))
+
+    def append(self, row: dict) -> None:
+        with open(self.seed_dir / _PROGRESS_FILE, "a") as f:
+            f.write(json.dumps(row) + "\n")
+
+    def online_state(self, sim_checkpoint: str | None) -> dict:
+        return {
+            "episodes_trained": self.episodes_trained,
+            "experiment": self.experiment,
+            "hist_len": self.hist_len,
+            "sim_seed": self.sim_seed,
+            "sim_checkpoint": sim_checkpoint,
+        }
+
+    def close(self) -> None:
+        self.writer.close()
+
+
+def _write_online_state(checkpoint_dir: str | Path, progress: _OnlineProgress, args: OnlineFinetuneArgs) -> None:
+    with open(Path(checkpoint_dir) / _ONLINE_STATE_FILE, "w") as f:
+        json.dump(progress.online_state(args.checkpoint), f, indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -357,6 +545,7 @@ def _build_learner_from_checkpoint(
     action_low_np: np.ndarray,
     action_high_np: np.ndarray,
     tb_log_dir: str,
+    source_label: str = "sim checkpoint",
 ) -> LearnerRuntimeState:
     from torch.utils.tensorboard import SummaryWriter
 
@@ -413,10 +602,10 @@ def _build_learner_from_checkpoint(
     _override_adam_hyperparams(q_optimizer, lr=args.q_lr, weight_decay=args.q_weight_decay)
     _override_adam_hyperparams(actor_optimizer, lr=args.policy_lr, weight_decay=0.0)
     print(
-        "[online_finetune] loaded in place from checkpoint: actor + actor_target + "
+        f"[online_finetune] loaded in place from the {source_label}: actor + actor_target + "
         f"{num_critics} critics + {num_critics} critic targets + q/actor Adam state. "
         f"actor lr {loaded_actor_lr:g} -> {args.policy_lr:g}, critic lr {loaded_q_lr:g} -> {args.q_lr:g}, "
-        f"critic weight_decay -> {args.q_weight_decay:g}. Sim replay buffer NOT loaded."
+        f"critic weight_decay -> {args.q_weight_decay:g}. No sim replay data is loaded."
     )
 
     target_subset = train_args.target_critic_subset_size
@@ -445,10 +634,11 @@ def _build_learner_from_checkpoint(
 # ---------------------------------------------------------------------------
 
 
-def _make_online_replay_push(stats: Dict[str, object]):
+def _make_online_replay_push(stats: Dict[str, object], args: OnlineFinetuneArgs):
     """Replay push with the ``_add_episode_to_shared_replay`` signature that
     writes every kept episode into the single online buffer and records the
-    episode's transition count for the learner's K = η·T budget."""
+    episode's transition count for the learner's K = η·T budget. Episodes that
+    ended in a stop are left out unless ``train_on_stop_episodes``."""
 
     def _push(
         replay: SharedTD3Replay,
@@ -458,10 +648,17 @@ def _make_online_replay_push(stats: Dict[str, object]):
     ) -> tuple[str, float, float, int]:
         del success_top_fraction  # no success / failure split
         episode_return = float(episode_trajectory.episode_return)
+        stop_reason = str(stats.get("last_episode_stop_reason", ""))
+        if stop_reason and not args.train_on_stop_episodes:
+            stats["online_pending_excluded_reason"] = stop_reason
+            stats["online_pending_episode_steps"] = float(len(episode_trajectory.observations))
+            stats["online_pending_episode_return"] = episode_return
+            return "excluded_stop", episode_return, 0.0, 0
         recent_episode_returns.append(episode_return)
         inserted = int(replay.add_episode(_ONLINE_PARTITION, _episode_to_tensors(episode_trajectory)))
         stats["online_kept_episodes"] = float(int(stats.get("online_kept_episodes", 0)) + 1)
         stats["online_pending_episode_steps"] = float(inserted)
+        stats["online_pending_episode_return"] = episode_return
         return _ONLINE_PARTITION_LABEL, episode_return, 0.0, inserted
 
     return _push
@@ -610,85 +807,308 @@ def _actor_update(
     return actor_loss.detach(), ((1.0 - float(args.gamma)) * q1).mean().detach()
 
 
-def _online_learner_step(
+def _save_online_checkpoint(
     args: OnlineFinetuneArgs,
     train_args: TrainArgs,
     replay: SharedTD3Replay,
     stats: Dict[str, object],
     state: LearnerRuntimeState,
-) -> bool:
+    progress: _OnlineProgress,
+) -> str | None:
+    """Full checkpoint (networks, optimizers, online buffer) + ``online_state.json``
+    after a training round, so --resume-online and per-episode evals can use it."""
+    try:
+        checkpoint_dir = _save_checkpoint_from_learner_state(
+            state=state,
+            replay=replay,
+            stats=stats,
+            checkpoint_tag=f"ep{progress.episodes_trained:04d}",
+            args=args,
+            train_args=train_args,
+        )
+        _write_online_state(checkpoint_dir, progress, args)
+    except Exception:
+        print(f"[learner_checkpoint] online-episode save FAILED:\n{traceback.format_exc()}")
+        return None
+    append_run_event(
+        args,
+        "checkpoint_saved",
+        checkpoint_dir=str(checkpoint_dir),
+        episodes_trained=int(progress.episodes_trained),
+        q_updates=int(state.total_updates),
+        trigger="online_episode",
+    )
+    return str(checkpoint_dir)
+
+
+def _make_online_learner_step(progress: _OnlineProgress):
     """Post-episode learner (``_run_sync_learner_iteration`` signature).
 
-    Warm start: idle for the first ``warm_start_episodes`` kept episodes.
-    After that: K = round(η·T) critic updates for the episode's T transitions,
-    with one actor update after every M-th critic update. Returns True when the
+    Warm start: idle for the first ``warm_start_episodes`` kept episodes of a
+    fresh run. After that: K = round(η·T) critic updates for the episode's T
+    transitions, with one actor update after every M-th critic update. Every
+    kept episode appends one row to ``online_progress.jsonl`` and writes the
+    per-episode return / loss scalars to ``online_tb/``. Returns True when the
     actor changed (the orchestrator then syncs it to the collector).
     """
-    _handle_checkpoint_request(args, train_args, replay, stats, state)
 
-    episode_steps = int(stats.pop("online_pending_episode_steps", 0))
-    kept_episodes = int(stats.get("online_kept_episodes", 0))
-    buffer_size = replay.len(_ONLINE_PARTITION)
-    if kept_episodes <= int(args.warm_start_episodes):
-        print(
-            f"[online_warm_start] episode {kept_episodes}/{args.warm_start_episodes} stored "
-            f"(T={episode_steps}, buffer={buffer_size}); learner idle, sim actor on the robot."
+    def _step(
+        args: OnlineFinetuneArgs,
+        train_args: TrainArgs,
+        replay: SharedTD3Replay,
+        stats: Dict[str, object],
+        state: LearnerRuntimeState,
+    ) -> bool:
+        _handle_checkpoint_request(args, train_args, replay, stats, state)
+
+        episode_steps = int(stats.pop("online_pending_episode_steps", 0))
+        episode_return = float(stats.pop("online_pending_episode_return", math.nan))
+        excluded_reason = str(stats.pop("online_pending_excluded_reason", ""))
+        buffer_size = replay.len(_ONLINE_PARTITION)
+        policy_episodes_trained = progress.episodes_trained
+        writer = progress.writer
+        row: Dict[str, object] = {
+            "experiment": progress.experiment,
+            "hist_len": progress.hist_len,
+            "sim_seed": progress.sim_seed,
+            "run_data_dir": str(args.checkpoint_root_dir),
+            "episode_id": int(float(stats.get("last_episode_id", -1))),
+            "wall_time_s": time.time(),
+            # The acting policy had received this many training rounds.
+            "policy_episodes_trained": policy_episodes_trained,
+            "episode_return": episode_return,
+            "episode_length": episode_steps,
+            "episode_juggles": float(stats.get("last_episode_juggles", math.nan)),
+            "episode_contacts": float(stats.get("last_episode_contacts", math.nan)),
+            "episode_estop_flag": float(stats.get("last_episode_estop_flag", math.nan)),
+            "replay_size": buffer_size,
+        }
+        if excluded_reason:
+            # Not stored, not trained on, not on the return curve; the same
+            # policy runs the next episode.
+            progress.launch_excluded_episodes += 1
+            progress.append({**row, "excluded": True, "excluded_reason": excluded_reason, "trained": False})
+            stats["online_episode_report"] = {"kind": "excluded", "reason": excluded_reason}
+            return False
+        progress.launch_kept_episodes += 1
+        row["launch_kept_episode"] = progress.launch_kept_episodes
+
+        if policy_episodes_trained == 0 and progress.warm_start_episodes_done < int(args.warm_start_episodes):
+            progress.warm_start_episodes_done += 1
+            writer.add_scalar("online_finetune/warm_start_return", episode_return, progress.warm_start_episodes_done)
+            writer.flush()
+            progress.append({**row, "warm_start": True, "trained": False})
+            stats["online_episode_report"] = {
+                "kind": "warm_start",
+                "done": progress.warm_start_episodes_done,
+                "total": int(args.warm_start_episodes),
+                "buffer": buffer_size,
+            }
+            return False
+
+        writer.add_scalar("online_finetune/return", episode_return, policy_episodes_trained)
+        writer.add_scalar("online_finetune_episode/juggles", row["episode_juggles"], policy_episodes_trained)
+        writer.add_scalar("online_finetune_episode/length", float(episode_steps), policy_episodes_trained)
+        writer.add_scalar("online_finetune_episode/estop", row["episode_estop_flag"], policy_episodes_trained)
+        if episode_steps <= 0 or buffer_size <= 0:
+            writer.flush()
+            progress.append({**row, "warm_start": False, "trained": False})
+            stats["online_episode_report"] = {"kind": "stored", "buffer": buffer_size}
+            return False
+
+        critic_budget = max(1, int(round(float(args.utd_ratio) * episode_steps)))
+        every = int(args.actor_update_every)
+        start = time.time()
+        buffer = _DeviceReplaySnapshot(replay, args.learner_device)
+        q_losses, q1_means, actor_losses, actor_norm_qs = [], [], [], []
+        for k in range(1, critic_budget + 1):
+            q_loss, q1_mean = _critic_update(args, train_args, buffer, state)
+            q_losses.append(q_loss)
+            q1_means.append(q1_mean)
+            # Paper Eq. 6: blocks of M critic updates each followed by one actor
+            # update; the K mod M leftover critic updates get no actor update.
+            if k % every == 0:
+                actor_loss, actor_norm_q = _actor_update(args, train_args, buffer, state)
+                actor_losses.append(actor_loss)
+                actor_norm_qs.append(actor_norm_q)
+        learner_s = time.time() - start
+        progress.episodes_trained += 1
+        episodes_trained = progress.episodes_trained
+
+        actor_updates = len(actor_losses)
+        q_loss_tensor = torch.stack(q_losses)
+        metrics: Dict[str, float] = {
+            "losses/q_loss": float(q_loss_tensor.mean().item()),
+            "losses/q1_mean": float(torch.stack(q1_means).mean().item()),
+            "online/episode_transitions_T": float(episode_steps),
+            "online/critic_updates_K": float(critic_budget),
+            "online/actor_updates": float(actor_updates),
+            "online/replay_size": float(buffer_size),
+            "online/learner_wall_s": float(learner_s),
+            "online/actor_lr": float(state.actor_optimizer.param_groups[0]["lr"]),
+            "online/critic_lr": float(state.q_optimizer.param_groups[0]["lr"]),
+        }
+        if actor_updates:
+            metrics["losses/actor_loss"] = float(torch.stack(actor_losses).mean().item())
+            metrics["losses/actor_norm_q_mean"] = float(torch.stack(actor_norm_qs).mean().item())
+        state.latest_train_metrics.update(metrics)
+        step_index = max(state.total_updates, 1)
+        for name, value in metrics.items():
+            state.writer.add_scalar(name, value, step_index)
+        state.writer.add_scalar("online/total_actor_updates", float(state.total_actor_updates), step_index)
+        stats["learner_q_updates"] = float(state.total_updates)
+        stats["learner_actor_updates"] = float(state.total_actor_updates)
+        stats["learner_replay_size"] = float(buffer_size)
+
+        # Per-episode view (x = training rounds completed). critic_loss is the
+        # mean over this round's K updates (per critic, h-transformed TD MSE);
+        # critic_loss_last is the round's final update.
+        critic_loss_last = float(q_loss_tensor[-1].item())
+        writer.add_scalar("online_finetune/critic_loss", metrics["losses/q_loss"], episodes_trained)
+        writer.add_scalar("online_finetune_loss/critic_loss_last", critic_loss_last, episodes_trained)
+        writer.add_scalar("online_finetune_loss/q1_mean", metrics["losses/q1_mean"], episodes_trained)
+        if actor_updates:
+            writer.add_scalar("online_finetune/actor_loss", metrics["losses/actor_loss"], episodes_trained)
+        writer.add_scalar("online_finetune_updates/critic_updates_K", float(critic_budget), episodes_trained)
+        writer.add_scalar("online_finetune_updates/actor_updates", float(actor_updates), episodes_trained)
+        writer.add_scalar("online_finetune_updates/replay_size", float(buffer_size), episodes_trained)
+        writer.flush()
+
+        checkpoint_dir = None
+        every_ckpt = int(args.checkpoint_every_online_episodes)
+        if every_ckpt > 0 and episodes_trained % every_ckpt == 0:
+            checkpoint_dir = _save_online_checkpoint(args, train_args, replay, stats, state, progress)
+        progress.append(
+            {
+                **row,
+                "warm_start": False,
+                "trained": True,
+                "episodes_trained_after": episodes_trained,
+                "critic_updates_K": critic_budget,
+                "actor_updates": actor_updates,
+                "critic_loss_mean": metrics["losses/q_loss"],
+                "critic_loss_last": critic_loss_last,
+                "actor_loss_mean": metrics.get("losses/actor_loss"),
+                "q1_mean": metrics["losses/q1_mean"],
+                "learner_wall_s": learner_s,
+                "total_critic_updates": int(state.total_updates),
+                "total_actor_updates": int(state.total_actor_updates),
+                "checkpoint_dir": checkpoint_dir,
+            }
         )
-        if kept_episodes == int(args.warm_start_episodes):
-            print("[online_warm_start] warm start complete — updates start after the next episode.")
-        return False
-    if episode_steps <= 0 or buffer_size <= 0:
-        return False
+        stats["online_episode_report"] = {
+            "kind": "trained",
+            "round": episodes_trained,
+            "K": critic_budget,
+            "actor_updates": actor_updates,
+            "q_loss": metrics["losses/q_loss"],
+            "actor_loss": metrics.get("losses/actor_loss", math.nan),
+            "buffer": buffer_size,
+            "learner_s": learner_s,
+        }
+        return actor_updates > 0
 
-    critic_budget = max(1, int(round(float(args.utd_ratio) * episode_steps)))
-    every = int(args.actor_update_every)
-    start = time.time()
-    buffer = _DeviceReplaySnapshot(replay, args.learner_device)
-    q_losses, q1_means, actor_losses, actor_norm_qs = [], [], [], []
-    for k in range(1, critic_budget + 1):
-        q_loss, q1_mean = _critic_update(args, train_args, buffer, state)
-        q_losses.append(q_loss)
-        q1_means.append(q1_mean)
-        # Paper Eq. 6: blocks of M critic updates each followed by one actor
-        # update; the K mod M leftover critic updates get no actor update.
-        if k % every == 0:
-            actor_loss, actor_norm_q = _actor_update(args, train_args, buffer, state)
-            actor_losses.append(actor_loss)
-            actor_norm_qs.append(actor_norm_q)
-    learner_s = time.time() - start
+    return _step
 
-    actor_updates = len(actor_losses)
-    metrics: Dict[str, float] = {
-        "losses/q_loss": float(torch.stack(q_losses).mean().item()),
-        "losses/q1_mean": float(torch.stack(q1_means).mean().item()),
-        "online/episode_transitions_T": float(episode_steps),
-        "online/critic_updates_K": float(critic_budget),
-        "online/actor_updates": float(actor_updates),
-        "online/replay_size": float(buffer_size),
-        "online/learner_wall_s": float(learner_s),
-        "online/actor_lr": float(state.actor_optimizer.param_groups[0]["lr"]),
-        "online/critic_lr": float(state.q_optimizer.param_groups[0]["lr"]),
-    }
-    if actor_updates:
-        metrics["losses/actor_loss"] = float(torch.stack(actor_losses).mean().item())
-        metrics["losses/actor_norm_q_mean"] = float(torch.stack(actor_norm_qs).mean().item())
-    state.latest_train_metrics.update(metrics)
-    step_index = max(state.total_updates, 1)
-    for name, value in metrics.items():
-        state.writer.add_scalar(name, value, step_index)
-    state.writer.add_scalar("online/total_actor_updates", float(state.total_actor_updates), step_index)
-    stats["learner_q_updates"] = float(state.total_updates)
-    stats["learner_actor_updates"] = float(state.total_actor_updates)
-    stats["learner_replay_size"] = float(buffer_size)
-    print(
-        f"[online_learner] episode={kept_episodes} T={episode_steps} K={critic_budget} "
-        f"actor_updates={actor_updates} (M={every}) q_loss={metrics['losses/q_loss']:.4f} "
-        f"q1_mean={metrics['losses/q1_mean']:.3f} "
-        f"actor_loss={metrics.get('losses/actor_loss', float('nan')):.4f} "
-        f"total_q={state.total_updates} total_actor={state.total_actor_updates} "
-        f"buffer={buffer_size} wall={learner_s:.1f}s"
-    )
-    return actor_updates > 0
+
+# Per-episode orchestrator / artifact lines the one-line episode report replaces
+# (quiet mode only; --no-quiet shows them again).
+_ONLINE_QUIET_PREFIXES = (
+    "[collector_progress]",
+    "[collector_rolling",
+    "[collector_reset_artifact]",
+    "[latency]",
+    # episode_artifacts.py camera-video block (the rest is in QUIET_SUPPRESS_SUBSTRS)
+    "Duration:",
+    "Codec:",
+    "Output path:",
+    "File size:",
+)
+
+
+def _install_online_print_filter() -> None:
+    import builtins
+
+    inner_print = builtins.print
+
+    def filtered_print(*print_args, **kwargs):
+        if print_args:
+            text = " ".join(str(a) for a in print_args).lstrip()
+            if text.startswith(_ONLINE_QUIET_PREFIXES):
+                return
+        inner_print(*print_args, **kwargs)
+
+    builtins.print = filtered_print
+
+
+def _make_online_episode_report(progress: _OnlineProgress, args: OnlineFinetuneArgs, stats: Dict[str, object]):
+    """One line per episode (orchestrator ``episode_report_fn``).
+
+    The episode number counts usable episodes of this launch, the ones
+    ``--num-online-episodes`` counts. A discarded attempt (too short / invalid
+    data, or ended in a stop) does not advance it; the next attempt reruns the
+    same episode number with the same policy.
+    """
+    discarded = 0
+    target = int(args.num_online_episodes)
+
+    def _label(n: int) -> str:
+        return f"Episode {n}/{target}" if target > 0 else f"Episode {n}"
+
+    def _report(*, result, episode_kept: bool, clean_reason: str, juggle_counts, episode_id: int) -> None:
+        nonlocal discarded
+        learner = stats.pop("online_episode_report", None) or {}
+        metrics = (
+            f"return {result.metrics.episode_return:.1f} | len {len(result.rows)} | "
+            f"juggles {juggle_counts.n_juggles} | contacts {juggle_counts.n_contacts} | "
+            f"end {result.terminal.episode_end_reason}"
+        )
+        stops = [
+            name
+            for name, hit in (
+                ("protective stop", result.metrics.had_protective_stop),
+                ("readiness-fail e-stop", result.terminal.readiness_fail_estop),
+                ("controller disconnect", result.metrics.had_controller_disconnect),
+                ("human interrupt", result.metrics.had_human_interrupt),
+            )
+            if hit
+        ]
+        if not episode_kept or learner.get("kind") == "excluded":
+            discarded += 1
+            if not episode_kept:
+                reason = (
+                    f"too short ({len(result.rows)} < {EPISODE_MIN_TIMESTEPS} steps)"
+                    if clean_reason == "short_episode"
+                    else f"invalid trajectory ({clean_reason})"
+                )
+                if stops:
+                    reason += ", " + ", ".join(stops)
+            else:
+                reason = ", ".join(stops) or str(learner.get("reason", "stop"))
+            print(
+                f"[online] DISCARDED (not counted; next is {_label(progress.launch_kept_episodes + 1)}, "
+                f"{discarded} discarded this launch) | reason: {reason} | {metrics}"
+            )
+            return
+
+        kind = learner.get("kind")
+        if kind == "trained":
+            update = (
+                f"trained round {learner['round']}: K={learner['K']}, actor updates {learner['actor_updates']}, "
+                f"q_loss {learner['q_loss']:.4f}, actor_loss {learner['actor_loss']:.4f} ({learner['learner_s']:.1f}s)"
+            )
+        elif kind == "warm_start":
+            update = f"warm start {learner['done']}/{learner['total']}, no update"
+            if learner["done"] == learner["total"]:
+                update += " (warm start done; training starts after the next episode)"
+        else:
+            update = "stored, no update"
+        print(
+            f"[online] {_label(progress.launch_kept_episodes)} | {metrics} | {update} | "
+            f"buffer {learner.get('buffer', '?')}"
+        )
+
+    return _report
 
 
 # ---------------------------------------------------------------------------
@@ -747,15 +1167,25 @@ def _initial_stats() -> Dict[str, object]:
 def main(
     args: OnlineFinetuneArgs,
     train_args: TrainArgs,
-    checkpoint: Dict[str, object],
+    sim_checkpoint: Dict[str, object],
     *,
+    seed_dir: Path,
+    hist_len: int,
+    sim_seed: int,
+    resume: tuple[Path, dict, Dict[str, object]] | None = None,
     quiet: bool = True,
 ) -> None:
+    """``resume`` = (checkpoint dir, its online_state.json, its training_state)
+    for --resume-online; None starts from the sim checkpoint."""
     if quiet:
         install_quiet_print_filter()
-        print("[main_quiet] per-step / per-reset robot debug prints suppressed (--no-quiet restores them).")
+        _install_online_print_filter()
+        print(
+            "[main_quiet] per-step / per-reset robot debug prints suppressed; one [online] line per "
+            "episode (--no-quiet restores the full output)."
+        )
     _validate_args(args)
-    _check_hist_len_matches(args, checkpoint)
+    _check_hist_len_matches(args, sim_checkpoint)
 
     obs_dim, act_dim, action_low_np, action_high_np = _probe_env_spaces(args)
     replay = SharedTD3Replay(
@@ -764,6 +1194,25 @@ def main(
         obs_shape=(obs_dim,),
         action_shape=(act_dim,),
     )
+    episodes_trained = 0
+    if resume is not None:
+        resume_dir, resume_state, resume_checkpoint = resume
+        replay.load_state_dict(
+            {"success": resume_checkpoint["success_replay_buffer"], "failure": resume_checkpoint["failure_replay_buffer"]}
+        )
+        episodes_trained = int(resume_state["episodes_trained"])
+        print(
+            f"[online_finetune] resuming {resume_dir}: {episodes_trained} training rounds done, "
+            f"online buffer restored with {replay.len(_ONLINE_PARTITION)} real transitions."
+        )
+    if args.no_warmup_no_sim_data:
+        if resume is None and replay.len(_ONLINE_PARTITION) != 0:
+            raise RuntimeError("--no-warmup-no-sim-data: the online buffer must start empty.")
+        print(
+            "[online_finetune] --no-warmup-no-sim-data: no warm start, no sim transitions; "
+            f"learning starts after the first real episode (online buffer starts with "
+            f"{replay.len(_ONLINE_PARTITION)} transitions)."
+        )
     stats = _initial_stats()
 
     base_log_dir = str(Path(args.checkpoint_root_dir).expanduser().resolve())
@@ -771,17 +1220,28 @@ def main(
     learner_tb_dir = os.path.join(base_log_dir, "learner_tb")
     os.makedirs(collector_tb_dir, exist_ok=True)
     os.makedirs(learner_tb_dir, exist_ok=True)
-    print(f"TensorBoard logs: {base_log_dir}")
+    print(f"TensorBoard logs: {base_log_dir} (per-episode return / loss: {seed_dir / _PROGRESS_TB_DIR})")
 
     learner_state = _build_learner_from_checkpoint(
         args=args,
         train_args=train_args,
-        checkpoint=checkpoint,
+        checkpoint=sim_checkpoint if resume is None else resume[2],
         obs_dim=obs_dim,
         act_dim=act_dim,
         action_low_np=action_low_np,
         action_high_np=action_high_np,
         tb_log_dir=learner_tb_dir,
+        source_label="sim checkpoint" if resume is None else f"online checkpoint {resume[0]}",
+    )
+    if resume is not None:
+        learner_state.total_updates = int(resume[2].get("learner_q_updates", 0))
+        learner_state.total_actor_updates = int(resume[2].get("learner_actor_updates", 0))
+    progress = _OnlineProgress(
+        seed_dir=seed_dir,
+        experiment=str(args.experiment_name),
+        hist_len=hist_len,
+        sim_seed=sim_seed,
+        episodes_trained=episodes_trained,
     )
     print(
         "[online_finetune] recipe: "
@@ -789,8 +1249,18 @@ def main(
         f"actor_update_every(M)={args.actor_update_every} tau={args.tau:g} "
         f"target_network_frequency={args.target_network_frequency} batch_size={args.batch_size} "
         f"gamma={args.gamma:g} exploration_noise={args.exploration_noise:g} "
-        f"online_buffer_size={args.online_buffer_size}"
+        f"online_buffer_size={args.online_buffer_size} num_online_episodes={args.num_online_episodes} "
+        f"train_on_stop_episodes={args.train_on_stop_episodes}"
     )
+
+    def _should_stop(_stats: Dict[str, object]) -> str | None:
+        n = int(args.num_online_episodes)
+        if n > 0 and progress.launch_kept_episodes >= n:
+            return (
+                f"num_online_episodes reached ({progress.launch_kept_episodes} usable episodes this launch, "
+                f"{progress.launch_excluded_episodes} excluded for a stop)"
+            )
+        return None
 
     run_end_reason = "completed"
     try:
@@ -805,8 +1275,10 @@ def main(
             action_low_np,
             action_high_np,
             collector_tb_dir,
-            add_episode_to_replay_fn=_make_online_replay_push(stats),
-            learner_step_fn=_online_learner_step,
+            add_episode_to_replay_fn=_make_online_replay_push(stats, args),
+            learner_step_fn=_make_online_learner_step(progress),
+            should_stop_fn=_should_stop,
+            episode_report_fn=_make_online_episode_report(progress, args, stats),
         )
     except KeyboardInterrupt:
         print("[main] interrupted by user; shutting down.")
@@ -815,6 +1287,7 @@ def main(
         run_end_reason = "exception"
         raise
     finally:
+        previous_checkpoint_dir = stats.get("last_checkpoint_dir")
         _finalize_sync_learner_state(
             args=args,
             train_args=train_args,
@@ -822,6 +1295,11 @@ def main(
             stats=stats,
             state=learner_state,
         )
+        final_checkpoint_dir = stats.get("last_checkpoint_dir")
+        if final_checkpoint_dir and final_checkpoint_dir != previous_checkpoint_dir:
+            # Lets --resume-online pick up the shutdown checkpoint too.
+            _write_online_state(final_checkpoint_dir, progress, args)
+        progress.close()
         if int(stats.get("last_checkpoint_request_id", 0)) > 0 or stats.get("last_checkpoint_dir"):
             append_run_event(
                 args,
@@ -837,7 +1315,9 @@ def main(
             reason=run_end_reason,
             collector_total_steps=int(float(stats.get("collector_total_steps", 0.0))),
             run_elapsed_total_s=float(stats.get("run_elapsed_total_s", 0.0)),
-            online_kept_episodes=int(float(stats.get("online_kept_episodes", 0.0))),
+            online_kept_episodes=int(progress.launch_kept_episodes),
+            online_excluded_stop_episodes=int(progress.launch_excluded_episodes),
+            episodes_trained=int(progress.episodes_trained),
             learner_q_updates=int(learner_state.total_updates),
             learner_actor_updates=int(learner_state.total_actor_updates),
             last_checkpoint_dir=str(stats.get("last_checkpoint_dir", "")) or None,
@@ -864,6 +1344,9 @@ if __name__ == "__main__":
     print("[args_file] applied keys:", ", ".join(applied_keys) if applied_keys else "none")
     if ignored_keys:
         print("[args_file] ignored keys (not used by online fine-tuning):", ", ".join(ignored_keys))
+    if args.no_warmup_no_sim_data and args.warm_start_episodes != 0:
+        print(f"[args] --no-warmup-no-sim-data: warm_start_episodes {args.warm_start_episodes} -> 0")
+        args.warm_start_episodes = 0
 
     checkpoint = _load_checkpoint(args.checkpoint)
     train_args, train_args_source = _resolve_train_args(args, checkpoint)
@@ -874,6 +1357,21 @@ if __name__ == "__main__":
         f"num_critics={train_args.num_critics} "
         f"use_last_action_in_policy_state={train_args.use_last_action_in_policy_state}"
     )
+    seed_dir, hist_len, sim_seed = _configure_results_layout(args, checkpoint)
+    resume = None
+    if args.resume_online:
+        resume_dir, resume_state = _find_resume_checkpoint(seed_dir)
+        resume = (resume_dir, resume_state, _load_checkpoint(str(resume_dir / "training_state.pth")))
+        print(f"[online_finetune] --resume-online: continuing from {resume_dir} ({resume_state['episodes_trained']} rounds)")
     run_note = _prompt_optional_run_note()
     _setup_run_data_dir(args, run_note)
-    main(args, train_args, checkpoint, quiet=bool(modular_extra_args.quiet))
+    main(
+        args,
+        train_args,
+        checkpoint,
+        seed_dir=seed_dir,
+        hist_len=hist_len,
+        sim_seed=sim_seed,
+        resume=resume,
+        quiet=bool(modular_extra_args.quiet),
+    )
