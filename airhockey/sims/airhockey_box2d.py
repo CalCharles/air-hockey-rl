@@ -1456,7 +1456,9 @@ class AirHockeyBox2D:
             target_pos = self._compute_pid_target_pos(pos, act)
             self.pose_hist.append(np.array(pos, dtype=float))
             self.dpose_hist.append(np.array(target_pos, dtype=float))
-            target_pos = self._filter_update()
+            # Clip the filtered target too, as the real env does: the filter can
+            # push it past the workspace limits even though each input was clipped.
+            target_pos = self._clip_pid_target_to_workspace(self._filter_update())
             self.last_target_position = self._box2d_to_base_coords(target_pos)
             current_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0],
                                    self.paddles['paddle_ego'].linearVelocity[1]])

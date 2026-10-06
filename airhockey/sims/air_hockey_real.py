@@ -285,6 +285,17 @@ class AirHockeyReal:
             # (set_reset_workspace): moves x_max_lim and both corner cuts by this
             # much so the sweep can touch a puck resting on the wall. 0 disables.
             "reset_x_max_extension_m": 0.005,
+            # Extra reach toward the +y ("right") side wall while the reset FSM runs:
+            # y_max moves out by this much and the +y corner cut moves with it. The +y
+            # limit (table y 0.353) sits ~1 cm further from its wall than the -y one
+            # (-0.367), so the sweep missed pucks resting against the right wall. Capped
+            # so the paddle edge stays RESET_WALL_CLEARANCE_M off the side wall. 0 disables.
+            "reset_y_max_extension_m": 0.014,  # 0.015 touched the right wall on hard pushes
+            # Extra depth for the +y ("right") bottom corner while the reset FSM runs: the
+            # +y corner cut moves this much toward the robot-end wall so the sweep gets
+            # under a puck sitting in that corner. Still capped by the (extended) bottom
+            # limit, which keeps RESET_WALL_CLEARANCE_M off the end wall. 0 disables.
+            "reset_right_corner_x_extension_m": 0.03,  # 0.01 was within tracking noise; 0.02 still a bit short
             # Command-filter window while the reset FSM runs: the FSM was tuned under hist_len 2, and a longer window delays its burst and makes it overshoot into the corners.
             "reset_hist_len": 2,
             "reset_pos_setting": "hitting",
@@ -662,6 +673,10 @@ class AirHockeyReal:
         self.lims = (self.x_min_lim, self.x_max_lim, self.y_min, self.y_max)
         self.move_lims = (self.rmax_x, self.rmax_y)
         self.reset_x_max_extension_m = float(getattr(config, "reset_x_max_extension_m", 0.0) or 0.0)
+        self.reset_y_max_extension_m = float(getattr(config, "reset_y_max_extension_m", 0.0) or 0.0)
+        self.reset_right_corner_x_extension_m = float(
+            getattr(config, "reset_right_corner_x_extension_m", 0.0) or 0.0
+        )
         self._normal_workspace = None  # (lims, edge_lims) saved while the reset workspace is active
         self.mouse_action_scale = getattr(config, "mouse_action_scale", None)
         self._last_teleop_policy_action = np.zeros(2)
@@ -863,13 +878,18 @@ class AirHockeyReal:
     RESET_WALL_CLEARANCE_M = 0.01
 
     def set_reset_workspace(self, active):
-        """Widen the bottom (robot-end) limit by ``reset_x_max_extension_m`` while the
-        reset FSM runs, so its wall sweep reaches a puck resting against the wall.
+        """Widen the workspace while the reset FSM runs.
 
-        x_max_lim and both corner-cut biases move together, so the whole bottom
-        boundary (chamfered corners included) shifts toward the wall; the other limits
-        are untouched. Capped so the paddle stays ``RESET_WALL_CLEARANCE_M`` short of
-        the wall. ``active=False`` restores the normal limits exactly.
+        Bottom (robot-end) limit: x_max_lim and both corner-cut biases move by
+        ``reset_x_max_extension_m``, so the whole bottom boundary (chamfered corners
+        included) shifts toward the wall and the sweep reaches a puck resting on it.
+        +y ("right") limit: y_max moves out by ``reset_y_max_extension_m`` and the +y
+        corner cut moves with the corner (bias_p += top_abs * ext, the same chamfer
+        ``corner_cut_biases`` derives for the wider y_max), plus
+        ``reset_right_corner_x_extension_m`` to reach deeper into that corner. Each is
+        capped so the paddle stays ``RESET_WALL_CLEARANCE_M`` short of its wall (the
+        corner cut can never pass the bottom limit); x_min / y_min are untouched.
+        ``active=False`` restores the normal limits exactly.
 
         Also switches the command-filter window to ``reset_hist_len`` while active and
         back to ``hist_len`` on exit.
@@ -881,17 +901,21 @@ class AirHockeyReal:
                 self.lims, self.edge_lims = self._normal_workspace
                 self._normal_workspace = None
             return
-        if self._normal_workspace is not None or self.reset_x_max_extension_m <= 0.0:
+        if self._normal_workspace is not None:
             return
         x_min, x_max, y_min, y_max = self.lims
-        cap = ROBOT_END_WALL_TCP_X - self.RESET_WALL_CLEARANCE_M
-        ext = max(0.0, min(self.reset_x_max_extension_m, cap - x_max))
-        if ext <= 0.0:
+        x_cap = ROBOT_END_WALL_TCP_X - self.RESET_WALL_CLEARANCE_M
+        ext_x = max(0.0, min(self.reset_x_max_extension_m, x_cap - x_max))
+        # +y side wall in robot frame: table y = robot y + center_offset_constant_y.
+        y_cap = self.width / 2 - self.paddle_radius - self.RESET_WALL_CLEARANCE_M - self.center_offset_constant_y
+        ext_y = max(0.0, min(self.reset_y_max_extension_m, y_cap - y_max))
+        ext_corner = max(0.0, self.reset_right_corner_x_extension_m)
+        if ext_x <= 0.0 and ext_y <= 0.0 and ext_corner <= 0.0:
             return
         self._normal_workspace = (self.lims, self.edge_lims)
         top_abs, bot_abs, bias_p, bias_m = self.edge_lims
-        self.lims = (x_min, x_max + ext, y_min, y_max)
-        self.edge_lims = [top_abs, bot_abs, bias_p + ext, bias_m + ext]
+        self.lims = (x_min, x_max + ext_x, y_min, y_max + ext_y)
+        self.edge_lims = [top_abs, bot_abs, bias_p + ext_x + top_abs * ext_y + ext_corner, bias_m + ext_x]
 
     def _set_filter_window(self, window):
         """Resize the command-filter history to ``window`` steps, keeping the newest entries."""
@@ -2148,6 +2172,11 @@ class AirHockeyReal:
             self.pose_hist.append(tcp_target_pose)
             self.dpose_hist.append(srvpose[0])
             srvpose[0] = filter_update(tcp_target_speed, self.pose_hist, self.dpose_hist)
+            # The filter adds past (target - pose) offsets to the newest pose, so its
+            # output can land outside the workspace even though every input target was
+            # clipped (up to ~8.5 cm past x_max with hist_len 4, into the end wall and
+            # corner guards). Clip again so the command sent to servoL respects the limits.
+            srvpose[0][0], srvpose[0][1] = clip_limits(srvpose[0][0], srvpose[0][1], self.lims, self.edge_lims)
             self.protected_target_pos[0] = srvpose[0][0]
             self.protected_target_pos[1] = srvpose[0][1]
             self.protected_target_pos[2] = 1

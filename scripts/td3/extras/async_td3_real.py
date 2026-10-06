@@ -763,6 +763,7 @@ def collector_process_modular(
     learner_step_fn=None,
     should_stop_fn=None,
     episode_report_fn=None,
+    episode_min_timesteps_fn=None,
 ) -> None:
     """Orchestrator. Drives PolicyRunner + ResetRunner around the learner,
     replay push, and artifact saves. Replaces the original monolithic
@@ -778,7 +779,10 @@ def collector_process_modular(
     ``episode_report_fn(result=, episode_kept=, clean_reason=, juggle_counts=,
     episode_id=)`` is called after every episode (kept or discarded), after the
     learner step and the standard progress lines; td3_online_real_finetune.py
-    uses it for its one-line episode summary."""
+    uses it for its one-line episode summary.
+    ``episode_min_timesteps_fn(result) -> int`` sets the minimum length a
+    trajectory needs to be kept (default ``EPISODE_MIN_TIMESTEPS``);
+    td3_online_real_finetune.py lowers it."""
     if add_episode_to_replay_fn is None:
         add_episode_to_replay_fn = _add_episode_to_shared_replay
     if learner_step_fn is None:
@@ -1157,6 +1161,11 @@ def collector_process_modular(
             pending_reset_artifact=pending_reset_artifact,
             latency_output_dir=latency_output_dir,
             counters=counters,
+            min_timesteps=(
+                int(episode_min_timesteps_fn(result))
+                if episode_min_timesteps_fn is not None
+                else EPISODE_MIN_TIMESTEPS
+            ),
         )
         pending_reset_artifact = None
         # Replay partition + success threshold are only assigned for kept

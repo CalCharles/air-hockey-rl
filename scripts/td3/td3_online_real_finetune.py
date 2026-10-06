@@ -17,11 +17,11 @@ Reinforcement Learning on Real Robots" (arXiv:2602.20220):
 2. **One real replay buffer, no sim data.** Transitions go into a single
    online buffer that starts empty; the sim replay buffer in the checkpoint is
    ignored. No D0 mixing, no α annealing, no success / failure split, no CQL.
-   Only usable episodes enter it: at least 50 steps with valid data
-   (``clean_episode_hdf5``) and, unless ``train_on_stop_episodes``, no stop
-   (protective / readiness-fail e-stop, controller disconnect, human
-   interrupt). Excluded episodes trigger no update and the same policy runs
-   the next episode.
+   Usable episodes enter it: valid data (``clean_episode_hdf5``) and at least
+   ``min_episode_steps`` (20) steps; with ``train_on_stop_episodes`` (default
+   on) an episode that ended in a stop (protective / readiness-fail e-stop,
+   controller disconnect, human interrupt) is kept at any length. Excluded
+   episodes trigger no update and the same policy runs the next episode.
 3. **Warm start (optional).** The first ``warm_start_episodes`` kept episodes
    (20) run the loaded sim actor unchanged and are only stored — the learner
    is idle. ``--no-warmup-no-sim-data`` sets it to 0: learning starts after
@@ -104,7 +104,6 @@ import yaml
 from airhockey import AirHockeyEnv
 from scripts.td3.deterministic_agent import DeterministicAgent
 from scripts.td3.extras.async_td3_real import (
-    EPISODE_MIN_TIMESTEPS,
     _parse_modular_specific_args,
     collector_process_modular,
 )
@@ -195,11 +194,13 @@ class OnlineFinetuneArgs(Args):
     # included); 0 = no limit (total_timesteps / Ctrl-C end the run).
     num_online_episodes: int = 0
     # Also store / train on episodes that ended in a stop (protective stop,
-    # readiness-fail e-stop, controller disconnect, human interrupt). Off: such
-    # episodes are excluded from the buffer, the learner and the curves, and
-    # don't count toward num_online_episodes. Episodes under 50 steps or with
-    # invalid data are always dropped (clean_episode_hdf5).
-    train_on_stop_episodes: bool = False
+    # readiness-fail e-stop, controller disconnect, human interrupt), at any
+    # length. Off: such episodes are excluded from the buffer, the learner and
+    # the curves, and don't count toward num_online_episodes.
+    train_on_stop_episodes: bool = True
+    # Episodes without a stop shorter than this are dropped (training / eval
+    # use 50). Invalid data is always dropped (clean_episode_hdf5).
+    min_episode_steps: int = 20
     # Continue the latest online checkpoint in this experiment / hist / seed
     # folder (networks, optimizers, online buffer, episode counter) instead of
     # starting from the sim checkpoint. --checkpoint still names the sim
@@ -1041,13 +1042,32 @@ def _install_online_print_filter() -> None:
     builtins.print = filtered_print
 
 
+def _make_episode_min_timesteps(args: OnlineFinetuneArgs):
+    """Orchestrator ``episode_min_timesteps_fn``: stop episodes are kept at any
+    length when ``train_on_stop_episodes``, the rest need ``min_episode_steps``."""
+
+    def _min_timesteps(result) -> int:
+        if args.train_on_stop_episodes and (
+            result.metrics.had_protective_stop
+            or result.terminal.readiness_fail_estop
+            or result.metrics.had_controller_disconnect
+            or result.metrics.had_human_interrupt
+            or result.terminal.stop_flags.had_stop
+        ):
+            return 1
+        return max(1, int(args.min_episode_steps))
+
+    return _min_timesteps
+
+
 def _make_online_episode_report(progress: _OnlineProgress, args: OnlineFinetuneArgs, stats: Dict[str, object]):
     """One line per episode (orchestrator ``episode_report_fn``).
 
     The episode number counts usable episodes of this launch, the ones
     ``--num-online-episodes`` counts. A discarded attempt (too short / invalid
-    data, or ended in a stop) does not advance it; the next attempt reruns the
-    same episode number with the same policy.
+    data, or ended in a stop without ``train_on_stop_episodes``) does not
+    advance it; the next attempt reruns the same episode number with the same
+    policy.
     """
     discarded = 0
     target = int(args.num_online_episodes)
@@ -1077,7 +1097,7 @@ def _make_online_episode_report(progress: _OnlineProgress, args: OnlineFinetuneA
             discarded += 1
             if not episode_kept:
                 reason = (
-                    f"too short ({len(result.rows)} < {EPISODE_MIN_TIMESTEPS} steps)"
+                    f"too short ({len(result.rows)} < {int(args.min_episode_steps)} steps)"
                     if clean_reason == "short_episode"
                     else f"invalid trajectory ({clean_reason})"
                 )
@@ -1103,8 +1123,9 @@ def _make_online_episode_report(progress: _OnlineProgress, args: OnlineFinetuneA
                 update += " (warm start done; training starts after the next episode)"
         else:
             update = "stored, no update"
+        stop_note = f" | kept despite {', '.join(stops)}" if stops else ""
         print(
-            f"[online] {_label(progress.launch_kept_episodes)} | {metrics} | {update} | "
+            f"[online] {_label(progress.launch_kept_episodes)} | {metrics}{stop_note} | {update} | "
             f"buffer {learner.get('buffer', '?')}"
         )
 
@@ -1279,6 +1300,7 @@ def main(
             learner_step_fn=_make_online_learner_step(progress),
             should_stop_fn=_should_stop,
             episode_report_fn=_make_online_episode_report(progress, args, stats),
+            episode_min_timesteps_fn=_make_episode_min_timesteps(args),
         )
     except KeyboardInterrupt:
         print("[main] interrupted by user; shutting down.")

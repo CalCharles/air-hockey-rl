@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 import time
+from typing import Optional
 
 import cv2
 import numpy as np
@@ -66,9 +67,9 @@ class ResetPolicyFSM:
       i.e. where ``upward_burst`` fires -- at the opposite, unbroken
       corner. That's the corner that actually needs to hold the puck
       against the wall for the burst/strike to work, so it's the only one
-      the FSM relies on for the reset to succeed. Set to ``None`` to
-      restore the original random-side behavior (e.g. once the table is
-      fixed).
+      the FSM relies on for the reset to succeed. ``None`` (the default
+      since both corners were repaired in 2026-10) picks a random side each
+      reset.
     """
 
     # run_reset_fsm widens the bottom limit (AirHockeyReal.set_reset_workspace) while
@@ -101,16 +102,23 @@ class ResetPolicyFSM:
         post_upward_check_steps: int = 20,
         post_window_debug_log: bool = False,
         shared_success_threshold_proportion_from_bottom: float = 0.5,
-        off_wall_abs_y_m: float = 0.35,
-        # True: a hit succeeds as soon as the puck crosses the success line, with
-        # no "away from the side walls" requirement (min_off_wall_window_steps).
-        success_ignore_wall: bool = False,
+        # Puck counts as "off the side walls" when |table-frame y| <= this. Measured in
+        # the table frame so both walls get the same margin: 0.3876 is what the left
+        # side used since the 2026-09-27 calibration (0.35 in the robot frame, whose y
+        # is shifted 0.0376 from the table's), i.e. ~1.2 cm short of a puck touching
+        # the wall (0.400). The right side used to need 8.8 cm.
+        off_wall_abs_y_m: float = 0.3876,
+        # Default True: hand over to the policy as soon as the puck is seen above the
+        # success line (shared_success_threshold_proportion_from_bottom); the side-wall
+        # check (off_wall_abs_y_m / min_off_wall_window_steps) is skipped. False brings
+        # back the "5 steps off the side walls" requirement.
+        success_ignore_wall: bool = True,
         min_off_wall_window_steps: int = 5,
         max_stage2_cycles: int = 5,
         capture_second_hit_frame: bool = True,
         async_second_hit_write: bool = False,
         show_second_hit_window: bool = False,
-        broken_corner_side: str = "right",
+        broken_corner_side: Optional[str] = None,
     ):
         if broken_corner_side not in (None, "left", "right"):
             raise ValueError(
@@ -463,7 +471,7 @@ class ResetPolicyFSM:
         puck_world_x = float(puck["position"][0])
         puck_pos = self._get_puck_pos(state_info)
         puck_tcp_x = float(puck_pos[0])
-        puck_y = float(puck_pos[1])
+        puck_y = float(puck["position"][1])  # table frame, as in the window check
         threshold_lookup = {
             "quarter": self._quarter_line_tcp_x(),
             "shared_success_gate": self._shared_success_height_tcp_x(),
@@ -639,7 +647,7 @@ class ResetPolicyFSM:
         if not self._puck_is_occluded(state_info):
             puck_pos = self._get_puck_pos(state_info)
             puck_tcp_x = float(puck_pos[0])
-            puck_y = float(puck_pos[1])
+            puck_y = float(state_info["pucks"][0]["position"][1])  # table frame (see off_wall_abs_y_m)
             above_height_now = puck_tcp_x <= self._shared_success_height_tcp_x()
             off_wall_now = abs(puck_y) <= self.off_wall_abs_y_m
             shared_gate_now = bool(above_height_now and off_wall_now)
@@ -1042,7 +1050,7 @@ def enter_reset_mode(
     async_second_hit_write: bool,
     show_second_hit_window: bool,
     fsm_cls=ResetPolicyFSM,
-    broken_corner_side: str = "right",
+    broken_corner_side: Optional[str] = None,
 ) -> tuple[str, ResetPolicyFSM]:
     reset_fsm = fsm_cls(
         eval_env,
@@ -1307,8 +1315,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--broken-corner-side",
         choices=("left", "right", "none"),
-        default="right",
-        help="Which bottom-edge corner is physically broken (paddle can't apply force there; puck just glides past). The edge-loop sweep still covers the full bottom edge, but is pinned to always START at this corner (transit only) and always END -- where the burst/strike fires -- at the opposite, unbroken corner. Default 'right' matches the currently-known damaged corner. Use 'none' to restore the original random-side behavior. Ignored (forced to 'none') when --force-end-side is explicitly set, since that flag already picks a deterministic end-side for debugging.",
+        default="none",
+        help="Which bottom-edge corner is physically broken (paddle can't apply force there; puck just glides past). The edge-loop sweep still covers the full bottom edge, but is pinned to always START at this corner (transit only) and always END -- where the burst/strike fires -- at the opposite, unbroken corner. Default 'none' (random side each reset; both corners were repaired 2026-10). Set 'left' / 'right' if a corner breaks again. Ignored (forced to 'none') when --force-end-side is explicitly set, since that flag already picks a deterministic end-side for debugging.",
     )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
