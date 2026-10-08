@@ -149,7 +149,7 @@ class AirHockeyBaseEnv(ABC, Env):
         if config.center_offset_constant_y is None:
             config.center_offset_constant_y = default_offset[1]
         simulator_params.center_offset_constant = config.center_offset_constant
-        if config.simulator == 'real':
+        if config.simulator in ('real', 'box2d'):
             simulator_params.center_offset_constant_y = config.center_offset_constant_y
         self.simulator_name = config.simulator
         self.simulator = simulator_fn.from_dict(vars(simulator_params))

@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from ..utils import dict_to_namespace
 from ..observation_homography import make_sine_y_warp_fn
 from .real.coordinate_transform import effective_x_max
+from .real.table_calibration import OCCLUDED_PLACEHOLDER_TABLE_X
 
 class PIDController:
     """
@@ -477,6 +478,10 @@ class AirHockeyBox2D:
             'paddle_bounds': [],
             'paddle_edge_bounds': [],
             'center_offset_constant': 1.2,
+            # robot -> table y offset (table = robot + offset). Only the workspace clip
+            # (x_min_lim ... y_max, corner cut) is in robot coordinates; set both offsets
+            # to the real table calibration to reuse the real robot's limits verbatim.
+            'center_offset_constant_y': 0.0,
             # When True, paddle targets that overshoot are damped toward the table (see step logic).
             'absorb_target': False,
             'puck_restitution': 1.0,
@@ -638,6 +643,7 @@ class AirHockeyBox2D:
         self.edge_lims = (self.top_abs, self.bot_abs, self.max_bias_p, self.max_bias_m)
         self.hist_len = config.hist_len
         self.center_offset_constant = config.center_offset_constant
+        self.center_offset_constant_y = float(config.center_offset_constant_y)
         self.enable_action_delay = bool(config.enable_action_delay)
         self.enable_observation_delay = bool(config.enable_observation_delay)
         self.action_lag = float(config.action_lag)
@@ -1045,7 +1051,7 @@ class AirHockeyBox2D:
         if remaining > 0:
             self._occlusion_run_remaining[puck_name] = remaining - 1
             observed = self._occlusion_last_visible_base.get(
-                puck_name, (-2.0 + self.center_offset_constant, 0.0)
+                puck_name, (OCCLUDED_PLACEHOLDER_TABLE_X, 0.0)
             )
             self._occlusion_prev_occluded[puck_name] = True
             return True, np.array(observed, dtype=float)
@@ -1064,7 +1070,7 @@ class AirHockeyBox2D:
             run_len = self._sample_occlusion_run_length()
             self._occlusion_run_remaining[puck_name] = max(run_len - 1, 0)
             observed = self._occlusion_last_visible_base.get(
-                puck_name, (-2.0 + self.center_offset_constant, 0.0)
+                puck_name, (OCCLUDED_PLACEHOLDER_TABLE_X, 0.0)
             )
             self._occlusion_prev_occluded[puck_name] = True
             return True, np.array(observed, dtype=float)
@@ -1321,12 +1327,11 @@ class AirHockeyBox2D:
         # Convert to raw-x for clipping, then shift back to centered frame.
         x_min_lim, x_max_lim, y_min, y_max = self.lims
         x_raw = x - self.center_offset_constant
-        y = np.clip(y, y_min, y_max)
+        y_raw = np.clip(y - self.center_offset_constant_y, y_min, y_max)
         x_min = x_min_lim
-        x_max = effective_x_max(y, self.lims, self.edge_lims)
+        x_max = effective_x_max(y_raw, self.lims, self.edge_lims)
         x_raw = np.clip(x_raw, x_min, x_max)
-        x_centered = x_raw + self.center_offset_constant
-        return np.array([x_centered, y], dtype=float)
+        return np.array([x_raw + self.center_offset_constant, y_raw + self.center_offset_constant_y], dtype=float)
 
     def _clip_pid_target_to_workspace(self, target_pos):
         """Clip PID target with real-equivalent workspace + edge limits."""
@@ -1521,7 +1526,7 @@ class AirHockeyBox2D:
                     self.puck_history.append(list(puck["position"]) + [int(puck.get("occluded", 0))])
             else:
                 for i in range(len(self.pucks.keys())):
-                    self.puck_history.append([-2 + self.center_offset_constant,0,1])
+                    self.puck_history.append([OCCLUDED_PLACEHOLDER_TABLE_X,0,1])
             
             if 'paddles' in state_info:
                 for paddle_name, paddle_data in state_info['paddles'].items():
@@ -1529,7 +1534,7 @@ class AirHockeyBox2D:
             else:
                 for i in range(len(self.paddles.keys())):
                     if 'paddle_ego_acceleration' not in self.paddles or 'paddle_ego_force' not in self.paddles or 'paddle_ego_jerk' not in self.paddles:
-                        self.paddle_history.append([-2 + self.center_offset_constant,0,1])
+                        self.paddle_history.append([OCCLUDED_PLACEHOLDER_TABLE_X,0,1])
             
             total_force = np.array(force)
 

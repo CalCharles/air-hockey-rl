@@ -31,6 +31,12 @@ air_hockey:
   obs_type: history
   seed: 0
 
+  # robot -> table offset of the real table (airhockey/sims/real/table_calibration.py,
+  # measured 2026-09-27). Box2D only uses it to place the robot-frame paddle workspace
+  # below on the table, so the sim paddle covers the same table region as the real one.
+  center_offset_constant: 1.3359
+  center_offset_constant_y: -0.0376
+
   simulator: box2d
   simulator_params:
     absorb_target: false
@@ -57,6 +63,17 @@ air_hockey:
     pid_kp: 7531.5
     pid_ki: 1928.7
     pid_kd: 0.0
+
+    # Paddle workspace in ROBOT frame = REAL_WORKSPACE_LIMS (airhockey/sims/air_hockey_real.py);
+    # table frame x 0.506..0.886, y -0.368..0.352. Corner-cut biases as the real env derives
+    # them: corner_cut_biases(x_max_lim, y_min, y_max, slope 0.8, y_extent 0.1).
+    x_min_lim: -0.83
+    x_max_lim: -0.45
+    y_min: -0.33
+    y_max: 0.39
+    top_abs: 0.8
+    max_bias_p: -0.218
+    max_bias_m: -0.266
 
     hist_len: 4
 
