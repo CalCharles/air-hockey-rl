@@ -207,6 +207,15 @@ class EvalSpecificArgs:
     manual_flick_reset: bool = False
     manual_flick_line: float = 0.34
 
+    # Episode end conditions, matching scripts/td3/td3_online_real_finetune.py:
+    # the puck_passed_paddle check is off by default, so an episode ends for good
+    # only when the puck touches the robot-end wall (puck_hit_bottom), stops, the
+    # budget runs out, or a safety stop fires. --terminate-on-puck-pass-paddle turns
+    # it back on (the pre-2026-10-09 eval behaviour); puck_pass_paddle_frames is the
+    # consecutive-frame threshold it then uses (finetune default 6, env default 3).
+    terminate_on_puck_pass_paddle: bool = False
+    puck_pass_paddle_frames: int = 6
+
 
 def _parse_eval_specific_args() -> EvalSpecificArgs:
     """Strip eval-specific flags from ``sys.argv`` before tyro sees it.
@@ -294,8 +303,24 @@ def _parse_eval_specific_args() -> EvalSpecificArgs:
             "(default 0.34 = the horizontal line nearest the robot; 0.5 = centre line)."
         ),
     )
+    parser.add_argument(
+        "--terminate-on-puck-pass-paddle",
+        action="store_true",
+        help=(
+            "End episodes when the puck is seen behind the paddle (puck_passed_paddle). Off by "
+            "default to match the online finetune; the puck_hit_bottom end-wall check stays on."
+        ),
+    )
+    parser.add_argument(
+        "--puck-pass-paddle-frames",
+        type=int,
+        default=6,
+        help="Consecutive frames for puck_passed_paddle; only with --terminate-on-puck-pass-paddle (default 6, as in the finetune).",
+    )
     parsed, remaining = parser.parse_known_args(sys.argv[1:])
     sys.argv = [sys.argv[0]] + remaining
+    if int(parsed.puck_pass_paddle_frames) < 1:
+        raise SystemExit(f"--puck-pass-paddle-frames must be >= 1, got {parsed.puck_pass_paddle_frames}")
     if parsed.manual_drop_reset and parsed.manual_flick_reset:
         raise SystemExit("--manual-drop-reset and --manual-flick-reset are mutually exclusive")
     if not 0.0 < float(parsed.manual_flick_line) < 1.0:
@@ -325,6 +350,8 @@ def _parse_eval_specific_args() -> EvalSpecificArgs:
         manual_drop_start_on_detect=bool(parsed.manual_drop_start_on_detect),
         manual_flick_reset=bool(parsed.manual_flick_reset),
         manual_flick_line=float(parsed.manual_flick_line),
+        terminate_on_puck_pass_paddle=bool(parsed.terminate_on_puck_pass_paddle),
+        puck_pass_paddle_frames=int(parsed.puck_pass_paddle_frames),
     )
 
 
@@ -404,6 +431,14 @@ def run_eval(
     with open(args.config, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
     collector_config = _prepare_air_hockey_config(config, seed=args.seed)
+    # Same episode end conditions as the online finetune (see EvalSpecificArgs).
+    end_condition_overrides = {
+        "terminate_on_puck_pass_paddle": bool(eval_args.terminate_on_puck_pass_paddle),
+        "puck_pass_paddle_score_threshold": int(eval_args.puck_pass_paddle_frames),
+    }
+    for key, value in end_condition_overrides.items():
+        print(f"[eval_run] env config override: {key}={value!r} (config had {collector_config.get(key)!r})")
+    collector_config.update(end_condition_overrides)
     sim_params = collector_config.get("simulator_params", {})
     if isinstance(sim_params, dict):
         sim_params["wait_for_space_to_start"] = False
@@ -822,6 +857,8 @@ def run_eval(
         "manual_drop_start_on_detect": bool(eval_args.manual_drop_start_on_detect),
         "manual_flick_reset": bool(eval_args.manual_flick_reset),
         "manual_flick_line": float(eval_args.manual_flick_line),
+        "terminate_on_puck_pass_paddle": bool(eval_args.terminate_on_puck_pass_paddle),
+        "puck_pass_paddle_frames": int(eval_args.puck_pass_paddle_frames),
         "min_timesteps": int(task_hooks.min_timesteps),
         "model_path": str(args.model_path) if args.model_path is not None else None,
         "config": str(args.config),

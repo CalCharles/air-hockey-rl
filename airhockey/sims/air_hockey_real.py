@@ -289,8 +289,12 @@ class AirHockeyReal:
             # y_max moves out by this much and the +y corner cut moves with it. The +y
             # limit (table y 0.353) sits ~1 cm further from its wall than the -y one
             # (-0.367), so the sweep missed pucks resting against the right wall. Capped
-            # so the paddle edge stays RESET_WALL_CLEARANCE_M off the side wall. 0 disables.
-            "reset_y_max_extension_m": 0.014,  # 0.015 touched the right wall on hard pushes
+            # so the paddle edge stays reset_side_wall_clearance_m off the side wall. 0 disables.
+            "reset_y_max_extension_m": 0.024,  # 2026-10-09: +1 cm (was 0.014) so the sweep reaches pucks on the right wall; 0.015 once touched the wall on hard pushes
+            # Gap kept between the paddle edge and the +y side wall by that cap. Smaller than
+            # RESET_WALL_CLEARANCE_M (end wall) so the extension above is not cut short:
+            # 0.004 leaves the paddle edge ~4.6 mm off the wall at y_max + 0.024.
+            "reset_side_wall_clearance_m": 0.004,
             # Extra depth for the +y ("right") bottom corner while the reset FSM runs: the
             # +y corner cut moves this much toward the robot-end wall so the sweep gets
             # under a puck sitting in that corner. Still capped by the (extended) bottom
@@ -674,6 +678,9 @@ class AirHockeyReal:
         self.move_lims = (self.rmax_x, self.rmax_y)
         self.reset_x_max_extension_m = float(getattr(config, "reset_x_max_extension_m", 0.0) or 0.0)
         self.reset_y_max_extension_m = float(getattr(config, "reset_y_max_extension_m", 0.0) or 0.0)
+        self.reset_side_wall_clearance_m = float(
+            getattr(config, "reset_side_wall_clearance_m", self.RESET_WALL_CLEARANCE_M)
+        )
         self.reset_right_corner_x_extension_m = float(
             getattr(config, "reset_right_corner_x_extension_m", 0.0) or 0.0
         )
@@ -887,8 +894,9 @@ class AirHockeyReal:
         corner cut moves with the corner (bias_p += top_abs * ext, the same chamfer
         ``corner_cut_biases`` derives for the wider y_max), plus
         ``reset_right_corner_x_extension_m`` to reach deeper into that corner. Each is
-        capped so the paddle stays ``RESET_WALL_CLEARANCE_M`` short of its wall (the
-        corner cut can never pass the bottom limit); x_min / y_min are untouched.
+        capped so the paddle stays short of its wall (``RESET_WALL_CLEARANCE_M`` for the
+        end wall, ``reset_side_wall_clearance_m`` for the +y wall; the corner cut can
+        never pass the bottom limit); x_min / y_min are untouched.
         ``active=False`` restores the normal limits exactly.
 
         Also switches the command-filter window to ``reset_hist_len`` while active and
@@ -907,7 +915,7 @@ class AirHockeyReal:
         x_cap = ROBOT_END_WALL_TCP_X - self.RESET_WALL_CLEARANCE_M
         ext_x = max(0.0, min(self.reset_x_max_extension_m, x_cap - x_max))
         # +y side wall in robot frame: table y = robot y + center_offset_constant_y.
-        y_cap = self.width / 2 - self.paddle_radius - self.RESET_WALL_CLEARANCE_M - self.center_offset_constant_y
+        y_cap = self.width / 2 - self.paddle_radius - self.reset_side_wall_clearance_m - self.center_offset_constant_y
         ext_y = max(0.0, min(self.reset_y_max_extension_m, y_cap - y_max))
         ext_corner = max(0.0, self.reset_right_corner_x_extension_m)
         if ext_x <= 0.0 and ext_y <= 0.0 and ext_corner <= 0.0:
