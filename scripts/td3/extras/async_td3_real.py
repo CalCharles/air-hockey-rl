@@ -764,6 +764,10 @@ def collector_process_modular(
     should_stop_fn=None,
     episode_report_fn=None,
     episode_min_timesteps_fn=None,
+    reset_fsm_cls=None,
+    force_fsm_after_hard_reset: bool = False,
+    env_config_overrides: dict | None = None,
+    periodic_hard_reset_every: int = 3,
 ) -> None:
     """Orchestrator. Drives PolicyRunner + ResetRunner around the learner,
     replay push, and artifact saves. Replaces the original monolithic
@@ -782,7 +786,21 @@ def collector_process_modular(
     uses it for its one-line episode summary.
     ``episode_min_timesteps_fn(result) -> int`` sets the minimum length a
     trajectory needs to be kept (default ``EPISODE_MIN_TIMESTEPS``);
-    td3_online_real_finetune.py lowers it."""
+    td3_online_real_finetune.py lowers it.
+    ``reset_fsm_cls`` (an ``(env, rng) -> fsm`` factory) replaces the default
+    puck reset FSM between episodes; td3_online_real_finetune.py passes
+    ``ManualPuckDropFSM`` for ``--manual-drop-reset``, together with
+    ``force_fsm_after_hard_reset=True`` so the periodic hard reset also waits
+    for the operator instead of starting the policy right away.
+    ``env_config_overrides`` is merged into the env's ``air_hockey`` config
+    (top-level keys, e.g. ``puck_pass_paddle_score_threshold``) before the
+    env is built, so a caller can change termination rules without editing
+    the shared real rollout config.
+    ``periodic_hard_reset_every`` is the cadence of the physical hard reset
+    (``env.reset()``: the arm drives back to its home reset pose) between
+    episodes; 1 does it after every episode, 0 only after stops.
+    td3_online_real_finetune.py passes 1 for ``--home-before-reset`` (with
+    ``force_fsm_after_hard_reset=True`` so the reset policy always follows)."""
     if add_episode_to_replay_fn is None:
         add_episode_to_replay_fn = _add_episode_to_shared_replay
     if learner_step_fn is None:
@@ -796,6 +814,10 @@ def collector_process_modular(
     with open(args.config, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
     collector_config = _prepare_air_hockey_config(config, seed=args.seed)
+    if env_config_overrides:
+        for key, value in env_config_overrides.items():
+            print(f"[collector] env config override: {key}={value!r} (config had {collector_config.get(key)!r})")
+        collector_config.update(env_config_overrides)
     sim_params = collector_config.get("simulator_params", {})
     if isinstance(sim_params, dict):
         sim_params["wait_for_space_to_start"] = False
@@ -883,7 +905,9 @@ def collector_process_modular(
             f"(existing data found in {args.reset_artifact_dir})"
         )
     reset_rng = np.random.default_rng(args.seed)
-    if _DEFAULT_RESET_FSM_CLS is ResetPolicyHybridFSM:
+    if reset_fsm_cls is not None:
+        reset_fsm_factory = reset_fsm_cls
+    elif _DEFAULT_RESET_FSM_CLS is ResetPolicyHybridFSM:
         # Build the frozen juggle actor once on the collector process and
         # close over it in the FSM factory. The ``ResetRunner`` factory
         # contract is ``(env, rng) -> fsm``, so any extra dependencies (the
@@ -909,6 +933,7 @@ def collector_process_modular(
         reset_policy_fsm_cls=reset_fsm_factory,
         build_split_episode_row=_build_split_episode_row,
         latest_camera_frame=_latest_camera_frame,
+        force_fsm_after_hard_reset=bool(force_fsm_after_hard_reset),
     )
     pending_reset_artifact = None
 
@@ -1443,6 +1468,7 @@ def collector_process_modular(
                 had_controller_disconnect=result.terminal.stop_flags.had_controller_disconnect,
                 had_human_interrupt=had_human_interrupt_now,
             ),
+            periodic_every=int(periodic_hard_reset_every),
         )
         reset_result = reset_runner.run(
             kind=kind,

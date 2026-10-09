@@ -73,6 +73,13 @@ hist2, sim seed 0, 20 episodes, no warm start:
 
 hist4: same with ``hist4_seed<S>/juggle_sysid_v2_hist4`` and ``juggle_hist4.yaml``.
 Add ``--resume-online`` to the same command to continue that curve.
+Add ``--manual-drop-reset`` to replace the automatic puck reset with a manual
+drop: the paddle parks at the start pose, the operator holds the puck at the
+top of the table, and the policy starts once the camera sees it there for
+``--manual-drop-detect-steps`` frames (``--manual-drop-line`` sets "top").
+By default (``--home-before-reset``) the arm drives back to its home reset
+pose after every episode before the reset runs; ``--no-home-before-reset``
+restores the soft reset (hard reset only every 3rd episode / after stops).
 
 ``--checkpoint`` must be a full ``training_state.pth`` (not ``model.pth``):
 the critics and optimizer states are needed. The args file carries the recipe
@@ -208,6 +215,51 @@ class OnlineFinetuneArgs(Args):
     resume_online: bool = False
     # Full checkpoint (checkpoint_ep<i>/) after every N-th training round.
     checkpoint_every_online_episodes: int = 1
+    # End episodes with puck_passed_paddle (puck seen > 1 cm behind the paddle,
+    # toward the robot, for puck_pass_paddle_frames frames). Off by default: a
+    # puck that slips past can still be recovered, and the episode only ends for
+    # good once the puck touches the robot-end wall (puck_hit_bottom, which the
+    # real rollout config keeps on). The detector also produces false
+    # "behind the paddle" readings. Overrides terminate_on_puck_pass_paddle for
+    # this run only (the real eval / sim keep it on).
+    terminate_on_puck_pass_paddle: bool = False
+    # Consecutive frames the visible puck must stay > 1 cm behind the paddle
+    # (toward the robot) before the episode ends with puck_passed_paddle. The
+    # env default (and the real eval / sim) is 3 (~0.15 s at 20 Hz); a longer
+    # window lets the policy try to recover a puck that just slipped past.
+    # Overrides puck_pass_paddle_score_threshold for this run only; ignored
+    # unless --terminate-on-puck-pass-paddle.
+    puck_pass_paddle_frames: int = 6
+    # Manual puck drop instead of the automatic puck reset: between episodes the
+    # paddle drives to the start pose and holds still; the operator holds the
+    # puck at the top of the table (beyond manual_drop_line, a fraction of the
+    # table length from the robot wall) where the camera can see it. Once it is
+    # seen there for manual_drop_detect_steps consecutive frames the policy
+    # starts; the operator drops the puck and steps out of the frame. Also used
+    # after hard resets (stop / periodic). See helper/real_manual_drop_fsm.py.
+    manual_drop_reset: bool = False
+    # "Top of the table" for --manual-drop-reset: fraction of the table length
+    # from the robot wall; the puck must be seen beyond it.
+    manual_drop_line: float = 0.75
+    # Consecutive frames the puck must be seen beyond manual_drop_line.
+    manual_drop_detect_steps: int = 5
+    # True: hand over as soon as the puck is detected (drop it within ~1 s, or
+    # the held-still puck ends the episode via terminate_on_puck_stop).
+    # False: hand over only once the puck starts moving toward the robot.
+    manual_drop_start_on_detect: bool = True
+    # Let the policy act from the first step of every episode: sets
+    # transition_hold_steps_post_reset (default 8 zero-action steps after each
+    # reset) and transition_hold_steps_post_actor_sync (3 steps after each
+    # training round, which carry over into the next episode's first steps) to
+    # 0. Meant for --manual-drop-reset, where the paddle has already settled
+    # at the start pose and the puck is falling when the policy takes over.
+    skip_post_reset_hold: bool = False
+    # After every episode, hard-reset the robot (env.reset(): the arm drives
+    # back to its home reset pose) and only then run the reset policy, instead
+    # of starting the reset policy from wherever the episode left the paddle.
+    # False (--no-home-before-reset) restores the soft reset between episodes
+    # with a hard reset every 3rd episode / after stops.
+    home_before_reset: bool = True
 
 
 # On Python 3.9, typing.get_type_hints can't evaluate the inherited ``X | None``
@@ -383,6 +435,12 @@ def _validate_args(args: OnlineFinetuneArgs) -> None:
         raise ValueError("The sim-to-online recipe has no CQL term: cql_alpha must be 0.")
     if args.full_checkpoint_load in ("residual", "residual_resume"):
         raise ValueError("No residual head in this recipe: full_checkpoint_load must not be residual.")
+    if not 0.0 < float(args.manual_drop_line) < 1.0:
+        raise ValueError(f"manual_drop_line must be between 0 and 1 (exclusive), got {args.manual_drop_line}.")
+    if int(args.manual_drop_detect_steps) < 1:
+        raise ValueError(f"manual_drop_detect_steps must be >= 1, got {args.manual_drop_detect_steps}.")
+    if int(args.puck_pass_paddle_frames) < 1:
+        raise ValueError(f"puck_pass_paddle_frames must be >= 1, got {args.puck_pass_paddle_frames}.")
     if len(args.warm_start_hdf5_dirs) > 0:
         raise ValueError(
             "warm_start_hdf5_dirs is not supported: this recipe starts from an empty online buffer "
@@ -1060,6 +1118,20 @@ def _make_episode_min_timesteps(args: OnlineFinetuneArgs):
     return _min_timesteps
 
 
+def _make_manual_drop_fsm_cls(args: OnlineFinetuneArgs):
+    """``(env, rng) -> ManualPuckDropFSM`` for ``--manual-drop-reset`` (drop mode)."""
+    from scripts.real.rollout_reset_policy_real import configure_reset_fsm_cls
+    from scripts.td3.helper.real_manual_drop_fsm import ManualPuckDropFSM
+
+    return configure_reset_fsm_cls(
+        ManualPuckDropFSM,
+        mode="drop",
+        top_line_from_robot=float(args.manual_drop_line),
+        detect_steps=int(args.manual_drop_detect_steps),
+        start_on_detect=bool(args.manual_drop_start_on_detect),
+    )
+
+
 def _make_online_episode_report(progress: _OnlineProgress, args: OnlineFinetuneArgs, stats: Dict[str, object]):
     """One line per episode (orchestrator ``episode_report_fn``).
 
@@ -1273,6 +1345,17 @@ def main(
         f"online_buffer_size={args.online_buffer_size} num_online_episodes={args.num_online_episodes} "
         f"train_on_stop_episodes={args.train_on_stop_episodes}"
     )
+    reset_fsm_cls = _make_manual_drop_fsm_cls(args) if args.manual_drop_reset else None
+    if reset_fsm_cls is not None:
+        print(
+            "[online_finetune] reset: manual puck drop (paddle parks at the start pose; policy starts "
+            f"{'once the puck is seen' if args.manual_drop_start_on_detect else 'once the held puck is dropped'} "
+            f"beyond {args.manual_drop_line:g} of the table length from the robot wall for "
+            f"{args.manual_drop_detect_steps} frames)."
+        )
+
+    if args.home_before_reset:
+        print("[online_finetune] reset: arm returns to its home reset pose after every episode, then the reset policy runs.")
 
     def _should_stop(_stats: Dict[str, object]) -> str | None:
         n = int(args.num_online_episodes)
@@ -1301,6 +1384,15 @@ def main(
             should_stop_fn=_should_stop,
             episode_report_fn=_make_online_episode_report(progress, args, stats),
             episode_min_timesteps_fn=_make_episode_min_timesteps(args),
+            reset_fsm_cls=reset_fsm_cls,
+            # Hard resets (stop / periodic) must also wait for the operator's puck,
+            # and with --home-before-reset the reset policy always follows the hard reset.
+            force_fsm_after_hard_reset=reset_fsm_cls is not None or bool(args.home_before_reset),
+            periodic_hard_reset_every=1 if args.home_before_reset else 3,
+            env_config_overrides={
+                "terminate_on_puck_pass_paddle": bool(args.terminate_on_puck_pass_paddle),
+                "puck_pass_paddle_score_threshold": int(args.puck_pass_paddle_frames),
+            },
         )
     except KeyboardInterrupt:
         print("[main] interrupted by user; shutting down.")
@@ -1369,6 +1461,14 @@ if __name__ == "__main__":
     if args.no_warmup_no_sim_data and args.warm_start_episodes != 0:
         print(f"[args] --no-warmup-no-sim-data: warm_start_episodes {args.warm_start_episodes} -> 0")
         args.warm_start_episodes = 0
+    if args.skip_post_reset_hold:
+        print(
+            "[args] --skip-post-reset-hold: transition_hold_steps_post_reset "
+            f"{args.transition_hold_steps_post_reset} -> 0, transition_hold_steps_post_actor_sync "
+            f"{args.transition_hold_steps_post_actor_sync} -> 0"
+        )
+        args.transition_hold_steps_post_reset = 0
+        args.transition_hold_steps_post_actor_sync = 0
 
     checkpoint = _load_checkpoint(args.checkpoint)
     train_args, train_args_source = _resolve_train_args(args, checkpoint)
