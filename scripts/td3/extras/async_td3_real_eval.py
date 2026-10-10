@@ -216,6 +216,13 @@ class EvalSpecificArgs:
     terminate_on_puck_pass_paddle: bool = False
     puck_pass_paddle_frames: int = 6
 
+    # Between episodes, hard-reset the robot (env.reset(): the arm drives back to
+    # its home reset pose) and only then run the reset policy, as in
+    # td3_online_real_finetune.py --home-before-reset. Puck-reset tasks only.
+    # --no-home-before-reset restores the soft reset with a hard reset every
+    # task_hooks.periodic_hard_reset_every episodes (3) / after stops.
+    home_before_reset: bool = True
+
 
 def _parse_eval_specific_args() -> EvalSpecificArgs:
     """Strip eval-specific flags from ``sys.argv`` before tyro sees it.
@@ -317,6 +324,16 @@ def _parse_eval_specific_args() -> EvalSpecificArgs:
         default=6,
         help="Consecutive frames for puck_passed_paddle; only with --terminate-on-puck-pass-paddle (default 6, as in the finetune).",
     )
+    parser.add_argument(
+        "--no-home-before-reset",
+        dest="home_before_reset",
+        action="store_false",
+        help=(
+            "Do not send the arm back to its home reset pose after every episode (default: it "
+            "does, then the reset policy runs, matching the online finetune). Restores the soft "
+            "reset with a periodic hard reset."
+        ),
+    )
     parsed, remaining = parser.parse_known_args(sys.argv[1:])
     sys.argv = [sys.argv[0]] + remaining
     if int(parsed.puck_pass_paddle_frames) < 1:
@@ -352,6 +369,7 @@ def _parse_eval_specific_args() -> EvalSpecificArgs:
         manual_flick_line=float(parsed.manual_flick_line),
         terminate_on_puck_pass_paddle=bool(parsed.terminate_on_puck_pass_paddle),
         puck_pass_paddle_frames=int(parsed.puck_pass_paddle_frames),
+        home_before_reset=bool(parsed.home_before_reset),
     )
 
 
@@ -483,6 +501,13 @@ def run_eval(
         force_fsm_after_hard_reset = True
     else:
         reset_fsm_cls = _configure_eval_reset_fsm_cls(task_hooks.make_reset_fsm_cls(), eval_args)
+    periodic_hard_reset_every = int(task_hooks.periodic_hard_reset_every)
+    home_before_reset = bool(eval_args.home_before_reset) and task_hooks.reset_strategy == "puck_reset_fsm"
+    if home_before_reset:
+        # Same as the online finetune: arm back home after every episode, then
+        # always the reset policy (never the puck-position skip heuristic).
+        periodic_hard_reset_every = 1
+        force_fsm_after_hard_reset = True
     # Post-reset zero-action hold: task hooks may override the args value
     # (paddle-only tasks set 0 — the reposition FSM already leaves the paddle
     # at rest, and the hold would eat into a 50-step reach budget).
@@ -504,7 +529,8 @@ def run_eval(
         f"reset_strategy={task_hooks.reset_strategy} "
         f"reset_fsm={reset_fsm_cls.__name__} "
         f"force_fsm_after_hard_reset={int(force_fsm_after_hard_reset)} "
-        f"periodic_hard_reset_every={int(task_hooks.periodic_hard_reset_every)} "
+        f"home_before_reset={int(home_before_reset)} "
+        f"periodic_hard_reset_every={periodic_hard_reset_every} "
         f"post_reset_hold_steps={post_reset_hold_steps}"
     )
 
@@ -803,7 +829,7 @@ def run_eval(
                 had_protective_stop=result.terminal.stop_flags.had_protective_stop,
                 had_controller_disconnect=result.terminal.stop_flags.had_controller_disconnect,
             ),
-            periodic_every=int(task_hooks.periodic_hard_reset_every),
+            periodic_every=periodic_hard_reset_every,
         )
         reset_result = reset_runner.run(
             kind=kind,
@@ -859,6 +885,7 @@ def run_eval(
         "manual_flick_line": float(eval_args.manual_flick_line),
         "terminate_on_puck_pass_paddle": bool(eval_args.terminate_on_puck_pass_paddle),
         "puck_pass_paddle_frames": int(eval_args.puck_pass_paddle_frames),
+        "home_before_reset": bool(eval_args.home_before_reset),
         "min_timesteps": int(task_hooks.min_timesteps),
         "model_path": str(args.model_path) if args.model_path is not None else None,
         "config": str(args.config),

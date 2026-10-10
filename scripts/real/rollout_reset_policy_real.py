@@ -44,6 +44,14 @@ def infer_policy_dims_from_state_dict(state_dict):
     return actor_input_dim, action_dim
 
 
+# TEMPORARY (2026-10-09, debugging the reset per side): force every reset to end
+# -- i.e. burst / strike -- at this corner ("right" = +y). The sweep then always
+# starts at the opposite corner. None restores the random side per reset.
+# Applies to every ResetPolicyFSM user (online finetune, eval, standalone runs);
+# broken_corner_side, when set, still takes precedence.
+_DEBUG_FORCE_END_SIDE: Optional[str] = "right"
+
+
 class ResetPolicyFSM:
     """Five-phase FSM for resetting the puck from the bottom of the table.
 
@@ -309,6 +317,9 @@ class ResetPolicyFSM:
         _, _, y_min_lim, y_max_lim = self._lims
         if self.broken_corner_side in ("left", "right"):
             self.start_side = self.broken_corner_side
+        elif _DEBUG_FORCE_END_SIDE in ("left", "right"):
+            # TEMPORARY debug override, see _DEBUG_FORCE_END_SIDE.
+            self.start_side = "left" if _DEBUG_FORCE_END_SIDE == "right" else "right"
         else:
             self.start_side = "left" if self.rng.random() < 0.5 else "right"
 
