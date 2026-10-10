@@ -44,12 +44,18 @@ def infer_policy_dims_from_state_dict(state_dict):
     return actor_input_dim, action_dim
 
 
-# TEMPORARY (2026-10-09, debugging the reset per side): force every reset to end
-# -- i.e. burst / strike -- at this corner ("right" = +y). The sweep then always
-# starts at the opposite corner. None restores the random side per reset.
+# Which corner every reset ends at -- i.e. where the burst / strike fires
+# ("right" = +y, "left" = -y); the sweep starts at the opposite corner.
+#   "alternate": left, right, left, ... switching after each SUCCESSFUL reset, so
+#                the episodes after resets split evenly between the two sides. A
+#                failed / restarted / interrupted reset retries the same side.
+#                Starts at "left" in each process (_ALTERNATE_NEXT_END_SIDE).
+#   "left" / "right": always that side (debugging one side).
+#   None: random side per reset (the original behaviour).
 # Applies to every ResetPolicyFSM user (online finetune, eval, standalone runs);
 # broken_corner_side, when set, still takes precedence.
-_DEBUG_FORCE_END_SIDE: Optional[str] = "right"
+_DEBUG_FORCE_END_SIDE: Optional[str] = "alternate"
+_ALTERNATE_NEXT_END_SIDE = {"side": "left"}
 
 
 class ResetPolicyFSM:
@@ -133,6 +139,13 @@ class ResetPolicyFSM:
                 f"broken_corner_side must be None, 'left', or 'right'; got {broken_corner_side!r}"
             )
         self.broken_corner_side = broken_corner_side
+        # End side fixed for this whole reset (all its restart rounds); see _DEBUG_FORCE_END_SIDE.
+        if _DEBUG_FORCE_END_SIDE == "alternate":
+            self._forced_end_side = _ALTERNATE_NEXT_END_SIDE["side"]
+        elif _DEBUG_FORCE_END_SIDE in ("left", "right"):
+            self._forced_end_side = _DEBUG_FORCE_END_SIDE
+        else:
+            self._forced_end_side = None
         self.env = env
         self.rng = rng
         self.loop_max_delta_m = float(loop_max_delta_m)
@@ -317,9 +330,9 @@ class ResetPolicyFSM:
         _, _, y_min_lim, y_max_lim = self._lims
         if self.broken_corner_side in ("left", "right"):
             self.start_side = self.broken_corner_side
-        elif _DEBUG_FORCE_END_SIDE in ("left", "right"):
-            # TEMPORARY debug override, see _DEBUG_FORCE_END_SIDE.
-            self.start_side = "left" if _DEBUG_FORCE_END_SIDE == "right" else "right"
+        elif getattr(self, "_forced_end_side", None) in ("left", "right"):
+            # See _DEBUG_FORCE_END_SIDE.
+            self.start_side = "left" if self._forced_end_side == "right" else "right"
         else:
             self.start_side = "left" if self.rng.random() < 0.5 else "right"
 
@@ -530,6 +543,8 @@ class ResetPolicyFSM:
         self.last_success_motion = motion
         self.done_reason = "success"
         self.done = True
+        if _DEBUG_FORCE_END_SIDE == "alternate" and self._forced_end_side in ("left", "right"):
+            _ALTERNATE_NEXT_END_SIDE["side"] = "right" if self._forced_end_side == "left" else "left"
         print(f"[reset_fsm] success stage={stage} motion_estimate={motion} total_steps={self.total_steps}")
 
     def _restart_round(self, reason: str) -> None:

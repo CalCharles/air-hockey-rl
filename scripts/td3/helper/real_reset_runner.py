@@ -261,7 +261,8 @@ def run_reset_fsm(
     reset_camera_null_frames = 0
     print(
         f"[reset_fsm] starting ({type(fsm).__name__} "
-        f"side={getattr(fsm, 'start_side', 'n/a')})"
+        f"side={getattr(fsm, 'start_side', 'n/a')} "
+        f"end_side={getattr(fsm, '_forced_end_side', None) or 'random'})"
     )
     try:
         while not fsm.done:
