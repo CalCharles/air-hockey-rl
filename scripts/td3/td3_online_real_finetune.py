@@ -72,7 +72,12 @@ hist2, sim seed 0, 20 episodes, no warm start:
         --no-warmup-no-sim-data --num-online-episodes 20
 
 hist4: same with ``hist4_seed<S>/juggle_sysid_v2_hist4`` and ``juggle_hist4.yaml``.
-Add ``--resume-online`` to the same command to continue that curve.
+Resuming is automatic: rerun the same command and, if the experiment / hist /
+seed folder already holds episodes, the run continues from its latest online
+checkpoint. ``--num-online-episodes`` is the total for the whole curve (all
+launches): a rerun collects only the remaining episodes, exits right away if
+the total is already reached, and a larger number extends the curve to it.
+(``--resume-online`` is still accepted; it is implied.)
 Add ``--manual-drop-reset`` to replace the automatic puck reset with a manual
 drop: the paddle parks at the start pose, the operator holds the puck at the
 top of the table, and the policy starts once the camera sees it there for
@@ -197,8 +202,10 @@ class OnlineFinetuneArgs(Args):
     # S the sim policy's training seed. Default: "no_warmup_no_sim_data" with
     # the flag above, else "warm_start_<N>".
     experiment_name: str | None = None
-    # Stop after this many usable episodes in this launch (warm-start episodes
-    # included); 0 = no limit (total_timesteps / Ctrl-C end the run).
+    # Total usable episodes for this experiment / hist / seed curve, counted
+    # across launches (warm-start episodes included). A rerun collects only the
+    # remaining ones and exits without running if the total is already reached;
+    # raise it to extend the curve. 0 = no limit (total_timesteps / Ctrl-C end the run).
     num_online_episodes: int = 0
     # Also store / train on episodes that ended in a stop (protective stop,
     # readiness-fail e-stop, controller disconnect, human interrupt), at any
@@ -211,7 +218,8 @@ class OnlineFinetuneArgs(Args):
     # Continue the latest online checkpoint in this experiment / hist / seed
     # folder (networks, optimizers, online buffer, episode counter) instead of
     # starting from the sim checkpoint. --checkpoint still names the sim
-    # policy; it picks the folder and the architecture.
+    # policy; it picks the folder and the architecture. Implied (set
+    # automatically) whenever that folder already holds episodes.
     resume_online: bool = False
     # Full checkpoint (checkpoint_ep<i>/) after every N-th training round.
     checkpoint_every_online_episodes: int = 1
@@ -474,6 +482,10 @@ def _validate_args(args: OnlineFinetuneArgs) -> None:
 
 _PROGRESS_FILE = "online_progress.jsonl"
 _PROGRESS_TB_DIR = "online_tb"
+# Per-episode critic errors (one JSON row per trained episode), kept so the
+# heatmap covers the whole curve across --resume-online launches.
+_CRITIC_ERROR_FILE = "critic_error.jsonl"
+_CRITIC_ERROR_HEATMAP_BINS = 60
 _ONLINE_STATE_FILE = "online_state.json"
 
 
@@ -499,14 +511,28 @@ def _configure_results_layout(args: OnlineFinetuneArgs, sim_checkpoint: Dict[str
         )
     seed_dir = Path(args.data_root_dir).expanduser().resolve() / args.experiment_name / f"hist{hist_len}" / f"seed{sim_seed}"
     if (seed_dir / _PROGRESS_FILE).exists() and not args.resume_online:
-        raise SystemExit(
-            f"{seed_dir} already holds an online fine-tuning run. Pass --resume-online to continue it, "
-            "or a different --experiment-name to start a new curve."
+        print(
+            f"[online_finetune] {seed_dir} already holds an online fine-tuning run: continuing it "
+            "(resume is automatic; use a different --experiment-name to start a new curve)."
         )
+        args.resume_online = True
     seed_dir.mkdir(parents=True, exist_ok=True)
     args.data_root_dir = str(seed_dir)
     print(f"[online_finetune] results folder: {seed_dir} (experiment={args.experiment_name}, hist{hist_len}, sim seed {sim_seed})")
     return seed_dir, hist_len, sim_seed
+
+
+def _count_kept_episodes(seed_dir: Path) -> int:
+    """Usable (non-excluded) episodes already logged in this curve's online_progress.jsonl."""
+    path = seed_dir / _PROGRESS_FILE
+    if not path.exists():
+        return 0
+    kept = 0
+    with open(path, "r") as f:
+        for line in f:
+            if line.strip() and not json.loads(line).get("excluded", False):
+                kept += 1
+    return kept
 
 
 def _find_resume_checkpoint(seed_dir: Path) -> tuple[Path, dict]:
@@ -528,7 +554,16 @@ def _find_resume_checkpoint(seed_dir: Path) -> tuple[Path, dict]:
 class _OnlineProgress:
     """Per-episode return / loss log of one hist / seed curve (JSONL + TensorBoard)."""
 
-    def __init__(self, *, seed_dir: Path, experiment: str, hist_len: int, sim_seed: int, episodes_trained: int = 0):
+    def __init__(
+        self,
+        *,
+        seed_dir: Path,
+        experiment: str,
+        hist_len: int,
+        sim_seed: int,
+        episodes_trained: int = 0,
+        prior_kept_episodes: int = 0,
+    ):
         from torch.utils.tensorboard import SummaryWriter
 
         self.seed_dir = seed_dir
@@ -540,8 +575,15 @@ class _OnlineProgress:
         # Usable (stored) episodes / stop-excluded episodes in this launch.
         self.launch_kept_episodes = 0
         self.launch_excluded_episodes = 0
+        # Usable episodes from earlier launches of this curve (resume).
+        self.prior_kept_episodes = int(prior_kept_episodes)
         self.warm_start_episodes_done = 0
         self.writer = SummaryWriter(str(seed_dir / _PROGRESS_TB_DIR))
+
+    @property
+    def total_kept_episodes(self) -> int:
+        """Usable episodes of the whole curve so far (what --num-online-episodes counts)."""
+        return self.prior_kept_episodes + self.launch_kept_episodes
 
     def append(self, row: dict) -> None:
         with open(self.seed_dir / _PROGRESS_FILE, "a") as f:
@@ -555,6 +597,19 @@ class _OnlineProgress:
             "sim_seed": self.sim_seed,
             "sim_checkpoint": sim_checkpoint,
         }
+
+    def append_critic_errors(self, x: int, errors: np.ndarray) -> list[tuple[int, np.ndarray]]:
+        """Store this episode's critic errors; return every stored (x, errors) row."""
+        path = self.seed_dir / _CRITIC_ERROR_FILE
+        with open(path, "a") as f:
+            f.write(json.dumps({"x": int(x), "errors": [round(float(e), 5) for e in errors]}) + "\n")
+        rows = []
+        with open(path) as f:
+            for line in f:
+                if line.strip():
+                    row = json.loads(line)
+                    rows.append((int(row["x"]), np.asarray(row["errors"], dtype=np.float64)))
+        return rows
 
     def close(self) -> None:
         self.writer.close()
@@ -693,11 +748,115 @@ def _build_learner_from_checkpoint(
 # ---------------------------------------------------------------------------
 
 
-def _make_online_replay_push(stats: Dict[str, object], args: OnlineFinetuneArgs):
+def _monte_carlo_returns(rewards: np.ndarray, gamma: float) -> np.ndarray:
+    """Discounted reward-to-go G_t = Σ_k γ^(k-t) r_k to the end of the episode
+    (no bootstrap: a truncated episode's tail is cut off, so G_t there is low)."""
+    returns = np.zeros(len(rewards), dtype=np.float64)
+    running = 0.0
+    for t in range(len(rewards) - 1, -1, -1):
+        running = float(rewards[t]) + float(gamma) * running
+        returns[t] = running
+    return returns
+
+
+def _episode_critic_error(
+    args: OnlineFinetuneArgs,
+    state: LearnerRuntimeState,
+    episode: Dict[str, torch.Tensor],
+) -> Dict[str, np.ndarray]:
+    """ε(s_t, a_t) = Q^{π_n}_φ(s_t, a_t) − Q^{π_n}_MC(s_t, a_t) on the episode just
+    collected by π_n, with the critic as it stood when π_n acted (before this
+    episode's updates). Q is qf1, h-inverted to reward units; Q_MC is the
+    discounted reward-to-go. Read-only: no_grad, no optimizer / RNG use."""
+    device = next(state.qf1.parameters()).device
+    with torch.no_grad():
+        q_h = state.qf1(episode["observations"].to(device), episode["actions"].to(device))
+        q = h_inverse(q_h, eps=float(args.h_transform_eps)).view(-1).double().cpu().numpy()
+    mc = _monte_carlo_returns(episode["rewards"].double().cpu().numpy(), float(args.gamma))
+    return {"q": q, "mc": mc, "error": q - mc}
+
+
+def _critic_error_heatmap(rows: list[tuple[int, np.ndarray]]) -> np.ndarray:
+    """Episode × critic-error histogram image (HWC uint8): x = episode (training
+    rounds the acting policy had), y = ε, colour = log(1 + count)."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    xs = [x for x, _ in rows]
+    all_errors = np.concatenate([e for _, e in rows])
+    lo, hi = float(all_errors.min()), float(all_errors.max())
+    if hi - lo < 1e-6:
+        lo, hi = lo - 0.5, hi + 0.5
+    edges = np.linspace(lo, hi, _CRITIC_ERROR_HEATMAP_BINS + 1)
+    x_min, x_max = min(xs), max(xs)
+    counts = np.zeros((_CRITIC_ERROR_HEATMAP_BINS, x_max - x_min + 1))
+    for x, errors in rows:
+        counts[:, x - x_min] += np.histogram(errors, bins=edges)[0]
+    fig, ax = plt.subplots(figsize=(7, 4), dpi=100)
+    mesh = ax.imshow(
+        np.log1p(counts),
+        origin="lower",
+        aspect="auto",
+        cmap="magma",
+        extent=(x_min - 0.5, x_max + 0.5, lo, hi),
+        interpolation="nearest",
+    )
+    ax.axhline(0.0, color="cyan", linewidth=0.8, linestyle="--")
+    ax.xaxis.set_major_locator(matplotlib.ticker.MaxNLocator(integer=True))
+    ax.set_xlabel("episode (training rounds of the acting policy)")
+    ax.set_ylabel("critic error  Q_φ − Q_MC")
+    ax.set_title("Critic error on newly collected data")
+    fig.colorbar(mesh, ax=ax, label="log(1 + count)")
+    fig.tight_layout()
+    fig.canvas.draw()
+    image = np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()
+    plt.close(fig)
+    return image
+
+
+def _log_episode_critic_error(
+    args: OnlineFinetuneArgs,
+    state: LearnerRuntimeState,
+    progress: _OnlineProgress,
+    episode: Dict[str, torch.Tensor] | None,
+    x: int,
+) -> Dict[str, float]:
+    """Compute and log the per-episode critic error (TensorBoard histogram,
+    scalars, heatmap image). Diagnostics only: failures are reported, never raised."""
+    if episode is None or episode["rewards"].numel() == 0:
+        return {}
+    try:
+        result = _episode_critic_error(args, state, episode)
+        error = result["error"]
+        writer = progress.writer
+        writer.add_histogram("online_finetune_critic_error/histogram", error, x)
+        summary = {
+            "critic_error_mean": float(error.mean()),
+            "critic_error_median": float(np.median(error)),
+            "critic_error_abs_mean": float(np.abs(error).mean()),
+            "critic_error_std": float(error.std()),
+            "critic_q_mean": float(result["q"].mean()),
+            "critic_mc_return_mean": float(result["mc"].mean()),
+        }
+        for name, value in summary.items():
+            writer.add_scalar(f"online_finetune_critic_error/{name.removeprefix('critic_')}", value, x)
+        rows = progress.append_critic_errors(x, error)
+        writer.add_image("online_finetune_critic_error/heatmap", _critic_error_heatmap(rows), x, dataformats="HWC")
+        return summary
+    except Exception as exc:  # metric only; never interrupt training
+        print(f"[online_finetune] critic error metric skipped: {type(exc).__name__}: {exc}")
+        return {}
+
+
+def _make_online_replay_push(stats: Dict[str, object], args: OnlineFinetuneArgs, pending_episode: Dict[str, object]):
     """Replay push with the ``_add_episode_to_shared_replay`` signature that
     writes every kept episode into the single online buffer and records the
     episode's transition count for the learner's K = η·T budget. Episodes that
-    ended in a stop are left out unless ``train_on_stop_episodes``."""
+    ended in a stop are left out unless ``train_on_stop_episodes``. The stored
+    episode's tensors are handed to the learner step through ``pending_episode``
+    for the critic-error metric."""
 
     def _push(
         replay: SharedTD3Replay,
@@ -714,7 +873,9 @@ def _make_online_replay_push(stats: Dict[str, object], args: OnlineFinetuneArgs)
             stats["online_pending_episode_return"] = episode_return
             return "excluded_stop", episode_return, 0.0, 0
         recent_episode_returns.append(episode_return)
-        inserted = int(replay.add_episode(_ONLINE_PARTITION, _episode_to_tensors(episode_trajectory)))
+        episode_tensors = _episode_to_tensors(episode_trajectory)
+        inserted = int(replay.add_episode(_ONLINE_PARTITION, episode_tensors))
+        pending_episode["tensors"] = episode_tensors
         stats["online_kept_episodes"] = float(int(stats.get("online_kept_episodes", 0)) + 1)
         stats["online_pending_episode_steps"] = float(inserted)
         stats["online_pending_episode_return"] = episode_return
@@ -900,15 +1061,16 @@ def _save_online_checkpoint(
     return str(checkpoint_dir)
 
 
-def _make_online_learner_step(progress: _OnlineProgress):
+def _make_online_learner_step(progress: _OnlineProgress, pending_episode: Dict[str, object]):
     """Post-episode learner (``_run_sync_learner_iteration`` signature).
 
     Warm start: idle for the first ``warm_start_episodes`` kept episodes of a
     fresh run. After that: K = round(η·T) critic updates for the episode's T
     transitions, with one actor update after every M-th critic update. Every
     kept episode appends one row to ``online_progress.jsonl`` and writes the
-    per-episode return / loss scalars to ``online_tb/``. Returns True when the
-    actor changed (the orchestrator then syncs it to the collector).
+    per-episode return / loss scalars to ``online_tb/``, plus the critic error
+    ε = Q_φ − Q_MC on the new episode (``online_finetune_critic_error/``). Returns
+    True when the actor changed (the orchestrator then syncs it to the collector).
     """
 
     def _step(
@@ -920,6 +1082,7 @@ def _make_online_learner_step(progress: _OnlineProgress):
     ) -> bool:
         _handle_checkpoint_request(args, train_args, replay, stats, state)
 
+        new_episode = pending_episode.pop("tensors", None)
         episode_steps = int(stats.pop("online_pending_episode_steps", 0))
         episode_return = float(stats.pop("online_pending_episode_return", math.nan))
         excluded_reason = str(stats.pop("online_pending_excluded_reason", ""))
@@ -951,6 +1114,7 @@ def _make_online_learner_step(progress: _OnlineProgress):
             return False
         progress.launch_kept_episodes += 1
         row["launch_kept_episode"] = progress.launch_kept_episodes
+        row["kept_episode"] = progress.total_kept_episodes
 
         if policy_episodes_trained == 0 and progress.warm_start_episodes_done < int(args.warm_start_episodes):
             progress.warm_start_episodes_done += 1
@@ -974,6 +1138,9 @@ def _make_online_learner_step(progress: _OnlineProgress):
             progress.append({**row, "warm_start": False, "trained": False})
             stats["online_episode_report"] = {"kind": "stored", "buffer": buffer_size}
             return False
+
+        # Critic error of Q^{π_n} on π_n's own episode, before training on it.
+        critic_error = _log_episode_critic_error(args, state, progress, new_episode, policy_episodes_trained)
 
         critic_budget = max(1, int(round(float(args.utd_ratio) * episode_steps)))
         every = int(args.actor_update_every)
@@ -1053,6 +1220,7 @@ def _make_online_learner_step(progress: _OnlineProgress):
                 "total_critic_updates": int(state.total_updates),
                 "total_actor_updates": int(state.total_actor_updates),
                 "checkpoint_dir": checkpoint_dir,
+                **critic_error,
             }
         )
         stats["online_episode_report"] = {
@@ -1178,7 +1346,7 @@ def _make_online_episode_report(progress: _OnlineProgress, args: OnlineFinetuneA
             else:
                 reason = ", ".join(stops) or str(learner.get("reason", "stop"))
             print(
-                f"[online] DISCARDED (not counted; next is {_label(progress.launch_kept_episodes + 1)}, "
+                f"[online] DISCARDED (not counted; next is {_label(progress.total_kept_episodes + 1)}, "
                 f"{discarded} discarded this launch) | reason: {reason} | {metrics}"
             )
             return
@@ -1197,7 +1365,7 @@ def _make_online_episode_report(progress: _OnlineProgress, args: OnlineFinetuneA
             update = "stored, no update"
         stop_note = f" | kept despite {', '.join(stops)}" if stops else ""
         print(
-            f"[online] {_label(progress.launch_kept_episodes)} | {metrics}{stop_note} | {update} | "
+            f"[online] {_label(progress.total_kept_episodes)} | {metrics}{stop_note} | {update} | "
             f"buffer {learner.get('buffer', '?')}"
         )
 
@@ -1266,6 +1434,7 @@ def main(
     hist_len: int,
     sim_seed: int,
     resume: tuple[Path, dict, Dict[str, object]] | None = None,
+    prior_kept_episodes: int = 0,
     quiet: bool = True,
 ) -> None:
     """``resume`` = (checkpoint dir, its online_state.json, its training_state)
@@ -1335,6 +1504,7 @@ def main(
         hist_len=hist_len,
         sim_seed=sim_seed,
         episodes_trained=episodes_trained,
+        prior_kept_episodes=prior_kept_episodes,
     )
     print(
         "[online_finetune] recipe: "
@@ -1359,13 +1529,16 @@ def main(
 
     def _should_stop(_stats: Dict[str, object]) -> str | None:
         n = int(args.num_online_episodes)
-        if n > 0 and progress.launch_kept_episodes >= n:
+        if n > 0 and progress.total_kept_episodes >= n:
             return (
-                f"num_online_episodes reached ({progress.launch_kept_episodes} usable episodes this launch, "
-                f"{progress.launch_excluded_episodes} excluded for a stop)"
+                f"num_online_episodes reached ({progress.total_kept_episodes}/{n} usable episodes on this curve; "
+                f"{progress.launch_kept_episodes} this launch, {progress.launch_excluded_episodes} excluded for a stop)"
             )
         return None
 
+    # Newest stored episode, handed from the replay push to the learner step
+    # (same process) for the critic-error metric.
+    pending_episode: Dict[str, object] = {}
     run_end_reason = "completed"
     try:
         collector_process_modular(
@@ -1379,8 +1552,8 @@ def main(
             action_low_np,
             action_high_np,
             collector_tb_dir,
-            add_episode_to_replay_fn=_make_online_replay_push(stats, args),
-            learner_step_fn=_make_online_learner_step(progress),
+            add_episode_to_replay_fn=_make_online_replay_push(stats, args, pending_episode),
+            learner_step_fn=_make_online_learner_step(progress, pending_episode),
             should_stop_fn=_should_stop,
             episode_report_fn=_make_online_episode_report(progress, args, stats),
             episode_min_timesteps_fn=_make_episode_min_timesteps(args),
@@ -1480,11 +1653,29 @@ if __name__ == "__main__":
         f"use_last_action_in_policy_state={train_args.use_last_action_in_policy_state}"
     )
     seed_dir, hist_len, sim_seed = _configure_results_layout(args, checkpoint)
+    prior_kept_episodes = _count_kept_episodes(seed_dir)
+    target_episodes = int(args.num_online_episodes)
+    if target_episodes > 0 and prior_kept_episodes >= target_episodes:
+        print(
+            f"[online_finetune] {seed_dir} already has {prior_kept_episodes} usable episodes "
+            f"(--num-online-episodes {target_episodes}); nothing to collect. Raise --num-online-episodes to continue."
+        )
+        raise SystemExit(0)
     resume = None
     if args.resume_online:
-        resume_dir, resume_state = _find_resume_checkpoint(seed_dir)
+        try:
+            resume_dir, resume_state = _find_resume_checkpoint(seed_dir)
+        except FileNotFoundError as exc:
+            raise SystemExit(
+                f"{exc} The curve has {prior_kept_episodes} logged episodes but no checkpoint to continue from; "
+                "use a different --experiment-name to start a new curve."
+            ) from None
         resume = (resume_dir, resume_state, _load_checkpoint(str(resume_dir / "training_state.pth")))
-        print(f"[online_finetune] --resume-online: continuing from {resume_dir} ({resume_state['episodes_trained']} rounds)")
+        remaining = f"{target_episodes - prior_kept_episodes} remaining of {target_episodes}" if target_episodes > 0 else "no episode limit"
+        print(
+            f"[online_finetune] resuming from {resume_dir} ({resume_state['episodes_trained']} rounds, "
+            f"{prior_kept_episodes} usable episodes so far; {remaining})"
+        )
     run_note = _prompt_optional_run_note()
     _setup_run_data_dir(args, run_note)
     main(
@@ -1495,5 +1686,6 @@ if __name__ == "__main__":
         hist_len=hist_len,
         sim_seed=sim_seed,
         resume=resume,
+        prior_kept_episodes=prior_kept_episodes,
         quiet=bool(modular_extra_args.quiet),
     )
