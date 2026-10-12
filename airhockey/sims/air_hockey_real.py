@@ -300,6 +300,11 @@ class AirHockeyReal:
             # under a puck sitting in that corner. Still capped by the (extended) bottom
             # limit, which keeps RESET_WALL_CLEARANCE_M off the end wall. 0 disables.
             "reset_right_corner_x_extension_m": 0.03,  # 0.01 was within tracking noise; 0.02 still a bit short
+            # Same for the -y ("left") bottom corner, but only while a reset that ENDS on the
+            # right runs (set_reset_end_side): that sweep starts in the left corner and was
+            # passing over pucks on the bottom-left wall. Left-ending resets keep the plain
+            # reset workspace. 0 disables.
+            "reset_left_corner_x_extension_m": 0.03,
             # Command-filter window while the reset FSM runs: the FSM was tuned under hist_len 2, and a longer window delays its burst and makes it overshoot into the corners.
             "reset_hist_len": 2,
             "reset_pos_setting": "hitting",
@@ -684,7 +689,11 @@ class AirHockeyReal:
         self.reset_right_corner_x_extension_m = float(
             getattr(config, "reset_right_corner_x_extension_m", 0.0) or 0.0
         )
+        self.reset_left_corner_x_extension_m = float(
+            getattr(config, "reset_left_corner_x_extension_m", 0.0) or 0.0
+        )
         self._normal_workspace = None  # (lims, edge_lims) saved while the reset workspace is active
+        self._reset_edge_lims_base = None  # reset-workspace edge_lims before any set_reset_end_side change
         self.mouse_action_scale = getattr(config, "mouse_action_scale", None)
         self._last_teleop_policy_action = np.zeros(2)
         # Runtime toggle for control_mode='mouse'. When True (default for
@@ -908,6 +917,7 @@ class AirHockeyReal:
             if self._normal_workspace is not None:
                 self.lims, self.edge_lims = self._normal_workspace
                 self._normal_workspace = None
+            self._reset_edge_lims_base = None
             return
         if self._normal_workspace is not None:
             return
@@ -924,6 +934,23 @@ class AirHockeyReal:
         top_abs, bot_abs, bias_p, bias_m = self.edge_lims
         self.lims = (x_min, x_max + ext_x, y_min, y_max + ext_y)
         self.edge_lims = [top_abs, bot_abs, bias_p + ext_x + top_abs * ext_y + ext_corner, bias_m + ext_x]
+        self._reset_edge_lims_base = list(self.edge_lims)
+
+    def set_reset_end_side(self, end_side):
+        """Per-side tweak of the reset workspace, called by the reset FSM once it knows its end side.
+
+        ``"right"``: the -y corner cut moves ``reset_left_corner_x_extension_m`` toward
+        the robot-end wall (still capped by the bottom limit), so the sweep that starts
+        in that corner gets down to pucks on the bottom-left wall. Any other side uses
+        the reset workspace exactly as ``set_reset_workspace`` built it. No-op unless
+        the reset workspace is active; ``set_reset_workspace(False)`` undoes it.
+        """
+        if self._normal_workspace is None or self._reset_edge_lims_base is None:
+            return
+        edge_lims = list(self._reset_edge_lims_base)
+        if end_side == "right":
+            edge_lims[3] += max(0.0, self.reset_left_corner_x_extension_m)
+        self.edge_lims = edge_lims
 
     def _set_filter_window(self, window):
         """Resize the command-filter history to ``window`` steps, keeping the newest entries."""

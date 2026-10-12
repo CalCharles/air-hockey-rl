@@ -110,24 +110,51 @@ class ResetPolicyFSM:
         nudge_action_m: float = 0.04,
         nudge_steps: int = 2,
         nudge_gap_steps: int = 3,
+        # Right-ending sweeps only (they start in the left corner): on the part of the
+        # sweep with waypoint y below right_end_press_until_y_m, x is commanded on its own
+        # (not sharing the loop_max_delta_m step with y) toward a point this far past the
+        # path, i.e. into the bottom limit, which the env's workspace clip turns into
+        # "ride the bottom limit". Without it the paddle came off the left corner ~3-9 cm
+        # short of the end wall and passed over pucks on the bottom-left wall. Past that
+        # y the original sweep takes over, so the right-corner burst is unchanged. 0 disables.
+        right_end_wall_press_m: float = 0.03,
+        right_end_press_until_y_m: float = 0.25,
+        # Right-ending resets only: fire the second hit (strike) on predicted time to
+        # contact instead of the fixed puck_proximity_m distance. The strike fires once
+        # the puck, at its current falling speed, would close the remaining gap within
+        # timed_strike_contact_steps (+ timed_strike_camera_latency_steps for the camera
+        # lag) given the paddle's own timed_strike_paddle_travel_m over that time. A puck
+        # that is barely moving (top of its bounce) therefore waits until it is within
+        # about the paddle's travel instead of being swung at from 0.5 m away.
+        # 2026-10-12 tuning on the robot: 5 steps / 0.075 m fired too late (the puck met
+        # the paddle while it was still speeding up), and so, slightly, did the old
+        # 0.5-0.6 m distance trigger; 8 steps / 0.10 m fires ~1 step before the old trigger.
+        right_end_timed_strike: bool = True,
+        timed_strike_contact_steps: float = 8.0,
+        timed_strike_camera_latency_steps: float = 1.0,
+        timed_strike_paddle_travel_m: float = 0.10,
         goto_start_arrive_m: float = 0.05,
         waypoint_advance_m: float = 0.05,
         puck_proximity_m: float = 0.5,
         post_upward_check_steps: int = 20,
         post_window_debug_log: bool = False,
         shared_success_threshold_proportion_from_bottom: float = 0.5,
-        # Puck counts as "off the side walls" when |table-frame y| <= this. Measured in
-        # the table frame so both walls get the same margin: 0.3876 is what the left
-        # side used since the 2026-09-27 calibration (0.35 in the robot frame, whose y
-        # is shifted 0.0376 from the table's), i.e. ~1.2 cm short of a puck touching
-        # the wall (0.400). The right side used to need 8.8 cm.
-        off_wall_abs_y_m: float = 0.3876,
-        # Default True: hand over to the policy as soon as the puck is seen above the
-        # success line (shared_success_threshold_proportion_from_bottom); the side-wall
-        # check (off_wall_abs_y_m / min_off_wall_window_steps) is skipped. False brings
-        # back the "5 steps off the side walls" requirement.
-        success_ignore_wall: bool = True,
-        min_off_wall_window_steps: int = 5,
+        # Hand-off needs a gap of at least this between the puck's edge and either side
+        # wall, however far up the table the puck is: a puck riding up a wall is not a
+        # finished reset (the policy learnt to camp on that wall and hit it from there).
+        # Sets off_wall_abs_y_m = width/2 - puck_radius - handoff_wall_gap_m in the table
+        # frame (0.370 for the current table: a touching puck sits at 0.400).
+        handoff_wall_gap_m: float = 0.03,
+        # Puck counts as "off the side walls" when |table-frame y| <= this. None derives
+        # it from handoff_wall_gap_m; a number overrides that.
+        off_wall_abs_y_m: Optional[float] = None,
+        # Default False: hand over only once the puck is above the success line
+        # (shared_success_threshold_proportion_from_bottom) AND off the side walls on the
+        # same step, for min_off_wall_window_steps consecutive steps; otherwise the FSM
+        # keeps going (wait for the puck, strike again). True hands over as soon as the
+        # puck is above the line, wall or not (the pre-2026-10-12 behaviour).
+        success_ignore_wall: bool = False,
+        min_off_wall_window_steps: int = 2,
         max_stage2_cycles: int = 5,
         capture_second_hit_frame: bool = True,
         async_second_hit_write: bool = False,
@@ -155,6 +182,15 @@ class ResetPolicyFSM:
         self.nudge_action_m = float(nudge_action_m)
         self.nudge_steps = max(0, int(nudge_steps))
         self.nudge_gap_steps = max(0, int(nudge_gap_steps))
+        self.right_end_wall_press_m = max(0.0, float(right_end_wall_press_m))
+        self.right_end_press_until_y_m = float(right_end_press_until_y_m)
+        self.right_end_timed_strike = bool(right_end_timed_strike)
+        self.timed_strike_contact_steps = float(timed_strike_contact_steps)
+        self.timed_strike_camera_latency_steps = float(timed_strike_camera_latency_steps)
+        self.timed_strike_paddle_travel_m = float(timed_strike_paddle_travel_m)
+        self._contact_radius_m = float(getattr(env, "paddle_radius", 0.0508)) + float(
+            getattr(env, "puck_radius", 0.03175)
+        )
         self.goto_start_arrive_m = float(goto_start_arrive_m)
         self.waypoint_advance_m = float(waypoint_advance_m)
         self.post_upward_check_steps = max(1, int(post_upward_check_steps))
@@ -162,6 +198,10 @@ class ResetPolicyFSM:
         self.shared_success_threshold_proportion_from_bottom = float(
             shared_success_threshold_proportion_from_bottom
         )
+        if off_wall_abs_y_m is None:
+            half_width = float(getattr(env, "width", 0.8636)) / 2.0
+            puck_radius = float(getattr(env, "puck_radius", 0.03175))
+            off_wall_abs_y_m = half_width - puck_radius - float(handoff_wall_gap_m)
         self.off_wall_abs_y_m = float(off_wall_abs_y_m)
         self.min_height_window_steps = 1
         self.min_off_wall_window_steps = max(1, int(min_off_wall_window_steps))
@@ -213,6 +253,7 @@ class ResetPolicyFSM:
         self._window_off_wall_count = 0
         self._window_height_count = 0
         self._window_shared_gate_count = 0
+        self._window_gate_streak = 0
         self._window_kind = "none"
         self._window_target_offset_x_m = 0.075
         self._window_start_tcp = None
@@ -336,6 +377,15 @@ class ResetPolicyFSM:
         else:
             self.start_side = "left" if self.rng.random() < 0.5 else "right"
 
+        # Side-specific reset workspace (deeper left corner for right-ending sweeps);
+        # re-read the limits so the path follows whatever the env will clip to.
+        set_end_side = getattr(self.env.simulator, "set_reset_end_side", None)
+        if set_end_side is not None:
+            set_end_side("right" if self.start_side == "left" else "left")
+            self._lims = np.array(self.env.simulator.lims, dtype=np.float32)
+            self._edge_lims = np.array(self.env.simulator.edge_lims, dtype=np.float32)
+            _, _, y_min_lim, y_max_lim = self._lims
+
         y_margin = 0.00
         y_min = float(y_min_lim + y_margin)
         y_max = float(y_max_lim - y_margin)
@@ -395,6 +445,13 @@ class ResetPolicyFSM:
             return np.zeros(2, dtype=np.float32)
         scaled_delta = delta * min(1.0, max_delta_m / norm)
         return self._meters_delta_to_action(scaled_delta)
+
+    def _wall_pressed_sweep_action(self, paddle_pos: np.ndarray, target: np.ndarray) -> np.ndarray:
+        """Sweep step with x and y limited separately and x aimed past the bottom limit."""
+        max_delta = self.loop_max_delta_m
+        dx = float(np.clip(target[0] + self.right_end_wall_press_m - paddle_pos[0], -max_delta, max_delta))
+        dy = float(np.clip(target[1] - paddle_pos[1], -max_delta, max_delta))
+        return self._meters_delta_to_action(np.array([dx, dy], dtype=np.float32))
 
     def _begin_upward_burst(self) -> np.ndarray:
         self.phase = "upward_burst"
@@ -481,6 +538,33 @@ class ResetPolicyFSM:
         puck_falling = (curr_x - older_x) > 0
         puck_rising = (curr_x - older_x) < 0
         return puck_falling, puck_rising
+
+    def _strike_due(self, state_info: dict, paddle_tcp: np.ndarray, puck_pos: np.ndarray,
+                    dist: float, puck_falling: bool) -> bool:
+        """Whether wait_for_puck should start the strike on this step."""
+        if not (self.right_end_timed_strike and self.start_side == "left"):
+            return dist <= self.puck_proximity_m and puck_falling
+        puck_history = state_info["pucks"][0].get("history", [])
+        if not puck_falling or len(puck_history) < 3:
+            return False
+        # Falling speed per step (+x = down the table toward the robot), as in
+        # _get_puck_motion_from_history.
+        speed = max(0.0, (float(puck_history[-1][0]) - float(puck_history[-3][0])) / 2.0)
+        dy = float(puck_pos[1]) - float(paddle_tcp[1])
+        if abs(dy) >= self._contact_radius_m:
+            # Not in the strike's path (the strike is straight up the table): keep the
+            # old distance trigger rather than timing a contact that will not happen.
+            return dist <= self.puck_proximity_m
+        contact_sep_x = float(np.sqrt(self._contact_radius_m ** 2 - dy ** 2))
+        gap = float(paddle_tcp[0]) - float(puck_pos[0]) - contact_sep_x
+        lead_steps = self.timed_strike_contact_steps + self.timed_strike_camera_latency_steps
+        due = gap <= speed * lead_steps + self.timed_strike_paddle_travel_m
+        if due:
+            print(
+                f"[reset_fsm] timed_strike gap={gap:.3f} speed={speed:.4f}/step "
+                f"dist={dist:.3f} total_steps={self.total_steps}"
+            )
+        return due
 
     def _log_phase_check(
         self,
@@ -572,6 +656,7 @@ class ResetPolicyFSM:
         self._window_off_wall_count = 0
         self._window_height_count = 0
         self._window_shared_gate_count = 0
+        self._window_gate_streak = 0
         window_start_tcp = (
             np.array(cached_tcp, dtype=np.float32)
             if cached_tcp is not None
@@ -683,12 +768,12 @@ class ResetPolicyFSM:
             self._window_height_count += 1
         if shared_gate_now:
             self._window_shared_gate_count += 1
+        # Consecutive steps above the line AND off the walls; any other step (on a wall,
+        # below the line, occluded) breaks it, so a puck that rides up a wall never passes.
+        self._window_gate_streak = self._window_gate_streak + 1 if shared_gate_now else 0
 
         action = self._current_window_downward_action(state_info, cached_tcp=cached_tcp)
-        passed_now = bool(
-            (self._window_height_count >= self.min_height_window_steps)
-            and (self._window_off_wall_count >= self._required_off_wall_steps)
-        )
+        passed_now = self._window_passed()
         if passed_now:
             self._pending_window_finalize = {
                 "kind": self._window_kind,
@@ -705,10 +790,7 @@ class ResetPolicyFSM:
             return self._finalize_post_upward_window(state_info)
         self._window_steps_left -= 1
         if self._window_steps_left <= 0:
-            passed = bool(
-                (self._window_height_count >= self.min_height_window_steps)
-                and (self._window_off_wall_count >= self._required_off_wall_steps)
-            )
+            passed = self._window_passed()
             self._pending_window_finalize = {
                 "kind": self._window_kind,
                 "phase_name": phase_name,
@@ -722,6 +804,11 @@ class ResetPolicyFSM:
                 "early_exit": False,
             }
         return action
+
+    def _window_passed(self) -> bool:
+        if self.success_ignore_wall:
+            return self._window_height_count >= self.min_height_window_steps
+        return self._window_gate_streak >= self._required_off_wall_steps
 
     def _finalize_post_upward_window(self, state_info: dict) -> np.ndarray:
         if self._pending_window_finalize is None:
@@ -862,6 +949,12 @@ class ResetPolicyFSM:
                     self.phase_steps = self.nudge_steps - 1
                     return self._meters_delta_to_action(np.array([-self.nudge_action_m, 0.0], dtype=np.float32))
                 return self._begin_upward_burst()
+            if (
+                self.start_side == "left"
+                and self.right_end_wall_press_m > 0.0
+                and float(target[1]) < self.right_end_press_until_y_m
+            ):
+                return self._wall_pressed_sweep_action(paddle_tcp, target)
             return self._toward_target(paddle_tcp, target, self.loop_max_delta_m)
 
         if self.phase == "nudge":
@@ -904,7 +997,7 @@ class ResetPolicyFSM:
             puck_pos = self._get_puck_pos(state_info)
             dist = float(np.linalg.norm(paddle_tcp - puck_pos))
             puck_falling, _ = self._get_puck_motion_from_history(state_info)
-            if dist <= self.puck_proximity_m and puck_falling:
+            if self._strike_due(state_info, paddle_tcp, puck_pos, dist, puck_falling):
                 if not self._captured_second_hit_frame:
                     # Capture now (same loop iteration) before issuing strike action.
                     self._capture_second_hit_trigger_frame(dist_m=dist, puck_falling=puck_falling)

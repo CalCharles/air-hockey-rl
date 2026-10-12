@@ -406,11 +406,13 @@ names.
   eval entrypoint installs a quiet filter by default).
 
 Reset → policy hand-off (puck tasks; all off by default, eval only — training and
-the teleop eval keep the historical behaviour):
+the teleop eval use the `ResetPolicyFSM` defaults):
 
 * `--reset-success-ignore-wall` — the reset hands over the moment the puck
-  crosses the success line; drops the "5 steps with |y| ≤ 0.35 m" side-wall
-  condition (`ResetPolicyFSM(success_ignore_wall=True)`).
+  crosses the success line; drops the side-wall condition (by default, since
+  2026-10-12, 2 consecutive steps above the line with ≥ 3 cm between the puck and
+  either side wall; see [`reset-fsm.md`](../environments/real-world/reset-fsm.md))
+  (`ResetPolicyFSM(success_ignore_wall=True)`).
 * `--reset-success-line F` — the success line as a fraction of the table length
   from the robot-end wall: 0.5 = centre line (default), smaller = closer to the
   robot (`shared_success_threshold_proportion_from_bottom`).

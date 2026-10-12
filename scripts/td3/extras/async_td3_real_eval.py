@@ -181,7 +181,8 @@ class EvalSpecificArgs:
     # behaviour; the reset FSM's defaults are used whenever a value is None / False.
     #
     # reset_success_ignore_wall: the reset hands over as soon as the puck crosses
-    # the success line, without the "away from the side walls" requirement.
+    # the success line, without the FSM's default "off the side walls" requirement
+    # (ResetPolicyFSM.handoff_wall_gap_m).
     reset_success_ignore_wall: bool = False
     # reset_success_line: where that line is, as a fraction of the table length
     # from the robot-end wall (0.5 = centre line, the FSM default; smaller = closer

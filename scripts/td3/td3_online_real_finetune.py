@@ -16,7 +16,8 @@ Reinforcement Learning on Real Robots" (arXiv:2602.20220):
    3e-4): actor LR = ``policy_lr`` (1e-5), critic LR = ``q_lr`` (1e-3).
 2. **One real replay buffer, no sim data.** Transitions go into a single
    online buffer that starts empty; the sim replay buffer in the checkpoint is
-   ignored. No D0 mixing, no α annealing, no success / failure split, no CQL.
+   ignored. No success / failure split, no CQL, and (for a single run) no D0
+   mixing — see 7 for the multi-trial data recycling.
    Usable episodes enter it: valid data (``clean_episode_hdf5``) and at least
    ``min_episode_steps`` (20) steps; with ``train_on_stop_episodes`` (default
    on) an episode that ended in a stop (protective / readiness-fail e-stop,
@@ -39,6 +40,15 @@ Reinforcement Learning on Real Robots" (arXiv:2602.20220):
 6. **Episodic ("asynchronous") learning.** Learning happens between
    episodes, decoupled from the 1-step control loop — the robot is idle while
    the K updates run, then the updated actor is synced to the collector.
+7. **Data recycling across trials (``--num-trials N``, paper Sec. 5 / Fig. 6).**
+   N trials run back to back, each ``--num-online-episodes`` usable episodes,
+   every one from the same sim checkpoint with an empty online buffer. Trial 0
+   learns from its own data only; trial t ≥ 1 loads the online buffers of
+   trials 0 .. t−1 as D0 and samples every batch from
+   (1 − α)·Unif(D0) + α·Unif(D_online), α rising linearly from
+   ``--recycle-alpha-start`` (0.5) to 1 over the trial's training rounds
+   (``--recycle-anneal-episodes`` to change). Each trial writes its buffer to
+   ``trial<t>/online_buffer.pt``; α / |D0| go to ``online_tb/online_finetune_recycle/``.
 
 Everything else (policy / reset runners, safety stops, transition holds,
 HDF5 / GIF / video artifacts, JSONL run logs, periodic checkpoints) is the
@@ -72,6 +82,15 @@ hist2, sim seed 0, 20 episodes, no warm start:
         --no-warmup-no-sim-data --num-online-episodes 20
 
 hist4: same with ``hist4_seed<S>/juggle_sysid_v2_hist4`` and ``juggle_hist4.yaml``.
+
+Data recycling, 4 trials x 20 episodes (results in
+``<data_root_dir>/multiple_trials/hist<H>/seed<S>/trial<t>/``):
+
+    python -m scripts.td3.td3_online_real_finetune \
+        --checkpoint <sim training_state.pth> --args-file configs/td3/td3_online_real_finetune/juggle_hist4.yaml \
+        --no-warmup-no-sim-data --num-trials 4 --num-online-episodes 20 --experiment-name multiple_trials
+
+Rerunning the same command skips finished trials and continues an unfinished one.
 Resuming is automatic: rerun the same command and, if the experiment / hist /
 seed folder already holds episodes, the run continues from its latest online
 checkpoint. ``--num-online-episodes`` is the total for the whole curve (all
@@ -97,6 +116,7 @@ per-step robot debug prints.
 """
 from __future__ import annotations
 
+import copy
 import json
 import math
 import os
@@ -268,6 +288,23 @@ class OnlineFinetuneArgs(Args):
     # False (--no-home-before-reset) restores the soft reset between episodes
     # with a hard reset every 3rd episode / after stops.
     home_before_reset: bool = True
+    # Data recycling across trials (As et al., Sec. 5 "Recycling data accelerates
+    # learning", Fig. 6; the real-robot version of sim2sim_online_finetune.py
+    # --recycle-data). num_trials > 1 runs that many trials back to back, each
+    # num_online_episodes usable episodes long. Every trial starts from the same
+    # sim checkpoint (--checkpoint) with an empty online buffer D_online; trial
+    # t >= 1 loads the online buffers of trials 0 .. t-1 as D0 and samples every
+    # batch from (1 - α)·Unif(D0) + α·Unif(D_online) (Eq. 16), α rising linearly
+    # from recycle_alpha_start to 1 over the trial. Trial 0 learns from D_online
+    # only. Results: <data_root_dir>/<experiment_name>/hist<H>/seed<S>/trial<t>/
+    # (default experiment name "multiple_trials"); rerunning the command skips
+    # finished trials and continues an unfinished one. 1 = one ordinary run.
+    num_trials: int = 1
+    # α (online share of each batch) at the first training round of trials >= 1.
+    recycle_alpha_start: float = 0.5
+    # Training rounds over which α rises to 1. 0 = the trial's training rounds
+    # (num_online_episodes - warm_start_episodes), so α reaches 1 on the last one.
+    recycle_anneal_episodes: int = 0
 
 
 # On Python 3.9, typing.get_type_hints can't evaluate the inherited ``X | None``
@@ -428,6 +465,14 @@ def _validate_args(args: OnlineFinetuneArgs) -> None:
         raise ValueError("--no-warmup-no-sim-data requires warm_start_episodes == 0 (set in main).")
     if args.num_online_episodes < 0:
         raise ValueError("num_online_episodes must be >= 0.")
+    if args.num_trials < 1:
+        raise ValueError("num_trials must be >= 1.")
+    if args.num_trials > 1 and args.num_online_episodes <= 0:
+        raise ValueError("--num-trials > 1 needs --num-online-episodes > 0 (the length of each trial).")
+    if not 0.0 <= float(args.recycle_alpha_start) <= 1.0:
+        raise ValueError(f"recycle_alpha_start must be in [0, 1], got {args.recycle_alpha_start}.")
+    if args.recycle_anneal_episodes < 0:
+        raise ValueError("recycle_anneal_episodes must be >= 0 (0 = the trial length).")
     if args.checkpoint_every_online_episodes < 0:
         raise ValueError("checkpoint_every_online_episodes must be >= 0 (0 = off).")
     if args.checkpoint_every_online_episodes > 0 and not args.include_non_vital_training_state_fields:
@@ -499,17 +544,25 @@ def _sim_seed_of(checkpoint: Dict[str, object], checkpoint_path: str) -> int:
     raise ValueError(f"Cannot tell the sim training seed of {checkpoint_path} (no args['seed'], no 'seed<N>' in the path).")
 
 
-def _configure_results_layout(args: OnlineFinetuneArgs, sim_checkpoint: Dict[str, object]) -> tuple[Path, int, int]:
-    """Point ``args.data_root_dir`` at ``<root>/<experiment>/hist<H>/seed<S>``."""
+def _configure_results_layout(
+    args: OnlineFinetuneArgs, sim_checkpoint: Dict[str, object], trial: int | None = None
+) -> tuple[Path, int, int]:
+    """Point ``args.data_root_dir`` at ``<root>/<experiment>/hist<H>/seed<S>``
+    (``.../seed<S>/trial<t>`` for a data-recycling trial)."""
     hist_len = _hist_len_of(args.config)
     if hist_len is None:
         raise ValueError(f"Real config {args.config!r} has no air_hockey.simulator_params.hist_len.")
     sim_seed = _sim_seed_of(sim_checkpoint, str(args.checkpoint))
     if not args.experiment_name:
-        args.experiment_name = (
-            "no_warmup_no_sim_data" if args.no_warmup_no_sim_data else f"warm_start_{args.warm_start_episodes}"
-        )
+        if trial is not None:
+            args.experiment_name = "multiple_trials"
+        else:
+            args.experiment_name = (
+                "no_warmup_no_sim_data" if args.no_warmup_no_sim_data else f"warm_start_{args.warm_start_episodes}"
+            )
     seed_dir = Path(args.data_root_dir).expanduser().resolve() / args.experiment_name / f"hist{hist_len}" / f"seed{sim_seed}"
+    if trial is not None:
+        seed_dir = seed_dir / f"trial{trial}"
     if (seed_dir / _PROGRESS_FILE).exists() and not args.resume_online:
         print(
             f"[online_finetune] {seed_dir} already holds an online fine-tuning run: continuing it "
@@ -942,6 +995,79 @@ class _DeviceReplaySnapshot:
         return {key: value[indices] for key, value in self.tensors.items()}
 
 
+# ---------------------------------------------------------------------------
+# Data recycling across trials (--num-trials; As et al. Eq. 16 / Fig. 6)
+# ---------------------------------------------------------------------------
+
+# A finished (or interrupted) trial's online buffer, in its trial folder; the
+# later trials load it as part of D0. Same file name / keys as sim2sim_online_finetune.py.
+_RECYCLE_BUFFER_FILE = "online_buffer.pt"
+_RECYCLE_BUFFER_KEYS = ("observations", "next_observations", "actions", "prev_actions", "rewards", "dones")
+_TRIAL_INFO_FILE = "trial.json"
+
+
+def _recycle_alpha(rounds_trained: int, alpha_start: float, anneal_episodes: int) -> float:
+    """α of the training round after ``rounds_trained`` earlier rounds: linear from
+    ``alpha_start`` (first round) to 1 (round ``anneal_episodes``, and after)."""
+    if anneal_episodes <= 1:
+        return 1.0
+    return float(alpha_start + (1.0 - alpha_start) * min(1.0, rounds_trained / (anneal_episodes - 1)))
+
+
+class _MixedReplaySnapshot:
+    """(1 − α) Unif(D0) + α Unif(D_online), drawn per sample (As et al. Eq. 16).
+
+    ``online`` is this round's ``_DeviceReplaySnapshot``; ``d0`` holds the earlier
+    trials' transitions, already on the learner device (loaded once per trial)."""
+
+    def __init__(self, online: _DeviceReplaySnapshot, d0: Dict[str, torch.Tensor], alpha: float):
+        self.online, self.d0, self.alpha = online, d0, float(alpha)
+        self.d0_size = int(d0["rewards"].shape[0])
+        self.device = online.device
+
+    def sample(self, batch_size: int) -> Dict[str, torch.Tensor]:
+        n = int(batch_size)
+        use_online = torch.rand(n, device=self.device) < self.alpha
+        on_idx = torch.randint(0, self.online.size, (n,), device=self.device)
+        d0_idx = torch.randint(0, self.d0_size, (n,), device=self.device)
+        out = {}
+        for key, value in self.online.tensors.items():
+            mask = use_online.view(-1, *([1] * (value.dim() - 1)))
+            out[key] = torch.where(mask, value[on_idx], self.d0[key][d0_idx])
+        return out
+
+
+def _save_trial_buffer(trial_dir: Path, replay: SharedTD3Replay) -> int:
+    """Write this trial's online buffer (``state_dict`` is trimmed to the filled size)."""
+    partition = replay.state_dict()[_ONLINE_PARTITION]
+    torch.save({key: partition[key] for key in _RECYCLE_BUFFER_KEYS}, trial_dir / _RECYCLE_BUFFER_FILE)
+    return int(partition["size"])
+
+
+def _load_trial_buffer(trial_dir: Path) -> tuple[Dict[str, torch.Tensor], str]:
+    """A trial's online buffer: ``online_buffer.pt``, else the buffer stored in its
+    latest online checkpoint (a trial whose process died before writing the file)."""
+    path = trial_dir / _RECYCLE_BUFFER_FILE
+    if path.exists():
+        return torch.load(path, map_location="cpu", weights_only=False), str(path)
+    checkpoint_dir, _ = _find_resume_checkpoint(trial_dir)
+    partition = _load_checkpoint(str(checkpoint_dir / "training_state.pth"))["success_replay_buffer"]
+    size = int(partition["size"])
+    return {key: torch.as_tensor(partition[key])[:size] for key in _RECYCLE_BUFFER_KEYS}, str(checkpoint_dir)
+
+
+def _load_recycle_d0(trial_dirs: list[Path], device: str | torch.device) -> tuple[Dict[str, torch.Tensor] | None, list[str]]:
+    """Concatenate the online buffers of the earlier trials (D0) on the learner device."""
+    parts, sources = [], []
+    for trial_dir in trial_dirs:
+        part, source = _load_trial_buffer(trial_dir)
+        parts.append(part)
+        sources.append(source)
+    if not parts:
+        return None, sources
+    return {key: torch.cat([p[key] for p in parts]).float().to(device) for key in _RECYCLE_BUFFER_KEYS}, sources
+
+
 def _polyak_update(source: torch.nn.Module, target: torch.nn.Module, tau: float) -> None:
     torch._foreach_lerp_(
         [p.data for p in target.parameters()],
@@ -1265,6 +1391,9 @@ _ONLINE_QUIET_PREFIXES = (
 def _install_online_print_filter() -> None:
     import builtins
 
+    if getattr(builtins, "_air_hockey_online_filter_installed", False):
+        return  # one install per process (main() runs once per data-recycling trial)
+    builtins._air_hockey_online_filter_installed = True
     inner_print = builtins.print
 
     def filtered_print(*print_args, **kwargs):
@@ -1445,9 +1574,17 @@ def main(
     resume: tuple[Path, dict, Dict[str, object]] | None = None,
     prior_kept_episodes: int = 0,
     quiet: bool = True,
-) -> None:
+    recycle: Dict[str, object] | None = None,
+) -> str:
     """``resume`` = (checkpoint dir, its online_state.json, its training_state)
-    for --resume-online; None starts from the sim checkpoint."""
+    for --resume-online; None starts from the sim checkpoint.
+
+    ``recycle`` (data-recycling trial, --num-trials): ``{"d0": earlier trials'
+    transitions on the learner device or None, "alpha_start", "anneal_rounds"}``.
+    With a D0 every training batch mixes it with the online buffer; either way
+    the online buffer is written to ``<seed_dir>/online_buffer.pt`` on exit for
+    the later trials. Returns how the run ended ("completed",
+    "keyboard_interrupt"); an exception propagates."""
     if quiet:
         install_quiet_print_filter()
         _install_online_print_filter()
@@ -1524,6 +1661,24 @@ def main(
         f"online_buffer_size={args.online_buffer_size} num_online_episodes={args.num_online_episodes} "
         f"train_on_stop_episodes={args.train_on_stop_episodes}"
     )
+    make_buffer = None
+    d0 = None if recycle is None else recycle.get("d0")
+    if d0 is not None:
+        d0_size = int(d0["rewards"].shape[0])
+        alpha_start = float(recycle["alpha_start"])
+        anneal_rounds = int(recycle["anneal_rounds"])
+        print(
+            f"[online_finetune] data recycling: D0 = {d0_size} transitions from earlier trials; "
+            f"batches = (1 - α)·D0 + α·D_online, α {alpha_start:g} -> 1 over {anneal_rounds} training rounds."
+        )
+
+        def make_buffer(rb: SharedTD3Replay, device: str | torch.device) -> _MixedReplaySnapshot:
+            rounds = progress.episodes_trained
+            alpha = _recycle_alpha(rounds, alpha_start, anneal_rounds)
+            progress.writer.add_scalar("online_finetune_recycle/alpha", alpha, rounds + 1)
+            progress.writer.add_scalar("online_finetune_recycle/d0_size", float(d0_size), rounds + 1)
+            return _MixedReplaySnapshot(_DeviceReplaySnapshot(rb, device), d0, alpha)
+
     reset_fsm_cls = _make_manual_drop_fsm_cls(args) if args.manual_drop_reset else None
     if reset_fsm_cls is not None:
         print(
@@ -1562,7 +1717,7 @@ def main(
             action_high_np,
             collector_tb_dir,
             add_episode_to_replay_fn=_make_online_replay_push(stats, args, pending_episode),
-            learner_step_fn=_make_online_learner_step(progress, pending_episode),
+            learner_step_fn=_make_online_learner_step(progress, pending_episode, make_buffer=make_buffer),
             should_stop_fn=_should_stop,
             episode_report_fn=_make_online_episode_report(progress, args, stats),
             episode_min_timesteps_fn=_make_episode_min_timesteps(args),
@@ -1595,6 +1750,14 @@ def main(
         if final_checkpoint_dir and final_checkpoint_dir != previous_checkpoint_dir:
             # Lets --resume-online pick up the shutdown checkpoint too.
             _write_online_state(final_checkpoint_dir, progress, args)
+        if recycle is not None:
+            # This trial's D_online becomes part of D0 for the later trials (an
+            # interrupted trial rewrites it when it is continued).
+            try:
+                saved = _save_trial_buffer(seed_dir, replay)
+                print(f"[online_finetune] trial online buffer ({saved} transitions) -> {seed_dir / _RECYCLE_BUFFER_FILE}")
+            except Exception:
+                print(f"[online_finetune] trial online buffer save FAILED:\n{traceback.format_exc()}")
         progress.close()
         if int(stats.get("last_checkpoint_request_id", 0)) > 0 or stats.get("last_checkpoint_dir"):
             append_run_event(
@@ -1619,6 +1782,118 @@ def main(
             last_checkpoint_dir=str(stats.get("last_checkpoint_dir", "")) or None,
         )
         print("Final stats:", {k: v for k, v in stats.items() if not isinstance(v, list)})
+    return run_end_reason
+
+
+def _prepare_curve(args: OnlineFinetuneArgs, checkpoint: Dict[str, object], trial: int | None = None) -> dict:
+    """Results folder, episodes already collected and the checkpoint to resume from
+    for one curve (one trial with --num-trials). ``done`` = nothing left to collect."""
+    seed_dir, hist_len, sim_seed = _configure_results_layout(args, checkpoint, trial=trial)
+    curve = {"seed_dir": seed_dir, "hist_len": hist_len, "sim_seed": sim_seed, "resume": None, "done": False}
+    prior_kept_episodes = _count_kept_episodes(seed_dir)
+    curve["prior_kept_episodes"] = prior_kept_episodes
+    target_episodes = int(args.num_online_episodes)
+    if target_episodes > 0 and prior_kept_episodes >= target_episodes:
+        print(
+            f"[online_finetune] {seed_dir} already has {prior_kept_episodes} usable episodes "
+            f"(--num-online-episodes {target_episodes}); nothing to collect. Raise --num-online-episodes to continue."
+        )
+        curve["done"] = True
+        return curve
+    if args.resume_online:
+        try:
+            resume_dir, resume_state = _find_resume_checkpoint(seed_dir)
+        except FileNotFoundError as exc:
+            raise SystemExit(
+                f"{exc} The curve has {prior_kept_episodes} logged episodes but no checkpoint to continue from; "
+                "use a different --experiment-name to start a new curve."
+            ) from None
+        curve["resume"] = (resume_dir, resume_state, _load_checkpoint(str(resume_dir / "training_state.pth")))
+        remaining = f"{target_episodes - prior_kept_episodes} remaining of {target_episodes}" if target_episodes > 0 else "no episode limit"
+        print(
+            f"[online_finetune] resuming from {resume_dir} ({resume_state['episodes_trained']} rounds, "
+            f"{prior_kept_episodes} usable episodes so far; {remaining})"
+        )
+    return curve
+
+
+def _run_trials(
+    args: OnlineFinetuneArgs, train_args: TrainArgs, checkpoint: Dict[str, object], *, quiet: bool
+) -> None:
+    """--num-trials: trials 0 .. N-1 in sequence, each ``num_online_episodes`` usable
+    episodes from the sim checkpoint with an empty online buffer; trial t mixes the
+    online buffers of trials < t (D0) into its batches with α annealed to 1.
+    Finished trials are skipped and an unfinished one is continued, so the same
+    command resumes the whole experiment. Stops (without starting the next trial)
+    if a trial ends before its episodes are collected (Ctrl-C, timestep cap)."""
+    num_trials = int(args.num_trials)
+    target = int(args.num_online_episodes)
+    anneal_rounds = int(args.recycle_anneal_episodes) or max(1, target - int(args.warm_start_episodes))
+    print(
+        f"[trials] {num_trials} trials x {target} usable episodes; trial t >= 1 trains on "
+        f"(1 - α)·D0 + α·D_online with D0 = the online buffers of trials < t, "
+        f"α {args.recycle_alpha_start:g} -> 1 over {anneal_rounds} training rounds."
+    )
+    run_note: str | None = None
+    finished_dirs: list[Path] = []
+    for trial in range(num_trials):
+        trial_args = copy.deepcopy(args)
+        trial_args.resume_online = False  # set per trial folder by _configure_results_layout
+        curve = _prepare_curve(trial_args, checkpoint, trial=trial)
+        seed_dir = curve["seed_dir"]
+        if curve["done"]:
+            print(f"[trials] trial {trial}: already complete, skipping ({seed_dir})")
+            finished_dirs.append(seed_dir)
+            continue
+        d0, d0_sources = _load_recycle_d0(finished_dirs, trial_args.learner_device)
+        d0_size = 0 if d0 is None else int(d0["rewards"].shape[0])
+        with open(seed_dir / _TRIAL_INFO_FILE, "w") as f:
+            json.dump(
+                {
+                    "trial": trial,
+                    "num_trials": num_trials,
+                    "episodes_per_trial": target,
+                    "sim_checkpoint": str(args.checkpoint),
+                    "d0_transitions": d0_size,
+                    "d0_sources": d0_sources,
+                    "alpha_start": float(args.recycle_alpha_start) if d0 is not None else 1.0,
+                    "anneal_rounds": anneal_rounds if d0 is not None else 0,
+                },
+                f,
+                indent=2,
+            )
+        print(
+            f"\n[trials] ===== trial {trial}/{num_trials - 1}: "
+            + (f"D0 = {d0_size} transitions from {len(d0_sources)} earlier trial(s)" if d0 is not None else "online data only")
+            + f" -> {seed_dir} ====="
+        )
+        if run_note is None:
+            run_note = _prompt_optional_run_note()
+        _setup_run_data_dir(trial_args, run_note)
+        end_reason = main(
+            trial_args,
+            train_args,
+            checkpoint,
+            seed_dir=seed_dir,
+            hist_len=curve["hist_len"],
+            sim_seed=curve["sim_seed"],
+            resume=curve["resume"],
+            prior_kept_episodes=curve["prior_kept_episodes"],
+            quiet=quiet,
+            recycle={"d0": d0, "alpha_start": float(args.recycle_alpha_start), "anneal_rounds": anneal_rounds},
+        )
+        del d0
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        kept = _count_kept_episodes(seed_dir)
+        if end_reason != "completed" or kept < target:
+            print(
+                f"[trials] trial {trial} ended ({end_reason}) with {kept}/{target} usable episodes; not starting "
+                "the next trial. Rerun the same command to continue this trial and then the rest."
+            )
+            return
+        finished_dirs.append(seed_dir)
+    print(f"[trials] all {num_trials} trials complete under {finished_dirs[0].parent if finished_dirs else args.data_root_dir}")
 
 
 if __name__ == "__main__":
@@ -1661,40 +1936,22 @@ if __name__ == "__main__":
         f"num_critics={train_args.num_critics} "
         f"use_last_action_in_policy_state={train_args.use_last_action_in_policy_state}"
     )
-    seed_dir, hist_len, sim_seed = _configure_results_layout(args, checkpoint)
-    prior_kept_episodes = _count_kept_episodes(seed_dir)
-    target_episodes = int(args.num_online_episodes)
-    if target_episodes > 0 and prior_kept_episodes >= target_episodes:
-        print(
-            f"[online_finetune] {seed_dir} already has {prior_kept_episodes} usable episodes "
-            f"(--num-online-episodes {target_episodes}); nothing to collect. Raise --num-online-episodes to continue."
-        )
+    if int(args.num_trials) > 1:
+        _run_trials(args, train_args, checkpoint, quiet=bool(modular_extra_args.quiet))
         raise SystemExit(0)
-    resume = None
-    if args.resume_online:
-        try:
-            resume_dir, resume_state = _find_resume_checkpoint(seed_dir)
-        except FileNotFoundError as exc:
-            raise SystemExit(
-                f"{exc} The curve has {prior_kept_episodes} logged episodes but no checkpoint to continue from; "
-                "use a different --experiment-name to start a new curve."
-            ) from None
-        resume = (resume_dir, resume_state, _load_checkpoint(str(resume_dir / "training_state.pth")))
-        remaining = f"{target_episodes - prior_kept_episodes} remaining of {target_episodes}" if target_episodes > 0 else "no episode limit"
-        print(
-            f"[online_finetune] resuming from {resume_dir} ({resume_state['episodes_trained']} rounds, "
-            f"{prior_kept_episodes} usable episodes so far; {remaining})"
-        )
+    curve = _prepare_curve(args, checkpoint)
+    if curve["done"]:
+        raise SystemExit(0)
     run_note = _prompt_optional_run_note()
     _setup_run_data_dir(args, run_note)
     main(
         args,
         train_args,
         checkpoint,
-        seed_dir=seed_dir,
-        hist_len=hist_len,
-        sim_seed=sim_seed,
-        resume=resume,
-        prior_kept_episodes=prior_kept_episodes,
+        seed_dir=curve["seed_dir"],
+        hist_len=curve["hist_len"],
+        sim_seed=curve["sim_seed"],
+        resume=curve["resume"],
+        prior_kept_episodes=curve["prior_kept_episodes"],
         quiet=bool(modular_extra_args.quiet),
     )

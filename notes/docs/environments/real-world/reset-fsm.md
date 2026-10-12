@@ -29,6 +29,38 @@ Hold position and wait for the puck to fall within `puck_proximity_m` (default 0
 
 Execute a ramping upward strike sequence with increasing action magnitudes: `[-0.3, -0.6, -1.0, -1.0, -1.0]`. This sends the puck decisively into the playing area for the next policy episode.
 
+## Hand-off rule and right-side (+y) tuning (2026-10-12)
+
+The policy-reward-hacking problem: on right-ending resets the burst pushed the puck straight
+up the right side wall and the FSM handed over as soon as it crossed the success line, so
+the policy learnt to camp on that wall. Changes (all in `ResetPolicyFSM` / `AirHockeyReal`,
+so the online-finetune and eval entrypoints get them; left-ending resets move exactly as
+before):
+
+- **Hand-off needs the puck off the side walls.** `success_ignore_wall` now defaults to
+  `False`: the post-burst / post-strike window passes only after `min_off_wall_window_steps`
+  (2) consecutive steps with the puck above the success line *and* at least
+  `handoff_wall_gap_m` (0.03 m) between its edge and either side wall
+  (`off_wall_abs_y_m` = width/2 − puck_radius − gap = 0.370 table-frame). A puck riding up
+  a wall, however high, never passes; the FSM waits for it and strikes again. Applies to
+  both sides. Eval opt-out: `--reset-success-ignore-wall`.
+- **Bottom-left reach on right-ending sweeps.** These start in the left corner, where the
+  paddle came off the chamfer 3–9 cm short of the end wall and passed over pucks. While the
+  reset workspace is active, `AirHockeyReal.set_reset_end_side("right")` deepens the −y
+  corner cut by `reset_left_corner_x_extension_m` (0.03), and on waypoints with
+  y < `right_end_press_until_y_m` (0.25) the FSM drives x separately from y toward a point
+  `right_end_wall_press_m` (0.03) past the path, so the workspace clip holds the paddle on
+  the bottom limit.
+- **Timed second hit on right-ending resets** (`right_end_timed_strike`). The strike fires
+  when the puck, at its measured falling speed, would close the gap to the paddle within
+  `timed_strike_contact_steps` (8) + `timed_strike_camera_latency_steps` (1) steps, given
+  `timed_strike_paddle_travel_m` (0.10). Slow pucks therefore wait until they are close
+  instead of being swung at from 0.5 m; pucks outside the strike's path keep the old
+  `puck_proximity_m` distance trigger. 5 steps / 0.075 m measured too late on the robot.
+
+Debug harness: `scripts/real/tmp_debug_reset_side.py` (one side, per-step CSV + camera mp4
+per reset, flags for every knob above).
+
 ## When reset runs
 
 The collector decides between two reset paths at episode end:
@@ -58,8 +90,12 @@ After the reset FSM completes:
 | `puck_proximity_m` | 0.5 | Puck distance threshold for phase 4 |
 | `post_upward_check_steps` | 20 | Steps to wait after burst before checking puck |
 | `shared_success_threshold_proportion_from_bottom` | 0.5 | Where to draw the success line on the table |
-| `off_wall_abs_y_m` | 0.35 | Offset from wall for edge loop path |
-| `min_off_wall_window_steps` | 5 | Minimum steps in off-wall segment |
+| `success_ignore_wall` | `False` | `True` hands over above the success line even with the puck on a side wall |
+| `handoff_wall_gap_m` | 0.03 | Min gap between puck edge and side wall at hand-off |
+| `off_wall_abs_y_m` | derived (0.370) | Table-frame \|y\| limit for "off the walls"; `None` derives it from `handoff_wall_gap_m` |
+| `min_off_wall_window_steps` | 2 | Consecutive steps above the line and off the walls needed to hand over |
+| `right_end_wall_press_m` / `right_end_press_until_y_m` | 0.03 / 0.25 | Right-ending sweeps: press toward the end wall on the left part of the sweep |
+| `right_end_timed_strike` | `True` | Right-ending resets: time-to-contact second hit (`timed_strike_*` knobs) |
 | `max_stage2_cycles` | 5 | Maximum edge loop repetitions |
 | `broken_corner_side` | `"right"` | `"left"`, `"right"`, or `None`. Pins the edge-loop sweep to start at this (broken) corner and end/burst at the opposite (unbroken) one. `None` restores random start-side. |
 
