@@ -105,7 +105,7 @@ import time
 import traceback
 from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Dict, Literal, Tuple  # Literal / Tuple: evaluate the Args annotations merged into OnlineFinetuneArgs
+from typing import Callable, Dict, Literal, Optional, Tuple  # Literal / Tuple: evaluate the Args annotations merged into OnlineFinetuneArgs
 
 import numpy as np
 import torch
@@ -1061,7 +1061,11 @@ def _save_online_checkpoint(
     return str(checkpoint_dir)
 
 
-def _make_online_learner_step(progress: _OnlineProgress, pending_episode: Dict[str, object]):
+def _make_online_learner_step(
+    progress: _OnlineProgress,
+    pending_episode: Dict[str, object],
+    make_buffer: Optional[Callable[[SharedTD3Replay, str | torch.device], object]] = None,
+):
     """Post-episode learner (``_run_sync_learner_iteration`` signature).
 
     Warm start: idle for the first ``warm_start_episodes`` kept episodes of a
@@ -1071,7 +1075,12 @@ def _make_online_learner_step(progress: _OnlineProgress, pending_episode: Dict[s
     per-episode return / loss scalars to ``online_tb/``, plus the critic error
     ε = Q_φ − Q_MC on the new episode (``online_finetune_critic_error/``). Returns
     True when the actor changed (the orchestrator then syncs it to the collector).
+
+    ``make_buffer(replay, device)`` (default ``_DeviceReplaySnapshot``) builds the
+    per-round sampler; anything with ``.sample(batch_size)`` works (the sim2sim
+    data-recycling experiment passes a D0 / online mixture).
     """
+    make_buffer = make_buffer or _DeviceReplaySnapshot
 
     def _step(
         args: OnlineFinetuneArgs,
@@ -1145,7 +1154,7 @@ def _make_online_learner_step(progress: _OnlineProgress, pending_episode: Dict[s
         critic_budget = max(1, int(round(float(args.utd_ratio) * episode_steps)))
         every = int(args.actor_update_every)
         start = time.time()
-        buffer = _DeviceReplaySnapshot(replay, args.learner_device)
+        buffer = make_buffer(replay, args.learner_device)
         q_losses, q1_means, actor_losses, actor_norm_qs = [], [], [], []
         for k in range(1, critic_budget + 1):
             q_loss, q1_mean = _critic_update(args, train_args, buffer, state)

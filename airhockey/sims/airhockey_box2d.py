@@ -484,6 +484,12 @@ class AirHockeyBox2D:
             'center_offset_constant_y': 0.0,
             # When True, paddle targets that overshoot are damped toward the table (see step logic).
             'absorb_target': False,
+            # Direct force control (the identify_ood_gap / OOD-oracle setup, commit 5020937):
+            # the action is the paddle force itself (action * direct_force_gain N in Box2D
+            # coords) instead of a displacement target through the low-pass filter and the
+            # PID controller. Off by default; the real robot is position/PID controlled.
+            'direct_force_control': False,
+            'direct_force_gain': 1250.0,
             'puck_restitution': 1.0,
             'paddle_restitution': 1.0,
             # Wall restitution defaults: side rails (x-min/x-max) are livelier
@@ -642,6 +648,8 @@ class AirHockeyBox2D:
         # Keep tuple ordering consistent with real environment construction.
         self.edge_lims = (self.top_abs, self.bot_abs, self.max_bias_p, self.max_bias_m)
         self.hist_len = config.hist_len
+        self.direct_force_control = bool(config.direct_force_control)
+        self.direct_force_gain = float(config.direct_force_gain)
         self.center_offset_constant = config.center_offset_constant
         self.center_offset_constant_y = float(config.center_offset_constant_y)
         self.enable_action_delay = bool(config.enable_action_delay)
@@ -1418,6 +1426,92 @@ class AirHockeyBox2D:
         self.jerk = filtered_jerk.copy()
         return filtered_acceleration, filtered_jerk
 
+    def _apply_pid_force(self, pos, act):
+        """Default control: the action is a displacement target, low-pass filtered and
+        tracked by the PID controller (mirrors the real robot). Returns the applied force."""
+        # Boundary constraint: prevent paddle from going into opponent's side
+        if pos[1] > 0 - 3 * self.paddle_radius:
+            act[1] = min(act[1], 0)
+
+        # PID controller target uses real-like scaled delta + rect projection + clipping.
+        target_pos = self._compute_pid_target_pos(pos, act)
+        self.pose_hist.append(np.array(pos, dtype=float))
+        self.dpose_hist.append(np.array(target_pos, dtype=float))
+        # Clip the filtered target too, as the real env does: the filter can
+        # push it past the workspace limits even though each input was clipped.
+        target_pos = self._clip_pid_target_to_workspace(self._filter_update())
+        self.last_target_position = self._box2d_to_base_coords(target_pos)
+        current_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0],
+                               self.paddles['paddle_ego'].linearVelocity[1]])
+        force = self.pid_controller.compute(target_pos, pos, current_vel)
+
+        # Force clipping / normalization
+        force_mag = np.linalg.norm(force)
+        force_unit = force / (force_mag + 1e-8)
+
+        # second clipping
+        if force_mag > self.max_force_timestep:
+            force = force_unit * self.max_force_timestep
+
+        if self.force_scaling > 0:
+            force = force * self.force_scaling
+        force = force.astype(float)
+        if self.paddles['paddle_ego'].position[1] > 0: 
+            new_force = self.force_scaling * self.paddles['paddle_ego'].mass * act[1]
+            if new_force < -self.max_force_timestep:
+                new_force = -self.max_force_timestep
+            force[1] = min(new_force, 0)
+        else:
+            force = force * np.array([self.action_x_scaling, self.action_y_scaling])
+        
+        # Clip force to maximum allowed
+        force_mag = np.linalg.norm(force)
+        if force_mag > self.max_force_timestep:
+            force = force / force_mag * self.max_force_timestep
+
+        # Apply force to paddle
+        if 'paddle_ego' in self.paddles:
+            self.paddles['paddle_ego'].ApplyForceToCenter(force.astype(float), True)
+        return force
+
+    def _apply_direct_force(self, pos, act):
+        """direct_force_control: the action is the paddle force (no filter, no PID),
+        as in the identify_ood_gap OOD-oracle runs (commit 5020937). Returns the applied force."""
+        force = np.array(act, dtype=float) * self.direct_force_gain
+
+        if pos[1] > 0 - 3 * self.paddle_radius:
+            force[1] = min(force[1], 0)
+
+        # Force clipping / normalization
+        force_mag = np.linalg.norm(force)
+        force_unit = force / (force_mag + 1e-8)
+
+        # second clipping
+        if force_mag > self.max_force_timestep:
+            force = force_unit * self.max_force_timestep
+
+        if self.force_scaling > 0:
+            force = force * self.force_scaling
+        force = force.astype(float)
+
+        force = force * np.array([self.action_x_scaling, self.action_y_scaling])
+
+        # Clip force to maximum allowed
+        force_mag = np.linalg.norm(force)
+        if force_mag > self.max_force_timestep:
+            force = force / force_mag * self.max_force_timestep
+
+        # Prevent unwanted behavior near max work horizontal line (only reachable when the
+        # workspace extends past it; the real-robot workspace clip stops the paddle earlier).
+        if pos[1] >= -0.35:
+            force[1] = min(force[1], 0)     # only allow paddle to move back towards agent
+            self.paddles['paddle_ego'].linearVelocity[1] = 0.0  # reset velocity by imagining we hit a wall
+
+        # Apply force to paddle
+        if 'paddle_ego' in self.paddles:
+            self.paddles['paddle_ego'].ApplyForceToCenter(force.astype(float), True)
+        return force
+
     def get_singleagent_transition(self, action):
         collision_start_idx = len(self.collision_listener.collision_forces)
         self.observation_state_info = None
@@ -1452,53 +1546,14 @@ class AirHockeyBox2D:
             else:
                 act = np.copy(action)
             pos = np.array([self.paddles['paddle_ego'].position[0], self.paddles['paddle_ego'].position[1]])
-            
-            # Boundary constraint: prevent paddle from going into opponent's side
-            if pos[1] > 0 - 3 * self.paddle_radius:
-                act[1] = min(act[1], 0)
-            
-            # PID controller target uses real-like scaled delta + rect projection + clipping.
-            target_pos = self._compute_pid_target_pos(pos, act)
-            self.pose_hist.append(np.array(pos, dtype=float))
-            self.dpose_hist.append(np.array(target_pos, dtype=float))
-            # Clip the filtered target too, as the real env does: the filter can
-            # push it past the workspace limits even though each input was clipped.
-            target_pos = self._clip_pid_target_to_workspace(self._filter_update())
-            self.last_target_position = self._box2d_to_base_coords(target_pos)
-            current_vel = np.array([self.paddles['paddle_ego'].linearVelocity[0],
-                                   self.paddles['paddle_ego'].linearVelocity[1]])
-            force = self.pid_controller.compute(target_pos, pos, current_vel)
 
-            # Force clipping / normalization
-            force_mag = np.linalg.norm(force)
-            force_unit = force / (force_mag + 1e-8)
-
-            # second clipping
-            if force_mag > self.max_force_timestep:
-                force = force_unit * self.max_force_timestep
-
-            if self.force_scaling > 0:
-                force = force * self.force_scaling
-            force = force.astype(float)
-            if self.paddles['paddle_ego'].position[1] > 0: 
-                new_force = self.force_scaling * self.paddles['paddle_ego'].mass * act[1]
-                if new_force < -self.max_force_timestep:
-                    new_force = -self.max_force_timestep
-                force[1] = min(new_force, 0)
+            if self.direct_force_control:
+                force = self._apply_direct_force(pos, act)
             else:
-                force = force * np.array([self.action_x_scaling, self.action_y_scaling])
-            
-            # Clip force to maximum allowed
-            force_mag = np.linalg.norm(force)
-            if force_mag > self.max_force_timestep:
-                force = force / force_mag * self.max_force_timestep
-
-            # Apply force to paddle
-            if 'paddle_ego' in self.paddles:
-                self.paddles['paddle_ego'].ApplyForceToCenter(force.astype(float), True)
+                force = self._apply_pid_force(pos, act)
 
             self.world.Step(sim_time, 100, 100)
-            
+
             # correct blocks for t=0
             if self.timestep == 0 and len(self.blocks) > 0:
                 for block_name in self.blocks:

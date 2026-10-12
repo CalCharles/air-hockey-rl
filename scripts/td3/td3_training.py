@@ -226,6 +226,8 @@ class Args:
     exploration_same_direction_max_magnitude: float | None = None
 
     # --- Checkpointing ---
+    # Spacing of the intermediate checkpoint_<step>/ dirs; <= 0 saves none. The
+    # final step is always saved to checkpoint_<total_timesteps>/ (plus the run root).
     checkpoint_interval: int = 25000
     save_replay_buffer: bool = True
     # Serialize the replay buffer into every *intermediate* checkpoint's
@@ -1238,7 +1240,7 @@ def _entrypoint():
             interval_primitive_horizontal_env_steps = 0
             next_stats_log_step += args.stats_log_interval
 
-        if global_step > 0 and global_step % args.checkpoint_interval == 0:
+        if args.checkpoint_interval > 0 and global_step > 0 and global_step % args.checkpoint_interval == 0:
             checkpoint_dir = os.path.join(log_parent_dir, f"checkpoint_{global_step}")
             model_path = save_full_checkpoint(checkpoint_dir, is_final=False)
             print(f"\nCheckpoint saved at step {global_step}", flush=True)
@@ -1254,6 +1256,9 @@ def _entrypoint():
         checkpoint_evaluator.wait_all()
 
     if not args.eval_mode:
+        # The loop exits before the in-loop checkpoint check can fire at the last
+        # step, so write the final state to checkpoint_<step>/ as well as the root.
+        save_full_checkpoint(os.path.join(log_parent_dir, f"checkpoint_{global_step}"))
         save_full_checkpoint(log_parent_dir)
     elif args.model_path is None:
         print("Eval mode is enabled without model_path; final evaluate_agent will be skipped.")
