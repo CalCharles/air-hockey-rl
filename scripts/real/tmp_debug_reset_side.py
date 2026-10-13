@@ -39,6 +39,16 @@ had both fixes for its (left) start corner; here they are mirrored for the left 
     bottom limit / corner cut into the corner (same as ``right_end_wall_press_m``).
 Set both to 0 to get the old left-ending sweep back.
 
+Right-ending fix (this script only): the reset y limit already sits ~6 mm (paddle edge)
+off the right wall, but the hits did not happen there: the sweep counted as done 5 cm
+from its end waypoint, so the nudge / burst fired ~3 cm short of the limit, and the
+wait / second hit kept whatever y the paddle had after the burst (1-2 cm short), so the
+hits pushed the puck into the wall instead of along it. With ``--right-end-hold-y``
+(default on) the sweep keeps going until the paddle is within
+``--right-end-arrive-y-m`` of the end y, and the nudge, burst, post-hit windows, wait
+and strike all hold y at the limit minus ``--right-end-wall-y-offset-m``.
+``--no-right-end-hold-y`` gives the old behaviour.
+
 Keys while running: x = exit after the current step, h = abort the current reset
 and hard-reset the robot.
 """
@@ -78,23 +88,71 @@ _CSV_FIELDS = (
 class _LeftEndPressFSM(rrp.ResetPolicyFSM):
     """ResetPolicyFSM whose left-ending sweep rides the bottom limit into the left corner."""
 
+    # Phases of a right-ending reset whose y is pinned to the right limit (_right_hold_y_tcp).
+    _RIGHT_HOLD_PHASES = ("nudge", "nudge_gap", "upward_burst")
+
     def __init__(self, *args, left_end_wall_press_m: float = 0.03, left_end_press_below_y_m: float = 0.0,
-                 **kwargs):
+                 right_end_hold_y: bool = True, right_end_wall_y_offset_m: float = 0.0,
+                 right_end_arrive_y_m: float = 0.005, **kwargs):
         self.left_end_wall_press_m = max(0.0, float(left_end_wall_press_m))
         self.left_end_press_below_y_m = float(left_end_press_below_y_m)
         self._left_end_press_active = False
+        self.right_end_hold_y = bool(right_end_hold_y)
+        self.right_end_wall_y_offset_m = max(0.0, float(right_end_wall_y_offset_m))
+        self.right_end_arrive_y_m = max(0.0, float(right_end_arrive_y_m))
         super().__init__(*args, **kwargs)
 
+    @property
+    def _right_hold_y_tcp(self):
+        """Y every right-ending hit is made from (None = not a right-ending reset / feature off)."""
+        if not (self.right_end_hold_y and self.start_side == "left"):
+            return None
+        return float(self._lims[3]) - self.right_end_wall_y_offset_m
+
     def step(self, state_info: dict) -> np.ndarray:
-        # Only the edge_loop sweep of a left-ending reset (start_side "right") is changed.
+        hold_y = self._right_hold_y_tcp
+        if hold_y is not None and not self.done and self.phase == "edge_loop":
+            # The base FSM ends the sweep once within 5 cm of the end waypoint, i.e. ~3-5 cm
+            # short of the right limit; keep heading for the end waypoint until y is there.
+            paddle = self._get_tcp_position(state_info)
+            end_wp = self.path_waypoints[-1]
+            if (self.path_idx >= len(self.path_waypoints) - 2
+                    and float(np.linalg.norm(end_wp - paddle)) < 0.05
+                    and float(end_wp[1]) - float(paddle[1]) > self.right_end_arrive_y_m):
+                self.total_steps += 1
+                self.phase_steps += 1
+                return self._toward_target(paddle, end_wp, self.loop_max_delta_m)
+
+        # Only the edge_loop sweep of a left-ending reset (start_side "right") is pressed.
         self._left_end_press_active = (
             not self.done and self.phase == "edge_loop" and self.start_side == "right"
             and self.left_end_wall_press_m > 0.0
         )
         try:
-            return super().step(state_info)
+            action = super().step(state_info)
         finally:
             self._left_end_press_active = False
+
+        if hold_y is not None and self.phase in self._RIGHT_HOLD_PHASES:
+            # Nudge / gap / burst are pure-x in the base FSM; add the y that keeps the paddle at the limit.
+            action = np.array(action, dtype=np.float32)
+            paddle = self._get_tcp_position(state_info)
+            dy = float(np.clip(hold_y - float(paddle[1]), -self.loop_max_delta_m, self.loop_max_delta_m))
+            action[1] = float(np.clip(dy / max(float(self._move_lims[1]), 1e-6), -1.0, 1.0))
+        return action
+
+    def _start_post_upward_window(self, kind, state_info, cached_tcp=None):
+        super()._start_post_upward_window(kind, state_info, cached_tcp=cached_tcp)
+        hold_y = self._right_hold_y_tcp
+        if hold_y is not None and self._window_target_tcp is not None:
+            self._window_target_tcp = np.array([self._window_target_tcp[0], hold_y], dtype=np.float32)
+
+    def _enter_wait_for_puck(self, cached_tcp=None):
+        super()._enter_wait_for_puck(cached_tcp=cached_tcp)
+        hold_y = self._right_hold_y_tcp
+        if hold_y is not None:
+            # wait_for_puck holds this y and the strike is pure-x, so the second hit is made from here.
+            self._wait_hold_y_tcp = hold_y
 
     def _toward_target(self, paddle_pos: np.ndarray, target: np.ndarray, max_delta_m: float) -> np.ndarray:
         if not (self._left_end_press_active and float(target[1]) < self.left_end_press_below_y_m):
@@ -152,10 +210,22 @@ def _parse_args():
     p.add_argument("--left-end-corner-x-extension-m", type=float, default=None,
                    help="Left-ending sweeps: move the -y corner cut this far toward the end wall "
                         "(default: the sim's reset_left_corner_x_extension_m; 0 = plain reset workspace).")
+    p.add_argument("--no-right-end-hold-y", action="store_true",
+                   help="Right-ending resets: old behaviour (hits made from wherever y ended up, 1-3 cm short "
+                        "of the right limit).")
+    p.add_argument("--right-end-wall-y-offset-m", type=float, default=0.0,
+                   help="Right-ending resets: hold y this far inside the right limit (0 = at the limit, paddle "
+                        "edge ~6 mm off the wall).")
+    p.add_argument("--right-end-arrive-y-m", type=float, default=0.005,
+                   help="Right-ending resets: sweep ends only once the paddle is within this of the end y.")
     p.add_argument("--no-timed-strike", action="store_true",
                    help="right_end_timed_strike=False: old fixed-distance second-hit trigger.")
     for name in ("timed_strike_contact_steps", "timed_strike_camera_latency_steps", "timed_strike_paddle_travel_m"):
         p.add_argument("--" + name.replace("_", "-"), type=float, default=None, help=f"ResetPolicyFSM {name}.")
+    p.add_argument("--no-strike-pullback", action="store_true",
+                   help="right_end_strike_pullback_margin_m=None: wait for the puck where the paddle is (no run-up).")
+    p.add_argument("--no-full-force-strike", action="store_true",
+                   help="right_end_full_force_strike=False: the old ramped strike (-0.3, -0.6, -0.8, then full).")
     p.add_argument("--no-video", action="store_true", help="Skip the per-reset camera .mp4.")
     p.add_argument("--video-fps", type=int, default=20, help="Playback fps of the camera .mp4 (control rate is 20 Hz).")
     p.add_argument("--seed", type=int, default=0)
@@ -222,6 +292,9 @@ def _run_one_reset(env, rng, args, reset_idx: int, out_dir: Path, nbc) -> dict:
         rng,
         left_end_wall_press_m=args.left_end_wall_press_m,
         left_end_press_below_y_m=args.left_end_press_below_y_m,
+        right_end_hold_y=not args.no_right_end_hold_y,
+        right_end_wall_y_offset_m=args.right_end_wall_y_offset_m,
+        right_end_arrive_y_m=args.right_end_arrive_y_m,
         shared_success_threshold_proportion_from_bottom=float(args.success_line),
         success_ignore_wall=args.ignore_wall,
         capture_second_hit_frame=False,
@@ -230,6 +303,8 @@ def _run_one_reset(env, rng, args, reset_idx: int, out_dir: Path, nbc) -> dict:
                                               "timed_strike_paddle_travel_m")
            if getattr(args, k) is not None},
         **({"right_end_timed_strike": False} if args.no_timed_strike else {}),
+        **({"right_end_strike_pullback_margin_m": None} if args.no_strike_pullback else {}),
+        **({"right_end_full_force_strike": False} if args.no_full_force_strike else {}),
     )
     wp = fsm.path_waypoints
     print(f"[debug_reset] start_side={fsm.start_side} end_side={fsm._forced_end_side} "
@@ -358,6 +433,8 @@ def main():
     _install_left_end_corner_extension(sim, left_corner_ext)
     print(f"[debug_reset] left-ending fix: corner_x_extension={left_corner_ext:.3f} "
           f"wall_press={args.left_end_wall_press_m:.3f} below_y={args.left_end_press_below_y_m:+.3f}")
+    print(f"[debug_reset] right-ending fix: hold_y={not args.no_right_end_hold_y} "
+          f"wall_y_offset={args.right_end_wall_y_offset_m:.3f} arrive_y={args.right_end_arrive_y_m:.3f}")
 
     rng = np.random.default_rng(args.seed)
     summaries = []

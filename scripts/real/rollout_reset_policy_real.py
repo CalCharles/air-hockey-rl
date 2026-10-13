@@ -133,6 +133,17 @@ class ResetPolicyFSM:
         timed_strike_contact_steps: float = 8.0,
         timed_strike_camera_latency_steps: float = 1.0,
         timed_strike_paddle_travel_m: float = 0.10,
+        # Right-ending resets only: while waiting for the puck to come back down,
+        # pull the paddle back toward the robot-end wall, to this far short of the
+        # bottom limit at its y. The strike drives toward the far reach limit
+        # (x_min_lim, TCP x -0.83) and the arm slows roughly in proportion to the
+        # distance left (2026-10-12: 0.042 m/step with 20 cm to go, 0.02-0.03 at
+        # contact 13-16 cm short of it, from the ~-0.54 wait position), so the extra
+        # run-up lets it meet the puck while still near full speed. None disables.
+        right_end_strike_pullback_margin_m: Optional[float] = 0.01,
+        # Right-ending resets only: full-strength strike from its first step
+        # (no -0.3 / -0.6 / -0.8 ramp, magnitude 1.0 instead of uniform(0.9, 1.0)).
+        right_end_full_force_strike: bool = True,
         goto_start_arrive_m: float = 0.05,
         waypoint_advance_m: float = 0.05,
         puck_proximity_m: float = 0.5,
@@ -194,6 +205,10 @@ class ResetPolicyFSM:
         self.timed_strike_contact_steps = float(timed_strike_contact_steps)
         self.timed_strike_camera_latency_steps = float(timed_strike_camera_latency_steps)
         self.timed_strike_paddle_travel_m = float(timed_strike_paddle_travel_m)
+        self.right_end_full_force_strike = bool(right_end_full_force_strike)
+        self.right_end_strike_pullback_margin_m = (
+            None if right_end_strike_pullback_margin_m is None else float(right_end_strike_pullback_margin_m)
+        )
         self._contact_radius_m = float(getattr(env, "paddle_radius", 0.0508)) + float(
             getattr(env, "puck_radius", 0.03175)
         )
@@ -227,6 +242,7 @@ class ResetPolicyFSM:
             -strike_mag,
             -strike_mag,
         ]
+        self._full_force_strike_actions = [-1.0] * len(self._strike_actions)
         self.puck_proximity_m = float(self.rng.uniform(0.5, 0.6)) # less delay than before
 
         simulator = self.env.simulator
@@ -572,6 +588,11 @@ class ResetPolicyFSM:
             )
         return due
 
+    def _strike_sequence(self) -> list:
+        if self.right_end_full_force_strike and self.start_side == "left":
+            return self._full_force_strike_actions
+        return self._strike_actions
+
     def _log_phase_check(
         self,
         state_info: dict,
@@ -715,6 +736,15 @@ class ResetPolicyFSM:
         action = self._project_displacement_to_action_box(hold_delta_m)
         action = np.clip(action, -1.0, 1.0).astype(np.float32)
         action[0] = 0.0
+        if self.right_end_strike_pullback_margin_m is not None and self.start_side == "left":
+            # Run-up for the strike: back toward the robot-end wall (bottom limit
+            # at the held y, chamfered corner included), at the sweep's speed.
+            _, x_limit, _, _ = get_clip_limits(
+                0.0, float(self._wait_hold_y_tcp), tuple(self._lims.tolist()), tuple(self._edge_lims.tolist())
+            )
+            x_target = float(x_limit) - self.right_end_strike_pullback_margin_m
+            dx = float(np.clip(x_target - float(current_tcp[0]), -self.loop_max_delta_m, self.loop_max_delta_m))
+            action[0] = float(self._meters_delta_to_action(np.array([dx, 0.0], dtype=np.float32))[0])
         return action
 
     def _current_window_downward_action(
@@ -1010,8 +1040,8 @@ class ResetPolicyFSM:
                     self._captured_second_hit_frame = True
                 self.phase = "strike"
                 self._wait_hold_y_tcp = None
-                self.phase_steps = len(self._strike_actions)
-                action_x = self._strike_actions[0]
+                self.phase_steps = len(self._strike_sequence())
+                action_x = self._strike_sequence()[0]
                 self.phase_steps -= 1
                 return np.array([action_x, 0.0], dtype=np.float32)
             return hold_action
@@ -1025,8 +1055,8 @@ class ResetPolicyFSM:
                     cached_tcp=paddle_tcp,
                 )
                 return self._step_post_upward_window(state_info, cached_tcp=paddle_tcp)
-            idx = len(self._strike_actions) - self.phase_steps
-            action_x = self._strike_actions[idx]
+            idx = len(self._strike_sequence()) - self.phase_steps
+            action_x = self._strike_sequence()[idx]
             self.phase_steps -= 1
             return np.array([action_x, 0.0], dtype=np.float32)
 
