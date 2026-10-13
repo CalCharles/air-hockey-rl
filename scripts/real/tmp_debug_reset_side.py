@@ -27,27 +27,10 @@ Usage (real-robot machine, repo root):
     python -m scripts.real.tmp_debug_reset_side --reset-y-max-extension-m 0.03 \\
         --reset-right-corner-x-extension-m 0.04                        # try other right-side reach
 
-Left-ending fix (this script only): a left-ending sweep (starts in the right corner)
-came into the left corner along the plain bottom limit, above the puck, and shoved it
-sideways into the left guard instead of getting under it. The right-ending sweep already
-had both fixes for its (left) start corner; here they are mirrored for the left END:
-  * the -y corner cut moves ``--left-end-corner-x-extension-m`` toward the end wall
-    (default = the sim's ``reset_left_corner_x_extension_m``; still capped by the
-    bottom limit, so it never goes past RESET_WALL_CLEARANCE_M off the wall), and
-  * on the part of the sweep with waypoint y below ``--left-end-press-below-y-m``,
-    x aims ``--left-end-wall-press-m`` past the path, i.e. the paddle rides the
-    bottom limit / corner cut into the corner (same as ``right_end_wall_press_m``).
-Set both to 0 to get the old left-ending sweep back.
-
-Right-ending fix (this script only): the reset y limit already sits ~6 mm (paddle edge)
-off the right wall, but the hits did not happen there: the sweep counted as done 5 cm
-from its end waypoint, so the nudge / burst fired ~3 cm short of the limit, and the
-wait / second hit kept whatever y the paddle had after the burst (1-2 cm short), so the
-hits pushed the puck into the wall instead of along it. With ``--right-end-hold-y``
-(default on) the sweep keeps going until the paddle is within
-``--right-end-arrive-y-m`` of the end y, and the nudge, burst, post-hit windows, wait
-and strike all hold y at the limit minus ``--right-end-wall-y-offset-m``.
-``--no-right-end-hold-y`` gives the old behaviour.
+Left-ending / right-ending side-wall fixes (2026-10-12) now live in ResetPolicyFSM
+(``left_end_wall_press_m``, ``right_end_hold_y`` ...) and AirHockeyReal.set_reset_end_side
+(``reset_left_corner_x_extension_m`` for both end sides), so eval / online finetune get them
+too; the flags below only override them for this run.
 
 Keys while running: x = exit after the current step, h = abort the current reset
 and hard-reset the robot.
@@ -85,98 +68,6 @@ _CSV_FIELDS = (
 )
 
 
-class _LeftEndPressFSM(rrp.ResetPolicyFSM):
-    """ResetPolicyFSM whose left-ending sweep rides the bottom limit into the left corner."""
-
-    # Phases of a right-ending reset whose y is pinned to the right limit (_right_hold_y_tcp).
-    _RIGHT_HOLD_PHASES = ("nudge", "nudge_gap", "upward_burst")
-
-    def __init__(self, *args, left_end_wall_press_m: float = 0.03, left_end_press_below_y_m: float = 0.0,
-                 right_end_hold_y: bool = True, right_end_wall_y_offset_m: float = 0.0,
-                 right_end_arrive_y_m: float = 0.005, **kwargs):
-        self.left_end_wall_press_m = max(0.0, float(left_end_wall_press_m))
-        self.left_end_press_below_y_m = float(left_end_press_below_y_m)
-        self._left_end_press_active = False
-        self.right_end_hold_y = bool(right_end_hold_y)
-        self.right_end_wall_y_offset_m = max(0.0, float(right_end_wall_y_offset_m))
-        self.right_end_arrive_y_m = max(0.0, float(right_end_arrive_y_m))
-        super().__init__(*args, **kwargs)
-
-    @property
-    def _right_hold_y_tcp(self):
-        """Y every right-ending hit is made from (None = not a right-ending reset / feature off)."""
-        if not (self.right_end_hold_y and self.start_side == "left"):
-            return None
-        return float(self._lims[3]) - self.right_end_wall_y_offset_m
-
-    def step(self, state_info: dict) -> np.ndarray:
-        hold_y = self._right_hold_y_tcp
-        if hold_y is not None and not self.done and self.phase == "edge_loop":
-            # The base FSM ends the sweep once within 5 cm of the end waypoint, i.e. ~3-5 cm
-            # short of the right limit; keep heading for the end waypoint until y is there.
-            paddle = self._get_tcp_position(state_info)
-            end_wp = self.path_waypoints[-1]
-            if (self.path_idx >= len(self.path_waypoints) - 2
-                    and float(np.linalg.norm(end_wp - paddle)) < 0.05
-                    and float(end_wp[1]) - float(paddle[1]) > self.right_end_arrive_y_m):
-                self.total_steps += 1
-                self.phase_steps += 1
-                return self._toward_target(paddle, end_wp, self.loop_max_delta_m)
-
-        # Only the edge_loop sweep of a left-ending reset (start_side "right") is pressed.
-        self._left_end_press_active = (
-            not self.done and self.phase == "edge_loop" and self.start_side == "right"
-            and self.left_end_wall_press_m > 0.0
-        )
-        try:
-            action = super().step(state_info)
-        finally:
-            self._left_end_press_active = False
-
-        if hold_y is not None and self.phase in self._RIGHT_HOLD_PHASES:
-            # Nudge / gap / burst are pure-x in the base FSM; add the y that keeps the paddle at the limit.
-            action = np.array(action, dtype=np.float32)
-            paddle = self._get_tcp_position(state_info)
-            dy = float(np.clip(hold_y - float(paddle[1]), -self.loop_max_delta_m, self.loop_max_delta_m))
-            action[1] = float(np.clip(dy / max(float(self._move_lims[1]), 1e-6), -1.0, 1.0))
-        return action
-
-    def _start_post_upward_window(self, kind, state_info, cached_tcp=None):
-        super()._start_post_upward_window(kind, state_info, cached_tcp=cached_tcp)
-        hold_y = self._right_hold_y_tcp
-        if hold_y is not None and self._window_target_tcp is not None:
-            self._window_target_tcp = np.array([self._window_target_tcp[0], hold_y], dtype=np.float32)
-
-    def _enter_wait_for_puck(self, cached_tcp=None):
-        super()._enter_wait_for_puck(cached_tcp=cached_tcp)
-        hold_y = self._right_hold_y_tcp
-        if hold_y is not None:
-            # wait_for_puck holds this y and the strike is pure-x, so the second hit is made from here.
-            self._wait_hold_y_tcp = hold_y
-
-    def _toward_target(self, paddle_pos: np.ndarray, target: np.ndarray, max_delta_m: float) -> np.ndarray:
-        if not (self._left_end_press_active and float(target[1]) < self.left_end_press_below_y_m):
-            return super()._toward_target(paddle_pos, target, max_delta_m)
-        # Same as _wall_pressed_sweep_action, with the left-end press distance.
-        dx = float(np.clip(target[0] + self.left_end_wall_press_m - paddle_pos[0], -max_delta_m, max_delta_m))
-        dy = float(np.clip(target[1] - paddle_pos[1], -max_delta_m, max_delta_m))
-        return self._meters_delta_to_action(np.array([dx, dy], dtype=np.float32))
-
-
-def _install_left_end_corner_extension(sim, ext_m: float) -> None:
-    """Deepen the -y corner cut for left-ending resets too (the sim only does it for right-ending ones)."""
-    original = sim.set_reset_end_side
-
-    def set_reset_end_side(end_side):
-        original(end_side)
-        if end_side == "left" and ext_m > 0.0 and getattr(sim, "_reset_edge_lims_base", None) is not None:
-            edge_lims = list(sim.edge_lims)
-            edge_lims[3] += ext_m
-            sim.edge_lims = edge_lims
-
-    sim.set_reset_end_side = set_reset_end_side  # instance attribute: this process / this sim only
-
-
 def _parse_args():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--config-path", default="configs/real_configs/rollout_td3_config_hist4.yaml")
@@ -207,9 +98,6 @@ def _parse_args():
     p.add_argument("--left-end-press-below-y-m", type=float, default=0.0,
                    help="Left-ending sweeps: press only where the waypoint y is below this (TCP frame; "
                         "the left corner is -y), i.e. on the way into the left corner.")
-    p.add_argument("--left-end-corner-x-extension-m", type=float, default=None,
-                   help="Left-ending sweeps: move the -y corner cut this far toward the end wall "
-                        "(default: the sim's reset_left_corner_x_extension_m; 0 = plain reset workspace).")
     p.add_argument("--no-right-end-hold-y", action="store_true",
                    help="Right-ending resets: old behaviour (hits made from wherever y ended up, 1-3 cm short "
                         "of the right limit).")
@@ -287,7 +175,7 @@ def _run_one_reset(env, rng, args, reset_idx: int, out_dir: Path, nbc) -> dict:
     print(f"\n[debug_reset] reset {reset_idx}: workspace {_fmt_lims(sim)}"
           f"{'' if widen is not None else ' (not widened)'}")
 
-    fsm = _LeftEndPressFSM(
+    fsm = rrp.ResetPolicyFSM(
         env,
         rng,
         left_end_wall_press_m=args.left_end_wall_press_m,
@@ -428,10 +316,7 @@ def main():
     print(f"[debug_reset] normal workspace {_fmt_lims(sim)}")
     for name in _SIM_OVERRIDES:
         print(f"[debug_reset]   {name}={getattr(sim, name, 'n/a')}")
-    left_corner_ext = (float(getattr(sim, "reset_left_corner_x_extension_m", 0.0))
-                       if args.left_end_corner_x_extension_m is None else float(args.left_end_corner_x_extension_m))
-    _install_left_end_corner_extension(sim, left_corner_ext)
-    print(f"[debug_reset] left-ending fix: corner_x_extension={left_corner_ext:.3f} "
+    print(f"[debug_reset] left-ending: corner_x_extension={getattr(sim, 'reset_left_corner_x_extension_m', 'n/a')} "
           f"wall_press={args.left_end_wall_press_m:.3f} below_y={args.left_end_press_below_y_m:+.3f}")
     print(f"[debug_reset] right-ending fix: hold_y={not args.no_right_end_hold_y} "
           f"wall_y_offset={args.right_end_wall_y_offset_m:.3f} arrive_y={args.right_end_arrive_y_m:.3f}")

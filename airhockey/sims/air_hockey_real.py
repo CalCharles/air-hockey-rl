@@ -300,10 +300,10 @@ class AirHockeyReal:
             # under a puck sitting in that corner. Still capped by the (extended) bottom
             # limit, which keeps RESET_WALL_CLEARANCE_M off the end wall. 0 disables.
             "reset_right_corner_x_extension_m": 0.03,  # 0.01 was within tracking noise; 0.02 still a bit short
-            # Same for the -y ("left") bottom corner, but only while a reset that ENDS on the
-            # right runs (set_reset_end_side): that sweep starts in the left corner and was
-            # passing over pucks on the bottom-left wall. Left-ending resets keep the plain
-            # reset workspace. 0 disables.
+            # Same for the -y ("left") bottom corner, applied by set_reset_end_side for both
+            # end sides: a right-ending sweep starts in that corner and was passing over pucks
+            # on the bottom-left wall; a left-ending one (2026-10-12) ends there and, without
+            # it, came into the corner above the puck and pushed it into the left guard. 0 disables.
             "reset_left_corner_x_extension_m": 0.03,
             # Command-filter window while the reset FSM runs: the FSM was tuned under hist_len 2, and a longer window delays its burst and makes it overshoot into the corners.
             "reset_hist_len": 2,
@@ -939,16 +939,17 @@ class AirHockeyReal:
     def set_reset_end_side(self, end_side):
         """Per-side tweak of the reset workspace, called by the reset FSM once it knows its end side.
 
-        ``"right"``: the -y corner cut moves ``reset_left_corner_x_extension_m`` toward
-        the robot-end wall (still capped by the bottom limit), so the sweep that starts
-        in that corner gets down to pucks on the bottom-left wall. Any other side uses
-        the reset workspace exactly as ``set_reset_workspace`` built it. No-op unless
-        the reset workspace is active; ``set_reset_workspace(False)`` undoes it.
+        ``"right"`` or ``"left"``: the -y corner cut moves ``reset_left_corner_x_extension_m``
+        toward the robot-end wall (still capped by the bottom limit), so the sweep gets
+        down to pucks on the bottom-left wall, whether it starts in that corner (right
+        end) or ends there (left end). Any other value uses the reset workspace exactly
+        as ``set_reset_workspace`` built it. No-op unless the reset workspace is active;
+        ``set_reset_workspace(False)`` undoes it.
         """
         if self._normal_workspace is None or self._reset_edge_lims_base is None:
             return
         edge_lims = list(self._reset_edge_lims_base)
-        if end_side == "right":
+        if end_side in ("right", "left"):
             edge_lims[3] += max(0.0, self.reset_left_corner_x_extension_m)
         self.edge_lims = edge_lims
 

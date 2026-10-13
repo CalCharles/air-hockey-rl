@@ -119,6 +119,23 @@ class ResetPolicyFSM:
         # y the original sweep takes over, so the right-corner burst is unchanged. 0 disables.
         right_end_wall_press_m: float = 0.03,
         right_end_press_until_y_m: float = 0.25,
+        # Left-ending sweeps only (they end in the left corner): same press, on the part
+        # of the sweep with waypoint y below left_end_press_below_y_m, i.e. on the way
+        # into the left corner and up to the burst. Without it (2026-10-12) the paddle
+        # came into that corner above the puck and pushed it sideways into the left
+        # guard instead of getting under it. 0 disables.
+        left_end_wall_press_m: float = 0.03,
+        left_end_press_below_y_m: float = 0.0,
+        # Right-ending resets only: make every hit from the right y limit (minus
+        # right_end_wall_y_offset_m; at the limit the paddle edge is ~6 mm off the wall).
+        # The sweep keeps going until the paddle is within right_end_arrive_y_m of its
+        # end y (instead of ending 5 cm from the end waypoint), and the nudge, burst,
+        # post-hit windows, wait and strike all hold that y. Before (2026-10-12) the
+        # first hit came ~3 cm and the second 1-2 cm short of the limit, which pushed
+        # the puck into the wall instead of up along it. False = old behaviour.
+        right_end_hold_y: bool = True,
+        right_end_wall_y_offset_m: float = 0.0,
+        right_end_arrive_y_m: float = 0.005,
         # Right-ending resets only: fire the second hit (strike) on predicted time to
         # contact instead of the fixed puck_proximity_m distance. The strike fires once
         # the puck, at its current falling speed, would close the remaining gap within
@@ -201,6 +218,11 @@ class ResetPolicyFSM:
         self.nudge_gap_steps = max(0, int(nudge_gap_steps))
         self.right_end_wall_press_m = max(0.0, float(right_end_wall_press_m))
         self.right_end_press_until_y_m = float(right_end_press_until_y_m)
+        self.left_end_wall_press_m = max(0.0, float(left_end_wall_press_m))
+        self.left_end_press_below_y_m = float(left_end_press_below_y_m)
+        self.right_end_hold_y = bool(right_end_hold_y)
+        self.right_end_wall_y_offset_m = max(0.0, float(right_end_wall_y_offset_m))
+        self.right_end_arrive_y_m = max(0.0, float(right_end_arrive_y_m))
         self.right_end_timed_strike = bool(right_end_timed_strike)
         self.timed_strike_contact_steps = float(timed_strike_contact_steps)
         self.timed_strike_camera_latency_steps = float(timed_strike_camera_latency_steps)
@@ -468,12 +490,28 @@ class ResetPolicyFSM:
         scaled_delta = delta * min(1.0, max_delta_m / norm)
         return self._meters_delta_to_action(scaled_delta)
 
-    def _wall_pressed_sweep_action(self, paddle_pos: np.ndarray, target: np.ndarray) -> np.ndarray:
-        """Sweep step with x and y limited separately and x aimed past the bottom limit."""
+    def _wall_pressed_sweep_action(self, paddle_pos: np.ndarray, target: np.ndarray, press_m: float) -> np.ndarray:
+        """Sweep step with x and y limited separately and x aimed press_m past the bottom limit."""
         max_delta = self.loop_max_delta_m
-        dx = float(np.clip(target[0] + self.right_end_wall_press_m - paddle_pos[0], -max_delta, max_delta))
+        dx = float(np.clip(target[0] + press_m - paddle_pos[0], -max_delta, max_delta))
         dy = float(np.clip(target[1] - paddle_pos[1], -max_delta, max_delta))
         return self._meters_delta_to_action(np.array([dx, dy], dtype=np.float32))
+
+    def _right_hold_y_tcp(self) -> Optional[float]:
+        """Y every right-ending hit is made from; None when not right-ending or right_end_hold_y is off."""
+        if not (self.right_end_hold_y and self.start_side == "left"):
+            return None
+        return float(self._lims[3]) - self.right_end_wall_y_offset_m
+
+    def _with_right_hold_y(self, action: np.ndarray, paddle_tcp: np.ndarray) -> np.ndarray:
+        """Add the y that keeps a right-ending reset's paddle at _right_hold_y_tcp (nudge / gap / burst are pure x)."""
+        hold_y = self._right_hold_y_tcp()
+        if hold_y is None:
+            return action
+        action = np.array(action, dtype=np.float32)
+        dy = float(np.clip(hold_y - float(paddle_tcp[1]), -self.loop_max_delta_m, self.loop_max_delta_m))
+        action[1] = float(np.clip(dy / max(float(self._move_lims[1]), 1e-6), -1.0, 1.0))
+        return action
 
     def _begin_upward_burst(self) -> np.ndarray:
         self.phase = "upward_burst"
@@ -689,8 +727,10 @@ class ResetPolicyFSM:
             if cached_tcp is not None
             else self._get_tcp_position(state_info)
         )
+        hold_y = self._right_hold_y_tcp()
         target_tcp = np.array(
-            [window_start_tcp[0] + self._window_target_offset_x_m, window_start_tcp[1]],
+            [window_start_tcp[0] + self._window_target_offset_x_m,
+             window_start_tcp[1] if hold_y is None else hold_y],
             dtype=np.float32,
         )
         self._window_start_tcp = window_start_tcp.astype(np.float32)
@@ -714,7 +754,11 @@ class ResetPolicyFSM:
             if cached_tcp is not None
             else None
         )
-        if tcp is not None and tcp.shape[0] >= 2:
+        hold_y = self._right_hold_y_tcp()
+        if hold_y is not None:
+            # The strike is pure x, so the second hit is made from this y.
+            self._wait_hold_y_tcp = hold_y
+        elif tcp is not None and tcp.shape[0] >= 2:
             self._wait_hold_y_tcp = float(tcp[1])
         else:
             self._wait_hold_y_tcp = None
@@ -979,35 +1023,55 @@ class ResetPolicyFSM:
             target = self._lookahead_target_on_path(paddle_tcp, self.loop_lookahead_m)
             end_dist = float(np.linalg.norm(self.path_waypoints[-1] - paddle_tcp))
             at_end = self.path_idx >= len(self.path_waypoints) - 2 and end_dist < 0.05
+            if (
+                at_end
+                and self._right_hold_y_tcp() is not None
+                and float(self.path_waypoints[-1][1]) - float(paddle_tcp[1]) > self.right_end_arrive_y_m
+            ):
+                # Right-ending: 5 cm from the end waypoint is still ~3-5 cm short of the
+                # right limit; keep heading for it until y is there (right_end_hold_y).
+                return self._toward_target(paddle_tcp, self.path_waypoints[-1], self.loop_max_delta_m)
             if at_end:
                 if self.nudge_steps > 0:
                     self.phase = "nudge"
                     self.phase_steps = self.nudge_steps - 1
-                    return self._meters_delta_to_action(np.array([-self.nudge_action_m, 0.0], dtype=np.float32))
-                return self._begin_upward_burst()
+                    return self._with_right_hold_y(
+                        self._meters_delta_to_action(np.array([-self.nudge_action_m, 0.0], dtype=np.float32)),
+                        paddle_tcp,
+                    )
+                return self._with_right_hold_y(self._begin_upward_burst(), paddle_tcp)
             if (
                 self.start_side == "left"
                 and self.right_end_wall_press_m > 0.0
                 and float(target[1]) < self.right_end_press_until_y_m
             ):
-                return self._wall_pressed_sweep_action(paddle_tcp, target)
+                return self._wall_pressed_sweep_action(paddle_tcp, target, self.right_end_wall_press_m)
+            if (
+                self.start_side == "right"
+                and self.left_end_wall_press_m > 0.0
+                and float(target[1]) < self.left_end_press_below_y_m
+            ):
+                return self._wall_pressed_sweep_action(paddle_tcp, target, self.left_end_wall_press_m)
             return self._toward_target(paddle_tcp, target, self.loop_max_delta_m)
 
         if self.phase == "nudge":
             if self.phase_steps > 0:
                 self.phase_steps -= 1
-                return self._meters_delta_to_action(np.array([-self.nudge_action_m, 0.0], dtype=np.float32))
+                return self._with_right_hold_y(
+                    self._meters_delta_to_action(np.array([-self.nudge_action_m, 0.0], dtype=np.float32)),
+                    paddle_tcp,
+                )
             if self.nudge_gap_steps > 0:
                 self.phase = "nudge_gap"
                 self.phase_steps = self.nudge_gap_steps - 1
-                return np.zeros(2, dtype=np.float32)
-            return self._begin_upward_burst()
+                return self._with_right_hold_y(np.zeros(2, dtype=np.float32), paddle_tcp)
+            return self._with_right_hold_y(self._begin_upward_burst(), paddle_tcp)
 
         if self.phase == "nudge_gap":
             if self.phase_steps > 0:
                 self.phase_steps -= 1
-                return np.zeros(2, dtype=np.float32)
-            return self._begin_upward_burst()
+                return self._with_right_hold_y(np.zeros(2, dtype=np.float32), paddle_tcp)
+            return self._with_right_hold_y(self._begin_upward_burst(), paddle_tcp)
 
         if self.phase == "upward_burst":
             self.phase_steps -= 1
@@ -1019,7 +1083,7 @@ class ResetPolicyFSM:
                     cached_tcp=paddle_tcp,
                 )
                 return self._step_post_upward_window(state_info, cached_tcp=paddle_tcp)
-            return self._upward_burst_action()
+            return self._with_right_hold_y(self._upward_burst_action(), paddle_tcp)
 
         if self.phase == "wait_for_puck":
             hold_action = self._wait_for_puck_hold_action(state_info, cached_tcp=paddle_tcp)
