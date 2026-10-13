@@ -156,7 +156,13 @@ class ResetPolicyFSM:
         success_ignore_wall: bool = False,
         min_off_wall_window_steps: int = 2,
         max_stage2_cycles: int = 5,
-        capture_second_hit_frame: bool = True,
+        # Debug snapshot of the camera frame at the moment the second hit fires
+        # (real_runs/async_td3/second_hit_frames/). Off by default: it reads a fresh
+        # camera frame and writes two 960x720 PNGs on the control thread right
+        # before the strike is sent, which stretched that step to 100-140 ms instead
+        # of 50 and made every second hit ~1-2 steps late in online fine-tuning /
+        # eval (2026-10-12). The standalone CLI below still sets it explicitly.
+        capture_second_hit_frame: bool = False,
         async_second_hit_write: bool = False,
         show_second_hit_window: bool = False,
         broken_corner_side: Optional[str] = None,

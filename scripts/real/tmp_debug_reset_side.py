@@ -27,6 +27,18 @@ Usage (real-robot machine, repo root):
     python -m scripts.real.tmp_debug_reset_side --reset-y-max-extension-m 0.03 \\
         --reset-right-corner-x-extension-m 0.04                        # try other right-side reach
 
+Left-ending fix (this script only): a left-ending sweep (starts in the right corner)
+came into the left corner along the plain bottom limit, above the puck, and shoved it
+sideways into the left guard instead of getting under it. The right-ending sweep already
+had both fixes for its (left) start corner; here they are mirrored for the left END:
+  * the -y corner cut moves ``--left-end-corner-x-extension-m`` toward the end wall
+    (default = the sim's ``reset_left_corner_x_extension_m``; still capped by the
+    bottom limit, so it never goes past RESET_WALL_CLEARANCE_M off the wall), and
+  * on the part of the sweep with waypoint y below ``--left-end-press-below-y-m``,
+    x aims ``--left-end-wall-press-m`` past the path, i.e. the paddle rides the
+    bottom limit / corner cut into the corner (same as ``right_end_wall_press_m``).
+Set both to 0 to get the old left-ending sweep back.
+
 Keys while running: x = exit after the current step, h = abort the current reset
 and hard-reset the robot.
 """
@@ -63,6 +75,50 @@ _CSV_FIELDS = (
 )
 
 
+class _LeftEndPressFSM(rrp.ResetPolicyFSM):
+    """ResetPolicyFSM whose left-ending sweep rides the bottom limit into the left corner."""
+
+    def __init__(self, *args, left_end_wall_press_m: float = 0.03, left_end_press_below_y_m: float = 0.0,
+                 **kwargs):
+        self.left_end_wall_press_m = max(0.0, float(left_end_wall_press_m))
+        self.left_end_press_below_y_m = float(left_end_press_below_y_m)
+        self._left_end_press_active = False
+        super().__init__(*args, **kwargs)
+
+    def step(self, state_info: dict) -> np.ndarray:
+        # Only the edge_loop sweep of a left-ending reset (start_side "right") is changed.
+        self._left_end_press_active = (
+            not self.done and self.phase == "edge_loop" and self.start_side == "right"
+            and self.left_end_wall_press_m > 0.0
+        )
+        try:
+            return super().step(state_info)
+        finally:
+            self._left_end_press_active = False
+
+    def _toward_target(self, paddle_pos: np.ndarray, target: np.ndarray, max_delta_m: float) -> np.ndarray:
+        if not (self._left_end_press_active and float(target[1]) < self.left_end_press_below_y_m):
+            return super()._toward_target(paddle_pos, target, max_delta_m)
+        # Same as _wall_pressed_sweep_action, with the left-end press distance.
+        dx = float(np.clip(target[0] + self.left_end_wall_press_m - paddle_pos[0], -max_delta_m, max_delta_m))
+        dy = float(np.clip(target[1] - paddle_pos[1], -max_delta_m, max_delta_m))
+        return self._meters_delta_to_action(np.array([dx, dy], dtype=np.float32))
+
+
+def _install_left_end_corner_extension(sim, ext_m: float) -> None:
+    """Deepen the -y corner cut for left-ending resets too (the sim only does it for right-ending ones)."""
+    original = sim.set_reset_end_side
+
+    def set_reset_end_side(end_side):
+        original(end_side)
+        if end_side == "left" and ext_m > 0.0 and getattr(sim, "_reset_edge_lims_base", None) is not None:
+            edge_lims = list(sim.edge_lims)
+            edge_lims[3] += ext_m
+            sim.edge_lims = edge_lims
+
+    sim.set_reset_end_side = set_reset_end_side  # instance attribute: this process / this sim only
+
+
 def _parse_args():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--config-path", default="configs/real_configs/rollout_td3_config_hist4.yaml")
@@ -87,6 +143,15 @@ def _parse_args():
                    help="ResetPolicyFSM right_end_wall_press_m (right-ending sweeps; 0 = old sweep).")
     p.add_argument("--right-end-press-until-y-m", type=float, default=None,
                    help="ResetPolicyFSM right_end_press_until_y_m.")
+    p.add_argument("--left-end-wall-press-m", type=float, default=0.03,
+                   help="Left-ending sweeps: aim x this far past the path (into the bottom limit) while the "
+                        "waypoint y is below --left-end-press-below-y-m. 0 = old sweep.")
+    p.add_argument("--left-end-press-below-y-m", type=float, default=0.0,
+                   help="Left-ending sweeps: press only where the waypoint y is below this (TCP frame; "
+                        "the left corner is -y), i.e. on the way into the left corner.")
+    p.add_argument("--left-end-corner-x-extension-m", type=float, default=None,
+                   help="Left-ending sweeps: move the -y corner cut this far toward the end wall "
+                        "(default: the sim's reset_left_corner_x_extension_m; 0 = plain reset workspace).")
     p.add_argument("--no-timed-strike", action="store_true",
                    help="right_end_timed_strike=False: old fixed-distance second-hit trigger.")
     for name in ("timed_strike_contact_steps", "timed_strike_camera_latency_steps", "timed_strike_paddle_travel_m"):
@@ -152,9 +217,11 @@ def _run_one_reset(env, rng, args, reset_idx: int, out_dir: Path, nbc) -> dict:
     print(f"\n[debug_reset] reset {reset_idx}: workspace {_fmt_lims(sim)}"
           f"{'' if widen is not None else ' (not widened)'}")
 
-    fsm = rrp.ResetPolicyFSM(
+    fsm = _LeftEndPressFSM(
         env,
         rng,
+        left_end_wall_press_m=args.left_end_wall_press_m,
+        left_end_press_below_y_m=args.left_end_press_below_y_m,
         shared_success_threshold_proportion_from_bottom=float(args.success_line),
         success_ignore_wall=args.ignore_wall,
         capture_second_hit_frame=False,
@@ -286,6 +353,11 @@ def main():
     print(f"[debug_reset] normal workspace {_fmt_lims(sim)}")
     for name in _SIM_OVERRIDES:
         print(f"[debug_reset]   {name}={getattr(sim, name, 'n/a')}")
+    left_corner_ext = (float(getattr(sim, "reset_left_corner_x_extension_m", 0.0))
+                       if args.left_end_corner_x_extension_m is None else float(args.left_end_corner_x_extension_m))
+    _install_left_end_corner_extension(sim, left_corner_ext)
+    print(f"[debug_reset] left-ending fix: corner_x_extension={left_corner_ext:.3f} "
+          f"wall_press={args.left_end_wall_press_m:.3f} below_y={args.left_end_press_below_y_m:+.3f}")
 
     rng = np.random.default_rng(args.seed)
     summaries = []
