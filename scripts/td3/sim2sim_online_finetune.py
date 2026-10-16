@@ -435,6 +435,8 @@ def build_recycle_jobs(root: Path, envs: List[dict], seeds: List[int], cli) -> L
             cmd += ["--policy-lr", repr(cli.policy_lr)]
         if cli.overwrite:
             cmd.append("--overwrite")
+        if getattr(cli, "allow_hist_mismatch", False):
+            cmd.append("--allow-hist-mismatch")
         out = recycle_root(root, cli.recycle_alpha_start) / f"env{env['env']}_seed{s}.log"
         jobs.append({"name": f"recycle_env{env['env']}_seed{s}", "cmd": cmd, "log": str(out)})
     return jobs
@@ -584,7 +586,7 @@ def run_worker(cli) -> None:
     use_last = bool(train_args.use_last_action_in_policy_state)
     src_hist = ft._hist_len_of((checkpoint.get("args") or {}).get("config"))
     env_hist = _load_yaml(env_spec["sim_config"])["air_hockey"]["simulator_params"]["hist_len"]
-    if src_hist is not None and int(src_hist) != int(env_hist):
+    if src_hist is not None and int(src_hist) != int(env_hist) and not getattr(cli, "allow_hist_mismatch", False):
         raise SystemExit(f"hist_len mismatch: source policy {src_hist}, target env {env_hist}")
 
     sim_config = env_spec["sim_config"]
@@ -1021,6 +1023,7 @@ def main() -> None:
     ap.add_argument("--seed", type=int, help=argparse.SUPPRESS)
     ap.add_argument("--learner-device", default="cuda:0", help=argparse.SUPPRESS)
     ap.add_argument("--policy-lr", type=float, default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--allow-hist-mismatch", action="store_true", help=argparse.SUPPRESS)  # worker: target env hist_len may differ (sim2sim_gap_search)
     ap.add_argument("--recycle", action="store_true", help=argparse.SUPPRESS)  # worker: run the recycling trials
     cli = ap.parse_args()
 

@@ -484,12 +484,6 @@ class AirHockeyBox2D:
             'center_offset_constant_y': 0.0,
             # When True, paddle targets that overshoot are damped toward the table (see step logic).
             'absorb_target': False,
-            # Direct force control (the identify_ood_gap / OOD-oracle setup, commit 5020937):
-            # the action is the paddle force itself (action * direct_force_gain N in Box2D
-            # coords) instead of a displacement target through the low-pass filter and the
-            # PID controller. Off by default; the real robot is position/PID controlled.
-            'direct_force_control': False,
-            'direct_force_gain': 1250.0,
             'puck_restitution': 1.0,
             'paddle_restitution': 1.0,
             # Wall restitution defaults: side rails (x-min/x-max) are livelier
@@ -519,6 +513,13 @@ class AirHockeyBox2D:
             'random_occlusion_max_run': 7,
             'random_occlusion_decay': 0.5,
             'random_occlusion_length_weights': None,
+            # Position-dependent occlusion measured on the real robot (JSON grid of
+            # P(occluded | true puck in cell), written by
+            # scripts/visualization/plot_occlusion_heatmaps.py --save-map). Each time the
+            # true puck enters a new cell, the observation is occluded with that cell's
+            # probability and stays so until the next cell change; OR-combined with the
+            # uniform occlusions above. None = off.
+            'occlusion_map_path': None,
             # Robust derivative-estimation controls used for accel/jerk readouts.
             'derivative_min_dt': 1e-6,
             'acceleration_ema_alpha': 0.35,
@@ -648,8 +649,10 @@ class AirHockeyBox2D:
         # Keep tuple ordering consistent with real environment construction.
         self.edge_lims = (self.top_abs, self.bot_abs, self.max_bias_p, self.max_bias_m)
         self.hist_len = config.hist_len
-        self.direct_force_control = bool(config.direct_force_control)
-        self.direct_force_gain = float(config.direct_force_gain)
+        # Direct force control (action = paddle force, no filter / PID; commits 5020937 / 9a3d5e6)
+        # was removed: fail loudly instead of silently running PID on such a config.
+        if getattr(config, 'direct_force_control', False):
+            raise ValueError("direct_force_control was removed; the paddle is always filter + PID controlled")
         self.center_offset_constant = config.center_offset_constant
         self.center_offset_constant_y = float(config.center_offset_constant_y)
         self.enable_action_delay = bool(config.enable_action_delay)
@@ -688,6 +691,11 @@ class AirHockeyBox2D:
         self._occlusion_last_visible_base = {}
         self._occlusion_prev_occluded = {}
         self._prev_puck_positions_box2d = {}
+        self.occlusion_map = self._load_occlusion_map(config.occlusion_map_path)
+        self._occ_map_rng = np.random.default_rng()
+        self._occ_map_cell = {}
+        self._occ_map_occluded = {}
+        self._occ_map_last_visible_base = {}
 
         self.last_action = np.zeros(2) # keep the last action taken, used for action lag
         self.last_target_position = None  # base-frame target used for visualization/debugging
@@ -789,6 +797,11 @@ class AirHockeyBox2D:
 
     def reset(self, seed, **kwargs):
         self.rng = np.random.RandomState(seed)
+        # Own stream so turning the occlusion map on does not shift any other random draw.
+        self._occ_map_rng = np.random.default_rng(None if seed is None else [int(seed), 0x0CC1])
+        self._occ_map_cell = {}
+        self._occ_map_occluded = {}
+        self._occ_map_last_visible_base = {}
         self.timestep = 0
 
         if hasattr(self, "object_dict"):
@@ -991,6 +1004,17 @@ class AirHockeyBox2D:
                 occluded, puck_base_xy_observed = self._update_random_occlusion(
                     puck_name, puck_base_xy_true
                 )
+                if self.occlusion_map is not None:
+                    # Cell lookup uses the true body position (no delay / noise); a frame is
+                    # reported only if neither model occludes it, else the last reported one.
+                    body_base_xy = self._box2d_to_base_coords(self.pucks[puck_name].position)
+                    occluded = self._update_map_occlusion(puck_name, body_base_xy) or occluded
+                    if occluded:
+                        puck_base_xy_observed = np.array(self._occ_map_last_visible_base.get(
+                            puck_name, (OCCLUDED_PLACEHOLDER_TABLE_X, 0.0)), dtype=float)
+                    else:
+                        puck_base_xy_observed = np.array(puck_base_xy_true, dtype=float)
+                        self._occ_map_last_visible_base[puck_name] = puck_base_xy_observed.copy()
                 puck_box2d_observed = self._base_to_box2d_coords(puck_base_xy_observed)
                 puck_x_vel = self.pucks[puck_name].linearVelocity[0]
                 puck_y_vel = self.pucks[puck_name].linearVelocity[1]
@@ -1044,6 +1068,42 @@ class AirHockeyBox2D:
             return 1
         probs = weights / weight_sum
         return int(self.rng.choice(lengths, p=probs))
+
+    @staticmethod
+    def _load_occlusion_map(path):
+        if not path:
+            return None
+        import json
+        import os
+        candidates = [path, os.path.join(os.path.dirname(__file__), "..", "..", path)]
+        for cand in candidates:
+            if os.path.isfile(cand):
+                with open(cand) as f:
+                    data = json.load(f)
+                p = np.clip(np.asarray(data["p"], dtype=float), 0.0, 1.0)
+                x_edges = np.asarray(data["x_edges"], dtype=float)
+                y_edges = np.asarray(data["y_edges"], dtype=float)
+                if p.shape != (len(x_edges) - 1, len(y_edges) - 1):
+                    raise ValueError(f"occlusion map {cand}: p shape {p.shape} does not match the edges")
+                return {"p": p, "x_edges": x_edges, "y_edges": y_edges}
+        raise FileNotFoundError(f"occlusion_map_path not found: {path}")
+
+    def _occlusion_map_cell(self, base_xy):
+        m = self.occlusion_map
+        i = int(np.searchsorted(m["x_edges"], base_xy[0], side="right")) - 1
+        j = int(np.searchsorted(m["y_edges"], base_xy[1], side="right")) - 1
+        if 0 <= i < m["p"].shape[0] and 0 <= j < m["p"].shape[1]:
+            return (i, j)
+        return None  # outside the grid: p = 0
+
+    def _update_map_occlusion(self, puck_name, true_base_xy):
+        """Redraw occluded ~ Bernoulli(p_cell) whenever the true puck changes cell; hold it within a cell."""
+        cell = self._occlusion_map_cell(true_base_xy)
+        if puck_name not in self._occ_map_cell or cell != self._occ_map_cell[puck_name]:
+            self._occ_map_cell[puck_name] = cell
+            p = 0.0 if cell is None else float(self.occlusion_map["p"][cell])
+            self._occ_map_occluded[puck_name] = bool(p > 0.0 and self._occ_map_rng.random() < p)
+        return self._occ_map_occluded[puck_name]
 
     def _update_random_occlusion(self, puck_name, true_puck_base_xy):
         if not self.enable_random_occlusions:
@@ -1474,44 +1534,6 @@ class AirHockeyBox2D:
             self.paddles['paddle_ego'].ApplyForceToCenter(force.astype(float), True)
         return force
 
-    def _apply_direct_force(self, pos, act):
-        """direct_force_control: the action is the paddle force (no filter, no PID),
-        as in the identify_ood_gap OOD-oracle runs (commit 5020937). Returns the applied force."""
-        force = np.array(act, dtype=float) * self.direct_force_gain
-
-        if pos[1] > 0 - 3 * self.paddle_radius:
-            force[1] = min(force[1], 0)
-
-        # Force clipping / normalization
-        force_mag = np.linalg.norm(force)
-        force_unit = force / (force_mag + 1e-8)
-
-        # second clipping
-        if force_mag > self.max_force_timestep:
-            force = force_unit * self.max_force_timestep
-
-        if self.force_scaling > 0:
-            force = force * self.force_scaling
-        force = force.astype(float)
-
-        force = force * np.array([self.action_x_scaling, self.action_y_scaling])
-
-        # Clip force to maximum allowed
-        force_mag = np.linalg.norm(force)
-        if force_mag > self.max_force_timestep:
-            force = force / force_mag * self.max_force_timestep
-
-        # Prevent unwanted behavior near max work horizontal line (only reachable when the
-        # workspace extends past it; the real-robot workspace clip stops the paddle earlier).
-        if pos[1] >= -0.35:
-            force[1] = min(force[1], 0)     # only allow paddle to move back towards agent
-            self.paddles['paddle_ego'].linearVelocity[1] = 0.0  # reset velocity by imagining we hit a wall
-
-        # Apply force to paddle
-        if 'paddle_ego' in self.paddles:
-            self.paddles['paddle_ego'].ApplyForceToCenter(force.astype(float), True)
-        return force
-
     def get_singleagent_transition(self, action):
         collision_start_idx = len(self.collision_listener.collision_forces)
         self.observation_state_info = None
@@ -1547,10 +1569,7 @@ class AirHockeyBox2D:
                 act = np.copy(action)
             pos = np.array([self.paddles['paddle_ego'].position[0], self.paddles['paddle_ego'].position[1]])
 
-            if self.direct_force_control:
-                force = self._apply_direct_force(pos, act)
-            else:
-                force = self._apply_pid_force(pos, act)
+            force = self._apply_pid_force(pos, act)
 
             self.world.Step(sim_time, 100, 100)
 
