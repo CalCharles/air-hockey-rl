@@ -22,7 +22,7 @@ import numpy as np
 PADDLE_RADIUS = 0.0508
 PUCK_RADIUS = 0.03175
 CONTACT_SLOP = 0.02
-CONTACT_THRESH = PADDLE_RADIUS + PUCK_RADIUS + CONTACT_SLOP  # ~0.0826 m
+CONTACT_THRESH = PADDLE_RADIUS + PUCK_RADIUS + CONTACT_SLOP  # ~0.1026 m
 
 WINDOW = 25            # long-term direction window: 25 frames before/after
 INNER = 5              # ignore the 5 frames immediately around contact

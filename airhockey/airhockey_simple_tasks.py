@@ -6,6 +6,22 @@ from .airhockey_base import AirHockeyBaseEnv
 from .airhockey_rewards import AirHockeyPuckCatchReward, AirHockeyPuckVelReward, AirHockeyPuckTouchReward, AirHockeyPuckHeightReward, AirHockeyPuckJuggleReward, AirHockeyPuckJuggleLinearTopReward, AirHockeyPuckJuggleNoBaseReward, AirHockeyPuckJuggleUpperHalfReward, AirHockeyPuckJuggleUpperHalfMidBandReward, AirHockeyPuckStrikeReward, AirHockeyStrikeCrowdReward, AirHockeyPaddleFreeMovementReward, AirHockeyPinballTriangleSideReward, AirHockeyTopEdgeSlotGoalReward, AirHockeyTopEdgeVelocityScaledGoalReward
 
 class AirHockeyPuckVelEnv(AirHockeyBaseEnv):
+    def __init__(self, **kwargs):
+        # Count reward / success only after the first paddle-puck contact
+        # (AirHockeyPuckVelReward). On in the real-robot eval configs, off in sim.
+        self.puck_vel_reward_after_contact = bool(kwargs.get("puck_vel_reward_after_contact", False))
+        super().__init__(**kwargs)
+
+    def reset(self, seed=None, **kwargs):
+        self.reward.reset_episode()
+        return super().reset(seed, **kwargs)
+
+    def soft_reset(self):
+        # Real-robot episodes start with a soft reset after the reset policy,
+        # which drives the paddle through env.step and strikes the puck.
+        self.reward.reset_episode()
+        return super().soft_reset()
+
     def get_puck_configuration(self, bad_regions=None):
         # Same spawn as juggle: uniform over the top fraction of the table with a
         # random low-speed heading, rather than a fixed drop from the top edge.

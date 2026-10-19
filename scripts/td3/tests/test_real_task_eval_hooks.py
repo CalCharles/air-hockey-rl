@@ -29,6 +29,7 @@ from scripts.td3.helper.real_task_eval_hooks import (
     JuggleEvalHooks,
     PaddleReachEvalHooks,
     PaddleReachVelocityEvalHooks,
+    PuckGoalEvalHooks,
     PuckTouchEvalHooks,
     PuckVelocityEvalHooks,
     get_task_eval_hooks,
@@ -41,6 +42,8 @@ CANONICAL = {
     "puck_velocity": PuckVelocityEvalHooks,
     "paddle_reach_position": PaddleReachEvalHooks,
     "paddle_reach_position_velocity": PaddleReachVelocityEvalHooks,
+    "puck_goal_position_sparse": PuckGoalEvalHooks,
+    "puck_goal_position_speed_sparse": PuckGoalEvalHooks,
 }
 
 
@@ -84,6 +87,14 @@ class _FakeGoalEnv:
 
 
 class RegistryTests(unittest.TestCase):
+    def test_only_puck_velocity_discards_stopped_episodes(self):
+        for task, cls in CANONICAL.items():
+            with self.subTest(task=task):
+                self.assertEqual(
+                    get_task_eval_hooks(task).discard_stopped_episodes,
+                    cls is PuckVelocityEvalHooks,
+                )
+
     def test_five_canonical_tasks_registered(self):
         for task, cls in CANONICAL.items():
             with self.subTest(task=task):
@@ -105,6 +116,7 @@ class RegistryTests(unittest.TestCase):
             metrics = hooks.compute_episode_metrics(result=_result(True), rows=rows, env=env)
             allowed = set(hooks.numeric_series_fields) | set(hooks.rate_fields) | {
                 "goal_x", "goal_y", "goal_vx", "goal_vy",
+                "goal_speed", "goal_radius_m", "goal_speed_radius_mps", "contact_ignore_rows",
             }
             with self.subTest(task=task):
                 self.assertTrue(set(metrics) <= allowed, set(metrics) - allowed)
@@ -271,6 +283,79 @@ class PuckTaskMetricsTests(unittest.TestCase):
         self.assertAlmostEqual(m["episode_max_upward_step_m"], 0.10, places=9)
         self.assertIsInstance(m["episode_hit_puck"], bool)
         self.assertIn("upward=0.150m", hooks.format_kept_console_extras(m))
+
+
+class PuckGoalMetricsTests(unittest.TestCase):
+    """Rows: puck falls onto the paddle (contact at row 3), then is hit up
+    through the goal at (-0.9, 0.0), 0.05 m per 0.05 s step = 1 m/s."""
+
+    def _rows(self, goal_pass=True):
+        xs = [-1.0, -0.9, -0.8, -0.7 - CONTACT_THRESH / 2, -0.8, -0.85]
+        if goal_pass:
+            xs += [-0.9, -0.95, -1.0]
+        else:
+            xs += [-0.86, -0.87, -0.88]
+        ys = [0.0] * len(xs) if goal_pass else [0.0] * 6 + [0.3] * 3
+        return [_row((-0.7, 0.0), puck_xy=(x, y), occluded=0.0) for x, y in zip(xs, ys)]
+
+    def _env(self, speed=None):
+        env = _FakeGoalEnv(goal=(-0.9, 0.0), goal_vel=None if speed is None else (speed,), goal_radius=0.02)
+        env.goal_speed_radius = 0.5
+        return env
+
+    def test_position_goal_saved_and_recomputed(self):
+        hooks = PuckGoalEvalHooks()
+        env = self._env()
+        hooks.on_episode_start(env)
+        m = hooks.compute_episode_metrics(result=_result(True, ["goal_reached"]), rows=self._rows(), env=env)
+        self.assertEqual((m["goal_x"], m["goal_y"], m["goal_radius_m"]), (-0.9, 0.0, 0.02))
+        self.assertIsNone(m["goal_speed"])
+        self.assertTrue(m["episode_goal_reached"])
+        self.assertTrue(m["episode_goal_reached_rows"])
+        self.assertEqual(m["episode_steps_to_goal"], 7)
+        self.assertEqual(m["episode_contacts"], 1)
+        self.assertAlmostEqual(m["episode_min_goal_dist_m"], 0.0, places=9)
+        self.assertIn("goal=(-0.900,0.000)", hooks.format_kept_console_extras(m))
+
+    def test_goal_needs_contact_first(self):
+        hooks = PuckGoalEvalHooks()
+        env = self._env()
+        hooks.on_episode_start(env)
+        # Puck drifts through the goal without ever touching the paddle.
+        rows = [_row((-0.3, 0.0), puck_xy=(x, 0.0), occluded=0.0) for x in (-1.0, -0.95, -0.9, -0.85)]
+        m = hooks.compute_episode_metrics(result=_result(False), rows=rows, env=env)
+        self.assertFalse(m["episode_goal_reached_rows"])
+        self.assertIsNone(m["episode_min_goal_dist_m"])
+        self.assertEqual(m["goal_x"], -0.9)
+
+    def test_speed_goal(self):
+        for goal_speed, expect in ((1.0, True), (2.5, False)):
+            hooks = PuckGoalEvalHooks()
+            env = self._env(speed=goal_speed)
+            hooks.on_episode_start(env)
+            m = hooks.compute_episode_metrics(result=_result(False), rows=self._rows(), env=env)
+            with self.subTest(goal_speed=goal_speed):
+                self.assertEqual(m["goal_speed"], goal_speed)
+                self.assertEqual(m["goal_speed_radius_mps"], 0.5)
+                self.assertEqual(m["episode_goal_reached_rows"], expect)
+
+    def test_contacts_during_post_reset_hold_do_not_count(self):
+        hooks = PuckGoalEvalHooks()
+        hooks.contact_ignore_rows = 8
+        env = self._env()
+        hooks.on_episode_start(env)
+        # The only contact is at row 3 (inside the hold), then the puck passes the goal.
+        m = hooks.compute_episode_metrics(result=_result(False), rows=self._rows(), env=env)
+        self.assertFalse(m["episode_goal_reached_rows"])
+        self.assertEqual(m["episode_contacts"], 1)
+        self.assertEqual(m["contact_ignore_rows"], 8)
+
+    def test_soft_reset_resamples_goal(self):
+        hooks = PuckGoalEvalHooks()
+        env = self._env()
+        hooks.on_soft_reset(env)
+        self.assertEqual(env.set_goals_calls, ["fixed"])
+        self.assertEqual(env.marker_synced, 1)
 
 
 class AggregateIntegrationTests(unittest.TestCase):

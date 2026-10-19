@@ -60,7 +60,9 @@ class AirHockeyPuckGoalPositionSparseReward(AirHockeyRewardBase):
     def get_base_reward(self, state_info):
         ag = self.task_env.get_achieved_goal(state_info)
         dg = self.task_env.get_desired_goal()
-        success = bool(self.goal_met(ag, dg))
+        # An occluded reading is a placeholder (or a held last position), not
+        # where the puck is: the placeholder (-0.8, 0) lies inside the goal box.
+        success = bool(self.goal_met(ag, dg)) and self.task_env.puck_visible(state_info)
         return (self.GOAL_REWARD if success else 0.0), success
 
 
@@ -95,5 +97,7 @@ class AirHockeyPuckGoalPositionSpeedSparseReward(AirHockeyRewardBase):
     def get_base_reward(self, state_info):
         ag = self.task_env.get_achieved_goal(state_info)
         dg = self.task_env.get_desired_goal()
-        success = bool(self.goal_met(ag, dg))
+        # An occluded reading is a placeholder (or a held last position), not
+        # where the puck is: the placeholder (-0.8, 0) lies inside the goal box.
+        success = bool(self.goal_met(ag, dg)) and self.task_env.puck_visible(state_info)
         return (self.GOAL_REWARD if success else 0.0), success

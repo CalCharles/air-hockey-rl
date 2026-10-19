@@ -2078,7 +2078,7 @@ def _prompt_optional_run_note() -> str:
     return note
 
 
-def _setup_run_data_dir(args: Args, run_note: str) -> Path:
+def _setup_run_data_dir(args: Args, run_note: str, existing_run_data_dir: str | Path | None = None) -> Path:
     """Create the unified per-run folder and route every artifact into it.
 
     Layout (all under `<data_root_dir>/data_<TIMESTAMP>/`):
@@ -2103,11 +2103,16 @@ def _setup_run_data_dir(args: Args, run_note: str) -> Path:
         `main()` resolves cleanly to `checkpoint_root_dir`.
 
     To direct artifacts to a different location, change `--data-root-dir`.
-    """
-    data_root_base = Path(args.data_root_dir).expanduser().resolve()
 
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_data_dir = data_root_base / f"data_{timestamp}"
+    `existing_run_data_dir` reuses that folder instead of creating a new
+    `data_<TIMESTAMP>` one (used to resume an interrupted eval).
+    """
+    if existing_run_data_dir is not None:
+        run_data_dir = Path(existing_run_data_dir).expanduser().resolve()
+    else:
+        data_root_base = Path(args.data_root_dir).expanduser().resolve()
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        run_data_dir = data_root_base / f"data_{timestamp}"
     run_data_dir.mkdir(parents=True, exist_ok=True)
 
     # Episode/reset artifact subdirs are populated dynamically (not declared

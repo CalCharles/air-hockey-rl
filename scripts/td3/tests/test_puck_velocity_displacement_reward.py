@@ -19,13 +19,14 @@ from airhockey.airhockey_rewards.airhockey_simple_task_rewards import AirHockeyP
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-def _make_env(**sim_overrides):
+def _make_env(task_overrides=None, **sim_overrides):
     config_path = (
         REPO_ROOT / "configs" / "new_juggle" / "tasks" / "sim_sysid_puck_vel.yaml"
     )
     with config_path.open("r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)["air_hockey"]
     cfg["seed"] = 4
+    cfg.update(task_overrides or {})
     cfg["simulator_params"].update(sim_overrides)
     return AirHockeyEnv(cfg)
 
@@ -130,6 +131,97 @@ class PuckVelocityDisplacementRewardTests(unittest.TestCase):
                     env.step(np.zeros(2, dtype=np.float32))
         finally:
             env.close()
+
+
+class PuckVelocityAfterContactTests(unittest.TestCase):
+    """``puck_vel_reward_after_contact``: nothing pays before the first paddle
+    contact, which on the real robot excludes the reset policy's strike."""
+
+    @staticmethod
+    def _state(env, puck_x, contact=False, policy_in_control=True):
+        return {
+            "pucks": [{"position": (puck_x, 0.0), "velocity": (0.0, 0.0), "occluded": 0}],
+            "paddles": env.current_state["paddles"],
+            "paddle_puck_collision_count": int(contact),
+            "policy_in_control": policy_in_control,
+        }
+
+    def _reward(self, env, state):
+        # Consecutive timesteps, as env.step would give them.
+        env.current_timestep += 1
+        return env.reward.get_base_reward(state)
+
+    def test_off_by_default(self):
+        env = _make_env(puck_noise=False, enable_random_occlusions=False)
+        try:
+            self.assertFalse(env.puck_vel_reward_after_contact)
+        finally:
+            env.close()
+
+    def test_rising_puck_pays_only_after_a_policy_contact(self):
+        env = _make_env({"puck_vel_reward_after_contact": True},
+                        puck_noise=False, enable_random_occlusions=False)
+        try:
+            env.reset()
+            self._reward(env, self._state(env, -0.10))
+            # Rising from the reset strike: no contact yet.
+            reward, success = self._reward(env, self._state(env, -0.20))
+            self.assertEqual(reward, 0.0)
+            # Contact during the post-reset hold is not the policy's.
+            reward, _ = self._reward(env, self._state(env, -0.30, contact=True, policy_in_control=False))
+            self.assertEqual(reward, 0.0)
+            reward, _ = self._reward(env, self._state(env, -0.40))
+            self.assertEqual(reward, 0.0)
+            # The policy's contact step and every step after it pay.
+            reward, _ = self._reward(env, self._state(env, -0.45, contact=True))
+            self.assertAlmostEqual(reward, AirHockeyPuckVelReward.DISPLACEMENT_SCALE * 0.05, places=9)
+            reward, _ = self._reward(env, self._state(env, -0.55))
+            self.assertAlmostEqual(reward, AirHockeyPuckVelReward.DISPLACEMENT_SCALE * 0.10, places=9)
+            # A soft reset (the real-robot hand-off) starts a fresh episode.
+            env.soft_reset()
+            self._reward(env, self._state(env, -0.10))
+            reward, _ = self._reward(env, self._state(env, -0.20))
+            self.assertEqual(reward, 0.0)
+        finally:
+            env.close()
+
+    def test_success_needs_a_contact(self):
+        env = _make_env({"puck_vel_reward_after_contact": True},
+                        puck_noise=False, enable_random_occlusions=False)
+        try:
+            env.reset()
+            env.current_timestep = 30
+            _, success = self._reward(env, self._state(env, -0.70))
+            self.assertFalse(success)
+            _, success = self._reward(env, self._state(env, -0.75, contact=True))
+            self.assertTrue(success)
+        finally:
+            env.close()
+
+    def test_sim_rollouts_match_ungated_from_first_contact(self):
+        gated = _make_env({"puck_vel_reward_after_contact": True},
+                          puck_noise=False, enable_random_occlusions=False)
+        plain = _make_env(puck_noise=False, enable_random_occlusions=False)
+        rng = np.random.default_rng(0)
+        contacted_episodes = 0
+        try:
+            for episode in range(30):
+                gated.reset(seed=episode)
+                plain.reset(seed=episode)
+                contacted = False
+                while True:
+                    action = rng.uniform(-1, 1, size=2).astype(np.float32)
+                    _, r_gated, done, truncated, info = gated.step(action)
+                    _, r_plain, _, _, _ = plain.step(action)
+                    contacted = contacted or info.get("paddle_puck_collision_count", 0) > 0
+                    self.assertAlmostEqual(r_gated, r_plain if contacted else 0.0, places=9)
+                    if done or truncated:
+                        break
+                contacted_episodes += int(contacted)
+            self.assertGreater(contacted_episodes, 0)
+        finally:
+            gated.close()
+            plain.close()
 
 
 if __name__ == "__main__":

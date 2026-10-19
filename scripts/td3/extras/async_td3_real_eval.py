@@ -224,6 +224,12 @@ class EvalSpecificArgs:
     # task_hooks.periodic_hard_reset_every episodes (3) / after stops.
     home_before_reset: bool = True
 
+    # Resume an interrupted eval: when the newest data_* folder under
+    # --data-root-dir has no eval_summary.json and was started with the same
+    # --model-path, the run continues in that folder and only runs the episodes
+    # still missing. --no-resume always starts a fresh data_* folder.
+    resume: bool = True
+
 
 def _parse_eval_specific_args() -> EvalSpecificArgs:
     """Strip eval-specific flags from ``sys.argv`` before tyro sees it.
@@ -335,6 +341,15 @@ def _parse_eval_specific_args() -> EvalSpecificArgs:
             "reset with a periodic hard reset."
         ),
     )
+    parser.add_argument(
+        "--no-resume",
+        dest="resume",
+        action="store_false",
+        help=(
+            "Always start a fresh data_* folder (default: continue the newest unfinished "
+            "eval of the same --model-path under --data-root-dir)."
+        ),
+    )
     parsed, remaining = parser.parse_known_args(sys.argv[1:])
     sys.argv = [sys.argv[0]] + remaining
     if int(parsed.puck_pass_paddle_frames) < 1:
@@ -371,6 +386,7 @@ def _parse_eval_specific_args() -> EvalSpecificArgs:
         terminate_on_puck_pass_paddle=bool(parsed.terminate_on_puck_pass_paddle),
         puck_pass_paddle_frames=int(parsed.puck_pass_paddle_frames),
         home_before_reset=bool(parsed.home_before_reset),
+        resume=bool(parsed.resume),
     )
 
 
@@ -517,6 +533,9 @@ def run_eval(
         if task_hooks.post_reset_transition_hold_steps is None
         else int(task_hooks.post_reset_transition_hold_steps)
     )
+    if hasattr(task_hooks, "contact_ignore_rows"):
+        # Puck-goal hooks: contacts during the post-reset hold are not the policy's.
+        task_hooks.contact_ignore_rows = int(post_reset_hold_steps)
     print(
         f"[eval_run] reset_success_ignore_wall={int(eval_args.reset_success_ignore_wall)} "
         f"reset_success_line={eval_args.reset_success_line} "
@@ -602,6 +621,7 @@ def run_eval(
     pending_reset_artifact = startup_result.pending_reset_artifact
     next_reset_file_id = startup_result.next_reset_file_id
 
+    resume_state = _load_eval_resume_state(args, eval_args)
     counters: dict = {
         "reset_fsm_steps_total": int(startup_result.total_fsm_steps),
         "protective_stop_episodes": 0,
@@ -620,6 +640,10 @@ def run_eval(
         "episodes_camera_video_failed": 0,
         "successful_online_episodes_kept": 0,
     }
+    if resume_state is not None:
+        for key, value in resume_state["counters"].items():
+            if key in counters:
+                counters[key] += value
 
     policy_runner = PolicyRunner(
         env,
@@ -665,6 +689,17 @@ def run_eval(
     total_attempts = 0
     eval_start_time = time.time()
     eval_started_iso = datetime.fromtimestamp(eval_start_time, tz=timezone.utc).isoformat()
+    prior_elapsed_s = 0.0
+    if resume_state is not None:
+        per_episode_records = list(resume_state["records"])
+        total_attempts = int(resume_state["total_attempts"])
+        prior_elapsed_s = float(resume_state["elapsed_s"])
+        eval_started_iso = str(resume_state["started_iso"] or eval_started_iso)
+        print(
+            f"[eval] resuming {run_data_dir_from_args(args)}: kept "
+            f"{len(per_episode_records)}/{target_kept} after {total_attempts} attempts; "
+            f"{max(0, target_kept - len(per_episode_records))} episode(s) to go"
+        )
 
     while len(per_episode_records) < target_kept:
         if max_attempts is not None and total_attempts >= max_attempts:
@@ -719,6 +754,19 @@ def run_eval(
             min_timesteps=int(task_hooks.min_timesteps),
         )
         pending_reset_artifact = None
+        episode_had_stop = bool(
+            result.metrics.had_protective_stop
+            or result.metrics.had_controller_disconnect
+            or result.terminal.readiness_fail_estop
+            or result.metrics.episode_estop_flag > 0
+        )
+        if episode_kept and episode_had_stop and getattr(task_hooks, "discard_stopped_episodes", False):
+            # The HDF5 / GIF / video stay on disk for inspection; the episode
+            # is left out of the eval set and another attempt is run.
+            episode_kept = False
+            clean_reason = "stopped_episode"
+            counters["successful_online_episodes_kept"] -= 1
+            counters["episodes_removed_stopped"] = counters.get("episodes_removed_stopped", 0) + 1
 
         # Per-step loop timing -> TensorBoard, one run per attempt (kept or not),
         # named by ``run_episode_index`` in episode_summaries.jsonl. Runs after the
@@ -821,6 +869,13 @@ def run_eval(
                 **task_metrics,
             },
         )
+        _write_eval_resume_state(
+            args,
+            counters=counters,
+            total_attempts=total_attempts,
+            elapsed_s=prior_elapsed_s + (time.time() - eval_start_time),
+            started_iso=eval_started_iso,
+        )
 
         # 4. Reset between episodes.
         kind = pick_reset_kind(
@@ -900,7 +955,8 @@ def run_eval(
         "n_discarded": int(total_attempts - len(per_episode_records)),
         "started_iso": eval_started_iso,
         "finished_iso": eval_finished_iso,
-        "elapsed_s": float(eval_finished_time - eval_start_time),
+        "elapsed_s": float(prior_elapsed_s + (eval_finished_time - eval_start_time)),
+        "resumed": resume_state is not None,
         "checkpoint_q_updates": int(agent_bundle.metadata.get("q_updates", 0)),
         "checkpoint_actor_updates": int(agent_bundle.metadata.get("actor_updates", 0)),
         "agent_metadata": dict(agent_bundle.metadata),
@@ -937,6 +993,136 @@ def run_eval(
 # writes the eval-specific filename so analysts can find the eval set with
 # one ls. (We still fan out to episode_summaries.jsonl too, in run_eval.)
 # ---------------------------------------------------------------------------
+
+
+_EVAL_RESUME_STATE_FILENAME = "eval_resume_state.json"
+
+
+def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
+    """Rows of a JSONL file; a truncated last line (killed mid-write) is skipped."""
+    import json
+
+    rows: List[Dict[str, Any]] = []
+    if not path.exists():
+        return rows
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                print(f"[eval] skipping unreadable line in {path}")
+    return rows
+
+
+def _find_resumable_eval_dir(args: Args, eval_args: EvalSpecificArgs) -> Optional[Path]:
+    """Newest data_* folder under --data-root-dir that is an unfinished eval of this model.
+
+    Unfinished = no eval_summary.json yet. Only the newest folder is considered,
+    so a finished eval followed by a rerun starts a new folder.
+    """
+    import json
+
+    root = Path(args.data_root_dir).expanduser().resolve()
+    if not root.is_dir():
+        return None
+    candidates = sorted(p for p in root.glob("data_*") if p.is_dir())
+    if not candidates:
+        return None
+    newest = candidates[-1]
+    if (newest / eval_args.eval_summary_filename).exists():
+        return None
+    run_start = next(
+        (r for r in _read_jsonl(newest / "run_events.jsonl") if r.get("event_type") == "run_start"),
+        None,
+    )
+    if run_start is None or run_start.get("mode") != "eval":
+        print(f"[eval] not resuming {newest}: no eval run_start event")
+        return None
+    prev_model = run_start.get("model_path")
+    if args.model_path is None or prev_model is None or (
+        Path(str(prev_model)).expanduser().resolve() != Path(str(args.model_path)).expanduser().resolve()
+    ):
+        print(
+            f"[eval] not resuming {newest}: it evaluated model_path={prev_model!r}, "
+            f"this run uses {args.model_path!r}"
+        )
+        return None
+    return newest
+
+
+def _load_eval_resume_state(args: Args, eval_args: EvalSpecificArgs) -> Optional[Dict[str, Any]]:
+    """Kept records, attempt count and counters of an interrupted eval in this run folder.
+
+    None for a fresh folder. eval_per_episode.jsonl (kept episodes) and
+    episode_summaries.jsonl (every attempt) are the source of truth; the state
+    file adds the step-level counters and elapsed time when it exists (folders
+    from before resume support only have the JSONLs).
+    """
+    import json
+
+    run_dir = Path(run_data_dir_from_args(args))
+    records = _read_jsonl(run_dir / eval_args.eval_per_episode_filename)
+    attempts = _read_jsonl(run_dir / "episode_summaries.jsonl")
+    if not records and not attempts:
+        return None
+    state: Dict[str, Any] = {}
+    state_path = run_dir / _EVAL_RESUME_STATE_FILENAME
+    if state_path.exists():
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except Exception:
+            print(f"[eval] could not read {state_path}; rebuilding counters from the JSONLs")
+            state = {}
+    counters = dict(state.get("counters", {}))
+    if not counters:
+        counters = {
+            "protective_stop_episodes": sum(bool(r.get("had_protective_stop")) for r in attempts),
+            "controller_disconnect_episodes": sum(bool(r.get("had_controller_disconnect")) for r in attempts),
+            "readiness_fail_estop_episodes": sum(bool(r.get("readiness_fail_estop")) for r in attempts),
+            "successful_online_episodes_kept": len(records),
+        }
+    # The startup reset of this process is counted afresh.
+    counters.pop("reset_fsm_steps_total", None)
+    total_attempts = max(
+        int(state.get("total_attempts", 0)),
+        max((int(r.get("run_episode_index", 0)) for r in attempts), default=0),
+        len(records),
+    )
+    return {
+        "records": records,
+        "total_attempts": total_attempts,
+        "counters": counters,
+        "elapsed_s": float(state.get("elapsed_s", 0.0)),
+        "started_iso": state.get("started_iso"),
+    }
+
+
+def _write_eval_resume_state(
+    args: Args,
+    *,
+    counters: Dict[str, Any],
+    total_attempts: int,
+    elapsed_s: float,
+    started_iso: str,
+) -> None:
+    import json
+
+    path = Path(run_data_dir_from_args(args)) / _EVAL_RESUME_STATE_FILENAME
+    payload = {
+        "counters": {k: v for k, v in counters.items() if isinstance(v, (int, float))},
+        "total_attempts": int(total_attempts),
+        "elapsed_s": float(elapsed_s),
+        "started_iso": started_iso,
+    }
+    try:
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp.replace(path)
+    except Exception:
+        print(f"[eval] failed to write {path}:\n{traceback.format_exc()}")
 
 
 def _append_eval_per_episode_row(
@@ -1023,6 +1209,7 @@ def main(args: Args, train_args: TrainArgs, eval_args: EvalSpecificArgs) -> None
         config=str(getattr(args, "config", "")) if getattr(args, "config", None) else None,
         model_path=str(getattr(args, "model_path", "")) if getattr(args, "model_path", None) else None,
         mode="eval",
+        resumed=bool(eval_args.resume and (run_data_dir_from_args(args) / "eval_per_episode.jsonl").exists()),
         eval_episodes=int(eval_args.eval_episodes),
         eval_max_attempts=int(eval_args.eval_max_attempts),
     )
@@ -1118,5 +1305,8 @@ if __name__ == "__main__":
         )
 
     # No interactive run-note prompt — eval is meant to run unattended.
-    _setup_run_data_dir(args, run_note="")
+    resume_dir = _find_resumable_eval_dir(args, eval_args) if eval_args.resume else None
+    if resume_dir is not None:
+        print(f"[eval] continuing the unfinished eval in {resume_dir} (--no-resume starts a new folder)")
+    _setup_run_data_dir(args, run_note="", existing_run_data_dir=resume_dir)
     main(args, train_args, eval_args)

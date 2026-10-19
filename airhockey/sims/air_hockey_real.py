@@ -1658,8 +1658,46 @@ class AirHockeyReal:
                                     "position": copy.deepcopy(self.puck),
                                     "velocity": np.array(self.puck_history[-1])[:2] - np.array(self.puck_history[-2])[:2],
                                     "occluded": np.array(self.puck_history[-1])[-1:]})
+        # "velocity" above is the per-frame displacement (m/frame), which the
+        # existing real-robot rewards are tuned to. Box2D's "velocity" is m/s, so
+        # tasks that compare puck speed to a sim-trained m/s target (the sparse
+        # puck goal + speed task) read "velocity_mps" when present: the same
+        # displacement over the nominal step period, 0 when either frame is occluded.
+        state_info["pucks"][0]["velocity_mps"] = self._puck_velocity_mps()
+        # Box2D reports paddle-puck contacts from its physics; the real table has
+        # no contact sensor, so infer one from geometry: a visible puck within
+        # paddle_radius + puck_radius + REAL_CONTACT_SLOP_M of the paddle. Same
+        # rule as scripts/td3/helper/juggle_counter.py (the eval's contact count).
+        # The sparse puck-goal tasks only pay the goal once a contact is seen.
+        state_info["paddle_puck_collision_count"] = int(self._puck_in_paddle_contact(state_info))
         # print("state_info", state_info)
         return state_info
+
+    REAL_CONTACT_SLOP_M = 0.02
+    # Nominal policy step period (20 Hz; block_time 0.049 s + compute time).
+    REAL_STEP_PERIOD_S = 0.05
+
+    def _puck_velocity_mps(self):
+        try:
+            cur = np.asarray(self.puck_history[-1], dtype=float).reshape(-1)
+            prev = np.asarray(self.puck_history[-2], dtype=float).reshape(-1)
+        except (IndexError, TypeError, ValueError):
+            return np.zeros(2)
+        if cur.size < 3 or prev.size < 3 or cur[2] > 0.5 or prev[2] > 0.5:
+            return np.zeros(2)
+        return (cur[:2] - prev[:2]) / self.REAL_STEP_PERIOD_S
+
+    def _puck_in_paddle_contact(self, state_info):
+        try:
+            puck = state_info["pucks"][0]
+            if float(np.asarray(puck["occluded"]).reshape(-1)[0]) > 0.5:
+                return False
+            paddle_xy = np.asarray(state_info["paddles"]["paddle_ego"]["position"], dtype=float)[:2]
+            puck_xy = np.asarray(puck["position"], dtype=float)[:2]
+        except (KeyError, IndexError, TypeError, ValueError):
+            return False
+        thresh = float(self.paddle_radius) + float(self.puck_radius) + self.REAL_CONTACT_SLOP_M
+        return bool(np.linalg.norm(paddle_xy - puck_xy) < thresh)
 
 
     def poll_puck_detection(self):
@@ -2413,6 +2451,8 @@ class AirHockeyReal:
             next_state["transition_hold_active"] = bool(self._transition_hold_steps_remaining > 0)
             next_state["transition_hold_reason"] = str(self._transition_hold_reason)
             next_state["transition_hold_steps_remaining"] = int(self._transition_hold_steps_remaining)
+            # Stopped / disconnected: the policy's action was not executed.
+            next_state["policy_in_control"] = False
             next_state["command_rearm_event"] = bool(self._command_rearm_event)
             next_state["controller_connected"] = bool(controller_connected)
             next_state["control_program_running"] = bool(control_program_running)
@@ -2447,6 +2487,10 @@ class AirHockeyReal:
         next_state["transition_hold_active"] = bool(self._transition_hold_steps_remaining > 0)
         next_state["transition_hold_reason"] = str(self._transition_hold_reason)
         next_state["transition_hold_steps_remaining"] = int(self._transition_hold_steps_remaining)
+        # Whether this step executed the commanded action. transition_hold_active
+        # above is read after the hold countdown, so it is already False on the
+        # hold's last (still held) step; this uses the value from before it.
+        next_state["policy_in_control"] = not bool(transition_hold_active)
         next_state["command_rearm_event"] = bool(self._command_rearm_event)
         next_state["controller_connected"] = bool(controller_connected)
         next_state["control_program_running"] = bool(control_program_running)

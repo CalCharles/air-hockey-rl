@@ -1,0 +1,66 @@
+# Real-world TD3+HER rollout / eval config for `puck_goal_position_speed_sparse`, hist2.
+# Real simulator block from tasks/rollout_td3_puck_vel_hist2.yaml; task keys from
+# data/policies_2026-09-19/puck_goal_vel/sysid/config.yaml. return_goal_obs: false
+# appends the 3-d goal (x, y, speed) to the 30-d obs, the flat layout the HER policy was trained on.
+#
+# Eval entrypoint: scripts/td3/extras/async_td3_real_eval.py. The goal is drawn
+# once per episode on env.reset() (every episode with the default
+# --home-before-reset) and shown as a ring on the camera overlay.
+air_hockey:
+  max_timesteps: 250
+  num_blocks: 0
+  num_obstacles: 0
+  num_paddles: 1
+  num_pucks: 1
+  num_targets: 0
+  obs_type: history
+  simulator: real
+  simulator_params:
+    absorb_target: false
+    block_density: 500
+    block_width: 0.0254
+    force_scaling: 1000
+    gravity: -0.73  # sysid v2; unused by the real sim, read by the goal shot sampler (puck_goal_sparse._flight_params)
+    hist_len: 2
+    length: 1.9304
+    max_force_timestep: 100
+    paddle_damping: 3
+    paddle_density: 2500
+    paddle_radius: 0.0508
+    puck_damping: 0.11  # sysid v2; as above
+    puck_density: 250
+    puck_hit_bottom_boundary_m: 0.03  # = sim default (airhockey_base.py), as in rollout_td3_config_hist2.yaml
+    puck_radius: 0.03175
+    render_size: 360
+    wall_bounce_scale: 0.02
+    width: 0.8636
+    control_mode: RL
+    wait_for_space_to_start: true
+    save_path: ./data/rollout/temp_saving/RL_test
+    debug_control: true
+    debug_control_every: 5
+    transition_hold_steps_on_estop_enter: 0
+    transition_hold_steps_on_estop_clear: 8
+    transition_hold_steps_on_safety_rearm: 3
+    transition_hold_debug: false
+    async_render_enabled: true
+    async_render_sim_view_enabled: true
+  task: puck_goal_position_speed_sparse
+  terminate_on_enemy_goal: true
+  terminate_on_goal_reached: true
+  terminate_on_out_of_bounds: false
+  terminate_on_puck_hit_bottom: true
+  terminate_on_puck_hit_paddle: false
+  terminate_on_puck_pass_paddle: true
+  terminate_on_puck_stop: false
+  return_goal_obs: false
+  goal_radius_type: fixed
+  base_goal_radius: 0.1
+  base_goal_speed_radius: 0.5
+  goal_position_margin: 0.1
+  goal_sampling: shot
+  goal_shot_max_angle_deg: 45.0
+  goal_shot_min_upward_speed: 0.3
+  goal_shot_speed_range:
+  - 1.0
+  - 3.0

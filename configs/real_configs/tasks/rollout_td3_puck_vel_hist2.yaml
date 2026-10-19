@@ -30,7 +30,7 @@ air_hockey:
     paddle_radius: 0.0508
     puck_damping: 0.5
     puck_density: 250
-    puck_hit_bottom_boundary_m: 0.2
+    puck_hit_bottom_boundary_m: 0.03  # = sim default (airhockey_base.py), as in rollout_td3_config_hist2.yaml
     puck_radius: 0.03175
     render_size: 360
     wall_bounce_scale: 0.02
@@ -47,6 +47,10 @@ air_hockey:
     async_render_enabled: true
     async_render_sim_view_enabled: true
   task: puck_velocity
+  # Reward / success only from the first paddle-puck contact on (contacts during
+  # the post-reset hold do not count): the episode starts while the puck is still
+  # rising from the reset policy's strike. Off in sim (AirHockeyPuckVelReward).
+  puck_vel_reward_after_contact: true
   terminate_on_enemy_goal: true
   terminate_on_out_of_bounds: false
   terminate_on_puck_hit_bottom: true

@@ -33,7 +33,7 @@ task-specific bits the orchestrator can't know:
   * ``on_episode_start(env)`` — snapshot whatever the metrics need at
     episode start (goal tasks record the goal).
 
-Five canonical tasks ship with a registered hooks class:
+These tasks ship with a registered hooks class:
 
   ================================= ================================ ======================
   ``task:``                         hooks                            reset
@@ -44,6 +44,8 @@ Five canonical tasks ship with a registered hooks class:
   ``puck_velocity``                 ``PuckVelocityEvalHooks``        ``ResetPolicyFSM``
   ``paddle_reach_position``         ``PaddleReachEvalHooks``         ``PaddleRepositionFSM``
   ``paddle_reach_position_velocity`` ``PaddleReachVelocityEvalHooks`` ``PaddleRepositionFSM``
+  ``puck_goal_position_sparse``     ``PuckGoalEvalHooks``            ``ResetPolicyFSM``
+  ``puck_goal_position_speed_sparse`` ``PuckGoalEvalHooks``          ``ResetPolicyFSM``
   ================================= ================================ ======================
 
 Unknown tasks fall through to ``GenericEvalHooks`` (puck FSM reset, bare
@@ -157,6 +159,10 @@ class BaseTaskEvalHooks:
     rate_fields: Tuple[str, ...] = BASE_RATE_FIELDS
     field_format_overrides: Dict[str, Tuple[str, str, str, str]] = {}
     min_timesteps: int = 10
+    # Drop episodes with a protective stop / controller disconnect / readiness
+    # e-stop from the eval set (they still count as attempts and in the stop
+    # counters). Off by default: juggle keeps them, as it always has.
+    discard_stopped_episodes: bool = False
 
     reset_strategy: str = RESET_STRATEGY_PUCK_FSM
     force_fsm_after_hard_reset: bool = False
@@ -389,13 +395,21 @@ class PuckVelocityEvalHooks(BaseTaskEvalHooks):
       * ``episode_max_upward_step_m``     — largest single-step upward move
                                             (a proxy for peak puck speed
                                             right after the hit).
+      * ``episode_upward_displacement_after_contact_m`` — the same sum from
+                                            the first contact row on (rows
+                                            before it are the reset strike's
+                                            travel); what the env reward pays
+                                            with ``puck_vel_reward_after_contact``.
       * ``episode_contacts``              — paddle-puck contact events.
       * ``episode_hit_puck``              — contacts > 0.
+    Contacts in the first ``contact_ignore_rows`` rows (the post-reset hold)
+    do not start the after-contact sum, as in the env.
     """
 
     numeric_series_fields: Tuple[str, ...] = (
         "episode_return",
         "episode_upward_displacement_m",
+        "episode_upward_displacement_after_contact_m",
         "episode_max_upward_step_m",
         "episode_contacts",
         "episode_reward",
@@ -410,10 +424,18 @@ class PuckVelocityEvalHooks(BaseTaskEvalHooks):
     )
     field_format_overrides: Dict[str, Tuple[str, str, str, str]] = {
         "episode_upward_displacement_m": (".3f", ".3f", ".3f", ".3f"),
+        "episode_upward_displacement_after_contact_m": (".3f", ".3f", ".3f", ".3f"),
         "episode_max_upward_step_m":     (".3f", ".3f", ".3f", ".3f"),
         "episode_contacts":              (".2f", ".0f", ".1f", ".2f"),
     }
     min_timesteps: int = 5
+    # A stop freezes the paddle mid-episode, so the episode no longer measures
+    # the policy's hit.
+    discard_stopped_episodes: bool = True
+
+    # Leading rows that are the post-reset zero-action hold; the eval sets it
+    # to its post-reset hold length (see PuckGoalEvalHooks).
+    contact_ignore_rows: int = 0
 
     def compute_episode_metrics(
         self, *, result: Any, rows: list, env: Any = None
@@ -421,7 +443,13 @@ class PuckVelocityEvalHooks(BaseTaskEvalHooks):
         counts = count_juggles_from_rows(rows)
         puck = _rows_xy(rows, "puck")
         occluded = _rows_puck_occluded(rows)
+        paddle = _rows_xy(rows, "pose")
+        contact_dist = np.linalg.norm(paddle - puck, axis=1)
+        contact = ~occluded & np.isfinite(contact_dist) & (contact_dist < CONTACT_THRESH)
+        contact[: max(0, int(self.contact_ignore_rows))] = False
+        first_contact = int(np.argmax(contact)) if contact.any() else puck.shape[0]
         upward_total = 0.0
+        upward_after_contact = 0.0
         upward_max = 0.0
         for t in range(1, puck.shape[0]):
             if occluded[t] or occluded[t - 1]:
@@ -430,9 +458,12 @@ class PuckVelocityEvalHooks(BaseTaskEvalHooks):
             if not np.isfinite(dx) or dx <= 0.0:
                 continue
             upward_total += dx
+            if t >= first_contact:
+                upward_after_contact += dx
             upward_max = max(upward_max, dx)
         return {
             "episode_upward_displacement_m": float(upward_total),
+            "episode_upward_displacement_after_contact_m": float(upward_after_contact),
             "episode_max_upward_step_m":     float(upward_max),
             "episode_contacts":              int(counts.n_contacts),
             "episode_hit_puck":              bool(counts.n_contacts > 0),
@@ -441,6 +472,7 @@ class PuckVelocityEvalHooks(BaseTaskEvalHooks):
     def format_kept_console_extras(self, metrics: Dict[str, Any]) -> str:
         return (
             f"upward={float(metrics['episode_upward_displacement_m']):.3f}m "
+            f"after_contact={float(metrics['episode_upward_displacement_after_contact_m']):.3f}m "
             f"max_step={float(metrics['episode_max_upward_step_m']):.3f}m "
             f"contacts={int(metrics['episode_contacts'])}"
         )
@@ -661,6 +693,156 @@ class PaddleReachVelocityEvalHooks(PaddleReachEvalHooks):
 
 
 # ---------------------------------------------------------------------------
+# Sparse puck-goal tasks (puck reset FSM; goal drawn on env.reset / soft reset).
+# ---------------------------------------------------------------------------
+
+
+# Nominal real policy step period, to turn per-row puck displacement into m/s
+# (same value as AirHockeyReal.REAL_STEP_PERIOD_S).
+_REAL_STEP_PERIOD_S = 0.05
+
+
+class PuckGoalEvalHooks(BaseTaskEvalHooks):
+    """``puck_goal_position_sparse`` / ``puck_goal_position_speed_sparse``:
+    +10 when the puck reaches the goal (and, for the speed task, the goal
+    speed) after the paddle has touched it; the episode ends there.
+
+    Reset: ``ResetPolicyFSM``. ``on_soft_reset`` draws a fresh goal so the
+    primed obs carries it (hard resets draw one in ``env.reset``).
+
+    The goal is snapshotted in ``on_episode_start`` and saved in every record
+    (``goal_x`` / ``goal_y`` / ``goal_speed`` / ``goal_radius_m`` /
+    ``goal_speed_radius_mps``), so success can be recomputed later from the
+    episode HDF5 (``pose`` / ``puck`` rows) without rerunning the robot.
+
+    Metrics, recomputed from the rows with the same rules as the env reward
+    (contact = juggle-counter distance threshold; speed from consecutive
+    visible frames over the nominal step period):
+      * ``episode_goal_reached``         — env success or ``goal_reached``.
+      * ``episode_goal_reached_rows``    — the rows' recomputation of it.
+      * ``episode_contacts`` / ``episode_hit_puck`` (all rows).
+    Only contacts after the first ``contact_ignore_rows`` rows (the post-reset
+    hold) count towards the goal, as in the env, which skips held steps.
+      * ``episode_min_goal_dist_m``      — closest visible puck-goal distance
+                                           after the first contact (``None``
+                                           without a contact).
+      * ``episode_steps_to_goal``        — 1-based row of the first row that
+                                           meets the goal after contact.
+    """
+
+    numeric_series_fields: Tuple[str, ...] = (
+        "episode_return",
+        "episode_contacts",
+        "episode_min_goal_dist_m",
+        "episode_steps_to_goal",
+        "episode_reward",
+        "episode_length",
+    )
+    rate_fields: Tuple[str, ...] = (
+        "episode_goal_reached",
+        "episode_goal_reached_rows",
+        "episode_hit_puck",
+        "episode_success",
+        "had_protective_stop",
+        "had_controller_disconnect",
+        "readiness_fail_estop",
+    )
+    field_format_overrides: Dict[str, Tuple[str, str, str, str]] = {
+        "episode_contacts":        (".2f", ".0f", ".1f", ".2f"),
+        "episode_min_goal_dist_m": (".3f", ".3f", ".3f", ".3f"),
+        "episode_steps_to_goal":   (".1f", ".0f", ".1f", ".1f"),
+    }
+    # A goal can be met soon after the hand-off.
+    min_timesteps: int = 5
+
+    # Leading rows of every episode that are the post-reset zero-action hold
+    # (the robot holds still, the policy's action is ignored); contacts there
+    # are not the policy's. The eval sets it to its post-reset hold length.
+    contact_ignore_rows: int = 0
+
+    def __init__(self) -> None:
+        self._goal: Optional[np.ndarray] = None
+        self._goal_radius: Optional[float] = None
+        self._goal_speed_radius: Optional[float] = None
+
+    # --- reset side ---
+    def on_soft_reset(self, env: Any) -> None:
+        _resample_goal(env)
+
+    def on_episode_start(self, env: Any) -> None:
+        self._goal = PaddleReachEvalHooks._read_goal(env)
+        radius = getattr(env, "goal_radius", None)
+        self._goal_radius = float(radius) if radius is not None else None
+        speed_radius = getattr(env, "goal_speed_radius", None)
+        self._goal_speed_radius = float(speed_radius) if speed_radius is not None else None
+
+    # --- metrics side ---
+    def compute_episode_metrics(
+        self, *, result: Any, rows: list, env: Any = None
+    ) -> Dict[str, Any]:
+        goal = self._goal if self._goal is not None else PaddleReachEvalHooks._read_goal(env)
+        has_speed = goal is not None and goal.size >= 3
+        counts = count_juggles_from_rows(rows)
+        metrics: Dict[str, Any] = {
+            "episode_goal_reached":      _goal_reached_from_result(result),
+            "episode_goal_reached_rows": False,
+            "episode_contacts":          int(counts.n_contacts),
+            "episode_hit_puck":          bool(counts.n_contacts > 0),
+            "episode_min_goal_dist_m":   None,
+            "episode_steps_to_goal":     None,
+            "goal_x":                    float(goal[0]) if goal is not None and goal.size > 0 else None,
+            "goal_y":                    float(goal[1]) if goal is not None and goal.size > 1 else None,
+            "goal_speed":                float(goal[2]) if has_speed else None,
+            "goal_radius_m":             self._goal_radius,
+            "goal_speed_radius_mps":     self._goal_speed_radius if has_speed else None,
+            "contact_ignore_rows":       int(self.contact_ignore_rows),
+        }
+        if goal is None or goal.size < 2 or not rows:
+            return metrics
+        paddle = _rows_xy(rows, "pose")
+        puck = _rows_xy(rows, "puck")
+        visible = ~_rows_puck_occluded(rows)
+        contact_dist = np.linalg.norm(paddle - puck, axis=1)
+        contact = visible & np.isfinite(contact_dist) & (contact_dist < CONTACT_THRESH)
+        contact[: max(0, int(self.contact_ignore_rows))] = False
+        if not contact.any():
+            return metrics
+        after = np.arange(len(rows)) >= int(np.argmax(contact))
+        goal_dist = np.linalg.norm(puck - goal[:2][None, :], axis=1)
+        ok_dist = visible & after & np.isfinite(goal_dist)
+        if ok_dist.any():
+            metrics["episode_min_goal_dist_m"] = float(np.min(goal_dist[ok_dist]))
+        met = ok_dist.copy()
+        if self._goal_radius is not None:
+            met &= goal_dist <= self._goal_radius
+        if has_speed and self._goal_speed_radius is not None:
+            speed = np.full(len(rows), np.nan)
+            both = visible[1:] & visible[:-1]
+            step = np.linalg.norm(puck[1:] - puck[:-1], axis=1) / _REAL_STEP_PERIOD_S
+            speed[1:][both] = step[both]
+            met &= np.isfinite(speed) & (np.abs(speed - float(goal[2])) <= self._goal_speed_radius)
+        hit = np.where(met)[0]
+        if hit.size > 0:
+            metrics["episode_goal_reached_rows"] = True
+            metrics["episode_steps_to_goal"] = int(hit[0]) + 1
+        return metrics
+
+    def format_kept_console_extras(self, metrics: Dict[str, Any]) -> str:
+        min_d = metrics.get("episode_min_goal_dist_m")
+        steps = metrics.get("episode_steps_to_goal")
+        speed = metrics.get("goal_speed")
+        goal = f"goal=({metrics.get('goal_x', float('nan')):.3f},{metrics.get('goal_y', float('nan')):.3f})"
+        if speed is not None:
+            goal += f" goal_speed={speed:.2f}m/s"
+        return (
+            f"goal_reached={int(bool(metrics['episode_goal_reached']))} "
+            f"contacts={int(metrics['episode_contacts'])} "
+            f"min_dist={'-' if min_d is None else f'{min_d:.3f}'}m "
+            f"steps_to_goal={'-' if steps is None else int(steps)} {goal}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Registry + factory.
 # ---------------------------------------------------------------------------
 
@@ -688,6 +870,8 @@ TASK_EVAL_HOOKS.update(
         "paddle_reach_position":           PaddleReachEvalHooks,
         "paddle_reach_position_neg":       PaddleReachEvalHooks,
         "paddle_reach_position_velocity":  PaddleReachVelocityEvalHooks,
+        "puck_goal_position_sparse":       PuckGoalEvalHooks,
+        "puck_goal_position_speed_sparse": PuckGoalEvalHooks,
     }
 )
 

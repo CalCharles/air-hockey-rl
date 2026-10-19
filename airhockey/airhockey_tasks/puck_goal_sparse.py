@@ -163,17 +163,33 @@ class AirHockeyPuckGoalPositionSparseEnv(AirHockeyGoalEnv):
         self._puck_contacted = False
         return super().reset_from_state_and_goal(state_vector, goal_vector, seed)
 
+    def soft_reset(self):
+        # Real-robot episodes start with a soft reset after the reset policy,
+        # which drives the paddle through env.step and strikes the puck: its
+        # contact must not count as the policy's.
+        self._puck_contacted = False
+        return super().soft_reset()
+
     def get_achieved_goal(self, state_info):
         """Puck state plus the episode's contact flag: ``(x, y, vx, vy, contacted)``.
 
         The flag latches on the first step whose state reports a paddle-puck
-        collision (``paddle_puck_collision_count`` from the simulator).
+        collision (``paddle_puck_collision_count`` from the simulator), except
+        on real-robot steps where the commanded action was not executed
+        (``policy_in_control`` False: post-reset / post-stop transition hold,
+        protective stop, disconnect). Box2D states have no such key.
+        Velocity is m/s: Box2D's ``velocity``, or the real robot's
+        ``velocity_mps`` (its ``velocity`` is per-frame displacement).
         """
-        if int(state_info.get("paddle_puck_collision_count", 0) or 0) > 0:
+        if (
+            int(state_info.get("paddle_puck_collision_count", 0) or 0) > 0
+            and bool(state_info.get("policy_in_control", True))
+        ):
             self._puck_contacted = True
         puck = state_info["pucks"][0]
+        vel = puck.get("velocity_mps", puck["velocity"])
         return np.array(
-            [puck["position"][0], puck["position"][1], puck["velocity"][0], puck["velocity"][1],
+            [puck["position"][0], puck["position"][1], vel[0], vel[1],
              1.0 if self._puck_contacted else 0.0],
             dtype=np.float64,
         )
@@ -182,7 +198,16 @@ class AirHockeyPuckGoalPositionSparseEnv(AirHockeyGoalEnv):
         return np.array(self.goal_pos[:2], dtype=np.float64)
 
     def goal_reached(self, state_info):
-        return bool(self.reward.goal_met(self.get_achieved_goal(state_info), self.get_desired_goal()))
+        return bool(
+            self.reward.goal_met(self.get_achieved_goal(state_info), self.get_desired_goal())
+            and self.puck_visible(state_info)
+        )
+
+    @staticmethod
+    def puck_visible(state_info):
+        """False when the puck reading is occluded (a placeholder, not a position)."""
+        occluded = state_info["pucks"][0].get("occluded", 0)
+        return not float(np.asarray(occluded, dtype=float).reshape(-1)[0]) > 0.5
 
     def get_observation(self, state_info, obs_type="history", **kwargs):
         return self.get_observation_by_type(state_info, obs_type=obs_type, **kwargs)

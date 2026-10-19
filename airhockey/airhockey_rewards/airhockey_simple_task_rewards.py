@@ -14,6 +14,14 @@ class AirHockeyPuckVelReward(AirHockeyRewardBase):
     the first step of an episode, and any step where the puck was occluded at
     either end, since an occluded reading is a placeholder rather than a
     position.  The displacement is multiplied by ``DISPLACEMENT_SCALE``.
+
+    With ``task_env.puck_vel_reward_after_contact`` (real-robot eval configs),
+    reward and success only count from the first paddle-puck contact of the
+    episode on.  A real episode starts while the puck is still rising from the
+    reset policy's strike, and that travel is not the policy's.  Contacts on
+    steps where the commanded action was not executed (``policy_in_control``
+    False: the post-reset hold, stops) do not count, as in the sparse
+    puck-goal tasks.  Box2D states have no ``policy_in_control`` key.
     """
 
     # Reward per metre of upward puck travel. Raw metres (scale 1) give
@@ -29,6 +37,13 @@ class AirHockeyPuckVelReward(AirHockeyRewardBase):
         super().__init__(task_env)
         self._prev_puck_x = None
         self._prev_timestep = None
+        self._puck_contacted = False
+
+    def reset_episode(self):
+        """Clear the per-episode state (the env calls it on reset / soft_reset)."""
+        self._prev_puck_x = None
+        self._prev_timestep = None
+        self._puck_contacted = False
 
     @staticmethod
     def _is_occluded(puck):
@@ -57,6 +72,15 @@ class AirHockeyPuckVelReward(AirHockeyRewardBase):
         reward = self.DISPLACEMENT_SCALE * max(upward_displacement, 0.0)
         puck_height = -puck_x
         success = puck_height > 0.5 and timestep > 25
+
+        if getattr(self.task_env, "puck_vel_reward_after_contact", False):
+            if (
+                int(state_info.get("paddle_puck_collision_count", 0) or 0) > 0
+                and bool(state_info.get("policy_in_control", True))
+            ):
+                self._puck_contacted = True
+            if not self._puck_contacted:
+                reward, success = 0.0, False
         return reward, success
 
 
