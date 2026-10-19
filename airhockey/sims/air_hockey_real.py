@@ -24,6 +24,7 @@ from .real.coordinate_transform import (
     CORNER_CUT_Y_EXTENT,
 )
 from .real.proprioceptive_state import get_state_array
+from .real.latest_frame_capture import LatestFrameCapture
 from .real.image_detection import find_red_hockey_puck, find_red_hockey_puck_antiglare
 from .real.table_calibration import (
     OCCLUDED_PLACEHOLDER_TABLE_X,
@@ -1321,8 +1322,9 @@ class AirHockeyReal:
             # TODO: changed camera to use the camera_index rather than a hardcode of 1
             # Use configured camera_index (default 0). Index 1 was a lab-specific
             # hardcode; many machines only expose /dev/video0.
-            self.cap = cv2.VideoCapture(int(self.camera_index), cv2.CAP_V4L2)
-            # self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            # Background reader keeps only the newest frame so each step sees the
+            # current table state instead of a stale frame from the V4L2 queue.
+            self.cap = LatestFrameCapture(int(self.camera_index), cv2.CAP_V4L2)
 
             if self._async_render_runtime_enabled and self.control_mode not in ["observe"]:
                 self._start_async_renderer(self._async_render_default_frame_shape)
