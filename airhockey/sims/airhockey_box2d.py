@@ -520,6 +520,19 @@ class AirHockeyBox2D:
             # probability and stays so until the next cell change; OR-combined with the
             # uniform occlusions above. None = off.
             'occlusion_map_path': None,
+            # Puck-only camera latency measured on the real robot (2026-10-18: the camera image
+            # trails robot telemetry by ~120-150 ms; the paddle observation is fresh telemetry).
+            # The reported puck (position + velocity; it also feeds reward / termination, as
+            # the camera puck does on the robot) is the true puck state from this many seconds
+            # earlier, linearly interpolated between physics sub-steps. 0 = off. Sits on top of
+            # the shared observation delay (delay_seconds), which still applies to both.
+            'puck_obs_lag_seconds': 0.0,
+            # If > 0, the lagged puck is additionally snapped to a camera frame grid of this
+            # period (e.g. 1/30 s) with a random per-episode phase: the reported frame is the
+            # last capture at or before (now - puck_obs_lag_seconds), so the lag varies within
+            # [lag, lag + period) and consecutive frames are unevenly spaced, as on the robot
+            # (30 fps camera read at 20 Hz). 0 = continuous (constant lag).
+            'puck_obs_lag_frame_period': 0.0,
             # Robust derivative-estimation controls used for accel/jerk readouts.
             'derivative_min_dt': 1e-6,
             'acceleration_ema_alpha': 0.35,
@@ -696,6 +709,12 @@ class AirHockeyBox2D:
         self._occ_map_cell = {}
         self._occ_map_occluded = {}
         self._occ_map_last_visible_base = {}
+        self.puck_obs_lag_seconds = max(float(config.puck_obs_lag_seconds), 0.0)
+        self.puck_obs_lag_frame_period = max(float(config.puck_obs_lag_frame_period), 0.0)
+        self._sim_time = 0.0
+        self._puck_trace = {}
+        self._puck_lag_phase = 0.0
+        self._puck_lag_rng = np.random.default_rng()
 
         self.last_action = np.zeros(2) # keep the last action taken, used for action lag
         self.last_target_position = None  # base-frame target used for visualization/debugging
@@ -802,6 +821,12 @@ class AirHockeyBox2D:
         self._occ_map_cell = {}
         self._occ_map_occluded = {}
         self._occ_map_last_visible_base = {}
+        # Own stream for the camera-grid phase, so the lag option leaves other draws unchanged.
+        self._puck_lag_rng = np.random.default_rng(None if seed is None else [int(seed), 0x1A6])
+        self._puck_lag_phase = float(self._puck_lag_rng.uniform(0.0, self.puck_obs_lag_frame_period)) \
+            if self.puck_obs_lag_frame_period > 0 else 0.0
+        self._sim_time = 0.0
+        self._puck_trace = {}
         self.timestep = 0
 
         if hasattr(self, "object_dict"):
@@ -996,6 +1021,10 @@ class AirHockeyBox2D:
             for puck_name in self.pucks:
                 puck_x_pos_true = self.pucks[puck_name].position[0]
                 puck_y_pos_true = self.pucks[puck_name].position[1]
+                puck_x_vel = self.pucks[puck_name].linearVelocity[0]
+                puck_y_vel = self.pucks[puck_name].linearVelocity[1]
+                if self.puck_obs_lag_seconds > 0:
+                    puck_x_pos_true, puck_y_pos_true, puck_x_vel, puck_y_vel = self._lagged_puck_state(puck_name)
                 puck_x_pos_true, puck_y_pos_true = self._apply_puck_delay_interpolation(
                     puck_name, (puck_x_pos_true, puck_y_pos_true)
                 )
@@ -1016,14 +1045,40 @@ class AirHockeyBox2D:
                         puck_base_xy_observed = np.array(puck_base_xy_true, dtype=float)
                         self._occ_map_last_visible_base[puck_name] = puck_base_xy_observed.copy()
                 puck_box2d_observed = self._base_to_box2d_coords(puck_base_xy_observed)
-                puck_x_vel = self.pucks[puck_name].linearVelocity[0]
-                puck_y_vel = self.pucks[puck_name].linearVelocity[1]
                 state_info['pucks'].append({'position': (float(puck_box2d_observed[0]), float(puck_box2d_observed[1])),
                                 'velocity': (puck_x_vel, puck_y_vel),
                                 'occluded': int(occluded)})
 
         state_info = self.convert_from_box2d_coords(state_info)
         return self._apply_fixed_state_velocity_jerk(state_info)
+
+    def _record_puck_trace(self):
+        if self.puck_obs_lag_seconds <= 0:
+            return
+        keep_s = self.puck_obs_lag_seconds + self.puck_obs_lag_frame_period + 2 * self.time_per_step
+        for name, puck in self.pucks.items():
+            trace = self._puck_trace.setdefault(name, [])
+            trace.append((self._sim_time, np.array([*puck.position, *puck.linearVelocity], dtype=float)))
+            while len(trace) > 2 and trace[1][0] < self._sim_time - keep_s:
+                trace.pop(0)
+
+    def _lagged_puck_state(self, puck_name):
+        """Box2D (x, y, vx, vy) of the puck ``puck_obs_lag_seconds`` ago (see the config defaults)."""
+        t = self._sim_time - self.puck_obs_lag_seconds
+        period = self.puck_obs_lag_frame_period
+        if period > 0:
+            t = self._puck_lag_phase + np.floor((t - self._puck_lag_phase) / period) * period
+        trace = self._puck_trace.get(puck_name)
+        if not trace:
+            body = self.pucks[puck_name]
+            return (*body.position, *body.linearVelocity)
+        if t <= trace[0][0]:
+            return tuple(float(v) for v in trace[0][1])  # before the episode began: the spawn state
+        for (t0, s0), (t1, s1) in zip(trace[:-1], trace[1:]):
+            if t <= t1:
+                w = 0.0 if t1 <= t0 else (t - t0) / (t1 - t0)
+                return tuple(float(v) for v in s0 + w * (s1 - s0))
+        return tuple(float(v) for v in trace[-1][1])
 
     def _apply_puck_delay_interpolation(self, puck_name, current_position):
         current = np.array(current_position, dtype=float)
@@ -1214,6 +1269,8 @@ class AirHockeyBox2D:
             puck.gravityScale = 0
         self.pucks[name] = puck
         self.object_dict[name] = puck
+        if self.puck_obs_lag_seconds > 0:
+            self._puck_trace[name] = [(self._sim_time, np.array([*puck.position, *puck.linearVelocity], dtype=float))]
         # Same as the paddle: the camera sees the puck where it was placed, so
         # the reset history holds the spawn position (flag 0 = not occluded)
         # rather than an off-table placeholder flagged as occluded.
@@ -1572,6 +1629,8 @@ class AirHockeyBox2D:
             force = self._apply_pid_force(pos, act)
 
             self.world.Step(sim_time, 100, 100)
+            self._sim_time += sim_time
+            self._record_puck_trace()
 
             # correct blocks for t=0
             if self.timestep == 0 and len(self.blocks) > 0:

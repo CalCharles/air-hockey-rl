@@ -157,7 +157,7 @@ def main():
         "",
         "## Return: mean ± standard error across policies (each policy = mean of its episodes)",
         "",
-        "| | source sim | target sim (+ occlusion map) | target − source |",
+        "| | source sim | target sim | target − source |",
         "|---|---|---|---|",
     ]
     ms, mt, md = mean_se(per["source"]), mean_se(per["target"]), mean_se(delta)
