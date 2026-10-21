@@ -14,6 +14,8 @@ All implementation and experiment decisions use the main session, without subage
 
 Model initialization, global randomization, and action-space exploration are now seeded. Earlier trainers only seeded resets and selected helper RNGs, so previous `seed` labels did not make whole runs reproducible. Resume preserves existing checkpoint RNG semantics; it is not an exact restoration of the simulator state.
 
+The matched 16-start source baseline is in `iteration_00/source_clean_matched/`: 429.6 mean observed steps, 135 median, 1.75 mean juggles, and zero genuine capped juggling. Its observed mean includes one 5,000-step episode with only three juggles and 4,205 contact frames; the repeated-juggle filter correctly excludes that episode from success. Mean duration credited to repeated juggling is 94.8 steps. Use the explicit `--config configs/new_juggle/sustained/clean_upper.yaml` when evaluating this source actor: its bundled `config.yaml` describes different physics. The exploratory `source_clean_paired/` baseline omitted this override and must not be compared with the new trials.
+
 ## Measuring actual juggling
 
 The evaluator uses the existing direction-flip juggle counter. Selection ranks genuine capped juggling first, then duration with repeated juggles, then observed survival. Long stationary contact or pinning the puck cannot count as successful juggling. This remains a heuristic quality check; inspect the GIFs and saved trajectories.
