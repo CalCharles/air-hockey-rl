@@ -57,3 +57,5 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-10-21 19:00 | Bounded residual CQL for sustained juggling | In-flight: first 100k results preserve juggling better, mixed scenario gains, no 2k-step cap completions | [2026-10-21_19-00_sustained-juggle-residual-cql.md](2026-10-21_19-00_sustained-juggle-residual-cql.md)
 
 - 2026-10-21 21-14 | Clean juggling iteration 1 | Selected upper; bounded validation, see GIFs and results | [2026-10-21_21-14_clean-juggle-iteration-1.md](2026-10-21_21-14_clean-juggle-iteration-1.md)
+
+- 2026-10-21 21-41 | Clean juggling iteration 2 | Selected long_discount; bounded validation, see GIFs and results | [2026-10-21_21-41_clean-juggle-iteration-2.md](2026-10-21_21-41_clean-juggle-iteration-2.md)
