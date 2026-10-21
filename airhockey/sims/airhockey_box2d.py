@@ -473,6 +473,10 @@ class AirHockeyBox2D:
             'max_paddle_vel': 2,
             'time_frequency': 20,
             'step_frequency': 20,
+            # Real cameras/telemetry add one history entry per control step.
+            # Legacy simulation adds an entry at every delay integration split.
+            # Opt in for new policies; old checkpoints keep their old contract.
+            'history_sample_once_per_step': False,
             'action_step_lag': 0,
             # Ignored in this class; env uses air_hockey.paddle_* for pre-step action clip.
             'paddle_bounds': [],
@@ -600,6 +604,7 @@ class AirHockeyBox2D:
         self.block_width = config.block_width
         self.max_force_timestep = config.max_force_timestep
         self.step_frequency = config.step_frequency # number of action steps per second
+        self.history_sample_once_per_step = bool(config.history_sample_once_per_step)
         self.time_frequency = config.time_frequency # number of simulation steps per second
         self.time_per_step = 1 / self.time_frequency
         self.force_scaling = config.force_scaling
@@ -1591,6 +1596,21 @@ class AirHockeyBox2D:
             self.paddles['paddle_ego'].ApplyForceToCenter(force.astype(float), True)
         return force
 
+    def _append_observation_history(self, state_info):
+        if 'pucks' in state_info:
+            for puck in state_info['pucks']:
+                self.puck_history.append(list(puck['position']) + [int(puck.get('occluded', 0))])
+        else:
+            for _ in self.pucks:
+                self.puck_history.append([OCCLUDED_PLACEHOLDER_TABLE_X, 0, 1])
+        if 'paddles' in state_info:
+            for paddle_data in state_info['paddles'].values():
+                self.paddle_history.append(list(paddle_data['position']) + [0])
+        else:
+            for _ in self.paddles:
+                if 'paddle_ego_acceleration' not in self.paddles or 'paddle_ego_force' not in self.paddles or 'paddle_ego_jerk' not in self.paddles:
+                    self.paddle_history.append([OCCLUDED_PLACEHOLDER_TABLE_X, 0, 1])
+
     def get_singleagent_transition(self, action):
         collision_start_idx = len(self.collision_listener.collision_forces)
         self.observation_state_info = None
@@ -1612,6 +1632,8 @@ class AirHockeyBox2D:
         obs_snapshot_recorded = False
         if t_obs is not None and t_obs <= 0.0:
             self.observation_state_info = copy.deepcopy(self.get_current_state())
+            if self.history_sample_once_per_step:
+                self._append_observation_history(self.observation_state_info)
             self.observation_puck_history = list(self.puck_history)
             self.observation_paddle_history = list(self.paddle_history)
             obs_snapshot_recorded = True
@@ -1654,20 +1676,12 @@ class AirHockeyBox2D:
             paddle_body.position = (float(pos[0]), float(pos[1]))
             
             state_info = self.get_current_state()
-            if 'pucks' in state_info:
-                for puck in state_info['pucks']:
-                    self.puck_history.append(list(puck["position"]) + [int(puck.get("occluded", 0))])
-            else:
-                for i in range(len(self.pucks.keys())):
-                    self.puck_history.append([OCCLUDED_PLACEHOLDER_TABLE_X,0,1])
-            
-            if 'paddles' in state_info:
-                for paddle_name, paddle_data in state_info['paddles'].items():
-                    self.paddle_history.append(list(paddle_data["position"]) + [0])
-            else:
-                for i in range(len(self.paddles.keys())):
-                    if 'paddle_ego_acceleration' not in self.paddles or 'paddle_ego_force' not in self.paddles or 'paddle_ego_jerk' not in self.paddles:
-                        self.paddle_history.append([OCCLUDED_PLACEHOLDER_TABLE_X,0,1])
+            sample_now = (
+                end_t >= self.time_per_step - 1e-12 if t_obs is None
+                else not obs_snapshot_recorded and end_t >= t_obs - 1e-12
+            )
+            if not self.history_sample_once_per_step or sample_now:
+                self._append_observation_history(state_info)
             
             total_force = np.array(force)
 

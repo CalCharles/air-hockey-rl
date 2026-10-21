@@ -164,6 +164,7 @@ class GraphedTD3Update:
         target_critic_subset_size: int | None = None,
         use_graph: bool = True,
         compile_update: bool = True,
+        actor_action_delta_penalty: float = 0.0,
     ) -> None:
         self.actor = actor
         self.actor_target = actor_target
@@ -177,6 +178,7 @@ class GraphedTD3Update:
         self.act_dim = int(act_dim)
         self.device = torch.device(device)
         self.gamma = float(gamma)
+        self.actor_action_delta_penalty = float(actor_action_delta_penalty)
         self.tau = float(tau)
         self.policy_noise = float(policy_noise)
         self.noise_clip = float(noise_clip)
@@ -464,6 +466,10 @@ class GraphedTD3Update:
         q1 = h_inverse(q1_h, eps=self.h_eps).view(-1)
         norm_q = (1.0 - self.gamma) * q1
         actor_loss = -norm_q.mean()
+        if self.actor_action_delta_penalty > 0:
+            actor_loss = actor_loss + self.actor_action_delta_penalty * (
+                current_policy_actions - prev_actions
+            ).square().mean()
         return actor_loss, norm_q.detach().mean()
 
     def _actor_step(self, counts: Tuple[int, int]) -> Dict[str, torch.Tensor]:

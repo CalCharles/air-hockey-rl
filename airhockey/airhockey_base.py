@@ -815,8 +815,8 @@ class AirHockeyBaseEnv(ABC, Env):
         if self.terminate_on_puck_stop:
             low_motion_cluster, low_motion_window = self._puck_low_motion_cluster_window(state_info)
             if not truncated and low_motion_cluster:
-                truncated = True
-                truncation_reasons.append(f"puck_low_motion_window_{low_motion_window}")
+                terminated = True
+                termination_reasons.append(f"puck_low_motion_window_{low_motion_window}")
 
 
         if "pucks" in state_info.keys():
@@ -829,8 +829,8 @@ class AirHockeyBaseEnv(ABC, Env):
                     state_info['paddles']['paddle_ego'],
                 )
                 if puck_passed_now:
-                    truncated = True
-                    truncation_reasons.append("puck_passed_paddle")
+                    terminated = True
+                    termination_reasons.append("puck_passed_paddle")
                     # print("Puck pass paddle")
             else:
                 self._puck_pass_paddle_score = 0
@@ -857,7 +857,6 @@ class AirHockeyBaseEnv(ABC, Env):
     def step(self, action):
         if not self.multiagent:
             obs, reward, is_finished, truncated, info = self.single_agent_step(action)
-            is_finished = is_finished or truncated
             return obs, reward, is_finished, truncated, info
         else:
             return self.multi_step(action)
@@ -923,7 +922,8 @@ class AirHockeyBaseEnv(ABC, Env):
         info['episode_end_type'] = episode_end_type
         info['episode_end_reasons'] = episode_end_reasons
         info['episode_end_reason'] = episode_end_reasons[0] if len(episode_end_reasons) > 0 else None
-        if not truncated:
+        time_limit_only = truncated and truncation_reasons == ["max_timesteps_exceeded"]
+        if not truncated or time_limit_only:
             reward, success = self.get_base_reward(next_state)
             # scale reward
             reward = reward * self.base_reward_scaling

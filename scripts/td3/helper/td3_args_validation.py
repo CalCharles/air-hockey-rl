@@ -49,6 +49,20 @@ def validate_args(args) -> None:
             "This training script currently supports only single-environment collection. "
             f"Set num_envs=1, got {args.num_envs}."
         )
+    train_every_steps = getattr(args, "train_every_steps", 0)
+    if train_every_steps < 0:
+        raise ValueError("train_every_steps must be >= 0.")
+    if train_every_steps > 0 and not args.single_replay_buffer:
+        raise ValueError("Fixed-step training requires single_replay_buffer=True.")
+    if getattr(args, "actor_action_delta_penalty", 0.0) < 0:
+        raise ValueError("actor_action_delta_penalty must be >= 0.")
+    actor_starts = getattr(args, "actor_learning_starts", None)
+    if actor_starts is not None and actor_starts < args.learning_starts:
+        raise ValueError("actor_learning_starts must be >= learning_starts.")
+    _fraction("gamma", args.gamma, exclusive=True)
+    if getattr(args, "survival_eval_steps", 0) < 0:
+        raise ValueError("survival_eval_steps must be >= 0.")
+    _positive("survival_eval_episodes", getattr(args, "survival_eval_episodes", 8))
     _fraction("critic_per_fraction", args.critic_per_fraction)
     _fraction("critic_uniform_fraction", args.critic_uniform_fraction)
     _sums_to_one(

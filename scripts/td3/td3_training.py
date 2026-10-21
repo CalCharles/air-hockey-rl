@@ -163,6 +163,9 @@ class Args:
     tau: float = 0.005
     batch_size: int = 256
     learning_starts: int = 5000
+    # Allow new critics to fit collected data before modifying a pretrained actor.
+    # None uses learning_starts, preserving the original schedule.
+    actor_learning_starts: int | None = None
     policy_lr: float = 3e-4
     q_lr: float = 1e-3
     q_weight_decay: float = 1e-4
@@ -171,6 +174,12 @@ class Args:
     policy_frequency: int = 2
     target_network_frequency: int = 1
     actor_updates_per_iteration: int = 1
+    # 0 retains the legacy episode-end schedule. Positive values drain the
+    # flat replay and update every N environment steps, even during an episode.
+    train_every_steps: int = 0
+    # Soft preference for smooth commands; does not change the deployed action
+    # mapping, PID gains, or action limits. Scaled against normalized Q.
+    actor_action_delta_penalty: float = 0.0
     exploration_noise: float = 0.1
     policy_noise: float = 0.2
     noise_clip: float = 0.5
@@ -305,6 +314,9 @@ class Args:
     eval_param_seed: int | None = None
     eval_n_envs: int = 1
     eval_eps_per_env: int = 4
+    # Optional survival-based checkpoint evaluation instead of short reward GIFs.
+    survival_eval_steps: int = 0
+    survival_eval_episodes: int = 8
 
 
 def make_env(env_id):
@@ -858,6 +870,7 @@ def _entrypoint():
         target_critic_subset_size=args.target_critic_subset_size,
         use_graph=use_cuda_graphs,
         compile_update=args.compile_update,
+        actor_action_delta_penalty=args.actor_action_delta_penalty,
     )
     print(
         f"Update engine: {'CUDA graphs' if updater.use_graph else 'eager'}"
@@ -1103,6 +1116,9 @@ def _entrypoint():
                 done=terminations_tensor[0],
                 prev_action=prev_action_for_transition[0],
             )
+            if args.train_every_steps > 0:
+                if (global_step + args.num_envs) % args.train_every_steps == 0:
+                    episode_trajectory.flush_to_buffer(success_rb, keep_episode_return=True)
             episode_return_success_threshold = finalize_episode_if_done(
                 episode_done=bool(dones[0]),
                 episode_trajectory=episode_trajectory,
@@ -1123,7 +1139,11 @@ def _entrypoint():
             _t_now = _pc(); section_time["bookkeeping"] += _t_now - _t_sec; _t_sec = _t_now
 
         # ----------------------------------------------------------- training
-        if global_step > args.learning_starts and episode_finished and not args.eval_mode:
+        update_due = (
+            (global_step + args.num_envs) % args.train_every_steps == 0
+            if args.train_every_steps > 0 else episode_finished
+        )
+        if global_step > args.learning_starts and update_due and not args.eval_mode:
             if args.per_enabled:
                 per_beta = linear_anneal(
                     args.per_beta_start,
@@ -1152,7 +1172,10 @@ def _entrypoint():
                 if total_critic_updates % args.target_network_frequency == 0:
                     updater.polyak()
 
-            for actor_update_idx in range(args.actor_updates_per_iteration):
+            actor_updates = args.actor_updates_per_iteration
+            if args.actor_learning_starts is not None and global_step < args.actor_learning_starts:
+                actor_updates = 0
+            for actor_update_idx in range(actor_updates):
                 actor_success_count, actor_failure_count = critic_success_failure_counts(
                     batch_size=args.batch_size,
                     success_fraction=args.critic_success_sample_fraction,

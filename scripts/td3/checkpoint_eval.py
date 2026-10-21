@@ -42,6 +42,18 @@ def main() -> None:
         config = yaml.load(f, Loader=yaml.FullLoader)
     model_path = os.path.join(ckpt_dir, "model.pth")
 
+    if int(args.get("survival_eval_steps", 0)) > 0:
+        from scripts.td3.juggle_survival import evaluate_checkpoint
+
+        evaluate_checkpoint(
+            ckpt_dir,
+            horizon=int(args["survival_eval_steps"]),
+            episodes=int(args.get("survival_eval_episodes", 8)),
+            seed_base=10000,
+            gif_steps=400,
+        )
+        return
+
     common = dict(
         n_eps=4,
         n_gifs=1,

@@ -64,9 +64,16 @@ class EpisodeTrajectory:
         self.prev_actions.append(prev_action.detach().clone())
         self.episode_return += float(reward.item())
 
-    def flush_to_buffer(self, replay_buffer) -> int:
+    def flush_to_buffer(self, replay_buffer, *, keep_episode_return: bool = False) -> int:
+        """Drain staged transitions; optionally retain the running episode return.
+
+        Fixed-step collection uses this to learn during long episodes without
+        retaining or inserting the same transitions twice.
+        """
         transition_count = len(self.observations)
         if transition_count == 0:
+            if not keep_episode_return:
+                self.reset()
             return 0
         replay_buffer.add(
             obs=torch.stack(self.observations, dim=0),
@@ -76,7 +83,10 @@ class EpisodeTrajectory:
             dones=torch.stack(self.dones, dim=0).view(-1),
             prev_action=torch.stack(self.prev_actions, dim=0),
         )
+        episode_return = self.episode_return
         self.reset()
+        if keep_episode_return:
+            self.episode_return = episode_return
         return transition_count
 
     def reset(self) -> None:
