@@ -55,3 +55,5 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-10-21 18:44 | Sustained juggling scratch pilot | Stopped: no useful juggling at 100k; exposed failure truncation semantics and motivated warm initialization | [2026-10-21_18-44_sustained-juggle-scratch-pilot.md](2026-10-21_18-44_sustained-juggle-scratch-pilot.md)
 - 2026-10-21 18:50 | Sustained juggling with warm actor and fixed-step TD3 | In-flight: three discounts × three scheduled seeds; 300k seed-0 validation remains below source, no indefinite-survival claim | [2026-10-21_18-50_sustained-juggle-warm-start.md](2026-10-21_18-50_sustained-juggle-warm-start.md)
 - 2026-10-21 19:00 | Bounded residual CQL for sustained juggling | In-flight: first 100k results preserve juggling better, mixed scenario gains, no 2k-step cap completions | [2026-10-21_19-00_sustained-juggle-residual-cql.md](2026-10-21_19-00_sustained-juggle-residual-cql.md)
+
+- 2026-10-21 21-14 | Clean juggling iteration 1 | Selected upper; bounded validation, see GIFs and results | [2026-10-21_21-14_clean-juggle-iteration-1.md](2026-10-21_21-14_clean-juggle-iteration-1.md)
