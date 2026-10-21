@@ -20,6 +20,8 @@ from scripts.rma.networks import (
     RMAActor,
     step_feature_dim,
     step_state_features,
+    HistoryActor,
+    initialize_history_from_plain,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -48,6 +50,27 @@ class NormalizerTests(unittest.TestCase):
 
 
 class NetworkShapeTests(unittest.TestCase):
+    def test_plain_warm_start_preserves_actions_for_arbitrary_memory(self):
+        from types import SimpleNamespace
+        import gymnasium as gym
+        from scripts.td3.deterministic_agent import DeterministicAgent
+        view = SimpleNamespace(single_observation_space=gym.spaces.Box(-np.inf, np.inf, (32,)),
+                               single_action_space=gym.spaces.Box(-1., 1., (2,)))
+        source = DeterministicAgent(view, action_scale=1., hidden_layer_size=64, num_hidden_layers=2)
+        target = HistoryActor(obs_dim=30, act_dim=2, history_len=50, feature_dim=8,
+                              latent_dim=8, use_last_action=True, hidden_layer_size=64, num_hidden_layers=2)
+        padded = initialize_history_from_plain(target, source.state_dict())
+        self.assertEqual(len(padded), 2)
+        obs, prev, window = torch.randn(8, 30), torch.randn(8, 2), torch.randn(8, 400)
+        with torch.no_grad():
+            expected = source.get_action(torch.cat([obs, prev], dim=-1))
+            actual = target.get_action(torch.cat([obs, window, prev], dim=-1))
+        torch.testing.assert_close(actual, expected, atol=1e-6, rtol=1e-5)
+        bad = dict(source.state_dict())
+        bad['actor_mean_head.weight'] = torch.zeros(2, 17)
+        with self.assertRaises(ValueError):
+            initialize_history_from_plain(target, bad)
+
     def test_encoder_and_actor(self):
         actor = RMAActor(obs_dim=30, act_dim=2, env_param_dim=3, latent_dim=8, use_last_action=True)
         self.assertEqual(actor.policy_obs_dim, 35)

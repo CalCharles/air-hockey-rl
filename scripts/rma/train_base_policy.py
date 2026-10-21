@@ -112,6 +112,7 @@ class RMAArgs(Args):
     step_features: str = "latest_frame"
     history_embed_dim: int = 32
     history_conv_channels: int = 32
+    history_warm_start_plain: bool = False
     # --- goal-conditioned tasks: hindsight experience replay (same knobs as td3_training_her) ---
     # Active when the sim config has ``return_goal_obs: true``; her_k = 0 -> plain goal-conditioned TD3.
     her_k: int = 4
@@ -166,6 +167,8 @@ def _entrypoint() -> None:
         default_args = RMAArgs()
     args = tyro.cli(RMAArgs, default=default_args)
     validate_args(args)
+    from scripts.td3.helper.td3_checkpointing import seed_training
+    seed_training(args.seed)
     if args.eval_mode:
         raise ValueError("RMA phase 1 has no eval_mode; evaluate with scripts.rma.evaluate / checkpoint_eval.")
     if args.full_checkpoint_load == "residual":
@@ -183,6 +186,8 @@ def _entrypoint() -> None:
     if not air_hockey_cfg.get("domain_random", False):
         print("[rma] WARNING: sim config has domain_random=false; the privileged factors will be constant.")
     goal_mode = bool(air_hockey_cfg.get("return_goal_obs", False))
+    if goal_mode and args.train_every_steps > 0:
+        raise ValueError("Fixed-step RMA collection currently supports non-HER tasks only")
     normalizer = EnvParamNormalizer.from_air_hockey_config(air_hockey_cfg)
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -317,7 +322,16 @@ def _entrypoint() -> None:
         print(f"Loading model/checkpoint from {args.model_path}")
         loaded_obj = torch.load(args.model_path, map_location=args.device, weights_only=False)
         is_full_state = isinstance(loaded_obj, dict) and "actor" in loaded_obj and "qf1" in loaded_obj
-        if is_full_state:
+        if args.history_warm_start_plain:
+            if args.rma_mode != "history":
+                raise ValueError("history_warm_start_plain requires rma_mode=history")
+            from scripts.rma.networks import initialize_history_from_plain
+            from scripts.td3.td3_training import extract_deterministic_state_dict
+            source = loaded_obj["actor"] if is_full_state else loaded_obj
+            padded = initialize_history_from_plain(actor, extract_deterministic_state_dict(source))
+            actor_target.load_state_dict(actor.state_dict())
+            print(f"History actor initialized from plain policy; zero-padded {padded}; critics fresh")
+        elif is_full_state:
             resume_checkpoint = loaded_obj
             actor.load_state_dict(resume_checkpoint["actor"])
             actor_target.load_state_dict(resume_checkpoint["actor_target"])
@@ -351,6 +365,7 @@ def _entrypoint() -> None:
         failure_rb = TD3ReplayBuffer(buffer_size=args.failure_buffer_size, **rb_kwargs)
     print(f"✓ replay buffers initialized (success={args.success_buffer_size:,}, failure={args.failure_buffer_size:,}, obs_dim={obs_dim}, PER={args.per_enabled})\n")
 
+    envs.single_action_space.seed(args.seed)
     obs, _ = envs.reset(seed=args.seed)
     last_action_for_policy = torch.zeros((args.num_envs, act_dim), dtype=torch.float32, device=rollout_device)
     interval_paddle_puck_collisions = 0.0
@@ -499,6 +514,7 @@ def _entrypoint() -> None:
         target_critic_subset_size=args.target_critic_subset_size,
         use_graph=use_cuda_graphs,
         compile_update=args.compile_update,
+        actor_action_delta_penalty=args.actor_action_delta_penalty,
     )
     print(f"Update engine: {'CUDA graphs' if updater.use_graph else 'eager'}{' + torch.compile' if updater.compile_update else ''} on {device}; rollout on {rollout_device}")
 
@@ -714,6 +730,8 @@ def _entrypoint() -> None:
                 done=terminations_tensor[0],
                 prev_action=prev_action_for_transition[0],
             )
+            if args.train_every_steps > 0 and (global_step + args.num_envs) % args.train_every_steps == 0:
+                episode_trajectory.flush_to_buffer(success_rb, keep_episode_return=True)
             episode_return_success_threshold = finalize_episode_if_done(
                 episode_done=episode_finished,
                 episode_trajectory=episode_trajectory,
@@ -729,7 +747,9 @@ def _entrypoint() -> None:
         obs = next_obs
 
         # ----------------------------------------------------------- training
-        if global_step > args.learning_starts and episode_finished:
+        update_due = ((global_step + args.num_envs) % args.train_every_steps == 0
+                      if args.train_every_steps > 0 else episode_finished)
+        if global_step > args.learning_starts and update_due:
             per_beta = linear_anneal(args.per_beta_start, args.per_beta_end, global_step, args.per_beta_anneal_steps) if args.per_enabled else 0.0
             for _ in range(args.q_updates):
                 s_count, f_count = critic_success_failure_counts(
@@ -744,7 +764,10 @@ def _entrypoint() -> None:
                 total_critic_updates += 1
                 if total_critic_updates % args.target_network_frequency == 0:
                     updater.polyak()
-            for _ in range(args.actor_updates_per_iteration):
+            actor_updates = args.actor_updates_per_iteration
+            if args.actor_learning_starts is not None and global_step < args.actor_learning_starts:
+                actor_updates = 0
+            for _ in range(actor_updates):
                 s_count, f_count = critic_success_failure_counts(
                     batch_size=args.batch_size,
                     success_fraction=args.critic_success_sample_fraction,

@@ -22,6 +22,13 @@ def _cpu_tensor(tensor: torch.Tensor) -> torch.Tensor:
     return tensor.detach().clone().cpu()
 
 
+def seed_training(seed: int) -> None:
+    """Seed initialization, exploration noise, and per-reset DR before construction."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+
 def _to_rng_byte_tensor(state: object) -> torch.Tensor:
     if isinstance(state, torch.Tensor):
         return state.detach().clone().to(device="cpu", dtype=torch.uint8).contiguous()

@@ -10,7 +10,7 @@ The objective is repeated paddle contacts with very low drop probability over lo
 - `actor_action_delta_penalty` adds a soft squared difference from the previous action to the normalized-Q actor objective. It is default-off and is not a hardware acceleration limiter. The campaign uses 0.005.
 - Box2D's opt-in `history_sample_once_per_step` records one observation-history entry at the observation snapshot per control step, instead of one per integration substep. This matches the robot's control-step sampling more closely. Existing configs retain legacy history sampling. It changes the temporal meaning of the same 30-value observation and must be treated as a training/deployment contract.
 
-These training changes are wired into `scripts.td3.td3_training`; the RMA and HER trainers have their own loops and do not automatically acquire the new collection schedule.
+These changes are wired into `scripts.td3.td3_training`. The subsequent clean-sim iteration work also wires fixed-step collection, actor warmup, and action-change regularization into the non-HER RMA/history trainer. HER retains episode-based collection; fixed-step RMA/HER is explicitly rejected.
 
 ## Training setup
 

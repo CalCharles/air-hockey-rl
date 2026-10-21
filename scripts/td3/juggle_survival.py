@@ -28,6 +28,7 @@ from scripts.td3.eval_utils import (
     build_policy_env_view,
     load_policy_for_evaluation,
 )
+from scripts.td3.helper.juggle_counter import count_juggles_from_arrays
 
 
 def summarize_episodes(rows, horizon):
@@ -43,8 +44,14 @@ def summarize_episodes(rows, horizon):
         "failures": failures,
         "horizon_survival_fraction": sum(row["reached_horizon"] for row in rows) / n,
         "sustained_juggling_fraction": sum(
-            row["reached_horizon"] and row["contacts"] >= 3 for row in rows
+            row["reached_horizon"] and row.get("juggles", row["contacts"]) >= max(3, horizon // 200)
+            for row in rows
         ) / n,
+        "mean_juggles": float(np.mean([row.get("juggles", 0) for row in rows])),
+        "mean_valid_juggling_steps": float(np.mean([
+            row["steps"] if row.get("juggles", 0) >= max(2, row["steps"] // 200) else 0
+            for row in rows
+        ])),
         "restricted_mean_steps": float(lengths.mean()),
         "median_observed_steps": float(np.median(lengths)),
         "min_steps": int(lengths.min()),
@@ -69,9 +76,28 @@ def summarize_episodes(rows, horizon):
     }
 
 
-def evaluation_scenarios(cfg):
+def clean_sim_config(cfg):
+    """A nominal-physics benchmark without sensor corruption; retain control limits."""
+    clean = copy.deepcopy(cfg)
+    clean["domain_random"] = False
+    clean["simulator_params"].update(
+        puck_noise=False, enable_random_occlusions=False, occlusion_map_path=None,
+        enable_observation_delay=False, enable_action_delay=False,
+        enable_puck_delay_interpolation=False, puck_obs_lag_seconds=0.,
+        puck_obs_lag_frame_period=0.,
+    )
+    return clean
+
+
+def evaluation_scenarios(cfg, scenario_set="transfer"):
+    if scenario_set == "clean":
+        return {"clean": clean_sim_config(cfg)}
     nominal = copy.deepcopy(cfg)
     nominal["domain_random"] = False
+    if scenario_set == "nominal":
+        return {"nominal": nominal}
+    if scenario_set != "transfer":
+        raise ValueError(f"Unknown scenario set: {scenario_set}")
     scenarios = {"nominal": nominal, "randomized": copy.deepcopy(cfg)}
     # Fixed camera latency probes expose dependence on fresh, synchronous puck
     # observations. Keep physical parameters nominal for an interpretable probe.
@@ -86,7 +112,8 @@ def evaluation_scenarios(cfg):
 
 @torch.inference_mode()
 def evaluate_checkpoint(run_dir, *, horizon=10000, episodes=32, seed_base=10000,
-                        gif_steps=400, out_dir=None, config_path=None, scenarios=None):
+                        gif_steps=400, out_dir=None, config_path=None, scenarios=None,
+                        scenario_set="transfer"):
     if horizon < 1 or episodes < 1 or gif_steps < 0:
         raise ValueError("horizon/episodes must be positive and gif_steps nonnegative")
     torch.set_num_threads(1)
@@ -97,16 +124,26 @@ def evaluate_checkpoint(run_dir, *, horizon=10000, episodes=32, seed_base=10000,
     cfg = yaml.safe_load(Path(config_path or run_dir / "config.yaml").read_text())["air_hockey"]
     if cfg.get("simulator") != "box2d":
         raise ValueError("This survival evaluator supports Box2D simulation only")
+    history_agent = None
     probe = AirHockeyEnv(copy.deepcopy(cfg))
     try:
         view = build_policy_env_view(SimpleNamespace(
             single_observation_space=probe.observation_space,
             single_action_space=probe.action_space,
         ), bool(args.get("use_last_action_in_policy_state", False)))
-        policy = load_policy_for_evaluation(
-            str(run_dir / "model.pth"), view, 1,
-            int(args["agent_hidden_layer_size"]), int(args["agent_num_hidden_layers"]),
-        )
+        if (run_dir / "rma_meta.json").exists():
+            from scripts.rma.bundle import load_phase1
+            from scripts.rma.evaluate import HistoryAgent
+            bundle = load_phase1(str(run_dir))
+            if bundle["mode"] != "history":
+                raise ValueError("Survival evaluation requires a deployable history actor, not a privileged actor")
+            history_agent = HistoryAgent(bundle["actor"])
+            policy = None
+        else:
+            policy = load_policy_for_evaluation(
+                str(run_dir / "model.pth"), view, 1,
+                int(args["agent_hidden_layer_size"]), int(args["agent_num_hidden_layers"]),
+            )
     finally:
         probe.close()
 
@@ -114,7 +151,7 @@ def evaluate_checkpoint(run_dir, *, horizon=10000, episodes=32, seed_base=10000,
     (out / "evaluation_args.yaml").write_text(yaml.safe_dump(args, sort_keys=False))
     result = {"run_dir": str(run_dir), "seed_base": seed_base,
               "horizon": horizon, "episodes_per_scenario": episodes, "scenarios": {}}
-    for name, scenario in (scenarios or evaluation_scenarios(cfg)).items():
+    for name, scenario in (scenarios or evaluation_scenarios(cfg, scenario_set)).items():
         scenario = copy.deepcopy(scenario)
         if scenario.get("simulator") != "box2d":
             raise ValueError("Evaluation scenarios must use Box2D simulation")
@@ -133,6 +170,8 @@ def evaluate_checkpoint(run_dir, *, horizon=10000, episodes=32, seed_base=10000,
             env = AirHockeyEnv(params)
             try:
                 obs, _ = env.reset(seed=seed)
+                if history_agent is not None:
+                    history_agent.reset(obs)
                 last_action = torch.zeros((1, 2))
                 previous_velocity = np.asarray(env.current_state["paddles"]["paddle_ego"]["velocity"])
                 renderer = AirHockeyRenderer(env, orientation="vertical") if episode == 0 and gif_steps else None
@@ -146,7 +185,10 @@ def evaluate_checkpoint(run_dir, *, horizon=10000, episodes=32, seed_base=10000,
                         torch.as_tensor(np.asarray(obs), dtype=torch.float32).unsqueeze(0),
                         last_action, bool(args.get("use_last_action_in_policy_state", False)),
                     )
-                    action = policy(state).cpu().numpy().reshape(2)
+                    action = (
+                        history_agent.act(np.asarray(obs), last_action.numpy().reshape(2))
+                        if history_agent is not None else policy(state).cpu().numpy().reshape(2)
+                    )
                     action = np.clip(action, env.action_space.low, env.action_space.high)
                     delta = action - last_action.numpy().reshape(2)
                     delta_sq += float(np.mean(delta ** 2))
@@ -182,6 +224,8 @@ def evaluate_checkpoint(run_dir, *, horizon=10000, episodes=32, seed_base=10000,
                         failed = bool(term or trunc)
                         unexpected_truncation = bool(trunc)
                         break
+                observed = np.asarray(trajectory["next_observation"])
+                counts = count_juggles_from_arrays(observed[:, 12:14], observed[:, 27:29], observed[:, 29])
                 rows.append({
                     "seed": seed, "steps": step, "return": ret, "contacts": contacts,
                     "failed": failed, "unexpected_truncation": unexpected_truncation,
@@ -192,6 +236,8 @@ def evaluate_checkpoint(run_dir, *, horizon=10000, episodes=32, seed_base=10000,
                     "action_delta_rms": float(np.sqrt(delta_sq / step)),
                     "target_delta_rms_m": float(np.sqrt(target_delta_sq / step)),
                     "trajectory": f"{name}_seed{seed}.npz",
+                    "contact_events": counts.n_contacts,
+                    "juggles": counts.n_juggles,
                 })
                 np.savez_compressed(out / f"{name}_seed{seed}.npz",
                                     **{key: np.asarray(value) for key, value in trajectory.items()})
@@ -227,10 +273,11 @@ def main():
     parser.add_argument("--episodes", type=int, default=32)
     parser.add_argument("--seed-base", type=int, default=10000)
     parser.add_argument("--gif-steps", type=int, default=400)
+    parser.add_argument("--scenario-set", choices=["transfer", "clean", "nominal"], default="transfer")
     cli = parser.parse_args()
     evaluate_checkpoint(cli.run_dir, horizon=cli.horizon, episodes=cli.episodes,
                         seed_base=cli.seed_base, gif_steps=cli.gif_steps,
-                        out_dir=cli.out_dir, config_path=cli.config)
+                        out_dir=cli.out_dir, config_path=cli.config, scenario_set=cli.scenario_set)
 
 
 if __name__ == "__main__":

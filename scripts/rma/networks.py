@@ -323,6 +323,36 @@ class HistoryActor(_LatentConditionedActor):
 
 
 # ------------------------------------------------------------ step features
+@torch.no_grad()
+def initialize_history_from_plain(actor: HistoryActor, source: dict) -> list[str]:
+    """Preserve a plain actor exactly while adding initially unused memory inputs.
+
+    Only the two first-block input matrices may grow. Their latent columns
+    start at zero; the existing observation/action columns and all other policy
+    parameters are copied. The history encoder retains its own initialization.
+    """
+    padded = []
+    expected_input = actor.obs_dim + (actor.act_dim if actor.use_last_action else 0)
+    expandable = {"actor.blocks.0.units.0.0.weight", "actor.blocks.0.skip_projection.weight"}
+    for key, target in actor.state_dict().items():
+        if key.startswith("encoder."):
+            continue
+        if key not in source:
+            raise ValueError(f"Plain actor lacks required parameter {key}")
+        value = source[key].to(target.device)
+        if value.shape == target.shape:
+            target.copy_(value)
+        elif (key in expandable and value.ndim == 2 and target.ndim == 2
+              and value.shape[0] == target.shape[0] and value.shape[1] == expected_input
+              and target.shape[1] == expected_input + actor.latent_dim):
+            target.zero_()
+            target[:, :expected_input].copy_(value)
+            padded.append(key)
+        else:
+            raise ValueError(f"Incompatible plain actor parameter {key}: {value.shape} vs {target.shape}")
+    return padded
+
+
 STEP_FEATURE_MODES = ("latest_frame", "full_obs")
 
 # Canonical 30-dim ``history`` observation layout (see CLAUDE.md):

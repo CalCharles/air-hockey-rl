@@ -24,6 +24,13 @@ def evaluate_checkpoint_dir(ckpt_dir: str, eval_call_index: int = 1, eps_per_env
 
     bundle = load_phase1(ckpt_dir)
     args = bundle["args"] or {}
+    if int(args.get("survival_eval_steps", 0)) > 0:
+        from scripts.td3.juggle_survival import evaluate_checkpoint
+        return evaluate_checkpoint(
+            ckpt_dir, horizon=int(args["survival_eval_steps"]),
+            episodes=int(args.get("survival_eval_episodes", 8)), seed_base=10000,
+            scenario_set=args.get("survival_eval_scenarios", "transfer"),
+        )
     config = bundle["config"]
     if config is None:
         raise FileNotFoundError(f"config.yaml not found next to {ckpt_dir}")

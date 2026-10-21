@@ -26,6 +26,44 @@ class RecordingBuffer:
 
 
 class ContinuingJuggleTests(unittest.TestCase):
+    def test_clean_benchmark_removes_sensor_corruption_without_changing_controller(self):
+        from scripts.td3.juggle_survival import clean_sim_config
+        cfg = yaml.safe_load((Path(__file__).resolve().parents[3] /
+                              "configs/new_juggle/sysid_v2_hist2.yaml").read_text())["air_hockey"]
+        clean = clean_sim_config(cfg)
+        self.assertFalse(clean["domain_random"])
+        for field in ("puck_noise", "enable_random_occlusions", "enable_observation_delay", "enable_action_delay"):
+            self.assertFalse(clean["simulator_params"][field])
+        for field in ("pid_kp", "pid_ki", "pid_kd", "hist_len", "max_force_timestep"):
+            self.assertEqual(clean["simulator_params"][field], cfg["simulator_params"][field])
+        self.assertTrue(cfg["simulator_params"]["puck_noise"])
+
+    def test_loss_cost_only_applies_to_actual_puck_loss(self):
+        cfg = yaml.safe_load((Path(__file__).resolve().parents[3] /
+                              "configs/new_juggle/sysid_v2_hist2.yaml").read_text())["air_hockey"]
+        cfg["puck_loss_penalty"] = 5.
+        env = AirHockeyEnv(cfg)
+        try:
+            env.reset(seed=3)
+            env._update_puck_pass_paddle_score = lambda puck, paddle: True
+            env.get_base_reward = lambda state: (7., False)
+            _, reward, term, trunc, info = env.step(np.zeros(2))
+            self.assertTrue(term)
+            self.assertFalse(trunc)
+            self.assertEqual(float(reward), 2.)
+            self.assertEqual(info['puck_loss_penalty'], 5.)
+        finally:
+            env.close()
+
+    def test_sticky_contact_does_not_count_as_repeated_juggling(self):
+        row = dict(steps=10000, failed=False, reached_horizon=True, contacts=10000,
+                   juggles=0, end_reasons=["evaluation_horizon"], peak_paddle_speed_m_s=0.,
+                   peak_paddle_acceleration_m_s2=0., action_delta_rms=0., target_delta_rms_m=0.,
+                   **{"return": 10000.})
+        summary = summarize_episodes([row], 10000)
+        self.assertEqual(summary['sustained_juggling_fraction'], 0.)
+        self.assertEqual(summary['mean_valid_juggling_steps'], 0.)
+
     def test_passed_puck_is_terminal_not_a_bootstrappable_time_limit(self):
         cfg = yaml.safe_load((Path(__file__).resolve().parents[3] /
                               "configs/new_juggle/sysid_v2_hist2.yaml").read_text())["air_hockey"]

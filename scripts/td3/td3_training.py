@@ -317,6 +317,7 @@ class Args:
     # Optional survival-based checkpoint evaluation instead of short reward GIFs.
     survival_eval_steps: int = 0
     survival_eval_episodes: int = 8
+    survival_eval_scenarios: Literal["transfer", "clean", "nominal"] = "transfer"
 
 
 def make_env(env_id):
@@ -451,6 +452,8 @@ def _entrypoint():
 
     args = tyro.cli(Args, default=default_args)
     validate_args(args)
+    from scripts.td3.helper.td3_checkpointing import seed_training
+    seed_training(args.seed)
 
     torch.set_num_threads(max(1, int(args.torch_num_threads)))
 
@@ -702,6 +705,7 @@ def _entrypoint():
             f"failure_capacity={args.failure_buffer_size:,})\n"
         )
 
+    envs.single_action_space.seed(args.seed)
     obs, _ = envs.reset(seed=args.seed)
     last_action_for_policy = torch.zeros((args.num_envs, act_dim), dtype=torch.float32, device=rollout_device)
     interval_paddle_puck_collisions = 0.0
@@ -1294,15 +1298,21 @@ def _entrypoint():
             final_eval_model_path = f"{log_parent_dir}/model.pth"
         if final_eval_model_path is None:
             raise ValueError("No model path available for final evaluation.")
-        evaluate_agent(
-            final_eval_model_path,
-            log_parent_dir,
-            config["air_hockey"],
-            action_scale=action_scale,
-            agent_hidden_layer_size=args.agent_hidden_layer_size,
-            agent_num_hidden_layers=args.agent_num_hidden_layers,
-            use_last_action_in_policy_state=args.use_last_action_in_policy_state,
-        )
+        if args.survival_eval_steps > 0 and not args.eval_mode:
+            from scripts.td3.juggle_survival import evaluate_checkpoint
+            evaluate_checkpoint(log_parent_dir, horizon=args.survival_eval_steps,
+                                episodes=args.survival_eval_episodes, seed_base=10000,
+                                scenario_set=args.survival_eval_scenarios)
+        else:
+            evaluate_agent(
+                final_eval_model_path,
+                log_parent_dir,
+                config["air_hockey"],
+                action_scale=action_scale,
+                agent_hidden_layer_size=args.agent_hidden_layer_size,
+                agent_num_hidden_layers=args.agent_num_hidden_layers,
+                use_last_action_in_policy_state=args.use_last_action_in_policy_state,
+            )
     except Exception as e:
         print(f"Final evaluation failed: {e}")
 

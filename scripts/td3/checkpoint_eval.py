@@ -51,6 +51,7 @@ def main() -> None:
             episodes=int(args.get("survival_eval_episodes", 8)),
             seed_base=10000,
             gif_steps=400,
+            scenario_set=args.get("survival_eval_scenarios", "transfer"),
         )
         return
 

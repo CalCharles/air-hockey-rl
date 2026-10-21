@@ -102,6 +102,7 @@ class AirHockeyBaseEnv(ABC, Env):
             'goal_min_y_velocity': 1,
             'enable_survival_bonus': False,
             'survival_bonus_per_step': 0.25,
+            'puck_loss_penalty': 0.0,
             # Optional list of [x, y] centers (base frame) for triangle obstacles.
             # If shorter than num_obstacles, remaining positions are sampled per reset.
             'obstacle_positions': [],
@@ -225,6 +226,9 @@ class AirHockeyBaseEnv(ABC, Env):
         self.base_reward_scaling = config.base_reward_scaling
         self.enable_survival_bonus = bool(config.enable_survival_bonus)
         self.survival_bonus_per_step = float(config.survival_bonus_per_step)
+        self.puck_loss_penalty = float(config.puck_loss_penalty)
+        if self.puck_loss_penalty < 0:
+            raise ValueError("puck_loss_penalty must be nonnegative")
         self.random_paddle_spawn = (
             self.random_paddle_spawn_default
             if config.random_paddle_spawn is None
@@ -936,10 +940,15 @@ class AirHockeyBaseEnv(ABC, Env):
             reward = self.truncate_rew
 
         survival_bonus = 0.0
-        if self.enable_survival_bonus and (not is_finished) and (not truncated):
+        if self.enable_survival_bonus and (not is_finished) and (not truncated or time_limit_only):
             survival_bonus = self.survival_bonus_per_step
             reward += survival_bonus
         info['survival_bonus'] = float(survival_bonus)
+        puck_lost = any(reason in ("puck_passed_paddle", "puck_hit_bottom")
+                        or reason.startswith("puck_low_motion_window_") for reason in termination_reasons)
+        loss_cost = self.puck_loss_penalty if is_finished and puck_lost else 0.0
+        reward -= loss_cost
+        info['puck_loss_penalty'] = loss_cost
         
         self.max_reward_in_single_step = max(self.max_reward_in_single_step, reward)
         self.min_reward_in_single_step = min(self.min_reward_in_single_step, reward)        
