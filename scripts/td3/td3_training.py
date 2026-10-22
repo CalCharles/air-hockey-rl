@@ -317,7 +317,7 @@ class Args:
     # Optional survival-based checkpoint evaluation instead of short reward GIFs.
     survival_eval_steps: int = 0
     survival_eval_episodes: int = 8
-    survival_eval_scenarios: Literal["transfer", "clean", "nominal"] = "transfer"
+    survival_eval_scenarios: Literal["transfer", "clean", "nominal", "training"] = "transfer"
 
 
 def make_env(env_id):

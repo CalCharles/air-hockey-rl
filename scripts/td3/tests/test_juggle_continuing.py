@@ -26,6 +26,24 @@ class RecordingBuffer:
 
 
 class ContinuingJuggleTests(unittest.TestCase):
+    def test_original_sensing_campaign_preserves_canonical_simulator_parameters(self):
+        from scripts.td3.juggle_original_sensing import original_sensing_config, assert_original_sensing
+        from scripts.td3.juggle_survival import evaluation_scenarios
+        original = yaml.safe_load((Path(__file__).resolve().parents[3] /
+                                   "configs/new_juggle/sysid_v2_hist2.yaml").read_text())["air_hockey"]
+        restored = original_sensing_config()["air_hockey"]
+        self.assertEqual(restored["simulator_params"], original["simulator_params"])
+        self.assertEqual(restored["obs_type"], original["obs_type"])
+        self.assertTrue(restored["domain_random"])
+        self.assertEqual(set(restored["random_variables"]), {"paddle_density", "puck_damping", "gravity"})
+        assert_original_sensing(restored)
+        evaluation = evaluation_scenarios(restored, "training")["training"]
+        self.assertEqual(evaluation, restored)
+        evaluation["simulator_params"]["puck_noise"] = False
+        self.assertTrue(restored["simulator_params"]["puck_noise"])
+        with self.assertRaises(ValueError):
+            assert_original_sensing(evaluation)
+
     def test_clean_benchmark_removes_sensor_corruption_without_changing_controller(self):
         from scripts.td3.juggle_survival import clean_sim_config
         cfg = yaml.safe_load((Path(__file__).resolve().parents[3] /

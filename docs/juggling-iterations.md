@@ -1,5 +1,7 @@
 # Clean juggling iterations
 
+**Diagnostic experiments only.** The user requires the original sensing during training. The active follow-up is [juggling with original sensing](juggling-original-sensing.md); clean-sensing results below do not establish sim-to-real performance.
+
 Branch: `codex/sustained-juggling`. The prior sensor-robust trials did not solve sustained juggling. Their “nominal” evaluation referred to nominal physics while retaining simulated sensor corruption; it was not a clean sensor benchmark.
 
 The new configurations explicitly disable puck noise, occlusions, observation/action delay, camera-frame lag, delay interpolation, and physics randomization. They retain the sysid-v2 measured PID gains, hist2 command smoothing, real workspace, action scaling, and speed/force limits. Source actor clean baseline: 137.2 mean steps on eight starts, cap 10,000; no capped successes. Artifacts: `runs/td3/juggle_iterations/iteration_00/source_clean/`.

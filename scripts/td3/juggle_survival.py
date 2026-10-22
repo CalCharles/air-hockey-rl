@@ -90,6 +90,8 @@ def clean_sim_config(cfg):
 
 
 def evaluation_scenarios(cfg, scenario_set="transfer"):
+    if scenario_set == "training":
+        return {"training": copy.deepcopy(cfg)}
     if scenario_set == "clean":
         return {"clean": clean_sim_config(cfg)}
     nominal = copy.deepcopy(cfg)
@@ -273,7 +275,7 @@ def main():
     parser.add_argument("--episodes", type=int, default=32)
     parser.add_argument("--seed-base", type=int, default=10000)
     parser.add_argument("--gif-steps", type=int, default=400)
-    parser.add_argument("--scenario-set", choices=["transfer", "clean", "nominal"], default="transfer")
+    parser.add_argument("--scenario-set", choices=["transfer", "clean", "nominal", "training"], default="transfer")
     cli = parser.parse_args()
     evaluate_checkpoint(cli.run_dir, horizon=cli.horizon, episodes=cli.episodes,
                         seed_base=cli.seed_base, gif_steps=cli.gif_steps,
