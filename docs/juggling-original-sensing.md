@@ -27,3 +27,16 @@ cat runs/td3/original_sensing/status.json
 ```
 
 Artifacts: `runs/td3/original_sensing/`, with `<trial>.log`, `<trial>_status.json`, `<trial>/validation/training.gif`, and `results.md`. Uses the three existing allocations, requests no new allocation, and refuses to overwrite an existing campaign. After completion it commits a new result note if still on `codex/sustained-juggling`; it does not automatically push. Model weights and original GIFs remain local.
+
+## Completed results and matched baseline
+
+All three trials finished. On 32 shared validation starts (100000–100031), with original sensing, physics DR, and a 10,000-step cap:
+
+| Policy | Mean steps | Median steps | Mean juggles | Genuine capped episodes |
+|---|---:|---:|---:|---:|
+| Original actor, no new training | 660.1 | 264 | 8.625 | 0/32 |
+| Original actor fine-tuned, discount 0.995 | 179.2 | 136.5 | 1.0 | 0/32 |
+| Clean actor fine-tuned, discount 0.995 | 282.7 | 175 | 2.156 | 0/32 |
+| Original actor fine-tuned, discount 0.99 | 342.8 | 246 | 2.844 | 0/32 |
+
+This recipe regressed relative to the original actor. The supervisor's `selected_trial: source_g099` means best of the three new final models; it does not beat the original actor and should not replace it. The original actor remains the reference. Its matched evaluation is saved in `source_matched_validation/`. The earlier 827.8-step source baseline used 16 different starts and should not be compared directly with the final models. Sensing and control settings remained fixed as required. The next investigation should address policy degradation during fine-tuning while retaining this sensing configuration.
