@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A024 — Assess 3M milestone before reallocating a training slot](#a024)
 - [A023 — Publish selected 20k clips with aggregate failure context](#a023)
 - [A022 — Audit evaluation physics without touching live learners](#a022)
 - [A021 — Measure newer history checkpoint and start paired longer test](#a021)
@@ -29,6 +30,14 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a024"></a>
+
+## A024 — 2026-10-29 15:45:09 -0500 — Assess 3M milestone before reallocating a training slot
+
+Codex verified live learning, completed the survival3M shared benchmark and revised the tentative interruption plan after a new validation best.
+
+**Evidence:** [E023](experiment_logbook.md#e023), [detailed note](../notes/scratch/experiments/2026-10-29_20-45_survival-3m-assessment.md). No stop signal, restart or new training launch occurred. Preserved all three live trials and the existing selection workers. Rechecked the seed1 replication's scratch/canonical guards and simulator diff; it remains planned for an available slot. Regenerated saved-data curves and validated documentation. The goal is still unsolved; 32/32survival benchmark failures and28/32history20k failures remain explicit.
 
 <a id="a023"></a>
 

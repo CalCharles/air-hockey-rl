@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E023 — Survival 3M improves validation but remains weak on shared starts](#e023)
 - [E022 — Selected 20k history replay reproduces exactly](#e022)
 - [E021 — Reconstruct randomized physics of the longer history test](#e021)
 - [E020 — History 2.1M reaches nine shared benchmark caps](#e020)
@@ -28,6 +29,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e023"></a>
+
+## E023 — 2026-10-29 15:45:09 -0500 — Survival 3M improves validation but remains weak on shared starts
+
+The combined survival recipe reaches a new validation best at3M but fails all32 shared10k benchmark starts.
+
+**Completed:** Validation mean963,0/8caps, versus prior best544.625; shared benchmark mean717.65625,median708,5.8125physical juggles,0/32caps. [Detailed evidence and command](../notes/scratch/experiments/2026-10-29_20-45_survival-3m-assessment.md), [per-start comparison](juggling-history-benchmark.csv). Reused starts and one training seed; multiple recipe differences prevent a reward-only attribution.
+
+**Decision:** Proposed interruption was not executed after observing the new validation best. All three learners continue; baseline is approaching6M. History seed1 replication remains prepared, not launched. No simulator/randomization changes. No new GIF; [E022](#e022) contains latest verified clips. [A024](agent_logbook.md#a024).
 
 <a id="e022"></a>
 

@@ -84,3 +84,5 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-10-29 20:27 | History randomized-physics audit | All32reset observations reproduced exactly; exploratory parameter splits preserve established DR | [file](2026-10-29_20-27_history-physics-audit.md)
 
 - 2026-10-29 20:30 | Selected20k history GIFs | All8arrays reproduce exactly; first10s/final20s clips; selected success with4/32 aggregate caps | [file](2026-10-29_20-30_history-20k-selected-gifs.md)
+
+- 2026-10-29 20:45 | Survival3M assessment | New validation best963; shared mean718,0/32caps; retain live trial and planned seed1 replication | [file](2026-10-29_20-45_survival-3m-assessment.md)
