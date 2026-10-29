@@ -31,6 +31,18 @@ from scripts.td3.eval_utils import (
 from scripts.td3.helper.juggle_counter import count_juggles_from_arrays
 
 
+def diagnostic_body_positions(simulator):
+    """Read physical body positions without sampling sensors or advancing RNG.
+
+    Do not call get_current_state here: it draws observation noise and updates
+    occlusion/interpolation state. These values are for saved diagnostics only.
+    """
+    paddle = simulator.paddles["paddle_ego"].position
+    puck = next(iter(simulator.pucks.values())).position
+    return (np.asarray([-paddle[1], paddle[0]], dtype=np.float64),
+            np.asarray([-puck[1], puck[0]], dtype=np.float64))
+
+
 def summarize_episodes(rows, horizon):
     """Treat capped episodes as censored, and actual terminations as failures."""
     n = len(rows)
@@ -38,7 +50,7 @@ def summarize_episodes(rows, horizon):
         raise ValueError("At least one evaluation episode is required")
     lengths = np.asarray([row["steps"] for row in rows])
     failures = sum(row["failed"] for row in rows)
-    return {
+    summary = {
         "episodes": n,
         "horizon": horizon,
         "failures": failures,
@@ -74,6 +86,13 @@ def summarize_episodes(rows, horizon):
         "mean_action_delta_rms": float(np.mean([row["action_delta_rms"] for row in rows])),
         "mean_target_delta_rms_m": float(np.mean([row["target_delta_rms_m"] for row in rows])),
     }
+    if all("true_state_juggles" in row for row in rows):
+        summary["mean_true_state_juggles"] = float(np.mean([row["true_state_juggles"] for row in rows]))
+        summary["true_state_sustained_juggling_fraction"] = sum(
+            row["reached_horizon"] and row["true_state_juggles"] >= max(3, horizon // 200)
+            for row in rows
+        ) / n
+    return summary
 
 
 def clean_sim_config(cfg):
@@ -180,7 +199,8 @@ def evaluate_checkpoint(run_dir, *, horizon=10000, episodes=32, seed_base=10000,
                 ret, contacts, speed_max, accel_max = 0.0, 0, 0.0, 0.0
                 delta_sq, target_delta_sq, failed, unexpected_truncation = 0.0, 0.0, False, False
                 info = {}
-                trajectory = {key: [] for key in ("observation", "next_observation", "action", "reward", "terminated", "truncated")}
+                trajectory = {key: [] for key in ("observation", "next_observation", "action", "reward", "terminated", "truncated",
+                                                  "true_paddle_xy", "true_puck_xy")}
                 for step in range(1, horizon + 1):
                     previous_obs = np.asarray(obs, dtype=np.float32).copy()
                     state = augment_policy_observation(
@@ -196,6 +216,10 @@ def evaluate_checkpoint(run_dir, *, horizon=10000, episodes=32, seed_base=10000,
                     delta_sq += float(np.mean(delta ** 2))
                     target_delta_sq += float(np.mean((delta * [env.action_x_ratio, env.action_y_ratio]) ** 2))
                     obs, reward, term, trunc, info = env.step(action)
+                    # Read-only telemetry: never used to construct policy state.
+                    true_paddle, true_puck = diagnostic_body_positions(env.simulator)
+                    trajectory["true_paddle_xy"].append(true_paddle)
+                    trajectory["true_puck_xy"].append(true_puck)
                     trajectory["observation"].append(previous_obs)
                     trajectory["next_observation"].append(np.asarray(obs, dtype=np.float32).copy())
                     trajectory["action"].append(action.copy())
@@ -228,6 +252,8 @@ def evaluate_checkpoint(run_dir, *, horizon=10000, episodes=32, seed_base=10000,
                         break
                 observed = np.asarray(trajectory["next_observation"])
                 counts = count_juggles_from_arrays(observed[:, 12:14], observed[:, 27:29], observed[:, 29])
+                true_counts = count_juggles_from_arrays(
+                    np.asarray(trajectory["true_paddle_xy"]), np.asarray(trajectory["true_puck_xy"]), np.zeros(step))
                 rows.append({
                     "seed": seed, "steps": step, "return": ret, "contacts": contacts,
                     "failed": failed, "unexpected_truncation": unexpected_truncation,
@@ -240,6 +266,8 @@ def evaluate_checkpoint(run_dir, *, horizon=10000, episodes=32, seed_base=10000,
                     "trajectory": f"{name}_seed{seed}.npz",
                     "contact_events": counts.n_contacts,
                     "juggles": counts.n_juggles,
+                    "true_state_contact_events": true_counts.n_contacts,
+                    "true_state_juggles": true_counts.n_juggles,
                 })
                 np.savez_compressed(out / f"{name}_seed{seed}.npz",
                                     **{key: np.asarray(value) for key, value in trajectory.items()})
@@ -256,12 +284,14 @@ def evaluate_checkpoint(run_dir, *, horizon=10000, episodes=32, seed_base=10000,
 
     lines = [f"# Juggling survival: {run_dir}", "", f"{episodes} paired episodes/scenario, cap {horizon} steps, seeds {seed_base} onward.",
              "Capped rollouts are censored; they do not demonstrate infinite survival. Motion metrics are simulator diagnostics, not hardware safety certification.", "",
-             "| Scenario | Mean observed steps | Survived cap | Mean contacts | Peak paddle speed (m/s) | Action delta RMS |",
-             "|---|---:|---:|---:|---:|---:|"]
+             "| Scenario | Mean observed steps | Survived cap | Mean contacts | True-state juggles | True-state genuine cap | Peak paddle speed (m/s) | Action delta RMS |",
+             "|---|---:|---:|---:|---:|---:|---:|---:|"]
     for name, value in result["scenarios"].items():
         s = value["summary"]
         lines.append(f"| {name} | {s['restricted_mean_steps']:.1f} | {s['horizon_survival_fraction']:.1%} | "
-                     f"{s['mean_contacts']:.1f} | {s['worst_peak_paddle_speed_m_s']:.3f} | {s['mean_action_delta_rms']:.4f} |")
+                     f"{s['mean_contacts']:.1f} | {s['mean_true_state_juggles']:.2f} | "
+                     f"{s['true_state_sustained_juggling_fraction']:.1%} | "
+                     f"{s['worst_peak_paddle_speed_m_s']:.3f} | {s['mean_action_delta_rms']:.4f} |")
     (out / "summary.md").write_text("\n".join(lines) + "\n")
     return result
 

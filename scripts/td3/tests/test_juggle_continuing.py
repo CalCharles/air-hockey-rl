@@ -13,7 +13,7 @@ from airhockey import AirHockeyEnv
 from scripts.td3.helper.td3_episode_collection import EpisodeTrajectory, finalize_episode_if_done
 from scripts.td3.helper.td3_args_validation import validate_args
 from scripts.td3.helper.td3_graphed_update import GraphedTD3Update, h_transform
-from scripts.td3.juggle_survival import summarize_episodes
+from scripts.td3.juggle_survival import diagnostic_body_positions, summarize_episodes
 from scripts.td3.td3_training import Args, SingleEnvVector
 
 
@@ -26,6 +26,43 @@ class RecordingBuffer:
 
 
 class ContinuingJuggleTests(unittest.TestCase):
+    def test_diagnostic_positions_do_not_sample_sensors(self):
+        import random
+        from scripts.td3.juggle_original_sensing import original_sensing_config
+
+        cfg = original_sensing_config()["air_hockey"]
+        traces = []
+        for record_truth in (False, True):
+            random.seed(123)
+            np.random.seed(123)
+            env = AirHockeyEnv(copy.deepcopy(cfg))
+            try:
+                obs, _ = env.reset(seed=123)
+                trace = [obs.copy()]
+                for _ in range(20):
+                    obs, _, term, trunc, _ = env.step(np.zeros(2))
+                    if record_truth:
+                        # Additional sensor calls change future noise/occlusions.
+                        paddle, puck = diagnostic_body_positions(env.simulator)
+                        np.testing.assert_allclose(paddle, env.current_state["paddles"]["paddle_ego"]["position"])
+                        self.assertEqual(puck.shape, (2,))
+                    trace.append(obs.copy())
+                    if term or trunc:
+                        break
+                traces.append(np.asarray(trace))
+            finally:
+                env.close()
+        np.testing.assert_array_equal(traces[0], traces[1])
+
+    def test_true_state_counts_do_not_replace_historical_observed_counts(self):
+        row = dict(steps=10000, failed=False, reached_horizon=True, contacts=10000,
+                   juggles=100, true_state_juggles=0, end_reasons=["evaluation_horizon"],
+                   peak_paddle_speed_m_s=0., peak_paddle_acceleration_m_s2=0.,
+                   action_delta_rms=0., target_delta_rms_m=0., **{"return": 10000.})
+        summary = summarize_episodes([row], 10000)
+        self.assertEqual(summary["sustained_juggling_fraction"], 1.)
+        self.assertEqual(summary["true_state_sustained_juggling_fraction"], 0.)
+
     def test_original_sensing_campaign_preserves_canonical_simulator_parameters(self):
         from scripts.td3.juggle_original_sensing import original_sensing_config, assert_original_sensing
         from scripts.td3.juggle_survival import evaluation_scenarios

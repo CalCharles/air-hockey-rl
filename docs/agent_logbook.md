@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A008 — Separate physical-trajectory diagnostics from noisy juggle counts](#a008)
 - [A007 — Add reproducible progress figures and inspect live learners](#a007)
 - [A006 — Continue sustained-juggling research and publish progress](#a006)
 - [A005 — Reverse logbooks and launch scratch training](#a005)
@@ -13,6 +14,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a008"></a>
+
+## A008 — 2026-10-29 12:24:45 -0500 — Separate physical-trajectory diagnostics from noisy juggle counts
+
+Codex added read-only physical-trajectory logging to survival evaluation and verified that it leaves the policy rollout unchanged.
+
+**Reason:** Existing noisy-position juggle classification can be affected by occluded direction-window endpoints. Preserve historical observed counts and add a separate physical-trajectory heuristic for subsequent acceptance checks. Actual simulated bodies are read after each action; no sensor calls, simulator settings or policy input changes.
+
+**Deliverables/checks:** [Evaluator](../scripts/td3/juggle_survival.py), [continuing-task tests](../scripts/td3/tests/test_juggle_continuing.py). All 16 tests pass, including paired sensor traces with/without diagnostic reads and separation of observed/physical count summaries. Replayed two saved policy episodes and verified exact equality for all six historical trajectory fields; [E007](experiment_logbook.md#e007) documents results. Checkpoint learners remained live throughout; latest inspected training steps approximately 160k/155k/115k. No new training launched. Periodic GIF publication continues at substantive milestones, rather than publishing random-initialization clips.
 
 <a id="a007"></a>
 

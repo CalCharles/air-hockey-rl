@@ -6,12 +6,27 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E007 — Verify read-only physical-trajectory diagnostics](#e007)
 - [E006 — Full learning-curve and failure-action analysis](#e006)
 - [E005 — Scratch run completed; longer-training comparison launched](#e005)
 - [E004 — Noisy-simulator training from scratch](#e004)
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e007"></a>
+
+## E007 — 2026-10-29 12:24:45 -0500 — Verify read-only physical-trajectory diagnostics
+
+A two-start replay confirms that physical-trajectory logging leaves all historical observations and actions bitwise unchanged, while the observed juggle heuristic can disagree with the physical-trajectory heuristic.
+
+**Experiment completed:** Reran the final E004 actor on seeds 200000 and 200001, training-distribution scenario, 10k cap, no GIF rendering. Mean survival 199.0 steps, no cap completions. Every prior trajectory field (`observation`, `next_observation`, `action`, `reward`, `terminated`, `truncated`) exactly matches the corresponding saved final-evaluation NPZ on both starts. These are repeated diagnostic starts, not new independent performance evidence.
+
+**Finding:** Noisy-observation/physical-trajectory juggle counts are 2/2 and 3/2 respectively. Both use the same contact-distance/direction-reversal heuristic; physical-trajectory counts remove sensor corruption but are still heuristic, not a formal contact-event ground truth. No historical metric was overwritten. New reports expose both.
+
+**Implementation:** Evaluator records actual Box2D body positions directly, without invoking sensor-producing `get_current_state` or advancing RNG. These values are stored in NPZ fields `true_paddle_xy` / `true_puck_xy` and used only for diagnostics, never policy inputs. Existing legacy observed-count summaries remain comparable. No sensing, physics, randomization or training changes.
+
+**Reproduction:** `.venv/bin/python -u -m scripts.td3.juggle_survival --run-dir runs/td3/noisy_scratch_20261028_seed0/train --scenario-set training --episodes 2 --horizon 10000 --seed-base 200000 --gif-steps 0 --out-dir runs/td3/noisy_scratch_20261028_seed0/truth_diagnostic`. [Raw results](../runs/td3/noisy_scratch_20261028_seed0/truth_diagnostic/results.json). Compare all six old NPZ keys using `numpy.testing.assert_array_equal`. No new figure for this measurement check. [Task A008](agent_logbook.md#a008).
 
 <a id="e006"></a>
 
