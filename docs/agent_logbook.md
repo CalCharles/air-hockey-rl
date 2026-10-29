@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A030 — Verify discount-trial checkpoint and attach fixed 4M evaluator](#a030)
 - [A029 — Reallocate weaker trial and verify scratch-history learning](#a029)
 - [A028 — Reuse completed baseline allocation for scratch replication](#a028)
 - [A027 — Complete fixed 3M evaluation and lock a new independent test](#a027)
@@ -35,6 +36,14 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a030"></a>
+
+## A030 — 2026-10-29 16:30:02 -0500 — Verify discount-trial checkpoint and attach fixed 4M evaluator
+
+Codex inspected the gamma .999 trial's actual optimizer state and attached the next fixed-milestone history evaluator.
+
+**Evidence:** [E030](experiment_logbook.md#e030), [detailed note](../notes/scratch/experiments/2026-10-29_21-30_history-discount-first-checkpoint.md). Saved model hash, gamma, scratch/config guards, update counters and early evaluation are preserved in portable JSON. Watcher1322650 is live and waiting for complete4M validation; it uses reused research starts and does not promote a checkpoint by validation. All three learners advance. No simulator or implementation modification and no additional training launch. Documentation/report checks pass; sustained reliability remains unsolved.
 
 <a id="a029"></a>
 

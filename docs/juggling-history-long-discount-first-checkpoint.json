@@ -1,0 +1,337 @@
+{
+  "recorded": "2026-10-29T21:29:24.866762+00:00",
+  "checkpoint": "runs/td3/noisy_history_long_discount_20261029_seed0/train/checkpoint_100000",
+  "model_sha256": "3c35c26177d62c876a6efa77a25830470f241987c710b5de26772d92c7f14b03",
+  "global_step": 100000,
+  "critic_updates": 62500,
+  "actor_optimizer_state_entries": 48,
+  "critic_optimizer_state_entries": 72,
+  "gamma": 0.999,
+  "scratch_config_verified": true,
+  "canonical_env_verified": true,
+  "rma_meta": {
+    "mode": "history",
+    "obs_dim": 30,
+    "act_dim": 2,
+    "latent_dim": 8,
+    "use_last_action": true,
+    "hidden_layer_size": 64,
+    "num_hidden_layers": 2,
+    "normalizer": {
+      "random_variables": [
+        "paddle_density",
+        "puck_damping",
+        "gravity"
+      ],
+      "random_variable_ranges": {
+        "paddle_density": [
+          2250.0,
+          3750.0
+        ],
+        "puck_damping": [
+          0.08250000327825546,
+          0.13750000298023224
+        ],
+        "gravity": [
+          -0.9125000238418579,
+          -0.5475000143051147
+        ]
+      }
+    },
+    "history_len": 50,
+    "feature_dim": 8,
+    "step_features": "latest_frame",
+    "embed_dim": 32,
+    "conv_channels": 32
+  },
+  "evaluation": {
+    "run_dir": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_long_discount_20261029_seed0/train/checkpoint_100000",
+    "seed_base": 10000,
+    "horizon": 5000,
+    "episodes_per_scenario": 8,
+    "scenarios": {
+      "training": {
+        "config": {
+          "center_offset_constant": 1.3359,
+          "center_offset_constant_y": -0.0376,
+          "domain_random": true,
+          "max_timesteps": 5001,
+          "num_blocks": 0,
+          "num_obstacles": 0,
+          "num_paddles": 1,
+          "num_pucks": 1,
+          "num_targets": 0,
+          "obs_type": "history",
+          "random_variable_ranges": {
+            "gravity": [
+              -0.9125,
+              -0.5475
+            ],
+            "paddle_density": [
+              2250.0,
+              3750.0
+            ],
+            "puck_damping": [
+              0.0825,
+              0.1375
+            ]
+          },
+          "random_variables": [
+            "paddle_density",
+            "puck_damping",
+            "gravity"
+          ],
+          "seed": 0,
+          "simulator": "box2d",
+          "simulator_params": {
+            "absorb_target": false,
+            "block_density": 1000,
+            "block_width": 0.0254,
+            "delay_seconds": 0.025,
+            "enable_action_delay": false,
+            "enable_observation_delay": true,
+            "enable_puck_delay_interpolation": true,
+            "enable_random_occlusions": true,
+            "end_wall_restitution": 0.55,
+            "force_scaling": 0.99,
+            "gravity": -0.73,
+            "hist_len": 2,
+            "length": 1.9304,
+            "max_bias_m": -0.266,
+            "max_bias_p": -0.218,
+            "max_force_timestep": 10000,
+            "paddle_damping": 17,
+            "paddle_density": 3000,
+            "paddle_radius": 0.0508,
+            "paddle_restitution": 0.0,
+            "pid_kd": 0.0,
+            "pid_ki": 1928.7,
+            "pid_kp": 7531.5,
+            "puck_damping": 0.11,
+            "puck_density": 3000,
+            "puck_noise": true,
+            "puck_noise_std": 0.01,
+            "puck_radius": 0.03175,
+            "puck_restitution": 1.2626,
+            "random_occlusion_rate": 0.05,
+            "render_size": 360,
+            "seed": 0,
+            "side_wall_restitution": 0.9,
+            "top_abs": 0.8,
+            "width": 0.8636,
+            "x_max_lim": -0.45,
+            "x_min_lim": -0.83,
+            "y_max": 0.39,
+            "y_min": -0.33
+          },
+          "task": "puck_juggle_upper_half_reward",
+          "terminate_on_enemy_goal": true,
+          "terminate_on_out_of_bounds": false,
+          "terminate_on_puck_hit_bottom": true,
+          "terminate_on_puck_hit_paddle": false,
+          "terminate_on_puck_pass_paddle": true,
+          "terminate_on_puck_stop": false
+        },
+        "summary": {
+          "episodes": 8,
+          "horizon": 5000,
+          "failures": 8,
+          "horizon_survival_fraction": 0.0,
+          "sustained_juggling_fraction": 0.0,
+          "mean_juggles": 0.5,
+          "mean_valid_juggling_steps": 0.0,
+          "restricted_mean_steps": 62.75,
+          "median_observed_steps": 58.0,
+          "min_steps": 32,
+          "mean_contacts": 1.625,
+          "mean_return": 27.0,
+          "end_reasons": {
+            "puck_passed_paddle": 8
+          },
+          "zero_failure_probability_upper_95": null,
+          "survival_at_steps": {
+            "250": 0.0,
+            "1000": 0.0,
+            "2000": 0.0
+          },
+          "worst_peak_paddle_speed_m_s": 2.000000057658144,
+          "worst_peak_paddle_acceleration_m_s2": 48.26941925414817,
+          "mean_action_delta_rms": 0.5341488506144203,
+          "mean_target_delta_rms_m": 0.11401330218634072,
+          "mean_true_state_juggles": 0.5,
+          "true_state_sustained_juggling_fraction": 0.0
+        },
+        "episodes": [
+          {
+            "seed": 10000,
+            "steps": 99,
+            "return": 70.0,
+            "contacts": 2,
+            "failed": true,
+            "unexpected_truncation": false,
+            "reached_horizon": false,
+            "end_reasons": [
+              "puck_passed_paddle"
+            ],
+            "peak_paddle_speed_m_s": 2.0000000555031856,
+            "peak_paddle_acceleration_m_s2": 39.96664184859404,
+            "action_delta_rms": 0.47341969354657865,
+            "target_delta_rms_m": 0.09807545573198907,
+            "trajectory": "training_seed10000.npz",
+            "contact_events": 1,
+            "juggles": 1,
+            "true_state_contact_events": 1,
+            "true_state_juggles": 1
+          },
+          {
+            "seed": 10001,
+            "steps": 32,
+            "return": 8.0,
+            "contacts": 0,
+            "failed": true,
+            "unexpected_truncation": false,
+            "reached_horizon": false,
+            "end_reasons": [
+              "puck_passed_paddle"
+            ],
+            "peak_paddle_speed_m_s": 1.8596126271717976,
+            "peak_paddle_acceleration_m_s2": 30.025656251773178,
+            "action_delta_rms": 0.7507191823931113,
+            "target_delta_rms_m": 0.17894885402994587,
+            "trajectory": "training_seed10001.npz",
+            "contact_events": 1,
+            "juggles": 0,
+            "true_state_contact_events": 0,
+            "true_state_juggles": 0
+          },
+          {
+            "seed": 10002,
+            "steps": 46,
+            "return": 24.0,
+            "contacts": 1,
+            "failed": true,
+            "unexpected_truncation": false,
+            "reached_horizon": false,
+            "end_reasons": [
+              "puck_passed_paddle"
+            ],
+            "peak_paddle_speed_m_s": 1.9919238808124076,
+            "peak_paddle_acceleration_m_s2": 31.85998503432077,
+            "action_delta_rms": 0.5614565068275511,
+            "target_delta_rms_m": 0.11070384060116036,
+            "trajectory": "training_seed10002.npz",
+            "contact_events": 1,
+            "juggles": 0,
+            "true_state_contact_events": 1,
+            "true_state_juggles": 0
+          },
+          {
+            "seed": 10003,
+            "steps": 40,
+            "return": 26.0,
+            "contacts": 0,
+            "failed": true,
+            "unexpected_truncation": false,
+            "reached_horizon": false,
+            "end_reasons": [
+              "puck_passed_paddle"
+            ],
+            "peak_paddle_speed_m_s": 2.000000013085362,
+            "peak_paddle_acceleration_m_s2": 28.781599242549845,
+            "action_delta_rms": 0.296236816285289,
+            "target_delta_rms_m": 0.053129202318926254,
+            "trajectory": "training_seed10003.npz",
+            "contact_events": 0,
+            "juggles": 0,
+            "true_state_contact_events": 0,
+            "true_state_juggles": 0
+          },
+          {
+            "seed": 10004,
+            "steps": 104,
+            "return": 40.0,
+            "contacts": 5,
+            "failed": true,
+            "unexpected_truncation": false,
+            "reached_horizon": false,
+            "end_reasons": [
+              "puck_passed_paddle"
+            ],
+            "peak_paddle_speed_m_s": 2.000000044697646,
+            "peak_paddle_acceleration_m_s2": 48.26941925414817,
+            "action_delta_rms": 0.6161154620896473,
+            "target_delta_rms_m": 0.1456635303551129,
+            "trajectory": "training_seed10004.npz",
+            "contact_events": 2,
+            "juggles": 1,
+            "true_state_contact_events": 2,
+            "true_state_juggles": 1
+          },
+          {
+            "seed": 10005,
+            "steps": 36,
+            "return": 0.0,
+            "contacts": 0,
+            "failed": true,
+            "unexpected_truncation": false,
+            "reached_horizon": false,
+            "end_reasons": [
+              "puck_passed_paddle"
+            ],
+            "peak_paddle_speed_m_s": 2.000000057658144,
+            "peak_paddle_acceleration_m_s2": 41.7696603805651,
+            "action_delta_rms": 0.6177952137515083,
+            "target_delta_rms_m": 0.1292582548351405,
+            "trajectory": "training_seed10005.npz",
+            "contact_events": 0,
+            "juggles": 0,
+            "true_state_contact_events": 0,
+            "true_state_juggles": 0
+          },
+          {
+            "seed": 10006,
+            "steps": 75,
+            "return": 15.0,
+            "contacts": 3,
+            "failed": true,
+            "unexpected_truncation": false,
+            "reached_horizon": false,
+            "end_reasons": [
+              "puck_passed_paddle"
+            ],
+            "peak_paddle_speed_m_s": 2.000000013037539,
+            "peak_paddle_acceleration_m_s2": 40.22341855842084,
+            "action_delta_rms": 0.653058297578287,
+            "target_delta_rms_m": 0.13425473954592648,
+            "trajectory": "training_seed10006.npz",
+            "contact_events": 3,
+            "juggles": 1,
+            "true_state_contact_events": 1,
+            "true_state_juggles": 1
+          },
+          {
+            "seed": 10007,
+            "steps": 70,
+            "return": 33.0,
+            "contacts": 2,
+            "failed": true,
+            "unexpected_truncation": false,
+            "reached_horizon": false,
+            "end_reasons": [
+              "puck_passed_paddle"
+            ],
+            "peak_paddle_speed_m_s": 1.9999999639946864,
+            "peak_paddle_acceleration_m_s2": 26.61557366522133,
+            "action_delta_rms": 0.3043896324433898,
+            "target_delta_rms_m": 0.06207254007252434,
+            "trajectory": "training_seed10007.npz",
+            "contact_events": 1,
+            "juggles": 1,
+            "true_state_contact_events": 1,
+            "true_state_juggles": 1
+          }
+        ]
+      }
+    }
+  }
+}

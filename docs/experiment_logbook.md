@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E030 — Longer-discount history first checkpoint confirms updates](#e030)
 - [E029 — History seed1 first checkpoint confirms updates, not replication success](#e029)
 - [E028 — Interrupt survival trial and launch longer-discount history](#e028)
 - [E027 — Baseline completes 6M; fresh history seed1 starts](#e027)
@@ -35,6 +36,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e030"></a>
+
+## E030 — 2026-10-29 16:30:02 -0500 — Longer-discount history first checkpoint confirms updates
+
+The gamma .999 history trial executes the intended learning updates but has no early validation caps.
+
+**Completed:** At100k,62,500critic updates and populated actor/critic optimizer states; gamma .999 and scratch/canonical guards verified from saved files. Eight reused validation starts: mean62.75,median58,0.5physical juggles,0/8caps at5k. [Portable evidence](juggling-history-long-discount-first-checkpoint.json), [detailed record](../notes/scratch/experiments/2026-10-29_21-30_history-discount-first-checkpoint.md). This verifies runtime, not the hypothesis or reliable juggling.
+
+**Waiting:** Fixed4M original-history benchmark watcher1322650 is live;32reused starts,10k cap. No result yet. Three history learners continue, no new training launch or simulator/DR changes. No new early-policy GIF. [A030](agent_logbook.md#a030).
 
 <a id="e029"></a>
 
