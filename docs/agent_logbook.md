@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A013 — Publish the 1M milestone without promoting a validation-only winner](#a013)
 - [A012 — Prepare guarded from-scratch history training](#a012)
 - [A011 — Test whether deployable memory improves state estimation](#a011)
 - [A010 — Publish the first matched exploration milestone](#a010)
@@ -18,6 +19,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a013"></a>
+
+## A013 — 2026-10-29 13:03:57 -0500 — Publish the 1M milestone without promoting a validation-only winner
+
+Codex monitored all live trials through the first 1M checkpoints, benchmarked the fixed reduced-exploration checkpoint and retained the stronger prior incumbent.
+
+**Evidence:** [E012](experiment_logbook.md#e012) and [detailed note](../notes/scratch/experiments/2026-10-29_18-03_exploration-1m-benchmark.md) distinguish the eight-start validation lead from the inconclusive shared 32-start comparison. New benchmark completed, current three production trainings and selected-checkpoint waiting workers remain live. No training, reward, architecture, simulator or randomization changes.
+
+**Publication:** Updated learning-curve report/CSV/figure, per-start paired benchmark CSV and a new 1M noisy rollout GIF with original source preserved locally. Checked raw JSON summaries against report values, relative links, image existence, anchors, TOC coverage and whitespace. No new implementation tests for this artifact-only milestone; the previous 20-test result remains historical. Goal remains active, with no cap completions yet.
 
 <a id="a012"></a>
 

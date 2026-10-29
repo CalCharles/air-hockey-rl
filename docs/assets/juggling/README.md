@@ -28,3 +28,5 @@ The clean policy is not yet robust to the simulated sensing conditions needed fo
 [Validation-selected scratch actor](noisy-scratch-selected.gif): 816.94 mean steps and 7.75 physical-trajectory juggles across 32 paired starts, 0/32 completing 10k. Final actor on those starts: 415.31 steps. Clip generated 2026-10-29, compacted to 10 fps with duration preserved; see [E008](../../experiment_logbook.md#e008).
 
 [Reduced exploration, 500k](noisy-low-explore-500k.gif): first validation rollout; eight-start mean survival 233.125 versus matched baseline 149.75, neither completing the 5k cap. Early running-experiment milestone, not a final result; [E009](../../experiment_logbook.md#e009).
+
+[Reduced exploration, 1M benchmark](noisy-low-explore-1m.gif): shared 32-start mean survival 695.375, 0/32 at 10k, versus selected incumbent 816.9375. Retain incumbent; matched eight-start validation lead is not a solved result. [E012](../../experiment_logbook.md#e012).

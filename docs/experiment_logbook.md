@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E012 — One-million-step exploration comparison and shared benchmark](#e012)
 - [E011 — Long-history scratch path passes CPU smoke; full trial planned](#e011)
 - [E010 — Offline state estimation supports a memory-policy trial](#e010)
 - [E009 — Reduced exploration leads at the 500k checkpoint](#e009)
@@ -17,6 +18,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e012"></a>
+
+## E012 — 2026-10-29 13:03:57 -0500 — One-million-step exploration comparison and shared benchmark
+
+Reduced exploration leads the matched 1M checkpoint validation but does not establish a better incumbent on the shared 32-start benchmark.
+
+**Running E005 milestone:** At 1M, baseline mean survival 266.25 and physical-trajectory juggles 2.125 versus reduced exploration 894.125 and 6.625 on the same eight validation starts; both 0/8 5k-cap completions. Reduced exploration also leads at 800k and 900k, after a near tie at 600k. The larger network remains slower, 165 mean steps at 700k, no capped completions.
+
+**Completed fixed-checkpoint benchmark:** New 1M actor: mean **695.375**, median 553, physical-trajectory juggles **6.09375**, 0/32 10k-cap completions. Existing selected 1.8M incumbent on the same seed-300000 starts: **816.9375**, median 612, juggles **7.75**, 0/32. New-minus-incumbent mean −121.5625, paired episode-bootstrap 95% interval [−469.88, 210.23], wins 16/32. One training seed; these shared benchmark starts are no longer untouched and training budgets differ. No reliable superiority claim. Retain E008 incumbent; keep current training running.
+
+![Reduced exploration at 1M, shared benchmark](assets/juggling/noisy-low-explore-1m.gif)
+
+New clip generated 2026-10-29, first episode's last 20 seconds, 10 fps/64 colors, duration preserved. [Detailed methods, commands and limitations](../notes/scratch/experiments/2026-10-29_18-03_exploration-1m-benchmark.md), [per-start CSV](juggling-exploration-1m-benchmark.csv), [refreshed curves](juggling-noisy-progress.md). Policy inputs remain canonical noisy observations; physical trajectories are diagnostic only. [A013](agent_logbook.md#a013).
 
 <a id="e011"></a>
 

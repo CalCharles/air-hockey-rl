@@ -65,3 +65,5 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-10-29 17:45 | Noisy state observability | Twelve-step deployable memory modestly improves held-out supervised state estimation; no policy-performance claim | [file](2026-10-29_17-45_noisy-state-observability.md)
 
 - 2026-10-29 17:50 | Scratch history smoke | Canonical sensor stream preserved; CPU collection, gradient updates, checkpoint and evaluation passed; full trial not launched | [file](2026-10-29_17-50_scratch-history-smoke.md)
+
+- 2026-10-29 18:03 | Exploration 1M benchmark | Reduced exploration leads matched validation, but shared 32-start mean remains below incumbent and all episodes fail the cap | [file](2026-10-29_18-03_exploration-1m-benchmark.md)
