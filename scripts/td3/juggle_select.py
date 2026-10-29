@@ -14,7 +14,7 @@ import time
 
 import yaml
 
-from scripts.td3.juggle_original_sensing import assert_original_sensing
+from scripts.td3.juggle_noisy_scratch import assert_canonical_scratch_env
 from scripts.td3.juggle_survival import evaluate_checkpoint
 
 
@@ -39,7 +39,7 @@ def select_checkpoint(root, seed_base, episodes):
     config = yaml.safe_load((checkpoint / "config.yaml").read_text())["air_hockey"]
     # The trainer saves its current evaluation RNG seed in this field. The
     # survival evaluator replaces it per episode; no physical/sensor key varies.
-    assert_original_sensing(dict(config, seed=0))
+    assert_canonical_scratch_env(dict(config, seed=0))
     return checkpoint, summary
 
 

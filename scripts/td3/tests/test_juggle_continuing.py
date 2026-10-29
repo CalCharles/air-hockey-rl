@@ -26,6 +26,57 @@ class RecordingBuffer:
 
 
 class ContinuingJuggleTests(unittest.TestCase):
+    def test_scratch_environment_guard_allows_only_explicit_reward_knobs(self):
+        from scripts.td3.juggle_original_sensing import original_sensing_config
+        from scripts.td3.juggle_noisy_scratch import assert_canonical_scratch_env
+
+        cfg = original_sensing_config()["air_hockey"]
+        cfg.update(enable_survival_bonus=True, survival_bonus_per_step=1., puck_loss_penalty=5.)
+        assert_canonical_scratch_env(cfg)
+        for bad in (dict(cfg, puck_loss_penalty=-1.), dict(cfg, survival_bonus_per_step=float("nan")),
+                    dict(cfg, enable_survival_bonus="true"), dict(cfg, task="puck_touch")):
+            with self.assertRaises(ValueError):
+                assert_canonical_scratch_env(bad)
+        for section, key, value in (("simulator_params", "puck_noise", False),
+                                    ("random_variable_ranges", "gravity", [-.8, -.7])):
+            bad = copy.deepcopy(cfg)
+            bad[section][key] = value
+            with self.assertRaises(ValueError):
+                assert_canonical_scratch_env(bad)
+
+    def test_reward_shaping_preserves_sensor_dynamics_and_termination_trace(self):
+        import random
+        from scripts.td3.juggle_original_sensing import original_sensing_config
+
+        traces, rewards, costs = [], [], []
+        for shaping in (False, True):
+            random.seed(3)
+            np.random.seed(3)
+            cfg = original_sensing_config()["air_hockey"]
+            if shaping:
+                cfg.update(enable_survival_bonus=True, survival_bonus_per_step=1., puck_loss_penalty=5.)
+            env = AirHockeyEnv(cfg)
+            trace, episode_rewards, expected_delta = [], [], []
+            try:
+                env.reset(seed=3)
+                for _ in range(200):
+                    obs, reward, term, trunc, info = env.step(np.zeros(2))
+                    trace.append(np.concatenate([obs, [term, trunc]]))
+                    episode_rewards.append(float(reward))
+                    lost = any(reason in ("puck_hit_bottom", "puck_passed_paddle")
+                               for reason in info["episode_end_reasons"])
+                    expected_delta.append((1. if not term and not trunc else 0.) - (5. if term and lost else 0.))
+                    if term or trunc:
+                        break
+                traces.append(np.asarray(trace))
+                rewards.append(np.asarray(episode_rewards))
+                costs.append(np.asarray(expected_delta))
+            finally:
+                env.close()
+        np.testing.assert_array_equal(traces[0], traces[1])
+        np.testing.assert_allclose(rewards[1] - rewards[0], costs[0])
+        self.assertTrue(traces[0][-1, -2], "test must include the puck-loss terminal")
+
     def test_selected_evaluation_finishes_waiting_after_intentional_interruption(self):
         import json
         import tempfile

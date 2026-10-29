@@ -4,13 +4,35 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
+import math
 from pathlib import Path
 import subprocess
 import sys
 
 import yaml
 
-from scripts.td3.juggle_original_sensing import REPO, assert_original_sensing
+from scripts.td3.juggle_original_sensing import REPO, assert_original_sensing, original_sensing_config
+
+
+def assert_canonical_scratch_env(config):
+    """Allow explicit reward shaping while retaining the exact simulator/DR.
+
+    These three existing base-env knobs affect only reward computation. Task,
+    terminations, observation sampling and every physical/control key stay fixed.
+    """
+    normalized = dict(config)
+    expected = original_sensing_config()['air_hockey']
+    if 'enable_survival_bonus' in config and not isinstance(config['enable_survival_bonus'], bool):
+        raise ValueError('enable_survival_bonus must be a boolean')
+    for key in ('survival_bonus_per_step', 'puck_loss_penalty'):
+        if key in config and (not math.isfinite(float(config[key])) or float(config[key]) < 0):
+            raise ValueError(key + ' must be finite and nonnegative')
+    for key in ('enable_survival_bonus', 'survival_bonus_per_step', 'puck_loss_penalty'):
+        if key in expected:
+            normalized[key] = expected[key]
+        else:
+            normalized.pop(key, None)
+    assert_original_sensing(normalized)
 
 
 def scratch_trainer(args):
@@ -46,7 +68,7 @@ def main():
 
     try:
         args = yaml.safe_load((REPO / cli.args_file).read_text())
-        assert_original_sensing(yaml.safe_load((REPO / args['config']).read_text())['air_hockey'])
+        assert_canonical_scratch_env(yaml.safe_load((REPO / args['config']).read_text())['air_hockey'])
         trainer = scratch_trainer(args)
         # The trainer uses this exact directory, rather than choosing an rN suffix.
         args.update(log_parent_dir=str(root / 'train'), resume_in_place=True)

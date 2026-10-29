@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A015 — Prepare authorized reward changes without relaxing simulator fidelity](#a015)
 - [A014 — Reassign an underperforming pilot GPU to fresh policy memory](#a014)
 - [A013 — Publish the 1M milestone without promoting a validation-only winner](#a013)
 - [A012 — Prepare guarded from-scratch history training](#a012)
@@ -20,6 +21,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a015"></a>
+
+## A015 — 2026-10-29 13:31:51 -0500 — Prepare authorized reward changes without relaxing simulator fidelity
+
+Codex prepared a survival-focused scratch candidate and added a narrowly scoped reward exception to the canonical simulator guard.
+
+**Implementation:** [Runner](../scripts/td3/juggle_noisy_scratch.py) and [selector](../scripts/td3/juggle_select.py) accept only the three existing reward knobs while preserving exact equality for every other environment field. Boolean/numeric validation rejects malformed, negative or nonfinite shaping values. Scratch/privileged-actor guards remain in force. Added [reward environment](../configs/new_juggle/sustained/noisy_survival.yaml) and [future training config](../configs/td3/sustained/noisy_survival_scratch.yaml); no full new trial launched.
+
+**Evidence:** All 23 targeted tests passed, including rejection of altered noise, task and DR, and a paired original/shaped trajectory through actual puck loss with exact sensor/terminal agreement and expected reward deltas. Training config matches Args and model_path is null. No simulator implementation file changed. Current running processes retain their settings and continue. [Planned experiment E014](experiment_logbook.md#e014) documents the combined candidate and its rationale; inspect 2M evidence before deciding to launch. Relative links, image existence, anchors, TOC coverage and whitespace checked.
 
 <a id="a014"></a>
 

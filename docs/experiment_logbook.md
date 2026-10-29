@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E014 — Prepare survival-focused scratch candidate; not launched](#e014)
 - [E013 — Interrupt width pilot and launch fresh policy-memory trial](#e013)
 - [E012 — One-million-step exploration comparison and shared benchmark](#e012)
 - [E011 — Long-history scratch path passes CPU smoke; full trial planned](#e011)
@@ -19,6 +20,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e014"></a>
+
+## E014 — 2026-10-29 13:31:51 -0500 — Prepare survival-focused scratch candidate; not launched
+
+A reward-focused scratch candidate is prepared for assessment after the current 2M milestones, with canonical dynamics, observations and DR still locked.
+
+**Planned only:** [Environment config](../configs/new_juggle/sustained/noisy_survival.yaml) retains the original upper-half task and adds existing reward-only fields: survival bonus +1 on nonterminal steps and puck-loss penalty 5. [Training config](../configs/td3/sustained/noisy_survival_scratch.yaml): 6M planned, seed 0, gamma 0.999, actor LR 1e-4, two actor updates per cycle, training-only action-delta penalty 0.005, existing low-exploration recipe. This is a combined candidate, not an isolated causal ablation. The actor penalty does not filter or remap deployed actions. No policy weights loaded and no production trial started.
+
+**Why:** Current runs show repeated checkpoint regressions and no cap completions. This candidate tests a longer-horizon survival objective plus more conservative actor optimization. E013 history trial remains running. At latest inspected validation: baseline 1.8M 495.875 mean steps, reduced exploration 1.7M 513.25, history 200k 93.0; each 0/8 caps.
+
+**Guard/validation:** Only `enable_survival_bonus`, `survival_bonus_per_step`, `puck_loss_penalty` can differ at the top level; values are type/finite/nonnegative checked. Task, termination rules, sensing, history sampling, PID, smoothing, geometry, contact parameters, workspace and DR still require exact canonical equality. All 23 targeted tests pass. A paired run through actual puck-loss termination has bitwise-identical observations/terminal flags and exactly the expected reward differences. This is implementation validation, not a learned-policy result. No figure or checkpoint exists for the planned candidate.
+
+**Future command, not run:** `.venv/bin/python -u -m scripts.td3.juggle_noisy_scratch --root <new-survival-root> --args-file configs/td3/sustained/noisy_survival_scratch.yaml`. [A015](agent_logbook.md#a015).
 
 <a id="e013"></a>
 
