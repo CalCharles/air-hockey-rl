@@ -6,6 +6,8 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E032 — First eight-of-eight validation caps trigger a new frozen test](#e032)
+- [E031 — Rendered 3M success and failure reproduce exactly](#e031)
 - [E030 — Longer-discount history first checkpoint confirms updates](#e030)
 - [E029 — History seed1 first checkpoint confirms updates, not replication success](#e029)
 - [E028 — Interrupt survival trial and launch longer-discount history](#e028)
@@ -36,6 +38,28 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e032"></a>
+
+## E032 — 2026-10-29 16:35:02 -0500 — First eight-of-eight validation caps trigger a new frozen test
+
+History3.6M becomes the first checkpoint with all eight reused5k validation caps, and its independent20k test is running.
+
+**Validation completed; independent test running:** Verified all prior saved cap fractions below1.0. Selected3.6M before testing32previously unused campaign seeds700000–700031; froze model hash and checked canonical environment first. [Pre-test provenance](juggling-history-3m6-test-provenance.json), [detailed record](../notes/scratch/experiments/2026-10-29_21-35_history-clips-perfect-validation-test.md). No independent result yet; validation reuse and checkpoint selection preclude an acceptance claim. Existing4M watcher and all three learners remain live; no simulator/DR change or new training launch. [A031](agent_logbook.md#a031).
+
+<a id="e031"></a>
+
+## E031 — 2026-10-29 16:35:02 -0500 — Rendered 3M success and failure reproduce exactly
+
+Both rendered 3M episodes match all eight original test arrays exactly, showing a selected cap and the first test seed’s failure.
+
+**Completed:** Selected seed600013 caps20k with310physical juggles; first test seed600000 fails at8862 with133. Aggregate remains5/32independent20k caps and27failures. [Detailed command and context](../notes/scratch/experiments/2026-10-29_21-35_history-clips-perfect-validation-test.md), [array digests](juggling-history-3m-gif-provenance.json).
+
+![Selected3M cap ending](assets/juggling/noisy-history-3m-cap-end.gif)
+
+![First3M test seed ending in failure](assets/juggling/noisy-history-3m-first-failure.gif)
+
+Different episodes; final20seconds each, generated2026-10-29, duration preserved. On-screen Contacts is contact timesteps. No new independent reliability claim. [A031](agent_logbook.md#a031).
 
 <a id="e030"></a>
 

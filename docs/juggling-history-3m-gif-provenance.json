@@ -1,0 +1,49 @@
+{
+  "recorded": "2026-10-29T21:35:02.377830+00:00",
+  "checkpoint": "runs/td3/noisy_history_20261029_seed0/train/checkpoint_3000000",
+  "model_sha256": "1e0dda69f8148b8178d0c575a0dca54e36357bbcf2809b1b98857e9f26357d20",
+  "clips": [
+    {
+      "seed": 600013,
+      "steps": 20000,
+      "physical_juggles": 310,
+      "reached_horizon": true,
+      "source_results": "runs/td3/noisy_history_20261029_seed0/independent_3m_20k_eval/results.json",
+      "renderer_results": "runs/td3/noisy_history_20261029_seed0/selected_demo_3m_seed600013_20k/results.json",
+      "all8arrays_exact": true,
+      "array_sha256": {
+        "observation": "587d64e97f6b87445a92a4d7d892c9012296340730e031b019bc5c726f095253",
+        "next_observation": "e4640fc7fdfcab5d0ac8ef841898de2704c4ca3794dc4a1fc459ce5cdb7f5be1",
+        "action": "df48fa46bc219b563aaacdb7769e0b0329e04f652b86230d5dcd46ddd4bdab4b",
+        "reward": "9ea9f1136db6dd9cf3b550afdf8f22400fcf77c34a79511df8e80bad0397377e",
+        "terminated": "28b4f41a7f3ee6d8cc87272db6e09c6d3566551fd4d18702b041a21658272a85",
+        "truncated": "28b4f41a7f3ee6d8cc87272db6e09c6d3566551fd4d18702b041a21658272a85",
+        "true_paddle_xy": "9177210588fe5021490d7f8b04931523ea08bba330607e480ab644540748fbf8",
+        "true_puck_xy": "a66372fda3f5e026342a23f62b33f9a72fa7dd36f5f264e61406ba08220c4170"
+      },
+      "gif": "docs/assets/juggling/noisy-history-3m-cap-end.gif",
+      "playback_ms": 20000
+    },
+    {
+      "seed": 600000,
+      "steps": 8862,
+      "physical_juggles": 133,
+      "reached_horizon": false,
+      "source_results": "runs/td3/noisy_history_20261029_seed0/independent_3m_20k_eval/results.json",
+      "renderer_results": "runs/td3/noisy_history_20261029_seed0/first_demo_3m_seed600000_20k/results.json",
+      "all8arrays_exact": true,
+      "array_sha256": {
+        "observation": "27f280d1b8c0aaa70790ccb3a327d926ba964e14d506e96c57a88f2fd5585aab",
+        "next_observation": "6e0e9feb64c4b9731a9b5f615c028cb623e42cf0349db7363de719e0ae8a2d83",
+        "action": "306f388942ea877e26a2fab8f52b5c35b4b128eb6cbc0e5a462d656858983ba1",
+        "reward": "011e0b45db9682591529c8196fd3581eb6fa1fa09f568fbe036c41f500e13359",
+        "terminated": "029268ae8389b6781536319ebd4c864b658861fcd17487922f04f1ece0d8a8a9",
+        "truncated": "546edc8ec949efd0ea11779f9fa89920961ebd0b914f71aa7b876e9ab7547908",
+        "true_paddle_xy": "e912d76359f02e704bc6b27265235ea506567afbd22a528e38fd02aa7853aef6",
+        "true_puck_xy": "1b0680cdf19df2d8e49c8097a9e99cce5daed598ef67775402e102651a24f691"
+      },
+      "gif": "docs/assets/juggling/noisy-history-3m-first-failure.gif",
+      "playback_ms": 20000
+    }
+  ]
+}

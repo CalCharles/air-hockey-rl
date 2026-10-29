@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A031 — Publish balanced 3M clips and test the first perfect validation checkpoint](#a031)
 - [A030 — Verify discount-trial checkpoint and attach fixed 4M evaluator](#a030)
 - [A029 — Reallocate weaker trial and verify scratch-history learning](#a029)
 - [A028 — Reuse completed baseline allocation for scratch replication](#a028)
@@ -36,6 +37,14 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a031"></a>
+
+## A031 — 2026-10-29 16:35:02 -0500 — Publish balanced 3M clips and test the first perfect validation checkpoint
+
+Codex verified two complete renderer replays, prepared their GIFs and froze the first8/8validation checkpoint for independent evaluation.
+
+**Evidence:** [E031](experiment_logbook.md#e031), [E032](experiment_logbook.md#e032), [detailed note](../notes/scratch/experiments/2026-10-29_21-35_history-clips-perfect-validation-test.md). All arrays match, both final frames inspected and playback durations preserved. Published success-selection and aggregate-failure context. Before launching3.6M evaluation, checked prior validation results, model hash, canonical environment and absence of seed700000–700031 in prior noisy results. Test is running; no result yet. Three learners and fixed4M watcher continue. No training/simulator implementation change or new policy initialization.
 
 <a id="a030"></a>
 

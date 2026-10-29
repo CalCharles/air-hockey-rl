@@ -46,3 +46,7 @@ History2.1M, known successful seed500014: [first10seconds](noisy-history-20k-sta
 ## Eventual failure after 48 simulated minutes
 
 [Final 20 seconds](noisy-history-48min-end.gif) of selected seed 500014: 57,811 steps, 838 physical juggles, then failure. The other three 20k successes also eventually failed. All extension prefixes and the complete renderer replay match saved arrays exactly. Generated 2026-10-29; duration preserved. This is a selected long episode, not independent reliability evidence. The original 32-start cohort now has 32 observed eventual failures. [E025](../../experiment_logbook.md#e025).
+
+## Current 3M candidate: success and failure
+
+[Selected cap, final 20 seconds](noisy-history-3m-cap-end.gif): seed 600013, 20,000 steps, 310 physical juggles. [First test seed, final 20 seconds](noisy-history-3m-first-failure.gif): different seed 600000, failure at 8,862 steps, 133 physical juggles. Both full replays match all eight original arrays exactly. Generated 2026-10-29, duration preserved. Aggregate independent test: **5/32 caps and 27 failures**. The first clip is selected success; the second is the first predeclared seed. [E031](../../experiment_logbook.md#e031).

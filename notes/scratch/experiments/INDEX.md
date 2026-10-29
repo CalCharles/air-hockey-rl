@@ -98,3 +98,5 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-10-29 21:26 | Survival stop and history discount start | Survival interrupted after4M; selected mean811,0caps; fresh gamma.999 history running; seed1 actual updates confirmed | [file](2026-10-29_21-26_survival-stop-history-discount-start.md)
 
 - 2026-10-29 21:30 | History discount first checkpoint | Actual62,500critic updates; early mean62.75,0caps; fixed4M watcher queued | [file](2026-10-29_21-30_history-discount-first-checkpoint.md)
+
+- 2026-10-29 21:35 | 3M clips and3.6M frozen test | Two exact replays; first8/8validation caps; new-seed20k test running with locked hash | [file](2026-10-29_21-35_history-clips-perfect-validation-test.md)

@@ -1,0 +1,40 @@
+{
+  "recorded_before_launch": "2026-10-29T21:33:57.364653+00:00",
+  "checkpoint": "runs/td3/noisy_history_20261029_seed0/train/checkpoint_3600000",
+  "model_sha256": "97e1184364f9f6a0c00406c8608bbc8190a82e60629f4a593eb483125ce95351",
+  "selection": "First checkpoint with all8 reused5k validation caps; selected before new test",
+  "seed_base": 700000,
+  "episodes": 32,
+  "horizon": 20000,
+  "seed_audit": "No saved noisy-campaign results overlap700000\u2013700031 before launch",
+  "validation_summary": {
+    "episodes": 8,
+    "horizon": 5000,
+    "failures": 0,
+    "horizon_survival_fraction": 1.0,
+    "sustained_juggling_fraction": 1.0,
+    "mean_juggles": 67.0,
+    "mean_valid_juggling_steps": 5000.0,
+    "restricted_mean_steps": 5000.0,
+    "median_observed_steps": 5000.0,
+    "min_steps": 5000,
+    "mean_contacts": 129.125,
+    "mean_return": 3769.0,
+    "end_reasons": {
+      "evaluation_horizon": 8
+    },
+    "zero_failure_probability_upper_95": 0.31234397806636793,
+    "survival_at_steps": {
+      "250": 1.0,
+      "1000": 1.0,
+      "2000": 1.0
+    },
+    "worst_peak_paddle_speed_m_s": 2.0000000772336066,
+    "worst_peak_paddle_acceleration_m_s2": 53.3968009553106,
+    "mean_action_delta_rms": 0.3594276256640385,
+    "mean_target_delta_rms_m": 0.0647312611494392,
+    "mean_true_state_juggles": 75.0,
+    "true_state_sustained_juggling_fraction": 1.0
+  },
+  "status_at_recording": "running_no_result_yet"
+}
