@@ -61,3 +61,5 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-10-21 21-41 | Clean juggling iteration 2 | Selected long_discount; bounded validation, see GIFs and results | [2026-10-21_21-41_clean-juggle-iteration-2.md](2026-10-21_21-41_clean-juggle-iteration-2.md)
 
 - 2026-10-29 17:31 | Scratch paired checkpoints | Validation-selected 1.8M actor doubles mean survival versus final on 32 fresh paired starts, but 0/32 complete the cap | [file](2026-10-29_17-31_scratch-paired-checkpoints.md)
+
+- 2026-10-29 17:45 | Noisy state observability | Twelve-step deployable memory modestly improves held-out supervised state estimation; no policy-performance claim | [file](2026-10-29_17-45_noisy-state-observability.md)

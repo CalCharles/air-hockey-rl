@@ -26,6 +26,36 @@ class RecordingBuffer:
 
 
 class ContinuingJuggleTests(unittest.TestCase):
+    def test_observer_diagnostic_has_no_current_action_or_future_state_leakage(self):
+        import tempfile
+        from scripts.analysis.juggle_observability import load_data
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            obs = np.repeat(np.arange(6, dtype=np.float32)[:, None], 30, axis=1)
+            action = np.repeat((100 + np.arange(6, dtype=np.float32))[:, None], 2, axis=1)
+            truth = np.stack([np.arange(6), -np.arange(6)], axis=1)
+            for seed in (300000, 300024):
+                np.savez(root / ("training_seed" + str(seed) + ".npz"),
+                         observation=obs, action=action, true_puck_xy=truth)
+            before = load_data([root], 2, 300024)
+            np.testing.assert_array_equal(before[0]["target"][0], [1., -1., 20., -20.])
+            # At observation t=2, use only actions 0 and 1, never action 2.
+            np.testing.assert_array_equal(before[0]["long"][0][-2:], action[1])
+            changed = action.copy()
+            changed[2:] = -999.
+            future_obs = obs.copy()
+            future_obs[3:] = -999.
+            future_truth = truth.copy()
+            future_truth[2:] = -999.
+            np.savez(root / "training_seed300000.npz", observation=future_obs,
+                     action=changed, true_puck_xy=future_truth)
+            after = load_data([root], 2, 300024)
+            np.testing.assert_array_equal(before[0]["long"][0], after[0]["long"][0])
+            np.testing.assert_array_equal(before[0]["target"][0], after[0]["target"][0])
+            self.assertFalse(before[0]["heldout"])
+            self.assertTrue(before[1]["heldout"])
+
     def test_checkpoint_selection_uses_validation_and_rejects_reused_test_seeds(self):
         import json
         import tempfile

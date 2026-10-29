@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E010 — Offline state estimation supports a memory-policy trial](#e010)
 - [E009 — Reduced exploration leads at the 500k checkpoint](#e009)
 - [E008 — Validation-selected scratch checkpoint doubles paired survival](#e008)
 - [E007 — Verify read-only physical-trajectory diagnostics](#e007)
@@ -15,6 +16,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e010"></a>
+
+## E010 — 2026-10-29 12:45:50 -0500 — Offline state estimation supports a memory-policy trial
+
+Twelve-step deployable history modestly improves held-out physical-state estimation over the current observation alone, without demonstrating improved juggling.
+
+**Completed offline diagnostic:** 64 saved E008 actor episodes, split by seed into 48 training and 16 held-out episodes (eight distinct held-out environment seeds shared across two actors). Fresh supervised MLPs, 3,000 updates each, no actor/critic training or new rollouts. Width-64 current-input / width-128 current-input / width-64 memory position RMSE: 4.444 / 4.251 / 4.102 cm; prior-step mean velocity RMSE: 0.769 / 0.744 / 0.659 m/s. Memory improves velocity error 11.4% over the larger current-input control. Only one regressor training seed; this frozen-policy dataset does not establish control performance.
+
+![Held-out state-estimation errors](juggling-observability.png)
+
+Figure generated 2026-10-29 from saved trajectories. Paired dots represent eight held-out seeds, each averaging two frozen-actor episodes. [Detailed methods, limitations and command](../notes/scratch/experiments/2026-10-29_17-45_noisy-state-observability.md), [raw JSON](juggling-observability.json), [diagnostic script](../scripts/analysis/juggle_observability.py). No weights retained or authorized for initializing an actor; all future policies still start from scratch.
+
+**Running E005 update:** At 600k, baseline mean survival 311.5 versus reduced exploration 308.375; both 0/8 cap completions. Thus E009's 500k lead is not yet robust. Continue the declared comparison; a from-scratch history architecture is a candidate if these trials fail. [A011](agent_logbook.md#a011).
 
 <a id="e009"></a>
 

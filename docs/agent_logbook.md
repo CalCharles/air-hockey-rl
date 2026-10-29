@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A011 — Test whether deployable memory improves state estimation](#a011)
 - [A010 — Publish the first matched exploration milestone](#a010)
 - [A009 — Publish stronger scratch incumbent and attach checkpoint selection](#a009)
 - [A008 — Separate physical-trajectory diagnostics from noisy juggle counts](#a008)
@@ -16,6 +17,18 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a011"></a>
+
+## A011 — 2026-10-29 12:45:50 -0500 — Test whether deployable memory improves state estimation
+
+Codex ran a supervised diagnostic on saved physical/noisy trajectory pairs to assess a longer-memory policy architecture while RL trials continued.
+
+**Deliverables:** [Script](../scripts/analysis/juggle_observability.py), [raw held-out metrics](juggling-observability.json), [figure](juggling-observability.png), [detailed experiment](../notes/scratch/experiments/2026-10-29_17-45_noisy-state-observability.md). [E010](experiment_logbook.md#e010) records the modest memory benefit and its limits. Regressor weights were discarded; no policy warm start, simulator change or new rollout was used.
+
+**Validation:** All 18 targeted continuing-task tests passed. Added a synthetic alignment/leakage test proving that inputs exclude current/future actions and states, targets refer to physical state before the evaluated action and seed groups remain separated. Control period is explicit (50 ms default, unchanged from the measured run). Checked generated plot/data paths, relative Markdown links, entry anchors, TOC coverage and whitespace. RL learners remained live and advanced to approximately 670k/665k/455k; no additional RL trial launched.
+
+**Decision:** Keep the existing comparison running. New policy memory is evidence-supported but unproven for sustained control; any future policy must be initialized independently, without these regression weights.
 
 <a id="a010"></a>
 
