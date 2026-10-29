@@ -1,5 +1,7 @@
 # Repository reference
 
+Research records: [Experiment logbook](experiment_logbook.md) · [Agent logbook](agent_logbook.md).
+
 Last inspected: 2026-10-21. These are compact working notes for future coding sessions, created at the user's request. The existing detailed documentation remains in [`notes/docs/`](../notes/docs/index.md); this directory does not replace it.
 
 Read in this order:

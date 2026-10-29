@@ -1,0 +1,118 @@
+# Experiment logbook
+
+Scope: recent sustained-juggling studies on this branch, not a complete repository history. Backfilled on 2026-10-28 12:23:43-05:00 from Git author timestamps, existing experiment notes, saved reports and tracked GIFs. Historical headings are **recording milestones**, not run start/end times. Timezone: America/Chicago, explicit UTC offsets. All results below are historical, not freshly reproduced. [Agent logbook](agent_logbook.md).
+
+Entries and contents are ordered newest first; IDs remain permanent.
+
+## Table of contents
+
+- [E005 — Scratch run completed; longer-training comparison launched](#e005)
+- [E004 — Noisy-simulator training from scratch](#e004)
+- [E003 — Original-sensing fine-tuning regression](#e003)
+- [E002 — Clean-simulation iterations and failed transfer](#e002)
+- [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e005"></a>
+
+## E005 — 2026-10-29 12:17:15 -0500 — Scratch run completed; longer-training comparison launched
+
+The 2M-step scratch policy improved but failed every fresh 10,000-step rollout; three new scratch trials now test training duration, exploration and network capacity.
+
+**Completed E004:** Finished 2026-10-28 13:57:31 -05:00 including final evaluation. On 32 independent starts (200000–200031), mean survival 416.1 steps, mean contact timesteps 20.4, genuine cap completions 0/32. Contact timesteps are not distinct juggle cycles. [Raw final results](../runs/td3/noisy_scratch_20261028_seed0/final_eval/results.json). These results supersede E004's running status; the goal remains unsolved.
+
+![Scratch policy under canonical noisy sensing](assets/juggling/noisy-scratch-final.gif)
+
+The existing evaluation clip was copied on 2026-10-29; it shows one rollout and does not establish aggregate reliability.
+
+**New experiment, running:** Three 6M-step seed-0 trials, all fresh random actor/critics: [long baseline](../configs/td3/sustained/noisy_long.yaml), [reduced exploration](../configs/td3/sustained/noisy_low_explore.yaml), and [256-wide networks plus reduced exploration](../configs/td3/sustained/noisy_large_low_explore.yaml). Low exploration changes Gaussian noise 0.1→0.03 and primitive probability floor 0.05→0.001, annealed over 500k steps. Everything else matches E004. Baseline controls duration; second controls exploration; third compares capacity at matched exploration. One seed each limits generalization.
+
+**Contract audit:** Compared simulator code against `94acd81932c59f3cd3b827d6f39a0283747a1beb`: optional history sampling remains false, original history path retained; base-env changes concern reward/terminal handling. Exact canonical sensing/control config plus established three-parameter DR checked for each trial. No simulator changes in this task.
+
+**Artifacts/reproduction:** Roots `runs/td3/noisy_iteration2_20261029_{long,low_explore,large_low_explore}`; status.json and training.log record actual starts/progress. Existing allocations 112935/112936/112937. Command within allocation: `.venv/bin/python -u -m scripts.td3.juggle_noisy_scratch --root <root> --args-file <config>`. Final evaluation: 32 starts, seeds 200000–200031, cap 10k. Those starts are now a repeated benchmark, not a new untouched test; use new seeds for subsequent acceptance testing. No new trial performance available at recording time. [Related task](agent_logbook.md#a006).
+
+<a id="e004"></a>
+
+## E004 — 2026-10-28 12:36:09 -05:00 — Noisy-simulator training from scratch
+
+A new TD3 policy is training from randomly initialized actor and critics in the canonical noisy simulator.
+
+**Timing/status:** Started 2026-10-28 12:35:26 -05:00; running at this entry's recording time. No performance results yet.
+
+**Setup:** Seed 0, 2M steps, gamma 0.995, canonical upper-half reward, random initial exploration for 20k steps, 25 critic and six actor updates every 32 environment steps. No checkpoint load or residual base. Simulator parameters exactly match the canonical noisy recipe; established three-parameter physics DR retained, episode cap 10,000. No dynamics or observation code changes.
+
+**Evaluation:** Planned checkpoint validation every 100k steps, eight starts with 5,000-step cap, training-distribution scenario. Final actor evaluation uses 32 fresh starts (200000–200031), 10,000-step cap; the runner does not select checkpoints on these final starts.
+
+**Artifacts/reproduction:** [TD3 config](../configs/td3/sustained/noisy_scratch.yaml), [guarded runner](../scripts/td3/juggle_noisy_scratch.py). Run command: `.venv/bin/python -u -m scripts.td3.juggle_noisy_scratch --root runs/td3/noisy_scratch_20261028_seed0` inside existing Slurm allocation 112935. Runner refuses an existing root. Local status, training log and saved launch args are under that run directory; training outputs under `train/`, final results under `final_eval/`.
+
+**Figures and limits:** No rollout figure or learned-policy result available yet. One training seed cannot establish seed robustness or infinite survival.
+
+**Related task:** [A005](agent_logbook.md#a005).
+
+<a id="e003"></a>
+
+## E003 — 2026-10-22 10:09:00 -05:00 — Original-sensing fine-tuning regression
+
+All three original-sensing fine-tuned actors regressed relative to the matched original actor.
+
+**Question/setup:** Preserve canonical sysid-v2 sensing/control while fine-tuning source or clean-trained actors with fresh critics and discounts 0.99/0.995. Three trials, 1M training steps each, one training seed each, established three-parameter ±25% physics randomization. Validation: 32 shared starts (100000–100031), 10,000-step cap.
+
+**Timing and status:** Completed historical results; `84620a0` records the matched baseline correction, not experiment execution time.
+
+| Actor | Mean steps | Median steps | Mean juggles | Genuine cap completion |
+|---|---:|---:|---:|---:|
+| Original, no new training | 660.1 | 264 | 8.625 | 0/32 |
+| Source fine-tune, gamma 0.995 | 179.2 | 136.5 | 1.000 | 0/32 |
+| Clean warm start, gamma 0.995 | 282.7 | 175 | 2.156 | 0/32 |
+| Source fine-tune, gamma 0.99 | 342.8 | 246 | 2.844 | 0/32 |
+
+**Interpretation and limits:** The campaign's selected trial was best among new actors, not better than the baseline. Retain the original actor as reference. These 32 starts were also used for selection; they are not an independent post-selection test. The earlier 16-start baseline is not a matched comparator.
+
+**Figures:** No tracked GIF for this study is available in `docs/assets/juggling/`; local rollout paths are recorded in the [result note](../notes/scratch/experiments/2026-10-22_01-45_original-sensing-juggle.md).
+
+**Artifacts and reproduction:** [Full setup, commands and baseline correction](juggling-original-sensing.md), [environment config](../configs/new_juggle/sustained/original_sensing.yaml), [launcher](../scripts/td3/juggle_original_sensing.py). Local raw results/checkpoints: `runs/td3/original_sensing/`, including `source_matched_validation/`. Baseline checkpoint: `latest_models/canonical/hist2_motion0_v2/` (local availability not checked).
+
+**Related task:** [A003](agent_logbook.md#a003).
+
+<a id="e002"></a>
+
+## E002 — 2026-10-21 19:46:27 -05:00 — Clean-simulation iterations and failed transfer
+
+Clean-simulation training achieved long bounded juggling but failed when simulated sensing corruption returned.
+
+**Question/setup:** Compare upper-half reward, survival shaping and policy memory, then continuation, replication and a longer discount. Clean sensing and disabled physics randomization make these diagnostic trials outside the current training contract. Iteration 1 used 300k steps per trial; iteration 2 targeted 1M total steps. Each trial had one training seed; validation used 16 starts with a 5,000-step cap.
+
+**Timing and status:** Completed historical studies; author-commit milestone `76d1d2c` records final clips/results, not execution timing.
+
+**Results:** Iteration 1 upper/survival/memory mean lengths were 1011.9/1188.6/234.6 steps, with genuine cap completion 2/16, 1/16, 0/16. Iteration 2 continuation/replication/long-discount achieved 14/16, 15/16, 16/16. The selected policy completed the independent 20,000-step clean cap on 28/32 fresh starts; four failed within 334 steps. Sensor-corrupted transfer tests completed 0/32 for both nominal physics (80.4 mean steps) and 100 ms camera lag (78.4).
+
+![Selected clean policy near the end of a long rollout](assets/juggling/final-clean-end.gif)
+
+This individual episode illustrates clean bounded survival; it is not aggregate evidence.
+
+![Clean-trained policy failing with simulated sensor corruption](assets/juggling/final-transfer-nominal.gif)
+
+The corrupted-sensing rollout illustrates the transfer failure; it is simulation, not a hardware test.
+
+**Interpretation and limits:** Long clean survival does not establish noisy-sim robustness or infinite juggling. Contact/pinning artifacts are excluded using a repeated-juggle heuristic, which still needs visual inspection.
+
+**Artifacts and reproduction:** [Setup, commands, raw-data/checkpoint paths](juggling-iterations.md), [iteration 1 report](../notes/scratch/experiments/2026-10-21_21-14_clean-juggle-iteration-1.md), [iteration 2 report](../notes/scratch/experiments/2026-10-21_21-41_clean-juggle-iteration-2.md), [tracked GIF index](assets/juggling/README.md), [launcher](../scripts/td3/juggle_iterations.py). Local runs are under `runs/td3/juggle_iterations/`; availability is machine-dependent.
+
+**Related task:** [A002](agent_logbook.md#a002).
+
+<a id="e001"></a>
+
+## E001 — 2026-10-21 15:50:04 -05:00 — Initial sustained-juggling studies
+
+The initial campaign explored continuing-task TD3, scratch/warm-start training and residual CQL without establishing indefinite juggling.
+
+**Question/setup:** Improve sustained juggling using corrected time-limit bootstrapping, longer discounts, warm starts and residual learning; the detailed recipes and budgets are preserved in the [study documentation](../notes/docs/training/sustained-juggling.md) and [experiment index](../notes/scratch/experiments/INDEX.md).
+
+**Timing and status:** Historical implementation/recording milestone `4a64790`; individual pilot outcomes are recorded in the source notes, not inferred from the commit. Full campaign completion is not independently verified here.
+
+**Results and limits:** Sensor-robust trials did not solve sustained juggling, as reported in the [subsequent analysis](juggling-iterations.md). No numerical aggregate is reconstructed without a matched saved report. Changes included an optional history-sampling mode, so this campaign must not be treated as proof under the preserved simulator contract.
+
+**Figures:** No aggregate figure is available in the reviewed tracked study documentation.
+
+**Artifacts and reproduction:** [Campaign launcher](../scripts/td3/juggle_campaign.py); commands/configurations and local checkpoint locations are documented in the study documentation. Do not rerun its historical recipes as the new noisy-simulator objective.
+
+**Related task:** [A001](agent_logbook.md#a001).

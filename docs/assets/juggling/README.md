@@ -20,3 +20,7 @@ The selected longer-discount policy completed 20,000 steps (16 minutes 40 second
 - Transfer configuration, 100 ms camera lag plus sensor corruption: [GIF](final-transfer-camera-100ms.gif). Mean duration 78.4 steps; 0/32 completed the cap.
 
 The clean policy is not yet robust to the simulated sensing conditions needed for real-world transfer. See [experiment setup](../../juggling-iterations.md) for configuration and evaluation details.
+
+## Canonical noisy scratch training
+
+[Final 2M-step rollout](noisy-scratch-final.gif): mean survival 416.1 steps over 32 fresh starts, 0/32 reaching 10,000 steps. See [E005](../../experiment_logbook.md#e005).
