@@ -120,3 +120,5 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-10-29 23:19 | Fixed5M results and failure GIFs | Retain3.6M target; independent14/32 failures remain; new2M tests complete. | [2026-10-29_23-19_history-5m-results-failure-gifs.md](2026-10-29_23-19_history-5m-results-failure-gifs.md)
 
 - 2026-10-29 23:21 | Final history tests and actor-LR queue | Queue frozen final comparisons and conditional scratch actor-LR reduction; no new training yet. | [2026-10-29_23-21_history-final-tests-low-actor-queue.md](2026-10-29_23-21_history-final-tests-low-actor-queue.md)
+
+- 2026-10-29 23:24 | Retained target physics audit | All32 reset observations exact; failures span sampled marginal physics ranges. | [2026-10-29_23-24_selected-target-physics-audit.md](2026-10-29_23-24_selected-target-physics-audit.md)

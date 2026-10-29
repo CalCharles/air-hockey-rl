@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A042 — Audit retained-target reset physics while full-budget learners continue](#a042)
 - [A041 — Guard final evaluations and prepare single-factor scratch follow-up](#a041)
 - [A040 — Publish completed milestone tests and independent failure GIFs](#a040)
 - [A039 — Verify new-trial caps and queue fixed 2M variant comparisons](#a039)
@@ -47,6 +48,14 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a042"></a>
+
+## A042 — 2026-10-29 18:24:12 -0500 — Audit retained-target reset physics while full-budget learners continue
+
+Reconstructed all32 retained-target independent-test resets, verified bitwise initial-observation matches, and exported unchanged randomized parameters.
+
+Exploratory quartile summaries show failures across each parameter range; they neither identify causes nor justify changing DR. No additional policy rollouts or training changes. Confirmed current learner and queued-evaluator process handles live. See [E043](experiment_logbook.md#e043) for the command, data and limitations.
 
 <a id="a041"></a>
 

@@ -1,0 +1,111 @@
+{
+  "cohort": "Independent test800000\u2013800031,now exploratory post-test analysis",
+  "episodes": 32,
+  "initial_observations_bitwise_exact": 32,
+  "causal_claim": false,
+  "randomization_changed": false,
+  "quartiles": {
+    "paddle_density": [
+      {
+        "quartile": 1,
+        "minimum": 2259.5572222800197,
+        "maximum": 2592.9845630392124,
+        "caps": 3,
+        "episodes": 8,
+        "bounded_mean_steps": 11261.0
+      },
+      {
+        "quartile": 2,
+        "minimum": 2647.180288424018,
+        "maximum": 2863.2215371474763,
+        "caps": 3,
+        "episodes": 8,
+        "bounded_mean_steps": 11175.25
+      },
+      {
+        "quartile": 3,
+        "minimum": 2902.2902184009517,
+        "maximum": 3269.972110791004,
+        "caps": 6,
+        "episodes": 8,
+        "bounded_mean_steps": 15655.375
+      },
+      {
+        "quartile": 4,
+        "minimum": 3356.276204422631,
+        "maximum": 3710.624558803329,
+        "caps": 6,
+        "episodes": 8,
+        "bounded_mean_steps": 16952.5
+      }
+    ],
+    "puck_damping": [
+      {
+        "quartile": 1,
+        "minimum": 0.08425252586675765,
+        "maximum": 0.09950533182136448,
+        "caps": 5,
+        "episodes": 8,
+        "bounded_mean_steps": 16294.25
+      },
+      {
+        "quartile": 2,
+        "minimum": 0.10491261309014199,
+        "maximum": 0.11055127899262587,
+        "caps": 5,
+        "episodes": 8,
+        "bounded_mean_steps": 14455.875
+      },
+      {
+        "quartile": 3,
+        "minimum": 0.11110309882114013,
+        "maximum": 0.12043811880893102,
+        "caps": 4,
+        "episodes": 8,
+        "bounded_mean_steps": 11610.25
+      },
+      {
+        "quartile": 4,
+        "minimum": 0.12195558741648735,
+        "maximum": 0.13580927097042722,
+        "caps": 4,
+        "episodes": 8,
+        "bounded_mean_steps": 12683.75
+      }
+    ],
+    "gravity": [
+      {
+        "quartile": 1,
+        "minimum": -0.9048111383680381,
+        "maximum": -0.8348819400537603,
+        "caps": 3,
+        "episodes": 8,
+        "bounded_mean_steps": 10711.625
+      },
+      {
+        "quartile": 2,
+        "minimum": -0.8340386619982428,
+        "maximum": -0.7708886157064837,
+        "caps": 5,
+        "episodes": 8,
+        "bounded_mean_steps": 14905.375
+      },
+      {
+        "quartile": 3,
+        "minimum": -0.754403001815826,
+        "maximum": -0.606385176755833,
+        "caps": 6,
+        "episodes": 8,
+        "bounded_mean_steps": 15554.25
+      },
+      {
+        "quartile": 4,
+        "minimum": -0.6063376502684423,
+        "maximum": -0.548673244161505,
+        "caps": 4,
+        "episodes": 8,
+        "bounded_mean_steps": 13872.875
+      }
+    ]
+  }
+}

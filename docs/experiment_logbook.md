@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E043 — Reconstruct independent target-test physics and inspect marginal failures](#e043)
 - [E042 — Queue final history comparisons and conditional scratch actor-LR trial](#e042)
 - [E041 — Fixed 5M results retain target candidate; independent failures rendered](#e041)
 - [E040 — New history validation caps and fixed 2M tests queued](#e040)
@@ -48,6 +49,19 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e043"></a>
+
+## E043 — 2026-10-29 18:24:12 -0500 — Reconstruct independent target-test physics and inspect marginal failures
+
+Reconstructing all32 independent-test resets confirms exact initial observations and shows failures across the sampled physics range.
+
+**Completed diagnostic, not a new policy test:** reconstructed randomized paddle density, puck damping and gravity for seeds800000–800031 using isolated resets without actions. All32 initial observations match the saved NPZ arrays bitwise, and every sampled parameter lies within the established full ±25% range. The original18/32 cap result is unchanged. [Raw parameter CSV](juggling-history-selected-target-physics.csv); [descriptive summary](juggling-history-selected-target-physics-summary.json).
+
+Sorting each parameter separately into four groups of eight cases gives cap counts **3,3,6,6** from low to high paddle density, **5,5,4,4** for damping, and **3,5,6,4** for numerical gravity (negative values; first group has greatest magnitude). Each case contains all three randomized parameters plus its own reset and sensor randomness. These post-test marginal summaries are exploratory, correlated and small; they do not isolate causes or establish significant group differences. Failures occur across all sampled marginal quartiles, so there is no supported single-range fix. Preserve the full distribution.
+
+Command: `.venv/bin/python -m scripts.analysis.juggle_physics_audit --results runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/results.json --out docs/juggling-history-selected-target-physics.csv`. No new rollout, model update, simulator change or training initialization. Three existing GPU learners and six final evaluator PIDs were confirmed live; the actor-LR queue remains waiting. Related: [E039](experiment_logbook.md#e039), [E041](experiment_logbook.md#e041), [E042](experiment_logbook.md#e042).
+
 
 <a id="e042"></a>
 
