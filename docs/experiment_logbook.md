@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E009 — Reduced exploration leads at the 500k checkpoint](#e009)
 - [E008 — Validation-selected scratch checkpoint doubles paired survival](#e008)
 - [E007 — Verify read-only physical-trajectory diagnostics](#e007)
 - [E006 — Full learning-curve and failure-action analysis](#e006)
@@ -14,6 +15,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e009"></a>
+
+## E009 — 2026-10-29 12:39:35 -0500 — Reduced exploration leads at the 500k checkpoint
+
+The reduced-exploration scratch trial has higher mean survival at 500k than the matched baseline, but neither completes the evaluation cap.
+
+**Running E005 status:** Same eight reused validation starts (10000–10007), 5k cap. At 500k, baseline mean survival **149.75** and physical-trajectory juggle heuristic **0.625**; reduced exploration **233.125** and **1.75**. Both 0/8 cap completions. At 400k the ranking was reversed (183.0 versus 154.625), so this single checkpoint is encouraging but insufficient to establish a reliable advantage. The larger-network trial is slower and has only reached its 300k checkpoint: 86.625 mean steps, 0/8 cap completions. Compare capacity at matched steps later.
+
+![Reduced-exploration 500k validation rollout](assets/juggling/noisy-low-explore-500k.gif)
+
+Newly published 2026-10-29 from the first checkpoint-validation episode, 160×357, reduced to 10 fps/64 colors with duration preserved. Individual rollout only. [Updated learning curves](juggling-noisy-progress.md), [CSV including optional physical-trajectory counts](juggling-noisy-progress.csv). Original artifacts: `runs/td3/noisy_iteration2_20261029_low_explore/train/checkpoint_500000/survival_eval/`.
+
+**Decision:** Continue the predeclared 6M-step comparisons. Exploration primitives anneal to the low floor at 500k; the current point does not yet measure extended learning at that floor. No policy, reward, sensing, physics, randomization or configuration changes. All three training processes and all three selected-evaluation waiting workers remain live. [Task A010](agent_logbook.md#a010).
 
 <a id="e008"></a>
 

@@ -31,6 +31,7 @@ def collect(root):
             step=int(result.parents[1].name.split("_")[-1]),
             mean_steps=summary["restricted_mean_steps"],
             mean_juggles=summary["mean_juggles"],
+            mean_true_state_juggles=summary.get("mean_true_state_juggles"),
             cap_fraction=summary["sustained_juggling_fraction"],
             episodes=payload["episodes_per_scenario"],
             seed_base=payload["seed_base"],
@@ -84,15 +85,21 @@ def write_report(roots, out):
             lines.append(f"| {root.name} | {v['step']:,} | {v['mean_steps']:.1f} | {v['mean_juggles']:.2f} | {v['cap_fraction']:.1%} |")
         else:
             lines.append(f"| {root.name} | No saved validation | — | — | — |")
-    lines += ["", "Final-actor evaluations (separate starts):", ""]
+    lines += ["", "Separate-start evaluations (selection and benchmark phases labeled):", ""]
     for root, _ in series:
-        result = root / "final_eval/results.json"
-        if result.exists():
-            payload = json.loads(result.read_text())
-            s = payload["scenarios"]["training"]["summary"]
-            lines.append(f"- [{root.name}]({link(result)}): {s['restricted_mean_steps']:.1f} mean steps, "
-                         f"{s['mean_juggles']:.2f} mean juggles, {s['sustained_juggling_fraction']:.1%} cap completion; "
-                         f"{payload['episodes_per_scenario']} starts from seed {payload['seed_base']}, cap {payload['horizon']}.")
+        for directory, phase in (("final_eval", "final actor benchmark"),
+                                 ("selected_eval", "validation-selected checkpoint benchmark"),
+                                 ("selected_paired_eval", "paired selected checkpoint"),
+                                 ("final_paired_eval", "paired final actor")):
+            result = root / directory / "results.json"
+            if result.exists():
+                payload = json.loads(result.read_text())
+                s = payload["scenarios"]["training"]["summary"]
+                true_count = (f", {s['mean_true_state_juggles']:.2f} physical-trajectory juggles"
+                              if "mean_true_state_juggles" in s else "")
+                lines.append(f"- [{root.name}, {phase}]({link(result)}): {s['restricted_mean_steps']:.1f} mean steps, "
+                             f"{s['mean_juggles']:.2f} observed juggles{true_count}, {s['sustained_juggling_fraction']:.1%} cap completion; "
+                             f"{payload['episodes_per_scenario']} starts from seed {payload['seed_base']}, cap {payload['horizon']}.")
     lines += ["", "The final-start benchmark is reused across recipes. A selected policy requires untouched seeds "
               "and longer horizons before acceptance. Bounded survival does not prove infinite survival."]
     out.write_text("\n".join(lines) + "\n")

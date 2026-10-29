@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A010 — Publish the first matched exploration milestone](#a010)
 - [A009 — Publish stronger scratch incumbent and attach checkpoint selection](#a009)
 - [A008 — Separate physical-trajectory diagnostics from noisy juggle counts](#a008)
 - [A007 — Add reproducible progress figures and inspect live learners](#a007)
@@ -15,6 +16,18 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a010"></a>
+
+## A010 — 2026-10-29 12:39:35 -0500 — Publish the first matched exploration milestone
+
+Codex checked live training through 500k, refreshed the learning-curve report and published a reduced-exploration checkpoint GIF.
+
+**Evidence/decision:** [E009](experiment_logbook.md#e009) records the first post-annealing checkpoint: reduced exploration 233.125 mean survival steps versus baseline 149.75, both 0/8 capped completions. Retained all planned trials; no early winner declaration. Larger-network comparison is not yet matched in training steps.
+
+**Reporting:** The [generator](../scripts/analysis/juggle_progress.py) now includes physical-trajectory juggle counts in CSV when available, and labels separate final, selected and paired benchmarks in its report. Executed it against all four run roots and checked source means, link existence, TOC coverage and unique anchors. GIF compacted from existing evaluation frames with duration preserved. No fresh rollouts or implementation tests required for this reporting-only update; the 17 prior implementation tests remain historical validation, not rerun here.
+
+**Waiting state:** Launcher PIDs 1214379/1214383/1214388 confirmed live during this task; selection PIDs 1222845/1222846/1222847 also confirmed. Progress logs advanced on each learner. Next substantive comparison is later checkpoints after sustained low-exploration learning. Goal remains active.
 
 <a id="a009"></a>
 
