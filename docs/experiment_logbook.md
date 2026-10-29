@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E013 — Interrupt width pilot and launch fresh policy-memory trial](#e013)
 - [E012 — One-million-step exploration comparison and shared benchmark](#e012)
 - [E011 — Long-history scratch path passes CPU smoke; full trial planned](#e011)
 - [E010 — Offline state estimation supports a memory-policy trial](#e010)
@@ -18,6 +19,18 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e013"></a>
+
+## E013 — 2026-10-29 13:22:22 -0500 — Interrupt width pilot and launch fresh policy-memory trial
+
+The width pilot remains weak through 1M, so its GPU now trains a fresh long-history policy while the two small-network controls continue.
+
+**Dated E005 correction/status:** The planned 6M width trial is **intentionally interrupted**, not completed. It underperformed the smaller reduced-exploration actor at all ten matched 100k checkpoints through 1M (last means 152.625 versus 894.125). Correlated checkpoints, one training seed; this is a resource-allocation choice, not proof it could never catch up. Last logged step 1,024,999; latest saved checkpoint 1M; exact final executed step unknown. Interrupted status recorded 2026-10-29 13:18:44 -05:00. Stopped only step 112937.3, preserved allocation/checkpoints and both other learners.
+
+**Partial selection completed:** Best saved validation checkpoint 900k (204 mean steps) evaluated on 32 seed-400000 benchmark starts, cap 10k: mean **225.8125**, median 188.5, physical-trajectory juggles **1.9375**, 0/32 caps. [Raw results](../runs/td3/noisy_iteration2_20261029_large_low_explore/selected_eval/results.json). No 6M final actor. Local GIF exists in that directory; no new tracked figure for this weak partial trial. [Progress curves and explicit runner statuses](juggling-noisy-progress.md).
+
+**E011 full history trial now running:** Actual start 2026-10-29 13:18:44.949 -05:00; root `runs/td3/noisy_history_20261029_seed0/`, existing allocation 112937, step .5. [Config](../configs/td3/sustained/noisy_history_scratch.yaml), 6M planned, seed 0, same low-exploration recipe, learned 50-step policy memory. Random actor/critics/encoder, no privileged actor input or reused weights. Canonical noisy sensing/dynamics and DR verified unchanged. Initial 20k random collection completed; GPU learning then advanced to about 65k before publication, with no checkpoint evaluation available yet. [Full evidence, commands and limits](../notes/scratch/experiments/2026-10-29_18-22_width-stop-history-start.md), [A014](agent_logbook.md#a014).
 
 <a id="e012"></a>
 

@@ -26,6 +26,25 @@ class RecordingBuffer:
 
 
 class ContinuingJuggleTests(unittest.TestCase):
+    def test_selected_evaluation_finishes_waiting_after_intentional_interruption(self):
+        import json
+        import tempfile
+        from unittest.mock import patch
+        from scripts.td3 import juggle_select
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "status.json").write_text(json.dumps(dict(status="interrupted")))
+            with patch("sys.argv", ["juggle_select", "--root", str(root), "--wait"]), \
+                 patch.object(juggle_select, "select_checkpoint", return_value=(root / "checkpoint", {})), \
+                 patch.object(juggle_select, "evaluate_checkpoint") as evaluate, \
+                 patch.object(juggle_select.time, "sleep", side_effect=AssertionError("must not keep waiting")):
+                juggle_select.main()
+            evaluate.assert_called_once()
+            state = json.loads((root / "selected_eval/status.json").read_text())
+            self.assertEqual(state["status"], "complete")
+            self.assertEqual(state["training_status"], "interrupted")
+
     def test_scratch_runner_rejects_warm_starts_and_privileged_actor(self):
         from scripts.td3.juggle_noisy_scratch import scratch_trainer
 

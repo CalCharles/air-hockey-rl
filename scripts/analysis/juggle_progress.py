@@ -77,14 +77,16 @@ def write_report(roots, out):
              "Contact timesteps are not distinct juggles.", "",
              f"![Checkpoint validation]({link(figure)})", "",
              f"[Raw validation table]({link(table)})" if rows else "No saved validation results yet.", "",
-             "| Run | Latest validation step | Mean survival | Mean juggles | Genuine cap fraction |",
-             "|---|---:|---:|---:|---:|"]
+             "| Run | Runner status | Latest validation step | Mean survival | Mean juggles | Genuine cap fraction |",
+             "|---|---|---:|---:|---:|---:|"]
     for root, values in series:
+        status_file = root / "status.json"
+        status = json.loads(status_file.read_text()).get("status", "unknown") if status_file.exists() else "unknown"
         if values:
             v = values[-1]
-            lines.append(f"| {root.name} | {v['step']:,} | {v['mean_steps']:.1f} | {v['mean_juggles']:.2f} | {v['cap_fraction']:.1%} |")
+            lines.append(f"| {root.name} | {status} | {v['step']:,} | {v['mean_steps']:.1f} | {v['mean_juggles']:.2f} | {v['cap_fraction']:.1%} |")
         else:
-            lines.append(f"| {root.name} | No saved validation | — | — | — |")
+            lines.append(f"| {root.name} | {status} | No saved validation | — | — | — |")
     lines += ["", "Separate-start evaluations (selection and benchmark phases labeled):", ""]
     for root, _ in series:
         for directory, phase in (("final_eval", "final actor benchmark"),

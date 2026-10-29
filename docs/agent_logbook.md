@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A014 — Reassign an underperforming pilot GPU to fresh policy memory](#a014)
 - [A013 — Publish the 1M milestone without promoting a validation-only winner](#a013)
 - [A012 — Prepare guarded from-scratch history training](#a012)
 - [A011 — Test whether deployable memory improves state estimation](#a011)
@@ -19,6 +20,18 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a014"></a>
+
+## A014 — 2026-10-29 13:22:22 -0500 — Reassign an underperforming pilot GPU to fresh policy memory
+
+Codex preserved and intentionally stopped the weak width pilot, evaluated its selected checkpoint and launched the prepared from-scratch history policy on the freed existing GPU.
+
+**Decision/evidence:** [E013](experiment_logbook.md#e013) / [detailed note](../notes/scratch/experiments/2026-10-29_18-22_width-stop-history-start.md) record ten matched negative pilot checkpoints, one-seed limitations and the adaptive change from the originally planned budget. No claim that the interrupted pilot completed. Both other learners and their waiters remain live.
+
+**Operations:** Confirmed Slurm step 112937.3 and launcher PID matched the width run, signaled only that step, verified it gone and GPU idle, preserved all checkpoints. Marked durable status interrupted with recording timestamp and last logged/saved steps. Stopped the old width waiter, preserved its directory, and ran a fresh partial selector (completed). Launched history step 112937.5, PID 1241157, then its selected-evaluation waiter PID 1241813 after root/status existed. Exact sensing/DR guard and scratch-initialization guard passed; no simulator files changed.
+
+**Implementation/checks:** [Selector](../scripts/td3/juggle_select.py) now exits its waiting loop on intentional interruption and records partial training status before evaluation. All 21 targeted tests pass, including the interruption regression test. [Report generator](../scripts/analysis/juggle_progress.py) displays runner status; refreshed report/CSV/figure show interrupted versus training states accurately. Relative-link, image, anchor, TOC and whitespace checks performed. No checkpoint from the pilot, smoke test or E010 regression initialized the new policy.
 
 <a id="a013"></a>
 

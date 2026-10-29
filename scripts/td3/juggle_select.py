@@ -67,7 +67,8 @@ def main():
         if args.wait:
             while True:
                 training = json.loads((root / "status.json").read_text())
-                if training["status"] == "complete":
+                if training["status"] in ("complete", "interrupted"):
+                    state["training_status"] = training["status"]
                     break
                 if training["status"] == "failed":
                     raise RuntimeError("Training runner failed: " + str(training.get("error")))

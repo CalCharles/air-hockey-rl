@@ -67,3 +67,5 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-10-29 17:50 | Scratch history smoke | Canonical sensor stream preserved; CPU collection, gradient updates, checkpoint and evaluation passed; full trial not launched | [file](2026-10-29_17-50_scratch-history-smoke.md)
 
 - 2026-10-29 18:03 | Exploration 1M benchmark | Reduced exploration leads matched validation, but shared 32-start mean remains below incumbent and all episodes fail the cap | [file](2026-10-29_18-03_exploration-1m-benchmark.md)
+
+- 2026-10-29 18:22 | Adaptive width stop and history start | Width pilot interrupted after 1M saved steps; selected benchmark 225.8/0 caps; fresh 50-step history policy running | [file](2026-10-29_18-22_width-stop-history-start.md)
