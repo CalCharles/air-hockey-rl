@@ -26,6 +26,34 @@ class RecordingBuffer:
 
 
 class ContinuingJuggleTests(unittest.TestCase):
+    def test_checkpoint_selection_uses_validation_and_rejects_reused_test_seeds(self):
+        import json
+        import tempfile
+        from scripts.td3.juggle_original_sensing import original_sensing_config
+        from scripts.td3.juggle_select import select_checkpoint
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for step, survival, genuine in ((100, 9000., 0.), (200, 8000., .5), (300, 1000., 0.)):
+                checkpoint = root / "train" / ("checkpoint_" + str(step))
+                (checkpoint / "survival_eval").mkdir(parents=True)
+                saved_config = original_sensing_config()
+                saved_config["air_hockey"]["seed"] = 51706749
+                (checkpoint / "config.yaml").write_text(yaml.safe_dump(saved_config))
+                payload = dict(seed_base=10000, episodes_per_scenario=8,
+                               scenarios={"training": {"summary": dict(
+                                   sustained_juggling_fraction=1.,
+                                   true_state_sustained_juggling_fraction=genuine,
+                                   restricted_mean_steps=survival)}})
+                (checkpoint / "survival_eval/results.json").write_text(json.dumps(payload))
+            (root / "final_eval").mkdir()
+            (root / "final_eval/results.json").write_text(json.dumps(dict(seed_base=200000, episodes_per_scenario=32)))
+            checkpoint, _ = select_checkpoint(root, 400000, 32)
+            self.assertEqual(checkpoint.name, "checkpoint_200")
+            for reused in (10005, 200001):
+                with self.assertRaisesRegex(ValueError, "overlap"):
+                    select_checkpoint(root, reused, 32)
+
     def test_diagnostic_positions_do_not_sample_sensors(self):
         import random
         from scripts.td3.juggle_original_sensing import original_sensing_config

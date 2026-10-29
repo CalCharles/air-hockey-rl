@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A009 — Publish stronger scratch incumbent and attach checkpoint selection](#a009)
 - [A008 — Separate physical-trajectory diagnostics from noisy juggle counts](#a008)
 - [A007 — Add reproducible progress figures and inspect live learners](#a007)
 - [A006 — Continue sustained-juggling research and publish progress](#a006)
@@ -14,6 +15,18 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a009"></a>
+
+## A009 — 2026-10-29 12:31:39 -0500 — Publish stronger scratch incumbent and attach checkpoint selection
+
+Codex evaluated validation-selected and final scratch policies on fresh paired starts, published a new noisy rollout GIF and attached selected-checkpoint evaluation to the live trials.
+
+**Finding and evidence:** [E008](experiment_logbook.md#e008): selected policy averages 816.94 survival steps versus final 415.31, with 0/32 cap completion each. [Detailed note](../notes/scratch/experiments/2026-10-29_17-31_scratch-paired-checkpoints.md). This justifies evaluating selected checkpoints rather than trusting the final actor.
+
+**Implementation:** [Selection worker](../scripts/td3/juggle_select.py) waits for durable run completion, ranks saved validation results, rejects evaluation-seed overlap and produces selected_eval outputs without training. Existing runner processes were left running; detached follow-up worker PIDs 1222845/1222846/1222847 were confirmed live. All 17 targeted unit tests passed, including genuine-juggling ranking and seed-overlap rejection. Real saved-run check selects the expected 1.8M checkpoint. Initial real-config check rejected trainer-saved top-level seed 51706749; inspection proved it was the sole difference, and the comparison now normalizes only that episode RNG seed, which survival evaluation overrides per episode. No physical/sensor key relaxed.
+
+**Publication:** New selected GIF is 160×357, 200 frames at 10 fps (20 seconds), with original source preserved locally. Documented paired raw data, bootstrap method, limitations and reproduction commands. Link/anchor/TOC checks and git diff whitespace check performed. Live trainers around 325k/315k/220k at inspection. Goal remains unsolved.
 
 <a id="a008"></a>
 

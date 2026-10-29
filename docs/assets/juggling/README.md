@@ -24,3 +24,5 @@ The clean policy is not yet robust to the simulated sensing conditions needed fo
 ## Canonical noisy scratch training
 
 [Final 2M-step rollout](noisy-scratch-final.gif): mean survival 416.1 steps over 32 fresh starts, 0/32 reaching 10,000 steps. See [E005](../../experiment_logbook.md#e005).
+
+[Validation-selected scratch actor](noisy-scratch-selected.gif): 816.94 mean steps and 7.75 physical-trajectory juggles across 32 paired starts, 0/32 completing 10k. Final actor on those starts: 415.31 steps. Clip generated 2026-10-29, compacted to 10 fps with duration preserved; see [E008](../../experiment_logbook.md#e008).

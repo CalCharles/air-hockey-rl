@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E008 — Validation-selected scratch checkpoint doubles paired survival](#e008)
 - [E007 — Verify read-only physical-trajectory diagnostics](#e007)
 - [E006 — Full learning-curve and failure-action analysis](#e006)
 - [E005 — Scratch run completed; longer-training comparison launched](#e005)
@@ -13,6 +14,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e008"></a>
+
+## E008 — 2026-10-29 12:31:39 -0500 — Validation-selected scratch checkpoint doubles paired survival
+
+The validation-selected 1.8M scratch checkpoint outperforms the final actor on fresh paired starts, but both fail every 10k-cap episode.
+
+**Completed:** Frozen policies, same 32 starts (300000–300031), canonical noisy sensing and established DR. Selected checkpoint: mean survival **816.94**, median 612, physical-trajectory juggle heuristic **7.75** per episode. Final actor: **415.31**, median 358.5, physical-trajectory juggles **3.84**. Both 0/32 cap completions. Selected actor wins 20/32 pairs; paired mean gain 401.625 steps, episode-bootstrap 95% interval [174.59, 660.10]. One training seed; no seed-robustness claim. Checkpoint selected on the earlier eight validation starts, not these fresh starts.
+
+![Selected scratch-policy rollout](assets/juggling/noisy-scratch-selected.gif)
+
+New simulation clip generated 2026-10-29, first paired episode tail, compacted to 10 fps/64 colors while preserving duration; not aggregate evidence. [Detailed note and commands](../notes/scratch/experiments/2026-10-29_17-31_scratch-paired-checkpoints.md), [per-start CSV](juggling-paired-checkpoints.csv). No training or simulator changes for this paired test. This is a stronger incumbent, not a solved policy.
+
+**Next evaluation change:** Attached live selected-checkpoint evaluation workers to all three E005 trials. After training and final benchmark, selection uses validation-only genuine-cap fraction then mean survival; selected policy evaluated on seeds 400000–400031, 10k cap. New worker refuses overlap with checkpoint validation/final benchmark seeds and checks canonical config (allowing only trainer-saved top-level episode seed normalization). Cross-recipe winner still requires untouched acceptance seeds. [A009](agent_logbook.md#a009).
 
 <a id="e007"></a>
 
