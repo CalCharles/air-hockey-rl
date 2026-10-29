@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E035 — Frozen target actor enters paired evaluation](#e035)
 - [E034 — History3.6M reaches fourteen independent20k caps](#e034)
 - [E033 — Policy-memory adapters match across rollover and resets](#e033)
 - [E032 — First eight-of-eight validation caps trigger a new frozen test](#e032)
@@ -40,6 +41,14 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e035"></a>
+
+## E035 — 2026-10-29 16:51:47 -0500 — Frozen target actor enters paired evaluation
+
+The3.6M target actor is under paired20k evaluation to test existing Polyak-averaged weights; its outcome is not yet known.
+
+**Running:** Same32reused starts700000–700031 as the online actor, cap20k. Target weights differ (L2norm0.7766), source hash and canonical bundle reload verified. Target lineage is the same random-initialized scratch run; no new training or warm start. [Provenance](juggling-history-target-actor-test-provenance.json), [source review and command](../notes/scratch/experiments/2026-10-29_21-51_history-target-actor-paired-test.md). No independent acceptance claim. Three learners and4M watcher continue; no simulator/DR change or new GIF. [A034](agent_logbook.md#a034).
 
 <a id="e034"></a>
 

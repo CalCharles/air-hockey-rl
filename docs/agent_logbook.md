@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A034 — Inspect replay capacity and evaluate saved target weights](#a034)
 - [A033 — Complete3.6M independent evaluation and retain research candidate](#a033)
 - [A032 — Verify policy-memory bookkeeping while independent test runs](#a032)
 - [A031 — Publish balanced 3M clips and test the first perfect validation checkpoint](#a031)
@@ -39,6 +40,14 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a034"></a>
+
+## A034 — 2026-10-29 16:51:47 -0500 — Inspect replay capacity and evaluate saved target weights
+
+Codex confirmed the intended1M replay capacity and launched a frozen paired comparison of the existing target and online actors.
+
+**Evidence:** [E035](experiment_logbook.md#e035), [detailed record](../notes/scratch/experiments/2026-10-29_21-51_history-target-actor-paired-test.md). Source review confirms random target initialization copied from the scratch actor and in-run Polyak updates. Verified distinct weights, frozen hash, reload and canonical sensing/control/DR. The target bundle is an inference-only view; no new learner or checkpoint warm start. Paired test is running with reused starts and no result yet. Existing learners/watchers remain live; documentation checks pass.
 
 <a id="a033"></a>
 

@@ -1,0 +1,16 @@
+{
+  "recorded_before_test": "2026-10-29T21:50:06.835718+00:00",
+  "variant": "TD3 target actor (Polyak EMA), frozen inference only",
+  "source_checkpoint": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/train/checkpoint_3600000",
+  "source_weights": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/train/checkpoint_3600000/actor_target.pth",
+  "model_sha256": "c8a1df78ade41cfbe6845a84f4b21480f512973be7a89f0baf66daf5d452b31b",
+  "online_actor_sha256": "97e1184364f9f6a0c00406c8608bbc8190a82e60629f4a593eb483125ce95351",
+  "weight_difference_l2": 0.776621288631065,
+  "lineage": "Target network initialized from the random actor at original scratch-run initialization and updated within that run; no new training or checkpoint warm start",
+  "evaluation_bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/target_actor_3m6_bundle",
+  "seed_base": 700000,
+  "episodes": 32,
+  "horizon": 20000,
+  "seed_status": "Reused same32starts as online3.6M actor; paired research comparison, not independent acceptance",
+  "status_at_recording": "running_no_result_yet"
+}
