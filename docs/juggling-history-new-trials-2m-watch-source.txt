@@ -1,0 +1,64 @@
+from pathlib import Path
+from datetime import datetime, timezone
+import json, hashlib, os, sys, time, traceback
+import yaml
+ROOT = Path(__file__).resolve().parent
+REPO = ROOT.parents[2]
+EXPECTED = {'airhockey/airhockey_base.py': 'a3a8c1c37fdb53015b6cb2568b1b9ccc39e6f6dff39323a4c25f97ae88fcb4d6', 'airhockey/sims/airhockey_box2d.py': '7059de3e1f8a979c706eb2546ba7674c4970226952bc002567a1d2aa20fa7eee', 'configs/new_juggle/sustained/original_sensing.yaml': 'd1bb13a7a4a5494507d085db230bdbe31854f0ddb556ccf88c3ec5aca0360385'}
+role = sys.argv[1]
+if role not in ("online", "target"):
+    raise ValueError(role)
+checkpoint = ROOT / "train/checkpoint_2000000"
+out = ROOT / ("milestone_2m_paired_20k_eval" if role == "online" else "target_actor_2m_paired_20k_eval")
+status_path = ROOT / ("milestone_2m_" + role + "_status.json")
+state = dict(pid=os.getpid(), role=role, checkpoint=str(checkpoint), seed_base=700000, episodes=32, horizon=20000, seed_role="Reused research selection cohort", queued=datetime.now(timezone.utc).isoformat())
+def save(status):
+    state.update(status=status, updated=datetime.now(timezone.utc).isoformat())
+    temp = status_path.with_suffix(".tmp")
+    temp.write_text(json.dumps(state, indent=2) + "\n")
+    temp.replace(status_path)
+try:
+    save("waiting_for_checkpoint_validation")
+    while True:
+        validation = checkpoint / "survival_eval/results.json"
+        if validation.exists():
+            try:
+                payload = json.loads(validation.read_text())
+                if payload["scenarios"]["training"]["summary"]["episodes"] == 8:
+                    break
+            except json.JSONDecodeError:
+                pass
+        training = json.loads((ROOT / "status.json").read_text())
+        if training["status"] in ("failed", "interrupted", "complete"):
+            raise RuntimeError("Training became terminal before required validation: " + training["status"])
+        time.sleep(20)
+    for name, sha in EXPECTED.items():
+        if hashlib.sha256((REPO / name).read_bytes()).hexdigest() != sha:
+            raise RuntimeError("Reviewed simulator/config changed: " + name)
+    from scripts.td3.juggle_noisy_scratch import assert_canonical_scratch_env
+    from scripts.td3.juggle_survival import evaluate_checkpoint
+    config = yaml.safe_load((checkpoint / "config.yaml").read_text())["air_hockey"]
+    assert_canonical_scratch_env(dict(config, seed=0))
+    if out.exists():
+        raise FileExistsError(out)
+    weights = checkpoint / ("model.pth" if role == "online" else "actor_target.pth")
+    state["source_weights"] = str(weights)
+    state["model_sha256"] = hashlib.sha256(weights.read_bytes()).hexdigest()
+    bundle = checkpoint
+    if role == "target":
+        bundle = ROOT / "target_actor_2m_bundle"
+        bundle.mkdir(exist_ok=False)
+        for destination, source in (("model.pth", "actor_target.pth"), ("args.yaml", "args.yaml"), ("config.yaml", "config.yaml"), ("rma_meta.json", "rma_meta.json")):
+            (bundle / destination).symlink_to(checkpoint / source)
+    state["evaluation_bundle"] = str(bundle)
+    save("evaluating")
+    evaluate_checkpoint(bundle, out_dir=out, scenario_set="training", horizon=20000, episodes=32, seed_base=700000, gif_steps=0)
+    if hashlib.sha256(weights.read_bytes()).hexdigest() != state["model_sha256"]:
+        raise RuntimeError("Frozen weights changed during evaluation")
+    state["summary"] = json.loads((out / "results.json").read_text())["scenarios"]["training"]["summary"]
+    save("complete")
+except Exception as exc:
+    state["error"] = repr(exc)
+    save("failed")
+    traceback.print_exc()
+    raise

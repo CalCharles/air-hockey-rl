@@ -1,0 +1,44 @@
+{
+  "recorded": "2026-10-29T22:56:56.188769+00:00",
+  "checkpoint_step": 2000000,
+  "seed_base": 700000,
+  "episodes": 32,
+  "horizon": 20000,
+  "seed_role": "Reused research selection cohort",
+  "trials": {
+    "seed1": {
+      "online": {
+        "pid": 1360532,
+        "status": "waiting_for_checkpoint_validation",
+        "queued": "2026-10-29T22:51:13.080733+00:00",
+        "source": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed1/milestone_2m_watch.py",
+        "status_path": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed1/milestone_2m_online_status.json"
+      },
+      "target": {
+        "pid": 1360533,
+        "status": "waiting_for_checkpoint_validation",
+        "queued": "2026-10-29T22:51:13.106731+00:00",
+        "source": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed1/milestone_2m_watch.py",
+        "status_path": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed1/milestone_2m_target_status.json"
+      }
+    },
+    "long_discount": {
+      "online": {
+        "pid": 1360534,
+        "status": "waiting_for_checkpoint_validation",
+        "queued": "2026-10-29T22:51:13.112078+00:00",
+        "source": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_long_discount_20261029_seed0/milestone_2m_watch.py",
+        "status_path": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_long_discount_20261029_seed0/milestone_2m_online_status.json"
+      },
+      "target": {
+        "pid": 1360535,
+        "status": "waiting_for_checkpoint_validation",
+        "queued": "2026-10-29T22:51:13.131658+00:00",
+        "source": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_long_discount_20261029_seed0/milestone_2m_watch.py",
+        "status_path": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_long_discount_20261029_seed0/milestone_2m_target_status.json"
+      }
+    }
+  },
+  "archived_source": "docs/juggling-history-new-trials-2m-watch-source.txt",
+  "source_sha256": "57ece7b3ad35aacd8c57a6e4dd084cf367d4dee01083a5dade35155935e0fcc5"
+}

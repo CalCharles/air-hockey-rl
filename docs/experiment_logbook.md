@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E040 — New history validation caps and fixed 2M tests queued](#e040)
 - [E039 — Selected target reaches eighteen new-seed 20k caps](#e039)
 - [E038 — Four-way comparison selects 3.6M target for new-seed testing](#e038)
 - [E037 — Target3.6M reaches twenty paired20k caps;4M target test starts](#e037)
@@ -45,6 +46,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e040"></a>
+
+## E040 — 2026-10-29 17:56:56 -0500 — New history validation caps and fixed 2M tests queued
+
+Both newer scratch trials have genuine 5k validation caps by 1.6M, and their fixed 2M online/target comparisons are queued.
+
+**Completed validation:** At1.6M, seed1 mean2836.25 and3/8caps; gamma.999 mean1349.875 and1/8caps. Full history shows seed1 first capped at1.2M (mean906.5,1/8), while gamma first capped at1.6M. [Checkpoint/per-start evidence](juggling-history-new-trials-caps.json), [detailed record](../notes/scratch/experiments/2026-10-29_22-56_new-history-caps-2m-queue.md). Reused8starts; no independent replication or gamma-advantage claim.
+
+**Waiting:** Four online/target watchers,32used700000starts at20k after2M. [Queue/source metadata](juggling-history-new-trials-2m-watch.json). No result yet. All three learners and both5M long tests continue, unchanged simulator/DR and no new training launch. No new GIF. [A039](agent_logbook.md#a039).
 
 <a id="e039"></a>
 

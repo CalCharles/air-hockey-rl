@@ -1,0 +1,220 @@
+{
+  "recorded": "2026-10-29T22:56:56.188762+00:00",
+  "validation_role": "Repeated research validation,not independent acceptance",
+  "trials": {
+    "seed1": {
+      "root": "runs/td3/noisy_history_20261029_seed1",
+      "first_genuine_validation_cap": {
+        "run": "noisy_history_20261029_seed1",
+        "step": 1200000,
+        "mean_steps": 906.5,
+        "mean_juggles": 11.0,
+        "mean_true_state_juggles": 12.75,
+        "cap_fraction": 0.125,
+        "episodes": 8,
+        "seed_base": 10000,
+        "horizon": 5000,
+        "source": "runs/td3/noisy_history_20261029_seed1/train/checkpoint_1200000/survival_eval/results.json"
+      },
+      "reported_milestone_step": 1600000,
+      "checkpoint": "runs/td3/noisy_history_20261029_seed1/train/checkpoint_1600000",
+      "model_sha256": "0b33dce4bc34807a65b80f85699546377c3a3910ff7bcfc04dc070c48e0d4af0",
+      "summary": {
+        "episodes": 8,
+        "horizon": 5000,
+        "failures": 5,
+        "horizon_survival_fraction": 0.375,
+        "sustained_juggling_fraction": 0.375,
+        "mean_juggles": 36.875,
+        "mean_valid_juggling_steps": 2808.25,
+        "restricted_mean_steps": 2836.25,
+        "median_observed_steps": 2721.5,
+        "min_steps": 224,
+        "mean_contacts": 77.5,
+        "mean_return": 2074.5,
+        "end_reasons": {
+          "puck_passed_paddle": 5,
+          "evaluation_horizon": 3,
+          "puck_hit_bottom": 1
+        },
+        "zero_failure_probability_upper_95": null,
+        "survival_at_steps": {
+          "250": 0.875,
+          "1000": 0.75,
+          "2000": 0.5
+        },
+        "worst_peak_paddle_speed_m_s": 2.0000000784314182,
+        "worst_peak_paddle_acceleration_m_s2": 53.246069760943335,
+        "mean_action_delta_rms": 0.48012345011610313,
+        "mean_target_delta_rms_m": 0.08522878865281813,
+        "mean_true_state_juggles": 42.125,
+        "true_state_sustained_juggling_fraction": 0.375
+      },
+      "episodes": [
+        {
+          "seed": 10000,
+          "steps": 1879,
+          "true_state_juggles": 30,
+          "reached_horizon": false,
+          "failed": true
+        },
+        {
+          "seed": 10001,
+          "steps": 5000,
+          "true_state_juggles": 78,
+          "reached_horizon": true,
+          "failed": false
+        },
+        {
+          "seed": 10002,
+          "steps": 970,
+          "true_state_juggles": 16,
+          "reached_horizon": false,
+          "failed": true
+        },
+        {
+          "seed": 10003,
+          "steps": 5000,
+          "true_state_juggles": 73,
+          "reached_horizon": true,
+          "failed": false
+        },
+        {
+          "seed": 10004,
+          "steps": 5000,
+          "true_state_juggles": 69,
+          "reached_horizon": true,
+          "failed": false
+        },
+        {
+          "seed": 10005,
+          "steps": 3564,
+          "true_state_juggles": 50,
+          "reached_horizon": false,
+          "failed": true
+        },
+        {
+          "seed": 10006,
+          "steps": 224,
+          "true_state_juggles": 3,
+          "reached_horizon": false,
+          "failed": true
+        },
+        {
+          "seed": 10007,
+          "steps": 1053,
+          "true_state_juggles": 18,
+          "reached_horizon": false,
+          "failed": true
+        }
+      ]
+    },
+    "long_discount": {
+      "root": "runs/td3/noisy_history_long_discount_20261029_seed0",
+      "first_genuine_validation_cap": {
+        "run": "noisy_history_long_discount_20261029_seed0",
+        "step": 1600000,
+        "mean_steps": 1349.875,
+        "mean_juggles": 16.625,
+        "mean_true_state_juggles": 17.125,
+        "cap_fraction": 0.125,
+        "episodes": 8,
+        "seed_base": 10000,
+        "horizon": 5000,
+        "source": "runs/td3/noisy_history_long_discount_20261029_seed0/train/checkpoint_1600000/survival_eval/results.json"
+      },
+      "reported_milestone_step": 1600000,
+      "checkpoint": "runs/td3/noisy_history_long_discount_20261029_seed0/train/checkpoint_1600000",
+      "model_sha256": "9673e7fecb2301dd9bf22985d7e3a427a9a8fb46cb5b3c7beca9d28b69693ef2",
+      "summary": {
+        "episodes": 8,
+        "horizon": 5000,
+        "failures": 7,
+        "horizon_survival_fraction": 0.125,
+        "sustained_juggling_fraction": 0.125,
+        "mean_juggles": 16.625,
+        "mean_valid_juggling_steps": 1349.875,
+        "restricted_mean_steps": 1349.875,
+        "median_observed_steps": 653.0,
+        "min_steps": 251,
+        "mean_contacts": 42.25,
+        "mean_return": 941.75,
+        "end_reasons": {
+          "puck_passed_paddle": 6,
+          "puck_hit_bottom": 1,
+          "evaluation_horizon": 1
+        },
+        "zero_failure_probability_upper_95": null,
+        "survival_at_steps": {
+          "250": 1.0,
+          "1000": 0.25,
+          "2000": 0.25
+        },
+        "worst_peak_paddle_speed_m_s": 2.0000000736361323,
+        "worst_peak_paddle_acceleration_m_s2": 63.42908145039331,
+        "mean_action_delta_rms": 0.5867007262482422,
+        "mean_target_delta_rms_m": 0.1131154205894023,
+        "mean_true_state_juggles": 17.125,
+        "true_state_sustained_juggling_fraction": 0.125
+      },
+      "episodes": [
+        {
+          "seed": 10000,
+          "steps": 2354,
+          "true_state_juggles": 25,
+          "reached_horizon": false,
+          "failed": true
+        },
+        {
+          "seed": 10001,
+          "steps": 613,
+          "true_state_juggles": 9,
+          "reached_horizon": false,
+          "failed": true
+        },
+        {
+          "seed": 10002,
+          "steps": 917,
+          "true_state_juggles": 8,
+          "reached_horizon": false,
+          "failed": true
+        },
+        {
+          "seed": 10003,
+          "steps": 586,
+          "true_state_juggles": 9,
+          "reached_horizon": false,
+          "failed": true
+        },
+        {
+          "seed": 10004,
+          "steps": 5000,
+          "true_state_juggles": 69,
+          "reached_horizon": true,
+          "failed": false
+        },
+        {
+          "seed": 10005,
+          "steps": 385,
+          "true_state_juggles": 6,
+          "reached_horizon": false,
+          "failed": true
+        },
+        {
+          "seed": 10006,
+          "steps": 251,
+          "true_state_juggles": 4,
+          "reached_horizon": false,
+          "failed": true
+        },
+        {
+          "seed": 10007,
+          "steps": 693,
+          "true_state_juggles": 7,
+          "reached_horizon": false,
+          "failed": true
+        }
+      ]
+    }
+  }
+}

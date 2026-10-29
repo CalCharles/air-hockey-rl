@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A039 — Verify new-trial caps and queue fixed 2M variant comparisons](#a039)
 - [A038 — Complete selected-target independent test and queue fixed5M variants](#a038)
 - [A037 — Complete four-variant selection and lock independent target test](#a037)
 - [A036 — Complete target3.6M comparison and evaluate4M target weights](#a036)
@@ -44,6 +45,14 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a039"></a>
+
+## A039 — 2026-10-29 17:56:56 -0500 — Verify new-trial caps and queue fixed 2M variant comparisons
+
+Codex checked the full new-trial validation history and attached guarded fixed-budget online/target evaluations.
+
+**Evidence:** [E040](experiment_logbook.md#e040), [detailed note](../notes/scratch/experiments/2026-10-29_22-56_new-history-caps-2m-queue.md). Checked the first-cap milestones separately from the1.6M comparison. Preserved checkpoint hashes/per-start validation, syntax-checked shared2M source and verified four waiting processes. Deferred imports keep idle watchers small. Evaluations use reused selection starts and freeze weights before acting; no warm start or simulator/control/DR change. Three learners and5M tests remain live. Documentation/report checks pass; goal remains unsolved.
 
 <a id="a038"></a>
 
