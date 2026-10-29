@@ -165,6 +165,7 @@ class GraphedTD3Update:
         use_graph: bool = True,
         compile_update: bool = True,
         actor_action_delta_penalty: float = 0.0,
+        critic_last_action: bool = False,
     ) -> None:
         self.actor = actor
         self.actor_target = actor_target
@@ -186,6 +187,7 @@ class GraphedTD3Update:
         self.action_high = action_high.to(self.device)
         self.h_eps = float(h_transform_eps)
         self.use_last_action = bool(use_last_action_in_policy_state)
+        self.critic_last_action = bool(critic_last_action)
         self.per_enabled = bool(per_enabled)
         self.per_eps = float(per_eps)
         self.critic_per_fraction = float(critic_per_fraction)
@@ -339,6 +341,11 @@ class GraphedTD3Update:
             return obs
         return torch.cat([obs, prev_actions], dim=-1)
 
+    def _critic_obs(self, obs: torch.Tensor, prev_actions: torch.Tensor) -> torch.Tensor:
+        if getattr(self, "critic_last_action", False):
+            return torch.cat([obs, prev_actions], dim=-1)
+        return obs
+
     def _critic_core(
         self,
         obs: torch.Tensor,
@@ -353,6 +360,7 @@ class GraphedTD3Update:
     ):
         """Target computation + N-critic loss. Pure tensor function (random
         draws are passed in) so it can be torch.compile'd."""
+        critic_obs = self._critic_obs(obs, prev_actions)
         with torch.no_grad():
             next_prev_actions = actions * (1.0 - dones.unsqueeze(-1))
             next_policy_obs = self._policy_obs(next_obs, next_prev_actions)
@@ -365,7 +373,8 @@ class GraphedTD3Update:
             else:
                 subset = torch.randperm(self.num_critics)[: self.target_subset].tolist()
                 target_critics = [self.qfs_target[i] for i in subset]
-            next_q_h_list = [qt(next_obs, target_next_action) for qt in target_critics]
+            next_critic_obs = self._critic_obs(next_obs, next_prev_actions)
+            next_q_h_list = [qt(next_critic_obs, target_next_action) for qt in target_critics]
             if len(next_q_h_list) == 1:
                 min_next_q_h = next_q_h_list[0]
             elif len(next_q_h_list) == 2:
@@ -383,7 +392,7 @@ class GraphedTD3Update:
                 )
                 bsz = obs.shape[0]
                 obs_repeat = (
-                    obs.unsqueeze(0).expand(self.cql_n_random, -1, -1).reshape(self.cql_n_random * bsz, -1)
+                    critic_obs.unsqueeze(0).expand(self.cql_n_random, -1, -1).reshape(self.cql_n_random * bsz, -1)
                 )
                 cql_terms = (cql_random_actions, obs_repeat, cql_policy_action, bsz)
 
@@ -391,7 +400,7 @@ class GraphedTD3Update:
         qi_loss_list = []
         q1_h = None
         for q in self.qfs:
-            qi_h = q(obs, actions)
+            qi_h = q(critic_obs, actions)
             if q1_h is None:
                 q1_h = qi_h
             qi_err = qi_h.view(-1) - next_q_value_h
@@ -400,7 +409,7 @@ class GraphedTD3Update:
             if cql_terms is not None:
                 random_actions, obs_repeat, cql_policy_action, bsz = cql_terms
                 q_rand_h = q(obs_repeat, random_actions).view(self.cql_n_random, bsz)
-                q_pi_h = q(obs, cql_policy_action).view(-1)
+                q_pi_h = q(critic_obs, cql_policy_action).view(-1)
                 logsumexp = torch.logsumexp(q_rand_h, dim=0) - math.log(float(self.cql_n_random))
                 loss_i = loss_i + self.cql_alpha * (logsumexp - q_pi_h).mean()
             qi_loss_list.append(loss_i)
@@ -462,7 +471,7 @@ class GraphedTD3Update:
     def _actor_core(self, obs: torch.Tensor, prev_actions: torch.Tensor):
         policy_obs = self._policy_obs(obs, prev_actions)
         current_policy_actions = deterministic_actor_action(self.actor, policy_obs)
-        q1_h = self.qfs[0](obs, current_policy_actions)
+        q1_h = self.qfs[0](self._critic_obs(obs, prev_actions), current_policy_actions)
         q1 = h_inverse(q1_h, eps=self.h_eps).view(-1)
         norm_q = (1.0 - self.gamma) * q1
         actor_loss = -norm_q.mean()

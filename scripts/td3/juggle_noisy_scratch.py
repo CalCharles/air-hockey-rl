@@ -44,6 +44,8 @@ def scratch_trainer(args):
     if args.get('exploration_pre_learning_action_source') != 'random':
         raise ValueError('Scratch training requires random initial exploration')
     if args.get('rma_mode') == 'history':
+        if args.get('actor_absolute_target', False) or args.get('critic_last_action', False):
+            raise ValueError('These actor/critic variants require the standard TD3 trainer')
         return 'scripts.rma.train_base_policy'
     if args.get('rma_mode') is not None:
         raise ValueError('Scratch juggling requires a deployable policy without privileged actor inputs')

@@ -104,6 +104,8 @@ class ContinuingJuggleTests(unittest.TestCase):
         self.assertEqual(scratch_trainer(dict(args, rma_mode="history")), "scripts.rma.train_base_policy")
         for changed in (dict(model_path="actor.pth"), dict(history_warm_start_plain=True),
                         dict(full_checkpoint_load="residual"), dict(rma_mode="privileged"),
+                        dict(rma_mode="history", actor_absolute_target=True),
+                        dict(rma_mode="history", critic_last_action=True),
                         dict(exploration_pre_learning_action_source="policy")):
             with self.assertRaises(ValueError):
                 scratch_trainer(dict(args, **changed))

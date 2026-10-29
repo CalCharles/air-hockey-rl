@@ -144,12 +144,14 @@ Active only when `full_checkpoint_load == "residual"`. See [`residual-rl-recipe.
 | `agent_num_hidden_layers` | `2` | Number of residual blocks in the actor. |
 | `q_hidden_layer_size` | `128` | Width of each residual block in each critic MLP. |
 | `q_num_hidden_layers` | `2` | Number of residual blocks per critic. |
+| `actor_absolute_target` | `False` | Experimental canonical-juggle actor: learns a bounded workspace aim point, then computes the original normalized command from observed paddle xy. Standard TD3, scratch training only; checkpoints identify this actor from saved geometry buffers. No simulator/control changes. |
 
 ## Policy observation
 
 | Field | Default | Notes |
 |---|---|---|
 | `use_last_action_in_policy_state` | `False` | When `True`, the actor sees `concat(obs, last_action)` (32-dim for `hist2`). When `False`, just `obs` (30-dim). |
+| `critic_last_action` | `False` | Experimental standard-TD3 scratch variant: critics also see the known previous action. Requires matching actor context. At the Bellman successor, context is the transition's taken action (zeroed for true terminals). Environment observations remain unchanged. |
 
 ## Episode GIF recording
 

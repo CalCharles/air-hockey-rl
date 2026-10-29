@@ -56,6 +56,13 @@ def validate_args(args) -> None:
         raise ValueError("Fixed-step training requires single_replay_buffer=True.")
     if getattr(args, "actor_action_delta_penalty", 0.0) < 0:
         raise ValueError("actor_action_delta_penalty must be >= 0.")
+    if getattr(args, "actor_absolute_target", False) or getattr(args, "critic_last_action", False):
+        if getattr(args, "rma_mode", None) is not None or hasattr(args, "her_k"):
+            raise ValueError("These policy/critic variants require the plain TD3 trainer")
+        if args.model_path is not None and not args.eval_mode:
+            raise ValueError("These policy/critic variants must train from scratch")
+    if getattr(args, "critic_last_action", False) and not args.use_last_action_in_policy_state:
+        raise ValueError("Critic last-action context requires the matching actor context")
     actor_starts = getattr(args, "actor_learning_starts", None)
     if actor_starts is not None and actor_starts < args.learning_starts:
         raise ValueError("actor_learning_starts must be >= learning_starts.")

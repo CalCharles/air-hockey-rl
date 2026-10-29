@@ -47,6 +47,7 @@ from torch.utils.tensorboard import SummaryWriter
 from airhockey import AirHockeyEnv
 from airhockey.renderers import AirHockeyRenderer
 from scripts.td3.deterministic_agent import DeterministicAgent
+from scripts.td3.absolute_target_agent import AbsoluteTargetAgent
 from scripts.td3.helper.q_network import TD3QNetwork
 from scripts.td3.helper.td3_args_validation import validate_args
 from scripts.td3.helper.td3_gif_recorder import GIFEpisodeRecorder
@@ -180,6 +181,11 @@ class Args:
     # Soft preference for smooth commands; does not change the deployed action
     # mapping, PID gains, or action limits. Scaled against normalized Q.
     actor_action_delta_penalty: float = 0.0
+    # Learn absolute canonical-workspace aim points inside the actor; the env
+    # still receives its original normalized displacement action.
+    actor_absolute_target: bool = False
+    # Optional critic context matching the actor's already-known previous action.
+    critic_last_action: bool = False
     exploration_noise: float = 0.1
     policy_noise: float = 0.2
     noise_clip: float = 0.5
@@ -510,14 +516,15 @@ def _entrypoint():
         single_action_space=envs.single_action_space,
     )
 
-    actor = DeterministicAgent(
+    actor_class = AbsoluteTargetAgent if args.actor_absolute_target else DeterministicAgent
+    actor = actor_class(
         policy_env_view,
         action_scale=action_scale,
         action_bias=0.0,
         hidden_layer_size=args.agent_hidden_layer_size,
         num_hidden_layers=args.agent_num_hidden_layers,
     ).to(device)
-    actor_target = DeterministicAgent(
+    actor_target = actor_class(
         policy_env_view,
         action_scale=action_scale,
         action_bias=0.0,
@@ -527,6 +534,7 @@ def _entrypoint():
     actor_target.load_state_dict(actor.state_dict())
 
     obs_dim = int(np.prod(envs.single_observation_space.shape))
+    critic_obs_dim = obs_dim + (act_dim if args.critic_last_action else 0)
     if args.num_critics < 2:
         raise ValueError(f"num_critics must be >=2, got {args.num_critics}")
     if args.target_critic_subset_size is not None and not (
@@ -539,7 +547,7 @@ def _entrypoint():
     # Build N critics + N targets. RNG advances between modules → diverse inits.
     qfs = [
         TD3QNetwork(
-            obs_dim=obs_dim,
+            obs_dim=critic_obs_dim,
             act_dim=act_dim,
             hidden_layer_size=args.q_hidden_layer_size,
             num_hidden_layers=args.q_num_hidden_layers,
@@ -548,7 +556,7 @@ def _entrypoint():
     ]
     qfs_target = [
         TD3QNetwork(
-            obs_dim=obs_dim,
+            obs_dim=critic_obs_dim,
             act_dim=act_dim,
             hidden_layer_size=args.q_hidden_layer_size,
             num_hidden_layers=args.q_num_hidden_layers,
@@ -866,6 +874,7 @@ def _entrypoint():
         action_high=action_high,
         h_transform_eps=args.h_transform_eps,
         use_last_action_in_policy_state=args.use_last_action_in_policy_state,
+        critic_last_action=args.critic_last_action,
         per_enabled=args.per_enabled,
         per_eps=args.per_eps,
         critic_per_fraction=args.critic_per_fraction,

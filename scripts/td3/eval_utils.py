@@ -13,6 +13,7 @@ import torch
 
 from scripts.td3.agent import Agent
 from scripts.td3.deterministic_agent import DeterministicAgent
+from scripts.td3.absolute_target_agent import AbsoluteTargetAgent
 from scripts.td3.residual_agent import ResidualActor
 
 
@@ -47,10 +48,12 @@ def unwrap_eval_state_dict(loaded_obj):
 
 
 def infer_policy_class_from_state_dict(state_dict):
-    """Infer whether a checkpoint is an Agent, DeterministicAgent, or ResidualActor."""
+    """Infer stochastic, displacement/aim-point deterministic, or residual actors."""
     keys = set(state_dict.keys())
     if any(k.startswith("base.") for k in keys) and any(k.startswith("residual.") for k in keys):
         return "residual_actor"
+    if {"target_center", "target_half_span", "displacement_scales"}.issubset(keys):
+        return "absolute_target_agent"
 
     has_agent_only_keys = (
         "actor_logstd" in keys
@@ -91,8 +94,9 @@ def build_policy(
             hidden_layer_size=agent_hidden_layer_size,
             num_hidden_layers=agent_num_hidden_layers,
         )
-    if policy_type == "deterministic_agent":
-        return DeterministicAgent(
+    if policy_type in ("deterministic_agent", "absolute_target_agent"):
+        actor_class = AbsoluteTargetAgent if policy_type == "absolute_target_agent" else DeterministicAgent
+        return actor_class(
             policy_env_view,
             action_scale=action_scale,
             action_bias=0.0,

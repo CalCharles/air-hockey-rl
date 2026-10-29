@@ -1,0 +1,31 @@
+{
+  "created": "2026-10-29T19:35:52.047038+00:00",
+  "reference_commit": "c4c422bf359989c5bf5e3ecdcc2c89a3837ab0ef",
+  "current_update_source_sha256": "0b5a2a984c21f11e2cdc5344d9ba8038f70ee0cc5ca3c2dd3f2c467598416d48",
+  "mode": "CPU eager; default critic_last_action=False; real 64-wide residual actor and twin critics; fixed torch seed 20261029",
+  "batch_size": 16,
+  "checks": [
+    {
+      "cql": false,
+      "critic_output_max_abs_difference": 0.0,
+      "critic_gradient_max_abs_difference": 0.0,
+      "actor_output_max_abs_difference": 0.0,
+      "actor_gradient_max_abs_difference": 0.0
+    },
+    {
+      "cql": true,
+      "critic_output_max_abs_difference": 0.0,
+      "critic_gradient_max_abs_difference": 0.0,
+      "actor_output_max_abs_difference": 0.0,
+      "actor_gradient_max_abs_difference": 0.0
+    }
+  ],
+  "fixture_parameters": {
+    "gamma": 0.9,
+    "h_transform_eps": 0.001,
+    "cql_alpha": 0.1,
+    "cql_n_random": 2,
+    "actor_action_delta_penalty": 0.005
+  },
+  "limitation": "No CUDA graph equivalence claim"
+}

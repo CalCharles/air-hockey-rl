@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A019 — Prepare independently testable actor and critic controls](#a019)
 - [A018 — Evaluate and isolate an unsuccessful state-estimator candidate](#a018)
 - [A017 — Reassign the plateauing pilot to survival-focused scratch training](#a017)
 - [A016 — Publish the first multi-minute noisy scratch rollout and 2M comparison](#a016)
@@ -24,6 +25,18 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a019"></a>
+
+## A019 — 2026-10-29 14:40:03 -0500 — Prepare independently testable actor and critic controls
+
+Codex implemented optional learned aim-point output and previous-action critic context, validated both from scratch on CPU and verified disabled-flag update compatibility.
+
+**Deliverables:** [Aim-point actor](../scripts/td3/absolute_target_agent.py), [trainer](../scripts/td3/td3_training.py), [update helper](../scripts/td3/helper/td3_graphed_update.py), [checkpoint inference](../scripts/td3/eval_utils.py), scratch/argument guards, separate full configs and [Args reference](../notes/docs/training/td3-args-reference.md). Critic context consistently uses previous actions for current Q, taken actions for successor Q and matching context in actor/CQL losses. Replay/sensing are unchanged. Aim-point policy uses only observed pose and fixed public geometry.
+
+**Evidence:** [E018](experiment_logbook.md#e018) / [detailed setup](../notes/scratch/experiments/2026-10-29_19-40_actor-critic-cpu-smokes.md) record actual two CPU smoke timestamps, saved optimizer/projection checks, 32 passed tests and additional guard-case recheck. [Compatibility driver](../scripts/analysis/verify_td3_update_compatibility.py) / [JSON](juggling-update-compatibility.json) demonstrate zero CPU eager output/gradient differences versus `c4c422b` with both options disabled. Enabled-mode GPU capture and performance still need actual trials. No simulator implementation, sensing/control recipe, randomization or active process configuration changed. No full new trial launched; all three existing learners remain live.
+
+**Publication checks:** Reviewed staged implementation, relative links, image paths, unique anchors, TOC coverage and whitespace. Future policies must start with random weights; smoke/regression/incumbent models are not initialization sources. Goal remains active.
 
 <a id="a018"></a>
 

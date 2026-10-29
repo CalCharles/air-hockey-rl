@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E018 — Aim-point and critic-action-context CPU smokes pass](#e018)
 - [E017 — Reject a fixed observer after negative offline estimates](#e017)
 - [E016 — Interrupt low-exploration pilot and launch survival-focused scratch trial](#e016)
 - [E015 — First noisy capped rollout and fixed-2M benchmark](#e015)
@@ -23,6 +24,18 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e018"></a>
+
+## E018 — 2026-10-29 14:40:03 -0500 — Aim-point and critic-action-context CPU smokes pass
+
+Two independently configured scratch candidates pass CPU training/reload checks, while their full GPU learning performance remains untested.
+
+**Completed implementation checks:** [Aim-point candidate](../configs/td3/sustained/noisy_absolute_target_scratch.yaml) changes only actor output representation; [critic-context candidate](../configs/td3/sustained/noisy_critic_context_scratch.yaml) adds the known previous action only to the critic. Same original noisy observations, reward, PID/smoothing, geometry, limits and DR. Both 96-step CPU runs completed at actual timestamps in the [detailed record](../notes/scratch/experiments/2026-10-29_19-40_actor-critic-cpu-smokes.md); each saved state confirms three critic updates and populated actor optimizer state. Frozen checkpoint reload and evaluation passed. Full 6M GPU candidates are **planned, not launched**. No teacher, residual base or reused weights.
+
+**Validation:** All 32 targeted tests passed, including gradients, legacy/new actor round trips, successor action context, terminal masking and CQL shapes. [Raw CPU compatibility verification](juggling-update-compatibility.json): disabled flags match prior `c4c422b` actor/critic outputs and parameter gradients bitwise on both tested no-CQL/CQL cases. No CUDA equivalence claim. No meaningful learned-policy figure from the short smoke runs; local random smoke clips exist but are not performance evidence.
+
+**Decision:** Preserve running trials. In particular, history improved to 612.875 mean steps at 1.4M (0/8 caps), so weak early results alone do not justify ending it. Both new flags remain false in existing/default configurations. [A019](agent_logbook.md#a019).
 
 <a id="e017"></a>
 
