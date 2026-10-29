@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E037 — Target3.6M reaches twenty paired20k caps;4M target test starts](#e037)
 - [E036 — Fixed4M history benchmark reaches sixteen shared10k caps](#e036)
 - [E035 — Frozen target actor enters paired evaluation](#e035)
 - [E034 — History3.6M reaches fourteen independent20k caps](#e034)
@@ -42,6 +43,18 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e037"></a>
+
+## E037 — 2026-10-29 17:06:06 -0500 — Target3.6M reaches twenty paired20k caps;4M target test starts
+
+The frozen3.6M target actor reaches20/32paired20k caps versus14/32online, but uncertainty and12failures prevent a reliability claim.
+
+**Completed:** Target mean15,427.625,median at20k cap,225.0625physical juggles; online mean13,099.8125. Paired gain2327.8125,95% bootstrap interval[-834.57109375,5445.16328125],including zero. [Per-start data](juggling-history-target-comparison.csv), [detailed record](../notes/scratch/experiments/2026-10-29_22-06_history-target-3m6-result-4m-start.md). Same reused seeds; target is an in-run Polyak average from the original scratch initialization, not a new warm-started learner.
+
+**Running:** Frozen4M target on same32used starts at20k, alongside existing4M online test. [Locked provenance](juggling-history-target-4m-test-provenance.json). Results unknown; candidate unchanged pending comparison/new-seed evaluation. Three learners continue; no simulator/DR change, new training or GIF. [A036](agent_logbook.md#a036).
+
+**Supporting offline audit 2026-10-29 17:09:08 -0500:** All20capped target episodes span at least1.393m longitudinally and0.810m laterally, with at least98.36% of samples beyond combined body radii plus2cm. [Per-start motion](juggling-history-target-3m6-motion.csv), [driver](../scripts/analysis/juggle_body_motion.py). This supports real flight, not exact contact counting or reliable survival.
 
 <a id="e036"></a>
 

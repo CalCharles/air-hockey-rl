@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A036 — Complete target3.6M comparison and evaluate4M target weights](#a036)
 - [A035 — Complete fixed4M benchmark and start matched long-horizon comparison](#a035)
 - [A034 — Inspect replay capacity and evaluate saved target weights](#a034)
 - [A033 — Complete3.6M independent evaluation and retain research candidate](#a033)
@@ -41,6 +42,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a036"></a>
+
+## A036 — 2026-10-29 17:06:06 -0500 — Complete target3.6M comparison and evaluate4M target weights
+
+Codex completed the paired target3.6M test, retained its uncertainty and launched the matched4M target comparison.
+
+**Evidence:** [E037](experiment_logbook.md#e037), [detailed note](../notes/scratch/experiments/2026-10-29_22-06_history-target-3m6-result-4m-start.md). Verified20genuine caps,12failures, paired scores/bootstrap and censored median. New target bundle points only to weights from the same scratch lineage; hash/reload/canonical guards pass. No new learning or warm start; both4M tests remain running with reused research starts. All three learners continue and documentation checks pass. Goal remains unsolved.
+
+**Additional analysis 2026-10-29 17:09:08 -0500:** Added an offline body-motion audit and checked all32saved target trajectories; the20caps show broad table travel and at least98.36% separated samples. No simulator reset, RNG sampling or new policy action. Source and CSV are linked from E037.
 
 <a id="a035"></a>
 

@@ -1,0 +1,15 @@
+{
+  "recorded_before_test": "2026-10-29T22:04:26.669101+00:00",
+  "variant": "TD3 target actor (Polyak EMA), frozen inference only",
+  "source_checkpoint": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/train/checkpoint_4000000",
+  "source_weights": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/train/checkpoint_4000000/actor_target.pth",
+  "model_sha256": "452f6dbfdd43c9a17224966e1f7db8b9b6640745c53413abe9bd7d076df63ae2",
+  "weight_difference_l2": 0.7360034203621898,
+  "lineage": "Original random-initialized scratch run target; no new training or warm start",
+  "evaluation_bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/target_actor_4m_bundle",
+  "seed_base": 700000,
+  "episodes": 32,
+  "horizon": 20000,
+  "seed_status": "Reused paired research cohort, not independent acceptance",
+  "status_at_recording": "running_no_result_yet"
+}
