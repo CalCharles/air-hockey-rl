@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A027 — Complete fixed 3M evaluation and lock a new independent test](#a027)
 - [A026 — Uncensor the long episodes and publish their failure evidence](#a026)
 - [A025 — Attach a guarded fixed-milestone evaluator](#a025)
 - [A024 — Assess 3M milestone before reallocating a training slot](#a024)
@@ -32,6 +33,14 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a027"></a>
+
+## A027 — 2026-10-29 16:13:02 -0500 — Complete fixed 3M evaluation and lock a new independent test
+
+Codex verified the fixed-milestone watcher completed, audited a new seed range, evaluated the frozen 3M policy and updated the research candidate pointer.
+
+**Evidence:** [E026](experiment_logbook.md#e026), [detailed record](../notes/scratch/experiments/2026-10-29_21-13_history-3m-independent.md). Model hash and canonical environment were checked before the 32-start independent test. Published per-start CSVs and preserved the prior candidate's eventual-failure provenance separately. Current candidate remains unaccepted: 27/32 independent 20k failures. No candidate weights may initialize new training. Baseline, history and survival learners remain live; prepared seed1 replication is not launched. Documentation/report checks pass; no new implementation or simulator changes.
 
 <a id="a026"></a>
 

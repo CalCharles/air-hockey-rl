@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E026 — History 3M improves shared survival; independent reliability remains low](#e026)
 - [E025 — All four long history episodes eventually fail](#e025)
 - [E024 — Fixed history 3M benchmark queued](#e024)
 - [E023 — Survival 3M improves validation but remains weak on shared starts](#e023)
@@ -31,6 +32,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e026"></a>
+
+## E026 — 2026-10-29 16:13:02 -0500 — History 3M improves shared survival; independent reliability remains low
+
+The fixed 3M history checkpoint reaches 14/32 shared 10k caps and 5/32 independent 20k caps, leaving sustained reliability unsolved.
+
+**Completed:** Shared mean 6,662.65625, median 9,635.5; independent mean 9,116.5625, median 7,998, 133.875 physical juggles and 27 failures. Previously unused seeds 600000–600031 were checked before launching a hash-locked checkpoint; this range is now consumed. Shared paired improvement over 2.1M is 1,777.375, bootstrap 95% interval [-15.5625, 3582.86640625], including zero. Single training seed and reused shared starts limit conclusions.
+
+**Evidence:** [Detailed record and commands](../notes/scratch/experiments/2026-10-29_21-13_history-3m-independent.md), [shared CSV](juggling-history-benchmark.csv), [independent CSV](juggling-history-3m-independent.csv), [updated candidate hash/provenance](juggling-candidate.json). The E024 watcher completed. No new GIF; E025 clips show the earlier 2.1M checkpoint. All three learners continue; no new training launch or simulator/DR change. [A027](agent_logbook.md#a027).
 
 <a id="e025"></a>
 
