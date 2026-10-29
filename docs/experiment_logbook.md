@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E022 — Selected 20k history replay reproduces exactly](#e022)
 - [E021 — Reconstruct randomized physics of the longer history test](#e021)
 - [E020 — History 2.1M reaches nine shared benchmark caps](#e020)
 - [E019 — History improves survival; fresh 20k test still fails](#e019)
@@ -27,6 +28,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e022"></a>
+
+## E022 — 2026-10-29 15:30:37 -0500 — Selected 20k history replay reproduces exactly
+
+The selected successful20k episode reproduces all eight saved arrays exactly while rendering the new GIFs.
+
+**Completed replay:** Frozen2.1M history checkpoint, known cap seed500014,20000steps,295physical juggles. Rendering preserved the full trajectory bitwise. [Detailed command and evidence](../notes/scratch/experiments/2026-10-29_20-30_history-20k-selected-gifs.md). This is selected illustration: aggregate reused32-start20k test remains4/32caps and28failures. No independent acceptance claim.
+
+![Selected episode first10seconds](assets/juggling/noisy-history-20k-start.gif)
+
+![Selected episode final20seconds](assets/juggling/noisy-history-20k-end.gif)
+
+Same episode with a time gap; end clip finishes at the cap. GIFs generated2026-10-29 at10fps, durations preserved; on-screen Contacts counts contact timesteps, not distinct juggles. [A023](agent_logbook.md#a023).
 
 <a id="e021"></a>
 

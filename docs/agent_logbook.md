@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A023 — Publish selected 20k clips with aggregate failure context](#a023)
 - [A022 — Audit evaluation physics without touching live learners](#a022)
 - [A021 — Measure newer history checkpoint and start paired longer test](#a021)
 - [A020 — Publish history milestone and independent failure test](#a020)
@@ -28,6 +29,14 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a023"></a>
+
+## A023 — 2026-10-29 15:30:37 -0500 — Publish selected 20k clips with aggregate failure context
+
+Codex rendered and checked the first10seconds and final20seconds of a selected20k history-policy success.
+
+**Deliverables:** [GIF index](assets/juggling/README.md), [E022](experiment_logbook.md#e022), [detailed note](../notes/scratch/experiments/2026-10-29_20-30_history-20k-selected-gifs.md). All eight20000-step arrays match the prior benchmark episode exactly; a decoded frame was visually inspected. Preserved durations and labeled selection, censoring and4/32 aggregate cap rate. Progress-report discovery excludes demo directories so a chosen1/1success is not presented as a benchmark. Saved-data report regeneration and documentation checks pass. Existing learners continue; no simulator or distribution change.
 
 <a id="a022"></a>
 

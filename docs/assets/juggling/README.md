@@ -38,3 +38,7 @@ Baseline 1.9M, specifically selected successful validation seed 10005: [first 10
 ## Scratch history milestone
 
 [Selected episode final20seconds](noisy-history-selected-end.gif): seed300017 survived17049steps with235 physical juggles, then failed. [First benchmark episode final20seconds](noisy-history-benchmark-first.gif): different seed300000 failed at785steps. Generated2026-10-29. Shared benchmark3/32 at10k; independent test0/32 at20k. These individual episodes do not establish reliability. [E019](../../experiment_logbook.md#e019).
+
+## Selected 20k noisy history success
+
+History2.1M, known successful seed500014: [first10seconds](noisy-history-20k-start.gif), [final20seconds](noisy-history-20k-end.gif), with a time gap. Ends at the20000-step cap (16minutes40seconds simulated), with295physical juggles. All eight saved trajectory arrays match the earlier evaluation exactly. Generated2026-10-29, duration preserved. This selected success accompanies **4/32caps and28failures** in the reused-start20k test. On-screen Contacts counts contact timesteps. [E022](../../experiment_logbook.md#e022).

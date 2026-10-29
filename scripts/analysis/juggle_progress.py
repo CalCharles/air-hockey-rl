@@ -99,7 +99,9 @@ def write_report(roots, out):
         known = {directory for directory, _ in phases}
         for result in sorted(root.glob("*/results.json")):
             directory = result.parent.name
-            if directory not in known and "stretch" not in directory and "diagnostic" not in directory:
+            if directory not in known and not any(
+                token in directory for token in ("stretch", "diagnostic", "demo")
+            ):
                 phases.append((directory, directory.replace("_", " ")))
         for directory, phase in phases:
             result = root / directory / "results.json"
