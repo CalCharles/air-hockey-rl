@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A021 — Measure newer history checkpoint and start paired longer test](#a021)
 - [A020 — Publish history milestone and independent failure test](#a020)
 - [A019 — Prepare independently testable actor and critic controls](#a019)
 - [A018 — Evaluate and isolate an unsuccessful state-estimator candidate](#a018)
@@ -26,6 +27,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a021"></a>
+
+## A021 — 2026-10-29 15:19:59 -0500 — Measure newer history checkpoint and start paired longer test
+
+Codex completed the2.1M frozen history benchmark and started a matched20k comparison without changing live training.
+
+**Evidence:** [E020](experiment_logbook.md#e020), [detailed note](../notes/scratch/experiments/2026-10-29_20-19_history-2m1-milestone.md), extended per-start comparison. Verified evaluation handle exited successfully and all three learner launcher processes remained live. Improvement is promising but9/32caps is insufficient. The new32-start20k test is running; its reused seeds must not be called fresh acceptance. Earlier GIF/logbook commit0869bce was confirmed pushed. Prepared [history seed1 replication](../configs/td3/sustained/noisy_history_scratch_seed1.yaml), changing only seed/run name; scratch and canonical guards pass. It is **not launched** and will use random initialization. No simulator changes or new implementation tests.
+
+**Status update 2026-10-29 15:25:44 -0500:** Completed the paired20k test and published per-start results;4/32 genuine caps remains insufficient. Updated frozen candidate pointer/hash to2.1M and retained the earlier independent-test provenance with an explicit reused-start limitation. Seed1 replication remains planned.
 
 <a id="a020"></a>
 

@@ -78,3 +78,5 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-10-29 19:40 | Actor/critic CPU smoke controls | Two opt-in scratch variants pass CPU update/reload checks; default eager outputs/gradients match prior code exactly; full trials unlaunched | [file](2026-10-29_19-40_actor-critic-cpu-smokes.md)
 
 - 2026-10-29 20:15 | History matched and independent tests | Shared mean3519; independent20k mean3607,0/32 caps; selected episode17049steps | [file](2026-10-29_20-15_history-benchmark-independent.md)
+
+- 2026-10-29 20:19 | History2.1M milestone | Shared mean4885,9/32 at10k; paired20k test running | [file](2026-10-29_20-19_history-2m1-milestone.md)

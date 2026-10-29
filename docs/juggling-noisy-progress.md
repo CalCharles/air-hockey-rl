@@ -1,6 +1,6 @@
 # Noisy juggling progress
 
-Generated 2026-10-29T20:12:18.125723+00:00 from saved evaluations; no new rollouts.
+Generated 2026-10-29T20:25:45.659520+00:00 from saved evaluations; no new rollouts.
 
 Validation curves use repeatedly evaluated starts, not independent acceptance tests. Each point is an episode mean for one training seed. Check the CSV for episode counts, seeds and caps. Observed juggle counts use noisy camera positions and a direction-reversal filter. Contact timesteps are not distinct juggles. Cap fractions use the physical-trajectory heuristic when available, otherwise the legacy observed-count heuristic.
 
@@ -11,11 +11,11 @@ Validation curves use repeatedly evaluated starts, not independent acceptance te
 | Run | Runner status | Latest validation step | Mean survival | Mean juggles | Genuine cap fraction |
 |---|---|---:|---:|---:|---:|
 | noisy_scratch_20261028_seed0 | complete | 1,900,000 | 663.4 | 5.75 | 0.0% |
-| noisy_iteration2_20261029_long | training | 4,300,000 | 1450.6 | 15.38 | 0.0% |
+| noisy_iteration2_20261029_long | training | 4,700,000 | 513.2 | 5.12 | 0.0% |
 | noisy_iteration2_20261029_low_explore | interrupted | 2,000,000 | 392.0 | 3.50 | 0.0% |
 | noisy_iteration2_20261029_large_low_explore | interrupted | 1,000,000 | 152.6 | 1.00 | 0.0% |
-| noisy_history_20261029_seed0 | training | 2,100,000 | 2992.8 | 42.38 | 50.0% |
-| noisy_survival_20261029_seed0 | training | 2,200,000 | 176.1 | 1.38 | 0.0% |
+| noisy_history_20261029_seed0 | training | 2,300,000 | 4876.1 | 68.62 | 75.0% |
+| noisy_survival_20261029_seed0 | training | 2,500,000 | 341.1 | 3.50 | 0.0% |
 
 Separate-start evaluations (selection and benchmark phases labeled):
 
@@ -32,5 +32,7 @@ Separate-start evaluations (selection and benchmark phases labeled):
 - [noisy_iteration2_20261029_large_low_explore, validation-selected checkpoint benchmark](../runs/td3/noisy_iteration2_20261029_large_low_explore/selected_eval/results.json): 225.8 mean steps, 1.62 observed juggles, 1.94 physical-trajectory juggles, 0.0% cap completion; 32 starts from seed 400000, cap 10000.
 - [noisy_history_20261029_seed0, independent 1m6 20k eval](../runs/td3/noisy_history_20261029_seed0/independent_1m6_20k_eval/results.json): 3606.7 mean steps, 46.50 observed juggles, 51.66 physical-trajectory juggles, 0.0% cap completion; 32 starts from seed 500000, cap 20000.
 - [noisy_history_20261029_seed0, milestone 1m6 benchmark](../runs/td3/noisy_history_20261029_seed0/milestone_1m6_benchmark/results.json): 3519.4 mean steps, 45.16 observed juggles, 51.31 physical-trajectory juggles, 9.4% cap completion; 32 starts from seed 300000, cap 10000.
+- [noisy_history_20261029_seed0, milestone 2m1 benchmark](../runs/td3/noisy_history_20261029_seed0/milestone_2m1_benchmark/results.json): 4885.3 mean steps, 66.69 observed juggles, 74.34 physical-trajectory juggles, 28.1% cap completion; 32 starts from seed 300000, cap 10000.
+- [noisy_history_20261029_seed0, paired 2m1 20k eval](../runs/td3/noisy_history_20261029_seed0/paired_2m1_20k_eval/results.json): 7066.3 mean steps, 97.81 observed juggles, 108.72 physical-trajectory juggles, 12.5% cap completion; 32 starts from seed 500000, cap 20000.
 
 The final-start benchmark is reused across recipes. A selected policy requires untouched seeds and longer horizons before acceptance. Bounded survival does not prove infinite survival.

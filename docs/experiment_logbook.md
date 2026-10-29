@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E020 — History 2.1M reaches nine shared benchmark caps](#e020)
 - [E019 — History improves survival; fresh 20k test still fails](#e019)
 - [E018 — Aim-point and critic-action-context CPU smokes pass](#e018)
 - [E017 — Reject a fixed observer after negative offline estimates](#e017)
@@ -25,6 +26,18 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e020"></a>
+
+## E020 — 2026-10-29 15:19:59 -0500 — History 2.1M reaches nine shared benchmark caps
+
+The continued scratch history learner reaches9/32 genuine10k shared-start caps while23starts still fail.
+
+**Completed:** Mean4885.28125, median3190,74.34375 physical-trajectory juggles, versus1.6M mean3519.375 and3/32 caps. Paired difference1365.90625, bootstrap95% interval[-332.4703125,3050.4234375],21/32 wins. Reused benchmark; single training seed. [Detailed results and exact command](../notes/scratch/experiments/2026-10-29_20-19_history-2m1-milestone.md); [per-start CSV](juggling-history-benchmark.csv).
+
+**Running:** Paired20k test on previously used500000–500031; no outcome yet. Three scratch training jobs remain active. No simulator changes, no new training initialization. No new GIF for this milestone; see [E019 clips](#e019). [A021](agent_logbook.md#a021).
+
+**Status update 2026-10-29 15:25:44 -0500:** The paired20k test completed: mean7066.28125, median5100.5,4/32 genuine caps,28failures. Previous1.6M on identical starts: mean3606.6875,0/32caps. Paired difference3459.59375,95% bootstrap interval[1170.4515625,5843.27734375]. [Per-start comparison](juggling-history-20k-comparison.csv). Both seed sets are reused research tests; candidate pointer updated, no acceptance claim.
 
 <a id="e019"></a>
 
