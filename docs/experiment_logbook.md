@@ -6,11 +6,28 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E006 — Full learning-curve and failure-action analysis](#e006)
 - [E005 — Scratch run completed; longer-training comparison launched](#e005)
 - [E004 — Noisy-simulator training from scratch](#e004)
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e006"></a>
+
+## E006 — 2026-10-29 12:19:36 -0500 — Full learning-curve and failure-action analysis
+
+Saved checkpoint evaluations show continued improvement with large fluctuations; terminal actions are more often saturated, without evidence that saturation causes failure.
+
+**Analysis, completed now:** Reconciled all 19 saved checkpoint evaluations from E004 (100k–1.9M steps). Eight reused validation starts, 5,000-step cap: best observed mean survival 771.875 at 1.8M versus 663.375 at 1.9M; no genuine cap completions. The final actor's separate 32-start result is 416.125 steps and 3.78125 observed juggles. These different seed sets cannot measure a matched final-checkpoint regression.
+
+![Historical checkpoint learning curves](juggling-noisy-progress.png)
+
+Historical figure generated 2026-10-29 from saved E004 results; this task ran no policy evaluations. [Report and reproduction context](juggling-noisy-progress.md), [raw CSV](juggling-noisy-progress.csv), [report generator](../scripts/analysis/juggle_progress.py). Generate with `.venv/bin/python -m scripts.analysis.juggle_progress --roots runs/td3/noisy_scratch_20261028_seed0 runs/td3/noisy_iteration2_20261029_long runs/td3/noisy_iteration2_20261029_low_explore runs/td3/noisy_iteration2_20261029_large_low_explore --out docs/juggling-noisy-progress.md`.
+
+**Failure diagnostics:** Computed from 32 saved final-evaluation NPZ trajectories, equally weighting episodes: normalized action components with absolute value >0.95 occupy 35.83% of all steps/components and 63.75% in the last ten steps. Latest puck-frame occlusion rates average 9.33% overall and 10.94% in the last ten steps. These are observational associations, not controlled causal tests; no sensing modifications are justified. The occlusion rate here measures observed flags, not the simulator's configured per-event probability.
+
+**Live experiment:** E005 trials confirmed as live Slurm processes, completed initial collection and began CUDA-graph updates; approximately 25k–30k steps at inspection. No checkpoint evaluations yet. No additional experiments launched. [Task A007](agent_logbook.md#a007).
 
 <a id="e005"></a>
 

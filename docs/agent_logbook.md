@@ -6,12 +6,25 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A007 — Add reproducible progress figures and inspect live learners](#a007)
 - [A006 — Continue sustained-juggling research and publish progress](#a006)
 - [A005 — Reverse logbooks and launch scratch training](#a005)
 - [A004 — Preserve simulator contract and set up logbooks](#a004)
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a007"></a>
+
+## A007 — 2026-10-29 12:19:36 -0500 — Add reproducible progress figures and inspect live learners
+
+Codex added a read-only saved-evaluation report generator and analyzed completed-policy learning curves and terminal actions while three scratch trials train.
+
+**Deliverables:** [Generator](../scripts/analysis/juggle_progress.py), [report](juggling-noisy-progress.md), [CSV](juggling-noisy-progress.csv), [figure](juggling-noisy-progress.png). The report separates reused checkpoint validation starts from final-actor results and labels limits of one training seed. [Findings E006](experiment_logbook.md#e006).
+
+**Checks actually run:** Executed generator on all four run roots; inspected figure rendering, checked 19 source checkpoint means and the final summary against raw JSON, and checked relative Markdown links and unique anchors/TOC coverage. Existing 14 implementation tests passed in A006; not rerun for this reporting-only change. Live launcher PIDs 1214379/1214383/1214388 and Slurm allocations confirmed, logs show learning-phase progress. Commit da83c9f with the first noisy GIF was successfully pushed to origin/codex/sustained-juggling; unrelated puck-score config remains untracked.
+
+**Next:** Wait for checkpoint evidence, publish milestone GIFs and evaluate whether reduced exploration improves sustained survival. Goal remains active and unsolved.
 
 <a id="a006"></a>
 
