@@ -92,13 +92,21 @@ def write_report(roots, out):
             lines.append(f"| {root.name} | {status} | No saved validation | — | — | — |")
     lines += ["", "Separate-start evaluations (selection and benchmark phases labeled):", ""]
     for root, _ in series:
-        for directory, phase in (("final_eval", "final actor benchmark"),
-                                 ("selected_eval", "validation-selected checkpoint benchmark"),
-                                 ("selected_paired_eval", "paired selected checkpoint"),
-                                 ("final_paired_eval", "paired final actor")):
+        phases = [("final_eval", "final actor benchmark"),
+                  ("selected_eval", "validation-selected checkpoint benchmark"),
+                  ("selected_paired_eval", "paired selected checkpoint"),
+                  ("final_paired_eval", "paired final actor")]
+        known = {directory for directory, _ in phases}
+        for result in sorted(root.glob("*/results.json")):
+            directory = result.parent.name
+            if directory not in known and "stretch" not in directory and "diagnostic" not in directory:
+                phases.append((directory, directory.replace("_", " ")))
+        for directory, phase in phases:
             result = root / directory / "results.json"
             if result.exists():
                 payload = json.loads(result.read_text())
+                if "training" not in payload.get("scenarios", {}):
+                    continue
                 s = payload["scenarios"]["training"]["summary"]
                 true_count = (f", {s['mean_true_state_juggles']:.2f} physical-trajectory juggles"
                               if "mean_true_state_juggles" in s else "")

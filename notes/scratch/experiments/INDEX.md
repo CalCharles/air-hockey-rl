@@ -76,3 +76,5 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-10-29 19:09 | Fixed observer negative | Untuned nominal-physics filter has worse saved-state estimation error; no policy integration or GPU trial | [file](2026-10-29_19-09_fixed-observer-negative.md)
 
 - 2026-10-29 19:40 | Actor/critic CPU smoke controls | Two opt-in scratch variants pass CPU update/reload checks; default eager outputs/gradients match prior code exactly; full trials unlaunched | [file](2026-10-29_19-40_actor-critic-cpu-smokes.md)
+
+- 2026-10-29 20:15 | History matched and independent tests | Shared mean3519; independent20k mean3607,0/32 caps; selected episode17049steps | [file](2026-10-29_20-15_history-benchmark-independent.md)

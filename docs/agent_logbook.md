@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A020 — Publish history milestone and independent failure test](#a020)
 - [A019 — Prepare independently testable actor and critic controls](#a019)
 - [A018 — Evaluate and isolate an unsuccessful state-estimator candidate](#a018)
 - [A017 — Reassign the plateauing pilot to survival-focused scratch training](#a017)
@@ -25,6 +26,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a020"></a>
+
+## A020 — 2026-10-29 15:15:24 -0500 — Publish history milestone and independent failure test
+
+Codex evaluated frozen scratch policies, preserved a stronger research candidate and published both favorable and failed rollout evidence.
+
+**Work:** Matched1.6M history/control benchmark, baseline through3M selection, extended selected rollouts and a checkpoint-locked independent32-start20k test. [E019](experiment_logbook.md#e019) and [detailed record](../notes/scratch/experiments/2026-10-29_20-15_history-benchmark-independent.md) document completed results and limits. Added portable per-start CSVs and hashed local checkpoint pointer; it is never a training initialization source. Extended saved-evaluation discovery in the progress report and regenerated curves.
+
+**Status:** Not solved:0/32 independent20k caps. Baseline, history and survival scratch learners remain active. No sensing, physics, control or randomization modifications. Published two compact GIFs showing different episodes. Documentation/link/anchor/TOC and whitespace checks performed for publication; no expensive training launched for documentation.
 
 <a id="a019"></a>
 

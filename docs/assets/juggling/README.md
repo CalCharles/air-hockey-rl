@@ -34,3 +34,7 @@ The clean policy is not yet robust to the simulated sensing conditions needed fo
 ## First bounded noisy survival milestone
 
 Baseline 1.9M, specifically selected successful validation seed 10005: [first 10 seconds](noisy-first-cap-start.gif), [final 20 seconds](noisy-first-cap-end.gif), with a time gap between clips. It completed 5k then failed at 6,859 steps (75 physical-trajectory juggles). Only 1/8 validation starts capped; 0/32 shared 10k starts capped. These 2026-10-29 clips illustrate one favorable episode, not reliability. [E015](../../experiment_logbook.md#e015).
+
+## Scratch history milestone
+
+[Selected episode final20seconds](noisy-history-selected-end.gif): seed300017 survived17049steps with235 physical juggles, then failed. [First benchmark episode final20seconds](noisy-history-benchmark-first.gif): different seed300000 failed at785steps. Generated2026-10-29. Shared benchmark3/32 at10k; independent test0/32 at20k. These individual episodes do not establish reliability. [E019](../../experiment_logbook.md#e019).

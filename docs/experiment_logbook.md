@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E019 — History improves survival; fresh 20k test still fails](#e019)
 - [E018 — Aim-point and critic-action-context CPU smokes pass](#e018)
 - [E017 — Reject a fixed observer after negative offline estimates](#e017)
 - [E016 — Interrupt low-exploration pilot and launch survival-focused scratch trial](#e016)
@@ -24,6 +25,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e019"></a>
+
+## E019 — 2026-10-29 15:15:24 -0500 — History improves survival; fresh 20k test still fails
+
+The scratch 50-step-history policy improves matched bounded survival but fails every independent 20k start.
+
+**Completed:** At1.6M, shared32-start10k benchmark mean3519.375 and3/32 genuine caps versus matched feed-forward580.21875 and0/32. Fixed checkpoint independent seeds500000–500031: mean3606.6875, median2010.5,0/32 at20k; two exceed10k. These previously unused seeds are now consumed. One selected favorable seed lasted17049steps with235 physical juggles before failing. Single training seed; shared benchmark reused; no reliability or indefinite-survival claim.
+
+**Evidence:** [Detailed record](../notes/scratch/experiments/2026-10-29_20-15_history-benchmark-independent.md), [matched CSV](juggling-history-benchmark.csv), [independent CSV](juggling-history-independent.csv), [checkpoint provenance](juggling-candidate.json), [live curves](juggling-noisy-progress.md). Baseline selected through3M averages920.3125 on the shared benchmark. All three learners remain running; no simulator or randomization changes.
+
+![Selected episode final20seconds](assets/juggling/noisy-history-selected-end.gif)
+
+Selected seed300017 ending in failure; distinct first-benchmark failed episode is embedded in the detailed record. GIFs generated2026-10-29, duration preserved. [A020](agent_logbook.md#a020).
 
 <a id="e018"></a>
 

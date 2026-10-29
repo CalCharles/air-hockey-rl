@@ -1,0 +1,32 @@
+{
+  "recorded": "2026-10-29T19:58:11.545248+00:00",
+  "status": "best_measured_shared_benchmark_candidate_not_accepted",
+  "checkpoint": "runs/td3/noisy_history_20261029_seed0/train/checkpoint_1600000",
+  "model_sha256": "ac1858279d66766166fe74a65b31abd9da053dd15aeefca98e3bbf17952d7fbf",
+  "architecture": "HistoryActor: 50-step deployment observation/action memory",
+  "initialization": "random actor/critics/encoder; no checkpoint, residual or warm start",
+  "initialization_evidence": "runs/td3/noisy_history_20261029_seed0/launch_args.yaml",
+  "benchmark": "runs/td3/noisy_history_20261029_seed0/milestone_1m6_benchmark/results.json",
+  "benchmark_seed_base": 300000,
+  "benchmark_episodes": 32,
+  "benchmark_horizon": 10000,
+  "restricted_mean_steps": 3519.375,
+  "genuine_cap_completions": 3,
+  "limitation": "29/32 shared benchmark starts failed before10k; all32 independent starts failed before20k. These seed ranges are now used research tests, not untouched acceptance seeds. Pointer is for frozen evaluation, never training initialization.",
+  "required_local_files": [
+    "model.pth",
+    "rma_meta.json",
+    "args.yaml",
+    "config.yaml"
+  ],
+  "independent_test": {
+    "results": "runs/td3/noisy_history_20261029_seed0/independent_1m6_20k_eval/results.json",
+    "seed_base": 500000,
+    "episodes": 32,
+    "horizon": 20000,
+    "mean_steps": 3606.6875,
+    "median_steps": 2010.5,
+    "genuine_cap_completions": 0,
+    "all_episodes_failed": true
+  }
+}
