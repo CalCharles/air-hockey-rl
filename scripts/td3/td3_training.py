@@ -180,6 +180,9 @@ class Args:
     # Soft preference for smooth commands; does not change the deployed action
     # mapping, PID gains, or action limits. Scaled against normalized Q.
     actor_action_delta_penalty: float = 0.0
+    # Squared pre-tanh action penalty in the actor loss (actors with get_pre_tanh(),
+    # e.g. the RMA/history actors); guards against tanh saturation. 0 = off.
+    actor_pre_tanh_penalty: float = 0.0
     exploration_noise: float = 0.1
     policy_noise: float = 0.2
     noise_clip: float = 0.5

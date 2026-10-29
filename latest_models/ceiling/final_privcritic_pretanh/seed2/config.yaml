@@ -1,0 +1,73 @@
+air_hockey:
+  center_offset_constant: 1.3359
+  center_offset_constant_y: -0.0376
+  max_timesteps: 2000
+  num_blocks: 0
+  num_obstacles: 0
+  num_paddles: 1
+  num_pucks: 1
+  num_targets: 0
+  obs_type: history
+  random_variable_ranges:
+    gravity:
+    - -0.9125
+    - -0.5475
+    paddle_density:
+    - 2250.0
+    - 3750.0
+    puck_damping:
+    - 0.0825
+    - 0.1375
+  random_variables:
+  - paddle_density
+  - puck_damping
+  - gravity
+  seed: 0
+  simulator: box2d
+  simulator_params:
+    absorb_target: false
+    block_density: 1000
+    block_width: 0.0254
+    delay_seconds: 0.025
+    enable_action_delay: false
+    enable_observation_delay: true
+    enable_puck_delay_interpolation: true
+    enable_random_occlusions: true
+    end_wall_restitution: 0.55
+    force_scaling: 0.99
+    gravity: -0.73
+    hist_len: 4
+    length: 1.9304
+    max_bias_m: -0.266
+    max_bias_p: -0.218
+    max_force_timestep: 10000
+    paddle_damping: 17
+    paddle_density: 3000
+    paddle_radius: 0.0508
+    paddle_restitution: 0.0
+    pid_kd: 0.0
+    pid_ki: 1928.7
+    pid_kp: 7531.5
+    puck_damping: 0.11
+    puck_density: 3000
+    puck_noise: true
+    puck_noise_std: 0.01
+    puck_radius: 0.03175
+    puck_restitution: 1.2626
+    random_occlusion_rate: 0.05
+    render_size: 360
+    seed: 0
+    side_wall_restitution: 0.9
+    top_abs: 0.8
+    width: 0.8636
+    x_max_lim: -0.45
+    x_min_lim: -0.83
+    y_max: 0.39
+    y_min: -0.33
+  task: puck_juggle_upper_half_reward
+  terminate_on_enemy_goal: true
+  terminate_on_out_of_bounds: false
+  terminate_on_puck_hit_bottom: true
+  terminate_on_puck_hit_paddle: false
+  terminate_on_puck_pass_paddle: true
+  terminate_on_puck_stop: false

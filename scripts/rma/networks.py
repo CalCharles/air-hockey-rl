@@ -87,7 +87,7 @@ class _LatentConditionedActor(nn.Module):
         self.register_buffer("action_scale", torch.tensor(float(action_scale)))
         self.register_buffer("action_bias", torch.tensor(float(action_bias)))
 
-    def get_action_from_latent(
+    def pre_tanh_from_latent(
         self, obs: torch.Tensor, prev_action: torch.Tensor | None, latent: torch.Tensor
     ) -> torch.Tensor:
         parts = [obs]
@@ -97,8 +97,12 @@ class _LatentConditionedActor(nn.Module):
             parts.append(prev_action)
         parts.append(latent)
         x = self.actor(torch.cat(parts, dim=-1))
-        mean = self.actor_mean_head(x)
-        return torch.tanh(mean) * self.action_scale + self.action_bias
+        return self.actor_mean_head(x)
+
+    def get_action_from_latent(
+        self, obs: torch.Tensor, prev_action: torch.Tensor | None, latent: torch.Tensor
+    ) -> torch.Tensor:
+        return torch.tanh(self.pre_tanh_from_latent(obs, prev_action, latent)) * self.action_scale + self.action_bias
 
     def get_action(self, policy_obs: torch.Tensor) -> torch.Tensor:  # pragma: no cover - interface
         raise NotImplementedError
@@ -314,12 +318,44 @@ class HistoryActor(_LatentConditionedActor):
         prev_action = policy_obs[..., self.obs_dim + self.window_dim :] if self.use_last_action else None
         return obs, window, prev_action
 
-    def get_action(self, policy_obs: torch.Tensor) -> torch.Tensor:
+    def get_pre_tanh(self, policy_obs: torch.Tensor) -> torch.Tensor:
+        """The action head's output before tanh (for the actor saturation penalty)."""
         obs, window, prev_action = self.split_policy_obs(policy_obs)
         if window.dim() == 2:
             window = window.unsqueeze(0)
-        latent = self.encoder(window)
-        return self.get_action_from_latent(obs, prev_action, latent)
+        return self.pre_tanh_from_latent(obs, prev_action, self.encoder(window))
+
+    def get_action(self, policy_obs: torch.Tensor) -> torch.Tensor:
+        return torch.tanh(self.get_pre_tanh(policy_obs)) * self.action_scale + self.action_bias
+
+
+class PrivilegedHistoryActor(HistoryActor):
+    """``HistoryActor`` trained alongside an asymmetric critic.
+
+    The training observation carries the true simulator state after the window
+    (``PrivilegedHistoryEnvVector``)::
+
+        [ x_t | window | s_t (privileged_dim) | a_{t-1} (optional) ]
+
+    The actor skips ``s_t``. It adds no parameters, so its state dict loads into a
+    plain ``HistoryActor`` for evaluation and deployment.
+    """
+
+    def __init__(self, *, privileged_dim: int, **kwargs):
+        super().__init__(**kwargs)
+        self.privileged_dim = int(privileged_dim)
+
+    @property
+    def policy_obs_dim(self) -> int:
+        return super().policy_obs_dim + self.privileged_dim
+
+    def split_policy_obs(self, policy_obs: torch.Tensor):
+        obs = policy_obs[..., : self.obs_dim]
+        window_end = self.obs_dim + self.window_dim
+        window = policy_obs[..., self.obs_dim : window_end]
+        window = window.reshape(*window.shape[:-1], self.history_len, self.feature_dim)
+        prev_action = policy_obs[..., window_end + self.privileged_dim :] if self.use_last_action else None
+        return obs, window, prev_action
 
 
 # ------------------------------------------------------------ step features

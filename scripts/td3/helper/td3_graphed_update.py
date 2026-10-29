@@ -165,6 +165,7 @@ class GraphedTD3Update:
         use_graph: bool = True,
         compile_update: bool = True,
         actor_action_delta_penalty: float = 0.0,
+        actor_pre_tanh_penalty: float = 0.0,
     ) -> None:
         self.actor = actor
         self.actor_target = actor_target
@@ -179,6 +180,9 @@ class GraphedTD3Update:
         self.device = torch.device(device)
         self.gamma = float(gamma)
         self.actor_action_delta_penalty = float(actor_action_delta_penalty)
+        self.actor_pre_tanh_penalty = float(actor_pre_tanh_penalty)
+        if self.actor_pre_tanh_penalty > 0 and not hasattr(actor, "get_pre_tanh"):
+            raise ValueError(f"actor_pre_tanh_penalty needs an actor with get_pre_tanh(); {type(actor).__name__} has none")
         self.tau = float(tau)
         self.policy_noise = float(policy_noise)
         self.noise_clip = float(noise_clip)
@@ -461,7 +465,11 @@ class GraphedTD3Update:
 
     def _actor_core(self, obs: torch.Tensor, prev_actions: torch.Tensor):
         policy_obs = self._policy_obs(obs, prev_actions)
-        current_policy_actions = deterministic_actor_action(self.actor, policy_obs)
+        if self.actor_pre_tanh_penalty > 0:
+            pre_tanh = self.actor.get_pre_tanh(policy_obs)
+            current_policy_actions = torch.tanh(pre_tanh) * self.actor.action_scale + self.actor.action_bias
+        else:
+            current_policy_actions = deterministic_actor_action(self.actor, policy_obs)
         q1_h = self.qfs[0](obs, current_policy_actions)
         q1 = h_inverse(q1_h, eps=self.h_eps).view(-1)
         norm_q = (1.0 - self.gamma) * q1
@@ -470,6 +478,10 @@ class GraphedTD3Update:
             actor_loss = actor_loss + self.actor_action_delta_penalty * (
                 current_policy_actions - prev_actions
             ).square().mean()
+        if self.actor_pre_tanh_penalty > 0:
+            # Keeps the actor out of the flat tanh tails, where its gradient vanishes and
+            # it can lock onto a constant corner action for the rest of training.
+            actor_loss = actor_loss + self.actor_pre_tanh_penalty * pre_tanh.square().mean()
         return actor_loss, norm_q.detach().mean()
 
     def _actor_step(self, counts: Tuple[int, int]) -> Dict[str, torch.Tensor]:

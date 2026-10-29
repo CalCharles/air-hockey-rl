@@ -225,7 +225,7 @@ class HistoryEnvVector(_AugmentedEnvVector):
 
         return self._features(torch.as_tensor(np.asarray(obs, dtype=np.float32)), self.step_features).numpy()
 
-    def _augment(self, obs) -> np.ndarray:
+    def _augment(self, obs, final=False) -> np.ndarray:
         return np.concatenate([np.asarray(obs, dtype=np.float64).reshape(-1), self.history.window().reshape(-1).astype(np.float64)])
 
     def _start_episode(self, obs) -> None:
@@ -242,8 +242,54 @@ class HistoryEnvVector(_AugmentedEnvVector):
         self.history.push(self._state_features(self._prev_raw_obs), action)
         obs, reward, terminated, truncated, infos = self.inner.step(actions)
         if "final_observation" in infos:
-            infos["final_observation"] = [self._augment(infos["final_observation"][0])]
+            infos["final_observation"] = [self._augment(infos["final_observation"][0], final=True)]
             self._start_episode(obs[0])
         else:
             self._prev_raw_obs = np.asarray(obs[0], dtype=np.float32).copy()
         return self._augment(obs[0])[None].copy(), reward, terminated, truncated, infos
+
+
+def true_state_features(env) -> np.ndarray:
+    """Noise-free, undelayed [puck x, y, vx, vy, paddle x, y, vx, vy] of the simulator right now."""
+    state = env.current_state
+    puck = state["pucks"][0]
+    paddle = state["paddles"]["paddle_ego"]
+    return np.asarray([*puck["position"], *puck["velocity"], *paddle["position"], *paddle["velocity"]], dtype=np.float64)
+
+
+TRUE_STATE_DIM = 8
+
+
+class PrivilegedHistoryEnvVector(HistoryEnvVector):
+    """``HistoryEnvVector`` plus the true simulator state, for an asymmetric critic.
+
+    Observation: ``[x_t | window_t | s_t]`` with ``s_t`` from ``true_state_features``.
+    Only the critic reads ``s_t``; ``PrivilegedHistoryActor`` skips it, so the trained
+    actor is a plain deployable ``HistoryActor``. The final observation of an episode
+    carries the state read before the autoreset, so it belongs to that episode.
+    """
+
+    def __init__(self, env_fn, history_len: int, step_features: str, goal: bool = False) -> None:
+        self._last_step_state = None
+
+        def env_fn_recording_state():
+            # The inner vector autoresets inside its step(); record the state each
+            # env.step ends in so the terminal observation can carry it.
+            env = env_fn()
+            env_step = env.step
+
+            def step(action):
+                out = env_step(action)
+                self._last_step_state = true_state_features(env)
+                return out
+
+            env.step = step
+            return env
+
+        super().__init__(env_fn_recording_state, history_len, step_features, goal=goal)
+        self.privileged_dim = TRUE_STATE_DIM
+        self._set_obs_space(self.window_dim + self.privileged_dim)
+
+    def _augment(self, obs, final=False) -> np.ndarray:
+        state = self._last_step_state if final else true_state_features(self.env)
+        return np.concatenate([super()._augment(obs), state])

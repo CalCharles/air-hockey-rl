@@ -65,8 +65,8 @@ from torch.utils.tensorboard import SummaryWriter
 from airhockey import AirHockeyEnv
 from airhockey.renderers import AirHockeyRenderer
 from scripts.rma.bundle import build_rma_meta, write_rma_meta
-from scripts.rma.env_wrapper import EnvParamNormalizer, HistoryEnvVector, RMAEnvVector
-from scripts.rma.networks import HistoryActor, RMAActor
+from scripts.rma.env_wrapper import EnvParamNormalizer, HistoryEnvVector, PrivilegedHistoryEnvVector, RMAEnvVector
+from scripts.rma.networks import HistoryActor, PrivilegedHistoryActor, RMAActor
 from scripts.td3.helper.exploration_selector import (
     NumpyPrimitiveExplorationSelector,
     PrimitiveExplorationSelector,
@@ -107,6 +107,8 @@ class RMAArgs(Args):
     # "history": the long-history TD3 control baseline — the deployable RMA
     # architecture (H-step window -> conv encoder -> z -> pi) trained
     # end-to-end by RL with no privileged input; critic sees [x_t, window].
+    # "history_privileged": the same deployable actor, but the critic also sees the
+    # true simulator state (asymmetric actor-critic; the actor never reads it).
     rma_mode: str = "privileged"
     history_len: int = 50
     step_features: str = "latest_frame"
@@ -209,9 +211,11 @@ def _entrypoint() -> None:
     with open(f"{log_parent_dir}/args.yaml", "w") as f:
         yaml.dump(vars(args), f)
 
-    if args.rma_mode not in ("privileged", "history"):
-        raise ValueError(f"rma_mode must be 'privileged' or 'history', got {args.rma_mode!r}")
-    if args.rma_mode == "history":
+    if args.rma_mode not in ("privileged", "history", "history_privileged"):
+        raise ValueError(f"rma_mode must be 'privileged', 'history' or 'history_privileged', got {args.rma_mode!r}")
+    if args.rma_mode == "history_privileged":
+        envs = PrivilegedHistoryEnvVector(make_env(air_hockey_cfg, goal=goal_mode), args.history_len, args.step_features, goal=goal_mode)
+    elif args.rma_mode == "history":
         envs = HistoryEnvVector(make_env(air_hockey_cfg, goal=goal_mode), args.history_len, args.step_features, goal=goal_mode)
     else:
         envs = RMAEnvVector(make_env(air_hockey_cfg, goal=goal_mode), normalizer, goal=goal_mode)
@@ -241,8 +245,10 @@ def _entrypoint() -> None:
     act_dim = int(np.prod(envs.single_action_space.shape))
 
     def _actor():
-        if args.rma_mode == "history":
-            actor_ = HistoryActor(
+        if args.rma_mode in ("history", "history_privileged"):
+            extra = {"privileged_dim": envs.privileged_dim} if args.rma_mode == "history_privileged" else {}
+            actor_ = (PrivilegedHistoryActor if extra else HistoryActor)(
+                **extra,
                 obs_dim=raw_obs_dim,
                 act_dim=act_dim,
                 history_len=args.history_len,
@@ -277,9 +283,9 @@ def _entrypoint() -> None:
     policy_obs_dim = actor.policy_obs_dim
     rma_meta = build_rma_meta(actor, normalizer, args.rma_encoder_hidden, args.agent_hidden_layer_size, args.agent_num_hidden_layers)
     write_rma_meta(log_parent_dir, rma_meta)
-    if args.rma_mode == "history":
+    if args.rma_mode in ("history", "history_privileged"):
         print(
-            f"[rma] long-history TD3 control: obs_dim={raw_obs_dim} window={args.history_len}x{envs.feature_dim} ({args.step_features}) "
+            f"[rma] long-history TD3 ({args.rma_mode}): obs_dim={raw_obs_dim} window={args.history_len}x{envs.feature_dim} ({args.step_features}) "
             f"latent_dim={args.rma_latent_dim} policy_obs_dim={policy_obs_dim} critic_obs_dim={obs_dim} (x_t + window)"
         )
     else:
@@ -323,8 +329,8 @@ def _entrypoint() -> None:
         loaded_obj = torch.load(args.model_path, map_location=args.device, weights_only=False)
         is_full_state = isinstance(loaded_obj, dict) and "actor" in loaded_obj and "qf1" in loaded_obj
         if args.history_warm_start_plain:
-            if args.rma_mode != "history":
-                raise ValueError("history_warm_start_plain requires rma_mode=history")
+            if args.rma_mode not in ("history", "history_privileged"):
+                raise ValueError("history_warm_start_plain requires a history rma_mode")
             from scripts.rma.networks import initialize_history_from_plain
             from scripts.td3.td3_training import extract_deterministic_state_dict
             source = loaded_obj["actor"] if is_full_state else loaded_obj
@@ -515,6 +521,7 @@ def _entrypoint() -> None:
         use_graph=use_cuda_graphs,
         compile_update=args.compile_update,
         actor_action_delta_penalty=args.actor_action_delta_penalty,
+        actor_pre_tanh_penalty=args.actor_pre_tanh_penalty,
     )
     print(f"Update engine: {'CUDA graphs' if updater.use_graph else 'eager'}{' + torch.compile' if updater.compile_update else ''} on {device}; rollout on {rollout_device}")
 
