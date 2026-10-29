@@ -6,6 +6,8 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A017 — Reassign the plateauing pilot to survival-focused scratch training](#a017)
+- [A016 — Publish the first multi-minute noisy scratch rollout and 2M comparison](#a016)
 - [A015 — Prepare authorized reward changes without relaxing simulator fidelity](#a015)
 - [A014 — Reassign an underperforming pilot GPU to fresh policy memory](#a014)
 - [A013 — Publish the 1M milestone without promoting a validation-only winner](#a013)
@@ -21,6 +23,26 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a017"></a>
+
+## A017 — 2026-10-29 13:49:22 -0500 — Reassign the plateauing pilot to survival-focused scratch training
+
+Codex preserved and stopped the reduced-exploration pilot, completed its partial selected evaluation and launched the prepared reward/optimization candidate on the same existing allocation.
+
+**Operations/evidence:** [E016](experiment_logbook.md#e016) / [launch note](../notes/scratch/experiments/2026-10-29_18-49_survival-candidate-start.md) record checkpoint/benchmark reasons, one-seed limits and intentional interruption instead of falsely claiming the 6M plan finished. Verified step/PID ownership, stopped only step 112936.3, confirmed it gone and GPU idle, preserved checkpoints and old waiting status directory. The replacement selector recognized interrupted state and completed. New training step 112936.5 and selected waiter launched after root/status existed.
+
+**Contract audit:** Re-read full simulator/base-env diffs against the required merge. Effective config comparison shows only the three authorized reward fields. Scratch guard passes, model_path null, random initial exploration; no pretrained actor/critic, residual base or smoke/regression weights. No simulator implementation changed. The previously completed 23-test suite validates reward-only sensor neutrality; no historical test is presented as a fresh run. New GPU learner advanced beyond its 20k warmup; the saved 100k training state confirms 62,500 critic updates and populated actor optimizer state. Other baseline/history processes remain live; goal active and unsolved.
+
+<a id="a016"></a>
+
+## A016 — 2026-10-29 13:49:22 -0500 — Publish the first multi-minute noisy scratch rollout and 2M comparison
+
+Codex verified the first 5k capped validation rollout, extended it to failure, benchmarked fixed 2M actors and prepared truthful GIF/data publication.
+
+**Findings:** [E015](experiment_logbook.md#e015) / [detailed note](../notes/scratch/experiments/2026-10-29_18-49_first-noisy-cap-2m-results.md) distinguish one selected 6,859-step episode from zero 10k completions on the shared 32-start benchmark. Replayed all eight NPZ fields through the first 5k exactly; noisy sensing and dynamics unchanged. Baseline fixed-2M mean 1017.34375 versus reduced exploration 664.4375, paired interval crossing zero. No solved-policy claim.
+
+**Artifacts/checks:** Two compact start/end GIFs with explicit time gap and selection caveat, per-start benchmark CSV, refreshed progress plot with genuine-cap fraction and runner statuses. Inspected a rendered GIF frame, checked source summary numbers, relative Markdown targets, image existence, anchors, TOC coverage and whitespace. No new implementation tests for these evaluation/artifact tasks. Prior 23-test result remains historical. Benchmark seeds are reused; untouched acceptance evidence is still missing.
 
 <a id="a015"></a>
 

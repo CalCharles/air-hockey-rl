@@ -6,6 +6,8 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E016 — Interrupt low-exploration pilot and launch survival-focused scratch trial](#e016)
+- [E015 — First noisy capped rollout and fixed-2M benchmark](#e015)
 - [E014 — Prepare survival-focused scratch candidate; not launched](#e014)
 - [E013 — Interrupt width pilot and launch fresh policy-memory trial](#e013)
 - [E012 — One-million-step exploration comparison and shared benchmark](#e012)
@@ -20,6 +22,40 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e016"></a>
+
+## E016 — 2026-10-29 13:49:22 -0500 — Interrupt low-exploration pilot and launch survival-focused scratch trial
+
+The reduced-exploration pilot is intentionally stopped after its 2M milestone and its GPU now trains the prepared combined survival/actor-stability candidate from scratch.
+
+**Dated E005 status correction:** Reduced-exploration 6M budget is **interrupted**, not completed. Validation best remained at 1M (894.125); fixed-2M mean 392.0, no caps. Last logged step 2,074,999; latest saved 2M; actual final executed step unknown. Interruption recorded 2026-10-29T13:44:39.832949-05:00. Stopped only step 112936.3 and its old waiter, preserved all artifacts and both other learners. This adaptive resource decision does not prove later training could never improve.
+
+**Partial selection completed:** Best saved checkpoint 1M, 32 seed-400000 starts, cap 10k: mean 824.40625, median 544.5, physical-trajectory juggles 7.90625, 0/32 caps. [Raw results](../runs/td3/noisy_iteration2_20261029_low_explore/selected_eval/results.json); status records interrupted training. These are different starts from the 300000 benchmark, not training progress. No full 6M actor.
+
+**E014 now running:** Actual start 2026-10-29T13:44:40.128064-05:00; root `runs/td3/noisy_survival_20261029_seed0/`, allocation 112936, step .5, launcher 1250064, waiter 1251615. [Training config](../configs/td3/sustained/noisy_survival_scratch.yaml), [environment](../configs/new_juggle/sustained/noisy_survival.yaml). Fresh actor/critics, no reused weights; 6M planned. Exactly three allowed environment reward differences; all sensing/dynamics/control/DR unchanged. First 100k validation: 76.375 mean steps, 0.5 physical-trajectory juggles, 0/8 caps; an early result, not a conclusion. Judge survival plus repeated juggling, not raw reward or stationary capped behavior.
+
+[Detailed decision, validation history and commands](../notes/scratch/experiments/2026-10-29_18-49_survival-candidate-start.md). No new learned-policy figure for this initial run; E015 contains current meaningful rollout GIFs. Baseline and history trials remain running. [A017](agent_logbook.md#a017).
+
+<a id="e015"></a>
+
+## E015 — 2026-10-29 13:49:22 -0500 — First noisy capped rollout and fixed-2M benchmark
+
+The baseline first completes a 5k validation rollout, but its best demonstrated episode fails at 6,859 steps and every shared 10k benchmark episode still fails.
+
+**Completed milestone:** At 1.9M, validation seed 10005 completes 5,000 steps with 59 physical-trajectory juggles; other seven starts fail (mean 1236.875). Extended that specifically selected seed to 20k: failed at **6,859** (`puck_passed_paddle`), **75** physical-trajectory juggles, about 5 min 43 s. All eight saved NPZ fields match the original prefix exactly through 5,000 steps. A selected favorable validation seed is not independent reliability evidence.
+
+![Beginning of the long noisy rollout](assets/juggling/noisy-first-cap-start.gif)
+
+![Final 20 seconds, ending in loss](assets/juggling/noisy-first-cap-end.gif)
+
+New 2026-10-29 clips from the same episode: first 10 seconds and last 20 seconds, with an intentional time gap. Original 20 fps clips remain local; compact copies are 160×357, 10 fps, 64 colors with duration preserved. No clean sensing used.
+
+**Shared 32-start benchmark (300000–300031, cap 10k):** baseline selected 1.9M 827.9375 mean steps; baseline fixed 2M **1017.34375** / 9.4375 physical juggles; reduced exploration fixed 2M **664.4375** / 6.0625; prior selected incumbent 816.9375 / 7.75. All **0/32** cap completions. Baseline 2M minus reduced exploration paired mean +352.90625, bootstrap 95% interval [−128.93, 832.44], wins 24/32; versus prior incumbent +200.40625, interval [−270.88, 701.06]. One training seed; shared starts reused. Best measured mean is not proven robust superiority.
+
+Ongoing 2.2M validation: 1681.125 mean steps and 1/8 cap, now seed 10004 (39 physical-trajectory juggles). Still reused validation starts.
+
+[Detailed results, uncertainty and reproduction](../notes/scratch/experiments/2026-10-29_18-49_first-noisy-cap-2m-results.md), [per-start CSV](juggling-2m-benchmark.csv), [curves including cap fraction](juggling-noisy-progress.md). Baseline continues toward 6M. [A016](agent_logbook.md#a016).
 
 <a id="e014"></a>
 

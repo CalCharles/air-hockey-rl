@@ -69,3 +69,6 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-10-29 18:03 | Exploration 1M benchmark | Reduced exploration leads matched validation, but shared 32-start mean remains below incumbent and all episodes fail the cap | [file](2026-10-29_18-03_exploration-1m-benchmark.md)
 
 - 2026-10-29 18:22 | Adaptive width stop and history start | Width pilot interrupted after 1M saved steps; selected benchmark 225.8/0 caps; fresh 50-step history policy running | [file](2026-10-29_18-22_width-stop-history-start.md)
+
+- 2026-10-29 18:49 | First noisy cap and 2M benchmark | One selected start survived 6,859 steps; fixed-2M baseline shared mean 1017, all 32 fail 10k | [file](2026-10-29_18-49_first-noisy-cap-2m-results.md)
+- 2026-10-29 18:49 | Survival candidate start | Reduced-exploration pilot interrupted after 2M saved steps; fresh combined survival/actor-stability recipe running | [file](2026-10-29_18-49_survival-candidate-start.md)

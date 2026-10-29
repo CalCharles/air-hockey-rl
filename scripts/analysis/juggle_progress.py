@@ -32,7 +32,7 @@ def collect(root):
             mean_steps=summary["restricted_mean_steps"],
             mean_juggles=summary["mean_juggles"],
             mean_true_state_juggles=summary.get("mean_true_state_juggles"),
-            cap_fraction=summary["sustained_juggling_fraction"],
+            cap_fraction=summary.get("true_state_sustained_juggling_fraction", summary["sustained_juggling_fraction"]),
             episodes=payload["episodes_per_scenario"],
             seed_base=payload["seed_base"],
             horizon=payload["horizon"],
@@ -52,7 +52,7 @@ def write_report(roots, out):
             writer = csv.DictWriter(stream, fieldnames=list(rows[0]), lineterminator="\n")
             writer.writeheader()
             writer.writerows(rows)
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4), constrained_layout=True)
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4), constrained_layout=True)
     for root, values in series:
         if not values:
             continue
@@ -60,9 +60,11 @@ def write_report(roots, out):
         label = root.name.replace("noisy_iteration2_20261029_", "iteration 2: ")
         axes[0].plot(steps, [v["mean_steps"] for v in values], marker=".", label=label)
         axes[1].plot(steps, [v["mean_juggles"] for v in values], marker=".", label=label)
-    for ax, ylabel in zip(axes, ["Mean survival (steps)", "Mean observed juggles"]):
+        axes[2].plot(steps, [v["cap_fraction"] for v in values], marker=".", label=label)
+    for ax, ylabel in zip(axes, ["Mean survival (steps)", "Mean observed juggles", "Genuine validation cap fraction"]):
         ax.set(xlabel="Training steps (millions)", ylabel=ylabel)
         ax.grid(alpha=.25)
+    axes[2].set_ylim(-.01, 1.01)
     if rows:
         axes[0].legend(fontsize=7)
     fig.suptitle("Canonical noisy simulator: checkpoint validation (one seed per recipe)")
@@ -74,7 +76,8 @@ def write_report(roots, out):
              "Validation curves use repeatedly evaluated starts, not independent acceptance tests. "
              "Each point is an episode mean for one training seed. Check the CSV for episode counts, seeds and caps. "
              "Observed juggle counts use noisy camera positions and a direction-reversal filter. "
-             "Contact timesteps are not distinct juggles.", "",
+             "Contact timesteps are not distinct juggles. Cap fractions use the physical-trajectory heuristic "
+             "when available, otherwise the legacy observed-count heuristic.", "",
              f"![Checkpoint validation]({link(figure)})", "",
              f"[Raw validation table]({link(table)})" if rows else "No saved validation results yet.", "",
              "| Run | Runner status | Latest validation step | Mean survival | Mean juggles | Genuine cap fraction |",

@@ -33,6 +33,14 @@ noisy_iteration2_20261029_long,1200000,402.125,2.375,2.875,0.0,8,10000,5000,runs
 noisy_iteration2_20261029_long,1300000,495.875,4.25,4.875,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_long/train/checkpoint_1300000/survival_eval/results.json
 noisy_iteration2_20261029_long,1400000,433.875,2.625,4.25,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_long/train/checkpoint_1400000/survival_eval/results.json
 noisy_iteration2_20261029_long,1500000,648.125,5.0,6.375,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_long/train/checkpoint_1500000/survival_eval/results.json
+noisy_iteration2_20261029_long,1600000,957.0,7.375,8.625,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_long/train/checkpoint_1600000/survival_eval/results.json
+noisy_iteration2_20261029_long,1700000,681.5,4.625,5.5,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_long/train/checkpoint_1700000/survival_eval/results.json
+noisy_iteration2_20261029_long,1800000,495.875,3.625,4.375,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_long/train/checkpoint_1800000/survival_eval/results.json
+noisy_iteration2_20261029_long,1900000,1236.875,12.125,13.25,0.125,8,10000,5000,runs/td3/noisy_iteration2_20261029_long/train/checkpoint_1900000/survival_eval/results.json
+noisy_iteration2_20261029_long,2000000,1077.25,8.875,9.625,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_long/train/checkpoint_2000000/survival_eval/results.json
+noisy_iteration2_20261029_long,2100000,590.375,5.25,4.625,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_long/train/checkpoint_2100000/survival_eval/results.json
+noisy_iteration2_20261029_long,2200000,1681.125,14.375,15.0,0.125,8,10000,5000,runs/td3/noisy_iteration2_20261029_long/train/checkpoint_2200000/survival_eval/results.json
+noisy_iteration2_20261029_long,2300000,419.75,3.5,3.0,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_long/train/checkpoint_2300000/survival_eval/results.json
 noisy_iteration2_20261029_low_explore,100000,59.25,0.25,,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_low_explore/train/checkpoint_100000/survival_eval/results.json
 noisy_iteration2_20261029_low_explore,200000,128.125,0.75,1.0,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_low_explore/train/checkpoint_200000/survival_eval/results.json
 noisy_iteration2_20261029_low_explore,300000,129.5,0.625,0.75,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_low_explore/train/checkpoint_300000/survival_eval/results.json
@@ -48,6 +56,11 @@ noisy_iteration2_20261029_low_explore,1200000,737.375,7.25,6.875,0.0,8,10000,500
 noisy_iteration2_20261029_low_explore,1300000,294.75,2.625,2.625,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_low_explore/train/checkpoint_1300000/survival_eval/results.json
 noisy_iteration2_20261029_low_explore,1400000,601.75,5.5,5.25,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_low_explore/train/checkpoint_1400000/survival_eval/results.json
 noisy_iteration2_20261029_low_explore,1500000,386.125,3.625,3.625,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_low_explore/train/checkpoint_1500000/survival_eval/results.json
+noisy_iteration2_20261029_low_explore,1600000,427.625,3.125,3.625,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_low_explore/train/checkpoint_1600000/survival_eval/results.json
+noisy_iteration2_20261029_low_explore,1700000,513.25,6.125,5.5,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_low_explore/train/checkpoint_1700000/survival_eval/results.json
+noisy_iteration2_20261029_low_explore,1800000,555.25,4.25,5.875,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_low_explore/train/checkpoint_1800000/survival_eval/results.json
+noisy_iteration2_20261029_low_explore,1900000,773.375,7.0,8.0,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_low_explore/train/checkpoint_1900000/survival_eval/results.json
+noisy_iteration2_20261029_low_explore,2000000,392.0,3.5,3.875,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_low_explore/train/checkpoint_2000000/survival_eval/results.json
 noisy_iteration2_20261029_large_low_explore,100000,44.0,0.125,,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_large_low_explore/train/checkpoint_100000/survival_eval/results.json
 noisy_iteration2_20261029_large_low_explore,200000,72.625,0.375,0.25,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_large_low_explore/train/checkpoint_200000/survival_eval/results.json
 noisy_iteration2_20261029_large_low_explore,300000,86.625,0.375,0.625,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_large_low_explore/train/checkpoint_300000/survival_eval/results.json
@@ -58,3 +71,10 @@ noisy_iteration2_20261029_large_low_explore,700000,165.0,1.25,1.25,0.0,8,10000,5
 noisy_iteration2_20261029_large_low_explore,800000,180.75,0.625,0.625,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_large_low_explore/train/checkpoint_800000/survival_eval/results.json
 noisy_iteration2_20261029_large_low_explore,900000,204.0,1.75,1.625,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_large_low_explore/train/checkpoint_900000/survival_eval/results.json
 noisy_iteration2_20261029_large_low_explore,1000000,152.625,1.0,1.125,0.0,8,10000,5000,runs/td3/noisy_iteration2_20261029_large_low_explore/train/checkpoint_1000000/survival_eval/results.json
+noisy_history_20261029_seed0,100000,43.875,0.0,0.0,0.0,8,10000,5000,runs/td3/noisy_history_20261029_seed0/train/checkpoint_100000/survival_eval/results.json
+noisy_history_20261029_seed0,200000,93.0,0.75,0.875,0.0,8,10000,5000,runs/td3/noisy_history_20261029_seed0/train/checkpoint_200000/survival_eval/results.json
+noisy_history_20261029_seed0,300000,72.0,0.5,0.625,0.0,8,10000,5000,runs/td3/noisy_history_20261029_seed0/train/checkpoint_300000/survival_eval/results.json
+noisy_history_20261029_seed0,400000,97.5,0.375,0.75,0.0,8,10000,5000,runs/td3/noisy_history_20261029_seed0/train/checkpoint_400000/survival_eval/results.json
+noisy_history_20261029_seed0,500000,85.0,0.625,0.375,0.0,8,10000,5000,runs/td3/noisy_history_20261029_seed0/train/checkpoint_500000/survival_eval/results.json
+noisy_history_20261029_seed0,600000,94.25,0.5,0.875,0.0,8,10000,5000,runs/td3/noisy_history_20261029_seed0/train/checkpoint_600000/survival_eval/results.json
+noisy_survival_20261029_seed0,100000,76.375,0.625,0.5,0.0,8,10000,5000,runs/td3/noisy_survival_20261029_seed0/train/checkpoint_100000/survival_eval/results.json

@@ -30,3 +30,7 @@ The clean policy is not yet robust to the simulated sensing conditions needed fo
 [Reduced exploration, 500k](noisy-low-explore-500k.gif): first validation rollout; eight-start mean survival 233.125 versus matched baseline 149.75, neither completing the 5k cap. Early running-experiment milestone, not a final result; [E009](../../experiment_logbook.md#e009).
 
 [Reduced exploration, 1M benchmark](noisy-low-explore-1m.gif): shared 32-start mean survival 695.375, 0/32 at 10k, versus selected incumbent 816.9375. Retain incumbent; matched eight-start validation lead is not a solved result. [E012](../../experiment_logbook.md#e012).
+
+## First bounded noisy survival milestone
+
+Baseline 1.9M, specifically selected successful validation seed 10005: [first 10 seconds](noisy-first-cap-start.gif), [final 20 seconds](noisy-first-cap-end.gif), with a time gap between clips. It completed 5k then failed at 6,859 steps (75 physical-trajectory juggles). Only 1/8 validation starts capped; 0/32 shared 10k starts capped. These 2026-10-29 clips illustrate one favorable episode, not reliability. [E015](../../experiment_logbook.md#e015).
