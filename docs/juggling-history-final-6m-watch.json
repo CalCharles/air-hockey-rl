@@ -1,0 +1,48 @@
+{
+  "purpose": "Frozen final online/target32-start20k comparison on reused700000selection cohort;not independent",
+  "readiness": "Full trainer returned successfully (root final_evaluation/complete) and final8-case validation exists;no training resumed",
+  "launches": [
+    {
+      "run": "noisy_history_20261029_seed0",
+      "role": "online",
+      "pid": 1371326,
+      "script": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/final_6m_watch.py",
+      "queued": "2026-10-29T23:20:15.401822+00:00"
+    },
+    {
+      "run": "noisy_history_20261029_seed0",
+      "role": "target",
+      "pid": 1371328,
+      "script": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/final_6m_watch.py",
+      "queued": "2026-10-29T23:20:15.403102+00:00"
+    },
+    {
+      "run": "noisy_history_20261029_seed1",
+      "role": "online",
+      "pid": 1371333,
+      "script": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed1/final_6m_watch.py",
+      "queued": "2026-10-29T23:20:15.404997+00:00"
+    },
+    {
+      "run": "noisy_history_20261029_seed1",
+      "role": "target",
+      "pid": 1371334,
+      "script": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed1/final_6m_watch.py",
+      "queued": "2026-10-29T23:20:15.406182+00:00"
+    },
+    {
+      "run": "noisy_history_long_discount_20261029_seed0",
+      "role": "online",
+      "pid": 1371338,
+      "script": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_long_discount_20261029_seed0/final_6m_watch.py",
+      "queued": "2026-10-29T23:20:15.408214+00:00"
+    },
+    {
+      "run": "noisy_history_long_discount_20261029_seed0",
+      "role": "target",
+      "pid": 1371341,
+      "script": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_long_discount_20261029_seed0/final_6m_watch.py",
+      "queued": "2026-10-29T23:20:15.409591+00:00"
+    }
+  ]
+}

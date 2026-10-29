@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A041 — Guard final evaluations and prepare single-factor scratch follow-up](#a041)
 - [A040 — Publish completed milestone tests and independent failure GIFs](#a040)
 - [A039 — Verify new-trial caps and queue fixed 2M variant comparisons](#a039)
 - [A038 — Complete selected-target independent test and queue fixed5M variants](#a038)
@@ -46,6 +47,14 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a041"></a>
+
+## A041 — 2026-10-29 18:21:39 -0500 — Guard final evaluations and prepare single-factor scratch follow-up
+
+Prepared six frozen final evaluations and a conditional scratch actor-learning-rate follow-up while all three existing learners continue.
+
+The queue waits for successful full-budget completion and final comparisons, checks reviewed input hashes and fresh output paths, and defers the new trial if the original final policy achieves32/32 selection caps. Verified effective YAML differences and canonical scratch guards; no training from saved weights, simulator changes or changed DR. All new processes are waiting, not new completed experiments. See [E042](experiment_logbook.md#e042) for configurations, provenance, guards and limitations.
 
 <a id="a040"></a>
 

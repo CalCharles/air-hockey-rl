@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E042 — Queue final history comparisons and conditional scratch actor-LR trial](#e042)
 - [E041 — Fixed 5M results retain target candidate; independent failures rendered](#e041)
 - [E040 — New history validation caps and fixed 2M tests queued](#e040)
 - [E039 — Selected target reaches eighteen new-seed 20k caps](#e039)
@@ -47,6 +48,19 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e042"></a>
+
+## E042 — 2026-10-29 18:21:39 -0500 — Queue final history comparisons and conditional scratch actor-LR trial
+
+Final frozen online/target evaluations are queued for all three full-budget history trials, followed conditionally by a fresh lower-actor-learning-rate trial.
+
+**Queued, not completed:** six CPU evaluators wait for each trainer to return successfully after its full6M budget and produce final8-case validation in `train/survival_eval/results.json`. Final weights live in `train/`, not `checkpoint_6000000`. Each evaluator checks reviewed simulator/config hashes, enforces canonical sensing/DR, freezes weight hash, and tests32 reused selection starts700000–700031 at20k. Target views are inference-only symlinks to the same scratch run's saved target weights. Existing final32-start10k tests and validation checkpoint selectors remain independent processes. See [launches](juggling-history-final-6m-watch.json) and [exact watcher source](juggling-history-final-6m-watch-source.txt).
+
+**Queued, not launched:** after original seed0 completes and both final20k comparisons finish, reuse its allocation112937 for `noisy_history_low_actor_lr_20261029_seed0`. The scratch actor, critics and history encoder initialize randomly. Only `policy_lr` changes from0.0003 to0.0001 (plus run name); gamma0.995,6M budget,50-step deployable memory, ±25% DR and every other recipe field match the original history trial. The hypothesis is that smaller actor updates improve stability; online/target score differences alone do not establish that cause. If either final original-run variant reaches32/32 caps, defer this launch for independent review instead. Parent failure/interruption, failed final comparison, changed reviewed hashes, existing output or allocation launch failure halt the queue without overwriting artifacts. See [configuration](../configs/td3/sustained/noisy_history_low_actor_lr_scratch.yaml), [queue provenance](juggling-history-low-actor-lr-queue.json), [exact queue source](juggling-history-low-actor-lr-queue-source.txt).
+
+Before queuing, compared effective YAMLs (exactly actor LR/run-name changes), ran canonical scratch guards, and reviewed simulator diff versus merge94acd81932c59f3cd3b827d6f39a0283747a1beb: preexisting reward/terminal bookkeeping and default-false optional history sampling only. Existing reviewed simulator hashes remain unchanged. No dynamics/sensing edits or randomization changes. Python source compilation, live waiting-status checks, documentation links/TOCs and `git diff --check` validate this queue; they are not new rollout or learning results. Related completed results: [E041](experiment_logbook.md#e041).
+
 
 <a id="e041"></a>
 

@@ -1,0 +1,40 @@
+from pathlib import Path
+from datetime import datetime,timezone
+import os,json,time,hashlib,subprocess,traceback
+ROOT=Path(__file__).resolve().parent
+REPO=ROOT.parents[2]
+OUT=REPO/'runs/td3/noisy_history_low_actor_lr_20261029_seed0'
+CONFIG=REPO/'configs/td3/sustained/noisy_history_low_actor_lr_scratch.yaml'
+STATE=ROOT/'queue_low_actor_lr_status.json'
+state=dict(pid=os.getpid(),queued=datetime.now(timezone.utc).isoformat(),parent=str(ROOT),root=str(OUT),config=str(CONFIG),policy_lr=0.0001,total_timesteps=6000000,initialization='All actor/critic/encoder weights random;no checkpoint',allocation=112937)
+def save(status):
+ state.update(status=status,updated=datetime.now(timezone.utc).isoformat())
+ tmp=STATE.with_suffix('.tmp');tmp.write_text(json.dumps(state,indent=2)+'\n');tmp.replace(STATE)
+try:
+ save('waiting_for_parent_completion_and_final_comparisons')
+ while True:
+  parent=json.loads((ROOT/'status.json').read_text())['status']
+  if parent in ('failed','interrupted'):raise RuntimeError('Parent did not complete:'+parent)
+  if parent=='complete' and all((ROOT/f'final_6m_{r}_status.json').exists() for r in ['online','target']):
+   checks=[json.loads((ROOT/f'final_6m_{r}_status.json').read_text()) for r in ['online','target']]
+   if any(c['status']=='failed' for c in checks):raise RuntimeError('Final comparison failed')
+   if all(c['status']=='complete' for c in checks):break
+  time.sleep(20)
+ state['final_parent_caps']={c['role']:round(c['summary']['true_state_sustained_juggling_fraction']*32) for c in checks}
+ if max(state['final_parent_caps'].values())==32:
+  save('deferred_for_independent_review_of_full_cap_candidate')
+ else:
+  expected={'airhockey/airhockey_base.py': 'a3a8c1c37fdb53015b6cb2568b1b9ccc39e6f6dff39323a4c25f97ae88fcb4d6', 'airhockey/sims/airhockey_box2d.py': '7059de3e1f8a979c706eb2546ba7674c4970226952bc002567a1d2aa20fa7eee', 'configs/new_juggle/sustained/original_sensing.yaml': 'd1bb13a7a4a5494507d085db230bdbe31854f0ddb556ccf88c3ec5aca0360385', 'configs/td3/sustained/noisy_history_low_actor_lr_scratch.yaml': 'dddecdeca3b453297acf1ff0bc6939edcbad14c5d1851201f714da4ccee6f225'}
+  for file,digest in expected.items():
+   if hashlib.sha256((REPO/file).read_bytes()).hexdigest()!=digest:raise RuntimeError('Reviewed input changed:'+file)
+  if OUT.exists():raise FileExistsError(OUT)
+  command=['srun','--jobid=112937','--overlap','--exact','--nodes=1','--ntasks=1','--cpus-per-task=6','--cpu-bind=none','--gres=gpu:1','--immediate=15','--chdir='+str(REPO),'/usr/bin/env','OMP_NUM_THREADS=1','MKL_NUM_THREADS=1','MPLCONFIGDIR=/tmp/airhockey-mpl',str(REPO/'.venv/bin/python'),'-u','-m','scripts.td3.juggle_noisy_scratch','--root',str(OUT),'--args-file',str(CONFIG)]
+  state['command']=command;save('launching')
+  with (ROOT/'low_actor_lr_launcher.log').open('w') as log:
+   process=subprocess.Popen(command,cwd=REPO,stdout=log,stderr=subprocess.STDOUT)
+   state['launcher_pid']=process.pid;save('running_launcher');code=process.wait()
+  state['returncode']=code
+  if code:raise RuntimeError('Launcher failed:'+str(code))
+  save('complete')
+except Exception as exc:
+ state['error']=repr(exc);save('failed');traceback.print_exc();raise

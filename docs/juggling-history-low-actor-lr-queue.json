@@ -1,0 +1,24 @@
+{
+  "queued": "2026-10-29T23:21:08.524117+00:00",
+  "pid": 1372355,
+  "config": "configs/td3/sustained/noisy_history_low_actor_lr_scratch.yaml",
+  "effective_changes": {
+    "policy_lr": [
+      0.0003,
+      0.0001
+    ],
+    "run_name": [
+      "noisy_history_scratch",
+      "noisy_history_low_actor_lr_scratch"
+    ]
+  },
+  "reviewed_sha256": {
+    "airhockey/airhockey_base.py": "a3a8c1c37fdb53015b6cb2568b1b9ccc39e6f6dff39323a4c25f97ae88fcb4d6",
+    "airhockey/sims/airhockey_box2d.py": "7059de3e1f8a979c706eb2546ba7674c4970226952bc002567a1d2aa20fa7eee",
+    "configs/new_juggle/sustained/original_sensing.yaml": "d1bb13a7a4a5494507d085db230bdbe31854f0ddb556ccf88c3ec5aca0360385",
+    "configs/td3/sustained/noisy_history_low_actor_lr_scratch.yaml": "dddecdeca3b453297acf1ff0bc6939edcbad14c5d1851201f714da4ccee6f225"
+  },
+  "status": "Queued only; no new training yet",
+  "hypothesis": "Lower actor learning rate may reduce policy update instability; online/target score differences do not establish the cause",
+  "prerequisite": "Parent full6M complete plus both frozen final32-case comparisons complete;defer if either final candidate has32caps"
+}
