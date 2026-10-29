@@ -26,6 +26,41 @@ class RecordingBuffer:
 
 
 class ContinuingJuggleTests(unittest.TestCase):
+    def test_scratch_runner_rejects_warm_starts_and_privileged_actor(self):
+        from scripts.td3.juggle_noisy_scratch import scratch_trainer
+
+        args = dict(model_path=None, exploration_pre_learning_action_source="random")
+        self.assertEqual(scratch_trainer(args), "scripts.td3.td3_training")
+        self.assertEqual(scratch_trainer(dict(args, rma_mode="history")), "scripts.rma.train_base_policy")
+        for changed in (dict(model_path="actor.pth"), dict(history_warm_start_plain=True),
+                        dict(full_checkpoint_load="residual"), dict(rma_mode="privileged"),
+                        dict(exploration_pre_learning_action_source="policy")):
+            with self.assertRaises(ValueError):
+                scratch_trainer(dict(args, **changed))
+
+    def test_policy_history_retains_canonical_sensor_stream(self):
+        import random
+        from scripts.rma.env_wrapper import HistoryEnvVector
+        from scripts.td3.juggle_original_sensing import original_sensing_config
+
+        traces = []
+        for memory in (False, True):
+            random.seed(321)
+            np.random.seed(321)
+            cfg = original_sensing_config()["air_hockey"]
+            factory = lambda: AirHockeyEnv(copy.deepcopy(cfg))
+            env = HistoryEnvVector(factory, 50, "latest_frame") if memory else SingleEnvVector(factory)
+            try:
+                obs, _ = env.reset(seed=321)
+                trace = [np.concatenate([obs[0, :30], [0., 0., 0.]])]
+                for _ in range(20):
+                    obs, reward, term, trunc, _ = env.step(np.array([[.1, -.2]]))
+                    trace.append(np.concatenate([obs[0, :30], reward, term, trunc]))
+                traces.append(np.asarray(trace))
+            finally:
+                env.close()
+        np.testing.assert_array_equal(traces[0], traces[1])
+
     def test_observer_diagnostic_has_no_current_action_or_future_state_leakage(self):
         import tempfile
         from scripts.analysis.juggle_observability import load_data

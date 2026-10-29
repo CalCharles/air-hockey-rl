@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E011 — Long-history scratch path passes CPU smoke; full trial planned](#e011)
 - [E010 — Offline state estimation supports a memory-policy trial](#e010)
 - [E009 — Reduced exploration leads at the 500k checkpoint](#e009)
 - [E008 — Validation-selected scratch checkpoint doubles paired survival](#e008)
@@ -16,6 +17,18 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e011"></a>
+
+## E011 — 2026-10-29 12:50:01 -0500 — Long-history scratch path passes CPU smoke; full trial planned
+
+A 96-step CPU smoke test validates fresh long-history TD3 training and evaluation under unchanged canonical sensing; sustained-control performance remains untested.
+
+**Completed:** Actual start/end 2026-10-29 12:48:15–12:48:34 -05:00. Canonical noisy simulator plus established DR, random actor/critics/encoder, 50-step policy memory, no checkpoint or residual base. Eager CPU, 96 environment steps, three critic updates and actor updates confirmed in saved optimizer states. Checkpoint at 64, metadata/bundle reload and frozen-policy evaluation succeeded. Raw status/training/args/checkpoints live under `runs/td3/noisy_history_smoke_20261029/`.
+
+**Validation/limitations:** All 20 targeted tests pass, including exact equality of canonical sensor/reward/termination traces with and without appended policy memory, plus scratch/privileged-mode rejection. This smoke does not validate CUDA compilation, learning quality or long survival. No meaningful learned-policy figure available from 96 steps.
+
+**Planned, not launched:** [6M-step history config](../configs/td3/sustained/noisy_history_scratch.yaml), same low-exploration algorithm recipe and DR as E005, learned 50-step memory added inside policy. No E010 regression weights or smoke weights will be reused. Current three production trials continue uninterrupted. [Detailed setup and commands](../notes/scratch/experiments/2026-10-29_17-50_scratch-history-smoke.md), [A012](agent_logbook.md#a012).
 
 <a id="e010"></a>
 

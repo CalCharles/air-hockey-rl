@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A012 — Prepare guarded from-scratch history training](#a012)
 - [A011 — Test whether deployable memory improves state estimation](#a011)
 - [A010 — Publish the first matched exploration milestone](#a010)
 - [A009 — Publish stronger scratch incumbent and attach checkpoint selection](#a009)
@@ -17,6 +18,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a012"></a>
+
+## A012 — 2026-10-29 12:50:01 -0500 — Prepare guarded from-scratch history training
+
+Codex generalized the scratch runner to the existing deployable long-history TD3 trainer and validated a future architecture candidate without interrupting current GPU trials.
+
+**Implementation:** [Runner](../scripts/td3/juggle_noisy_scratch.py) selects the history trainer only for `rma_mode: history`, rejects privileged actor modes, all checkpoint/residual initialization, history warm starts and nonrandom initial exploration. Added [production config](../configs/td3/sustained/noisy_history_scratch.yaml); full run is planned, not launched. The existing simulator and its observations are unchanged; only policy memory is added.
+
+**Evidence:** [E011](experiment_logbook.md#e011) / [detailed note](../notes/scratch/experiments/2026-10-29_17-50_scratch-history-smoke.md) record the completed CPU smoke, actual timestamps and optimizer evidence. All 20 targeted tests pass. New paired wrapper test proves bitwise-identical canonical observations, rewards and terminal flags; scratch guards reject prohibited initialization routes. Production config keys match `RMAArgs` and exact sensing/DR assertion passes. CPU smoke does not prove GPU capture or policy performance. No full new GPU training launched; existing three learners and selected-checkpoint workers remain active.
 
 <a id="a011"></a>
 

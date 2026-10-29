@@ -13,6 +13,21 @@ import yaml
 from scripts.td3.juggle_original_sensing import REPO, assert_original_sensing
 
 
+def scratch_trainer(args):
+    """Choose a deployable trainer while rejecting all policy warm starts."""
+    if args.get('model_path') is not None or args.get('full_checkpoint_load') == 'residual':
+        raise ValueError('Scratch training must not load a checkpoint or residual base')
+    if args.get('history_warm_start_plain', False):
+        raise ValueError('Scratch history policies must not warm-start an encoder or actor')
+    if args.get('exploration_pre_learning_action_source') != 'random':
+        raise ValueError('Scratch training requires random initial exploration')
+    if args.get('rma_mode') == 'history':
+        return 'scripts.rma.train_base_policy'
+    if args.get('rma_mode') is not None:
+        raise ValueError('Scratch juggling requires a deployable policy without privileged actor inputs')
+    return 'scripts.td3.td3_training'
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', required=True)
@@ -32,15 +47,12 @@ def main():
     try:
         args = yaml.safe_load((REPO / cli.args_file).read_text())
         assert_original_sensing(yaml.safe_load((REPO / args['config']).read_text())['air_hockey'])
-        if args['model_path'] is not None or args.get('full_checkpoint_load') == 'residual':
-            raise ValueError('Scratch training must not load a checkpoint or residual base')
-        if args.get('exploration_pre_learning_action_source') != 'random':
-            raise ValueError('Scratch training requires random initial exploration')
+        trainer = scratch_trainer(args)
         # The trainer uses this exact directory, rather than choosing an rN suffix.
         args.update(log_parent_dir=str(root / 'train'), resume_in_place=True)
         args_path = root / 'launch_args.yaml'
         args_path.write_text(yaml.safe_dump(args, sort_keys=False))
-        command = [sys.executable, '-u', '-m', 'scripts.td3.td3_training', '--args-file', str(args_path)]
+        command = [sys.executable, '-u', '-m', trainer, '--args-file', str(args_path)]
         state['training_command'] = command
         status('training')
         with (root / 'training.log').open('w') as log:
