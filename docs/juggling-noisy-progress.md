@@ -1,6 +1,6 @@
 # Noisy juggling progress
 
-Generated 2026-10-29T20:45:10.448359+00:00 from saved evaluations; no new rollouts.
+Generated 2026-10-29T20:58:32.215164+00:00 from saved evaluations; no new rollouts.
 
 Validation curves use repeatedly evaluated starts, not independent acceptance tests. Each point is an episode mean for one training seed. Check the CSV for episode counts, seeds and caps. Observed juggle counts use noisy camera positions and a direction-reversal filter. Contact timesteps are not distinct juggles. Cap fractions use the physical-trajectory heuristic when available, otherwise the legacy observed-count heuristic.
 
@@ -11,11 +11,11 @@ Validation curves use repeatedly evaluated starts, not independent acceptance te
 | Run | Runner status | Latest validation step | Mean survival | Mean juggles | Genuine cap fraction |
 |---|---|---:|---:|---:|---:|
 | noisy_scratch_20261028_seed0 | complete | 1,900,000 | 663.4 | 5.75 | 0.0% |
-| noisy_iteration2_20261029_long | training | 5,200,000 | 452.4 | 3.38 | 0.0% |
+| noisy_iteration2_20261029_long | training | 5,500,000 | 748.5 | 8.12 | 0.0% |
 | noisy_iteration2_20261029_low_explore | interrupted | 2,000,000 | 392.0 | 3.50 | 0.0% |
 | noisy_iteration2_20261029_large_low_explore | interrupted | 1,000,000 | 152.6 | 1.00 | 0.0% |
-| noisy_history_20261029_seed0 | training | 2,700,000 | 3145.8 | 41.12 | 37.5% |
-| noisy_survival_20261029_seed0 | training | 3,000,000 | 963.0 | 7.88 | 0.0% |
+| noisy_history_20261029_seed0 | training | 2,900,000 | 3517.9 | 45.75 | 62.5% |
+| noisy_survival_20261029_seed0 | training | 3,400,000 | 719.6 | 5.38 | 0.0% |
 
 Separate-start evaluations (selection and benchmark phases labeled):
 

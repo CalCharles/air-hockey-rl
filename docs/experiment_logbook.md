@@ -6,6 +6,8 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E025 — All four long history episodes eventually fail](#e025)
+- [E024 — Fixed history 3M benchmark queued](#e024)
 - [E023 — Survival 3M improves validation but remains weak on shared starts](#e023)
 - [E022 — Selected 20k history replay reproduces exactly](#e022)
 - [E021 — Reconstruct randomized physics of the longer history test](#e021)
@@ -29,6 +31,28 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e025"></a>
+
+## E025 — 2026-10-29 15:58:07 -0500 — All four long history episodes eventually fail
+
+Extending the four 20k successes reveals failures between 27,936 and 57,811 steps, so reliability remains insufficient during long play.
+
+**Completed:** Selected reused seeds 500014/500016/500018/500021 fail at 57,811/38,023/27,936/28,246 steps with 838/577/466/479 physical juggles. All eight original 20k prefix arrays match exactly for each extension. Retaining the other 28 already observed failures gives the original cohort an uncensored mean of 9,316.78125 steps; all 32 eventually fail. This is derived cohort accounting, not a new independent test.
+
+**Evidence:** [Detailed record and commands](../notes/scratch/experiments/2026-10-29_20-58_history-extended-failures.md), [per-start data](juggling-history-2m1-uncensored.csv), [summary](juggling-history-2m1-uncensored.json). No simulator/DR changes or new training. The fixed-3M watcher and all three learners remain live.
+
+![Selected longest episode ending in failure](assets/juggling/noisy-history-48min-end.gif)
+
+Final 20 seconds of the selected 48-minute simulated episode; full renderer replay matches all eight arrays exactly. Generated 2026-10-29, duration preserved. This illustration does not establish reliable survival. [A026](agent_logbook.md#a026).
+
+<a id="e024"></a>
+
+## E024 — 2026-10-29 15:47:58 -0500 — Fixed history 3M benchmark queued
+
+A live watcher is waiting to evaluate the exact3M history checkpoint after its training validation completes.
+
+**Waiting, no result yet:**32reused shared starts300000–300031,cap10000; watcher PID1302296 confirmed live. [Detailed guard behavior and command](../notes/scratch/experiments/2026-10-29_20-47_history-fixed-3m-queued.md). Fixed milestone, no new policy initialization or validation-based selection. Existing three learners continue; no simulator/DR change and no new GIF. [A025](agent_logbook.md#a025).
 
 <a id="e023"></a>
 

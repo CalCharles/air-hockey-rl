@@ -42,3 +42,7 @@ Baseline 1.9M, specifically selected successful validation seed 10005: [first 10
 ## Selected 20k noisy history success
 
 History2.1M, known successful seed500014: [first10seconds](noisy-history-20k-start.gif), [final20seconds](noisy-history-20k-end.gif), with a time gap. Ends at the20000-step cap (16minutes40seconds simulated), with295physical juggles. All eight saved trajectory arrays match the earlier evaluation exactly. Generated2026-10-29, duration preserved. This selected success accompanies **4/32caps and28failures** in the reused-start20k test. On-screen Contacts counts contact timesteps. [E022](../../experiment_logbook.md#e022).
+
+## Eventual failure after 48 simulated minutes
+
+[Final 20 seconds](noisy-history-48min-end.gif) of selected seed 500014: 57,811 steps, 838 physical juggles, then failure. The other three 20k successes also eventually failed. All extension prefixes and the complete renderer replay match saved arrays exactly. Generated 2026-10-29; duration preserved. This is a selected long episode, not independent reliability evidence. The original 32-start cohort now has 32 observed eventual failures. [E025](../../experiment_logbook.md#e025).

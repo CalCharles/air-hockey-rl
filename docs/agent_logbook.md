@@ -6,6 +6,8 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A026 — Uncensor the long episodes and publish their failure evidence](#a026)
+- [A025 — Attach a guarded fixed-milestone evaluator](#a025)
 - [A024 — Assess 3M milestone before reallocating a training slot](#a024)
 - [A023 — Publish selected 20k clips with aggregate failure context](#a023)
 - [A022 — Audit evaluation physics without touching live learners](#a022)
@@ -30,6 +32,22 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a026"></a>
+
+## A026 — 2026-10-29 15:58:07 -0500 — Uncensor the long episodes and publish their failure evidence
+
+Codex extended all four known 20k successes, verified trajectory prefixes, derived the original cohort’s completed lifetimes and rendered its longest failure.
+
+**Evidence:** [E025](experiment_logbook.md#e025), [detailed record](../notes/scratch/experiments/2026-10-29_20-58_history-extended-failures.md). All four evaluations completed; every episode eventually failed. Published source-linked CSV/JSON and added the tail result to candidate provenance. The selected renderer replay matches all eight 57,811-step arrays; inspected its final frame and preserved GIF duration. This uses reused starts and does not become an independent acceptance test. All three scratch learners and the fixed-3M watcher remain live. No simulator, observation, control or randomization modification.
+
+<a id="a025"></a>
+
+## A025 — 2026-10-29 15:47:58 -0500 — Attach a guarded fixed-milestone evaluator
+
+Codex attached a detached evaluator that waits for complete3M history validation, checks the canonical environment and evaluates the fixed checkpoint.
+
+**Status:** Watcher PID1302296 is live and waiting; no evaluation result yet. [E024](experiment_logbook.md#e024), [source/log/status locations and reproduction](../notes/scratch/experiments/2026-10-29_20-47_history-fixed-3m-queued.md). It records terminal-training/missing-checkpoint errors and refuses existing output. This is frozen evaluation only; the three scratch learners remain live. Reused benchmark seeds are explicitly labeled.
 
 <a id="a024"></a>
 

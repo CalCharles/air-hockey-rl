@@ -1,0 +1,13 @@
+{
+  "method": "Original32 paired starts:28observed failures below20k plus4 selected cap episodes extended to100k with all8prefixarrays bitwise matched. No new independent32-start evaluation.",
+  "seed_base": 500000,
+  "episodes": 32,
+  "diagnostic_horizon": 100000,
+  "all_failed": true,
+  "remaining_censored": 0,
+  "mean_steps": 9316.78125,
+  "median_steps": 5100.5,
+  "max_steps": 57811,
+  "mean_physical_juggles": 142.875,
+  "data": "docs/juggling-history-2m1-uncensored.csv"
+}

@@ -12,7 +12,7 @@
   "benchmark_horizon": 10000,
   "restricted_mean_steps": 4885.28125,
   "genuine_cap_completions": 9,
-  "limitation": "23/32 shared10k starts and28/32 paired20k starts failed. Both seed sets are reused research tests; this checkpoint has no untouched acceptance test. Frozen evaluation pointer only; never initialize training from it.",
+  "limitation": "All32 original paired starts eventually failed, including4 capped20k episodes extended with exact prefixes. Reused seeds; no untouched acceptance test. Frozen evaluation pointer only; never initialize training from it.",
   "required_local_files": [
     "model.pth",
     "rma_meta.json",
@@ -39,5 +39,18 @@
     "genuine_cap_completions": 4,
     "failures": 28,
     "seeds_reused_from_1m6_test": true
+  },
+  "tail_analysis": {
+    "method": "Original32 paired starts:28observed failures below20k plus4 selected cap episodes extended to100k with all8prefixarrays bitwise matched. No new independent32-start evaluation.",
+    "seed_base": 500000,
+    "episodes": 32,
+    "diagnostic_horizon": 100000,
+    "all_failed": true,
+    "remaining_censored": 0,
+    "mean_steps": 9316.78125,
+    "median_steps": 5100.5,
+    "max_steps": 57811,
+    "mean_physical_juggles": 142.875,
+    "data": "docs/juggling-history-2m1-uncensored.csv"
   }
 }

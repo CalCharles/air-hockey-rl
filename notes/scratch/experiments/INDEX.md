@@ -86,3 +86,7 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-10-29 20:30 | Selected20k history GIFs | All8arrays reproduce exactly; first10s/final20s clips; selected success with4/32 aggregate caps | [file](2026-10-29_20-30_history-20k-selected-gifs.md)
 
 - 2026-10-29 20:45 | Survival3M assessment | New validation best963; shared mean718,0/32caps; retain live trial and planned seed1 replication | [file](2026-10-29_20-45_survival-3m-assessment.md)
+
+- 2026-10-29 20:47 | Fixed history3M benchmark queued | Watcher live;32reused starts,10k horizon; waiting with no result | [file](2026-10-29_20-47_history-fixed-3m-queued.md)
+
+- 2026-10-29 20:58 | History extended failures | All four 20k successes eventually fail; longest 57,811 steps; verified ending GIF and original-cohort uncensoring | [file](2026-10-29_20-58_history-extended-failures.md)
