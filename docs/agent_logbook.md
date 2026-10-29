@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A022 — Audit evaluation physics without touching live learners](#a022)
 - [A021 — Measure newer history checkpoint and start paired longer test](#a021)
 - [A020 — Publish history milestone and independent failure test](#a020)
 - [A019 — Prepare independently testable actor and critic controls](#a019)
@@ -27,6 +28,14 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a022"></a>
+
+## A022 — 2026-10-29 15:27:48 -0500 — Audit evaluation physics without touching live learners
+
+Codex added a standalone reset-reconstruction audit and verified32stored observations before recovering randomized parameters.
+
+**Evidence:** [E021](experiment_logbook.md#e021), [detailed record](../notes/scratch/experiments/2026-10-29_20-27_history-physics-audit.md). Actual reset replay and parameter-range assertions pass; mismatches fail before a CSV is written. The diagnostic process is separate from live training and performs no actions. Small exploratory subgroup differences do not authorize narrowing DR; no such change made. Existing baseline, history and survival learners continue. Link/anchor/TOC and whitespace checks performed for publication.
 
 <a id="a021"></a>
 

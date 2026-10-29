@@ -80,3 +80,5 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-10-29 20:15 | History matched and independent tests | Shared mean3519; independent20k mean3607,0/32 caps; selected episode17049steps | [file](2026-10-29_20-15_history-benchmark-independent.md)
 
 - 2026-10-29 20:19 | History2.1M milestone | Shared mean4885,9/32 at10k; paired20k test running | [file](2026-10-29_20-19_history-2m1-milestone.md)
+
+- 2026-10-29 20:27 | History randomized-physics audit | All32reset observations reproduced exactly; exploratory parameter splits preserve established DR | [file](2026-10-29_20-27_history-physics-audit.md)

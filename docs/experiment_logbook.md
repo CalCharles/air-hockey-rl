@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E021 — Reconstruct randomized physics of the longer history test](#e021)
 - [E020 — History 2.1M reaches nine shared benchmark caps](#e020)
 - [E019 — History improves survival; fresh 20k test still fails](#e019)
 - [E018 — Aim-point and critic-action-context CPU smokes pass](#e018)
@@ -26,6 +27,14 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e021"></a>
+
+## E021 — 2026-10-29 15:27:48 -0500 — Reconstruct randomized physics of the longer history test
+
+All32 reconstructed evaluation resets match saved initial observations exactly and recover in-range randomized physics.
+
+**Completed diagnostic:** [Driver](../scripts/analysis/juggle_physics_audit.py), [CSV](juggling-history-2m1-physics.csv), [detailed record and command](../notes/scratch/experiments/2026-10-29_20-27_history-physics-audit.md). Four20k caps all occur in the upper half of sampled paddle density; however overall survival/density correlation is0.056 and the post-hoc subgroup is too small for a causal conclusion. Gravity and density cover nearly their full configured ranges. Established DR is retained unchanged. No policy actions, training launch or new GIF in this reset-only analysis. [A022](agent_logbook.md#a022).
 
 <a id="e020"></a>
 
