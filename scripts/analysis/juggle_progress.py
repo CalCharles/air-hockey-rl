@@ -67,7 +67,7 @@ def write_report(roots, out):
     axes[2].set_ylim(-.01, 1.01)
     if rows:
         axes[0].legend(fontsize=7)
-    fig.suptitle("Canonical noisy simulator: checkpoint validation (one seed per recipe)")
+    fig.suptitle("Canonical noisy simulator: checkpoint validation (one curve per training run)")
     fig.savefig(figure, dpi=160)
     plt.close(fig)
     link = lambda path: os.path.relpath(path, out.parent)

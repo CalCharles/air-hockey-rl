@@ -1,0 +1,63 @@
+{
+  "checked": "2026-10-29T21:15:20.114381+00:00",
+  "branch": "codex/sustained-juggling",
+  "required_merge": "94acd81932c59f3cd3b827d6f39a0283747a1beb",
+  "hashes_match_previously_reviewed_files": {
+    "airhockey/airhockey_base.py": "a3a8c1c37fdb53015b6cb2568b1b9ccc39e6f6dff39323a4c25f97ae88fcb4d6",
+    "airhockey/sims/airhockey_box2d.py": "7059de3e1f8a979c706eb2546ba7674c4970226952bc002567a1d2aa20fa7eee",
+    "configs/new_juggle/sustained/original_sensing.yaml": "d1bb13a7a4a5494507d085db230bdbe31854f0ddb556ccf88c3ec5aca0360385",
+    "configs/td3/sustained/noisy_history_scratch_seed1.yaml": "5633eba58c84be5d1548b5363709ee5a823760522e3376527f87f047574e9d02"
+  },
+  "args_differences": {
+    "seed": [
+      0,
+      1
+    ],
+    "run_name": [
+      "noisy_history_scratch",
+      "noisy_history_scratch_seed1"
+    ]
+  },
+  "trainer": "scripts.rma.train_base_policy",
+  "model_path": null,
+  "history_warm_start_plain": false,
+  "status": "training_confirmed",
+  "launcher_pid": 1317877,
+  "requested": "2026-10-29T21:18:15.613171+00:00",
+  "command": [
+    "srun",
+    "--jobid=112935",
+    "--overlap",
+    "--exact",
+    "--nodes=1",
+    "--ntasks=1",
+    "--cpus-per-task=6",
+    "--cpu-bind=none",
+    "--gres=gpu:1",
+    "--immediate=15",
+    "--chdir=/scratch/cluster/mrudolph/documents/air-hockey-rl",
+    "/usr/bin/env",
+    "OMP_NUM_THREADS=1",
+    "MKL_NUM_THREADS=1",
+    "MPLCONFIGDIR=/tmp/airhockey-mpl",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/.venv/bin/python",
+    "-u",
+    "-m",
+    "scripts.td3.juggle_noisy_scratch",
+    "--root",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed1",
+    "--args-file",
+    "configs/td3/sustained/noisy_history_scratch_seed1.yaml"
+  ],
+  "actual_started": "2026-10-29T21:18:15.860119+00:00",
+  "step": "112935.6",
+  "selector_pid": 1319154,
+  "checked_after_launch": "2026-10-29T21:19:48.125703+00:00",
+  "recorded": "2026-10-29T21:21:30.256970+00:00",
+  "run_root": "runs/td3/noisy_history_20261029_seed1",
+  "status_at_recording": "training",
+  "args_file": "configs/td3/sustained/noisy_history_scratch_seed1.yaml",
+  "all_networks_random_initialization": true,
+  "baseline_runner_completed": "2026-10-29T21:17:37.672199+00:00",
+  "first_checkpoint_quality": "not yet evaluated at recording"
+}

@@ -92,3 +92,5 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-10-29 20:58 | History extended failures | All four 20k successes eventually fail; longest 57,811 steps; verified ending GIF and original-cohort uncensoring | [file](2026-10-29_20-58_history-extended-failures.md)
 
 - 2026-10-29 21:13 | Fixed history 3M tests | Shared mean6663,14/32 at10k; independent mean9117,5/32 at20k; candidate remains unaccepted | [file](2026-10-29_21-13_history-3m-independent.md)
+
+- 2026-10-29 21:21 | Baseline complete; history seed1 starts | Full6M baseline0/32caps; released allocation now trains history replication from random weights | [file](2026-10-29_21-21_baseline-complete-history-replication.md)

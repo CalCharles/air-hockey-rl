@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A028 — Reuse completed baseline allocation for scratch replication](#a028)
 - [A027 — Complete fixed 3M evaluation and lock a new independent test](#a027)
 - [A026 — Uncensor the long episodes and publish their failure evidence](#a026)
 - [A025 — Attach a guarded fixed-milestone evaluator](#a025)
@@ -33,6 +34,14 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a028"></a>
+
+## A028 — 2026-10-29 16:21:30 -0500 — Reuse completed baseline allocation for scratch replication
+
+Codex confirmed full baseline completion, preserved its final/selected results and launched the second history seed in the released GPU slot.
+
+**Evidence:** [E027](experiment_logbook.md#e027), [detailed record](../notes/scratch/experiments/2026-10-29_21-21_baseline-complete-history-replication.md), [hashed launch record](juggling-history-seed1-launch.json). Verified the old step ended, then launched112935.6 with fresh networks, unchanged canonical environment and full DR. Startup was observed on the same live handle until status appeared; no duplicate launch or restart. Attached selector1319154. Three learners are now live: history seed0, history seed1 and survival. Updated report wording for multiple seeds and checked documentation. Goal remains unsolved; replication efficacy has not been established.
 
 <a id="a027"></a>
 

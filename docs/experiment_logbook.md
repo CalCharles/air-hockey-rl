@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E027 — Baseline completes 6M; fresh history seed1 starts](#e027)
 - [E026 — History 3M improves shared survival; independent reliability remains low](#e026)
 - [E025 — All four long history episodes eventually fail](#e025)
 - [E024 — Fixed history 3M benchmark queued](#e024)
@@ -32,6 +33,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e027"></a>
+
+## E027 — 2026-10-29 16:21:30 -0500 — Baseline completes 6M; fresh history seed1 starts
+
+The baseline finishes its full 6M budget with no 10k benchmark caps, and its freed allocation starts a random-initialized history replication.
+
+**Completed baseline:** Final6M mean890.84375, median915,0/32 on seeds200000–200031; selected2.2M mean1091.46875, median718,0/32 on seeds400000–400031. Different reused seed sets; no paired-gain claim. [Per-start data](juggling-baseline-6m.csv), [timestamps and detailed record](../notes/scratch/experiments/2026-10-29_21-21_baseline-complete-history-replication.md). All artifacts preserved; no interruption.
+
+**Running replication:** Actual start 2026-10-29T21:18:15.860119+00:00 UTC, root `noisy_history_20261029_seed1`, Slurm112935.6, launcher1317877, selector1319154. Random actor/critics/encoder; only seed/run name changed. Passed20k random exploration and advanced beyond35k; no quality result yet. [Launch evidence](juggling-history-seed1-launch.json). Canonical simulator/config hashes and scratch guards pass. Seed0 history and survival continue. No new random-policy GIF; latest verified clips are in E025. [A028](agent_logbook.md#a028).
 
 <a id="e026"></a>
 
