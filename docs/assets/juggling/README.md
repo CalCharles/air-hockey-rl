@@ -54,3 +54,7 @@ History2.1M, known successful seed500014: [first10seconds](noisy-history-20k-sta
 ## Selected target-actor illustration
 
 [Final 20 seconds](noisy-history-target-3m6-end.gif) of seed 700000 under the 3.6M target actor: 20,000 steps, 270 physical juggles, censored at the cap. This is the first reused selection-cohort case, a known success. Full selection result: **20/32 caps and 12 failures**; a separate new-seed test is running. All eight full replay arrays match byte for byte. Generated 2026-10-29, duration preserved. [E038](../../experiment_logbook.md#e038).
+
+## Independent retained-target failures (generated 2026-10-29)
+
+[First independent case, final20 seconds](noisy-history-target-fresh-first-failure.gif): failed at4407 steps after64 physical juggles. [Shortest observed failure](noisy-history-target-fresh-early-failure.gif): whole27-step,1.35-second episode,0 physical juggles; selected after results as a negative example. Full independent result remains18/32 caps and14 failures. Both replay trajectories match all eight original arrays exactly; duration and last frame are preserved (short clip ends with50ms frame). See [E041](../../experiment_logbook.md#e041).

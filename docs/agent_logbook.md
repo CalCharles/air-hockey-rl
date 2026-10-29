@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A040 — Publish completed milestone tests and independent failure GIFs](#a040)
 - [A039 — Verify new-trial caps and queue fixed 2M variant comparisons](#a039)
 - [A038 — Complete selected-target independent test and queue fixed5M variants](#a038)
 - [A037 — Complete four-variant selection and lock independent target test](#a037)
@@ -45,6 +46,14 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a040"></a>
+
+## A040 — 2026-10-29 18:19:33 -0500 — Publish completed milestone tests and independent failure GIFs
+
+Completed the six-variant comparison, verified four newer-trial 2M results, and prepared failure replays for the unchanged candidate.
+
+All eight saved arrays match each frozen replay byte-for-byte. Reviewed final images and checked GIF durations/final frames, case alignment and model hashes. Both logbooks and progress report are updated; three learners continue. No dynamics or sensing changes or checkpoint warm starts. See [E041](experiment_logbook.md#e041) for results, limitations, figures and provenance. Validation covers relative links/images, anchors, TOCs and `git diff --check`.
 
 <a id="a039"></a>
 

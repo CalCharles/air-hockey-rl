@@ -1,0 +1,47 @@
+{
+  "model_sha256": "c8a1df78ade41cfbe6845a84f4b21480f512973be7a89f0baf66daf5d452b31b",
+  "clips": [
+    {
+      "seed": 800000,
+      "steps": 4407,
+      "physical_juggles": 64,
+      "source_results": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/results.json",
+      "render_results": "runs/td3/noisy_history_20261029_seed0/target_actor_3m6_failure_demo_seed800000/results.json",
+      "all8arrays_byte_exact": true,
+      "array_sha256": {
+        "observation": "3479299059ce6af8b5cb85f4fe9fd5fc48415679cb1f9ca36a1a29fe90c82ee0",
+        "next_observation": "1aa2f84cc48d66d8a6fa1996c08ffb445a82dad6d34aeb009eeee47f1c564db4",
+        "action": "f1de708b1a111f1c8913e4de9fc36d56249e9c5bd0184bb6f958abcbb61b0020",
+        "reward": "eacb7c1760e9b7f1f5056989abebe5022385f155d31f226ccf5c401c617b9aae",
+        "terminated": "f68b96794d78fc2d88516ee558fe91011be09cd994fb1500a79e5f65e1b62415",
+        "truncated": "3716c941aab1e39bc5174f2e6c88ae6ce028d17fc85ca08ec7627e4a49d3df02",
+        "true_paddle_xy": "674f21f1e59c74f70f2cdf6ef7d4e7c1b9e5694d98c81488664fb2e4e4e2be98",
+        "true_puck_xy": "5b8c111b70f84402c8f18a814607982cbc2f9a41d404390b2f0328118bf0135c"
+      },
+      "gif": "docs/assets/juggling/noisy-history-target-fresh-first-failure.gif",
+      "playback_ms": 20000,
+      "selection": "First independent test case"
+    },
+    {
+      "seed": 800012,
+      "steps": 27,
+      "physical_juggles": 0,
+      "source_results": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/results.json",
+      "render_results": "runs/td3/noisy_history_20261029_seed0/target_actor_3m6_failure_demo_seed800012/results.json",
+      "all8arrays_byte_exact": true,
+      "array_sha256": {
+        "observation": "4afe0bc321d96e541356ca61bfd09f9921aa4fe053baa87ac9f3bf7dc25b8724",
+        "next_observation": "f39fec88cc1734bb90685c2e7fed3145b85c202fbcf00a38f1f6b5fb8de10ace",
+        "action": "b6d3fdab068f437f78ee2d7f5482ae87c683a2d76193ef11ba2ebe7956fe4a5a",
+        "reward": "a5645e7a3fa0866cde8842c4dab96567507c3d1a3c028b816bc63f6966367b70",
+        "terminated": "c489bba3c06d68bca1ea0c73052152a952f98631ec356408c704319647267e68",
+        "truncated": "ea49aa9f6f6cf2d53d454e628ba5a339cc000230c4651655d0237711d747f50b",
+        "true_paddle_xy": "30a01608fd08ca47cfdafda660117585be6b2b97fb425c9820929bdcaa61cf9a",
+        "true_puck_xy": "8c2e4b6fecfcdfda68ed4002cea69dd789fc9638256735f26eb5bdeb28118d09"
+      },
+      "gif": "docs/assets/juggling/noisy-history-target-fresh-early-failure.gif",
+      "playback_ms": 1350,
+      "selection": "Shortest observed independent-test failure;selected after results"
+    }
+  ]
+}

@@ -116,3 +116,5 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-10-29 22:36 | Selected-target independent result | New-seed18/32at20k,14failures;fixed5M online/target watchers waiting | [file](2026-10-29_22-36_selected-target-independent-result-5m-queue.md)
 
 - 2026-10-29 22:56 | New history caps and 2M queue | Seed1 first cap1.2M;1.6M caps3/8seed1 and1/8gamma.999;fixed2M tests waiting | [file](2026-10-29_22-56_new-history-caps-2m-queue.md)
+
+- 2026-10-29 23:19 | Fixed5M results and failure GIFs | Retain3.6M target; independent14/32 failures remain; new2M tests complete. | [2026-10-29_23-19_history-5m-results-failure-gifs.md](2026-10-29_23-19_history-5m-results-failure-gifs.md)

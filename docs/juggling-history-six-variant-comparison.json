@@ -1,0 +1,107 @@
+{
+  "recorded": "2026-10-29T23:14:29.535729+00:00",
+  "cohort": "Reused700000\u2013700031selection cohort,32episodes,horizon20000",
+  "rule": "Highest genuine cap count,then bounded mean",
+  "variants": {
+    "online_3m6": {
+      "results": "runs/td3/noisy_history_20261029_seed0/independent_3m6_20k_eval/results.json",
+      "bundle": "runs/td3/noisy_history_20261029_seed0/train/checkpoint_3600000",
+      "sha256": "97e1184364f9f6a0c00406c8608bbc8190a82e60629f4a593eb483125ce95351",
+      "mean_steps": 13099.8125,
+      "median_observed_steps": 14790.0,
+      "physical_juggles": 197.4375,
+      "genuine_caps": 14,
+      "failures": 18
+    },
+    "target_3m6": {
+      "results": "runs/td3/noisy_history_20261029_seed0/target_actor_3m6_paired_20k_eval/results.json",
+      "bundle": "runs/td3/noisy_history_20261029_seed0/target_actor_3m6_bundle",
+      "sha256": "c8a1df78ade41cfbe6845a84f4b21480f512973be7a89f0baf66daf5d452b31b",
+      "mean_steps": 15427.625,
+      "median_observed_steps": 20000.0,
+      "physical_juggles": 225.0625,
+      "genuine_caps": 20,
+      "failures": 12
+    },
+    "online_4m": {
+      "results": "runs/td3/noisy_history_20261029_seed0/paired_4m_20k_eval/results.json",
+      "bundle": "runs/td3/noisy_history_20261029_seed0/train/checkpoint_4000000",
+      "sha256": "2af429a2a059b4d43b20b3e4b5df54bebf8446761d9771a64f454b07c823d591",
+      "mean_steps": 13687.09375,
+      "median_observed_steps": 16801.5,
+      "physical_juggles": 203.21875,
+      "genuine_caps": 15,
+      "failures": 17
+    },
+    "target_4m": {
+      "results": "runs/td3/noisy_history_20261029_seed0/target_actor_4m_paired_20k_eval/results.json",
+      "bundle": "runs/td3/noisy_history_20261029_seed0/target_actor_4m_bundle",
+      "sha256": "452f6dbfdd43c9a17224966e1f7db8b9b6640745c53413abe9bd7d076df63ae2",
+      "mean_steps": 13074.8125,
+      "median_observed_steps": 16791.0,
+      "physical_juggles": 193.15625,
+      "genuine_caps": 14,
+      "failures": 18
+    },
+    "online_5m": {
+      "results": "runs/td3/noisy_history_20261029_seed0/milestone_5m_paired_20k_eval/results.json",
+      "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/train/checkpoint_5000000",
+      "sha256": "abd79edde56e0b142c04f362d0a67b6a69e1e741d59d5b58b21c9f836dc2c166",
+      "mean_steps": 13719.65625,
+      "median_observed_steps": 19791.5,
+      "physical_juggles": 195.8125,
+      "genuine_caps": 16,
+      "failures": 16
+    },
+    "target_5m": {
+      "results": "runs/td3/noisy_history_20261029_seed0/target_actor_5m_paired_20k_eval/results.json",
+      "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/target_actor_5m_bundle",
+      "sha256": "84ef18e77c85846926b1d1b6e14210e9b4d401922bec36332dcf35eaf63a5e26",
+      "mean_steps": 13493.125,
+      "median_observed_steps": 18014.5,
+      "physical_juggles": 191.96875,
+      "genuine_caps": 14,
+      "failures": 18
+    }
+  },
+  "new_paired_comparisons": {
+    "online_5m_minus_online_4m": {
+      "mean_difference": 32.5625,
+      "bootstrap_95": [
+        -3688.49140625,
+        3684.201562499999
+      ],
+      "wins": 13,
+      "ties": 7
+    },
+    "target_5m_minus_online_5m": {
+      "mean_difference": -226.53125,
+      "bootstrap_95": [
+        -3537.14921875,
+        3088.949218749998
+      ],
+      "wins": 13,
+      "ties": 7
+    },
+    "online_5m_minus_target_3m6": {
+      "mean_difference": -1707.96875,
+      "bootstrap_95": [
+        -5296.60078125,
+        1985.3109374999995
+      ],
+      "wins": 9,
+      "ties": 9
+    },
+    "target_5m_minus_target_3m6": {
+      "mean_difference": -1934.5,
+      "bootstrap_95": [
+        -5874.6296875,
+        2050.225781249998
+      ],
+      "wins": 9,
+      "ties": 7
+    }
+  },
+  "winner": "target_3m6",
+  "candidate_weights_unchanged": true
+}

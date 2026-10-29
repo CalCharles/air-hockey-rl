@@ -1,5 +1,5 @@
 {
-  "recorded": "2026-10-29T22:36:52.828526+00:00",
+  "recorded": "2026-10-29T23:16:04.856781+00:00",
   "status": "research_candidate_not_accepted",
   "checkpoint": "runs/td3/noisy_history_20261029_seed0/target_actor_3m6_bundle",
   "source_checkpoint": "runs/td3/noisy_history_20261029_seed0/train/checkpoint_3600000",
@@ -48,5 +48,6 @@
     "model_sha256": "97e1184364f9f6a0c00406c8608bbc8190a82e60629f4a593eb483125ce95351",
     "results": "runs/td3/noisy_history_20261029_seed0/independent_3m6_20k_eval/results.json"
   },
-  "limitation": "New-seed800000test has18/32caps and14failures;median at20k is censored. Selection used reused700000cohort. No reliable or indefinite survival claim. Inference-only target from original scratch lineage;never initialize new training from this bundle."
+  "limitation": "New-seed800000test has18/32caps and14failures;median at20k is censored. Selection used reused700000cohort. No reliable or indefinite survival claim. Inference-only target from original scratch lineage;never initialize new training from this bundle.",
+  "latest_selection_review": "docs/juggling-history-six-variant-comparison.json"
 }

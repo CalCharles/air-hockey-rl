@@ -1,6 +1,6 @@
 # Noisy juggling progress
 
-Generated 2026-10-29T22:56:57.245805+00:00 from saved evaluations; no new rollouts.
+Generated 2026-10-29T23:19:21.210926+00:00 from saved evaluations; no new rollouts.
 
 Validation curves use repeatedly evaluated starts, not independent acceptance tests. Each point is an episode mean for one training seed. Check the CSV for episode counts, seeds and caps. Observed juggle counts use noisy camera positions and a direction-reversal filter. Contact timesteps are not distinct juggles. Cap fractions use the physical-trajectory heuristic when available, otherwise the legacy observed-count heuristic.
 
@@ -14,10 +14,10 @@ Validation curves use repeatedly evaluated starts, not independent acceptance te
 | noisy_iteration2_20261029_long | complete | 5,900,000 | 834.4 | 7.88 | 0.0% |
 | noisy_iteration2_20261029_low_explore | interrupted | 2,000,000 | 392.0 | 3.50 | 0.0% |
 | noisy_iteration2_20261029_large_low_explore | interrupted | 1,000,000 | 152.6 | 1.00 | 0.0% |
-| noisy_history_20261029_seed0 | training | 5,100,000 | 4279.1 | 52.75 | 62.5% |
-| noisy_history_20261029_seed1 | training | 1,800,000 | 1809.5 | 25.88 | 12.5% |
+| noisy_history_20261029_seed0 | training | 5,500,000 | 3118.8 | 38.75 | 12.5% |
+| noisy_history_20261029_seed1 | training | 2,200,000 | 2006.8 | 25.75 | 0.0% |
 | noisy_survival_20261029_seed0 | interrupted | 4,000,000 | 461.0 | 2.75 | 0.0% |
-| noisy_history_long_discount_20261029_seed0 | training | 1,700,000 | 1434.9 | 17.62 | 12.5% |
+| noisy_history_long_discount_20261029_seed0 | training | 2,100,000 | 3331.2 | 43.62 | 12.5% |
 
 Separate-start evaluations (selection and benchmark phases labeled):
 
@@ -42,11 +42,17 @@ Separate-start evaluations (selection and benchmark phases labeled):
 - [noisy_history_20261029_seed0, milestone 2m1 benchmark](../runs/td3/noisy_history_20261029_seed0/milestone_2m1_benchmark/results.json): 4885.3 mean steps, 66.69 observed juggles, 74.34 physical-trajectory juggles, 28.1% cap completion; 32 starts from seed 300000, cap 10000.
 - [noisy_history_20261029_seed0, milestone 3m benchmark](../runs/td3/noisy_history_20261029_seed0/milestone_3m_benchmark/results.json): 6662.7 mean steps, 88.41 observed juggles, 99.19 physical-trajectory juggles, 43.8% cap completion; 32 starts from seed 300000, cap 10000.
 - [noisy_history_20261029_seed0, milestone 4m benchmark](../runs/td3/noisy_history_20261029_seed0/milestone_4m_benchmark/results.json): 7335.6 mean steps, 95.12 observed juggles, 107.22 physical-trajectory juggles, 50.0% cap completion; 32 starts from seed 300000, cap 10000.
+- [noisy_history_20261029_seed0, milestone 5m paired 20k eval](../runs/td3/noisy_history_20261029_seed0/milestone_5m_paired_20k_eval/results.json): 13719.7 mean steps, 173.81 observed juggles, 195.81 physical-trajectory juggles, 50.0% cap completion; 32 starts from seed 700000, cap 20000.
 - [noisy_history_20261029_seed0, paired 2m1 20k eval](../runs/td3/noisy_history_20261029_seed0/paired_2m1_20k_eval/results.json): 7066.3 mean steps, 97.81 observed juggles, 108.72 physical-trajectory juggles, 12.5% cap completion; 32 starts from seed 500000, cap 20000.
 - [noisy_history_20261029_seed0, paired 4m 20k eval](../runs/td3/noisy_history_20261029_seed0/paired_4m_20k_eval/results.json): 13687.1 mean steps, 181.00 observed juggles, 203.22 physical-trajectory juggles, 46.9% cap completion; 32 starts from seed 700000, cap 20000.
 - [noisy_history_20261029_seed0, target actor 3m6 paired 20k eval](../runs/td3/noisy_history_20261029_seed0/target_actor_3m6_paired_20k_eval/results.json): 15427.6 mean steps, 200.62 observed juggles, 225.06 physical-trajectory juggles, 62.5% cap completion; 32 starts from seed 700000, cap 20000.
 - [noisy_history_20261029_seed0, target actor 4m paired 20k eval](../runs/td3/noisy_history_20261029_seed0/target_actor_4m_paired_20k_eval/results.json): 13074.8 mean steps, 169.56 observed juggles, 193.16 physical-trajectory juggles, 43.8% cap completion; 32 starts from seed 700000, cap 20000.
+- [noisy_history_20261029_seed0, target actor 5m paired 20k eval](../runs/td3/noisy_history_20261029_seed0/target_actor_5m_paired_20k_eval/results.json): 13493.1 mean steps, 168.75 observed juggles, 191.97 physical-trajectory juggles, 43.8% cap completion; 32 starts from seed 700000, cap 20000.
+- [noisy_history_20261029_seed1, milestone 2m paired 20k eval](../runs/td3/noisy_history_20261029_seed1/milestone_2m_paired_20k_eval/results.json): 3446.4 mean steps, 47.69 observed juggles, 52.25 physical-trajectory juggles, 0.0% cap completion; 32 starts from seed 700000, cap 20000.
+- [noisy_history_20261029_seed1, target actor 2m paired 20k eval](../runs/td3/noisy_history_20261029_seed1/target_actor_2m_paired_20k_eval/results.json): 10779.8 mean steps, 146.50 observed juggles, 164.19 physical-trajectory juggles, 21.9% cap completion; 32 starts from seed 700000, cap 20000.
 - [noisy_survival_20261029_seed0, validation-selected checkpoint benchmark](../runs/td3/noisy_survival_20261029_seed0/selected_eval/results.json): 811.2 mean steps, 6.78 observed juggles, 7.59 physical-trajectory juggles, 0.0% cap completion; 32 starts from seed 400000, cap 10000.
 - [noisy_survival_20261029_seed0, milestone 3m benchmark](../runs/td3/noisy_survival_20261029_seed0/milestone_3m_benchmark/results.json): 717.7 mean steps, 6.25 observed juggles, 5.81 physical-trajectory juggles, 0.0% cap completion; 32 starts from seed 300000, cap 10000.
+- [noisy_history_long_discount_20261029_seed0, milestone 2m paired 20k eval](../runs/td3/noisy_history_long_discount_20261029_seed0/milestone_2m_paired_20k_eval/results.json): 3065.5 mean steps, 38.19 observed juggles, 44.50 physical-trajectory juggles, 0.0% cap completion; 32 starts from seed 700000, cap 20000.
+- [noisy_history_long_discount_20261029_seed0, target actor 2m paired 20k eval](../runs/td3/noisy_history_long_discount_20261029_seed0/target_actor_2m_paired_20k_eval/results.json): 4729.7 mean steps, 63.34 observed juggles, 69.53 physical-trajectory juggles, 3.1% cap completion; 32 starts from seed 700000, cap 20000.
 
 The final-start benchmark is reused across recipes. A selected policy requires untouched seeds and longer horizons before acceptance. Bounded survival does not prove infinite survival.

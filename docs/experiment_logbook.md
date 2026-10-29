@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E041 — Fixed 5M results retain target candidate; independent failures rendered](#e041)
 - [E040 — New history validation caps and fixed 2M tests queued](#e040)
 - [E039 — Selected target reaches eighteen new-seed 20k caps](#e039)
 - [E038 — Four-way comparison selects 3.6M target for new-seed testing](#e038)
@@ -46,6 +47,36 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e041"></a>
+
+## E041 — 2026-10-29 18:19:33 -0500 — Fixed 5M results retain target candidate; independent failures rendered
+
+The fixed 5M variants do not displace the retained 3.6M target actor, and independent-test failure GIFs reproduce the saved trajectories exactly.
+
+The completed 5M online/target evaluations on reused selection seeds700000–700031 (32 starts,20k horizon) reached **16/32 and14/32** genuine caps, with bounded means **13719.65625 and13493.125** steps. The retained3.6M target scored20/32 and15427.625 on this cohort. All six variants share case seeds/configurations; these are selection results from one original training seed, not independent evidence of improvement. Online5M minus online4M mean is+32.5625 steps (paired episode bootstrap95% interval[-3688.4914,3684.2016]); online5M minus retained target is−1707.96875[-5296.6008,1985.3109]. Neither resolves a population difference. Bootstrap uses10000 draws, NumPy default_rng(42). See [six-variant scores/hashes](juggling-history-six-variant-comparison.json) and [episode CSV](juggling-history-target-comparison.csv).
+
+The queued fixed2M tests of both newer trials are now **complete**:
+
+| Trial at 2M | Weights | Mean bounded steps | Genuine 20k caps |
+|---|---|---:|---:|
+| History seed1 | online | 3446.4375 | 0/32 |
+| History seed1 | target | 10779.84375 | 7/32 |
+| Long discount seed0 | online | 3065.46875 | 0/32 |
+| Long discount seed0 | target | 4729.71875 | 1/32 |
+
+These four tests reuse the same selection cohort. Seven caps from seed1's target weights are promising but still leave25 failures; early checkpoints do not determine full-budget outcomes. The three fresh-initialization GPU learners remain running toward6M each. No simulator, observation, action smoothing, randomization or training recipe changed for this report.
+
+The retained candidate's separate locked independent test (seeds800000–800031) remains **18/32 genuine20k caps,14 failures**, bounded mean13761.03125; unchanged SHA256 `c8a1df78ade41cfbe6845a84f4b21480f512973be7a89f0baf66daf5d452b31b`. It remains unaccepted. No additional independent quality test was run for this unchanged candidate.
+
+Two replay GIFs generated2026-10-29 expose its failures. First independent case800000 fails at4407 steps after64 physical-trajectory juggles; the clip shows its final20 seconds. Case800012 is the shortest observed failure, selected after inspecting results:27 steps,0 physical juggles,full1.35-second episode. It is deliberately a negative example, not representative. Neither clip adds a test case. Renderer contact counts are contact timesteps, not distinct juggles. Each replay matches all eight original NPZ arrays byte-for-byte (including observations, actions and true body positions), and GIF compaction preserves duration and final frame; the short clip has a final50ms frame. See [hashes and raw paths](juggling-history-selected-target-failure-gifs.json).
+
+![First independent case,final20 seconds](assets/juggling/noisy-history-target-fresh-first-failure.gif)
+
+![Selected shortest independent failure,whole1.35-second episode](assets/juggling/noisy-history-target-fresh-early-failure.gif)
+
+Related: [previous independent result](experiment_logbook.md#e039), [queued2M tests](experiment_logbook.md#e040), [new2M results and hashes](juggling-history-new-trials-2m-results.json). Raw checkpoints/NPZ/results remain under ignored `runs/td3/`; JSON provenance records exact paths. Frozen replay reproduction: `.venv/bin/python -m scripts.td3.juggle_survival --run-dir runs/td3/noisy_history_20261029_seed0/target_actor_3m6_bundle --out-dir <unused-output> --scenario-set training --horizon 20000 --episodes 1 --seed-base 800000 --gif-steps 400` (substitute800012 for shortest case).
+
 
 <a id="e040"></a>
 
