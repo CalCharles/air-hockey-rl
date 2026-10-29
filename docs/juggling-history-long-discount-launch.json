@@ -1,0 +1,53 @@
+{
+  "requested": "2026-10-29T21:23:39.884118+00:00",
+  "status": "training_confirmed",
+  "launcher_pid": 1320884,
+  "command": [
+    "srun",
+    "--jobid=112936",
+    "--overlap",
+    "--exact",
+    "--nodes=1",
+    "--ntasks=1",
+    "--cpus-per-task=6",
+    "--cpu-bind=none",
+    "--gres=gpu:1",
+    "--immediate=15",
+    "--chdir=/scratch/cluster/mrudolph/documents/air-hockey-rl",
+    "/usr/bin/env",
+    "OMP_NUM_THREADS=1",
+    "MKL_NUM_THREADS=1",
+    "MPLCONFIGDIR=/tmp/airhockey-mpl",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/.venv/bin/python",
+    "-u",
+    "-m",
+    "scripts.td3.juggle_noisy_scratch",
+    "--root",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_long_discount_20261029_seed0",
+    "--args-file",
+    "configs/td3/sustained/noisy_history_long_discount_scratch.yaml"
+  ],
+  "previous_run_status": "runs/td3/noisy_survival_20261029_seed0/status.json",
+  "args_sha256": "5ce333aeb01de3ec597378a9e54c5de97440394b8b591cc4582d98e9c8ba5316",
+  "canonical_env_sha256": "d1bb13a7a4a5494507d085db230bdbe31854f0ddb556ccf88c3ec5aca0360385",
+  "new_random_actor_critics_encoder": true,
+  "changes_from_history_seed0": {
+    "gamma": [
+      0.995,
+      0.999
+    ],
+    "run_name": [
+      "noisy_history_scratch",
+      "noisy_history_long_discount_scratch"
+    ]
+  },
+  "actual_started": "2026-10-29T21:23:40.035965+00:00",
+  "step": "112936.6",
+  "selector_pid": 1321073,
+  "recorded": "2026-10-29T21:26:07.568070+00:00",
+  "run_root": "runs/td3/noisy_history_long_discount_20261029_seed0",
+  "reviewed_simulator_hashes": {
+    "airhockey/airhockey_base.py": "a3a8c1c37fdb53015b6cb2568b1b9ccc39e6f6dff39323a4c25f97ae88fcb4d6",
+    "airhockey/sims/airhockey_box2d.py": "7059de3e1f8a979c706eb2546ba7674c4970226952bc002567a1d2aa20fa7eee"
+  }
+}

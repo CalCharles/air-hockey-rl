@@ -94,3 +94,5 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-10-29 21:13 | Fixed history 3M tests | Shared mean6663,14/32 at10k; independent mean9117,5/32 at20k; candidate remains unaccepted | [file](2026-10-29_21-13_history-3m-independent.md)
 
 - 2026-10-29 21:21 | Baseline complete; history seed1 starts | Full6M baseline0/32caps; released allocation now trains history replication from random weights | [file](2026-10-29_21-21_baseline-complete-history-replication.md)
+
+- 2026-10-29 21:26 | Survival stop and history discount start | Survival interrupted after4M; selected mean811,0caps; fresh gamma.999 history running; seed1 actual updates confirmed | [file](2026-10-29_21-26_survival-stop-history-discount-start.md)

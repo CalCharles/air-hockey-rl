@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A029 — Reallocate weaker trial and verify scratch-history learning](#a029)
 - [A028 — Reuse completed baseline allocation for scratch replication](#a028)
 - [A027 — Complete fixed 3M evaluation and lock a new independent test](#a027)
 - [A026 — Uncensor the long episodes and publish their failure evidence](#a026)
@@ -34,6 +35,14 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a029"></a>
+
+## A029 — 2026-10-29 16:26:07 -0500 — Reallocate weaker trial and verify scratch-history learning
+
+Codex preserved the interrupted survival trial, launched a gamma-only history comparison and inspected the replication's first saved optimizer state.
+
+**Evidence:** [E028](experiment_logbook.md#e028), [E029](experiment_logbook.md#e029), [detailed record](../notes/scratch/experiments/2026-10-29_21-26_survival-stop-history-discount-start.md). Confirmed only survival step112936.5 ended, kept its allocation/artifacts and allowed its existing selector to finish. New112936.6 starts all networks randomly with canonical simulator/config hashes and scratch guards verified before and after launch; selector1321073 attached. Seed1 checkpoint inspection confirms actual updates but no efficacy. Three history learners now run (seed0,seed1,gamma .999); no simulator/control/DR changes. Documentation and saved-data report checks pass; goal remains unsolved.
 
 <a id="a028"></a>
 

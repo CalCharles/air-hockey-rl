@@ -6,6 +6,8 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E029 — History seed1 first checkpoint confirms updates, not replication success](#e029)
+- [E028 — Interrupt survival trial and launch longer-discount history](#e028)
 - [E027 — Baseline completes 6M; fresh history seed1 starts](#e027)
 - [E026 — History 3M improves shared survival; independent reliability remains low](#e026)
 - [E025 — All four long history episodes eventually fail](#e025)
@@ -33,6 +35,24 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e029"></a>
+
+## E029 — 2026-10-29 16:26:07 -0500 — History seed1 first checkpoint confirms updates, not replication success
+
+The seed1 history run executes learning updates but remains weak at its100k checkpoint.
+
+**Completed check:** Saved state has62,500critic updates,48actor and72critic optimizer entries, modehistory and50×8memory. Eight reused validation starts: mean64.25,median45.5,0.5physical juggles,0/8caps at5k. [Portable raw evidence](juggling-history-seed1-first-checkpoint.json), [detailed context](../notes/scratch/experiments/2026-10-29_21-26_survival-stop-history-discount-start.md). This establishes pipeline operation, not useful performance or replication of seed0's gain. Training continues from its own scratch initialization; no model was loaded and no sensing/dynamics changed. No new early-policy GIF. [A029](agent_logbook.md#a029).
+
+<a id="e028"></a>
+
+## E028 — 2026-10-29 16:26:07 -0500 — Interrupt survival trial and launch longer-discount history
+
+The survival recipe is interrupted after4M with no validation caps, and a new random-initialized history trial changes only gamma to .999.
+
+**Interrupted:** Last logged4,049,999, latest saved4M; unfinished6M budget is not reported as complete. Selected3M checkpoint on32reused starts averages811.25 with0/32caps. All checkpoints preserved; adaptive resource choice does not rule out later improvement. [Per-start data](juggling-survival-selected.csv), [detailed record](../notes/scratch/experiments/2026-10-29_21-26_survival-stop-history-discount-start.md).
+
+**Running:** History gamma .999 starts 2026-10-29T21:23:40.035965+00:00 UTC in step112936.6, launcher1320884,selector1321073. Only gamma/run name differ from original history; random actor/critics/encoder, original reward and canonical sensing/control/DR. Passed20k exploration; no quality result yet. [Launch provenance](juggling-history-long-discount-launch.json). Both existing history seeds continue; no new GIF. [A029](agent_logbook.md#a029).
 
 <a id="e027"></a>
 

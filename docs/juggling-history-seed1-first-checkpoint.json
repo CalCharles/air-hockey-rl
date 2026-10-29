@@ -1,0 +1,131 @@
+{
+  "recorded": "2026-10-29T21:26:07.595485+00:00",
+  "checkpoint": "runs/td3/noisy_history_20261029_seed1/train/checkpoint_100000",
+  "model_sha256": "0f84b0ccf00e764eb2ff787a73a7cd99c7e0e79961a3c7ebb626eb1df4c08e8d",
+  "global_step": 100000,
+  "critic_updates": 62500,
+  "actor_optimizer_state_entries": 48,
+  "critic_optimizer_state_entries": 72,
+  "rma_meta": {
+    "mode": "history",
+    "obs_dim": 30,
+    "act_dim": 2,
+    "latent_dim": 8,
+    "use_last_action": true,
+    "hidden_layer_size": 64,
+    "num_hidden_layers": 2,
+    "normalizer": {
+      "random_variables": [
+        "paddle_density",
+        "puck_damping",
+        "gravity"
+      ],
+      "random_variable_ranges": {
+        "paddle_density": [
+          2250.0,
+          3750.0
+        ],
+        "puck_damping": [
+          0.08250000327825546,
+          0.13750000298023224
+        ],
+        "gravity": [
+          -0.9125000238418579,
+          -0.5475000143051147
+        ]
+      }
+    },
+    "history_len": 50,
+    "feature_dim": 8,
+    "step_features": "latest_frame",
+    "embed_dim": 32,
+    "conv_channels": 32
+  },
+  "summary": {
+    "episodes": 8,
+    "horizon": 5000,
+    "failures": 8,
+    "horizon_survival_fraction": 0.0,
+    "sustained_juggling_fraction": 0.0,
+    "mean_juggles": 0.25,
+    "mean_valid_juggling_steps": 0.0,
+    "restricted_mean_steps": 64.25,
+    "median_observed_steps": 45.5,
+    "min_steps": 24,
+    "mean_contacts": 1.375,
+    "mean_return": 34.875,
+    "end_reasons": {
+      "puck_passed_paddle": 8
+    },
+    "zero_failure_probability_upper_95": null,
+    "survival_at_steps": {
+      "250": 0.0,
+      "1000": 0.0,
+      "2000": 0.0
+    },
+    "worst_peak_paddle_speed_m_s": 2.000000053789826,
+    "worst_peak_paddle_acceleration_m_s2": 47.69175404940468,
+    "mean_action_delta_rms": 0.8827728709592458,
+    "mean_target_delta_rms_m": 0.16579139924084452,
+    "mean_true_state_juggles": 0.5,
+    "true_state_sustained_juggling_fraction": 0.0
+  },
+  "episodes": [
+    {
+      "seed": 10000,
+      "steps": 40,
+      "true_state_juggles": 0,
+      "reached_horizon": false,
+      "failed": true
+    },
+    {
+      "seed": 10001,
+      "steps": 30,
+      "true_state_juggles": 0,
+      "reached_horizon": false,
+      "failed": true
+    },
+    {
+      "seed": 10002,
+      "steps": 42,
+      "true_state_juggles": 0,
+      "reached_horizon": false,
+      "failed": true
+    },
+    {
+      "seed": 10003,
+      "steps": 96,
+      "true_state_juggles": 1,
+      "reached_horizon": false,
+      "failed": true
+    },
+    {
+      "seed": 10004,
+      "steps": 97,
+      "true_state_juggles": 1,
+      "reached_horizon": false,
+      "failed": true
+    },
+    {
+      "seed": 10005,
+      "steps": 49,
+      "true_state_juggles": 0,
+      "reached_horizon": false,
+      "failed": true
+    },
+    {
+      "seed": 10006,
+      "steps": 24,
+      "true_state_juggles": 0,
+      "reached_horizon": false,
+      "failed": true
+    },
+    {
+      "seed": 10007,
+      "steps": 136,
+      "true_state_juggles": 2,
+      "reached_horizon": false,
+      "failed": true
+    }
+  ]
+}
