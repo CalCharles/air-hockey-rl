@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A038 — Complete selected-target independent test and queue fixed5M variants](#a038)
 - [A037 — Complete four-variant selection and lock independent target test](#a037)
 - [A036 — Complete target3.6M comparison and evaluate4M target weights](#a036)
 - [A035 — Complete fixed4M benchmark and start matched long-horizon comparison](#a035)
@@ -43,6 +44,14 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a038"></a>
+
+## A038 — 2026-10-29 17:36:52 -0500 — Complete selected-target independent test and queue fixed5M variants
+
+Codex verified the independent target test, retained its failures and attached guarded online/target evaluations to the fixed5M milestone.
+
+**Evidence:** [E039](experiment_logbook.md#e039), [detailed note](../notes/scratch/experiments/2026-10-29_22-36_selected-target-independent-result-5m-queue.md). Verified locked model hash,18physical caps,14failures and all32starts; updated candidate as unaccepted and preserved prior selection evidence. Offline positions support real flight. Both5M watcher processes are live and waiting, with reviewed-source guards and archived orchestration source. No new learner, checkpoint warm start or simulator/control/DR change. Documentation/report checks pass; goal remains unsolved.
 
 <a id="a037"></a>
 

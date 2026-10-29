@@ -1,6 +1,6 @@
 {
-  "recorded": "2026-10-29T22:19:18.607613+00:00",
-  "status": "research_candidate_pending_independent_test_not_accepted",
+  "recorded": "2026-10-29T22:36:52.828526+00:00",
+  "status": "research_candidate_not_accepted",
   "checkpoint": "runs/td3/noisy_history_20261029_seed0/target_actor_3m6_bundle",
   "source_checkpoint": "runs/td3/noisy_history_20261029_seed0/train/checkpoint_3600000",
   "source_weights": "runs/td3/noisy_history_20261029_seed0/train/checkpoint_3600000/actor_target.pth",
@@ -21,13 +21,21 @@
   "genuine_cap_completions": 20,
   "failures": 12,
   "independent_test": {
-    "status": "running_no_result_yet",
+    "status": "complete",
     "results": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/results.json",
     "seed_base": 800000,
     "episodes": 32,
     "horizon": 20000,
     "checkpoint_locked_before_test": true,
-    "provenance": "docs/juggling-history-selected-target-independent-provenance.json"
+    "provenance": "docs/juggling-history-selected-target-independent-provenance.json",
+    "mean_steps": 13761.03125,
+    "median_observed_steps": 20000.0,
+    "median_is_censored": true,
+    "mean_physical_juggles": 200.34375,
+    "genuine_cap_completions": 18,
+    "failures": 14,
+    "min_steps": 27,
+    "seed_status_now": "Consumed research starts;not untouched acceptance for future candidates"
   },
   "required_local_files": [
     "model.pth",
@@ -40,5 +48,5 @@
     "model_sha256": "97e1184364f9f6a0c00406c8608bbc8190a82e60629f4a593eb483125ce95351",
     "results": "runs/td3/noisy_history_20261029_seed0/independent_3m6_20k_eval/results.json"
   },
-  "limitation": "Selected on reused700000 cohort;20caps and12failures there. New800000 test pending. No reliable or indefinite survival claim. Target inference comes solely from original scratch lineage; never initialize new training from this bundle."
+  "limitation": "New-seed800000test has18/32caps and14failures;median at20k is censored. Selection used reused700000cohort. No reliable or indefinite survival claim. Inference-only target from original scratch lineage;never initialize new training from this bundle."
 }

@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E039 — Selected target reaches eighteen new-seed 20k caps](#e039)
 - [E038 — Four-way comparison selects 3.6M target for new-seed testing](#e038)
 - [E037 — Target3.6M reaches twenty paired20k caps;4M target test starts](#e037)
 - [E036 — Fixed4M history benchmark reaches sixteen shared10k caps](#e036)
@@ -44,6 +45,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e039"></a>
+
+## E039 — 2026-10-29 17:36:52 -0500 — Selected target reaches eighteen new-seed 20k caps
+
+The selected 3.6M target completes 20k on 18/32 new starts, with 14 failures still preventing reliable sustained juggling.
+
+**Completed:** Mean13,761.03125,median at20k cap,min27,200.34375physical juggles. No starts excluded. Seed800000range was unused before the locked test and is now consumed. [Per-start data](juggling-history-selected-target-independent.csv), [motion audit](juggling-history-selected-target-independent-motion.csv), [detailed record](../notes/scratch/experiments/2026-10-29_22-36_selected-target-independent-result-5m-queue.md), [unaccepted candidate](juggling-candidate.json). New cohort differs from selection's20/32; no paired-improvement claim.
+
+**Waiting:** Fixed5M online/target watchers1349083/1349084, same32used700000starts at20k. [Queue/source metadata](juggling-history-5m-watch.json). No result yet. All three learners continue; no new training or simulator/DR changes. No new GIF; E038 has the selected policy clip. [A038](agent_logbook.md#a038).
 
 <a id="e038"></a>
 

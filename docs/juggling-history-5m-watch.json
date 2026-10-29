@@ -1,0 +1,25 @@
+{
+  "recorded": "2026-10-29T22:36:52.830939+00:00",
+  "source": "runs/td3/noisy_history_20261029_seed0/milestone_5m_watch.py",
+  "source_sha256": "1a2d5b077c65385c7251e827653cd59a7558500741db003f9a68015ae9b835bf",
+  "archived_source": "docs/juggling-history-5m-watch-source.txt",
+  "checkpoint_step": 5000000,
+  "seed_base": 700000,
+  "episodes": 32,
+  "horizon": 20000,
+  "seed_role": "Reused research selection cohort;not independent acceptance",
+  "roles": {
+    "online": {
+      "pid": 1349083,
+      "status": "waiting_for_checkpoint_validation",
+      "queued": "2026-10-29T22:29:36.154283+00:00",
+      "status_path": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/milestone_5m_online_status.json"
+    },
+    "target": {
+      "pid": 1349084,
+      "status": "waiting_for_checkpoint_validation",
+      "queued": "2026-10-29T22:29:36.154301+00:00",
+      "status_path": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/milestone_5m_target_status.json"
+    }
+  }
+}
