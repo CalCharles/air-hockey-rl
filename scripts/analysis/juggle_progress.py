@@ -49,7 +49,7 @@ def write_report(roots, out):
     rows = [row for _, values in series for row in values]
     if rows:
         with table.open("w") as stream:
-            writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+            writer = csv.DictWriter(stream, fieldnames=list(rows[0]), lineterminator="\n")
             writer.writeheader()
             writer.writerows(rows)
     fig, axes = plt.subplots(1, 2, figsize=(11, 4), constrained_layout=True)
