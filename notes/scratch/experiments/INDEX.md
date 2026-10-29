@@ -110,3 +110,5 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-10-29 22:01 | Fixed4M shared benchmark | Mean7336,16/32at10k; uncertainty includes zero; matched20k test running | [file](2026-10-29_22-01_history-4m-shared-result.md)
 
 - 2026-10-29 22:06 | Target3.6M result and4M start | Target20/32 at20k vs14online; paired interval includes zero;4M target running | [file](2026-10-29_22-06_history-target-3m6-result-4m-start.md)
+
+- 2026-10-29 22:21 | Four-variant selection and independent test | Cap counts14/20/15/14;3.6M target chosen before new800000 test; verified target GIF | [file](2026-10-29_22-21_history-four-variant-selection-new-test.md)

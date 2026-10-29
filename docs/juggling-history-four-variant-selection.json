@@ -1,0 +1,77 @@
+{
+  "recorded": "2026-10-29T22:17:24.428658+00:00",
+  "selection_cohort": "700000\u2013700031,reused research selection set",
+  "rule": "Highest genuine20k cap count,then bounded mean;rule stated before final variant completed",
+  "variants": {
+    "online_3m6": {
+      "results": "runs/td3/noisy_history_20261029_seed0/independent_3m6_20k_eval/results.json",
+      "bundle": "runs/td3/noisy_history_20261029_seed0/train/checkpoint_3600000",
+      "sha256": "97e1184364f9f6a0c00406c8608bbc8190a82e60629f4a593eb483125ce95351",
+      "mean_steps": 13099.8125,
+      "median_observed_steps": 14790.0,
+      "physical_juggles": 197.4375,
+      "genuine_caps": 14,
+      "failures": 18
+    },
+    "target_3m6": {
+      "results": "runs/td3/noisy_history_20261029_seed0/target_actor_3m6_paired_20k_eval/results.json",
+      "bundle": "runs/td3/noisy_history_20261029_seed0/target_actor_3m6_bundle",
+      "sha256": "c8a1df78ade41cfbe6845a84f4b21480f512973be7a89f0baf66daf5d452b31b",
+      "mean_steps": 15427.625,
+      "median_observed_steps": 20000.0,
+      "physical_juggles": 225.0625,
+      "genuine_caps": 20,
+      "failures": 12
+    },
+    "online_4m": {
+      "results": "runs/td3/noisy_history_20261029_seed0/paired_4m_20k_eval/results.json",
+      "bundle": "runs/td3/noisy_history_20261029_seed0/train/checkpoint_4000000",
+      "sha256": "2af429a2a059b4d43b20b3e4b5df54bebf8446761d9771a64f454b07c823d591",
+      "mean_steps": 13687.09375,
+      "median_observed_steps": 16801.5,
+      "physical_juggles": 203.21875,
+      "genuine_caps": 15,
+      "failures": 17
+    },
+    "target_4m": {
+      "results": "runs/td3/noisy_history_20261029_seed0/target_actor_4m_paired_20k_eval/results.json",
+      "bundle": "runs/td3/noisy_history_20261029_seed0/target_actor_4m_bundle",
+      "sha256": "452f6dbfdd43c9a17224966e1f7db8b9b6640745c53413abe9bd7d076df63ae2",
+      "mean_steps": 13074.8125,
+      "median_observed_steps": 16791.0,
+      "physical_juggles": 193.15625,
+      "genuine_caps": 14,
+      "failures": 18
+    }
+  },
+  "paired_bootstrap": {
+    "online_4m_minus_online_3m6": {
+      "mean_difference": 587.28125,
+      "bootstrap_95": [
+        -2851.26484375,
+        4080.8335937499987
+      ],
+      "wins": 12,
+      "ties": 7
+    },
+    "target_3m6_minus_online_3m6": {
+      "mean_difference": 2327.8125,
+      "bootstrap_95": [
+        -834.5710937499999,
+        5445.163281249999
+      ],
+      "wins": 14,
+      "ties": 10
+    },
+    "target_4m_minus_online_4m": {
+      "mean_difference": -612.28125,
+      "bootstrap_95": [
+        -3357.98984375,
+        2234.3070312499945
+      ],
+      "wins": 9,
+      "ties": 8
+    }
+  },
+  "winner": "target_3m6"
+}

@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E038 — Four-way comparison selects 3.6M target for new-seed testing](#e038)
 - [E037 — Target3.6M reaches twenty paired20k caps;4M target test starts](#e037)
 - [E036 — Fixed4M history benchmark reaches sixteen shared10k caps](#e036)
 - [E035 — Frozen target actor enters paired evaluation](#e035)
@@ -43,6 +44,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e038"></a>
+
+## E038 — 2026-10-29 17:21:46 -0500 — Four-way comparison selects 3.6M target for new-seed testing
+
+The completed matched comparison selects the 3.6M target at 20/32 caps, and its new-seed 20k test is running.
+
+**Completed:** On reused 700000–700031 starts, online3.6M/target3.6M/online4M/target4M achieve 14/20/15/14 genuine caps. Means are 13,099.8125/15,427.625/13,687.09375/13,074.8125. Paired intervals include zero; averaging is not consistently better. [Selection and uncertainty](juggling-history-four-variant-selection.json), [per-start matrix](juggling-history-target-comparison.csv), [detailed record](../notes/scratch/experiments/2026-10-29_22-21_history-four-variant-selection-new-test.md).
+
+**Running:** Selected target hash locked before 32 previously unused 800000–800031 starts, cap20k. [Provenance](juggling-history-selected-target-independent-provenance.json), [unaccepted candidate](juggling-candidate.json). No outcome yet. Same scratch lineage; no new training/warm start or simulator/DR change.
+
+![Verified target illustration](assets/juggling/noisy-history-target-3m6-end.gif)
+
+First reused selection case, 20k cap,270 physical juggles; all eight replay arrays byte-exact. Final20seconds, generated2026-10-29, duration preserved. This known success does not establish reliability. [A037](agent_logbook.md#a037).
 
 <a id="e037"></a>
 

@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A037 — Complete four-variant selection and lock independent target test](#a037)
 - [A036 — Complete target3.6M comparison and evaluate4M target weights](#a036)
 - [A035 — Complete fixed4M benchmark and start matched long-horizon comparison](#a035)
 - [A034 — Inspect replay capacity and evaluate saved target weights](#a034)
@@ -42,6 +43,14 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a037"></a>
+
+## A037 — 2026-10-29 17:21:46 -0500 — Complete four-variant selection and lock independent target test
+
+Codex completed the matched policy comparison, selected by cap count then bounded mean, locked a new-seed test and published an exact target-policy replay.
+
+**Evidence:** [E038](experiment_logbook.md#e038), [detailed note](../notes/scratch/experiments/2026-10-29_22-21_history-four-variant-selection-new-test.md). All four share identical effective configs and starts; score matrix and uncertainty preserved. Selected target comes only from the original random-initialized scratch run; candidate remains unaccepted pending the 800000 test. Audited seed overlap and model hash before launch. Verified all renderer array bytes and inspected GIF frame/duration. All three learners continue; no training or simulator implementation change. Documentation/report checks pass; goal remains unsolved.
 
 <a id="a036"></a>
 

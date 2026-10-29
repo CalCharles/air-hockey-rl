@@ -1,0 +1,22 @@
+{
+  "checkpoint_bundle": "runs/td3/noisy_history_20261029_seed0/target_actor_3m6_bundle",
+  "model_sha256": "c8a1df78ade41cfbe6845a84f4b21480f512973be7a89f0baf66daf5d452b31b",
+  "seed": 700000,
+  "steps": 20000,
+  "physical_juggles": 270,
+  "reached_horizon": true,
+  "all8arrays_byte_exact": true,
+  "array_sha256": {
+    "observation": "7e56eff0a0a4274d34d0738bd8b596a05dcd5e647b9a86f14bcad4108757a968",
+    "next_observation": "df25205f406499bc206113e88b3771e890912792ccbe4068cf72ab2369f0634a",
+    "action": "5377ea50118814f0220d20d231f6d0f98db332e0b0ec4bdd39c8ea435c955b72",
+    "reward": "a71a09f3f30e8dd22c28f4b8d565615be934a9fa6ea61c444e417f50dbcac7da",
+    "terminated": "28b4f41a7f3ee6d8cc87272db6e09c6d3566551fd4d18702b041a21658272a85",
+    "truncated": "28b4f41a7f3ee6d8cc87272db6e09c6d3566551fd4d18702b041a21658272a85",
+    "true_paddle_xy": "70c29f5c485dcc0c7e8bdf711ba7c42d501c55d9de82b4fc0c00f526cf897c72",
+    "true_puck_xy": "fbcabf3c6cb044eea90cc32d9dd225dd499572011d36d9aabce37d0a06e0f84c"
+  },
+  "gif": "docs/assets/juggling/noisy-history-target-3m6-end.gif",
+  "playback_ms": 20000,
+  "selection": "First seed of reused selection cohort; known cap; demonstration only"
+}

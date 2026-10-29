@@ -50,3 +50,7 @@ History2.1M, known successful seed500014: [first10seconds](noisy-history-20k-sta
 ## Current 3M candidate: success and failure
 
 [Selected cap, final 20 seconds](noisy-history-3m-cap-end.gif): seed 600013, 20,000 steps, 310 physical juggles. [First test seed, final 20 seconds](noisy-history-3m-first-failure.gif): different seed 600000, failure at 8,862 steps, 133 physical juggles. Both full replays match all eight original arrays exactly. Generated 2026-10-29, duration preserved. Aggregate independent test: **5/32 caps and 27 failures**. The first clip is selected success; the second is the first predeclared seed. [E031](../../experiment_logbook.md#e031).
+
+## Selected target-actor illustration
+
+[Final 20 seconds](noisy-history-target-3m6-end.gif) of seed 700000 under the 3.6M target actor: 20,000 steps, 270 physical juggles, censored at the cap. This is the first reused selection-cohort case, a known success. Full selection result: **20/32 caps and 12 failures**; a separate new-seed test is running. All eight full replay arrays match byte for byte. Generated 2026-10-29, duration preserved. [E038](../../experiment_logbook.md#e038).

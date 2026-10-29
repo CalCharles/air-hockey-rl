@@ -1,0 +1,13 @@
+{
+  "recorded_before_launch": "2026-10-29T22:17:25.984372+00:00",
+  "selected_variant": "target_3m6",
+  "evaluation_bundle": "runs/td3/noisy_history_20261029_seed0/target_actor_3m6_bundle",
+  "model_sha256": "c8a1df78ade41cfbe6845a84f4b21480f512973be7a89f0baf66daf5d452b31b",
+  "selection_file": "runs/td3/noisy_history_20261029_seed0/four_variant_selection.json",
+  "seed_base": 800000,
+  "episodes": 32,
+  "horizon": 20000,
+  "seed_audit": "No prior saved noisy-campaign results overlap800000\u2013800031",
+  "lineage": "Target network from the original random-initialized scratch run; frozen evaluation only, no new training or warm start",
+  "status_at_recording": "running_no_result_yet"
+}

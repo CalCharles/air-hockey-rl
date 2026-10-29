@@ -1,6 +1,6 @@
 # Noisy juggling progress
 
-Generated 2026-10-29T22:06:07.466733+00:00 from saved evaluations; no new rollouts.
+Generated 2026-10-29T22:21:47.465310+00:00 from saved evaluations; no new rollouts.
 
 Validation curves use repeatedly evaluated starts, not independent acceptance tests. Each point is an episode mean for one training seed. Check the CSV for episode counts, seeds and caps. Observed juggle counts use noisy camera positions and a direction-reversal filter. Contact timesteps are not distinct juggles. Cap fractions use the physical-trajectory heuristic when available, otherwise the legacy observed-count heuristic.
 
@@ -14,10 +14,10 @@ Validation curves use repeatedly evaluated starts, not independent acceptance te
 | noisy_iteration2_20261029_long | complete | 5,900,000 | 834.4 | 7.88 | 0.0% |
 | noisy_iteration2_20261029_low_explore | interrupted | 2,000,000 | 392.0 | 3.50 | 0.0% |
 | noisy_iteration2_20261029_large_low_explore | interrupted | 1,000,000 | 152.6 | 1.00 | 0.0% |
-| noisy_history_20261029_seed0 | training | 4,200,000 | 4378.1 | 57.38 | 37.5% |
-| noisy_history_20261029_seed1 | training | 900,000 | 151.0 | 1.38 | 0.0% |
+| noisy_history_20261029_seed0 | training | 4,500,000 | 3416.6 | 46.12 | 50.0% |
+| noisy_history_20261029_seed1 | training | 1,100,000 | 292.2 | 3.12 | 0.0% |
 | noisy_survival_20261029_seed0 | interrupted | 4,000,000 | 461.0 | 2.75 | 0.0% |
-| noisy_history_long_discount_20261029_seed0 | training | 800,000 | 170.4 | 1.12 | 0.0% |
+| noisy_history_long_discount_20261029_seed0 | training | 1,100,000 | 192.0 | 1.62 | 0.0% |
 
 Separate-start evaluations (selection and benchmark phases labeled):
 
@@ -42,7 +42,9 @@ Separate-start evaluations (selection and benchmark phases labeled):
 - [noisy_history_20261029_seed0, milestone 3m benchmark](../runs/td3/noisy_history_20261029_seed0/milestone_3m_benchmark/results.json): 6662.7 mean steps, 88.41 observed juggles, 99.19 physical-trajectory juggles, 43.8% cap completion; 32 starts from seed 300000, cap 10000.
 - [noisy_history_20261029_seed0, milestone 4m benchmark](../runs/td3/noisy_history_20261029_seed0/milestone_4m_benchmark/results.json): 7335.6 mean steps, 95.12 observed juggles, 107.22 physical-trajectory juggles, 50.0% cap completion; 32 starts from seed 300000, cap 10000.
 - [noisy_history_20261029_seed0, paired 2m1 20k eval](../runs/td3/noisy_history_20261029_seed0/paired_2m1_20k_eval/results.json): 7066.3 mean steps, 97.81 observed juggles, 108.72 physical-trajectory juggles, 12.5% cap completion; 32 starts from seed 500000, cap 20000.
+- [noisy_history_20261029_seed0, paired 4m 20k eval](../runs/td3/noisy_history_20261029_seed0/paired_4m_20k_eval/results.json): 13687.1 mean steps, 181.00 observed juggles, 203.22 physical-trajectory juggles, 46.9% cap completion; 32 starts from seed 700000, cap 20000.
 - [noisy_history_20261029_seed0, target actor 3m6 paired 20k eval](../runs/td3/noisy_history_20261029_seed0/target_actor_3m6_paired_20k_eval/results.json): 15427.6 mean steps, 200.62 observed juggles, 225.06 physical-trajectory juggles, 62.5% cap completion; 32 starts from seed 700000, cap 20000.
+- [noisy_history_20261029_seed0, target actor 4m paired 20k eval](../runs/td3/noisy_history_20261029_seed0/target_actor_4m_paired_20k_eval/results.json): 13074.8 mean steps, 169.56 observed juggles, 193.16 physical-trajectory juggles, 43.8% cap completion; 32 starts from seed 700000, cap 20000.
 - [noisy_survival_20261029_seed0, validation-selected checkpoint benchmark](../runs/td3/noisy_survival_20261029_seed0/selected_eval/results.json): 811.2 mean steps, 6.78 observed juggles, 7.59 physical-trajectory juggles, 0.0% cap completion; 32 starts from seed 400000, cap 10000.
 - [noisy_survival_20261029_seed0, milestone 3m benchmark](../runs/td3/noisy_survival_20261029_seed0/milestone_3m_benchmark/results.json): 717.7 mean steps, 6.25 observed juggles, 5.81 physical-trajectory juggles, 0.0% cap completion; 32 starts from seed 300000, cap 10000.
 
