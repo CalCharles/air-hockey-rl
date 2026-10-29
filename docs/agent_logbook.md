@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A035 — Complete fixed4M benchmark and start matched long-horizon comparison](#a035)
 - [A034 — Inspect replay capacity and evaluate saved target weights](#a034)
 - [A033 — Complete3.6M independent evaluation and retain research candidate](#a033)
 - [A032 — Verify policy-memory bookkeeping while independent test runs](#a032)
@@ -40,6 +41,14 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a035"></a>
+
+## A035 — 2026-10-29 17:01:05 -0500 — Complete fixed4M benchmark and start matched long-horizon comparison
+
+Codex collected the completed4M watcher result and launched a frozen20k comparison on the existing3.6M cohort.
+
+**Evidence:** [E036](experiment_logbook.md#e036), [detailed note](../notes/scratch/experiments/2026-10-29_22-01_history-4m-shared-result.md). Verified raw scores, paired seeds/bootstrap, locked4M model hash and canonical config. Preserved the short benchmark in the shared CSV and kept the candidate unchanged because horizons/cohorts must match for a direct comparison. Both long evaluations are running; all three learners continue. No simulator or training implementation change; documentation/report checks pass.
 
 <a id="a034"></a>
 

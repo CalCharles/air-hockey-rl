@@ -1,0 +1,11 @@
+{
+  "recorded_before_test": "2026-10-29T21:59:26.510170+00:00",
+  "checkpoint": "runs/td3/noisy_history_20261029_seed0/train/checkpoint_4000000",
+  "model_sha256": "2af429a2a059b4d43b20b3e4b5df54bebf8446761d9771a64f454b07c823d591",
+  "selection": "Fixed4M milestone",
+  "seed_base": 700000,
+  "episodes": 32,
+  "horizon": 20000,
+  "seed_status": "Reused paired research cohort from3.6M online/target tests, not independent acceptance",
+  "status_at_recording": "running_no_result_yet"
+}

@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E036 — Fixed4M history benchmark reaches sixteen shared10k caps](#e036)
 - [E035 — Frozen target actor enters paired evaluation](#e035)
 - [E034 — History3.6M reaches fourteen independent20k caps](#e034)
 - [E033 — Policy-memory adapters match across rollover and resets](#e033)
@@ -41,6 +42,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e036"></a>
+
+## E036 — 2026-10-29 17:01:05 -0500 — Fixed4M history benchmark reaches sixteen shared10k caps
+
+The fixed4M checkpoint completes10k on16/32shared starts, leaving16failures and a longer paired test still running.
+
+**Completed:** Mean7335.59375,median9989.5,107.21875physical juggles. Same starts as3M's14/32caps and6662.65625mean; paired difference672.9375,bootstrap95% interval[-1236.88671875,2529.1328125],including zero. [Per-start CSV](juggling-history-benchmark.csv), [detailed record and commands](../notes/scratch/experiments/2026-10-29_22-01_history-4m-shared-result.md). Reused research benchmark, single training seed; no acceptance claim.
+
+**Running:** Frozen4M on same32used700000starts as3.6M,cap20k; target-actor test also running. [Pre-test provenance](juggling-history-4m-test-provenance.json). Candidate remains3.6M pending long results. Three learners continue; no new training or simulator/DR changes. No new GIF. [A035](agent_logbook.md#a035).
 
 <a id="e035"></a>
 

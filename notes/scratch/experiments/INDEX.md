@@ -106,3 +106,5 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-10-29 21:46 | History3.6M independent result | Mean13,100,14/32at20k,18failures; research candidate retained, not accepted | [file](2026-10-29_21-46_history-3m6-independent-result.md)
 
 - 2026-10-29 21:51 | Target actor paired test | Frozen target weights from original scratch run;32reused starts at20k; running with no outcome | [file](2026-10-29_21-51_history-target-actor-paired-test.md)
+
+- 2026-10-29 22:01 | Fixed4M shared benchmark | Mean7336,16/32at10k; uncertainty includes zero; matched20k test running | [file](2026-10-29_22-01_history-4m-shared-result.md)
