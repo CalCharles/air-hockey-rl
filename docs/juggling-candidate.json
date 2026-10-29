@@ -1,29 +1,32 @@
 {
-  "recorded": "2026-10-29T21:13:02.966050+00:00",
-  "status": "best_measured_shared_benchmark_candidate_not_accepted",
-  "checkpoint": "runs/td3/noisy_history_20261029_seed0/train/checkpoint_3000000",
-  "model_sha256": "1e0dda69f8148b8178d0c575a0dca54e36357bbcf2809b1b98857e9f26357d20",
+  "recorded": "2026-10-29T21:46:28.596694+00:00",
+  "status": "research_candidate_not_accepted",
+  "checkpoint": "runs/td3/noisy_history_20261029_seed0/train/checkpoint_3600000",
+  "model_sha256": "97e1184364f9f6a0c00406c8608bbc8190a82e60629f4a593eb483125ce95351",
   "architecture": "HistoryActor: 50-step deployment observation/action memory",
   "initialization": "random actor/critics/encoder; no checkpoint, residual or warm start",
   "initialization_evidence": "runs/td3/noisy_history_20261029_seed0/launch_args.yaml",
-  "benchmark": "runs/td3/noisy_history_20261029_seed0/milestone_3m_benchmark/results.json",
-  "benchmark_seed_base": 300000,
+  "selection": "First checkpoint with all8 reused5k validation caps; selected before new test",
+  "selection_provenance": "docs/juggling-history-3m6-test-provenance.json",
+  "benchmark": "runs/td3/noisy_history_20261029_seed0/independent_3m6_20k_eval/results.json",
+  "benchmark_kind": "Independent research test of validation-selected checkpoint",
+  "benchmark_seed_base": 700000,
   "benchmark_episodes": 32,
-  "benchmark_horizon": 10000,
-  "restricted_mean_steps": 6662.65625,
+  "benchmark_horizon": 20000,
+  "restricted_mean_steps": 13099.8125,
   "genuine_cap_completions": 14,
   "independent_test": {
-    "results": "runs/td3/noisy_history_20261029_seed0/independent_3m_20k_eval/results.json",
-    "seed_base": 600000,
+    "results": "runs/td3/noisy_history_20261029_seed0/independent_3m6_20k_eval/results.json",
+    "seed_base": 700000,
     "episodes": 32,
     "horizon": 20000,
-    "mean_steps": 9116.5625,
-    "median_steps": 7998,
-    "mean_physical_juggles": 133.875,
-    "genuine_cap_completions": 5,
-    "failures": 27,
+    "mean_steps": 13099.8125,
+    "median_steps": 14790,
+    "mean_physical_juggles": 197.4375,
+    "genuine_cap_completions": 14,
+    "failures": 18,
     "checkpoint_locked_before_test": true,
-    "seed_audit": "No existing noisy-campaign results overlap this range before launch"
+    "seed_audit": "No saved noisy-campaign results overlap700000\u2013700031 before launch"
   },
   "required_local_files": [
     "model.pth",
@@ -32,9 +35,22 @@
     "config.yaml"
   ],
   "previous_candidate": {
-    "checkpoint": "runs/td3/noisy_history_20261029_seed0/train/checkpoint_2100000",
-    "model_sha256": "83819bb1d7ef4ccb3ccb0cb276f91a4de89505d1a2293b887172e2c59f698b0b",
-    "tail_analysis": "docs/juggling-history-2m1-uncensored.json"
+    "checkpoint": "runs/td3/noisy_history_20261029_seed0/train/checkpoint_3000000",
+    "model_sha256": "1e0dda69f8148b8178d0c575a0dca54e36357bbcf2809b1b98857e9f26357d20",
+    "shared_benchmark": "runs/td3/noisy_history_20261029_seed0/milestone_3m_benchmark/results.json",
+    "independent_test": {
+      "results": "runs/td3/noisy_history_20261029_seed0/independent_3m_20k_eval/results.json",
+      "seed_base": 600000,
+      "episodes": 32,
+      "horizon": 20000,
+      "mean_steps": 9116.5625,
+      "median_steps": 7998,
+      "mean_physical_juggles": 133.875,
+      "genuine_cap_completions": 5,
+      "failures": 27,
+      "checkpoint_locked_before_test": true,
+      "seed_audit": "No existing noisy-campaign results overlap this range before launch"
+    }
   },
-  "limitation": "27/32 independent20k starts failed. Shared300000 seeds are reused; independent600000 seeds are now consumed research starts. No reliable or indefinite survival claim. Frozen evaluation pointer only; never initialize new training from it."
+  "limitation": "18/32 independent20k starts failed. Validation was reused;700000 seeds were unused before this locked test and are now consumed research starts. Comparisons to3M use different seed cohorts. No reliable or indefinite survival claim. Frozen evaluation pointer only; never initialize training from it."
 }

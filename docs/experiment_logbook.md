@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E034 — History3.6M reaches fourteen independent20k caps](#e034)
 - [E033 — Policy-memory adapters match across rollover and resets](#e033)
 - [E032 — First eight-of-eight validation caps trigger a new frozen test](#e032)
 - [E031 — Rendered 3M success and failure reproduce exactly](#e031)
@@ -39,6 +40,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e034"></a>
+
+## E034 — 2026-10-29 16:46:28 -0500 — History3.6M reaches fourteen independent20k caps
+
+The validation-selected3.6M checkpoint completes20k on14/32previously unused starts, with18failures still preventing reliable sustained juggling.
+
+**Completed:** Mean13,099.8125,median14,790,min629,197.4375physical juggles;20/32last beyond10k. Frozen hash matched before/after test, and seeds700000–700031 were unused in the campaign before launch. They are now consumed. [Detailed results and command](../notes/scratch/experiments/2026-10-29_21-46_history-3m6-independent-result.md), [per-start CSV](juggling-history-3m6-independent.csv), [research pointer](juggling-candidate.json).
+
+Compared with3M's5/32caps and9,116.5625mean, the observed result is higher on a different cohort; no paired-gain claim. One training seed and reused validation limit conclusions. This completes E032's running test. No new GIF; E031clips are from3M. Three learners and fixed4M watcher continue; no simulator/DR changes. [A033](agent_logbook.md#a033).
 
 <a id="e033"></a>
 

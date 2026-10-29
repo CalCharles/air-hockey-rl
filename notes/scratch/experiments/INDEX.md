@@ -102,3 +102,5 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-10-29 21:35 | 3M clips and3.6M frozen test | Two exact replays; first8/8validation caps; new-seed20k test running with locked hash | [file](2026-10-29_21-35_history-clips-perfect-validation-test.md)
 
 - 2026-10-29 21:40 | Policy-memory parity | CPU eager actions/windows exact across256steps and3automatic resets; independent test still running | [file](2026-10-29_21-40_history-policy-parity.md)
+
+- 2026-10-29 21:46 | History3.6M independent result | Mean13,100,14/32at20k,18failures; research candidate retained, not accepted | [file](2026-10-29_21-46_history-3m6-independent-result.md)

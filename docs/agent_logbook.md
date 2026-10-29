@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A033 — Complete3.6M independent evaluation and retain research candidate](#a033)
 - [A032 — Verify policy-memory bookkeeping while independent test runs](#a032)
 - [A031 — Publish balanced 3M clips and test the first perfect validation checkpoint](#a031)
 - [A030 — Verify discount-trial checkpoint and attach fixed 4M evaluator](#a030)
@@ -38,6 +39,14 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a033"></a>
+
+## A033 — 2026-10-29 16:46:28 -0500 — Complete3.6M independent evaluation and retain research candidate
+
+Codex completed the independent3.6M test, preserved per-start evidence and updated the frozen research pointer without an acceptance claim.
+
+**Evidence:** [E034](experiment_logbook.md#e034), [detailed record](../notes/scratch/experiments/2026-10-29_21-46_history-3m6-independent-result.md). Verified locked hash,14physical-juggle caps and18failures, retained previous3M provenance and labeled different-cohort comparisons. Seed700000range is now consumed; no candidate may warm-start new training. All three history learners and4M watcher remain live. Documentation/report checks pass. The goal remains unsolved despite improved measured survival.
 
 <a id="a032"></a>
 
