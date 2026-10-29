@@ -1,0 +1,13 @@
+{
+  "checkpoint": "runs/td3/noisy_history_20261029_seed0/train/checkpoint_3600000",
+  "model_sha256": "97e1184364f9f6a0c00406c8608bbc8190a82e60629f4a593eb483125ce95351",
+  "seed": 600013,
+  "steps": 256,
+  "diagnostic_episode_budget": 73,
+  "automatic_resets": 3,
+  "terminal_history_windows": 3,
+  "history_len": 50,
+  "max_action_difference": 0.0,
+  "all_windows_and_actions_exact": true,
+  "limitation": "CPU eager comparison; short budgets test reset semantics, not survival quality"
+}

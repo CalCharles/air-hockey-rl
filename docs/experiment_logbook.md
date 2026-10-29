@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E033 — Policy-memory adapters match across rollover and resets](#e033)
 - [E032 — First eight-of-eight validation caps trigger a new frozen test](#e032)
 - [E031 — Rendered 3M success and failure reproduce exactly](#e031)
 - [E030 — Longer-discount history first checkpoint confirms updates](#e030)
@@ -38,6 +39,14 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e033"></a>
+
+## E033 — 2026-10-29 16:40:22 -0500 — Policy-memory adapters match across rollover and resets
+
+Training-wrapper and evaluation-agent memory windows and actions match exactly over256noisy steps and three automatic resets.
+
+**Completed diagnostic:** Frozen3.6M model,50×8history, maximum action difference0.0. [Driver](../scripts/analysis/verify_history_policy_parity.py), [JSON](juggling-history-policy-parity.json), [scope and command](../notes/scratch/experiments/2026-10-29_21-40_history-policy-parity.md). Temporary73-step episode budgets exercise reset handling; sensing, dynamics and DR are unchanged and no data enters training. CPU eager adapter check only, not survival quality, compiled equivalence or two-stream RNG parity. The independent3.6M test is still running; no outcome yet. No new diagnostic GIF. [A032](agent_logbook.md#a032).
 
 <a id="e032"></a>
 

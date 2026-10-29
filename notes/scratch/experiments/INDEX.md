@@ -100,3 +100,5 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-10-29 21:30 | History discount first checkpoint | Actual62,500critic updates; early mean62.75,0caps; fixed4M watcher queued | [file](2026-10-29_21-30_history-discount-first-checkpoint.md)
 
 - 2026-10-29 21:35 | 3M clips and3.6M frozen test | Two exact replays; first8/8validation caps; new-seed20k test running with locked hash | [file](2026-10-29_21-35_history-clips-perfect-validation-test.md)
+
+- 2026-10-29 21:40 | Policy-memory parity | CPU eager actions/windows exact across256steps and3automatic resets; independent test still running | [file](2026-10-29_21-40_history-policy-parity.md)

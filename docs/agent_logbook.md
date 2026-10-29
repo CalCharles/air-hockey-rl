@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A032 — Verify policy-memory bookkeeping while independent test runs](#a032)
 - [A031 — Publish balanced 3M clips and test the first perfect validation checkpoint](#a031)
 - [A030 — Verify discount-trial checkpoint and attach fixed 4M evaluator](#a030)
 - [A029 — Reallocate weaker trial and verify scratch-history learning](#a029)
@@ -37,6 +38,14 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a032"></a>
+
+## A032 — 2026-10-29 16:40:22 -0500 — Verify policy-memory bookkeeping while independent test runs
+
+Codex checked the actual training and evaluation memory adapters together and found exact agreement across window rollover and episode resets.
+
+**Evidence:** [E033](experiment_logbook.md#e033), [detailed note](../notes/scratch/experiments/2026-10-29_21-40_history-policy-parity.md). Added a standalone read-only driver and portable result;256steps,3automatic resets, exact actions/windows. The short diagnostic budget is explicitly excluded from performance claims and training. No simulator or adapter modification. Independent3.6M evaluation, all three learners and fixed4M watcher remain live. Documentation/hash checks pass; goal remains unsolved.
 
 <a id="a031"></a>
 
