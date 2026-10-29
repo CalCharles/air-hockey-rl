@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E017 — Reject a fixed observer after negative offline estimates](#e017)
 - [E016 — Interrupt low-exploration pilot and launch survival-focused scratch trial](#e016)
 - [E015 — First noisy capped rollout and fixed-2M benchmark](#e015)
 - [E014 — Prepare survival-focused scratch candidate; not launched](#e014)
@@ -22,6 +23,18 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e017"></a>
+
+## E017 — 2026-10-29 14:09:34 -0500 — Reject a fixed observer after negative offline estimates
+
+One fixed nominal-physics puck observer estimates saved physical states worse than the E010 learned regressors, so it will not enter an active policy.
+
+**Completed offline:** Same saved E010 trajectories and reused eight comparison seeds (16 frozen-actor episodes). No new rollout, policy/regressor training or parameter fit. Filter uses latest puck xy/flag, nominal mean physics, approximate wall reflection, 25 ms latency compensation and fixed noise settings; no sampled DR factors or true state as input. Position/velocity-proxy errors **5.1748 cm / 1.2656 m/s**, versus E010 memory regressor **4.1023 / 0.6587** and larger current-input regressor **4.2508 / 0.7438**. Different inputs and approximate impact/velocity modeling limit causal interpretation; one setting does not rule out the broader filter family.
+
+![Negative fixed-observer comparison](juggling-filter-observability.png)
+
+Figure generated 2026-10-29 from saved data. Paired dots represent eight reused environment seeds averaged across two actors; this is not a juggling-performance test. [Raw results](juggling-filter-observability.json), [methods and commands](../notes/scratch/experiments/2026-10-29_19-09_fixed-observer-negative.md), [analysis code](../scripts/analysis/juggle_filter_observability.py). Experimental observer remains isolated under scripts/analysis; no active trainer/evaluator uses it. All three RL jobs continue. [A018](agent_logbook.md#a018).
 
 <a id="e016"></a>
 

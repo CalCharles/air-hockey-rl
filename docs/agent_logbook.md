@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A018 — Evaluate and isolate an unsuccessful state-estimator candidate](#a018)
 - [A017 — Reassign the plateauing pilot to survival-focused scratch training](#a017)
 - [A016 — Publish the first multi-minute noisy scratch rollout and 2M comparison](#a016)
 - [A015 — Prepare authorized reward changes without relaxing simulator fidelity](#a015)
@@ -23,6 +24,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a018"></a>
+
+## A018 — 2026-10-29 14:09:34 -0500 — Evaluate and isolate an unsuccessful state-estimator candidate
+
+Codex tested a deterministic nominal-physics observer on saved noisy trajectories and retained it only as a reproducible negative analysis.
+
+**Evidence/decision:** [E017](experiment_logbook.md#e017) / [detailed note](../notes/scratch/experiments/2026-10-29_19-09_fixed-observer-negative.md) record larger state-estimation errors than E010 regressors and the unequal-input/impact-model limitations. No policy integration, GPU training, simulator alteration, action filtering or checkpoint initialization resulted.
+
+**Deliverables/checks:** [Experimental class](../scripts/analysis/puck_state_filter.py), [analysis driver](../scripts/analysis/juggle_filter_observability.py), [raw metrics](juggling-filter-observability.json), [figure](juggling-filter-observability.png), [tests](../scripts/td3/tests/test_puck_state_filter.py). All 26 targeted tests passed; three observer tests were rechecked after placing research code under analysis. Checked causal target alignment against E010, no observation/RNG mutation, latency/occlusion behavior and finite wall-prediction covariance. Relative links, image paths, anchors, TOC coverage and whitespace validated. Existing baseline/history/survival learners confirmed live and progressing; goal remains active.
 
 <a id="a017"></a>
 
