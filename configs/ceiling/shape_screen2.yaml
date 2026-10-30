@@ -1,0 +1,48 @@
+# Natural-strike shaping screen, round 2 (Task 1). Round 1 (shape_screen1) per-step edge penalties and
+# small per-contact bonuses left 33-88 % of contacts at the top edge. Round 2: much larger per-contact
+# edge / weak-hit penalties, a puck-exit-speed bonus, and ending the (training) episode on an edge contact.
+# All variants keep the 0.5 near-edge time penalty. 1 seed, 3M steps.
+name: shape_screen2
+base_args: configs/ceiling/base_td3_hist4.yaml
+seeds: [0]
+variants:
+  - name: term03
+    trainer: scripts.rma.train_base_policy
+    args: {train_every_steps: 32, q_updates: 8, actor_updates_per_iteration: 2, gamma: 0.995, actor_pre_tanh_penalty: 0.001, total_timesteps: 3000000, rma_mode: history_privileged, rma_latent_dim: 8, history_len: 50, step_features: latest_frame, history_embed_dim: 32, history_conv_channels: 32, eval_param_seed: 12345, shape_edge_coef: 0.5, shape_edge_term_margin: 0.03}
+    sim: {max_timesteps: 2000, random_variables: [paddle_density, puck_damping, gravity], random_variable_ranges: {paddle_density: [2250., 3750.], puck_damping: [0.0825, 0.1375], gravity: [-0.9125, -0.5475]}}
+  - name: term06
+    trainer: scripts.rma.train_base_policy
+    args: {train_every_steps: 32, q_updates: 8, actor_updates_per_iteration: 2, gamma: 0.995, actor_pre_tanh_penalty: 0.001, total_timesteps: 3000000, rma_mode: history_privileged, rma_latent_dim: 8, history_len: 50, step_features: latest_frame, history_embed_dim: 32, history_conv_channels: 32, eval_param_seed: 12345, shape_edge_coef: 0.5, shape_edge_term_margin: 0.06}
+    sim: {max_timesteps: 2000, random_variables: [paddle_density, puck_damping, gravity], random_variable_ranges: {paddle_density: [2250., 3750.], puck_damping: [0.0825, 0.1375], gravity: [-0.9125, -0.5475]}}
+  - name: term03_pout1
+    trainer: scripts.rma.train_base_policy
+    args: {train_every_steps: 32, q_updates: 8, actor_updates_per_iteration: 2, gamma: 0.995, actor_pre_tanh_penalty: 0.001, total_timesteps: 3000000, rma_mode: history_privileged, rma_latent_dim: 8, history_len: 50, step_features: latest_frame, history_embed_dim: 32, history_conv_channels: 32, eval_param_seed: 12345, shape_edge_coef: 0.5, shape_edge_term_margin: 0.03, shape_pout_coef: 1.0}
+    sim: {max_timesteps: 2000, random_variables: [paddle_density, puck_damping, gravity], random_variable_ranges: {paddle_density: [2250., 3750.], puck_damping: [0.0825, 0.1375], gravity: [-0.9125, -0.5475]}}
+  - name: term06_hit1_weak2
+    trainer: scripts.rma.train_base_policy
+    args: {train_every_steps: 32, q_updates: 8, actor_updates_per_iteration: 2, gamma: 0.995, actor_pre_tanh_penalty: 0.001, total_timesteps: 3000000, rma_mode: history_privileged, rma_latent_dim: 8, history_len: 50, step_features: latest_frame, history_embed_dim: 32, history_conv_channels: 32, eval_param_seed: 12345, shape_edge_coef: 0.5, shape_edge_term_margin: 0.06, shape_hit_coef: 1.0, shape_weak_coef: 2.0}
+    sim: {max_timesteps: 2000, random_variables: [paddle_density, puck_damping, gravity], random_variable_ranges: {paddle_density: [2250., 3750.], puck_damping: [0.0825, 0.1375], gravity: [-0.9125, -0.5475]}}
+  - name: edgehit5
+    trainer: scripts.rma.train_base_policy
+    args: {train_every_steps: 32, q_updates: 8, actor_updates_per_iteration: 2, gamma: 0.995, actor_pre_tanh_penalty: 0.001, total_timesteps: 3000000, rma_mode: history_privileged, rma_latent_dim: 8, history_len: 50, step_features: latest_frame, history_embed_dim: 32, history_conv_channels: 32, eval_param_seed: 12345, shape_edge_coef: 0.5, shape_edge_hit_coef: 5.0}
+    sim: {max_timesteps: 2000, random_variables: [paddle_density, puck_damping, gravity], random_variable_ranges: {paddle_density: [2250., 3750.], puck_damping: [0.0825, 0.1375], gravity: [-0.9125, -0.5475]}}
+  - name: edgehit5_weak2
+    trainer: scripts.rma.train_base_policy
+    args: {train_every_steps: 32, q_updates: 8, actor_updates_per_iteration: 2, gamma: 0.995, actor_pre_tanh_penalty: 0.001, total_timesteps: 3000000, rma_mode: history_privileged, rma_latent_dim: 8, history_len: 50, step_features: latest_frame, history_embed_dim: 32, history_conv_channels: 32, eval_param_seed: 12345, shape_edge_coef: 0.5, shape_edge_hit_coef: 5.0, shape_weak_coef: 2.0}
+    sim: {max_timesteps: 2000, random_variables: [paddle_density, puck_damping, gravity], random_variable_ranges: {paddle_density: [2250., 3750.], puck_damping: [0.0825, 0.1375], gravity: [-0.9125, -0.5475]}}
+  - name: edgehit10m12
+    trainer: scripts.rma.train_base_policy
+    args: {train_every_steps: 32, q_updates: 8, actor_updates_per_iteration: 2, gamma: 0.995, actor_pre_tanh_penalty: 0.001, total_timesteps: 3000000, rma_mode: history_privileged, rma_latent_dim: 8, history_len: 50, step_features: latest_frame, history_embed_dim: 32, history_conv_channels: 32, eval_param_seed: 12345, shape_edge_coef: 0.5, shape_edge_hit_coef: 10.0, shape_edge_hit_margin: 0.12}
+    sim: {max_timesteps: 2000, random_variables: [paddle_density, puck_damping, gravity], random_variable_ranges: {paddle_density: [2250., 3750.], puck_damping: [0.0825, 0.1375], gravity: [-0.9125, -0.5475]}}
+  - name: hit2_weak5
+    trainer: scripts.rma.train_base_policy
+    args: {train_every_steps: 32, q_updates: 8, actor_updates_per_iteration: 2, gamma: 0.995, actor_pre_tanh_penalty: 0.001, total_timesteps: 3000000, rma_mode: history_privileged, rma_latent_dim: 8, history_len: 50, step_features: latest_frame, history_embed_dim: 32, history_conv_channels: 32, eval_param_seed: 12345, shape_edge_coef: 0.5, shape_hit_coef: 2.0, shape_weak_coef: 5.0}
+    sim: {max_timesteps: 2000, random_variables: [paddle_density, puck_damping, gravity], random_variable_ranges: {paddle_density: [2250., 3750.], puck_damping: [0.0825, 0.1375], gravity: [-0.9125, -0.5475]}}
+  - name: edgehit3_weak3_pout2
+    trainer: scripts.rma.train_base_policy
+    args: {train_every_steps: 32, q_updates: 8, actor_updates_per_iteration: 2, gamma: 0.995, actor_pre_tanh_penalty: 0.001, total_timesteps: 3000000, rma_mode: history_privileged, rma_latent_dim: 8, history_len: 50, step_features: latest_frame, history_embed_dim: 32, history_conv_channels: 32, eval_param_seed: 12345, shape_edge_coef: 0.5, shape_edge_hit_coef: 3.0, shape_weak_coef: 3.0, shape_pout_coef: 2.0}
+    sim: {max_timesteps: 2000, random_variables: [paddle_density, puck_damping, gravity], random_variable_ranges: {paddle_density: [2250., 3750.], puck_damping: [0.0825, 0.1375], gravity: [-0.9125, -0.5475]}}
+  - name: pout3
+    trainer: scripts.rma.train_base_policy
+    args: {train_every_steps: 32, q_updates: 8, actor_updates_per_iteration: 2, gamma: 0.995, actor_pre_tanh_penalty: 0.001, total_timesteps: 3000000, rma_mode: history_privileged, rma_latent_dim: 8, history_len: 50, step_features: latest_frame, history_embed_dim: 32, history_conv_channels: 32, eval_param_seed: 12345, shape_edge_coef: 0.5, shape_pout_coef: 3.0}
+    sim: {max_timesteps: 2000, random_variables: [paddle_density, puck_damping, gravity], random_variable_ranges: {paddle_density: [2250., 3750.], puck_damping: [0.0825, 0.1375], gravity: [-0.9125, -0.5475]}}

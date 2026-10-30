@@ -1,0 +1,48 @@
+# Slower-play screen (follow-up to Task 1): the strike recipes (strike_shaped / strike_term03) send the puck
+# out at ~4.2 m/s and survive 73-80 % at 10k. Keep the strike (weak-contact penalty, edge rules), but cap the
+# puck-exit bonus at a lower speed (shape_pout_ref) and/or penalize exits above shape_fast_min. Paddle motion
+# is not constrained. Base: term03_weak3_pout2 unless named otherwise. 1 seed, 3M steps.
+name: slow_screen1
+base_args: configs/ceiling/base_td3_hist4.yaml
+seeds: [0]
+variants:
+  - name: p25_f35
+    trainer: scripts.rma.train_base_policy
+    args: {train_every_steps: 32, q_updates: 8, actor_updates_per_iteration: 2, gamma: 0.995, actor_pre_tanh_penalty: 0.001, total_timesteps: 3000000, rma_mode: history_privileged, rma_latent_dim: 8, history_len: 50, step_features: latest_frame, history_embed_dim: 32, history_conv_channels: 32, eval_param_seed: 12345, shape_edge_coef: 0.5, shape_edge_term_margin: 0.03, shape_weak_coef: 3.0, shape_pout_coef: 2.0, shape_pout_ref: 2.5, shape_fast_coef: 2.0, shape_fast_min: 3.5}
+    sim: {max_timesteps: 2000, random_variables: [paddle_density, puck_damping, gravity], random_variable_ranges: {paddle_density: [2250., 3750.], puck_damping: [0.0825, 0.1375], gravity: [-0.9125, -0.5475]}}
+  - name: p25_f30
+    trainer: scripts.rma.train_base_policy
+    args: {train_every_steps: 32, q_updates: 8, actor_updates_per_iteration: 2, gamma: 0.995, actor_pre_tanh_penalty: 0.001, total_timesteps: 3000000, rma_mode: history_privileged, rma_latent_dim: 8, history_len: 50, step_features: latest_frame, history_embed_dim: 32, history_conv_channels: 32, eval_param_seed: 12345, shape_edge_coef: 0.5, shape_edge_term_margin: 0.03, shape_weak_coef: 3.0, shape_pout_coef: 2.0, shape_pout_ref: 2.5, shape_fast_coef: 2.0, shape_fast_min: 3.0}
+    sim: {max_timesteps: 2000, random_variables: [paddle_density, puck_damping, gravity], random_variable_ranges: {paddle_density: [2250., 3750.], puck_damping: [0.0825, 0.1375], gravity: [-0.9125, -0.5475]}}
+  - name: p30
+    trainer: scripts.rma.train_base_policy
+    args: {train_every_steps: 32, q_updates: 8, actor_updates_per_iteration: 2, gamma: 0.995, actor_pre_tanh_penalty: 0.001, total_timesteps: 3000000, rma_mode: history_privileged, rma_latent_dim: 8, history_len: 50, step_features: latest_frame, history_embed_dim: 32, history_conv_channels: 32, eval_param_seed: 12345, shape_edge_coef: 0.5, shape_edge_term_margin: 0.03, shape_weak_coef: 3.0, shape_pout_coef: 2.0, shape_pout_ref: 3.0}
+    sim: {max_timesteps: 2000, random_variables: [paddle_density, puck_damping, gravity], random_variable_ranges: {paddle_density: [2250., 3750.], puck_damping: [0.0825, 0.1375], gravity: [-0.9125, -0.5475]}}
+  - name: p30_f35c1
+    trainer: scripts.rma.train_base_policy
+    args: {train_every_steps: 32, q_updates: 8, actor_updates_per_iteration: 2, gamma: 0.995, actor_pre_tanh_penalty: 0.001, total_timesteps: 3000000, rma_mode: history_privileged, rma_latent_dim: 8, history_len: 50, step_features: latest_frame, history_embed_dim: 32, history_conv_channels: 32, eval_param_seed: 12345, shape_edge_coef: 0.5, shape_edge_term_margin: 0.03, shape_weak_coef: 3.0, shape_pout_coef: 2.0, shape_pout_ref: 3.0, shape_fast_coef: 1.0, shape_fast_min: 3.5}
+    sim: {max_timesteps: 2000, random_variables: [paddle_density, puck_damping, gravity], random_variable_ranges: {paddle_density: [2250., 3750.], puck_damping: [0.0825, 0.1375], gravity: [-0.9125, -0.5475]}}
+  - name: p30_f35c3r1
+    trainer: scripts.rma.train_base_policy
+    args: {train_every_steps: 32, q_updates: 8, actor_updates_per_iteration: 2, gamma: 0.995, actor_pre_tanh_penalty: 0.001, total_timesteps: 3000000, rma_mode: history_privileged, rma_latent_dim: 8, history_len: 50, step_features: latest_frame, history_embed_dim: 32, history_conv_channels: 32, eval_param_seed: 12345, shape_edge_coef: 0.5, shape_edge_term_margin: 0.03, shape_weak_coef: 3.0, shape_pout_coef: 2.0, shape_pout_ref: 3.0, shape_fast_coef: 3.0, shape_fast_min: 3.5, shape_fast_ref: 1.0}
+    sim: {max_timesteps: 2000, random_variables: [paddle_density, puck_damping, gravity], random_variable_ranges: {paddle_density: [2250., 3750.], puck_damping: [0.0825, 0.1375], gravity: [-0.9125, -0.5475]}}
+  - name: nopout_f30
+    trainer: scripts.rma.train_base_policy
+    args: {train_every_steps: 32, q_updates: 8, actor_updates_per_iteration: 2, gamma: 0.995, actor_pre_tanh_penalty: 0.001, total_timesteps: 3000000, rma_mode: history_privileged, rma_latent_dim: 8, history_len: 50, step_features: latest_frame, history_embed_dim: 32, history_conv_channels: 32, eval_param_seed: 12345, shape_edge_coef: 0.5, shape_edge_term_margin: 0.03, shape_weak_coef: 3.0, shape_fast_coef: 2.0, shape_fast_min: 3.0}
+    sim: {max_timesteps: 2000, random_variables: [paddle_density, puck_damping, gravity], random_variable_ranges: {paddle_density: [2250., 3750.], puck_damping: [0.0825, 0.1375], gravity: [-0.9125, -0.5475]}}
+  - name: p25_f30_weak02
+    trainer: scripts.rma.train_base_policy
+    args: {train_every_steps: 32, q_updates: 8, actor_updates_per_iteration: 2, gamma: 0.995, actor_pre_tanh_penalty: 0.001, total_timesteps: 3000000, rma_mode: history_privileged, rma_latent_dim: 8, history_len: 50, step_features: latest_frame, history_embed_dim: 32, history_conv_channels: 32, eval_param_seed: 12345, shape_edge_coef: 0.5, shape_edge_term_margin: 0.03, shape_weak_coef: 3.0, shape_weak_vmin: 0.2, shape_pout_coef: 2.0, shape_pout_ref: 2.5, shape_fast_coef: 2.0, shape_fast_min: 3.0}
+    sim: {max_timesteps: 2000, random_variables: [paddle_density, puck_damping, gravity], random_variable_ranges: {paddle_density: [2250., 3750.], puck_damping: [0.0825, 0.1375], gravity: [-0.9125, -0.5475]}}
+  - name: p30_f35_v05
+    trainer: scripts.rma.train_base_policy
+    args: {train_every_steps: 32, q_updates: 8, actor_updates_per_iteration: 2, gamma: 0.995, actor_pre_tanh_penalty: 0.001, total_timesteps: 3000000, rma_mode: history_privileged, rma_latent_dim: 8, history_len: 50, step_features: latest_frame, history_embed_dim: 32, history_conv_channels: 32, eval_param_seed: 12345, shape_edge_coef: 0.5, shape_edge_term_margin: 0.03, shape_weak_coef: 3.0, shape_weak_vmin: 0.5, shape_pout_coef: 2.0, shape_pout_ref: 3.0, shape_fast_coef: 2.0, shape_fast_min: 3.5}
+    sim: {max_timesteps: 2000, random_variables: [paddle_density, puck_damping, gravity], random_variable_ranges: {paddle_density: [2250., 3750.], puck_damping: [0.0825, 0.1375], gravity: [-0.9125, -0.5475]}}
+  - name: edgehit3_v05_p30_f35
+    trainer: scripts.rma.train_base_policy
+    args: {train_every_steps: 32, q_updates: 8, actor_updates_per_iteration: 2, gamma: 0.995, actor_pre_tanh_penalty: 0.001, total_timesteps: 3000000, rma_mode: history_privileged, rma_latent_dim: 8, history_len: 50, step_features: latest_frame, history_embed_dim: 32, history_conv_channels: 32, eval_param_seed: 12345, shape_edge_coef: 0.5, shape_edge_hit_coef: 3.0, shape_weak_coef: 3.0, shape_weak_vmin: 0.5, shape_pout_coef: 2.0, shape_pout_ref: 3.0, shape_fast_coef: 2.0, shape_fast_min: 3.5}
+    sim: {max_timesteps: 2000, random_variables: [paddle_density, puck_damping, gravity], random_variable_ranges: {paddle_density: [2250., 3750.], puck_damping: [0.0825, 0.1375], gravity: [-0.9125, -0.5475]}}
+  - name: p25_f30c4r1
+    trainer: scripts.rma.train_base_policy
+    args: {train_every_steps: 32, q_updates: 8, actor_updates_per_iteration: 2, gamma: 0.995, actor_pre_tanh_penalty: 0.001, total_timesteps: 3000000, rma_mode: history_privileged, rma_latent_dim: 8, history_len: 50, step_features: latest_frame, history_embed_dim: 32, history_conv_channels: 32, eval_param_seed: 12345, shape_edge_coef: 0.5, shape_edge_term_margin: 0.03, shape_weak_coef: 3.0, shape_pout_coef: 2.0, shape_pout_ref: 2.5, shape_fast_coef: 4.0, shape_fast_min: 3.0, shape_fast_ref: 1.0}
+    sim: {max_timesteps: 2000, random_variables: [paddle_density, puck_damping, gravity], random_variable_ranges: {paddle_density: [2250., 3750.], puck_damping: [0.0825, 0.1375], gravity: [-0.9125, -0.5475]}}

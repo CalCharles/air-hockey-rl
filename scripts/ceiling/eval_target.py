@@ -10,6 +10,8 @@ Every policy in the ceiling search is scored here, on exactly
 Run with ``python -m scripts.ceiling.eval_target --protocol selection --label <name> <checkpoint_dir> ...``.
 Policies are evaluated in parallel, one process each. Results land in
 ``runs/ceiling/evals/<protocol>/<label>/<policy>/`` (``results.json``, ``summary.md``, GIFs).
+``--edge-velocity-fix`` evaluates on the target sim with the counterfactual top-edge velocity fix of
+``scripts/rma/edge_velocity_fix.py`` (instance patch; use a separate label).
 """
 
 from __future__ import annotations
@@ -54,15 +56,22 @@ def config_differences(cfg, target, prefix=""):
 def policy_name(run_dir):
     """Short unique name: the path below runs/, with separators flattened."""
     path = Path(run_dir).resolve()
-    try:
-        path = path.relative_to(REPO / "runs")
-    except ValueError:
-        pass
+    for root in (REPO / "runs", REPO):
+        try:
+            path = path.relative_to(root)
+            break
+        except ValueError:
+            pass
     return "__".join(path.parts)
 
 
-def _evaluate_chunk(run_dir, out_dir, protocol, episodes, seed_base, gif_steps):
+def _evaluate_chunk(run_dir, out_dir, protocol, episodes, seed_base, gif_steps, edge_velocity_fix=False):
     os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+    if edge_velocity_fix:
+        from airhockey.airhockey_base import AirHockeyBaseEnv
+        from scripts.rma.edge_velocity_fix import patch_env_class
+
+        patch_env_class(AirHockeyBaseEnv)
     from scripts.td3.juggle_survival import evaluate_checkpoint
 
     target = yaml.safe_load(TARGET_CONFIG.read_text())["air_hockey"]
@@ -106,6 +115,8 @@ def main():
                         help="split each policy's episodes over this many parallel processes")
     parser.add_argument("--allow-config-mismatch", action="store_true",
                         help="evaluate policies trained on a different sim config (e.g. privileged teachers)")
+    parser.add_argument("--edge-velocity-fix", action="store_true",
+                        help="remove the paddle's outward velocity at the workspace clip (scripts/rma/edge_velocity_fix.py)")
     cli = parser.parse_args()
 
     target = yaml.safe_load(TARGET_CONFIG.read_text())["air_hockey"]
@@ -127,7 +138,8 @@ def main():
         for run_dir, out in jobs.items():
             if cli.chunks == 1:
                 futures[run_dir] = [pool.submit(_evaluate_chunk, str(run_dir), str(out), cli.protocol,
-                                                protocol["episodes"], protocol["seed_base"], cli.gif_steps)]
+                                                protocol["episodes"], protocol["seed_base"], cli.gif_steps,
+                                                cli.edge_velocity_fix)]
                 continue
             futures[run_dir] = []
             for i in range(cli.chunks):
@@ -136,7 +148,7 @@ def main():
                 if count > 0:
                     futures[run_dir].append(pool.submit(
                         _evaluate_chunk, str(run_dir), str(out / f"chunk{i}"), cli.protocol, count,
-                        protocol["seed_base"] + start, cli.gif_steps if i == 0 else 0))
+                        protocol["seed_base"] + start, cli.gif_steps if i == 0 else 0, cli.edge_velocity_fix))
         for run_dir, chunk_futures in futures.items():
             results = [f.result() for f in chunk_futures]
             s = (results[0]["scenarios"]["target"]["summary"] if cli.chunks == 1
@@ -144,7 +156,8 @@ def main():
             print(f"{run_dir}: mean steps {s['restricted_mean_steps']:.1f}, median {s['median_observed_steps']:.0f}, "
                   f"reached cap {s['horizon_survival_fraction']:.1%}, juggles {s['mean_juggles']:.1f}", flush=True)
     (root / "protocol.json").write_text(json.dumps(
-        {"protocol": cli.protocol, **PROTOCOLS[cli.protocol], "target_config": str(TARGET_CONFIG.relative_to(REPO)),
+        {"protocol": cli.protocol, **PROTOCOLS[cli.protocol], "edge_velocity_fix": cli.edge_velocity_fix,
+         "target_config": str(TARGET_CONFIG.relative_to(REPO)),
          "policies": {str(r): str(o.relative_to(REPO)) for r, o in jobs.items()}}, indent=2) + "\n")
 
 

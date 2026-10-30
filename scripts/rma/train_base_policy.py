@@ -66,6 +66,8 @@ from airhockey import AirHockeyEnv
 from airhockey.renderers import AirHockeyRenderer
 from scripts.rma.bundle import build_rma_meta, write_rma_meta
 from scripts.rma.env_wrapper import EnvParamNormalizer, HistoryEnvVector, PrivilegedHistoryEnvVector, RMAEnvVector
+from scripts.rma.edge_velocity_fix import install_edge_velocity_fix
+from scripts.rma.motion_shaping import MotionShaping, install_motion_shaping
 from scripts.rma.networks import HistoryActor, PrivilegedHistoryActor, RMAActor
 from scripts.td3.helper.exploration_selector import (
     NumpyPrimitiveExplorationSelector,
@@ -115,6 +117,26 @@ class RMAArgs(Args):
     history_embed_dim: int = 32
     history_conv_channels: int = 32
     history_warm_start_plain: bool = False
+    # --- training-only motion shaping from the true sim state (scripts/rma/motion_shaping.py; 0 = off) ---
+    shape_edge_coef: float = 0.0
+    shape_edge_margin: float = 0.05
+    shape_hit_coef: float = 0.0
+    shape_hit_vref: float = 1.0
+    shape_weak_coef: float = 0.0
+    shape_weak_vmin: float = 0.3
+    shape_edge_hit_coef: float = 0.0
+    shape_edge_hit_margin: float = 0.08
+    shape_pout_coef: float = 0.0
+    shape_pout_min: float = 1.5
+    shape_pout_ref: float = 3.5
+    shape_edge_term_margin: float = 0.0
+    shape_cock_coef: float = 0.0
+    shape_cock_ref: float = 0.10
+    shape_fast_coef: float = 0.0
+    shape_fast_min: float = 3.5
+    shape_fast_ref: float = 1.5
+    # remove the paddle's outward velocity when the workspace clip pins it (scripts/rma/edge_velocity_fix.py)
+    edge_velocity_fix: bool = False
     # --- goal-conditioned tasks: hindsight experience replay (same knobs as td3_training_her) ---
     # Active when the sim config has ``return_goal_obs: true``; her_k = 0 -> plain goal-conditioned TD3.
     her_k: int = 4
@@ -213,12 +235,22 @@ def _entrypoint() -> None:
 
     if args.rma_mode not in ("privileged", "history", "history_privileged"):
         raise ValueError(f"rma_mode must be 'privileged', 'history' or 'history_privileged', got {args.rma_mode!r}")
+    env_fn = make_env(air_hockey_cfg, goal=goal_mode)
+    if args.edge_velocity_fix:
+        unfixed_env_fn = env_fn
+        env_fn = lambda: install_edge_velocity_fix(unfixed_env_fn())  # noqa: E731
+        print("[rma] edge velocity fix on (training sim only)")
+    shaping = MotionShaping.from_args(args)
+    if shaping.enabled:
+        base_env_fn = env_fn
+        env_fn = lambda: install_motion_shaping(base_env_fn(), shaping)  # noqa: E731
+        print(f"[rma] training-only motion shaping: {shaping}")
     if args.rma_mode == "history_privileged":
-        envs = PrivilegedHistoryEnvVector(make_env(air_hockey_cfg, goal=goal_mode), args.history_len, args.step_features, goal=goal_mode)
+        envs = PrivilegedHistoryEnvVector(env_fn, args.history_len, args.step_features, goal=goal_mode)
     elif args.rma_mode == "history":
-        envs = HistoryEnvVector(make_env(air_hockey_cfg, goal=goal_mode), args.history_len, args.step_features, goal=goal_mode)
+        envs = HistoryEnvVector(env_fn, args.history_len, args.step_features, goal=goal_mode)
     else:
-        envs = RMAEnvVector(make_env(air_hockey_cfg, goal=goal_mode), normalizer, goal=goal_mode)
+        envs = RMAEnvVector(env_fn, normalizer, goal=goal_mode)
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
     relabeler = None
     if goal_mode:
