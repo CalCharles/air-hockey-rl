@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E044 — Retrospective fixed2M baseline duration distribution](#e044)
 - [E043 — Reconstruct independent target-test physics and inspect marginal failures](#e043)
 - [E042 — Queue final history comparisons and conditional scratch actor-LR trial](#e042)
 - [E041 — Fixed 5M results retain target candidate; independent failures rendered](#e041)
@@ -49,6 +50,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e 044"></a>
+
+## E 044 — 2026-10-29 21:18:16 -0500 — Retrospective fixed 2 M baseline duration distribution
+
+The fixed 2 M baseline averages 50.9 seconds and 9.44 physical juggles across 32 saved episodes, independent of the 10 k cutoff.
+
+**Completed retrospective analysis; no new rollouts:** median 31.65 seconds;20/32 last 25 seconds,11/32 last 50 seconds,3/32 last 100 seconds. Longest 236.1 seconds/40 juggles; excluding it leaves 44.89 seconds on average. All 32 failed before 10 k, so the cutoff does not affect these durations. One training seed and reused evaluation seeds limit generalization. End labels do not identify root causes.
+
+[Detailed analysis](../notes/scratch/experiments/2026-10-30_02-18_baseline-2 m-duration-review.md); [episode CSV](juggling-baseline-2 m-duration.csv); [summary JSON](juggling-baseline-2 m-duration.json). Related: [E 015](experiment_logbook.md#e 015). Recording timestamp above is analysis time; original rollout timestamps were not reconstructed.
 
 <a id="e043"></a>
 

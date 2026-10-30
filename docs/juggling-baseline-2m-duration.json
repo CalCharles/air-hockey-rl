@@ -1,0 +1,40 @@
+{
+  "analysis_time_utc": "2026-10-30T02:18:16.450429+00:00",
+  "source": "runs/td3/noisy_iteration2_20261029_long/milestone_2m_benchmark/results.json",
+  "checkpoint": "runs/td3/noisy_iteration2_20261029_long/train/checkpoint_2000000",
+  "episode_count": 32,
+  "control_step_seconds": 0.05,
+  "mean_steps": 1017.34375,
+  "sample_std_steps": 1056.3959304612836,
+  "step_quantiles_0_25_50_75_90_100": [
+    92.0,
+    370.25,
+    633.0,
+    1391.25,
+    1729.3000000000002,
+    4722.0
+  ],
+  "mean_physical_juggles": 9.4375,
+  "sample_std_physical_juggles": 9.869920089881436,
+  "median_physical_juggles": 6.0,
+  "at_least_steps": {
+    "250": 26,
+    "500": 20,
+    "1000": 11,
+    "2000": 3
+  },
+  "at_least_physical_juggles": {
+    "1": 30,
+    "5": 20,
+    "10": 12,
+    "20": 4
+  },
+  "mean_steps_excluding_longest": 897.8387096774194,
+  "duration_juggle_correlation": 0.9777315913291972,
+  "episode_bootstrap_mean_steps_95": [
+    689.96484375,
+    1409.699999999999
+  ],
+  "bootstrap_seed": 0,
+  "bootstrap_resamples": 20000
+}

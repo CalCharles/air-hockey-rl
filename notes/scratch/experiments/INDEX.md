@@ -122,3 +122,5 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-10-29 23:21 | Final history tests and actor-LR queue | Queue frozen final comparisons and conditional scratch actor-LR reduction; no new training yet. | [2026-10-29_23-21_history-final-tests-low-actor-queue.md](2026-10-29_23-21_history-final-tests-low-actor-queue.md)
 
 - 2026-10-29 23:24 | Retained target physics audit | All32 reset observations exact; failures span sampled marginal physics ranges. | [2026-10-29_23-24_selected-target-physics-audit.md](2026-10-29_23-24_selected-target-physics-audit.md)
+
+- 2026-10-30 02:18 | Fixed2M duration review | Historical baseline averages50.9 seconds and9.44 juggles;10k cutoff does not censor results. | [file](2026-10-30_02-18_baseline-2m-duration-review.md)
