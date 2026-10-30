@@ -50,15 +50,15 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
 
-<a id="a 043"></a>
+<a id="a043"></a>
 
-## A 043 — 2026-10-29 21:18:16 -0500 — Document useful baseline juggling independently of evaluation cutoff
+## A043 — 2026-10-29 21:18:16 -0500 — Document useful baseline juggling independently of evaluation cutoff
 
 Analyzed and published the historical 2 M baseline distribution at the user’s request without modifying active training.
 
 Read saved per-episode results, calculated duration/juggle quantiles, threshold counts, failure-label combinations and a seeded episode-bootstrap interval. Published 32 raw rows and a machine-readable summary, preserved newer main-thread findings and excluded the unrelated untracked puck-score config. No new experiment, simulator change or GIF; existing 1.9 M GIFs are explicitly distinguished from this 2 M checkpoint.
 
-[Detailed analysis](../notes/scratch/experiments/2026-10-30_02-18_baseline-2 m-duration-review.md); [episode CSV](juggling-baseline-2 m-duration.csv); [summary JSON](juggling-baseline-2 m-duration.json). Related: [E 015](experiment_logbook.md#e 015). Recording timestamp above is analysis time; original rollout timestamps were not reconstructed.
+[Detailed analysis](../notes/scratch/experiments/2026-10-30_02-18_baseline-2m-duration-review.md); [episode CSV](juggling-baseline-2m-duration.csv); [summary JSON](juggling-baseline-2m-duration.json). Related: [E015](experiment_logbook.md#e015). Recording timestamp above is analysis time; original rollout timestamps were not reconstructed.
 
 <a id="a042"></a>
 
