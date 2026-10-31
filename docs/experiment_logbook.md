@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E046 — Launch fresh action-smoothness history trial with matched milestone tests](#e046)
 - [E045 — Plot raw juggling, reward and episode steps through completed 6M trials](#e045)
 - [E044 — Retrospective fixed2M baseline duration distribution](#e044)
 - [E043 — Reconstruct independent target-test physics and inspect marginal failures](#e043)
@@ -51,6 +52,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e046"></a>
+
+## E046 — 2026-10-31 17:43:56 -0500 — Launch fresh action-smoothness history trial with matched milestone tests
+
+Started fresh history training with an action-change penalty and queued descriptive comparisons at 1M, 3M and 6M steps.
+
+**Running, not a completed result:** Slurm job 115589 on slurm-node-003; 6M-step budget, random actor/critics/history encoder. Only action-change coefficient (0 to 0.05) and run name differ from history seed 0. Fixed online/target tests use 32 reused starts, 20k recordings and frozen copies; built-in validation uses eight starts and 5k recordings. Report physical/sensed juggles, episode steps, reward, command changes and paddle speed/acceleration without binary acceptance gates. No quality conclusion yet; figures unavailable for the new trial. Canonical config/scratch guards and reviewed simulator hashes passed; no sensing, dynamics, control or DR change. Related: [E045](#e045), [A045](agent_logbook.md#a045).
+
+[Detailed note and reproduction](../notes/scratch/experiments/2026-10-31_22-43_smooth-history-scratch.md); [launch provenance](juggling-smooth-training-launch.json); [orchestrator source](juggling-smooth-training-watch-source.txt). Actual runner launch: 2026-10-31 17:43:21 -0500; this heading records documentation time.
 
 <a id="e045"></a>
 

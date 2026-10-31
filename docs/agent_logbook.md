@@ -6,6 +6,8 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A046 — Launch smoothness training and attach durable raw-metric tests](#a046)
+- [A045 — Enable action-change penalty in a fresh history trial configuration](#a045)
 - [A044 — Publish training reward and juggle curves and reconcile completed trials](#a044)
 - [A043 — Document useful baseline juggling independently of evaluation cutoff](#a043)
 - [A042 — Audit retained-target reset physics while full-budget learners continue](#a042)
@@ -50,6 +52,26 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a046"></a>
+
+## A046 — 2026-10-31 17:43:56 -0500 — Launch smoothness training and attach durable raw-metric tests
+
+Launched the authorized smoothness trial from scratch and attached frozen milestone evaluations.
+
+**Running:** submitted Slurm job 115589 with a new GPU allocation, preserving existing jobs and the current branch. Verified effective differences, canonical scratch/sensing guards and prior reviewed simulator/config hashes. Durable orchestration tests online and target actors at 1M/3M/6M, snapshots weights, checks hashes, records failures and preserves the learner if auxiliary tests fail. Exact sources and provenance are retained. No training warm start or simulator/control/DR modification. Related preparation: [A045](#a045); experiment: [E046](experiment_logbook.md#e046).
+
+[Detailed note and reproduction](../notes/scratch/experiments/2026-10-31_22-43_smooth-history-scratch.md); [launch provenance](juggling-smooth-training-launch.json); [orchestrator source](juggling-smooth-training-watch-source.txt). Actual runner launch: 2026-10-31 17:43:21 -0500; this heading records documentation time.
+
+<a id="a045"></a>
+
+## A045 — 2026-10-31 14:09:48 -0500 — Enable action-change penalty in a fresh history trial configuration
+
+Prepared a fresh history policy configuration with an explicit action-change penalty after confirming the four completed history trials had it disabled.
+
+**Prepared, not launched:** [smooth scratch configuration](../configs/td3/sustained/noisy_history_smooth_scratch.yaml) differs from [original history seed 0](../configs/td3/sustained/noisy_history_scratch.yaml) only by run name and `actor_action_delta_penalty: 0.05` (previously default 0). The existing shared actor objective adds `0.05 * mean((action - previous_action)^2)` against normalized `(1-gamma)*Q`. This discourages abrupt commands; it is not measured motor energy or a physical smoothness guarantee. The coefficient is an unvalidated starting hypothesis. Existing checkpoints are unchanged and cannot acquire this preference without new training. Any future trial initializes actor/critic/history encoder from scratch.
+
+Reviewed simulator differences from merge `94acd81932c59f3cd3b827d6f39a0283747a1beb`; the optional observation-history change remains default false and is not enabled. The canonical environment/scratch guards and exact effective-config comparison passed. Existing actor-loss gradient test passed, confirming the penalty pushes toward previous actions. No simulator, observation, PID, action smoothing, workspace, termination or DR change; no training or new evaluation experiment, so no experiment entry is added. Future assessment should report physical/sensed juggles, episode steps, action/target changes and physical speed/acceleration jointly, without binary acceptance gates. Related: [A044](#a044), [E045](experiment_logbook.md#e045).
 
 <a id="a044"></a>
 

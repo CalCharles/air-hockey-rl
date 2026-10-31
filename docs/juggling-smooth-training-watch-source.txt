@@ -1,0 +1,53 @@
+from pathlib import Path
+import subprocess,sys,time,json,hashlib,shutil,os
+from datetime import datetime,timezone
+REPO=Path('/scratch/cluster/mrudolph/documents/air-hockey-rl')
+ROOT=Path('/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_20261031_seed0')
+EXPECTED={'airhockey/airhockey_base.py': 'a3a8c1c37fdb53015b6cb2568b1b9ccc39e6f6dff39323a4c25f97ae88fcb4d6', 'airhockey/sims/airhockey_box2d.py': '7059de3e1f8a979c706eb2546ba7674c4970226952bc002567a1d2aa20fa7eee', 'configs/new_juggle/sustained/original_sensing.yaml': 'd1bb13a7a4a5494507d085db230bdbe31854f0ddb556ccf88c3ec5aca0360385', 'configs/td3/sustained/noisy_history_smooth_scratch.yaml': '687786a925e8dcaba905fecac7d8cde222b9ea05aaeab6278d0f828cb100391b'}
+
+def check():
+    for f,h in EXPECTED.items():
+        if hashlib.sha256((REPO/f).read_bytes()).hexdigest()!=h:
+            raise RuntimeError('Reviewed input changed: '+f)
+
+def save(state):
+    p=ROOT/'smooth_test_status.json';t=p.with_suffix('.tmp')
+    t.write_text(json.dumps(state,indent=2)+'\n');t.replace(p)
+
+check()
+command=[sys.executable,'-u','-m','scripts.td3.juggle_noisy_scratch','--root',str(ROOT),'--args-file','configs/td3/sustained/noisy_history_smooth_scratch.yaml']
+trainer=subprocess.Popen(command,cwd=REPO)
+try:
+    for step in [1000000,3000000,6000000]:
+        checkpoint=ROOT/'train'/('checkpoint_'+str(step)) if step<6000000 else ROOT/'train'
+        ready=checkpoint/'survival_eval/results.json'
+        while True:
+            if ready.exists():
+                try:
+                    d=json.loads(ready.read_text())
+                    if d['scenarios']['training']['summary']['episodes']==8 and (step<6000000 or trainer.poll()==0):break
+                except json.JSONDecodeError:pass
+            code=trainer.poll()
+            if code is not None and (code!=0 or not ready.exists()):raise RuntimeError('Trainer stopped: '+str(code))
+            if ROOT.exists():save(dict(status='waiting',training_step=step,updated=datetime.now(timezone.utc).isoformat()))
+            time.sleep(20)
+        check()
+        for role in ['online','target']:
+            bundle=ROOT/('frozen_'+str(step)+'_'+role);bundle.mkdir()
+            source=checkpoint/('model.pth' if role=='online' else 'actor_target.pth')
+            shutil.copy2(source,bundle/'model.pth')
+            for filename in ['args.yaml','config.yaml','rma_meta.json']:shutil.copy2(checkpoint/filename,bundle/filename)
+            h=hashlib.sha256((bundle/'model.pth').read_bytes()).hexdigest()
+            save(dict(status='evaluating',training_step=step,role=role,model_sha256=h,updated=datetime.now(timezone.utc).isoformat()))
+            out=ROOT/('paired_'+str(step)+'_'+role+'_20k_eval')
+            cmd=[sys.executable,'-u','-m','scripts.td3.juggle_survival','--run-dir',str(bundle),'--scenario-set','training','--episodes','32','--horizon','20000','--seed-base','700000','--out-dir',str(out)]
+            with (ROOT/('paired_'+str(step)+'_'+role+'.log')).open('w') as log:subprocess.run(cmd,cwd=REPO,stdout=log,stderr=subprocess.STDOUT,check=True)
+            assert hashlib.sha256((bundle/'model.pth').read_bytes()).hexdigest()==h
+            (out/'frozen_provenance.json').write_text(json.dumps(dict(step=step,role=role,sha256=h,source=str(source),command=cmd),indent=2)+'\n')
+    if trainer.wait()!=0:raise RuntimeError('Trainer failed')
+    save(dict(status='complete',updated=datetime.now(timezone.utc).isoformat()))
+except Exception as exc:
+    if ROOT.exists():save(dict(status='failed',error=repr(exc),updated=datetime.now(timezone.utc).isoformat()))
+    # Preserve any running full-budget learner if an auxiliary evaluation fails.
+    trainer.wait()
+    raise

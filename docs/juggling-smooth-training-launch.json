@@ -1,0 +1,25 @@
+{
+  "requested_utc": "2026-10-31T22:43:19.472313+00:00",
+  "job_id": "115589",
+  "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_20261031_seed0",
+  "batch_source": "#!/bin/bash\n#SBATCH --job-name=juggle-smooth\n#SBATCH --partition=allnodes\n#SBATCH --nodes=1\n#SBATCH --ntasks=1\n#SBATCH --cpus-per-task=6\n#SBATCH --gres=gpu:1\n#SBATCH --mem=32G\n#SBATCH --time=12:00:00\n#SBATCH --output=/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_20261031_seed0_slurm.log\nset -euo pipefail\ncd /scratch/cluster/mrudolph/documents/air-hockey-rl\nexport OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 MPLCONFIGDIR=/tmp/airhockey-mpl\nexport PYTHONPATH=/scratch/cluster/mrudolph/documents/air-hockey-rl\nexec /scratch/cluster/mrudolph/documents/air-hockey-rl/.venv/bin/python -u /scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_20261031_seed0_orchestrate.py\n",
+  "orchestrator": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_20261031_seed0_orchestrate.py",
+  "reviewed_sha256": {
+    "airhockey/airhockey_base.py": "a3a8c1c37fdb53015b6cb2568b1b9ccc39e6f6dff39323a4c25f97ae88fcb4d6",
+    "airhockey/sims/airhockey_box2d.py": "7059de3e1f8a979c706eb2546ba7674c4970226952bc002567a1d2aa20fa7eee",
+    "configs/new_juggle/sustained/original_sensing.yaml": "d1bb13a7a4a5494507d085db230bdbe31854f0ddb556ccf88c3ec5aca0360385",
+    "configs/td3/sustained/noisy_history_smooth_scratch.yaml": "687786a925e8dcaba905fecac7d8cde222b9ea05aaeab6278d0f828cb100391b"
+  },
+  "initialization": "random actor, critics and history encoder; no pretrained checkpoint",
+  "budget": 6000000,
+  "smoothness_coefficient": 0.05,
+  "tests": "online and target at 1M, 3M, 6M; 32 reused starts 700000-700031; 20k recording limit; descriptive raw metrics, no binary gates",
+  "status": "running",
+  "node": "slurm-node-003",
+  "runner_started_utc": "2026-10-31T22:43:21.203811+00:00",
+  "saved_trainer_args_verified": {
+    "actor_action_delta_penalty": 0.05,
+    "model_path": null,
+    "seed": 0
+  }
+}
