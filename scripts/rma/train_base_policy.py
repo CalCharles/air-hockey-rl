@@ -66,6 +66,7 @@ from airhockey import AirHockeyEnv
 from airhockey.renderers import AirHockeyRenderer
 from scripts.rma.bundle import build_rma_meta, write_rma_meta
 from scripts.rma.env_wrapper import EnvParamNormalizer, HistoryEnvVector, PrivilegedHistoryEnvVector, RMAEnvVector
+from scripts.rma.action_latency import install_action_latency
 from scripts.rma.edge_velocity_fix import install_edge_velocity_fix
 from scripts.rma.motion_shaping import MotionShaping, install_motion_shaping
 from scripts.rma.networks import HistoryActor, PrivilegedHistoryActor, RMAActor
@@ -137,6 +138,8 @@ class RMAArgs(Args):
     shape_fast_ref: float = 1.5
     # remove the paddle's outward velocity when the workspace clip pins it (scripts/rma/edge_velocity_fix.py)
     edge_velocity_fix: bool = False
+    # apply every action this many control steps late (scripts/rma/action_latency.py; real-plant proxy)
+    action_latency_steps: int = 0
     # --- goal-conditioned tasks: hindsight experience replay (same knobs as td3_training_her) ---
     # Active when the sim config has ``return_goal_obs: true``; her_k = 0 -> plain goal-conditioned TD3.
     her_k: int = 4
@@ -240,6 +243,10 @@ def _entrypoint() -> None:
         unfixed_env_fn = env_fn
         env_fn = lambda: install_edge_velocity_fix(unfixed_env_fn())  # noqa: E731
         print("[rma] edge velocity fix on (training sim only)")
+    if args.action_latency_steps > 0:
+        undelayed_env_fn = env_fn
+        env_fn = lambda: install_action_latency(undelayed_env_fn(), args.action_latency_steps)  # noqa: E731
+        print(f"[rma] action latency {args.action_latency_steps} control steps")
     shaping = MotionShaping.from_args(args)
     if shaping.enabled:
         base_env_fn = env_fn

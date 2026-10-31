@@ -1,0 +1,26 @@
+# Seeds 3-4 of the realplant_screen2 fine-tune variants (ft_term03, ft_edgefix), so each has 5 seeds; seeds 0-2 are in realplant_screen2.
+name: realplant_seeds34
+base_args: configs/ceiling/base_td3_hist4.yaml
+target_config: configs/new_juggle/sysid_v2_hist4_realplant.yaml
+seeds: [0]
+variants:
+- name: ft_term03
+  trainer: scripts.rma.train_base_policy
+  args: {train_every_steps: 32, q_updates: 8, actor_updates_per_iteration: 2, gamma: 0.995, actor_pre_tanh_penalty: 0.001, total_timesteps: 1500000, rma_mode: history_privileged, rma_latent_dim: 8, history_len: 50, step_features: latest_frame, history_embed_dim: 32, history_conv_channels: 32, eval_param_seed: 12345, action_latency_steps: 2, shape_edge_coef: 0.5, shape_edge_term_margin: 0.03, shape_weak_coef: 3.0,
+    shape_pout_coef: 2.0, full_checkpoint_load: weights_only, exploration_pre_learning_action_source: policy, exploration_primitive_chance_start: 0.05}
+  sim: &id001
+    max_timesteps: 2000
+    random_variables: [paddle_density, puck_damping, gravity]
+    random_variable_ranges:
+      paddle_density: [2250.0, 3750.0]
+      puck_damping: [0.0825, 0.1375]
+      gravity: [-0.9125, -0.5475]
+  seeds: [3, 4]
+  init_from: {0: runs/ceiling/shape_screen3/term03_weak3_pout2_s0/checkpoint_2600000, 1: runs/ceiling/shape_seeds_term03/term03_weak3_pout2_s1/checkpoint_2700000, 2: runs/ceiling/shape_seeds_term03/term03_weak3_pout2_s2/checkpoint_2900000, 3: runs/ceiling/shape_seeds_term03/term03_weak3_pout2_s3/checkpoint_2200000, 4: runs/ceiling/shape_seeds_term03/term03_weak3_pout2_s4}
+- name: ft_edgefix
+  trainer: scripts.rma.train_base_policy
+  args: {train_every_steps: 32, q_updates: 8, actor_updates_per_iteration: 2, gamma: 0.995, actor_pre_tanh_penalty: 0.001, total_timesteps: 1500000, rma_mode: history_privileged, rma_latent_dim: 8, history_len: 50, step_features: latest_frame, history_embed_dim: 32, history_conv_channels: 32, eval_param_seed: 12345, action_latency_steps: 2, full_checkpoint_load: weights_only, exploration_pre_learning_action_source: policy,
+    exploration_primitive_chance_start: 0.05, edge_velocity_fix: true}
+  sim: *id001
+  seeds: [3, 4]
+  init_from: {0: runs/ceiling/task2_edgefix/hist50_privcritic_pretanh_edgefix_s0/checkpoint_2100000, 1: runs/ceiling/task2_edgefix/hist50_privcritic_pretanh_edgefix_s1/checkpoint_2600000, 2: runs/ceiling/task2_edgefix/hist50_privcritic_pretanh_edgefix_s2/checkpoint_2700000, 3: runs/ceiling/task2_edgefix/hist50_privcritic_pretanh_edgefix_s3/checkpoint_2700000, 4: runs/ceiling/task2_edgefix/hist50_privcritic_pretanh_edgefix_s4/checkpoint_2400000}

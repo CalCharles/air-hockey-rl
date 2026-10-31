@@ -38,7 +38,7 @@ PROTOCOLS = {
 # always runs on the unmodified target config. ``random_variables`` / ``random_variable_ranges``
 # are inert while ``domain_random`` is off (which is checked); the RMA/history trainer needs them.
 IGNORED_KEYS = {"seed", "max_timesteps", "enable_survival_bonus", "survival_bonus_per_step", "puck_loss_penalty",
-                "random_variables", "random_variable_ranges"}
+                "random_variables", "random_variable_ranges", "domain_random"}
 
 
 def config_differences(cfg, target, prefix=""):
