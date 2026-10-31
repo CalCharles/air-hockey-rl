@@ -1,0 +1,7 @@
+run,weights,horizon,episodes,mean_physical_juggles,mean_sensed_juggles,mean_steps,median_steps,source
+noisy_history_20261029_seed0,target,20000,32,138.40625,121.71875,9859.8125,7798.5,runs/td3/noisy_history_20261029_seed0/final_6m_target_status.json
+noisy_history_20261029_seed0,online,20000,32,77.53125,68.03125,5447.0,2419.5,runs/td3/noisy_history_20261029_seed0/final_6m_online_status.json
+noisy_history_20261029_seed1,target,20000,32,145.15625,128.625,10558.875,8706.0,runs/td3/noisy_history_20261029_seed1/final_6m_target_status.json
+noisy_history_20261029_seed1,online,20000,32,137.8125,120.375,9861.5625,9633.5,runs/td3/noisy_history_20261029_seed1/final_6m_online_status.json
+noisy_history_long_discount_20261029_seed0,target,20000,32,198.625,175.53125,14141.53125,19725.5,runs/td3/noisy_history_long_discount_20261029_seed0/final_6m_target_status.json
+noisy_history_long_discount_20261029_seed0,online,20000,32,107.125,92.40625,7518.75,3847.5,runs/td3/noisy_history_long_discount_20261029_seed0/final_6m_online_status.json

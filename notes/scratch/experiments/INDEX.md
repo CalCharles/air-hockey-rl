@@ -124,3 +124,5 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-10-29 23:24 | Retained target physics audit | All32 reset observations exact; failures span sampled marginal physics ranges. | [2026-10-29_23-24_selected-target-physics-audit.md](2026-10-29_23-24_selected-target-physics-audit.md)
 
 - 2026-10-30 02:18 | Fixed2M duration review | Historical baseline averages50.9 seconds and9.44 juggles;10k cutoff does not censor results. | [file](2026-10-30_02-18_baseline-2m-duration-review.md)
+
+- 2026-10-31 19:00 | History training plots | Published physical/sensed juggles, reward and episode-step curves for four completed 6M trials from saved data. | [note](2026-10-31_19-00_history-training-plots.md)

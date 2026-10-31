@@ -1,5 +1,7 @@
 # Noisy juggling progress
 
+2026-10-31 update: all four history trials completed. [Training reward, physical/sensed juggles, and episode-step plots with raw exports](../notes/scratch/experiments/2026-10-31_19-00_history-training-plots.md) supersede the older running-status snapshot below. Historical tables and gate terminology below are preserved as originally recorded.
+
 Generated 2026-10-29T23:19:21.210926+00:00 from saved evaluations; no new rollouts.
 
 Validation curves use repeatedly evaluated starts, not independent acceptance tests. Each point is an episode mean for one training seed. Check the CSV for episode counts, seeds and caps. Observed juggle counts use noisy camera positions and a direction-reversal filter. Contact timesteps are not distinct juggles. Cap fractions use the physical-trajectory heuristic when available, otherwise the legacy observed-count heuristic.

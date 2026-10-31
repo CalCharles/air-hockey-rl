@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E045 — Plot raw juggling, reward and episode steps through completed 6M trials](#e045)
 - [E044 — Retrospective fixed2M baseline duration distribution](#e044)
 - [E043 — Reconstruct independent target-test physics and inspect marginal failures](#e043)
 - [E042 — Queue final history comparisons and conditional scratch actor-LR trial](#e042)
@@ -50,6 +51,24 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e045"></a>
+
+## E045 — 2026-10-31 14:02:11 -0500 — Plot raw juggling, reward and episode steps through completed 6M trials
+
+Saved evaluations and training logs show juggle counts, reward and episode steps across all four completed history trials.
+
+Completed retrospective analysis; no new training or rollouts. Corrects the queued/running statuses in [E041](#e041) and [E042](#e042): all four trials completed. The final longer-discount target averages 198.63 physical juggles and 14,141.53 steps on the 32 reused 20k starts; the historical 3.6M target averages 225.06 and 15,427.63 on those starts. No binary success gates are used for this report. Checkpoint curves show eight reused starts per point, a 5k recording limit, online actors, and physical/sensed counts separately; exploratory training reward and episode steps use 100k-step bins. Limited horizons truncate both durations and counts. Each variant has one training seed except the separately shown history replication.
+
+[Detailed analysis and reproduction](../notes/scratch/experiments/2026-10-31_19-00_history-training-plots.md); [raw checkpoint episodes](assets/juggling/history-checkpoint-episodes.csv); [raw training episodes](assets/juggling/history-training-episodes.csv). Figures generated 2026-10-31 from historical saved artifacts:
+
+![Juggle counts, reward and episode steps](assets/juggling/history-checkpoint-curves.png)
+
+The four panels show unsmoothed episode means over training steps, with physical and sensed juggle counts separated.
+
+![Training reward and episode steps](assets/juggling/history-training-reward-curves.png)
+
+Means of exploratory training episodes in fixed 100k-step bins; no per-training-episode juggle counter was logged. Related: [A044](agent_logbook.md#a044).
 
 <a id="e044"></a>
 

@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A044 — Publish training reward and juggle curves and reconcile completed trials](#a044)
 - [A043 — Document useful baseline juggling independently of evaluation cutoff](#a043)
 - [A042 — Audit retained-target reset physics while full-budget learners continue](#a042)
 - [A041 — Guard final evaluations and prepare single-factor scratch follow-up](#a041)
@@ -49,6 +50,24 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a044"></a>
+
+## A044 — 2026-10-31 14:02:11 -0500 — Publish training reward and juggle curves and reconcile completed trials
+
+Generated and published raw training and checkpoint plots at the user’s request, then reconciled completed trial statuses.
+
+Added a read-only plot generator, standalone figures, raw episode CSVs and source hashes. Inspected Git state, saved evaluations, trainer logging and historical logbooks; preserved unrelated untracked puck-score configuration. Replaced binary gate framing for this analysis with physical/sensed juggles, reward and episode steps. No policy, simulator, sensing, control, randomization or training changes. Verified generated metrics and figures, relative links/images, unique anchors, full TOC coverage and whitespace before committing and pushing on the existing branch.
+
+[Detailed analysis and reproduction](../notes/scratch/experiments/2026-10-31_19-00_history-training-plots.md); [raw checkpoint episodes](assets/juggling/history-checkpoint-episodes.csv); [raw training episodes](assets/juggling/history-training-episodes.csv). Figures generated 2026-10-31 from historical saved artifacts:
+
+![Juggle counts, reward and episode steps](assets/juggling/history-checkpoint-curves.png)
+
+The four panels show unsmoothed episode means over training steps, with physical and sensed juggle counts separated.
+
+![Training reward and episode steps](assets/juggling/history-training-reward-curves.png)
+
+Means of exploratory training episodes in fixed 100k-step bins; no per-training-episode juggle counter was logged. Related: [E045](experiment_logbook.md#e045).
 
 <a id="a043"></a>
 
