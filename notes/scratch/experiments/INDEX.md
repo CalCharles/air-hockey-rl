@@ -129,3 +129,4 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-10-31 22:43 | Smooth history scratch | Launched 6M fresh smoothness training and queued frozen raw-metric milestone tests; results pending. | [note](2026-10-31_22-43_smooth-history-scratch.md)
 - 2026-11-01 17:06 | Smooth history completion | Penalty 0.05 reduced command-change RMS about 88% but final physical juggles fell to about one; all 6M training and milestone tests completed. | [note](2026-11-01_17-06_smooth-history-results.md)
 - 2026-11-01 22:48 | Weaker smoothness sweep | Six fresh 6M trials at three weaker coefficients and two seeds are running; added read-only physical motion distributions. | [note](2026-11-01_22-48_weaker-smoothness-sweep.md)
+- 2026-11-01 22:52 | Longer fixed-target reference | CPU-only 32-start 100k recording test of the unchanged retained 3.6M target is running alongside six smoothness learners. | [note](2026-11-01_22-52_long-juggle-reference.md)

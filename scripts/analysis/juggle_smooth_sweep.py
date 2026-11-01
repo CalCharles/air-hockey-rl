@@ -18,7 +18,7 @@ def main():
     launch = json.loads(Path('docs/juggling-smooth-sweep-launch.json').read_text())
     rows, statuses = [], []
     fig, axes = plt.subplots(2, 2, figsize=(12, 7), constrained_layout=True)
-    for run in launch['launches']:
+    for run_index, run in enumerate(launch['launches']):
         root = Path(run['root'])
         status_path = root/'status.json'
         status = json.loads(status_path.read_text())['status'] if status_path.exists() else 'submitted'
@@ -41,7 +41,7 @@ def main():
                 ['mean_true_state_juggles','restricted_mean_steps','mean_return','mean_action_delta_rms'],
                 ['Mean physical juggles','Mean episode steps','Mean episode reward','Mean action-change RMS']):
             if points:
-                ax.plot([s/1e6 for s,_ in points], [v[key] for _,v in points], label=run['name'].replace('noisy_history_smooth_','').replace('_20261101',''))
+                ax.plot([s/1e6 for s,_ in points], [v[key] for _,v in points], marker='.', color=f'C{run_index}', label=f"λ={ {'0005':'0.0005','002':'0.002','008':'0.008'}[run['name'].split('_')[3]]}, seed {run['manifest']['seed']}")
             ax.set(xlabel='Training steps (millions)', ylabel=ylabel)
             ax.grid(alpha=.25)
         for p in sorted(root.glob('paired_*/results.json')):

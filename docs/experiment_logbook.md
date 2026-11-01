@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E049 — Test the fixed retained target on 32 longer new starts](#e049)
 - [E048 — Launch six weaker-penalty scratch trials and measure sampled physical motion](#e048)
 - [E047 — Complete smoothness trial: smaller command changes accompany lost juggling](#e047)
 - [E046 — Launch fresh action-smoothness history trial with matched milestone tests](#e046)
@@ -54,6 +55,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e049"></a>
+
+## E049 — 2026-11-01 16:53:48 -0600 — Test the fixed retained target on 32 longer new starts
+
+A CPU-only test now measures the unchanged retained 3.6M target over 32 new starts with a 100k-step recording limit.
+
+**Running:** job 115864; seeds 9000000–9000031; same frozen actor SHA256 as the earlier independent test. Passed canonical sensing/scratch-environment checks and prior simulator hashes. Full original DR, dynamics and control remain unchanged. Results will report raw episode steps, physical/sensed juggles, reward and sampled motion, with no binary acceptance gate. No result or figure yet. This is independent reference evidence for the already-fixed actor; future reuse must be labeled. Six fresh learners remain live and total user GPUs remain nine. Related: [E048](#e048), [E039](#e039).
+
+[Detailed note](../notes/scratch/experiments/2026-11-01_22-52_long-juggle-reference.md); [launch and frozen-model evidence](juggling-long-reference-launch.json). Worker start 2026-11-01 16:52:36.988738 -0600; heading records documentation time.
 
 <a id="e048"></a>
 

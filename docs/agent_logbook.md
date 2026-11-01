@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A049 — Attach longer independent reference testing while six learners advance](#a049)
 - [A048 — Launch replicated weaker smoothness sweep under the GPU ceiling](#a048)
 - [A047 — Document completed smoothness trial and publish raw comparison evidence](#a047)
 - [A046 — Launch smoothness training and attach durable raw-metric tests](#a046)
@@ -54,6 +55,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a049"></a>
+
+## A049 — 2026-11-01 16:53:48 -0600 — Attach longer independent reference testing while six learners advance
+
+Verified all six learners advancing and launched a CPU-only longer reference test of the unchanged retained target.
+
+Observed live Slurm handles 115858–115863 and training steps advancing beyond 20k; no restart or reallocation. Reviewed robot-stop documentation: sampled simulation motion cannot certify UR5 stop risk, and reset/compliance/arm-state causes remain outside these metrics. Copied and hashed the historical actor, checked canonical config/simulator hashes, and submitted job 115864 with no GPUs. Preserved exact commands and sources; normalized a status-file trailing-newline defect without touching the live evaluation. Published the first available 100k-step checkpoint metrics/figure; physical juggle means 0–0.125 are preliminary and all learners continue. Related: [E049](experiment_logbook.md#e049), [A048](#a048).
+
+[Detailed note](../notes/scratch/experiments/2026-11-01_22-52_long-juggle-reference.md); [launch and frozen-model evidence](juggling-long-reference-launch.json). Worker start 2026-11-01 16:52:36.988738 -0600; heading records documentation time.
 
 <a id="a048"></a>
 
