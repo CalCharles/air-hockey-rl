@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E051 — Launch a weak-penalty longer-discount pair from scratch](#e051)
 - [E050 — Verify actual PID-target motion with exact saved-action replays](#e050)
 - [E049 — Test the fixed retained target on 32 longer new starts](#e049)
 - [E048 — Launch six weaker-penalty scratch trials and measure sampled physical motion](#e048)
@@ -56,6 +57,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e051"></a>
+
+## E051 — 2026-11-01 17:10:39 -0600 — Launch a weak-penalty longer-discount pair from scratch
+
+Two new fresh trials test coefficient 0.0005 with gamma 0.999 while the six gamma-0.995 learners continue.
+
+**Running jobs:** 115866/115867, seeds 0/1, 6M-step budgets. Simulator/control/sensing/DR unchanged; exact config differences and reviewed source hashes passed. Checkpoints every 500k reduce storage; matched online/target tests remain at 1M/3M/6M on reused 32-start 20k protocol. Eleven total user GPU requests including existing jobs, below 16. Hypothesis motivated by prior longer-discount results, not early selection of a winner. No performance result yet from the new pair. Goal remains active; no binary gates or new real-robot operation. Related: [E048](#e048), [E049](#e049), [E050](#e050).
+
+[Detailed note and reproduction](../notes/scratch/experiments/2026-11-01_23-09_smooth-long-discount-pair.md); [launch provenance](juggling-smooth-longdiscount-launch.json); [raw progress](juggling-smooth-sweep.md). Heading records documentation time; exact submission/runner times are preserved in provenance. New-pair figures are unavailable until its first 500k validation.
 
 <a id="e050"></a>
 

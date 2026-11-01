@@ -8,6 +8,7 @@ import csv
 from datetime import datetime, timezone
 import json
 import os
+import yaml
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -15,10 +16,15 @@ import matplotlib.pyplot as plt
 
 def main():
     report = Path('docs/juggling-smooth-sweep.md')
-    launch = json.loads(Path('docs/juggling-smooth-sweep-launch.json').read_text())
+    launches = []
+    for filename in ['docs/juggling-smooth-sweep-launch.json', 'docs/juggling-smooth-longdiscount-launch.json']:
+        if Path(filename).exists():
+            launches.extend(json.loads(Path(filename).read_text())['launches'])
     rows, statuses = [], []
     fig, axes = plt.subplots(2, 2, figsize=(12, 7), constrained_layout=True)
-    for run_index, run in enumerate(launch['launches']):
+    for run_index, run in enumerate(launches):
+        cfg = yaml.safe_load(Path(run['config']).read_text())
+        label = f"λ={cfg['actor_action_delta_penalty']:g}, γ={cfg['gamma']:g}, seed {cfg['seed']}"
         root = Path(run['root'])
         status_path = root/'status.json'
         status = json.loads(status_path.read_text())['status'] if status_path.exists() else 'submitted'
@@ -41,7 +47,7 @@ def main():
                 ['mean_true_state_juggles','restricted_mean_steps','mean_return','mean_action_delta_rms'],
                 ['Mean physical juggles','Mean episode steps','Mean episode reward','Mean action-change RMS']):
             if points:
-                ax.plot([s/1e6 for s,_ in points], [v[key] for _,v in points], marker='.', color=f'C{run_index}', label=f"λ={ {'0005':'0.0005','002':'0.002','008':'0.008'}[run['name'].split('_')[3]]}, seed {run['manifest']['seed']}")
+                ax.plot([s/1e6 for s,_ in points], [v[key] for _,v in points], marker='.', color=f'C{run_index}', label=label)
             ax.set(xlabel='Training steps (millions)', ylabel=ylabel)
             ax.grid(alpha=.25)
         for p in sorted(root.glob('paired_*/results.json')):
@@ -64,10 +70,10 @@ def main():
     with table.open('w') as f:
         writer=csv.DictWriter(f,fieldnames=fields,lineterminator='\n');writer.writeheader();writer.writerows(rows)
     lines=['# Smoothness sweep progress','', 'Generated '+datetime.now(timezone.utc).isoformat()+' from saved artifacts; no new rollouts.', '',
-        'Each coefficient (0.0005, 0.002, 0.008) has two independent fresh training seeds. Simulator, sensing, control and DR remain unchanged. GPU ceiling: 16 total user allocations, including other jobs. Training seeds remain separate curves; starts within one run are not training-seed replications.', '',
+        'Original sweep: each coefficient (0.0005, 0.002, 0.008) has two fresh training seeds at gamma 0.995. An additional pair uses coefficient 0.0005 and gamma 0.999. Original checkpoints are every 100k steps; the additional pair saves every 500k for storage. All budgets are 6M. Simulator, sensing, control and DR remain unchanged. GPU ceiling: 16 total user allocations, including other jobs. Training seeds remain separate curves; starts within one run are not training-seed replications.', '',
         '| Run | Slurm job | Saved runner status |','|---|---|---|']
     lines += [f'| {n} | {j} | {s} |' for n,j,s in statuses]
-    lines += ['',f'![Checkpoint metrics]({figure.name})' if rows else 'Checkpoint figures are unavailable until the first saved evaluation.', '',f'[Raw summary CSV]({table.name}); [launch provenance](juggling-smooth-sweep-launch.json).', '',
+    lines += ['',f'![Checkpoint metrics]({figure.name})' if rows else 'Checkpoint figures are unavailable until the first saved evaluation.', '',f'[Raw summary CSV]({table.name}); [original launch provenance](juggling-smooth-sweep-launch.json); [longer-discount pair](juggling-smooth-longdiscount-launch.json).', '',
         'Plots use saved 8-start 5k online-actor validation only. The CSV separately labels 32-start 20k online/target tests; do not mix these protocols. Physical juggles use true simulated trajectories; reward is the environment episode sum. Recording limits truncate counts and durations. Action-change RMS is a command diagnostic, not measured energy or UR5 safety. Physical speed/acceleration/jerk distributions are stored in each matched test’s local `motion_metrics.json`, with first-250-step and whole-episode estimates. Short episodes still have different exposure and visited states.', '',
         'No new policy-quality result yet.' if not rows else 'Curves are descriptive repeated-validation results. Independent longer tests and qualitative review follow candidate comparison; no binary acceptance gate is used.']
     lines += ['', 'Measurement clarification: [actual PID-target replay audit](../notes/scratch/experiments/2026-11-01_22-59_pid-target-replay-audit.md). Legacy `target_delta_rms_m` is a scaled displacement-change proxy, not direct PID-target telemetry.']

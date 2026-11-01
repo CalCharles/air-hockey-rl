@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A051 — Extend scratch smoothness research with a replicated discount comparison](#a051)
 - [A050 — Audit actual controller targets and publish exact-replay and GIF evidence](#a050)
 - [A049 — Attach longer independent reference testing while six learners advance](#a049)
 - [A048 — Launch replicated weaker smoothness sweep under the GPU ceiling](#a048)
@@ -56,6 +57,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a051"></a>
+
+## A051 — 2026-11-01 17:10:39 -0600 — Extend scratch smoothness research with a replicated discount comparison
+
+Launched two controlled longer-discount smoothness trials and extended the progress report to distinguish discount and seed.
+
+Revalidated all live jobs, GPU counts, disk headroom, canonical environment/scratch guards and simulator hashes. Counted nine then ten GPUs immediately before adding one each. New configurations change only permitted algorithm/artifact fields; no live trainer/evaluator source changes. Slurm confirms both new jobs running. Existing diagnostics confirm nonzero compiled regularization terms in all six original learners. The reference test remains live; no observation timeout was treated as a stopped process and no learner was restarted. Related: [E051](experiment_logbook.md#e051).
+
+[Detailed note and reproduction](../notes/scratch/experiments/2026-11-01_23-09_smooth-long-discount-pair.md); [launch provenance](juggling-smooth-longdiscount-launch.json); [raw progress](juggling-smooth-sweep.md). Heading records documentation time; exact submission/runner times are preserved in provenance. New-pair figures are unavailable until its first 500k validation.
 
 <a id="a050"></a>
 
