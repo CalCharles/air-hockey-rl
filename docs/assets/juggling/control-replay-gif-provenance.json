@@ -1,0 +1,10 @@
+{
+  "source": "runs/td3/noisy_history_smooth_20261031_seed0/paired_6000000_online_20k_eval/training.gif",
+  "destination": "docs/assets/juggling/penalty-0p05-6m-online-episode700000.gif",
+  "sha256": "d78be1e6eba44206af70fffaaf1e85cd32052a13759dccd1946c18e49f01d996",
+  "seed": 700000,
+  "episode_steps": 106,
+  "physical_juggles": 1,
+  "frames": 106,
+  "duration_seconds": 5.3
+}

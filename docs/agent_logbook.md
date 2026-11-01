@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A050 — Audit actual controller targets and publish exact-replay and GIF evidence](#a050)
 - [A049 — Attach longer independent reference testing while six learners advance](#a049)
 - [A048 — Launch replicated weaker smoothness sweep under the GPU ceiling](#a048)
 - [A047 — Document completed smoothness trial and publish raw comparison evidence](#a047)
@@ -55,6 +56,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a050"></a>
+
+## A050 — 2026-11-01 17:01:00 -0600 — Audit actual controller targets and publish exact-replay and GIF evidence
+
+Added a standalone exact-action replay diagnostic to separate actual PID-target motion from the scaled action-change proxy.
+
+Kept live trainer/evaluator and simulator sources untouched; read only cached targets/body velocities during diagnostic replays and verified every saved state/outcome with exact numeric equality. Exported both 32-episode prefix records with source trajectory hashes, clarified reset-edge conventions and differing motion definitions, and copied an existing performance GIF into tracked docs. Reviewed GIF start/end frames, frame count and duration. All six learner and CPU-reference Slurm handles remain running; published the latest available checkpoint report without selecting or stopping trials. Related: [E050](experiment_logbook.md#e050).
+
+[Detailed measurement correction and reproduction](../notes/scratch/experiments/2026-11-01_22-59_pid-target-replay-audit.md); [baseline replay](assets/juggling/baseline-pid-target-replay.json); [strong-penalty replay](assets/juggling/strong-smooth-pid-target-replay.json).
+
+![Existing strong-penalty final episode](assets/juggling/penalty-0p05-6m-online-episode700000.gif)
+
+Existing historical GIF copied 2026-11-01: seed 700000, 106 steps / one physical juggle. It illustrates the strong-penalty failure, not average performance.
 
 <a id="a049"></a>
 

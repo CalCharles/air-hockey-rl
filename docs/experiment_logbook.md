@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E050 — Verify actual PID-target motion with exact saved-action replays](#e050)
 - [E049 — Test the fixed retained target on 32 longer new starts](#e049)
 - [E048 — Launch six weaker-penalty scratch trials and measure sampled physical motion](#e048)
 - [E047 — Complete smoothness trial: smaller command changes accompany lost juggling](#e047)
@@ -55,6 +56,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e050"></a>
+
+## E050 — 2026-11-01 17:01:00 -0600 — Verify actual PID-target motion with exact saved-action replays
+
+Exact replays show that the historical target-change metric is a displacement-request proxy and differs from actual filtered PID-target changes.
+
+**Completed diagnostic:** 64 saved episodes and 10,111 prefix steps reproduce all observations, rewards, termination flags and true body positions exactly. Actual PID-target change RMS averages 0.054785 m baseline versus 0.014940 m penalty 0.05; same-prefix scaled-action proxy averages 0.076177 m versus 0.009675 m. Different exposure and visited states remain confounders. Earlier raw values are preserved; interpret `target_delta_rms_m` as the scaled displacement-change proxy. No new policy-quality test or training. Published the existing strong-penalty 106-step/one-juggle GIF. Six weaker learners and the long reference test remain live. Related: [E047](#e047), [E048](#e048), [E049](#e049).
+
+[Detailed measurement correction and reproduction](../notes/scratch/experiments/2026-11-01_22-59_pid-target-replay-audit.md); [baseline replay](assets/juggling/baseline-pid-target-replay.json); [strong-penalty replay](assets/juggling/strong-smooth-pid-target-replay.json).
+
+![Existing strong-penalty final episode](assets/juggling/penalty-0p05-6m-online-episode700000.gif)
+
+Existing historical GIF copied 2026-11-01: seed 700000, 106 steps / one physical juggle. It illustrates the strong-penalty failure, not average performance.
 
 <a id="e049"></a>
 
