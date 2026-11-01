@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E053 — Queue terminal-state continuation for the fixed long-reference test](#e053)
 - [E052 — Publish physical-motion curves with a matched historical control](#e052)
 - [E051 — Launch a weak-penalty longer-discount pair from scratch](#e051)
 - [E050 — Verify actual PID-target motion with exact saved-action replays](#e050)
@@ -58,6 +59,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e053"></a>
+
+## E053 — 2026-11-01 17:33:50 -0600 — Queue terminal-state continuation for the fixed long-reference test
+
+Queued a CPU-only continuation of the same fixed-policy cohort after Slurm denied extending the still-live original reference allocation.
+
+**Queued, not completed:** job 115869 depends on afterany:115864, then independently checks terminal accounting state. Reuses valid completed episodes; evaluates only missing/partial cases from the same 32 reset seeds and frozen actor. No restart due to polling delay, no new policy training or simulator/sensing/control/DR changes. Parent remains live at its original four-hour limit. Three artifact-reuse tests passed and the existing first 100k/1,403-juggle trajectory validates. GPU count remains 11; the continuation uses none. No aggregate result or new figure yet. Related: [E049](#e049), [E052](#e052).
+
+[Detailed note and reproduction](../notes/scratch/experiments/2026-11-01_23-32_long-reference-continuation.md); [exact dependency/manifest](juggling-long-reference-completion-queue.json). Heading records documentation time; queue timestamp is retained in provenance.
 
 <a id="e052"></a>
 

@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A053 — Preserve long-reference work through a dependency-guarded CPU continuation](#a053)
 - [A052 — Add physical motion and matched-budget control to sweep reporting](#a052)
 - [A051 — Extend scratch smoothness research with a replicated discount comparison](#a051)
 - [A050 — Audit actual controller targets and publish exact-replay and GIF evidence](#a050)
@@ -58,6 +59,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a053"></a>
+
+## A053 — 2026-11-01 17:33:50 -0600 — Preserve long-reference work through a dependency-guarded CPU continuation
+
+Prepared a terminal-state-only continuation so a short reference allocation need not discard completed cases or restart the full cohort.
+
+Verified the parent live; attempted an extension and recorded Slurm permission denial without treating it as a stopped process. Queued job 115869 with an afterany dependency and a separate accounting-state guard. Added integrity checks for completed/partial/corrupt NPZs, frozen source/model checks, per-case persistence and raw-cohort aggregation with unknown termination causes kept explicit. Three meaningful reuse tests passed; no live learner/evaluator source changed. Related: [E053](experiment_logbook.md#e053).
+
+[Detailed note and reproduction](../notes/scratch/experiments/2026-11-01_23-32_long-reference-continuation.md); [exact dependency/manifest](juggling-long-reference-completion-queue.json). Heading records documentation time; queue timestamp is retained in provenance.
 
 <a id="a052"></a>
 
