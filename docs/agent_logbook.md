@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A052 — Add physical motion and matched-budget control to sweep reporting](#a052)
 - [A051 — Extend scratch smoothness research with a replicated discount comparison](#a051)
 - [A050 — Audit actual controller targets and publish exact-replay and GIF evidence](#a050)
 - [A049 — Attach longer independent reference testing while six learners advance](#a049)
@@ -57,6 +58,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a052"></a>
+
+## A052 — 2026-11-01 17:19:12 -0600 — Add physical motion and matched-budget control to sweep reporting
+
+Extended read-only sweep reporting with physical motion distributions, a protocol-matched historical control and raw per-episode exports.
+
+Kept live trainer/evaluator/simulator sources unchanged; cached existing motion diagnostics only beside ignored results. Added protocol/sample-count guards and checked exported means/medians against all 264 episode rows. Compared equal training budgets and preserved separate seed curves. Reviewed both figures, clarified derived displacement speed versus cached velocity, checked links/images/anchors/TOCs and whitespace. Eight learners plus CPU reference remain live; total user GPU allocations 11. Related: [E052](experiment_logbook.md#e052).
+
+[Detailed snapshot and reproduction](../notes/scratch/experiments/2026-11-01_23-18_smoothness-motion-curves.md); [raw episode metrics](juggling-smooth-sweep-episodes.csv); [moving report](juggling-smooth-sweep.md).
+
+![Sampled physical motion distributions](assets/juggling/sweep-early-motion-20261101.png)
+
+Figure generated 2026-11-01 from saved checkpoint trajectories: each point is the median episode-p95 position-derived motion statistic. Historical control is dashed black. These are sampled diagnostics with different durations/states, not UR5 safety thresholds.
 
 <a id="a051"></a>
 

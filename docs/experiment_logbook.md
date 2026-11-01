@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E052 — Publish physical-motion curves with a matched historical control](#e052)
 - [E051 — Launch a weak-penalty longer-discount pair from scratch](#e051)
 - [E050 — Verify actual PID-target motion with exact saved-action replays](#e050)
 - [E049 — Test the fixed retained target on 32 longer new starts](#e049)
@@ -57,6 +58,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e052"></a>
+
+## E052 — 2026-11-01 17:19:12 -0600 — Publish physical-motion curves with a matched historical control
+
+Matched early checkpoint measurements show reduced sampled motion with regularization, while physical juggling remains below one per episode at 500k.
+
+**Completed analysis, learners running:** added historical coefficient-0 seed-0 checkpoints on the same eight starts/5k horizon and physical displacement-speed/acceleration/jerk curves. At 500k, baseline averages 0.375 physical juggles/85 steps; coefficient 0.002 seeds 0/1 average 0.500/0.375 juggles and 73.625/72.375 steps, with lower sampled episode-p95 acceleration/jerk. Coefficient 0.008 also has lower motion but weak juggling. No full-budget conclusion or binary gate. Duration/visited-state confounding and position-vs-velocity definitions remain explicit. Verified 33 summaries against 264 raw episode rows; no new rollouts or simulator/learner changes. Related: [E048](#e048), [E050](#e050), [E051](#e051).
+
+[Detailed snapshot and reproduction](../notes/scratch/experiments/2026-11-01_23-18_smoothness-motion-curves.md); [raw episode metrics](juggling-smooth-sweep-episodes.csv); [moving report](juggling-smooth-sweep.md).
+
+![Sampled physical motion distributions](assets/juggling/sweep-early-motion-20261101.png)
+
+Figure generated 2026-11-01 from saved checkpoint trajectories: each point is the median episode-p95 position-derived motion statistic. Historical control is dashed black. These are sampled diagnostics with different durations/states, not UR5 safety thresholds.
 
 <a id="e051"></a>
 

@@ -1,6 +1,6 @@
 # Smoothness sweep progress
 
-Generated 2026-11-01T23:11:16.026076+00:00 from saved artifacts; no new rollouts.
+Generated 2026-11-01T23:17:48.682682+00:00 from saved artifacts; no new rollouts.
 
 Original sweep: each coefficient (0.0005, 0.002, 0.008) has two fresh training seeds at gamma 0.995. An additional pair uses coefficient 0.0005 and gamma 0.999. Original checkpoints are every 100k steps; the additional pair saves every 500k for storage. All budgets are 6M. Simulator, sensing, control and DR remain unchanged. GPU ceiling: 16 total user allocations, including other jobs. Training seeds remain separate curves; starts within one run are not training-seed replications.
 
@@ -15,11 +15,15 @@ Original sweep: each coefficient (0.0005, 0.002, 0.008) has two fresh training s
 | noisy_history_smooth_0005_g0999_20261101_seed0 | 115866 | training |
 | noisy_history_smooth_0005_g0999_20261101_seed1 | 115867 | training |
 
-![Checkpoint metrics](juggling-smooth-sweep.png)
+![Checkpoint juggling, steps, reward and commands](juggling-smooth-sweep.png)
 
-[Raw summary CSV](juggling-smooth-sweep.csv); [original launch provenance](juggling-smooth-sweep-launch.json); [longer-discount pair](juggling-smooth-longdiscount-launch.json).
+![Sampled physical speed, acceleration and jerk](juggling-smooth-sweep-motion.png)
 
-Plots use saved 8-start 5k online-actor validation only. The CSV separately labels 32-start 20k online/target tests; do not mix these protocols. Physical juggles use true simulated trajectories; reward is the environment episode sum. Recording limits truncate counts and durations. Action-change RMS is a command diagnostic, not measured energy or UR5 safety. Physical speed/acceleration/jerk distributions are stored in each matched test’s local `motion_metrics.json`, with first-250-step and whole-episode estimates. Short episodes still have different exposure and visited states.
+[Raw summary CSV](juggling-smooth-sweep.csv); [per-episode metrics](juggling-smooth-sweep-episodes.csv); [original launch provenance](juggling-smooth-sweep-launch.json); [longer-discount pair](juggling-smooth-longdiscount-launch.json).
+
+Curves use saved 8-start 5k online-actor validation only, including the historical unregularized seed-0 control on exactly the same seeds/horizon. That control is shown only through the latest available sweep checkpoint. The CSV separately labels historical checkpoints and 32-start 20k online/target tests; do not mix protocols. No interpolation supplies missing checkpoints. Latest points can be at different training budgets; compare the same x-coordinate, not each curve’s last point. Physical juggles use true simulated trajectories; reward is the environment episode sum. Recording limits truncate counts and durations.
+
+Motion curves show the median across episodes of each episode’s p95 speed, acceleration or jerk, using finite differences of true paddle positions at the control rate. These are whole-episode distributions, with different lengths and visited states. They exclude the reset-position sample and do not capture all substep spikes, joint torques or UR5 controller behavior. Position-difference displacement speed is not cached body velocity; solver/workspace position corrections can contribute, so do not equate these estimates to the simulator velocity cap. They are not robot-safety thresholds. Per-episode diagnostics remain beside the original local results in `motion_metrics.json`. Action-change RMS remains a separate command diagnostic, not measured motor energy.
 
 Curves are descriptive repeated-validation results. Independent longer tests and qualitative review follow candidate comparison; no binary acceptance gate is used.
 

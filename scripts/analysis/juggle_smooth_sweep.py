@@ -1,17 +1,62 @@
-"""Publish descriptive raw metrics from the active smoothness sweep.
+"""Publish descriptive raw juggling and physical-motion metrics from saved runs.
 
 Reproduce: .venv/bin/python -m scripts.analysis.juggle_smooth_sweep
-Never runs training, environments or acceptance gates.
+No policy loading, environments, training, acceptance gates or simulator changes.
 """
 from pathlib import Path
 import csv
 from datetime import datetime, timezone
 import json
-import os
+import numpy as np
 import yaml
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from scripts.analysis.juggle_motion_metrics import analyze
+
+MOTION = {
+    'median_episode_p95_speed_m_s': 'speed_m_s',
+    'median_episode_p95_acceleration_m_s2': 'acceleration_m_s2',
+    'median_episode_p95_jerk_m_s3': 'jerk_m_s3',
+}
+
+
+def motion_summary(result_path):
+    """Cache read-only position diagnostics beside the original ignored results."""
+    path = result_path.parent/'motion_metrics.json'
+    if not path.exists():
+        analyze(result_path)
+    data = json.loads(path.read_text())
+    rows = [r for r in data['episodes'] if r['scenario'] == 'training']
+    for row in rows:
+        for metric, order in [('speed_m_s', 1), ('acceleration_m_s2', 2), ('jerk_m_s3', 3)]:
+            if row['whole_episode'][metric]['samples'] != max(0, row['steps']-order):
+                raise ValueError('Motion sample count does not match episode steps')
+    output = {}
+    for field, metric in MOTION.items():
+        values = [r['whole_episode'][metric]['p95'] for r in rows if r['whole_episode'][metric]['p95'] is not None]
+        output[field] = float(np.median(values)) if values else None
+    return output, rows
+
+
+def collect(result_path, run, phase, step, weights, episode_rows):
+    payload = json.loads(result_path.read_text())
+    summary = payload['scenarios']['training']['summary']
+    motion, details = motion_summary(result_path)
+    indexed = {r['seed']: r for r in details}
+    for ep in payload['scenarios']['training']['episodes']:
+        m = indexed[ep['seed']]
+        episode_rows.append(dict(run=run, phase=phase, step=step, weights=weights, seed=ep['seed'],
+            steps=ep['steps'], physical_juggles=ep['true_state_juggles'], sensed_juggles=ep['juggles'], reward=ep['return'],
+            position_p95_speed_m_s=m['whole_episode']['speed_m_s']['p95'],
+            position_p95_acceleration_m_s2=m['whole_episode']['acceleration_m_s2']['p95'],
+            position_p95_jerk_m_s3=m['whole_episode']['jerk_m_s3']['p95'], source=str(result_path),
+            trajectory=str(result_path.parent/ep['trajectory'])))
+    return dict(run=run, phase=phase, step=step, weights=weights,
+        episodes=payload['episodes_per_scenario'], seed_base=payload['seed_base'], horizon=payload['horizon'],
+        physical_juggles=summary['mean_true_state_juggles'], sensed_juggles=summary['mean_juggles'],
+        episode_steps=summary['restricted_mean_steps'], reward=summary['mean_return'],
+        action_delta_rms=summary['mean_action_delta_rms'], **motion, source=str(result_path))
 
 
 def main():
@@ -20,8 +65,7 @@ def main():
     for filename in ['docs/juggling-smooth-sweep-launch.json', 'docs/juggling-smooth-longdiscount-launch.json']:
         if Path(filename).exists():
             launches.extend(json.loads(Path(filename).read_text())['launches'])
-    rows, statuses = [], []
-    fig, axes = plt.subplots(2, 2, figsize=(12, 7), constrained_layout=True)
+    rows, statuses, curves, episode_rows = [], [], [], []
     for run_index, run in enumerate(launches):
         cfg = yaml.safe_load(Path(run['config']).read_text())
         label = f"λ={cfg['actor_action_delta_penalty']:g}, γ={cfg['gamma']:g}, seed {cfg['seed']}"
@@ -33,50 +77,77 @@ def main():
         if (root/'train/survival_eval/results.json').exists():
             results.append(root/'train/survival_eval/results.json')
         points = []
-        for p in results:
-            payload = json.loads(p.read_text())
-            summary = payload['scenarios']['training']['summary']
-            step = 6000000 if p.parents[1].name == 'train' else int(p.parents[1].name.split('_')[-1])
-            points.append((step, summary))
-            rows.append(dict(run=run['name'], phase='checkpoint_validation', step=step, weights='online',
-                episodes=payload['episodes_per_scenario'], horizon=payload['horizon'],
-                physical_juggles=summary['mean_true_state_juggles'], sensed_juggles=summary['mean_juggles'],
-                episode_steps=summary['restricted_mean_steps'], reward=summary['mean_return'],
-                action_delta_rms=summary['mean_action_delta_rms'], source=str(p)))
-        for ax, key, ylabel in zip(axes.flat,
-                ['mean_true_state_juggles','restricted_mean_steps','mean_return','mean_action_delta_rms'],
-                ['Mean physical juggles','Mean episode steps','Mean episode reward','Mean action-change RMS']):
-            if points:
-                ax.plot([s/1e6 for s,_ in points], [v[key] for _,v in points], marker='.', color=f'C{run_index}', label=label)
-            ax.set(xlabel='Training steps (millions)', ylabel=ylabel)
-            ax.grid(alpha=.25)
-        for p in sorted(root.glob('paired_*/results.json')):
-            payload = json.loads(p.read_text()); summary = payload['scenarios']['training']['summary']
-            parts = p.parent.name.split('_')
-            rows.append(dict(run=run['name'], phase='32_reused_starts', step=int(parts[1]), weights=parts[2],
-                episodes=payload['episodes_per_scenario'], horizon=payload['horizon'],
-                physical_juggles=summary['mean_true_state_juggles'], sensed_juggles=summary['mean_juggles'],
-                episode_steps=summary['restricted_mean_steps'], reward=summary['mean_return'],
-                action_delta_rms=summary['mean_action_delta_rms'], source=str(p)))
-    figure = report.with_suffix('.png')
-    if rows:
-        axes[0,0].legend(fontsize=8)
-    fig.suptitle('Fresh smoothness sweep: unsmoothed checkpoint means\n8 reused starts per point, 5k recording limit; no binary gates')
-    if rows:
-        fig.savefig(figure,dpi=160)
-    plt.close(fig)
+        for path in results:
+            step = 6000000 if path.parents[1].name == 'train' else int(path.parents[1].name.split('_')[-1])
+            row = collect(path, run['name'], 'checkpoint_validation', step, 'online', episode_rows)
+            if (row['episodes'], row['seed_base'], row['horizon']) != (8, 10000, 5000):
+                raise ValueError('Unexpected checkpoint protocol; cannot combine curves')
+            rows.append(row); points.append(row)
+        curves.append((label, points, dict(color=f'C{run_index}', marker='.')))
+        for path in sorted(root.glob('paired_*/results.json')):
+            parts = path.parent.name.split('_')
+            rows.append(collect(path, run['name'], '32_reused_starts', int(parts[1]), parts[2], episode_rows))
+    # The historical control uses the same eight starts and recording horizon;
+    # do not extend its curve past the newest available sweep checkpoint.
+    limit = max((r['step'] for r in rows if r['phase'] == 'checkpoint_validation'), default=0)
+    baseline = Path('runs/td3/noisy_history_20261029_seed0/train')
+    points = []
+    paths = sorted(baseline.glob('checkpoint_*/survival_eval/results.json'), key=lambda p:int(p.parents[1].name.split('_')[-1]))
+    if limit >= 6000000 and (baseline/'survival_eval/results.json').exists():
+        paths.append(baseline/'survival_eval/results.json')
+    for path in paths:
+        step = 6000000 if path.parents[1].name == 'train' else int(path.parents[1].name.split('_')[-1])
+        if step > limit:
+            continue
+        row = collect(path, baseline.parent.name, 'historical_checkpoint_validation', step, 'online', episode_rows)
+        if (row['episodes'], row['seed_base'], row['horizon']) != (8, 10000, 5000):
+            raise ValueError('Historical baseline does not match checkpoint protocol')
+        rows.append(row); points.append(row)
+    curves.append(('Historical λ=0, γ=0.995, seed 0', points, dict(color='black', linestyle='--')))
+    panels = [
+        (report.with_suffix('.png'), (2, 2), ['physical_juggles','episode_steps','reward','action_delta_rms'],
+         ['Mean physical juggles','Mean episode steps','Mean episode reward','Mean action-change RMS'],
+         'Fresh smoothness sweep: unsmoothed checkpoint means'),
+        (report.with_name('juggling-smooth-sweep-motion.png'), (1, 3), list(MOTION),
+         ['Median episode p95 displacement speed (m/s)','Median episode p95 acceleration (m/s²)','Median episode p95 jerk (m/s³)'],
+         'Sampled physical paddle motion from true positions; whole episodes'),
+    ]
+    for figure, shape, fields, labels, title in panels:
+        fig, axes = plt.subplots(*shape, figsize=(12, 7) if shape == (2, 2) else (15, 4), constrained_layout=True)
+        for label, points, style in curves:
+            for ax, field, ylabel in zip(axes.flat, fields, labels):
+                available = [r for r in points if r[field] is not None]
+                if available:
+                    ax.plot([r['step']/1e6 for r in available], [r[field] for r in available], label=label, **style)
+                ax.set(xlabel='Training steps (millions)', ylabel=ylabel); ax.grid(alpha=.25)
+        if rows:
+            axes.flat[0].legend(fontsize=6)
+        fig.suptitle(title+'\n8 reused starts per point, 5k recording limit; different episode lengths and visited states')
+        if rows:
+            fig.savefig(figure,dpi=160)
+        plt.close(fig)
     table = report.with_suffix('.csv')
-    fields=['run','phase','step','weights','episodes','horizon','physical_juggles','sensed_juggles','episode_steps','reward','action_delta_rms','source']
+    fields=['run','phase','step','weights','episodes','seed_base','horizon','physical_juggles','sensed_juggles','episode_steps','reward','action_delta_rms',*MOTION,'source']
     with table.open('w') as f:
         writer=csv.DictWriter(f,fieldnames=fields,lineterminator='\n');writer.writeheader();writer.writerows(rows)
+    episode_table = report.with_name('juggling-smooth-sweep-episodes.csv')
+    if episode_rows:
+        with episode_table.open('w') as f:
+            writer=csv.DictWriter(f,fieldnames=list(episode_rows[0]),lineterminator='\n');writer.writeheader();writer.writerows(episode_rows)
     lines=['# Smoothness sweep progress','', 'Generated '+datetime.now(timezone.utc).isoformat()+' from saved artifacts; no new rollouts.', '',
         'Original sweep: each coefficient (0.0005, 0.002, 0.008) has two fresh training seeds at gamma 0.995. An additional pair uses coefficient 0.0005 and gamma 0.999. Original checkpoints are every 100k steps; the additional pair saves every 500k for storage. All budgets are 6M. Simulator, sensing, control and DR remain unchanged. GPU ceiling: 16 total user allocations, including other jobs. Training seeds remain separate curves; starts within one run are not training-seed replications.', '',
         '| Run | Slurm job | Saved runner status |','|---|---|---|']
     lines += [f'| {n} | {j} | {s} |' for n,j,s in statuses]
-    lines += ['',f'![Checkpoint metrics]({figure.name})' if rows else 'Checkpoint figures are unavailable until the first saved evaluation.', '',f'[Raw summary CSV]({table.name}); [original launch provenance](juggling-smooth-sweep-launch.json); [longer-discount pair](juggling-smooth-longdiscount-launch.json).', '',
-        'Plots use saved 8-start 5k online-actor validation only. The CSV separately labels 32-start 20k online/target tests; do not mix these protocols. Physical juggles use true simulated trajectories; reward is the environment episode sum. Recording limits truncate counts and durations. Action-change RMS is a command diagnostic, not measured energy or UR5 safety. Physical speed/acceleration/jerk distributions are stored in each matched test’s local `motion_metrics.json`, with first-250-step and whole-episode estimates. Short episodes still have different exposure and visited states.', '',
-        'No new policy-quality result yet.' if not rows else 'Curves are descriptive repeated-validation results. Independent longer tests and qualitative review follow candidate comparison; no binary acceptance gate is used.']
-    lines += ['', 'Measurement clarification: [actual PID-target replay audit](../notes/scratch/experiments/2026-11-01_22-59_pid-target-replay-audit.md). Legacy `target_delta_rms_m` is a scaled displacement-change proxy, not direct PID-target telemetry.']
+    if rows:
+        lines += ['', '![Checkpoint juggling, steps, reward and commands](juggling-smooth-sweep.png)', '',
+                  '![Sampled physical speed, acceleration and jerk](juggling-smooth-sweep-motion.png)']
+    else:
+        lines += ['', 'Checkpoint figures are unavailable until the first saved evaluation.']
+    lines += ['',f'[Raw summary CSV]({table.name}); [per-episode metrics]({episode_table.name}); [original launch provenance](juggling-smooth-sweep-launch.json); [longer-discount pair](juggling-smooth-longdiscount-launch.json).', '',
+        'Curves use saved 8-start 5k online-actor validation only, including the historical unregularized seed-0 control on exactly the same seeds/horizon. That control is shown only through the latest available sweep checkpoint. The CSV separately labels historical checkpoints and 32-start 20k online/target tests; do not mix protocols. No interpolation supplies missing checkpoints. Latest points can be at different training budgets; compare the same x-coordinate, not each curve’s last point. Physical juggles use true simulated trajectories; reward is the environment episode sum. Recording limits truncate counts and durations.', '',
+        'Motion curves show the median across episodes of each episode’s p95 speed, acceleration or jerk, using finite differences of true paddle positions at the control rate. These are whole-episode distributions, with different lengths and visited states. They exclude the reset-position sample and do not capture all substep spikes, joint torques or UR5 controller behavior. Position-difference displacement speed is not cached body velocity; solver/workspace position corrections can contribute, so do not equate these estimates to the simulator velocity cap. They are not robot-safety thresholds. Per-episode diagnostics remain beside the original local results in `motion_metrics.json`. Action-change RMS remains a separate command diagnostic, not measured motor energy.', '',
+        'Curves are descriptive repeated-validation results. Independent longer tests and qualitative review follow candidate comparison; no binary acceptance gate is used.', '',
+        'Measurement clarification: [actual PID-target replay audit](../notes/scratch/experiments/2026-11-01_22-59_pid-target-replay-audit.md). Legacy `target_delta_rms_m` is a scaled displacement-change proxy, not direct PID-target telemetry.']
     report.write_text('\n'.join(lines)+'\n')
     print('Saved summary rows:',len(rows))
 
