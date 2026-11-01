@@ -1,0 +1,176 @@
+{
+  "requested_utc": "2026-11-01T22:46:50.462019+00:00",
+  "max_total_user_gpus": 16,
+  "initial_user_gpu_allocations": 3,
+  "initial_squeue": "115504|gres/gpu:1\n115505|gres/gpu:1\n115503|gres/gpu:1\n",
+  "launches": [
+    {
+      "job_id": "115858",
+      "name": "noisy_history_smooth_0005_20261101_seed0",
+      "config": "configs/td3/sustained/noisy_history_smooth_0005_seed0.yaml",
+      "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed0",
+      "manifest": {
+        "reviewed_sha256": {
+          "airhockey/airhockey_base.py": "a3a8c1c37fdb53015b6cb2568b1b9ccc39e6f6dff39323a4c25f97ae88fcb4d6",
+          "airhockey/sims/airhockey_box2d.py": "7059de3e1f8a979c706eb2546ba7674c4970226952bc002567a1d2aa20fa7eee",
+          "configs/new_juggle/sysid_v2_hist2.yaml": "5005076245b4ba9e6d95c1d9efa337b59e57a24017e117db97b45644758f5349",
+          "configs/new_juggle/sustained/original_sensing.yaml": "d1bb13a7a4a5494507d085db230bdbe31854f0ddb556ccf88c3ec5aca0360385",
+          "scripts/rma/train_base_policy.py": "cdf735f9a1aaa29f22a7f4810766a49c96bcfbac137ffce74a07321f047175c2",
+          "scripts/td3/helper/td3_graphed_update.py": "0b5a2a984c21f11e2cdc5344d9ba8038f70ee0cc5ca3c2dd3f2c467598416d48",
+          "scripts/td3/juggle_survival.py": "e533f1f3b0dd34bcdfeef6e5dec10922422edde5a16db8cff706736d832b8a92",
+          "scripts/td3/extras/run_juggle_smooth_trial.py": "275cf99c0d03925d4206040851204a8726501a09400d75cd40e51e1c0fd55636",
+          "scripts/analysis/juggle_motion_metrics.py": "3c36447afa2dc0f99b72c06c134411d853c89d06004fb4fdc5296e5006ef7f67",
+          "configs/td3/sustained/noisy_history_smooth_0005_seed0.yaml": "c850e7f9f4b9068c322175cd6d51bc7ba4c10db3abef1dc0796737134681c663"
+        },
+        "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed0",
+        "config": "configs/td3/sustained/noisy_history_smooth_0005_seed0.yaml",
+        "seed": 0
+      },
+      "batch_source": "#!/bin/bash\n#SBATCH --job-name=js-0005-s0\n#SBATCH --partition=allnodes\n#SBATCH --nodes=1\n#SBATCH --ntasks=1\n#SBATCH --cpus-per-task=6\n#SBATCH --gres=gpu:1\n#SBATCH --mem=32G\n#SBATCH --time=18:00:00\n#SBATCH --output=/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed0_slurm.log\nset -euo pipefail\ncd /scratch/cluster/mrudolph/documents/air-hockey-rl\nexport OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 MPLCONFIGDIR=/tmp/airhockey-mpl\nexport PYTHONPATH=/scratch/cluster/mrudolph/documents/air-hockey-rl\nexec /scratch/cluster/mrudolph/documents/air-hockey-rl/.venv/bin/python -u -m scripts.td3.extras.run_juggle_smooth_trial --root /scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed0 --args-file /scratch/cluster/mrudolph/documents/air-hockey-rl/configs/td3/sustained/noisy_history_smooth_0005_seed0.yaml --manifest /scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed0_manifest.json\n",
+      "user_gpus_before_submission": 3,
+      "status": "training",
+      "submitted_utc": "2026-11-01T22:46:50.517509+00:00",
+      "runner_started_utc": "2026-11-01T22:46:53.312558+00:00"
+    },
+    {
+      "job_id": "115859",
+      "name": "noisy_history_smooth_0005_20261101_seed1",
+      "config": "configs/td3/sustained/noisy_history_smooth_0005_seed1.yaml",
+      "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed1",
+      "manifest": {
+        "reviewed_sha256": {
+          "airhockey/airhockey_base.py": "a3a8c1c37fdb53015b6cb2568b1b9ccc39e6f6dff39323a4c25f97ae88fcb4d6",
+          "airhockey/sims/airhockey_box2d.py": "7059de3e1f8a979c706eb2546ba7674c4970226952bc002567a1d2aa20fa7eee",
+          "configs/new_juggle/sysid_v2_hist2.yaml": "5005076245b4ba9e6d95c1d9efa337b59e57a24017e117db97b45644758f5349",
+          "configs/new_juggle/sustained/original_sensing.yaml": "d1bb13a7a4a5494507d085db230bdbe31854f0ddb556ccf88c3ec5aca0360385",
+          "scripts/rma/train_base_policy.py": "cdf735f9a1aaa29f22a7f4810766a49c96bcfbac137ffce74a07321f047175c2",
+          "scripts/td3/helper/td3_graphed_update.py": "0b5a2a984c21f11e2cdc5344d9ba8038f70ee0cc5ca3c2dd3f2c467598416d48",
+          "scripts/td3/juggle_survival.py": "e533f1f3b0dd34bcdfeef6e5dec10922422edde5a16db8cff706736d832b8a92",
+          "scripts/td3/extras/run_juggle_smooth_trial.py": "275cf99c0d03925d4206040851204a8726501a09400d75cd40e51e1c0fd55636",
+          "scripts/analysis/juggle_motion_metrics.py": "3c36447afa2dc0f99b72c06c134411d853c89d06004fb4fdc5296e5006ef7f67",
+          "configs/td3/sustained/noisy_history_smooth_0005_seed1.yaml": "8b4d6b654e510f7f159f568a4621eb65cc952bd39da80deba6873f96d88b73e0"
+        },
+        "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed1",
+        "config": "configs/td3/sustained/noisy_history_smooth_0005_seed1.yaml",
+        "seed": 1
+      },
+      "batch_source": "#!/bin/bash\n#SBATCH --job-name=js-0005-s1\n#SBATCH --partition=allnodes\n#SBATCH --nodes=1\n#SBATCH --ntasks=1\n#SBATCH --cpus-per-task=6\n#SBATCH --gres=gpu:1\n#SBATCH --mem=32G\n#SBATCH --time=18:00:00\n#SBATCH --output=/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed1_slurm.log\nset -euo pipefail\ncd /scratch/cluster/mrudolph/documents/air-hockey-rl\nexport OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 MPLCONFIGDIR=/tmp/airhockey-mpl\nexport PYTHONPATH=/scratch/cluster/mrudolph/documents/air-hockey-rl\nexec /scratch/cluster/mrudolph/documents/air-hockey-rl/.venv/bin/python -u -m scripts.td3.extras.run_juggle_smooth_trial --root /scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed1 --args-file /scratch/cluster/mrudolph/documents/air-hockey-rl/configs/td3/sustained/noisy_history_smooth_0005_seed1.yaml --manifest /scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed1_manifest.json\n",
+      "user_gpus_before_submission": 4,
+      "status": "training",
+      "submitted_utc": "2026-11-01T22:46:50.569574+00:00",
+      "runner_started_utc": "2026-11-01T22:46:53.320543+00:00"
+    },
+    {
+      "job_id": "115860",
+      "name": "noisy_history_smooth_002_20261101_seed0",
+      "config": "configs/td3/sustained/noisy_history_smooth_002_seed0.yaml",
+      "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0",
+      "manifest": {
+        "reviewed_sha256": {
+          "airhockey/airhockey_base.py": "a3a8c1c37fdb53015b6cb2568b1b9ccc39e6f6dff39323a4c25f97ae88fcb4d6",
+          "airhockey/sims/airhockey_box2d.py": "7059de3e1f8a979c706eb2546ba7674c4970226952bc002567a1d2aa20fa7eee",
+          "configs/new_juggle/sysid_v2_hist2.yaml": "5005076245b4ba9e6d95c1d9efa337b59e57a24017e117db97b45644758f5349",
+          "configs/new_juggle/sustained/original_sensing.yaml": "d1bb13a7a4a5494507d085db230bdbe31854f0ddb556ccf88c3ec5aca0360385",
+          "scripts/rma/train_base_policy.py": "cdf735f9a1aaa29f22a7f4810766a49c96bcfbac137ffce74a07321f047175c2",
+          "scripts/td3/helper/td3_graphed_update.py": "0b5a2a984c21f11e2cdc5344d9ba8038f70ee0cc5ca3c2dd3f2c467598416d48",
+          "scripts/td3/juggle_survival.py": "e533f1f3b0dd34bcdfeef6e5dec10922422edde5a16db8cff706736d832b8a92",
+          "scripts/td3/extras/run_juggle_smooth_trial.py": "275cf99c0d03925d4206040851204a8726501a09400d75cd40e51e1c0fd55636",
+          "scripts/analysis/juggle_motion_metrics.py": "3c36447afa2dc0f99b72c06c134411d853c89d06004fb4fdc5296e5006ef7f67",
+          "configs/td3/sustained/noisy_history_smooth_002_seed0.yaml": "c74420e5ce70c68e15a174f3d3b916f433bf3dd70a890df3fa5fe11755b5f986"
+        },
+        "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0",
+        "config": "configs/td3/sustained/noisy_history_smooth_002_seed0.yaml",
+        "seed": 0
+      },
+      "batch_source": "#!/bin/bash\n#SBATCH --job-name=js-002-s0\n#SBATCH --partition=allnodes\n#SBATCH --nodes=1\n#SBATCH --ntasks=1\n#SBATCH --cpus-per-task=6\n#SBATCH --gres=gpu:1\n#SBATCH --mem=32G\n#SBATCH --time=18:00:00\n#SBATCH --output=/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0_slurm.log\nset -euo pipefail\ncd /scratch/cluster/mrudolph/documents/air-hockey-rl\nexport OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 MPLCONFIGDIR=/tmp/airhockey-mpl\nexport PYTHONPATH=/scratch/cluster/mrudolph/documents/air-hockey-rl\nexec /scratch/cluster/mrudolph/documents/air-hockey-rl/.venv/bin/python -u -m scripts.td3.extras.run_juggle_smooth_trial --root /scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0 --args-file /scratch/cluster/mrudolph/documents/air-hockey-rl/configs/td3/sustained/noisy_history_smooth_002_seed0.yaml --manifest /scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0_manifest.json\n",
+      "user_gpus_before_submission": 5,
+      "status": "training",
+      "submitted_utc": "2026-11-01T22:46:50.608137+00:00",
+      "runner_started_utc": "2026-11-01T22:46:53.280769+00:00"
+    },
+    {
+      "job_id": "115861",
+      "name": "noisy_history_smooth_002_20261101_seed1",
+      "config": "configs/td3/sustained/noisy_history_smooth_002_seed1.yaml",
+      "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed1",
+      "manifest": {
+        "reviewed_sha256": {
+          "airhockey/airhockey_base.py": "a3a8c1c37fdb53015b6cb2568b1b9ccc39e6f6dff39323a4c25f97ae88fcb4d6",
+          "airhockey/sims/airhockey_box2d.py": "7059de3e1f8a979c706eb2546ba7674c4970226952bc002567a1d2aa20fa7eee",
+          "configs/new_juggle/sysid_v2_hist2.yaml": "5005076245b4ba9e6d95c1d9efa337b59e57a24017e117db97b45644758f5349",
+          "configs/new_juggle/sustained/original_sensing.yaml": "d1bb13a7a4a5494507d085db230bdbe31854f0ddb556ccf88c3ec5aca0360385",
+          "scripts/rma/train_base_policy.py": "cdf735f9a1aaa29f22a7f4810766a49c96bcfbac137ffce74a07321f047175c2",
+          "scripts/td3/helper/td3_graphed_update.py": "0b5a2a984c21f11e2cdc5344d9ba8038f70ee0cc5ca3c2dd3f2c467598416d48",
+          "scripts/td3/juggle_survival.py": "e533f1f3b0dd34bcdfeef6e5dec10922422edde5a16db8cff706736d832b8a92",
+          "scripts/td3/extras/run_juggle_smooth_trial.py": "275cf99c0d03925d4206040851204a8726501a09400d75cd40e51e1c0fd55636",
+          "scripts/analysis/juggle_motion_metrics.py": "3c36447afa2dc0f99b72c06c134411d853c89d06004fb4fdc5296e5006ef7f67",
+          "configs/td3/sustained/noisy_history_smooth_002_seed1.yaml": "ba89fb3a711c4b292ad5a48c3ed1a46fe039e0f95d0b6e2cc7a9edb30c1da32e"
+        },
+        "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed1",
+        "config": "configs/td3/sustained/noisy_history_smooth_002_seed1.yaml",
+        "seed": 1
+      },
+      "batch_source": "#!/bin/bash\n#SBATCH --job-name=js-002-s1\n#SBATCH --partition=allnodes\n#SBATCH --nodes=1\n#SBATCH --ntasks=1\n#SBATCH --cpus-per-task=6\n#SBATCH --gres=gpu:1\n#SBATCH --mem=32G\n#SBATCH --time=18:00:00\n#SBATCH --output=/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed1_slurm.log\nset -euo pipefail\ncd /scratch/cluster/mrudolph/documents/air-hockey-rl\nexport OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 MPLCONFIGDIR=/tmp/airhockey-mpl\nexport PYTHONPATH=/scratch/cluster/mrudolph/documents/air-hockey-rl\nexec /scratch/cluster/mrudolph/documents/air-hockey-rl/.venv/bin/python -u -m scripts.td3.extras.run_juggle_smooth_trial --root /scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed1 --args-file /scratch/cluster/mrudolph/documents/air-hockey-rl/configs/td3/sustained/noisy_history_smooth_002_seed1.yaml --manifest /scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed1_manifest.json\n",
+      "user_gpus_before_submission": 6,
+      "status": "training",
+      "submitted_utc": "2026-11-01T22:46:50.647236+00:00",
+      "runner_started_utc": "2026-11-01T22:46:53.283638+00:00"
+    },
+    {
+      "job_id": "115862",
+      "name": "noisy_history_smooth_008_20261101_seed0",
+      "config": "configs/td3/sustained/noisy_history_smooth_008_seed0.yaml",
+      "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed0",
+      "manifest": {
+        "reviewed_sha256": {
+          "airhockey/airhockey_base.py": "a3a8c1c37fdb53015b6cb2568b1b9ccc39e6f6dff39323a4c25f97ae88fcb4d6",
+          "airhockey/sims/airhockey_box2d.py": "7059de3e1f8a979c706eb2546ba7674c4970226952bc002567a1d2aa20fa7eee",
+          "configs/new_juggle/sysid_v2_hist2.yaml": "5005076245b4ba9e6d95c1d9efa337b59e57a24017e117db97b45644758f5349",
+          "configs/new_juggle/sustained/original_sensing.yaml": "d1bb13a7a4a5494507d085db230bdbe31854f0ddb556ccf88c3ec5aca0360385",
+          "scripts/rma/train_base_policy.py": "cdf735f9a1aaa29f22a7f4810766a49c96bcfbac137ffce74a07321f047175c2",
+          "scripts/td3/helper/td3_graphed_update.py": "0b5a2a984c21f11e2cdc5344d9ba8038f70ee0cc5ca3c2dd3f2c467598416d48",
+          "scripts/td3/juggle_survival.py": "e533f1f3b0dd34bcdfeef6e5dec10922422edde5a16db8cff706736d832b8a92",
+          "scripts/td3/extras/run_juggle_smooth_trial.py": "275cf99c0d03925d4206040851204a8726501a09400d75cd40e51e1c0fd55636",
+          "scripts/analysis/juggle_motion_metrics.py": "3c36447afa2dc0f99b72c06c134411d853c89d06004fb4fdc5296e5006ef7f67",
+          "configs/td3/sustained/noisy_history_smooth_008_seed0.yaml": "ee29d67468517efa4229548a85a0885e7dae1a55506dc460fa4c83d6d9105d92"
+        },
+        "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed0",
+        "config": "configs/td3/sustained/noisy_history_smooth_008_seed0.yaml",
+        "seed": 0
+      },
+      "batch_source": "#!/bin/bash\n#SBATCH --job-name=js-008-s0\n#SBATCH --partition=allnodes\n#SBATCH --nodes=1\n#SBATCH --ntasks=1\n#SBATCH --cpus-per-task=6\n#SBATCH --gres=gpu:1\n#SBATCH --mem=32G\n#SBATCH --time=18:00:00\n#SBATCH --output=/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed0_slurm.log\nset -euo pipefail\ncd /scratch/cluster/mrudolph/documents/air-hockey-rl\nexport OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 MPLCONFIGDIR=/tmp/airhockey-mpl\nexport PYTHONPATH=/scratch/cluster/mrudolph/documents/air-hockey-rl\nexec /scratch/cluster/mrudolph/documents/air-hockey-rl/.venv/bin/python -u -m scripts.td3.extras.run_juggle_smooth_trial --root /scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed0 --args-file /scratch/cluster/mrudolph/documents/air-hockey-rl/configs/td3/sustained/noisy_history_smooth_008_seed0.yaml --manifest /scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed0_manifest.json\n",
+      "user_gpus_before_submission": 7,
+      "status": "training",
+      "submitted_utc": "2026-11-01T22:46:50.706877+00:00",
+      "runner_started_utc": "2026-11-01T22:46:53.284248+00:00"
+    },
+    {
+      "job_id": "115863",
+      "name": "noisy_history_smooth_008_20261101_seed1",
+      "config": "configs/td3/sustained/noisy_history_smooth_008_seed1.yaml",
+      "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed1",
+      "manifest": {
+        "reviewed_sha256": {
+          "airhockey/airhockey_base.py": "a3a8c1c37fdb53015b6cb2568b1b9ccc39e6f6dff39323a4c25f97ae88fcb4d6",
+          "airhockey/sims/airhockey_box2d.py": "7059de3e1f8a979c706eb2546ba7674c4970226952bc002567a1d2aa20fa7eee",
+          "configs/new_juggle/sysid_v2_hist2.yaml": "5005076245b4ba9e6d95c1d9efa337b59e57a24017e117db97b45644758f5349",
+          "configs/new_juggle/sustained/original_sensing.yaml": "d1bb13a7a4a5494507d085db230bdbe31854f0ddb556ccf88c3ec5aca0360385",
+          "scripts/rma/train_base_policy.py": "cdf735f9a1aaa29f22a7f4810766a49c96bcfbac137ffce74a07321f047175c2",
+          "scripts/td3/helper/td3_graphed_update.py": "0b5a2a984c21f11e2cdc5344d9ba8038f70ee0cc5ca3c2dd3f2c467598416d48",
+          "scripts/td3/juggle_survival.py": "e533f1f3b0dd34bcdfeef6e5dec10922422edde5a16db8cff706736d832b8a92",
+          "scripts/td3/extras/run_juggle_smooth_trial.py": "275cf99c0d03925d4206040851204a8726501a09400d75cd40e51e1c0fd55636",
+          "scripts/analysis/juggle_motion_metrics.py": "3c36447afa2dc0f99b72c06c134411d853c89d06004fb4fdc5296e5006ef7f67",
+          "configs/td3/sustained/noisy_history_smooth_008_seed1.yaml": "94ab26f5707f70bb1ab53833e23f07a1c84ab7f46550d358064b779985f683d0"
+        },
+        "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed1",
+        "config": "configs/td3/sustained/noisy_history_smooth_008_seed1.yaml",
+        "seed": 1
+      },
+      "batch_source": "#!/bin/bash\n#SBATCH --job-name=js-008-s1\n#SBATCH --partition=allnodes\n#SBATCH --nodes=1\n#SBATCH --ntasks=1\n#SBATCH --cpus-per-task=6\n#SBATCH --gres=gpu:1\n#SBATCH --mem=32G\n#SBATCH --time=18:00:00\n#SBATCH --output=/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed1_slurm.log\nset -euo pipefail\ncd /scratch/cluster/mrudolph/documents/air-hockey-rl\nexport OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 MPLCONFIGDIR=/tmp/airhockey-mpl\nexport PYTHONPATH=/scratch/cluster/mrudolph/documents/air-hockey-rl\nexec /scratch/cluster/mrudolph/documents/air-hockey-rl/.venv/bin/python -u -m scripts.td3.extras.run_juggle_smooth_trial --root /scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed1 --args-file /scratch/cluster/mrudolph/documents/air-hockey-rl/configs/td3/sustained/noisy_history_smooth_008_seed1.yaml --manifest /scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed1_manifest.json\n",
+      "user_gpus_before_submission": 8,
+      "status": "training",
+      "submitted_utc": "2026-11-01T22:46:50.745517+00:00",
+      "runner_started_utc": "2026-11-01T22:46:53.283936+00:00"
+    }
+  ]
+}

@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E048 — Launch six weaker-penalty scratch trials and measure sampled physical motion](#e048)
 - [E047 — Complete smoothness trial: smaller command changes accompany lost juggling](#e047)
 - [E046 — Launch fresh action-smoothness history trial with matched milestone tests](#e046)
 - [E045 — Plot raw juggling, reward and episode steps through completed 6M trials](#e045)
@@ -53,6 +54,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e048"></a>
+
+## E048 — 2026-11-01 16:49:01 -0600 — Launch six weaker-penalty scratch trials and measure sampled physical motion
+
+Six fresh history policies are training with weaker action-change penalties to seek useful juggling and smoother motion together.
+
+**Running:** coefficients 0.0005, 0.002 and 0.008 × seeds 0/1; 6M steps each; Slurm jobs 115858–115863. Only coefficient/run-name/seed differ from original history seed 0. Nine total user GPUs including three preexisting jobs, under the authorized 16-GPU cap; counted pending/running requests before each submission. Canonical config/scratch guards, prior reviewed simulator hashes and actual saved trainer arguments passed. Matched online/target 32-start 20k tests at 1M/3M/6M and built-in validation remain separate. No result yet from these trials. Read-only trajectory analysis adds sampled speed/acceleration/jerk distributions; three analytic tests passed. No simulator/sensing/control/DR change, warm start, hardware rollout or claim of infinite juggling/robot safety. Related: [E047](#e047).
+
+[Campaign note and reproduction](../notes/scratch/experiments/2026-11-01_22-48_weaker-smoothness-sweep.md); [launch provenance](juggling-smooth-sweep-launch.json); [progress report](juggling-smooth-sweep.md). All six runners recorded start at 2026-11-01 16:46:53 -0600; heading records this documentation time. New-trial figures are unavailable until the first saved evaluation.
 
 <a id="e047"></a>
 

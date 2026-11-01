@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A048 — Launch replicated weaker smoothness sweep under the GPU ceiling](#a048)
 - [A047 — Document completed smoothness trial and publish raw comparison evidence](#a047)
 - [A046 — Launch smoothness training and attach durable raw-metric tests](#a046)
 - [A045 — Enable action-change penalty in a fresh history trial configuration](#a045)
@@ -53,6 +54,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a048"></a>
+
+## A048 — 2026-11-01 16:49:01 -0600 — Launch replicated weaker smoothness sweep under the GPU ceiling
+
+Launched six authorized scratch jobs and attached durable raw-metric tests plus physical motion diagnostics.
+
+Checked current jobs and disk headroom, compared effective configs and simulator diffs, verified canonical sensing/scratch guards and fixed reviewed source hashes. Submitted six one-GPU jobs with per-submission total-GPU checks; all were confirmed running and logging actor updates beyond 20k. New motion diagnostics read saved true positions only and passed analytic velocity/acceleration/short-recording tests. Added a source-based progress report, exact commands/manifests and a dated campaign note. No simulator/trainer math changes; source hashes guard auxiliary tests. Independent longer testing follows candidate comparison, without binary acceptance gates. The continuing research goal remains active. Related: [E048](experiment_logbook.md#e048).
+
+[Campaign note and reproduction](../notes/scratch/experiments/2026-11-01_22-48_weaker-smoothness-sweep.md); [launch provenance](juggling-smooth-sweep-launch.json); [progress report](juggling-smooth-sweep.md). All six runners recorded start at 2026-11-01 16:46:53 -0600; heading records this documentation time. New-trial figures are unavailable until the first saved evaluation.
 
 <a id="a047"></a>
 
