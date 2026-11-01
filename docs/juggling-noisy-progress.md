@@ -1,5 +1,7 @@
 # Noisy juggling progress
 
+2026-11-01 update: [completed smoothness trial and raw metrics](../notes/scratch/experiments/2026-11-01_17-06_smooth-history-results.md): action changes fell about 88%, but final episodes averaged 0.84–1.00 physical juggles and 94.84–97.31 steps.
+
 2026-10-31 update: all four history trials completed. [Training reward, physical/sensed juggles, and episode-step plots with raw exports](../notes/scratch/experiments/2026-10-31_19-00_history-training-plots.md) supersede the older running-status snapshot below. Historical tables and gate terminology below are preserved as originally recorded.
 
 Generated 2026-10-29T23:19:21.210926+00:00 from saved evaluations; no new rollouts.

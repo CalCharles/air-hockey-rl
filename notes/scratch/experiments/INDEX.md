@@ -127,3 +127,4 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 
 - 2026-10-31 19:00 | History training plots | Published physical/sensed juggles, reward and episode-step curves for four completed 6M trials from saved data. | [note](2026-10-31_19-00_history-training-plots.md)
 - 2026-10-31 22:43 | Smooth history scratch | Launched 6M fresh smoothness training and queued frozen raw-metric milestone tests; results pending. | [note](2026-10-31_22-43_smooth-history-scratch.md)
+- 2026-11-01 17:06 | Smooth history completion | Penalty 0.05 reduced command-change RMS about 88% but final physical juggles fell to about one; all 6M training and milestone tests completed. | [note](2026-11-01_17-06_smooth-history-results.md)

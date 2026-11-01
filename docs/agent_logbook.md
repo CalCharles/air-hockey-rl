@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A047 — Document completed smoothness trial and publish raw comparison evidence](#a047)
 - [A046 — Launch smoothness training and attach durable raw-metric tests](#a046)
 - [A045 — Enable action-change penalty in a fresh history trial configuration](#a045)
 - [A044 — Publish training reward and juggle curves and reconcile completed trials](#a044)
@@ -52,6 +53,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a047"></a>
+
+## A047 — 2026-11-01 11:08:04 -0600 — Document completed smoothness trial and publish raw comparison evidence
+
+Reconciled the completed smoothness run, exported all saved test metrics and published its juggling-versus-command-change comparison.
+
+Read runner/orchestrator statuses, all six milestone tests, final 10k test, matched baseline tests and Slurm accounting. Added a read-only reproduction script, 288 raw episode rows, nine summary rows, source hashes, a comparison figure and a dated completion note; preserved the launch note and original provenance. Validated raw means against saved summaries, reviewed the figure and checked relative links/images, unique anchors, ordered TOCs and whitespace. No new training or rollout; unrelated untracked puck-score config excluded. Related: [A046](#a046), [E047](experiment_logbook.md#e047).
+
+[Detailed results and reproduction](../notes/scratch/experiments/2026-11-01_17-06_smooth-history-results.md); [raw episodes](assets/juggling/smooth-results-episodes.csv); [summaries](assets/juggling/smooth-results-summary.csv); [completion evidence](juggling-smooth-training-completion.json). Runner final evaluation completed 2026-11-01 00:47:49 -0500; milestone testing completed 00:48:37 -0500, before the DST change. Heading timestamp records this analysis after that change.
+
+![Raw juggling and motion comparison](assets/juggling/smooth-final-comparison.png)
+
+Historical figure generated 2026-11-01: mean physical juggles, episode steps and action-change RMS, plus largest recorded acceleration. Lower command changes accompany much shorter episodes; peak-motion comparisons have unequal observation durations.
 
 <a id="a046"></a>
 

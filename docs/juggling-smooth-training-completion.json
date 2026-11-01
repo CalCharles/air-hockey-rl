@@ -1,0 +1,41 @@
+{
+  "status.json": {
+    "status": "complete",
+    "started": "2026-10-31T22:43:21.203811+00:00",
+    "training_command": [
+      "/scratch/cluster/mrudolph/documents/air-hockey-rl/.venv/bin/python",
+      "-u",
+      "-m",
+      "scripts.rma.train_base_policy",
+      "--args-file",
+      "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_20261031_seed0/launch_args.yaml"
+    ],
+    "updated": "2026-11-01T05:47:49.469522+00:00",
+    "evaluation_command": [
+      "/scratch/cluster/mrudolph/documents/air-hockey-rl/.venv/bin/python",
+      "-u",
+      "-m",
+      "scripts.td3.juggle_survival",
+      "--run-dir",
+      "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_20261031_seed0/train",
+      "--scenario-set",
+      "training",
+      "--episodes",
+      "32",
+      "--horizon",
+      "10000",
+      "--seed-base",
+      "200000",
+      "--out-dir",
+      "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_20261031_seed0/final_eval"
+    ]
+  },
+  "smooth_test_status.json": {
+    "status": "complete",
+    "updated": "2026-11-01T05:48:37.544200+00:00"
+  },
+  "recorded_utc": "2026-11-01T17:07:42.431599+00:00",
+  "slurm_accounting": "115589        COMPLETED   07:05:18 2026-10-31T17:43:19 2026-11-01T00:48:37      0:0 \n115589.batch  COMPLETED   07:05:18 2026-10-31T17:43:19 2026-11-01T00:48:37      0:0 \n115589.exte+  COMPLETED   07:05:18 2026-10-31T17:43:19 2026-11-01T00:48:37      0:0 \n",
+  "slurm_accounting_timezone": "America/Chicago; end occurred before the 2026-11-01 daylight-saving transition, offset -0500",
+  "local_artifact_root": "runs/td3/noisy_history_smooth_20261031_seed0"
+}

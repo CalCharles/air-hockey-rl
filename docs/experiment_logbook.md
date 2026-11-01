@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E047 — Complete smoothness trial: smaller command changes accompany lost juggling](#e047)
 - [E046 — Launch fresh action-smoothness history trial with matched milestone tests](#e046)
 - [E045 — Plot raw juggling, reward and episode steps through completed 6M trials](#e045)
 - [E044 — Retrospective fixed2M baseline duration distribution](#e044)
@@ -52,6 +53,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e047"></a>
+
+## E047 — 2026-11-01 11:08:04 -0600 — Complete smoothness trial: smaller command changes accompany lost juggling
+
+The completed 6M action-change penalty trial reduced command changes but averaged roughly one physical juggle and 95–97 episode steps in final matched tests.
+
+**Completed:** job 115589 exited 0 after 7:05:18, including all queued 1M/3M/6M online/target tests. Final online/target physical juggles averaged 0.84/1.00 and episode steps 94.84/97.31, versus baseline 77.53/138.41 juggles and 5,447.00/9,859.81 steps on identical 32 reused starts. Action-change RMS fell from 0.40835/0.39745 to 0.04960/0.04763 (about 88%). This is an unsuccessful juggling setting despite smaller commands. Unequal episode lengths confound peak-motion comparisons; one seed per setting and reused starts limit inference. No binary acceptance gate. This dated completion update preserves [E046](#e046); no new experiments or simulator/control/DR changes.
+
+[Detailed results and reproduction](../notes/scratch/experiments/2026-11-01_17-06_smooth-history-results.md); [raw episodes](assets/juggling/smooth-results-episodes.csv); [summaries](assets/juggling/smooth-results-summary.csv); [completion evidence](juggling-smooth-training-completion.json). Runner final evaluation completed 2026-11-01 00:47:49 -0500; milestone testing completed 00:48:37 -0500, before the DST change. Heading timestamp records this analysis after that change.
+
+![Raw juggling and motion comparison](assets/juggling/smooth-final-comparison.png)
+
+Historical figure generated 2026-11-01: mean physical juggles, episode steps and action-change RMS, plus largest recorded acceleration. Lower command changes accompany much shorter episodes; peak-motion comparisons have unequal observation durations.
 
 <a id="e046"></a>
 
