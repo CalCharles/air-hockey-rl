@@ -8,6 +8,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E086 — Publish first-million reward and motion-cost traces for all four learners](#e086)
 - [E085 — Complete first-million cost-policy comparisons across discounts](#e085)
 - [E084 — Launch weak longer-discount6M target paired long test](#e084)
 - [E083 — Compare first500k reward-cost policies across both discounts](#e083)
@@ -93,6 +94,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e086"></a>
+
+## E086 — 2026-11-02 00:20:09 -0600 — Publish first-million reward and motion-cost traces for all four learners
+
+Published original/shaped reward, actual filtered-target cost and target-motion traces from4000 completed training-log blocks across four scratch learners.
+
+Cumulative cost is4.2–6.9% of raw reward at1M; rising reward also accompanies increased target motion after the20k action-source transition. That transition's immediate cost drop is not learned smoothness. Raw juggling and duration remain separate frozen-policy measurements. Validated source prefixes,4000-block continuity/accounting, output hashes and both figures. No new training, simulator changes, rollouts or hardware actions. Existing jobs remain live;9 total user GPUs including unrelated allocations.
+
+[Detailed tables, figures, raw logs, provenance and reproduction](../notes/scratch/experiments/2026-11-02_06-20_target-cost-first-million-reward-traces.md). Related record: [A087](agent_logbook.md#a087); [E085](experiment_logbook.md#e085) retains the matched1M raw juggling results. Heading is documentation time; traces are saved first-million training data, not new execution.
 
 <a id="e085"></a>
 

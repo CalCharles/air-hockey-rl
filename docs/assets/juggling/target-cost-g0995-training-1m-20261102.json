@@ -1,0 +1,59 @@
+{
+  "generated_utc": "2026-11-02T06:19:11.149618+00:00",
+  "max_step": 1000000,
+  "blocks": 2000,
+  "sources": [
+    {
+      "path": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_20261102_seed0/target_cost_training.csv",
+      "captured_prefix_bytes": 94467,
+      "captured_prefix_sha256": "dc8c1e57e0acecda58e46ac6e797fa39240adaa9b181e5bb7ea378e006b900f8"
+    },
+    {
+      "path": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_20261102_seed1/target_cost_training.csv",
+      "captured_prefix_bytes": 94764,
+      "captured_prefix_sha256": "ea490b7144d2ead24bca8599a0e7bcc881d4efa704f7b10bac1508e2c8d611f9"
+    }
+  ],
+  "launch_path": "docs/juggling-target-cost-launch.json",
+  "launch_inputs": [
+    {
+      "name": "noisy_history_target_cost_100_20261102_seed0",
+      "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_20261102_seed0",
+      "seed": 0,
+      "coefficient": 100,
+      "config": "configs/td3/sustained/noisy_history_target_cost_100_seed0.yaml",
+      "config_sha256": "5590b98bb7b3158a678071427d57bd2282f5f7a8dd11f53c333fa957162c115e"
+    },
+    {
+      "name": "noisy_history_target_cost_100_20261102_seed1",
+      "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_20261102_seed1",
+      "seed": 1,
+      "coefficient": 100,
+      "config": "configs/td3/sustained/noisy_history_target_cost_100_seed1.yaml",
+      "config_sha256": "289504a5e3bd1991958185b847e3838a37cc6411f64f585adf71989155f36304"
+    }
+  ],
+  "launch_inputs_sha256": "f04da2641b6715d9575aa4d76699594a33dd40b75c43d0f1e42c3a092b3dcdf4",
+  "generator_sha256": "0029d7a9438f52dc43475355a46e8756448854588d86733328a0f2fbdf2288fb",
+  "output_sha256": {
+    "docs/assets/juggling/target-cost-g0995-training-1m-20261102.csv": "0bf41851301b1b9ea63537b1f4fb22810518efed9e640f0a499b1c1f8f6ce961",
+    "docs/assets/juggling/target-cost-g0995-training-1m-20261102.png": "cc25813c3e80ad4417ef51d90d0d3cf434d22402633ccca71244009a1f0283d3"
+  },
+  "limitations": "Exploration, visited states and episode lengths differ. Includes random pre-learning exploration. No evaluation juggles inferred from reward.",
+  "per_run": [
+    {
+      "run": "noisy_history_target_cost_100_20261102_seed0",
+      "steps": 1000000,
+      "original_reward": 546342.0,
+      "shaped_reward": 514071.76534624613,
+      "cost": 32270.234653753756
+    },
+    {
+      "run": "noisy_history_target_cost_100_20261102_seed1",
+      "steps": 1000000,
+      "original_reward": 531855.0,
+      "shaped_reward": 509559.1084534506,
+      "cost": 22295.89154654953
+    }
+  ]
+}
