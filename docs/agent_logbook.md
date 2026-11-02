@@ -6,6 +6,8 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A066 — Publish complete regularized long outcomes and first-episode failure](#a066)
+- [A065 — Add paired replay windows and publish command-tail diagnostics](#a065)
 - [A064 — Publish longer-discount milestones and verify paired resets](#a064)
 - [A063 — Freeze regularized candidate and attach CPU-only paired long testing](#a063)
 - [A062 — Publish first complete 3M subset with equal-prefix diagnostics](#a062)
@@ -70,6 +72,34 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a066"></a>
+
+## A066 — 2026-11-01 20:37:09 -0600 — Publish complete regularized long outcomes and first-episode failure
+
+Collected CPU115892 completion, independently verified32 trajectories and paired resets, and published raw comparisons, motion and the existing failure GIF.
+
+**Completed:** CPU115892 COMPLETED/exit0 in23m47s. Frozen gamma .995/.002 seed1 target at3M,32 paired reference starts9000000–9000031/100k. Mean291.75 physical/256.53125 sensed juggles and20432.4375 steps; median193 juggles/13011.5steps, range1–1272juggles/100–94110steps. All episodes end in puck loss. Retained3.6M reference mean546.25/37131.03125, with three100k-censored records. Equal-prefix p95 jerk ratio .961086 does not offset the lower duration distribution. Different training seeds/budgets prevent a causal penalty conclusion. All eight6M learners continue,11 user GPUs. Related: [E063](experiment_logbook.md#e063), [E061](experiment_logbook.md#e061), [E065](experiment_logbook.md#e065).
+
+[Detailed distribution, paired audit, failure GIF and reproduction](../notes/scratch/experiments/2026-11-02_02-37_regularized-target-long-results.md); [raw32 outcomes](assets/juggling/regularized-3m-long-candidate-20261102.csv); [paired outcome differences](assets/juggling/regularized-3m-long-reference-pairs-20261102.csv); [source/model hashes](assets/juggling/regularized-3m-long-candidate-20261102.json). Heading is actual documentation time in America/Chicago; job completion was02:12UTC.
+
+![Complete regularized long-test distribution](assets/juggling/regularized-3m-long-candidate-20261102.png)
+
+Generated2026-11-02 from completed saved outcomes/verified trajectories, with per-start durations/juggles and sampled whole-episode position motion. The note adds equal-prefix analysis and embeds the first predeclared episode’s existing final200frames. No hardware-stop or infinite-juggling claim.
+
+<a id="a065"></a>
+
+## A065 — 2026-11-01 20:30:20 -0600 — Add paired replay windows and publish command-tail diagnostics
+
+Extended saved-action replay with equal per-start cropping and tail metrics, verifying64 episodes/15750steps exactly before publishing results.
+
+**Completed diagnostic replays:** gamma .9993M baseline seed0 target versus coefficient .0005 seed1 target.32 reused starts/20k source protocol; common prefixes up to250steps,7875steps each. All observations/rewards/flags/true positions match exactly. Mean actual PID-target RMS .068384/.034358m, largest step .397894/.367065m; cached-velocity p99 jerk medians842.887637/579.487300m/s³. Equal exposure does not equalize visited states; complete substep/handoff/joint behavior is unverified. No robot-stop or infinite-juggling claim. Eight learners continue,11 user GPUs. Related: [E064](experiment_logbook.md#e064), [E050](experiment_logbook.md#e050).
+
+[Detailed table and reproduction](../notes/scratch/experiments/2026-11-02_02-30_paired-pid-target-tail-audit.md); [raw64 rows](assets/juggling/longdiscount-3m-pid-replay-comparison-20261102.csv); [source/code hashes](assets/juggling/longdiscount-3m-pid-replay-comparison-20261102.json). Heading is documentation time in America/Chicago; exact replay start/end timestamps were not separately captured.
+
+![Cached command/velocity-tail audit](assets/juggling/longdiscount-3m-pid-replay-comparison-20261102.png)
+
+Generated2026-11-02 from exact saved-action replays; per-seed target RMS/maximum and cached-velocity acceleration/jerk p99. These differ from position-derived sweep metrics and exclude reset-to-first-target changes.
 
 <a id="a064"></a>
 

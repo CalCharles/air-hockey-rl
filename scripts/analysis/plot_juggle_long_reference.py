@@ -25,6 +25,7 @@ def main():
     parser.add_argument('--verified-trajectories', required=True, type=Path)
     parser.add_argument('--out-prefix', required=True, type=Path)
     parser.add_argument('--policy-label', help='Display label; defaults to the frozen bundle directory name')
+    parser.add_argument('--cohort-label', default='reset starts', help='Describe whether starts are new, paired or reused')
     args = parser.parse_args()
     primary = json.loads(args.results.read_text())
     verified = json.loads(args.verified_trajectories.read_text())
@@ -72,7 +73,7 @@ def main():
     with csv_path.open('w') as file:
         writer = csv.DictWriter(file, fieldnames=list(rows[0]), lineterminator='\n')
         writer.writeheader(); writer.writerows(rows)
-    output = dict(generated_utc=now.isoformat(), policy_label=policy_label, episodes=count, seed_base=primary['seed_base'],
+    output = dict(generated_utc=now.isoformat(), policy_label=policy_label, cohort_label=args.cohort_label, episodes=count, seed_base=primary['seed_base'],
                   recording_limit_steps=primary['horizon'], model_sha256=verified['model_sha256'],
                   sources={str(p.resolve()): digest(p) for p in (args.results, args.verified_trajectories, model, Path(__file__))},
                   published_csv_sha256=digest(csv_path), summary=summary,
@@ -93,7 +94,7 @@ def main():
     for ax in axes.flat:
         ax.set_xlabel(f'Reset seed − {primary["seed_base"]:,}')
         ax.set_xticks(x[::4]); ax.grid(axis='y', alpha=.2); ax.set_axisbelow(True)
-    fig.suptitle(f'{policy_label}: {count} new reset starts, {primary["horizon"]:,}-step recording limit\n'
+    fig.suptitle(f'{policy_label}: {count} {args.cohort_label}, {primary["horizon"]:,}-step recording limit\n'
                  f'Generated {now:%Y-%m-%d}; sampled position motion is not a robot-stop model')
     fig.savefig(args.out_prefix.with_suffix('.png'), dpi=160); plt.close(fig)
     print(json.dumps(summary, indent=2))

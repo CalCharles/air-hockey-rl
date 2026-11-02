@@ -17,10 +17,27 @@ from airhockey import AirHockeyEnv
 from scripts.td3.juggle_survival import diagnostic_body_positions
 
 
-def replay(results, out, prefix_steps=250):
+def replay(results, out, prefix_steps=250, paired_results=None):
     payload = json.loads(results.read_text())
     if prefix_steps < 2:
         raise ValueError('Need at least two steps for target changes')
+    paired = None
+    if paired_results is not None:
+        paired_payload = json.loads(paired_results.read_text())
+        if (payload['horizon'] != paired_payload['horizon'] or
+                payload['scenarios'].keys() != paired_payload['scenarios'].keys()):
+            raise ValueError('Paired scenario sets/horizons differ')
+        paired = {}
+        for name, scenario in payload['scenarios'].items():
+            partner = paired_payload['scenarios'][name]
+            if scenario['config'] != partner['config']:
+                raise ValueError('Paired effective simulator configurations differ')
+            own = {e['seed']: e for e in scenario['episodes']}
+            other = {e['seed']: e for e in partner['episodes']}
+            if (not own or len(own) != len(scenario['episodes']) or
+                    len(other) != len(partner['episodes']) or own.keys() != other.keys()):
+                raise ValueError('Paired unique reset seed cohorts differ')
+            paired[name] = other
     rows = []
     for name, scenario in payload['scenarios'].items():
         for episode in scenario['episodes']:
@@ -35,6 +52,15 @@ def replay(results, out, prefix_steps=250):
                 try:
                     obs, _ = env.reset(seed=seed)
                     count = min(len(saved['action']), prefix_steps)
+                    if paired is not None:
+                        partner = paired[name][seed]
+                        with np.load(paired_results.parent/partner['trajectory']) as other:
+                            if (len(other['action']) != partner['steps'] or
+                                    not np.array_equal(saved['observation'][0], other['observation'][0])):
+                                raise ValueError('Paired trajectory duration/initial observation mismatch')
+                            count = min(count, len(other['action']))
+                    if len(saved['action']) != episode['steps']:
+                        raise ValueError('Trajectory duration differs from primary episode record')
                     for index in range(count):
                         if not np.array_equal(np.asarray(obs,dtype=saved['observation'].dtype),saved['observation'][index]):
                             raise ValueError(f'Before-observation mismatch: {seed} step {index}')
@@ -56,19 +82,31 @@ def replay(results, out, prefix_steps=250):
                     speed = np.linalg.norm(np.asarray(velocities),axis=1)
                     accel = np.linalg.norm(np.diff(velocities,axis=0)*rate,axis=1)
                     jerk = np.linalg.norm(np.diff(velocities,n=2,axis=0)*rate**2,axis=1)
-                    rows.append(dict(scenario=name,seed=seed,episode_steps=episode['steps'],replayed_steps=count,exact_match=True,
+                    row = dict(scenario=name,seed=seed,episode_steps=episode['steps'],replayed_steps=count,exact_match=True,
                         pid_target_change_rms_m=float(np.sqrt(np.mean(delta**2))) if len(delta) else None,
                         scaled_action_change_rms_m_excluding_reset=float(np.sqrt(np.mean(proxy_delta**2))) if len(proxy_delta) else None,
                         trajectory_sha256=hashlib.sha256((results.parent/episode['trajectory']).read_bytes()).hexdigest(),
                         pid_target_change_p95_m=float(np.percentile(np.linalg.norm(delta,axis=1),95)) if len(delta) else None,
                         body_speed_p95_m_s=float(np.percentile(speed,95)),
                         velocity_acceleration_p95_m_s2=float(np.percentile(accel,95)) if len(accel) else None,
-                        velocity_jerk_p95_m_s3=float(np.percentile(jerk,95)) if len(jerk) else None))
+                        velocity_jerk_p95_m_s3=float(np.percentile(jerk,95)) if len(jerk) else None)
+                    for label, values, unit in [('pid_target_change', np.linalg.norm(delta,axis=1), 'm'),
+                                                ('body_speed', speed, 'm_s'),
+                                                ('velocity_acceleration', accel, 'm_s2'),
+                                                ('velocity_jerk', jerk, 'm_s3')]:
+                        row[label+'_p99_'+unit] = float(np.percentile(values,99)) if len(values) else None
+                        row[label+'_maximum_'+unit] = float(np.max(values)) if len(values) else None
+                    rows.append(row)
                 finally:
                     env.close()
     output=dict(source=str(results),source_sha256=hashlib.sha256(results.read_bytes()).hexdigest(),prefix_limit=prefix_steps,
         definition='Cached final filtered PID target after each control step; differences exclude reset target. Physical derivatives use cached body velocity at control rate.',
-        limitations='Different visited states and exposure when an episode ends before prefix limit; no UR5 joint dynamics or stop-risk prediction.',episodes=rows)
+        limitations='Different visited states; unpaired exposure differs when episodes end before prefix limit. Only control-rate cached telemetry, not complete substep traces, UR5 joint dynamics or stop-risk prediction.',
+        replay_source_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), episodes=rows)
+    if paired_results is not None:
+        output.update(paired_source=str(paired_results),
+                      paired_source_sha256=hashlib.sha256(paired_results.read_bytes()).hexdigest(),
+                      paired_definition='Each reset seed uses the first min(prefix limit, own steps, partner steps) saved actions; initial noisy observations must match exactly.')
     out.parent.mkdir(parents=True,exist_ok=True)
     out.write_text(json.dumps(output,indent=2)+'\n')
     print(f'Exact replay matches: {len(rows)} episodes; {sum(r["replayed_steps"] for r in rows)} steps; {out}')
@@ -79,4 +117,5 @@ if __name__ == '__main__':
     p.add_argument('--results',type=Path,required=True)
     p.add_argument('--out',type=Path,required=True)
     p.add_argument('--prefix-steps',type=int,default=250)
-    a=p.parse_args();replay(a.results,a.out,a.prefix_steps)
+    p.add_argument('--paired-results',type=Path)
+    a=p.parse_args();replay(a.results,a.out,a.prefix_steps,a.paired_results)

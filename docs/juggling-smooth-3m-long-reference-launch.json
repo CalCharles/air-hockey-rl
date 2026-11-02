@@ -1,7 +1,7 @@
 {
   "submitted_utc": "2026-11-02T01:48:47.348637+00:00",
   "job_id": "115892",
-  "status": "evaluating",
+  "status": "complete",
   "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_smooth_002_seed1_target3m_long_20261102",
   "source_bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed1/frozen_3000000_target",
   "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_smooth_002_seed1_target3m_long_20261102/frozen_target_3m",
@@ -68,10 +68,13 @@
   ],
   "limitations": "Fixed selected early checkpoint comparison; different policy training seed/budget from retained reference. No new learning, no old reference trajectories reused as candidate outcomes, no claim of infinite juggling or robot safety.",
   "observed_worker_status": {
-    "status": "evaluating",
-    "updated_utc": "2026-11-02T01:48:48.045586+00:00"
+    "status": "complete",
+    "updated_utc": "2026-11-02T02:12:34.350353+00:00"
   },
-  "observed_utc": "2026-11-02T01:51:26.432634+00:00",
-  "slurm_state": "RUNNING",
-  "user_gpu_requests_at_inspection": 11
+  "observed_utc": "2026-11-02T02:33:21.608528+00:00",
+  "slurm_state": "COMPLETED",
+  "user_gpu_requests_at_inspection": 11,
+  "exit_code": "0:0",
+  "elapsed": "00:23:47",
+  "published_summary": "docs/assets/juggling/regularized-3m-long-candidate-20261102.json"
 }
