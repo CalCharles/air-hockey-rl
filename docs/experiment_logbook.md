@@ -8,6 +8,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E085 — Complete first-million cost-policy comparisons across discounts](#e085)
 - [E084 — Launch weak longer-discount6M target paired long test](#e084)
 - [E083 — Compare first500k reward-cost policies across both discounts](#e083)
 - [E082 — Publish first reward-cost1M raw milestones with exact controls](#e082)
@@ -92,6 +93,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e085"></a>
+
+## E085 — 2026-11-02 00:16:47 -0600 — Complete first-million cost-policy comparisons across discounts
+
+Published all12 matched1M variants and384 raw episode outcomes for four cost100 learners and both discount controls.
+
+The gamma .999 cost targets average0.96875/0.65625 physical juggles and102.0625/96.34375 steps, versus2.25/221 for the matched control; all are immature. All four6M scratch learners continue; CPU115950 and the remaining weak-actor jobs were also RUNNING at inspection. Total user GPU requests9 including unrelated jobs. No new experiment launched or simulator/control changes made. Verified60 input/bundle hashes,3 output hashes, episode means and motion medians, all launch source guards, and visually inspected the figure. Finite simulation does not establish infinite juggling or robot-stop safety.
+
+[Detailed raw tables, figure, provenance, configs and reproduction](../notes/scratch/experiments/2026-11-02_06-16_target-cost-complete-first-million.md). Related record: [A086](agent_logbook.md#a086). Earlier partial results remain preserved in [E082](experiment_logbook.md#e082) and [E083](experiment_logbook.md#e083). Heading is actual documentation time; source execution times are not reconstructed.
 
 <a id="e084"></a>
 
