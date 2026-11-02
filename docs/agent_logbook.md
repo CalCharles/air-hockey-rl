@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A094 — Publish first cost10 checkpoint and initial reward-cost traces](#a094)
 - [A093 — Launch two fresh weaker-cost10 longer-discount learners](#a093)
 - [A092 — Complete cost100 budgets and publish3M controller counterevidence](#a092)
 - [A091 — Audit improving reward-cost checkpoint with exact controller replay](#a091)
@@ -99,6 +100,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a094"></a>
+
+## A094 — 2026-11-02 08:50:21 -0600 — Publish first cost10 checkpoint and initial reward-cost traces
+
+Cost10 gamma .999 seeds average1.0/1.125 physical juggles and99.875/124.25steps at500k on8 reused validation starts, still immature alongside the matched control.
+
+Published5 variants/40 raw outcomes,1000 reward-cost blocks, plots and source/model/config hashes. Verified16 new full NPZ outcomes, aggregate counts/reward/steps, block continuity/accounting, prefix/output/source hashes and documentation links/anchors/TOCs. Cost consumes2.2–2.4% of raw exploratory reward while target changes grow after the20k action-source switch; no smoothness or endurance improvement claimed. Both learners remain RUNNING toward fixed6M budgets and1/3/6M32-start tests;5 total user GPUs. No new run, implementation or simulator change.
+
+[Detailed raw tables, figures, provenance and reproduction](../notes/scratch/experiments/2026-11-02_14-50_cost10-first-checkpoint-and-reward-traces.md). Related record: [E093](experiment_logbook.md#e093); [E092 launch](experiment_logbook.md#e092). Heading is saved-data analysis/documentation time, not reconstructed evaluation time.
 
 <a id="a093"></a>
 

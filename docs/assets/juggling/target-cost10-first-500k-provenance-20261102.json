@@ -1,0 +1,46 @@
+{
+  "generated_utc": "2026-11-02T14:49:28.877079+00:00",
+  "scope": "Gamma.999 cost10 and cost100 seed0/1 plus historical seed0 control at500k online;5 variants/40 reused validation outcomes",
+  "protocol": {
+    "training_steps": 500000,
+    "episodes": 8,
+    "seed_base": 10000,
+    "horizon": 5000
+  },
+  "sources": {
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_g0999_20261102_seed0/train/checkpoint_500000/survival_eval/results.json": "741c8fdd71d825b0702ea843c8df27b8175d61ce5128cadfecc28acc8dadd048",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_g0999_20261102_seed1/train/checkpoint_500000/survival_eval/results.json": "96da72d61e5c3324931ce400717abe142594fa6463443d3af647ebf72deea176",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_10_g0999_20261102_seed0/train/checkpoint_500000/survival_eval/results.json": "cc09ee858fadae349e12f95e8e70483eea57434beb67d2fa2ee572ec52db2cd4",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_10_g0999_20261102_seed1/train/checkpoint_500000/survival_eval/results.json": "65606c2e7e1142908ce0d3251ad42800d9a5b4e9b1b0876043288f7af9bcc7d2",
+    "runs/td3/noisy_history_long_discount_20261029_seed0/train/checkpoint_500000/survival_eval/results.json": "8848e4c5ea3625e22c850624b3dafb02e5db52000c1a853566d1e73cd864aab7"
+  },
+  "bundles": {
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_g0999_20261102_seed0/train/checkpoint_500000/model.pth": "2ede9d95912848e935d4d2381c14764897a33e7f5c3ba7f3def4a58e6540b172",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_g0999_20261102_seed0/train/checkpoint_500000/args.yaml": "f78b75d4d4f43ea8d950602faf53a45323dba1525c4a2ccd87cd5662ad391253",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_g0999_20261102_seed0/train/checkpoint_500000/config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_g0999_20261102_seed0/train/checkpoint_500000/rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_g0999_20261102_seed1/train/checkpoint_500000/model.pth": "6fbd7c4e9ae582763f618bc1056e3e11777000a63677434b827bc83614e3cb57",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_g0999_20261102_seed1/train/checkpoint_500000/args.yaml": "ebd297a8aaf60d0448645e18e7a06ba7b09f6f1494980b7a4a5d6a2cf2b25b1e",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_g0999_20261102_seed1/train/checkpoint_500000/config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_g0999_20261102_seed1/train/checkpoint_500000/rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_10_g0999_20261102_seed0/train/checkpoint_500000/model.pth": "20eac3462191af1d8ed91ed8ea4171448830fcd780caaade7f3031f450242c77",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_10_g0999_20261102_seed0/train/checkpoint_500000/args.yaml": "ebe252ea406ec8cd0f70943eccda0eb19ef8b3adf8be36c8b204c7561d4bacd9",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_10_g0999_20261102_seed0/train/checkpoint_500000/config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_10_g0999_20261102_seed0/train/checkpoint_500000/rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_10_g0999_20261102_seed1/train/checkpoint_500000/model.pth": "0c7ff260a40a7234280e18d56c08b236ee6745ca9bcbecdbe568f0eb6c850d4e",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_10_g0999_20261102_seed1/train/checkpoint_500000/args.yaml": "eb241e94a1d71a5785ef054819a521d6f5a1d13eccebac8d5188e3cd88449ef3",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_10_g0999_20261102_seed1/train/checkpoint_500000/config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_10_g0999_20261102_seed1/train/checkpoint_500000/rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_long_discount_20261029_seed0/train/checkpoint_500000/model.pth": "40d786b4802ada9a4e0b00b3bb496783f4f7df150c57ff55b8ef20ab850b46b0",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_long_discount_20261029_seed0/train/checkpoint_500000/args.yaml": "feaa907c394b623aa191adc9b91877fb975bcdaf1406bddba76b9b0edc20ef86",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_long_discount_20261029_seed0/train/checkpoint_500000/config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_long_discount_20261029_seed0/train/checkpoint_500000/rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+  },
+  "generator_sha256": "b01ce77f0565227236c9ec7df78db0df10652554d7737d5cbd2b289fbaf9d9c9",
+  "limitations": "All immature; eight reused validation starts, not the32-start milestones or long/infinite/hardware evidence.",
+  "published_sha256": {
+    "docs/assets/juggling/target-cost10-first-500k-summary-20261102.csv": "463e726e098a3db2876f48a972e06a3d4b75e6d638ee9deb38fd1e8e9912415f",
+    "docs/assets/juggling/target-cost10-first-500k-episodes-20261102.csv": "8bcc682f1df27b13bfc666f691a2a8b1a1137d389b3a7e5cb5d01e243c7e93c1",
+    "docs/assets/juggling/target-cost10-first-500k-comparison-20261102.png": "ee982110894638f423b5bf009abb8e465de5643376fe5ad79cb99f5a24183db0"
+  }
+}

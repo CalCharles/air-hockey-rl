@@ -1,6 +1,6 @@
 # Smoothness sweep progress
 
-Generated 2026-11-02T14:19:46.074421+00:00 from saved artifacts; no new rollouts.
+Generated 2026-11-02T14:49:10.803330+00:00 from saved artifacts; no new rollouts.
 
 Original sweep: each coefficient (0.0005, 0.002, 0.008) has two fresh training seeds at gamma 0.995. An additional pair uses coefficient 0.0005 and gamma 0.999. Original checkpoints are every 100k steps; the additional pair saves every 500k for storage. All budgets are 6M. Simulator, sensing, control and DR remain unchanged. GPU ceiling: 16 total user allocations, including other jobs. Training seeds remain separate curves; starts within one run are not training-seed replications.
 
@@ -18,8 +18,8 @@ Original sweep: each coefficient (0.0005, 0.002, 0.008) has two fresh training s
 | noisy_history_target_cost_100_20261102_seed1 | 115922 | complete |
 | noisy_history_target_cost_100_g0999_20261102_seed0 | 115928 | complete |
 | noisy_history_target_cost_100_g0999_20261102_seed1 | 115929 | complete |
-| noisy_history_target_cost_10_g0999_20261102_seed0 | 116027 | submitted |
-| noisy_history_target_cost_10_g0999_20261102_seed1 | 116028 | submitted |
+| noisy_history_target_cost_10_g0999_20261102_seed0 | 116027 | training |
+| noisy_history_target_cost_10_g0999_20261102_seed1 | 116028 | training |
 
 ![Checkpoint juggling, steps, reward and commands](juggling-smooth-sweep.png)
 
