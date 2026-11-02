@@ -6,6 +6,11 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A081 — Publish verified late-discount6M long outcomes and failure clip](#a081)
+- [A080 — Launch gamma .999 reward-cost pair under reviewed simulator contract](#a080)
+- [A079 — Publish first500k reward-cost raw metrics and original/shaped reward traces](#a079)
+- [A078 — Publish verified stronger6M long outcomes and first-episode failure](#a078)
+- [A077 — Losslessly archive completed historical full training states](#a077)
 - [A076 — Freeze stronger-penalty target and launch CPU paired long testing](#a076)
 - [A075 — Publish medium6M outcomes and distinguish command/physical tails](#a075)
 - [A074 — Freeze late6M longer-discount target and launch CPU long testing](#a074)
@@ -82,6 +87,81 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a081"></a>
+
+## A081 — 2026-11-01 23:20:31 -0600 — Publish verified late-discount6M long outcomes and failure clip
+
+Collected and verified all32 late-discount6M long outcomes, finding modest sampled-motion reduction and less endurance than the retained reference.
+
+**Completed:** CPU115924 COMPLETED/exit0 in33m07s, actual worker completion04:52:03UTC. Mean321.1875 physical/280.1875 sensed juggles and23142.34375steps; median154.5 juggles/10919steps. One100k-censored recording,31 puck-loss endings; later outcome of the capped record unknown. Reference546.25/37131.03125 includes three censored records. Equal-prefix p95 jerk ratio.980370,7952 positions per policy, all32 initial observations exact. Source budgets/discounts differ, cohort is reused development, no policy promotion. Draft stale-live wording reconciled before publication; committed launch history preserved.
+
+Experiment record: [E080](experiment_logbook.md#e080). [Complete distribution, raw32 cases, sources and reproduction](../notes/scratch/experiments/2026-11-02_05-20_late-discount-six-million-long.md). Heading is documentation time, not run time. Related: [E074](experiment_logbook.md#e074), [E077](experiment_logbook.md#e077), [E079](experiment_logbook.md#e079). No infinite-juggling or hardware-stop conclusion.
+
+![Completed late-discount long test](assets/juggling/longdiscount-6m-long-candidate-20261102.png)
+
+Generated2026-11-02 from completed raw outcomes. Detailed note embeds the existing first-episode failure GIF (3296steps/47 physical juggles), copied byte-for-byte and not selected for performance.
+
+<a id="a080"></a>
+
+## A080 — 2026-11-01 23:08:56 -0600 — Launch gamma .999 reward-cost pair under reviewed simulator contract
+
+Launched two additional from-random6M history learners to combine constant PID-target reward cost100 with gamma .999.
+
+Jobs115928/115929 RUNNING; only gamma/run name differ from the same-seed .995 cost configs. Canonical simulator/source hashes rechecked before each launch; no pretrained actor/critic/residual, sensing/control edit or extra action filter. GPU requests9 then10 before submission, reaching11 under16. Same500k checkpoint cadence and raw1M/3M/6M online/target protocol. No checkpoint performance result or GIF yet;400-cost configurations remain inactive.
+
+Experiment record: [E079](experiment_logbook.md#e079).
+
+[Detailed setup, all raw artifacts, limitations and reproduction](../notes/scratch/experiments/2026-11-02_05-08_target-cost-long-discount-launch.md). Heading is documentation time; run submissions/completions are recorded separately. Related: [E073](experiment_logbook.md#e073), [E075](experiment_logbook.md#e075), [E076](experiment_logbook.md#e076). No infinite-juggling or hardware-stop conclusion.
+
+<a id="a079"></a>
+
+## A079 — 2026-11-01 23:08:56 -0600 — Publish first500k reward-cost raw metrics and original/shaped reward traces
+
+Published the first reward-cost fixed-policy checkpoint outcomes separately from exploratory training reward/cost logs.
+
+Exactly8 reused starts10000/5k, online actor at500k. Gamma .995 cost100 seed0 .875 physical juggles/104.875steps, seed1 .25/59.625; .995 control .375/85 and .999 control1.25/124.25. Snapshot includes12 variants/96 raw episodes, with source/model fingerprints. All are short early episodes; no sustained-performance claim. Published1000 complete reward blocks and verified reward-minus-cost accounting. Full6M budgets continue, missing checkpoints omitted.
+
+Experiment record: [E078](experiment_logbook.md#e078).
+
+[Detailed setup, all raw artifacts, limitations and reproduction](../notes/scratch/experiments/2026-11-02_05-08_first-target-cost-checkpoints.md). Heading is documentation time; run submissions/completions are recorded separately. Related: [E073](experiment_logbook.md#e073), [E075](experiment_logbook.md#e075), [E076](experiment_logbook.md#e076). No infinite-juggling or hardware-stop conclusion.
+
+![Recorded experiment evidence](assets/juggling/target-cost-500k-comparison-20261102.png)
+
+Generated2026-11-02 from saved raw data. The detailed note distinguishes completed fixed-policy tests, exploratory reward blocks and still-running experiments, and embeds available existing GIF evidence.
+
+<a id="a078"></a>
+
+## A078 — 2026-11-01 23:08:56 -0600 — Publish verified stronger6M long outcomes and first-episode failure
+
+Completed and independently recounted all32 long candidate trajectories, finding lower sampled motion but markedly worse endurance than the retained reference.
+
+CPU115927 COMPLETED/exit0 in9m29s, model3098fd... frozen. Mean123.71875 physical/109.78125 sensed juggles and9017.34375steps; median48.5 juggles/3351steps, range0–750juggles/13–53564steps. All32 end in puck loss;29 pass and4 bottom tags overlap in one case. Reference546.25/37131.03125 includes three100k-censored records. Equal-prefix jerk ratio.768415,7026 positions per policy,32 exact initial observations. No promotion. Publisher cohort wording corrected prospectively; old paired artifacts remain historical.
+
+Experiment record: [E077](experiment_logbook.md#e077).
+
+[Detailed setup, all raw artifacts, limitations and reproduction](../notes/scratch/experiments/2026-11-02_05-08_strong-six-million-long-results.md). Heading is documentation time; run submissions/completions are recorded separately. Related: [E073](experiment_logbook.md#e073), [E075](experiment_logbook.md#e075), [E076](experiment_logbook.md#e076). No infinite-juggling or hardware-stop conclusion.
+
+![Recorded experiment evidence](assets/juggling/strong-6m-long-candidate-20261102.png)
+
+Generated2026-11-02 from saved raw data. The detailed note distinguishes completed fixed-policy tests, exploratory reward blocks and still-running experiments, and embeds available existing GIF evidence.
+
+<a id="a077"></a>
+
+## A077 — 2026-11-01 23:08:56 -0600 — Losslessly archive completed historical full training states
+
+Archived two completed historical full training-state files as verified gzip copies, reducing storage by7017176954bytes while preserving their exact contents.
+
+**Completed maintenance, no new experiment:** the .995 and .999 history seed0 final states from2026-10-29 had complete runner status and immutable timestamps; historical allocations are terminal. Each original was streamed to a new gzip staging file, decompressed and checked for identical SHA256 and byte length, atomically renamed, and only then had its uncompressed copy removed. Original sizes total7429347472bytes, compressed total412170518bytes. Full optimizer/critic/replay contents remain losslessly recoverable; separate actor/target weights were hash-checked unchanged, and configs/trajectories/live job inputs were untouched. Disk margin recovered while ongoing jobs wrote checkpoints. [Exact paths, hashes, original modes/timestamps, terminal evidence and restore commands](juggling-training-state-archives-20261102.json). New archives remain in ignored `runs/`, not committed binary payloads.
+
+The original paths now have `.gz` appended. To restore either original for inspection while keeping the archive:
+
+```sh
+gzip -dk runs/td3/noisy_history_20261029_seed0/train/training_state.pth.gz
+gzip -dk runs/td3/noisy_history_long_discount_20261029_seed0/train/training_state.pth.gz
+```
+
+Verify a restored file against `original_sha256` in the index. Existing dated findings remain unchanged; this is a dated storage-location update. All new policies still train from scratch. No experiment-logbook entry is added for this storage maintenance.
 
 <a id="a076"></a>
 

@@ -25,7 +25,7 @@ def main():
             label='Baseline γ=.999 s0 '+row['weights'];color='black'
         elif 'target_cost_' in row['run']:
             coefficient=row['run'].split('target_cost_',1)[1].split('_')[0]
-            gamma=float(row.get('gamma') or .995)
+            gamma=float(row.get('gamma') or (.999 if '_g0999_' in row['run'] else .995))
             label=f"PID-target reward c={coefficient} γ={gamma:g} s{row['run'].split('seed')[-1]} {row['weights']}"
             color='#b279a2'
         else:

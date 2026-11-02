@@ -1,0 +1,36 @@
+{
+  "source": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_smooth_008_seed0_target6m_long_20261102/paired_reference_100k_eval/training.gif",
+  "source_sha256": "85d2fe97ab6782950291587a8775e1eab59ab95a60bdd5f59a7fd560cf1433d6",
+  "published": "docs/assets/juggling/strong-6m-long-first-episode-end-20261102.gif",
+  "published_sha256": "85d2fe97ab6782950291587a8775e1eab59ab95a60bdd5f59a7fd560cf1433d6",
+  "model_sha256": "3098fd104583404e69a577fd903f44099a57dd0a40b29de9bc8d5f2e14f32241",
+  "episode": {
+    "seed": 9000000,
+    "steps": 29335,
+    "return": 21866.0,
+    "contacts": 655,
+    "failed": true,
+    "unexpected_truncation": false,
+    "reached_horizon": false,
+    "end_reasons": [
+      "puck_passed_paddle"
+    ],
+    "peak_paddle_speed_m_s": 2.000000073482115,
+    "peak_paddle_acceleration_m_s2": 48.518613331767426,
+    "action_delta_rms": 0.1501929495641181,
+    "target_delta_rms_m": 0.031486248594494476,
+    "trajectory": "training_seed9000000.npz",
+    "contact_events": 368,
+    "juggles": 368,
+    "true_state_contact_events": 407,
+    "true_state_juggles": 406
+  },
+  "frames": 200,
+  "duration_ms": 50,
+  "width": 160,
+  "frame_steps_inclusive": [
+    29136,
+    29335
+  ],
+  "selection": "First predeclared reset9000000, existing final200 frames copied byte-for-byte; not selected for good performance"
+}

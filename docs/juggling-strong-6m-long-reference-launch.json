@@ -1,5 +1,5 @@
 {
-  "status": "evaluating",
+  "status": "complete",
   "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_smooth_008_seed0_target6m_long_20261102",
   "source_bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed0/frozen_6000000_target",
   "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_smooth_008_seed0_target6m_long_20261102/frozen_target_6m",
@@ -64,10 +64,14 @@
   "limitations": "Fixed-policy inference only; no learning or pretrained warm start. Reused development cohort and different training budgets from retained3.6M reference; no infinite-survival or hardware-stop conclusion.",
   "job_id": "115927",
   "submitted_utc": "2026-11-02T04:34:24.848079+00:00",
-  "observed_utc": "2026-11-02T04:36:15.810295+00:00",
+  "observed_utc": "2026-11-02T04:49:43.063496+00:00",
   "slurm_observation": "RUNNING|N/A",
   "observed_worker_status": {
-    "status": "evaluating",
-    "updated_utc": "2026-11-02T04:34:25.447163+00:00"
-  }
+    "status": "complete",
+    "updated_utc": "2026-11-02T04:43:53.332368+00:00"
+  },
+  "slurm_state": "COMPLETED",
+  "exit_code": "0:0",
+  "elapsed": "00:09:29",
+  "published_summary": "docs/assets/juggling/strong-6m-long-candidate-20261102.json"
 }

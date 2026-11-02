@@ -29,6 +29,7 @@ def main():
         path=Path(run['root'])/'target_cost_training.csv'
         if not path.exists():
             continue
+        gamma=yaml.safe_load(Path(run['config']).read_text())['gamma']
         lines=path.read_bytes().splitlines(keepends=True)
         if lines and not lines[-1].endswith(b'\n'):
             lines=lines[:-1]  # A live writer's unfinished final row is not evidence.
@@ -52,7 +53,8 @@ def main():
                 raise ValueError('Negative motion cost')
             if args.max_step is not None and step>args.max_step:
                 break
-            selected.append(dict(run=run['name'],seed=run['manifest']['seed'],**row,
+            selected.append(dict(run=run['name'],seed=run['manifest']['seed'],
+                gamma=gamma,**row,
                 original_reward_per_step=values['original_reward_sum']/count,
                 shaped_reward_per_step=values['shaped_reward_sum']/count,cost_per_step=values['cost_sum']/count))
         if not selected:
@@ -69,7 +71,7 @@ def main():
     fig,axes=plt.subplots(2,2,figsize=(12,7),constrained_layout=True)
     for name in dict.fromkeys(r['run'] for r in rows):
         own=[r for r in rows if r['run']==name];x=[int(r['step']) for r in own]
-        label='Seed '+str(own[0]['seed'])
+        label=f"γ={own[0]['gamma']:g}, seed {own[0]['seed']}"
         for ax,key,ylabel in zip(axes.flat,['original_reward_per_step','shaped_reward_per_step','cost_per_step','target_step_p95_m'],
             ['Original reward / step','Shaped reward / step','Target cost / step','Block p95 filtered-target change (m)']):
             ax.plot(x,[float(r[key]) for r in own],label=label)

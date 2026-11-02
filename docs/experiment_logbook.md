@@ -2,10 +2,16 @@
 
 Scope: recent sustained-juggling studies on this branch, not a complete repository history. Backfilled on 2026-10-28 12:23:43-05:00 from Git author timestamps, existing experiment notes, saved reports and tracked GIFs. Historical headings are **recording milestones**, not run start/end times. Timezone: America/Chicago, explicit UTC offsets. All results below are historical, not freshly reproduced. [Agent logbook](agent_logbook.md).
 
+Scope clarification (2026-11-01 23:08:56 -0600): the preceding historical/not-reproduced statement describes the original backfill. Later dated entries explicitly distinguish fresh runs/replays, saved-artifact analyses and pending work.
+
 Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E080 — Complete late-discount6M paired long test](#e080)
+- [E079 — Launch two scratch longer-discount target-cost learners](#e079)
+- [E078 — Analyze first500k PID-target reward-cost checkpoints](#e078)
+- [E077 — Complete stronger6M paired long test](#e077)
 - [E076 — Launch paired long test of smoother strong6M target](#e076)
 - [E075 — Complete medium6M comparisons and audit actual controller tails](#e075)
 - [E074 — Launch paired100k test of late longer-discount target](#e074)
@@ -82,6 +88,64 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e080"></a>
+
+## E080 — 2026-11-01 23:20:31 -0600 — Complete late-discount6M paired long test
+
+Collected and verified all32 late-discount6M long outcomes, finding modest sampled-motion reduction and less endurance than the retained reference.
+
+**Completed:** CPU115924 COMPLETED/exit0 in33m07s, actual worker completion04:52:03UTC. Mean321.1875 physical/280.1875 sensed juggles and23142.34375steps; median154.5 juggles/10919steps. One100k-censored recording,31 puck-loss endings; later outcome of the capped record unknown. Reference546.25/37131.03125 includes three censored records. Equal-prefix p95 jerk ratio.980370,7952 positions per policy, all32 initial observations exact. Source budgets/discounts differ, cohort is reused development, no policy promotion. Draft stale-live wording reconciled before publication; committed launch history preserved.
+
+Agent task: [A081](agent_logbook.md#a081). [Complete distribution, raw32 cases, sources and reproduction](../notes/scratch/experiments/2026-11-02_05-20_late-discount-six-million-long.md). Heading is documentation time, not run time. Related: [E074](experiment_logbook.md#e074), [E077](experiment_logbook.md#e077), [E079](experiment_logbook.md#e079). No infinite-juggling or hardware-stop conclusion.
+
+![Completed late-discount long test](assets/juggling/longdiscount-6m-long-candidate-20261102.png)
+
+Generated2026-11-02 from completed raw outcomes. Detailed note embeds the existing first-episode failure GIF (3296steps/47 physical juggles), copied byte-for-byte and not selected for performance.
+
+<a id="e079"></a>
+
+## E079 — 2026-11-01 23:08:56 -0600 — Launch two scratch longer-discount target-cost learners
+
+Launched two additional from-random6M history learners to combine constant PID-target reward cost100 with gamma .999.
+
+Jobs115928/115929 RUNNING; only gamma/run name differ from the same-seed .995 cost configs. Canonical simulator/source hashes rechecked before each launch; no pretrained actor/critic/residual, sensing/control edit or extra action filter. GPU requests9 then10 before submission, reaching11 under16. Same500k checkpoint cadence and raw1M/3M/6M online/target protocol. No checkpoint performance result or GIF yet;400-cost configurations remain inactive.
+
+Agent task: [A080](agent_logbook.md#a080).
+
+[Detailed setup, all raw artifacts, limitations and reproduction](../notes/scratch/experiments/2026-11-02_05-08_target-cost-long-discount-launch.md). Heading is documentation time; run submissions/completions are recorded separately. Related: [E073](experiment_logbook.md#e073), [E075](experiment_logbook.md#e075), [E076](experiment_logbook.md#e076). No infinite-juggling or hardware-stop conclusion.
+
+<a id="e078"></a>
+
+## E078 — 2026-11-01 23:08:56 -0600 — Analyze first500k PID-target reward-cost checkpoints
+
+Published the first reward-cost fixed-policy checkpoint outcomes separately from exploratory training reward/cost logs.
+
+Exactly8 reused starts10000/5k, online actor at500k. Gamma .995 cost100 seed0 .875 physical juggles/104.875steps, seed1 .25/59.625; .995 control .375/85 and .999 control1.25/124.25. Snapshot includes12 variants/96 raw episodes, with source/model fingerprints. All are short early episodes; no sustained-performance claim. Published1000 complete reward blocks and verified reward-minus-cost accounting. Full6M budgets continue, missing checkpoints omitted.
+
+Agent task: [A079](agent_logbook.md#a079).
+
+[Detailed setup, all raw artifacts, limitations and reproduction](../notes/scratch/experiments/2026-11-02_05-08_first-target-cost-checkpoints.md). Heading is documentation time; run submissions/completions are recorded separately. Related: [E073](experiment_logbook.md#e073), [E075](experiment_logbook.md#e075), [E076](experiment_logbook.md#e076). No infinite-juggling or hardware-stop conclusion.
+
+![Recorded experiment evidence](assets/juggling/target-cost-500k-comparison-20261102.png)
+
+Generated2026-11-02 from saved raw data. The detailed note distinguishes completed fixed-policy tests, exploratory reward blocks and still-running experiments, and embeds available existing GIF evidence.
+
+<a id="e077"></a>
+
+## E077 — 2026-11-01 23:08:56 -0600 — Complete stronger6M paired long test
+
+Completed and independently recounted all32 long candidate trajectories, finding lower sampled motion but markedly worse endurance than the retained reference.
+
+CPU115927 COMPLETED/exit0 in9m29s, model3098fd... frozen. Mean123.71875 physical/109.78125 sensed juggles and9017.34375steps; median48.5 juggles/3351steps, range0–750juggles/13–53564steps. All32 end in puck loss;29 pass and4 bottom tags overlap in one case. Reference546.25/37131.03125 includes three100k-censored records. Equal-prefix jerk ratio.768415,7026 positions per policy,32 exact initial observations. No promotion. Publisher cohort wording corrected prospectively; old paired artifacts remain historical.
+
+Agent task: [A078](agent_logbook.md#a078).
+
+[Detailed setup, all raw artifacts, limitations and reproduction](../notes/scratch/experiments/2026-11-02_05-08_strong-six-million-long-results.md). Heading is documentation time; run submissions/completions are recorded separately. Related: [E073](experiment_logbook.md#e073), [E075](experiment_logbook.md#e075), [E076](experiment_logbook.md#e076). No infinite-juggling or hardware-stop conclusion.
+
+![Recorded experiment evidence](assets/juggling/strong-6m-long-candidate-20261102.png)
+
+Generated2026-11-02 from saved raw data. The detailed note distinguishes completed fixed-policy tests, exploratory reward blocks and still-running experiments, and embeds available existing GIF evidence.
 
 <a id="e076"></a>
 

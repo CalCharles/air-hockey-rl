@@ -1,0 +1,50 @@
+{
+  "started_utc": "2026-11-02T04:43:43.855008+00:00",
+  "status": "complete",
+  "purpose": "Lossless storage migration of two completed historical full training states; all actor/critic/policy files, configs, raw trajectories and live job inputs untouched.",
+  "historical_slurm_evidence": "112936|TIMEOUT|0:0\n112936.extern|COMPLETED|0:0\n112936.0|CANCELLED|0:9\n112936.1|CANCELLED|0:64\n112936.2|COMPLETED|0:0\n112936.3|CANCELLED|0:15\n112936.4|COMPLETED|0:0\n112936.5|CANCELLED|0:15\n112936.6|COMPLETED|0:0\n112937|TIMEOUT|0:0\n112937.extern|COMPLETED|0:0\n112937.0|CANCELLED|0:9\n112937.1|CANCELLED|0:64\n112937.2|COMPLETED|0:0\n112937.3|CANCELLED|0:15\n112937.4|COMPLETED|0:0\n112937.5|COMPLETED|0:0\n112937.6|CANCELLED|0:64\n112937.7|CANCELLED|0:64\n112937.8|COMPLETED|0:0\n",
+  "archives": [
+    {
+      "original": "runs/td3/noisy_history_20261029_seed0/train/training_state.pth",
+      "archive": "runs/td3/noisy_history_20261029_seed0/train/training_state.pth.gz",
+      "original_bytes": 3714673704,
+      "compressed_bytes": 197991593,
+      "original_sha256": "2374a7fae20eee30a82d25e0434d336173019478199fc6a2a537e8f262c697d3",
+      "decompressed_verified_sha256": "2374a7fae20eee30a82d25e0434d336173019478199fc6a2a537e8f262c697d3",
+      "archive_sha256": "cb8aae151836eb4eab22f88c05e16aa590a12a6707d6ea6941d878249cad577a",
+      "original_mode": "0o600",
+      "original_mtime_ns": 1793317679426769827,
+      "verified_utc": "2026-11-02T04:44:00.207903+00:00",
+      "policy_files_sha256": {
+        "runs/td3/noisy_history_20261029_seed0/train/model.pth": "01e1548f1bb0163bf672f39d15e132f5a5697e2319b484dbb5fced8a6b982305",
+        "runs/td3/noisy_history_20261029_seed0/train/actor_target.pth": "7fb377f4dc7da0c8dd1a7fb6f822ccd81d3e763d5e2bb14c6cddfa4143439b5d"
+      },
+      "status": "archived_losslessly",
+      "restore_command": "gzip -dk runs/td3/noisy_history_20261029_seed0/train/training_state.pth.gz",
+      "uncompressed_original_removed_utc": "2026-11-02T04:44:00.706017+00:00",
+      "space_saved_bytes": 3516682111
+    },
+    {
+      "original": "runs/td3/noisy_history_long_discount_20261029_seed0/train/training_state.pth",
+      "archive": "runs/td3/noisy_history_long_discount_20261029_seed0/train/training_state.pth.gz",
+      "original_bytes": 3714673768,
+      "compressed_bytes": 214178925,
+      "original_sha256": "68905df153b3840a3cd2f094f31c82a9ca3bb3c45257d807adb12056ca5af274",
+      "decompressed_verified_sha256": "68905df153b3840a3cd2f094f31c82a9ca3bb3c45257d807adb12056ca5af274",
+      "archive_sha256": "d2537036aff21fba111269df297e8b7e64ffd1995273d8abc11137d84c2f9887",
+      "original_mode": "0o600",
+      "original_mtime_ns": 1793328313219443160,
+      "verified_utc": "2026-11-02T04:44:17.629836+00:00",
+      "policy_files_sha256": {
+        "runs/td3/noisy_history_long_discount_20261029_seed0/train/model.pth": "61f05e56d5cb7842b048076919143ea8c4870f0a7a7a5b0d7edadcdf7cdb074b",
+        "runs/td3/noisy_history_long_discount_20261029_seed0/train/actor_target.pth": "204f6af6731cafd1dfa60d8466776908e85122f79722e2a92797033f3f05880e"
+      },
+      "status": "archived_losslessly",
+      "restore_command": "gzip -dk runs/td3/noisy_history_long_discount_20261029_seed0/train/training_state.pth.gz",
+      "uncompressed_original_removed_utc": "2026-11-02T04:44:18.107014+00:00",
+      "space_saved_bytes": 3500494843
+    }
+  ],
+  "completed_utc": "2026-11-02T04:44:18.143642+00:00",
+  "total_space_saved_bytes": 7017176954
+}

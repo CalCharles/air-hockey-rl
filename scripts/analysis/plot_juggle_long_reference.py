@@ -77,7 +77,7 @@ def main():
                   recording_limit_steps=primary['horizon'], model_sha256=verified['model_sha256'],
                   sources={str(p.resolve()): digest(p) for p in (args.results, args.verified_trajectories, model, Path(__file__))},
                   published_csv_sha256=digest(csv_path), summary=summary,
-                  limitations='One fixed training seed and policy; new reset starts. Recording limits censor counts and durations. Whole-episode motion uses20Hz position differences, excludes the reset sample, and involves unequal durations/visited states. No joint loads, substep spikes, infinite reliability or hardware-stop prediction.')
+                  limitations='One fixed training seed and policy; cohort reuse is described by cohort_label. Recording limits censor counts and durations. Whole-episode motion uses20Hz position differences, excludes the reset sample, and involves unequal durations/visited states. No joint loads, substep spikes, infinite reliability or hardware-stop prediction.')
     args.out_prefix.with_suffix('.json').write_text(json.dumps(output, indent=2, allow_nan=False)+'\n')
     x = np.arange(count)
     fig, axes = plt.subplots(2, 2, figsize=(13, 8), constrained_layout=True)
