@@ -41,7 +41,7 @@ def main():
         ax.barh(labels,[float(r[key]) for r in rows],color=colors);ax.invert_yaxis();ax.set_xlabel(label)
         ax.tick_params(axis='y',labelsize=8);ax.grid(axis='x',alpha=.2);ax.set_axisbelow(True)
     _,episodes,_,horizon=next(iter(protocol))
-    fig.suptitle(args.title+f'\nOne seed/weight variant per bar; {episodes} reused starts, {int(horizon):,}-step recording limit; training continues')
+    fig.suptitle(args.title+f'\nOne seed/weight variant per bar; {episodes} reused starts, {int(horizon):,}-step recording limit; frozen checkpoint comparisons')
     args.out.parent.mkdir(parents=True,exist_ok=True);fig.savefig(args.out,dpi=160);plt.close(fig)
 
 

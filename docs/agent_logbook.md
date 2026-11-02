@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A089 — Complete full6M actor-smoothness matrix and paired motion](#a089)
 - [A088 — Complete weak longer-discount6M paired long test](#a088)
 - [A087 — Publish first-million reward and motion-cost traces for all four learners](#a087)
 - [A086 — Publish complete first-million cost matrix and verify live source guards](#a086)
@@ -94,6 +95,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a089"></a>
+
+## A089 — 2026-11-02 00:40:18 -0600 — Complete full6M actor-smoothness matrix and paired motion
+
+Completed all eight scratch actor-penalty trials and published20 frozen6M variants/640 raw outcomes with16 matched paired-motion comparisons.
+
+New weak .995 targets average124.625/8798.25steps and103.1875/7486.1875 versus138.40625/9859.8125 matched control; strong penalty reduces typical paired jerk but one seed averages9.9375/722.875. No consistently better policy or hardware-ready claim. Verified128 new NPZ outcomes,640-row aggregates/motion medians,512 identical paired initial observations, source guards and terminal Slurm states. Refreshed training figures and corrected only a reporting caption to avoid describing completed training as ongoing. Four cost100 learners remain RUNNING;7 total user GPUs including unrelated jobs. No new experiment launched.
+
+[Full raw tables, plot, provenance, configs/checkpoints and reproduction](../notes/scratch/experiments/2026-11-02_06-40_complete-actor-smoothness-six-million.md). Related record: [E088](experiment_logbook.md#e088); [E0683M matrix](experiment_logbook.md#e068), [E087 long test](experiment_logbook.md#e087). Heading is documentation time; actual final-job completion timestamps appear in the note.
 
 <a id="a088"></a>
 
