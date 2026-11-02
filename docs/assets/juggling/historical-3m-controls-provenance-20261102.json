@@ -1,0 +1,20 @@
+{
+  "generated_utc": "2026-11-02T01:05:39.858555+00:00",
+  "sources": {
+    "runs/td3/juggle_history_baseline_3m_20261102/paired_online_20k_eval/results.json": "e63bad41361e036fc218e89f12edb744990d2119c39f503a7929ef359f2bbc84",
+    "runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/results.json": "449cbbcc575b94f2785398c5dc46b3e8a9249bf28554b0f3e7beec2d4c1f2348",
+    "runs/td3/juggle_history_longdiscount_baseline_3m_20261102/paired_online_20k_eval/results.json": "dd4ec6d36b85b2329b051be37f143baf6c1397f6055021cfe331696076c6ad40",
+    "runs/td3/juggle_history_longdiscount_baseline_3m_20261102/paired_target_20k_eval/results.json": "2358a1f0aa79a047898331f4df172dfc0494af805674345fad866917aa2c65c0"
+  },
+  "launches": [
+    "docs/juggling-baseline-3m-comparison-launch.json",
+    "docs/juggling-longdiscount-baseline-3m-launch.json"
+  ],
+  "protocol": {
+    "step": 3000000,
+    "episodes": 32,
+    "seed_base": 700000,
+    "horizon": 20000
+  },
+  "limitations": "Frozen historical seed0 online/target controls, not independent training replications or new regularized3M results. Finite recording limits censor counts/durations."
+}

@@ -12,7 +12,7 @@
   "horizon": 20000,
   "seed_base": 700000,
   "gpus": 0,
-  "status": "evaluating",
+  "status": "complete",
   "batch_source": "#!/bin/bash\n#SBATCH --job-name=juggle-base-3m\n#SBATCH --partition=allnodes\n#SBATCH --nodes=1\n#SBATCH --ntasks=1\n#SBATCH --cpus-per-task=2\n#SBATCH --gres=none\n#SBATCH --mem=8G\n#SBATCH --time=04:00:00\n#SBATCH --output=/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/slurm.log\nset -euo pipefail\ncd /scratch/cluster/mrudolph/documents/air-hockey-rl\nexport OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 MPLCONFIGDIR=/tmp/airhockey-mpl\nexport PYTHONPATH=/scratch/cluster/mrudolph/documents/air-hockey-rl\nexport CUDA_VISIBLE_DEVICES=\"\"\nexec /scratch/cluster/mrudolph/documents/air-hockey-rl/.venv/bin/python -u /scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/run.py\n",
   "worker_source": "from pathlib import Path\nimport subprocess,hashlib,json\nfrom datetime import datetime,timezone\nROOT=Path('/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102')\nREPO=Path('/scratch/cluster/mrudolph/documents/air-hockey-rl')\nWEIGHTS={'online': '1e0dda69f8148b8178d0c575a0dca54e36357bbcf2809b1b98857e9f26357d20', 'target': 'f938e3a9df175d78c18ac0553210aa9bde411f0041d62bfe9291bf2d56ed6fb4'}\nREVIEWED={'airhockey/airhockey_base.py': 'a3a8c1c37fdb53015b6cb2568b1b9ccc39e6f6dff39323a4c25f97ae88fcb4d6', 'airhockey/sims/airhockey_box2d.py': '7059de3e1f8a979c706eb2546ba7674c4970226952bc002567a1d2aa20fa7eee', 'configs/new_juggle/sysid_v2_hist2.yaml': '5005076245b4ba9e6d95c1d9efa337b59e57a24017e117db97b45644758f5349', 'configs/new_juggle/sustained/original_sensing.yaml': 'd1bb13a7a4a5494507d085db230bdbe31854f0ddb556ccf88c3ec5aca0360385', 'scripts/rma/history.py': 'd7c3456d01c8e612c28ffb560d3711722a17948e002be313de0c54e9c0576f94', 'scripts/rma/evaluate.py': '24cb367940072b483b97d0fee9bb6ddd722b0a27424f5197e2634337b241570f', 'scripts/td3/juggle_survival.py': 'e533f1f3b0dd34bcdfeef6e5dec10922422edde5a16db8cff706736d832b8a92', 'scripts/analysis/juggle_motion_metrics.py': '3c36447afa2dc0f99b72c06c134411d853c89d06004fb4fdc5296e5006ef7f67', 'scripts/td3/helper/juggle_counter.py': 'c87916662f35ff091cf0a4be47bdef90d0be92a8a9917f66632807e01a7f40cc'}\ndef save(status,**details):\n    (ROOT/'status.json').write_text(json.dumps(dict(status=status,updated_utc=datetime.now(timezone.utc).isoformat(),**details),indent=2)+chr(10))\ntry:\n    for role in ['online','target']:\n        for name, expected in REVIEWED.items():\n            assert hashlib.sha256((REPO/name).read_bytes()).hexdigest()==expected, name\n        bundle=ROOT/('frozen_'+role)\n        assert hashlib.sha256((bundle/'model.pth').read_bytes()).hexdigest()==WEIGHTS[role]\n        save('evaluating',role=role)\n        cmd=[str(REPO/'.venv/bin/python'),'-u','-m','scripts.td3.juggle_survival','--run-dir',str(bundle),'--scenario-set','training','--episodes','32','--horizon','20000','--seed-base','700000','--gif-steps','0','--out-dir',str(ROOT/('paired_'+role+'_20k_eval'))]\n        subprocess.run(cmd,cwd=REPO,check=True)\n        assert hashlib.sha256((bundle/'model.pth').read_bytes()).hexdigest()==WEIGHTS[role]\n        subprocess.run([cmd[0],'-m','scripts.analysis.juggle_motion_metrics','--results',str(ROOT/('paired_'+role+'_20k_eval')/'results.json')],cwd=REPO,check=True)\n    save('complete')\nexcept Exception as exc:\n    save('failed',error=repr(exc))\n    raise\n",
   "reviewed_sha256": {
@@ -29,9 +29,8 @@
   "purpose": "Discount-matched archived3M fixed-policy inference controls for the active scratch sweep; no learning or warm start.",
   "observed_utc": "2026-11-02T00:46:52.480304+00:00",
   "saved_worker_status": {
-    "status": "evaluating",
-    "updated_utc": "2026-11-02T00:46:03.491460+00:00",
-    "role": "online"
+    "status": "complete",
+    "updated_utc": "2026-11-02T01:04:46.354210+00:00"
   },
   "bundle_files_sha256": {
     "online": {
@@ -46,5 +45,8 @@
       "config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
       "rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
     }
-  }
+  },
+  "verified_utc": "2026-11-02T01:05:29.417774+00:00",
+  "slurm_state": "COMPLETED",
+  "exit_code": "0:0"
 }

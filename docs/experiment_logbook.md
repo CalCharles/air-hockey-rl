@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E060 — Complete all discount-matched historical 3M controls](#e060)
 - [E059 — Run discount-matched archived 3M controls for upcoming comparisons](#e059)
 - [E058 — Review matched early weak-penalty and baseline performance GIFs](#e058)
 - [E057 — Compare physical motion over equal per-start prefixes](#e057)
@@ -65,6 +66,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e060"></a>
+
+## E060 — 2026-11-01 19:06:24 -0600 — Complete all discount-matched historical 3M controls
+
+Both historical3M target actors outlast their online actors on the same32 starts, providing complete controls for the upcoming smoothness tests.
+
+**Controls completed; new training ongoing:**115886/115887 both COMPLETED/exit0. At3M, gamma .995 online/target means134.25/202.625 physical juggles and9049.28125/13708.5625 steps; gamma .999 online/target34.125/142.375 juggles and2391.53125/9376.625 steps. Each row uses32 reused starts/20k limit; new regularized3M results are not yet available. One historical seed per discount and shared online/target training limit inference. Eight scratch learners remain active, eleven total user GPUs. Related: [E059](experiment_logbook.md#e059), [E056](experiment_logbook.md#e056).
+
+[Detailed table, refreshed figures, verification and reproduction](../notes/scratch/experiments/2026-11-02_01-06_completed-3m-controls.md); [fixed summaries](assets/juggling/historical-3m-controls-summary-20261102.csv); [raw128 episodes](assets/juggling/historical-3m-controls-episodes-20261102.csv); [source hashes](assets/juggling/historical-3m-controls-provenance-20261102.json). No separate control figure; the detailed note embeds existing checkpoint curves and explains their different protocol. Heading records actual collection time in America/Chicago. No new rollout for documentation, simulator/control changes or robot safety claim.
 
 <a id="e059"></a>
 

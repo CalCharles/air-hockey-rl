@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A060 — Publish complete 3M control metrics with frozen provenance](#a060)
 - [A059 — Prepare exact-protocol 3M controls and refresh training evidence](#a059)
 - [A058 — Publish matched weak-penalty performance clips with raw context](#a058)
 - [A057 — Make paired physical-motion comparisons reproducible](#a057)
@@ -65,6 +66,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a060"></a>
+
+## A060 — 2026-11-01 19:06:24 -0600 — Publish complete 3M control metrics with frozen provenance
+
+Collected four completed CPU-only historical controls, refreshed saved-artifact plots and exported128 raw episode records.
+
+**Controls completed; new training ongoing:**115886/115887 both COMPLETED/exit0. At3M, gamma .995 online/target means134.25/202.625 physical juggles and9049.28125/13708.5625 steps; gamma .999 online/target34.125/142.375 juggles and2391.53125/9376.625 steps. Each row uses32 reused starts/20k limit; new regularized3M results are not yet available. One historical seed per discount and shared online/target training limit inference. Eight scratch learners remain active, eleven total user GPUs. Related: [E059](experiment_logbook.md#e059), [E056](experiment_logbook.md#e056).
+
+[Detailed table, refreshed figures, verification and reproduction](../notes/scratch/experiments/2026-11-02_01-06_completed-3m-controls.md); [fixed summaries](assets/juggling/historical-3m-controls-summary-20261102.csv); [raw128 episodes](assets/juggling/historical-3m-controls-episodes-20261102.csv); [source hashes](assets/juggling/historical-3m-controls-provenance-20261102.json). No separate control figure; the detailed note embeds existing checkpoint curves and explains their different protocol. Heading records actual collection time in America/Chicago. No new rollout for documentation, simulator/control changes or robot safety claim.
 
 <a id="a059"></a>
 
