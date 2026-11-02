@@ -65,7 +65,8 @@ def main():
     report = Path('docs/juggling-smooth-sweep.md')
     launches = []
     for filename in ['docs/juggling-smooth-sweep-launch.json', 'docs/juggling-smooth-longdiscount-launch.json',
-                     'docs/juggling-target-cost-launch.json', 'docs/juggling-target-cost-longdiscount-launch.json']:
+                     'docs/juggling-target-cost-launch.json', 'docs/juggling-target-cost-longdiscount-launch.json',
+                     'docs/juggling-target-cost10-longdiscount-launch.json']:
         if Path(filename).exists():
             launches.extend(json.loads(Path(filename).read_text())['launches'])
     rows, statuses, curves, episode_rows = [], [], [], []

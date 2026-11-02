@@ -1,0 +1,22 @@
+{
+  "generated_utc": "2026-11-02T14:21:22.251035+00:00",
+  "source": "runs/td3/noisy_history_target_cost_100_g0999_20261102_seed1/paired_6000000_target_20k_eval/training.gif",
+  "destination": "docs/assets/juggling/target-cost100-g0999-seed1-6m-first-episode-end-20261102.gif",
+  "source_sha256": "4e22d606975d95182a6be8f63930d5ced277fcf49fc89ef2ba63bda0bc1e9ce8",
+  "gif_sha256": "4e22d606975d95182a6be8f63930d5ced277fcf49fc89ef2ba63bda0bc1e9ce8",
+  "seed": 700000,
+  "steps": 1780,
+  "physical_juggles": 25,
+  "sensed_juggles": 18,
+  "frames": 200,
+  "size": [
+    160,
+    357
+  ],
+  "duration_ms": 50,
+  "frame_steps": [
+    1581,
+    1780
+  ],
+  "limitations": "Last up to200 frames of first predeclared reset700000, not selected best; simulation only."
+}

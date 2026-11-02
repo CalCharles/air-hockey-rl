@@ -1,0 +1,114 @@
+{
+  "reviewed_utc": "2026-11-02T14:19:06.321029+00:00",
+  "merged_reference": "94acd81932c59f3cd3b827d6f39a0283747a1beb",
+  "source_review": "docs/juggling-target-cost-contract-review-20261102.json",
+  "all_prior_reviewed_sources_sha256_match": true,
+  "canonical_config_changes": {
+    "domain_random": [
+      null,
+      true
+    ],
+    "max_timesteps": [
+      250,
+      10000
+    ],
+    "random_variable_ranges": [
+      null,
+      {
+        "paddle_density": [
+          2250.0,
+          3750.0
+        ],
+        "puck_damping": [
+          0.0825,
+          0.1375
+        ],
+        "gravity": [
+          -0.9125,
+          -0.5475
+        ]
+      }
+    ],
+    "random_variables": [
+      null,
+      [
+        "paddle_density",
+        "puck_damping",
+        "gravity"
+      ]
+    ]
+  },
+  "effective_simulator_flags": {
+    "history_sample_once_per_step": false,
+    "puck_noise": true,
+    "puck_noise_std": 0.01,
+    "enable_random_occlusions": true,
+    "enable_observation_delay": true,
+    "enable_action_delay": false,
+    "delay_seconds": 0.025,
+    "enable_puck_delay_interpolation": true,
+    "hist_len": 2,
+    "force_scaling": 0.99,
+    "step_frequency": 20,
+    "time_frequency": 20
+  },
+  "reviewed_sha256": {
+    "airhockey/airhockey_base.py": "a3a8c1c37fdb53015b6cb2568b1b9ccc39e6f6dff39323a4c25f97ae88fcb4d6",
+    "airhockey/sims/airhockey_box2d.py": "7059de3e1f8a979c706eb2546ba7674c4970226952bc002567a1d2aa20fa7eee",
+    "airhockey/airhockey_simple_tasks.py": "89cbf0ff989e3231e6708db456b7f93182bd8985fe1035fbc29a5c83a8144c8b",
+    "configs/new_juggle/sysid_v2_hist2.yaml": "5005076245b4ba9e6d95c1d9efa337b59e57a24017e117db97b45644758f5349",
+    "configs/new_juggle/sustained/original_sensing.yaml": "d1bb13a7a4a5494507d085db230bdbe31854f0ddb556ccf88c3ec5aca0360385",
+    "configs/new_juggle/tasks_v2/sim_dr3_juggle.yaml": "354104653f0664529847c4ef4b09a62b1556a680eec90d9a4d6079b04eefd5e1",
+    "scripts/rma/train_base_policy.py": "cdf735f9a1aaa29f22a7f4810766a49c96bcfbac137ffce74a07321f047175c2",
+    "scripts/rma/history.py": "d7c3456d01c8e612c28ffb560d3711722a17948e002be313de0c54e9c0576f94",
+    "scripts/rma/networks.py": "e9fa1f464fe0023e80e5237391fa672610df2c9b184931935d74d9cad22d6c01",
+    "scripts/rma/env_wrapper.py": "fff82ed43111d6e3b3b766d7ace7baa1b63666944bfa70816109c2deb03d6ef6",
+    "scripts/rma/checkpoint_eval.py": "433fc6e825196e5ca7840fbff019e896498cc87e47ecd788e90e2cc9642e6e2e",
+    "scripts/rma/evaluate.py": "24cb367940072b483b97d0fee9bb6ddd722b0a27424f5197e2634337b241570f",
+    "scripts/td3/helper/td3_graphed_update.py": "0b5a2a984c21f11e2cdc5344d9ba8038f70ee0cc5ca3c2dd3f2c467598416d48",
+    "scripts/td3/juggle_survival.py": "e533f1f3b0dd34bcdfeef6e5dec10922422edde5a16db8cff706736d832b8a92",
+    "scripts/td3/juggle_noisy_scratch.py": "fc1a9acfa9faf72ed7932f54698426076a17018b1b423770cc9d3ce27df83394",
+    "scripts/td3/juggle_original_sensing.py": "c1cec9222bc85f50d8b0250eedd38bd55fccb63e4886872b20153090a79f34b3",
+    "scripts/td3/helper/juggle_counter.py": "c87916662f35ff091cf0a4be47bdef90d0be92a8a9917f66632807e01a7f40cc",
+    "scripts/analysis/juggle_motion_metrics.py": "3c36447afa2dc0f99b72c06c134411d853c89d06004fb4fdc5296e5006ef7f67",
+    "scripts/td3/juggle_target_cost.py": "adb3c195d25666d2d90294f86dc5cc52451f1d54c2725e4cc5dc35012abb2dfa",
+    "scripts/td3/train_juggle_target_cost.py": "c494e831d943640d39b19228d2edd10b0b97b8b3baa6b5505dd14ae1f9cf47e4",
+    "scripts/td3/extras/run_juggle_target_cost_trial.py": "67fa6aa30da2ac003cdb6f8da9336dc1118a80e63202f9028d972637e8a5ca08"
+  },
+  "simulator_diff_from_merged": "diff --git a/airhockey/airhockey_base.py b/airhockey/airhockey_base.py\nindex 546d663..a90f51e 100644\n--- a/airhockey/airhockey_base.py\n+++ b/airhockey/airhockey_base.py\n@@ -102,6 +102,7 @@ class AirHockeyBaseEnv(ABC, Env):\n             'goal_min_y_velocity': 1,\n             'enable_survival_bonus': False,\n             'survival_bonus_per_step': 0.25,\n+            'puck_loss_penalty': 0.0,\n             # Optional list of [x, y] centers (base frame) for triangle obstacles.\n             # If shorter than num_obstacles, remaining positions are sampled per reset.\n             'obstacle_positions': [],\n@@ -225,6 +226,9 @@ class AirHockeyBaseEnv(ABC, Env):\n         self.base_reward_scaling = config.base_reward_scaling\n         self.enable_survival_bonus = bool(config.enable_survival_bonus)\n         self.survival_bonus_per_step = float(config.survival_bonus_per_step)\n+        self.puck_loss_penalty = float(config.puck_loss_penalty)\n+        if self.puck_loss_penalty < 0:\n+            raise ValueError(\"puck_loss_penalty must be nonnegative\")\n         self.random_paddle_spawn = (\n             self.random_paddle_spawn_default\n             if config.random_paddle_spawn is None\n@@ -815,8 +819,8 @@ class AirHockeyBaseEnv(ABC, Env):\n         if self.terminate_on_puck_stop:\n             low_motion_cluster, low_motion_window = self._puck_low_motion_cluster_window(state_info)\n             if not truncated and low_motion_cluster:\n-                truncated = True\n-                truncation_reasons.append(f\"puck_low_motion_window_{low_motion_window}\")\n+                terminated = True\n+                termination_reasons.append(f\"puck_low_motion_window_{low_motion_window}\")\n \n \n         if \"pucks\" in state_info.keys():\n@@ -829,8 +833,8 @@ class AirHockeyBaseEnv(ABC, Env):\n                     state_info['paddles']['paddle_ego'],\n                 )\n                 if puck_passed_now:\n-                    truncated = True\n-                    truncation_reasons.append(\"puck_passed_paddle\")\n+                    terminated = True\n+                    termination_reasons.append(\"puck_passed_paddle\")\n                     # print(\"Puck pass paddle\")\n             else:\n                 self._puck_pass_paddle_score = 0\n@@ -857,7 +861,6 @@ class AirHockeyBaseEnv(ABC, Env):\n     def step(self, action):\n         if not self.multiagent:\n             obs, reward, is_finished, truncated, info = self.single_agent_step(action)\n-            is_finished = is_finished or truncated\n             return obs, reward, is_finished, truncated, info\n         else:\n             return self.multi_step(action)\n@@ -923,7 +926,8 @@ class AirHockeyBaseEnv(ABC, Env):\n         info['episode_end_type'] = episode_end_type\n         info['episode_end_reasons'] = episode_end_reasons\n         info['episode_end_reason'] = episode_end_reasons[0] if len(episode_end_reasons) > 0 else None\n-        if not truncated:\n+        time_limit_only = truncated and truncation_reasons == [\"max_timesteps_exceeded\"]\n+        if not truncated or time_limit_only:\n             reward, success = self.get_base_reward(next_state)\n             # scale reward\n             reward = reward * self.base_reward_scaling\n@@ -936,10 +940,15 @@ class AirHockeyBaseEnv(ABC, Env):\n             reward = self.truncate_rew\n \n         survival_bonus = 0.0\n-        if self.enable_survival_bonus and (not is_finished) and (not truncated):\n+        if self.enable_survival_bonus and (not is_finished) and (not truncated or time_limit_only):\n             survival_bonus = self.survival_bonus_per_step\n             reward += survival_bonus\n         info['survival_bonus'] = float(survival_bonus)\n+        puck_lost = any(reason in (\"puck_passed_paddle\", \"puck_hit_bottom\")\n+                        or reason.startswith(\"puck_low_motion_window_\") for reason in termination_reasons)\n+        loss_cost = self.puck_loss_penalty if is_finished and puck_lost else 0.0\n+        reward -= loss_cost\n+        info['puck_loss_penalty'] = loss_cost\n         \n         self.max_reward_in_single_step = max(self.max_reward_in_single_step, reward)\n         self.min_reward_in_single_step = min(self.min_reward_in_single_step, reward)        \ndiff --git a/airhockey/sims/airhockey_box2d.py b/airhockey/sims/airhockey_box2d.py\nindex d3a52e8..c5516c8 100644\n--- a/airhockey/sims/airhockey_box2d.py\n+++ b/airhockey/sims/airhockey_box2d.py\n@@ -473,6 +473,10 @@ class AirHockeyBox2D:\n             'max_paddle_vel': 2,\n             'time_frequency': 20,\n             'step_frequency': 20,\n+            # Real cameras/telemetry add one history entry per control step.\n+            # Legacy simulation adds an entry at every delay integration split.\n+            # Opt in for new policies; old checkpoints keep their old contract.\n+            'history_sample_once_per_step': False,\n             'action_step_lag': 0,\n             # Ignored in this class; env uses air_hockey.paddle_* for pre-step action clip.\n             'paddle_bounds': [],\n@@ -600,6 +604,7 @@ class AirHockeyBox2D:\n         self.block_width = config.block_width\n         self.max_force_timestep = config.max_force_timestep\n         self.step_frequency = config.step_frequency # number of action steps per second\n+        self.history_sample_once_per_step = bool(config.history_sample_once_per_step)\n         self.time_frequency = config.time_frequency # number of simulation steps per second\n         self.time_per_step = 1 / self.time_frequency\n         self.force_scaling = config.force_scaling\n@@ -1591,6 +1596,21 @@ class AirHockeyBox2D:\n             self.paddles['paddle_ego'].ApplyForceToCenter(force.astype(float), True)\n         return force\n \n+    def _append_observation_history(self, state_info):\n+        if 'pucks' in state_info:\n+            for puck in state_info['pucks']:\n+                self.puck_history.append(list(puck['position']) + [int(puck.get('occluded', 0))])\n+        else:\n+            for _ in self.pucks:\n+                self.puck_history.append([OCCLUDED_PLACEHOLDER_TABLE_X, 0, 1])\n+        if 'paddles' in state_info:\n+            for paddle_data in state_info['paddles'].values():\n+                self.paddle_history.append(list(paddle_data['position']) + [0])\n+        else:\n+            for _ in self.paddles:\n+                if 'paddle_ego_acceleration' not in self.paddles or 'paddle_ego_force' not in self.paddles or 'paddle_ego_jerk' not in self.paddles:\n+                    self.paddle_history.append([OCCLUDED_PLACEHOLDER_TABLE_X, 0, 1])\n+\n     def get_singleagent_transition(self, action):\n         collision_start_idx = len(self.collision_listener.collision_forces)\n         self.observation_state_info = None\n@@ -1612,6 +1632,8 @@ class AirHockeyBox2D:\n         obs_snapshot_recorded = False\n         if t_obs is not None and t_obs <= 0.0:\n             self.observation_state_info = copy.deepcopy(self.get_current_state())\n+            if self.history_sample_once_per_step:\n+                self._append_observation_history(self.observation_state_info)\n             self.observation_puck_history = list(self.puck_history)\n             self.observation_paddle_history = list(self.paddle_history)\n             obs_snapshot_recorded = True\n@@ -1654,20 +1676,12 @@ class AirHockeyBox2D:\n             paddle_body.position = (float(pos[0]), float(pos[1]))\n             \n             state_info = self.get_current_state()\n-            if 'pucks' in state_info:\n-                for puck in state_info['pucks']:\n-                    self.puck_history.append(list(puck[\"position\"]) + [int(puck.get(\"occluded\", 0))])\n-            else:\n-                for i in range(len(self.pucks.keys())):\n-                    self.puck_history.append([OCCLUDED_PLACEHOLDER_TABLE_X,0,1])\n-            \n-            if 'paddles' in state_info:\n-                for paddle_name, paddle_data in state_info['paddles'].items():\n-                    self.paddle_history.append(list(paddle_data[\"position\"]) + [0])\n-            else:\n-                for i in range(len(self.paddles.keys())):\n-                    if 'paddle_ego_acceleration' not in self.paddles or 'paddle_ego_force' not in self.paddles or 'paddle_ego_jerk' not in self.paddles:\n-                        self.paddle_history.append([OCCLUDED_PLACEHOLDER_TABLE_X,0,1])\n+            sample_now = (\n+                end_t >= self.time_per_step - 1e-12 if t_obs is None\n+                else not obs_snapshot_recorded and end_t >= t_obs - 1e-12\n+            )\n+            if not self.history_sample_once_per_step or sample_now:\n+                self._append_observation_history(state_info)\n             \n             total_force = np.array(force)\n \n@@ -1791,4 +1805,4 @@ class AirHockeyBox2D:\n               \"paddle\": {\"low\": ..., \"mid\": ..., \"high\": ...},\n             }\n         \"\"\"\n-        return self.collision_listener.get_and_reset_episode_stats()\n\\ No newline at end of file\n+        return self.collision_listener.get_and_reset_episode_stats()\n",
+  "simulator_diff_sha256": "d4dda948acc847ac09c8ab384220b4926d8679258925d308c9247b163cfb83fe",
+  "new_trial_changes": [
+    {
+      "seed": 0,
+      "source": "configs/td3/sustained/noisy_history_target_cost_100_g0999_seed0.yaml",
+      "config": "configs/td3/sustained/noisy_history_target_cost_10_g0999_seed0.yaml",
+      "changes": {
+        "run_name": [
+          "noisy_history_target_cost_100_g0999_seed0",
+          "noisy_history_target_cost_10_g0999_seed0"
+        ]
+      },
+      "coefficient_change": [
+        100,
+        10
+      ]
+    },
+    {
+      "seed": 1,
+      "source": "configs/td3/sustained/noisy_history_target_cost_100_g0999_seed1.yaml",
+      "config": "configs/td3/sustained/noisy_history_target_cost_10_g0999_seed1.yaml",
+      "changes": {
+        "run_name": [
+          "noisy_history_target_cost_100_g0999_seed1",
+          "noisy_history_target_cost_10_g0999_seed1"
+        ]
+      },
+      "coefficient_change": [
+        100,
+        10
+      ]
+    }
+  ],
+  "interpretation": "Same exact reviewed simulator sources and effective config; optional once-per-control history remains false; PID/smoothing/sensors/DR untouched. Two new random actor/critic trials. Only run name and external reward coefficient100\u219210 differ from same-seed gamma.999 cost100 family. No warm start.",
+  "selection_evidence": "All four cost100 learners completed6M, target means57.15625\u201369.9375 juggles/4069.625\u20135014.84375steps below same-discount controls; all declined from3M. Lower cost isolates whether weaker shaping preserves acquisition and endurance. Not guaranteed to improve."
+}

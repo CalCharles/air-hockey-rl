@@ -43,7 +43,7 @@
       "user_gpus_before_submission": 10,
       "squeue_before_submission": "1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|N/A\n",
       "submitted_utc": "2026-11-02T04:12:09.542696+00:00",
-      "status": "training",
+      "status": "complete",
       "observed_utc": "2026-11-02T04:17:10.361593+00:00",
       "slurm_observation": "RUNNING|gres/gpu:1",
       "saved_runner_status": {
@@ -60,6 +60,19 @@
         ],
         "target_cost_coefficient": 100.0,
         "updated_utc": "2026-11-02T04:12:10.390822+00:00"
+      },
+      "completed_utc": "2026-11-02T11:45:30.783999+00:00",
+      "slurm_terminal_state": "COMPLETED",
+      "slurm_exit_code": "0:0",
+      "completed_observation": {
+        "observed_utc": "2026-11-02T14:23:52.182455+00:00",
+        "slurm_accounting": "115921|COMPLETED|0:0|07:33:21|2026-11-02T05:45:30\n115921.batch|COMPLETED|0:0|07:33:21|2026-11-02T05:45:30\n115921.extern|COMPLETED|0:0|07:33:21|2026-11-02T05:45:30\n",
+        "runner_status": {
+          "status": "complete",
+          "trainer_exit_code": 0,
+          "updated_utc": "2026-11-02T11:45:30.783999+00:00",
+          "errors": []
+        }
       }
     },
     {
@@ -102,7 +115,7 @@
       "user_gpus_before_submission": 11,
       "squeue_before_submission": "1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|N/A\n",
       "submitted_utc": "2026-11-02T04:12:09.598736+00:00",
-      "status": "training",
+      "status": "complete",
       "observed_utc": "2026-11-02T04:17:10.380257+00:00",
       "slurm_observation": "RUNNING|gres/gpu:1",
       "saved_runner_status": {
@@ -119,6 +132,19 @@
         ],
         "target_cost_coefficient": 100.0,
         "updated_utc": "2026-11-02T04:12:10.400305+00:00"
+      },
+      "completed_utc": "2026-11-02T11:49:54.322791+00:00",
+      "slurm_terminal_state": "COMPLETED",
+      "slurm_exit_code": "0:0",
+      "completed_observation": {
+        "observed_utc": "2026-11-02T14:23:52.193591+00:00",
+        "slurm_accounting": "115922|COMPLETED|0:0|07:37:45|2026-11-02T05:49:54\n115922.batch|COMPLETED|0:0|07:37:45|2026-11-02T05:49:54\n115922.extern|COMPLETED|0:0|07:37:45|2026-11-02T05:49:54\n",
+        "runner_status": {
+          "status": "complete",
+          "trainer_exit_code": 0,
+          "updated_utc": "2026-11-02T11:49:54.322791+00:00",
+          "errors": []
+        }
       }
     }
   ]

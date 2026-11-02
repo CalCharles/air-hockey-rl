@@ -6,6 +6,8 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A093 — Launch two fresh weaker-cost10 longer-discount learners](#a093)
+- [A092 — Complete cost100 budgets and publish3M controller counterevidence](#a092)
 - [A091 — Audit improving reward-cost checkpoint with exact controller replay](#a091)
 - [A090 — Analyze emerging reward-cost juggling before3M milestones](#a090)
 - [A089 — Complete full6M actor-smoothness matrix and paired motion](#a089)
@@ -97,6 +99,26 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a093"></a>
+
+## A093 — 2026-11-02 08:22:43 -0600 — Launch two fresh weaker-cost10 longer-discount learners
+
+Launched two from-random gamma .9996M learners with stationary actual PID-target cost10 after the completed cost100 evidence.
+
+Jobs116027/116028 RUNNING,5 total user GPUs including unrelated jobs. Same effective simulator/control/DR and all21 reviewed core hashes verified; only run name/external coefficient differ from same-seed cost100 recipes. No new trainer code, warm start, ramp or simulator modification. Fixed1/3/6M raw tests retained; outcomes pending. Reporting manifest discovery exercised by regenerating saved-data figures.
+
+[Detailed raw data, figures, configs/source/checkpoint hashes and reproduction](../notes/scratch/experiments/2026-11-02_14-22_cost10-longdiscount-scratch-launch.md). Related record: [E092](experiment_logbook.md#e092). Heading is actual documentation time; saved run completion/submission timestamps are identified separately in the note/manifests.
+
+<a id="a092"></a>
+
+## A092 — 2026-11-02 08:22:43 -0600 — Complete cost100 budgets and publish3M controller counterevidence
+
+All four cost100 learners completed6M with lower endurance than matched controls; the audited .9953M target has only4% lower command RMS and worse several tails.
+
+Verified512 new3M/6M NPZ outcomes,768 aggregate rows,2×7889 exact controller-replay transitions, full reward logs and figures. Final target means57.15625–69.9375 juggles/4069.625–5014.84375steps; all lower than3M. Old partial snapshot retained and superseded explicitly. Completed Slurm exit0:0 confirmed; no policy promoted or infinite/hardware claim.
+
+[Detailed raw data, figures, configs/source/checkpoint hashes and reproduction](../notes/scratch/experiments/2026-11-02_14-22_complete-cost100-and-controller-audit.md). Related record: [E091](experiment_logbook.md#e091). Heading is actual documentation time; saved run completion/submission timestamps are identified separately in the note/manifests.
 
 <a id="a091"></a>
 
