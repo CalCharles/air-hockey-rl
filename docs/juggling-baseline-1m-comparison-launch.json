@@ -1,0 +1,25 @@
+{
+  "submitted_utc": "2026-11-01T23:43:13.703576+00:00",
+  "job_id": "115874",
+  "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_1m_20261101",
+  "checkpoint": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/train/checkpoint_1000000",
+  "budget": 1000000,
+  "weights_sha256": {
+    "online": "a5ed7ca793abf5f26365732eb73ce30923eac0d4ef344fb709ec2bfc0c8e8bf1",
+    "target": "9be809ddad24cf764054077d64611ae98148cdbdc9f96fc8f965c596d4e82560"
+  },
+  "episodes": 32,
+  "horizon": 20000,
+  "seed_base": 700000,
+  "gpus": 0,
+  "status": "complete",
+  "batch_source": "#!/bin/bash\n#SBATCH --job-name=juggle-base-1m\n#SBATCH --partition=allnodes\n#SBATCH --nodes=1\n#SBATCH --ntasks=1\n#SBATCH --cpus-per-task=2\n#SBATCH --gres=none\n#SBATCH --mem=8G\n#SBATCH --time=01:00:00\n#SBATCH --output=/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_1m_20261101/slurm.log\nset -euo pipefail\ncd /scratch/cluster/mrudolph/documents/air-hockey-rl\nexport OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 MPLCONFIGDIR=/tmp/airhockey-mpl\nexport PYTHONPATH=/scratch/cluster/mrudolph/documents/air-hockey-rl\nexport CUDA_VISIBLE_DEVICES=\"\"\nexec /scratch/cluster/mrudolph/documents/air-hockey-rl/.venv/bin/python -u /scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_1m_20261101/run.py\n",
+  "worker_source": "from pathlib import Path\nimport subprocess,hashlib,json\nfrom datetime import datetime,timezone\nROOT=Path('/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_1m_20261101')\nREPO=Path('/scratch/cluster/mrudolph/documents/air-hockey-rl')\nWEIGHTS={'online': 'a5ed7ca793abf5f26365732eb73ce30923eac0d4ef344fb709ec2bfc0c8e8bf1', 'target': '9be809ddad24cf764054077d64611ae98148cdbdc9f96fc8f965c596d4e82560'}\ndef save(status,**details):\n    (ROOT/'status.json').write_text(json.dumps(dict(status=status,updated_utc=datetime.now(timezone.utc).isoformat(),**details),indent=2)+chr(10))\ntry:\n    for role in ['online','target']:\n        bundle=ROOT/('frozen_'+role)\n        assert hashlib.sha256((bundle/'model.pth').read_bytes()).hexdigest()==WEIGHTS[role]\n        save('evaluating',role=role)\n        cmd=[str(REPO/'.venv/bin/python'),'-u','-m','scripts.td3.juggle_survival','--run-dir',str(bundle),'--scenario-set','training','--episodes','32','--horizon','20000','--seed-base','700000','--gif-steps','200','--out-dir',str(ROOT/('paired_'+role+'_20k_eval'))]\n        subprocess.run(cmd,cwd=REPO,check=True)\n        assert hashlib.sha256((bundle/'model.pth').read_bytes()).hexdigest()==WEIGHTS[role]\n        subprocess.run([cmd[0],'-m','scripts.analysis.juggle_motion_metrics','--results',str(ROOT/('paired_'+role+'_20k_eval')/'results.json')],cwd=REPO,check=True)\n    save('complete')\nexcept Exception as exc:\n    save('failed',error=repr(exc))\n    raise\n",
+  "reviewed_sha256": {
+    "airhockey/airhockey_base.py": "a3a8c1c37fdb53015b6cb2568b1b9ccc39e6f6dff39323a4c25f97ae88fcb4d6",
+    "airhockey/sims/airhockey_box2d.py": "7059de3e1f8a979c706eb2546ba7674c4970226952bc002567a1d2aa20fa7eee",
+    "scripts/td3/juggle_survival.py": "e533f1f3b0dd34bcdfeef6e5dec10922422edde5a16db8cff706736d832b8a92",
+    "scripts/analysis/juggle_motion_metrics.py": "3c36447afa2dc0f99b72c06c134411d853c89d06004fb4fdc5296e5006ef7f67"
+  },
+  "worker_status_recorded_utc": "2026-11-01T23:44:01.971121+00:00"
+}

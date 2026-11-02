@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A054 — Publish matched 1M evidence and audit normal deployment adapter behavior](#a054)
 - [A053 — Preserve long-reference work through a dependency-guarded CPU continuation](#a053)
 - [A052 — Add physical motion and matched-budget control to sweep reporting](#a052)
 - [A051 — Extend scratch smoothness research with a replicated discount comparison](#a051)
@@ -59,6 +60,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a054"></a>
+
+## A054 — 2026-11-01 17:57:03 -0600 — Publish matched 1M evidence and audit normal deployment adapter behavior
+
+Completed an archived fixed-budget control and verified normal deployment-adapter actions against saved noisy trajectories.
+
+Ran CPU-only historical online/target inference on the same 32 starts as all twelve original regularized comparisons; froze/hashes weights and checked effective configs. Published fourteen variant summaries/448 episode records and a dated figure without conflating 8-start validation or promoting early checkpoints. Added an offline factory/adapter verifier covering resets and history rollovers: 9,146 exact actions, no hardware or simulator stepping. Explicitly recorded the unresolved post-policy override-history path as follow-up. Verified live input hashes, data/provenance, figures, links/anchors/TOCs and whitespace. Eight scratch learners continue; GPU allocation remains 11. Related: [E054](experiment_logbook.md#e054).
+
+[Detailed comparison/parity evidence](../notes/scratch/experiments/2026-11-01_23-54_first-1m-smoothness-comparison.md); [raw episodes](assets/juggling/smooth-first-1m-episodes-20261101.csv); [normal-adapter parity](assets/juggling/history-deployment-parity-20261101.json). Heading records analysis time; actual worker milestones are in the note/provenance.
+
+![Fixed 1M comparison](assets/juggling/smooth-first-1m-comparison-20261101.png)
+
+Dated figure generated 2026-11-01: mean physical juggles, episode steps and command changes, plus median episode-p95 position-derived jerk. One seed/weight variant per bar; lower motion has mixed early performance and no reliable high-performance policy yet.
 
 <a id="a053"></a>
 

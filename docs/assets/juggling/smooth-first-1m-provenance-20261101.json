@@ -1,0 +1,38 @@
+{
+  "recorded_utc": "2026-11-02T00:00:29.692216+00:00",
+  "summary_rows": 14,
+  "episode_rows": 448,
+  "source_json_sha256": {
+    "runs/td3/juggle_history_baseline_1m_20261101/paired_online_20k_eval/results.json": "d85a12be2672b1586e8898d2543af911601102292e59b24af7b9ee36e7a1e7ad",
+    "runs/td3/juggle_history_baseline_1m_20261101/paired_target_20k_eval/results.json": "f6e94762576605f33de3477c48611404aba8b830c29d65cd97af02f624b51777",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed0/paired_1000000_online_20k_eval/results.json": "c412367910105d6f89297f0aad7e99aa3e89cecd31521ddec02278adc7861d4a",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed0/paired_1000000_target_20k_eval/results.json": "140a476157416b5656c8a94d4701573957d064d6779011027eb6b4b1c47fa54d",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed1/paired_1000000_online_20k_eval/results.json": "89d311ac3e56a2f9709eefeea711b360ae79e4d8ab469f78ba9faf7bd3b62831",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed1/paired_1000000_target_20k_eval/results.json": "10679f7c23320e4315318fa05f7366f8f5e88d87d8c127ef2f87c8a9e95fe0b4",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_1000000_online_20k_eval/results.json": "2a57fa1c0d3d26a1a19da7f8ba94f8061b73d3e67cdbe1b0d613804cc3ae4ba2",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_1000000_target_20k_eval/results.json": "c4bce181ab273c5db009dbe8e73e4f10fca8a10692d07e94fc8fa65f98ef2e3c",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed1/paired_1000000_online_20k_eval/results.json": "7766291d3746cdd93d1a7f9988e7d3f627c93b49cc8b7f06b227a7776886516a",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed1/paired_1000000_target_20k_eval/results.json": "a4c9b5adfd7694842ba3349dabd0b66ee0272aaa4da20176c6a0ca38dc78c96b",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed0/paired_1000000_online_20k_eval/results.json": "f26a8920d2c536c2a7f25abe245fb58c0d4a4f4531d17d88a27a75d9a483775e",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed0/paired_1000000_target_20k_eval/results.json": "725c1033a0e2fb4a2ea82e44e2ae69756ed77c97c5dd3fc80b7c83c01ffc4eca",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed1/paired_1000000_online_20k_eval/results.json": "978454251eebd86e7665ab6c7dbda9e6dc13d8553bd21bd45e872f2b6f226293",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed1/paired_1000000_target_20k_eval/results.json": "98c2d7ceb4227cbe66f764c8d427ea583c91ab5be0257f56fca96f4aceefeaa5"
+  },
+  "model_sha256": {
+    "runs/td3/juggle_history_baseline_1m_20261101/paired_online_20k_eval/results.json": "a5ed7ca793abf5f26365732eb73ce30923eac0d4ef344fb709ec2bfc0c8e8bf1",
+    "runs/td3/juggle_history_baseline_1m_20261101/paired_target_20k_eval/results.json": "9be809ddad24cf764054077d64611ae98148cdbdc9f96fc8f965c596d4e82560",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed0/paired_1000000_online_20k_eval/results.json": "58b64788973adb04d431f21dc3f8aca0adc098db9514a6e3bde6ead7956b926b",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed0/paired_1000000_target_20k_eval/results.json": "de220b9552ba88b203e899276d46d1329cdddde98ac932e5271e975302e2eb24",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed1/paired_1000000_online_20k_eval/results.json": "af8fef97896877d78f01e8546d8695cb6ca74409126ed75eec129a4afe741212",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed1/paired_1000000_target_20k_eval/results.json": "0ac5b5664823b923c9fc5afdff1f8167151d1ca9187b72958fdfa92de3844e7f",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_1000000_online_20k_eval/results.json": "78ff358c65065a3c020569f2c4f9fa85f56b9d7011e412dd2aa335dfec9ef5d5",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_1000000_target_20k_eval/results.json": "b61f063d66b30098e9ab1f08e03bb6b77d0d1ca8dd4709326e93ad6ea87c3493",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed1/paired_1000000_online_20k_eval/results.json": "0ea2dca952c80352c8acc0007bc2da06ac9c34f41638fcc9c728d2335deebe5b",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed1/paired_1000000_target_20k_eval/results.json": "d5fb946934de30cca167b55728c589c1c73f65da8b45bbcda3802d5b0914e118",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed0/paired_1000000_online_20k_eval/results.json": "0a5116741aab3b388c2f585865f891f2bef0ace01c392ffe18ee520385810dc4",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed0/paired_1000000_target_20k_eval/results.json": "df8fc26c2e0335d15154c54005ba611a36fccd89bce26458c2d1fc308a50a0c6",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed1/paired_1000000_online_20k_eval/results.json": "84dd80eea7e5527bc4cbf041e398c4aaac4dcac34c8d47faf77fb6fc474614c7",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed1/paired_1000000_target_20k_eval/results.json": "302674310a84b24b3ec59ca5b949e2bfdc057da6e67ae1d964ffe40db6378a25"
+  },
+  "scope": "Complete original gamma-0.995 six-trial 1M comparison and archived baseline. Gamma-0.999 pair pending at snapshot."
+}

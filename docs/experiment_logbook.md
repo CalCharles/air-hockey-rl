@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E054 — Complete original fixed 1M comparisons and verify normal deployment parity](#e054)
 - [E053 — Queue terminal-state continuation for the fixed long-reference test](#e053)
 - [E052 — Publish physical-motion curves with a matched historical control](#e052)
 - [E051 — Launch a weak-penalty longer-discount pair from scratch](#e051)
@@ -59,6 +60,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e054"></a>
+
+## E054 — 2026-11-01 17:57:03 -0600 — Complete original fixed 1M comparisons and verify normal deployment parity
+
+The original six-trial 1M comparison shows mixed weak-penalty performance and lower motion, without a consistent high-performance improvement.
+
+**Completed comparisons, training ongoing:** coefficients 0.0005/0.002/0.008, seeds 0/1, online/target weights; 32 reused starts/20k limit. Weak coefficient 0.0005 seed 0 reaches 1.71875/2.25 physical juggles and 155.34375/185.25 steps online/target, while seed 1 reaches 0.78125/0.9375 and 78/85.3125. Stronger coefficients reach 0.1875–0.71875 juggles and 68.8125–80.375 steps. Baseline online/target is 1.25/1.09375 juggles and 147.25/154.6875 steps. Effective configs match; CPU baseline job 115874 exited 0. No final-budget conclusion or gate; longer-discount tests remain pending at snapshot. Separately, the fixed retained 3.6M target exactly matches 9,146 normal deployment-adapter commands across 32 saved episodes. Holds/overrides remain outside that parity check and have a documented history-bookkeeping limitation. No robot connected. Related: [E048](#e048), [E051](#e051), [E052](#e052).
+
+[Detailed comparison/parity evidence](../notes/scratch/experiments/2026-11-01_23-54_first-1m-smoothness-comparison.md); [raw episodes](assets/juggling/smooth-first-1m-episodes-20261101.csv); [normal-adapter parity](assets/juggling/history-deployment-parity-20261101.json). Heading records analysis time; actual worker milestones are in the note/provenance.
+
+![Fixed 1M comparison](assets/juggling/smooth-first-1m-comparison-20261101.png)
+
+Dated figure generated 2026-11-01: mean physical juggles, episode steps and command changes, plus median episode-p95 position-derived jerk. One seed/weight variant per bar; lower motion has mixed early performance and no reliable high-performance policy yet.
 
 <a id="e053"></a>
 
