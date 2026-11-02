@@ -2,7 +2,7 @@
   "queued_utc": "2026-11-01T23:32:07.537535+00:00",
   "job_id": "115869",
   "dependency": "afterany:115864",
-  "status": "queued only; parent still live",
+  "status": "complete; reused all32 completed parent cases; no new evaluations",
   "manifest": {
     "repo": "/scratch/cluster/mrudolph/documents/air-hockey-rl",
     "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_long_reference_20261101_completion",
@@ -39,5 +39,26 @@
   "original_time_limit": "04:00:00",
   "requested_extension": "12:00:00",
   "extension_result": "Slurm denied permission; original job remains running unchanged",
-  "gpus": 0
+  "gpus": 0,
+  "verified_utc": "2026-11-02T01:14:12.560884+00:00",
+  "slurm_state": "COMPLETED",
+  "elapsed": "00:00:05",
+  "exit_code": "0:0",
+  "saved_worker_status": {
+    "status": "complete",
+    "parent_accounting_state": "COMPLETED",
+    "updated_utc": "2026-11-02T01:10:42.284294+00:00",
+    "summary": {
+      "episodes": 32,
+      "recording_limit_steps": 100000,
+      "mean_steps": 37131.03125,
+      "median_steps": 30926.5,
+      "mean_physical_juggles": 546.25,
+      "mean_sensed_juggles": 482.9375,
+      "mean_reward": 28335.3125,
+      "mean_action_delta_rms": 0.3552117534179966
+    },
+    "reused_cases": 32,
+    "new_cases": 0
+  }
 }

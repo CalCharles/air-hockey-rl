@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A061 — Publish complete long-reference distribution and late performance clip](#a061)
 - [A060 — Publish complete 3M control metrics with frozen provenance](#a060)
 - [A059 — Prepare exact-protocol 3M controls and refresh training evidence](#a059)
 - [A058 — Publish matched weak-penalty performance clips with raw context](#a058)
@@ -66,6 +67,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a061"></a>
+
+## A061 — 2026-11-01 19:16:15 -0600 — Publish complete long-reference distribution and late performance clip
+
+Collected the successful long-reference run and zero-new-case continuation, verified all32 trajectories and published raw data, motion plots and the final clip.
+
+**Completed:** CPU115864/115869 both COMPLETED/exit0; parent2h18m01s, continuation5s reuses32cases and evaluates0new. Fixed retained3.6M target hashC8a1…, seeds9000000–9000031,100k recording limit, unchanged original sensing/control/DR. Median duration30926.5steps; minimum3036, maximum100000. Physical juggles median429, range48–1539; mean sensed482.9375. Full cohort has29 `puck_passed_paddle` ends; three later outcomes are unknown beyond recording. No binary acceptance gate, infinite-juggling or hardware-safety claim. Eight fresh learners continue,11 total user GPUs. Related: [E049](experiment_logbook.md#e049), [E053](experiment_logbook.md#e053), [E060](experiment_logbook.md#e060).
+
+[Detailed distribution, late GIF and reproduction](../notes/scratch/experiments/2026-11-02_01-16_long-reference-results.md); [raw32 records](assets/juggling/long-reference-100k-20261102.csv); [source/model/code hashes](assets/juggling/long-reference-100k-20261102.json). Heading is actual collection time in America/Chicago; actual job completion times are documented separately.
+
+![Complete long-reference distribution](assets/juggling/long-reference-100k-20261102.png)
+
+Generated2026-11-02 from completed saved results/verified trajectories. Top panels show per-start steps and physical/sensed juggles; bottom panels show20Hz position-derived acceleration/jerk, with duration/state confounding and no robot-stop model. The detailed note embeds the existing final200step clip of the first predeclared episode.
 
 <a id="a060"></a>
 

@@ -30,6 +30,14 @@
   ],
   "batch_source": "#!/bin/bash\n#SBATCH --job-name=juggle-long-ref\n#SBATCH --partition=allnodes\n#SBATCH --nodes=1\n#SBATCH --ntasks=1\n#SBATCH --cpus-per-task=6\n#SBATCH --gres=none\n#SBATCH --mem=16G\n#SBATCH --time=04:00:00\n#SBATCH --output=/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_long_reference_20261101/slurm.log\nset -euo pipefail\ncd /scratch/cluster/mrudolph/documents/air-hockey-rl\nexport OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 MPLCONFIGDIR=/tmp/airhockey-mpl\nexport PYTHONPATH=/scratch/cluster/mrudolph/documents/air-hockey-rl\nexport CUDA_VISIBLE_DEVICES=\"\"\nexec /scratch/cluster/mrudolph/documents/air-hockey-rl/.venv/bin/python -u /scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_long_reference_20261101/run.py\n",
   "script_source": "from pathlib import Path\nimport hashlib,json,subprocess\nfrom datetime import datetime,timezone\nROOT=Path('/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_long_reference_20261101')\nREPO=Path('/scratch/cluster/mrudolph/documents/air-hockey-rl')\nCMD=['/scratch/cluster/mrudolph/documents/air-hockey-rl/.venv/bin/python', '-u', '-m', 'scripts.td3.juggle_survival', '--run-dir', '/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_long_reference_20261101/frozen_target_3m6', '--scenario-set', 'training', '--episodes', '32', '--horizon', '100000', '--seed-base', '9000000', '--gif-steps', '200', '--out-dir', '/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_long_reference_20261101/independent_100k_eval']\nSHA='c8a1df78ade41cfbe6845a84f4b21480f512973be7a89f0baf66daf5d452b31b'\n\ndef save(status,**extra):\n    (ROOT/'status.json').write_text(json.dumps(dict(status=status,updated_utc=datetime.now(timezone.utc).isoformat(),**extra),indent=2)+'\\n')\ntry:\n    assert hashlib.sha256((ROOT/'frozen_target_3m6/model.pth').read_bytes()).hexdigest()==SHA\n    save('evaluating')\n    subprocess.run(CMD,cwd=REPO,check=True)\n    assert hashlib.sha256((ROOT/'frozen_target_3m6/model.pth').read_bytes()).hexdigest()==SHA\n    subprocess.run([CMD[0],'-m','scripts.analysis.juggle_motion_metrics','--results',str(ROOT/'independent_100k_eval/results.json')],cwd=REPO,check=True)\n    save('complete')\nexcept Exception as exc:\n    save('failed',error=repr(exc))\n    raise\n",
-  "status": "submitted",
-  "gpus": 0
+  "status": "complete",
+  "gpus": 0,
+  "verified_utc": "2026-11-02T01:14:12.558690+00:00",
+  "slurm_state": "COMPLETED",
+  "elapsed": "02:18:01",
+  "exit_code": "0:0",
+  "saved_worker_status": {
+    "status": "complete",
+    "updated_utc": "2026-11-02T01:10:37.548845+00:00"
+  }
 }
