@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A095 — Complete cost10 first-million comparisons and reward traces](#a095)
 - [A094 — Publish first cost10 checkpoint and initial reward-cost traces](#a094)
 - [A093 — Launch two fresh weaker-cost10 longer-discount learners](#a093)
 - [A092 — Complete cost100 budgets and publish3M controller counterevidence](#a092)
@@ -100,6 +101,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a095"></a>
+
+## A095 — 2026-11-02 09:18:49 -0600 — Complete cost10 first-million comparisons and reward traces
+
+Cost10 gamma .999 targets average3.46875/3.78125 physical juggles and309.4375/327.75steps at1M versus2.25/221 matched control, still short and with inconsistent sampled-motion benefit.
+
+Published10 variants/320 raw outcomes,2000 reward-cost blocks, plots and first-scheduled-episode GIF. Verified128 new full NPZ outcomes, aggregate means/motion medians, frozen source/model/config/output and prefix hashes, live source guards and documentation links/anchors/TOCs. Online/target roles correlated, starts reused; no policy promotion, final-rank or hardware/infinite claim. Both learners continue unchanged toward3M/6M;5 total user GPUs including unrelated jobs. No additional job launched or implementation change.
+
+[Detailed raw tables, figures, GIF context, provenance and reproduction](../notes/scratch/experiments/2026-11-02_15-18_cost10-complete-first-million.md). Related record: [E094](experiment_logbook.md#e094); [E093](experiment_logbook.md#e093). Heading is saved-data analysis/documentation time, not reconstructed evaluation time.
 
 <a id="a094"></a>
 
