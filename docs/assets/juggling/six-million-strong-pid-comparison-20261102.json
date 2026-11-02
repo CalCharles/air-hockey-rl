@@ -1,0 +1,101 @@
+{
+  "generated_utc": "2026-11-02T04:35:20.680695+00:00",
+  "episodes_per_policy": 32,
+  "replayed_steps_per_policy": 7204,
+  "paired_step_range": [
+    22,
+    250
+  ],
+  "sources": {
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/docs/assets/juggling/six-million-strong-baseline-pid-replay-20261102.json": "0687c1e10d5b3adf5e09b07ebca367c6ddb686c46ed4e9af0bf770c373062531",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/docs/assets/juggling/six-million-strong-candidate-pid-replay-20261102.json": "99ecf13d567d836a2b70d1f1f41cfc9bf87374b13cbe7b3259b4f7d793ba5d83"
+  },
+  "publisher_sha256": "2f36f53a5612e818ff2357d3248dbee09862c4941485c7fc96e8475a616843e4",
+  "published_csv_sha256": {
+    "docs/assets/juggling/six-million-strong-pid-comparison-20261102.csv": "28c28895c6bc2ccf6f173ad674217eedcbdd8ae582f53ee63a682ac319eaed8f",
+    "docs/assets/juggling/six-million-strong-pid-comparison-20261102-summary.csv": "28c2dfbcc896acc85fd476c3eaa782f136c3ac77b8c66ad15f63e1461eb01d33"
+  },
+  "summary": [
+    {
+      "metric": "pid_target_change_rms_m",
+      "aggregate": "mean",
+      "unit": "m",
+      "baseline": 0.049140865267959535,
+      "candidate": 0.03024017589777353,
+      "candidate_baseline_ratio": 0.6153773592076025
+    },
+    {
+      "metric": "pid_target_change_p99_m",
+      "aggregate": "median",
+      "unit": "m",
+      "baseline": 0.24864013190023643,
+      "candidate": 0.1600909903313591,
+      "candidate_baseline_ratio": 0.6438662540429857
+    },
+    {
+      "metric": "pid_target_change_maximum_m",
+      "aggregate": "max",
+      "unit": "m",
+      "baseline": 0.41591218282225295,
+      "candidate": 0.27931524301316213,
+      "candidate_baseline_ratio": 0.6715726409306269
+    },
+    {
+      "metric": "body_speed_maximum_m_s",
+      "aggregate": "max",
+      "unit": "m/s",
+      "baseline": 2.0000000588313056,
+      "candidate": 2.0000000705299485,
+      "candidate_baseline_ratio": 1.0000000058493212
+    },
+    {
+      "metric": "velocity_acceleration_p95_m_s2",
+      "aggregate": "median",
+      "unit": "m/s\u00b2",
+      "baseline": 18.106115555107273,
+      "candidate": 14.940864531766064,
+      "candidate_baseline_ratio": 0.8251833192101564
+    },
+    {
+      "metric": "velocity_acceleration_p99_m_s2",
+      "aggregate": "median",
+      "unit": "m/s\u00b2",
+      "baseline": 27.566056132240995,
+      "candidate": 23.700678638460474,
+      "candidate_baseline_ratio": 0.8597776382940898
+    },
+    {
+      "metric": "velocity_acceleration_maximum_m_s2",
+      "aggregate": "max",
+      "unit": "m/s\u00b2",
+      "baseline": 50.43737131792799,
+      "candidate": 45.30158543266466,
+      "candidate_baseline_ratio": 0.8981749890792224
+    },
+    {
+      "metric": "velocity_jerk_p95_m_s3",
+      "aggregate": "median",
+      "unit": "m/s\u00b3",
+      "baseline": 418.08929386385444,
+      "candidate": 349.6801865312576,
+      "candidate_baseline_ratio": 0.8363768019496969
+    },
+    {
+      "metric": "velocity_jerk_p99_m_s3",
+      "aggregate": "median",
+      "unit": "m/s\u00b3",
+      "baseline": 689.3129090148174,
+      "candidate": 574.0689895704297,
+      "candidate_baseline_ratio": 0.8328133450901173
+    },
+    {
+      "metric": "velocity_jerk_maximum_m_s3",
+      "aggregate": "max",
+      "unit": "m/s\u00b3",
+      "baseline": 1294.7007348726352,
+      "candidate": 1076.6393661466761,
+      "candidate_baseline_ratio": 0.831573920634709
+    }
+  ],
+  "limitations": "Equal-duration prefixes, different visited states. Final cached PID targets and20Hz body velocities omit complete substep traces and the reset-to-first-target edge; no UR5 joint/stop-risk model."
+}

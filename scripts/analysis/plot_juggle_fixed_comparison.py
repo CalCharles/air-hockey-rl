@@ -23,6 +23,11 @@ def main():
             label=('Baseline γ=.995 s0 ' if row.get('gamma') else 'Baseline s0 ')+row['weights'];color='black'
         elif row['run']=='noisy_history_long_discount_20261029_seed0':
             label='Baseline γ=.999 s0 '+row['weights'];color='black'
+        elif 'target_cost_' in row['run']:
+            coefficient=row['run'].split('target_cost_',1)[1].split('_')[0]
+            gamma=float(row.get('gamma') or .995)
+            label=f"PID-target reward c={coefficient} γ={gamma:g} s{row['run'].split('seed')[-1]} {row['weights']}"
+            color='#b279a2'
         else:
             slug=row['run'].split('smooth_',1)[1].split('_')[0]
             coefficient={'0005':'0.0005','002':'0.002','008':'0.008'}[slug]

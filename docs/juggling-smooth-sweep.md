@@ -1,6 +1,6 @@
 # Smoothness sweep progress
 
-Generated 2026-11-02T04:20:37.950849+00:00 from saved artifacts; no new rollouts.
+Generated 2026-11-02T04:31:15.661178+00:00 from saved artifacts; no new rollouts.
 
 Original sweep: each coefficient (0.0005, 0.002, 0.008) has two fresh training seeds at gamma 0.995. An additional pair uses coefficient 0.0005 and gamma 0.999. Original checkpoints are every 100k steps; the additional pair saves every 500k for storage. All budgets are 6M. Simulator, sensing, control and DR remain unchanged. GPU ceiling: 16 total user allocations, including other jobs. Training seeds remain separate curves; starts within one run are not training-seed replications.
 
@@ -14,6 +14,8 @@ Original sweep: each coefficient (0.0005, 0.002, 0.008) has two fresh training s
 | noisy_history_smooth_008_20261101_seed1 | 115863 | complete |
 | noisy_history_smooth_0005_g0999_20261101_seed0 | 115866 | training |
 | noisy_history_smooth_0005_g0999_20261101_seed1 | 115867 | training |
+| noisy_history_target_cost_100_20261102_seed0 | 115921 | training |
+| noisy_history_target_cost_100_20261102_seed1 | 115922 | training |
 
 ![Checkpoint juggling, steps, reward and commands](juggling-smooth-sweep.png)
 
@@ -25,6 +27,8 @@ Curves use saved 8-start 5k online-actor validation only, including historical u
 
 Motion curves show the median across episodes of each episode’s p95 speed, acceleration or jerk, using finite differences of true paddle positions at the control rate. These are whole-episode distributions, with different lengths and visited states. They exclude the reset-position sample and do not capture all substep spikes, joint torques or UR5 controller behavior. Position-difference displacement speed is not cached body velocity; solver/workspace position corrections can contribute, so do not equate these estimates to the simulator velocity cap. They are not robot-safety thresholds. Per-episode diagnostics remain beside the original local results in `motion_metrics.json`. Action-change RMS remains a separate command diagnostic, not measured motor energy.
 
-Curves are descriptive repeated-validation results. Independent longer tests and qualitative review follow candidate comparison; no binary acceptance gate is used.
+The [PID-target reward-cost pair](juggling-target-cost-launch.json) uses c=100 reward/m⁴ on cached filtered-target changes, zero actor-delta penalty, gamma .995, and 500k checkpoint cadence. Its evaluation curves use ordinary unshaped task reward and raw trajectory counts, exactly the same 8-start/5k protocol; missing checkpoints are omitted. Exploratory original/shaped training reward and cost are separate from these fixed-policy evaluations; see [initial reward traces](assets/juggling/target-cost-first25k-rewards-20261102.png).
+
+Curves are descriptive repeated-validation results. Longer tests and qualitative review follow candidate comparison; no binary acceptance gate is used. Cohorts explicitly labeled reused paired development are not independent evidence.
 
 Measurement clarification: [actual PID-target replay audit](../notes/scratch/experiments/2026-11-01_22-59_pid-target-replay-audit.md). Legacy `target_delta_rms_m` is a scaled displacement-change proxy, not direct PID-target telemetry.
