@@ -40,6 +40,7 @@ import numpy as np
 import torch
 
 from scripts.td3.eval_utils import unwrap_eval_state_dict
+from scripts.rma.history import StepHistoryBuffer
 
 from .real_td3_runtime import (
     Args,
@@ -312,6 +313,16 @@ def _resolve_adaptation_module_path(bundle_dir: str) -> str:
     )
 
 
+class _CommandHistoryBuffer(StepHistoryBuffer):
+    """Replace the newest intended action after the runner chooses its command."""
+
+    def replace_last_action(self, action: np.ndarray) -> None:
+        command = np.asarray(action, dtype=np.float32).reshape(-1)
+        if command.shape != (self.act_dim,) or not np.isfinite(command).all():
+            raise ValueError("History command must be a finite action vector")
+        self._buf[-1, -self.act_dim:] = command
+
+
 class _RMAActorAdapter:
     """Bridges an ``scripts.rma.evaluate.EvalAgent`` to the runner's contract.
 
@@ -325,10 +336,10 @@ class _RMAActorAdapter:
       must be cleared per episode, which ``on_episode_start`` does via
       ``PolicyRunner._notify_actor_episode_start``.
 
-    Known limitation: ``act()`` pushes the action it *returned* into its own
-    history, but the runner may substitute a hold action afterwards (post-reset
-    holds, e-stop recovery). During those steps the window records an intent the
-    robot did not execute.
+    ``act()`` initially records the predicted action. ``on_env_action`` replaces
+    that newest action with the final normalized command sent to ``env.step``
+    after noise, clipping, primitives and holds. It does not append a second
+    history row or change the controller's command/hold behavior.
     """
 
     def __init__(
@@ -346,6 +357,11 @@ class _RMAActorAdapter:
         self._use_last_action = bool(use_last_action)
         self._device = device
         self._episode_started = False
+        self._pending_env_action = False
+        history = agent.history
+        agent.history = _CommandHistoryBuffer(
+            history.history_len, history.feature_dim, history.act_dim
+        )
 
     def eval(self) -> None:
         return None
@@ -355,6 +371,14 @@ class _RMAActorAdapter:
         # the target-latent diagnostic instead of demanding the true physics.
         self._agent.reset(np.asarray(obs, dtype=np.float32).reshape(-1), None)
         self._episode_started = True
+        self._pending_env_action = False
+
+    def on_env_action(self, action: np.ndarray) -> None:
+        """Record the command passed to the env, before env-internal clipping."""
+        if not self._episode_started or not self._pending_env_action:
+            raise RuntimeError("History command requires a preceding actor query")
+        self._agent.history.replace_last_action(action)
+        self._pending_env_action = False
 
     def get_action(self, policy_obs: torch.Tensor) -> torch.Tensor:
         if not self._episode_started:
@@ -370,6 +394,7 @@ class _RMAActorAdapter:
         else:
             last_action = np.zeros(self._act_dim, dtype=np.float32)
         action = np.asarray(self._agent.act(obs, last_action), dtype=np.float32).reshape(-1)
+        self._pending_env_action = True
         return torch.as_tensor(action, dtype=torch.float32, device=self._device).unsqueeze(0)
 
 

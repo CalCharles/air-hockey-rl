@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E055 — Verify final-command history after holds and overrides](#e055)
 - [E054 — Complete original fixed 1M comparisons and verify normal deployment parity](#e054)
 - [E053 — Queue terminal-state continuation for the fixed long-reference test](#e053)
 - [E052 — Publish physical-motion curves with a matched historical control](#e052)
@@ -60,6 +61,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e055"></a>
+
+## E055 — 2026-11-01 18:11:51 -0600 — Verify final-command history after holds and overrides
+
+Deployment history now follows final normalized commands, while 9,146 retained-policy normal actions remain exactly unchanged.
+
+**Completed offline verification:** nine implementation tests cover history/adapted-RMA neural interfaces, holds, nonzero overrides, resets/rollovers, callback ordering, failed steps and stateless actors. Normal action parity remains exact across 32 saved episodes with up to 300 actions each. Policy memory is corrected without changing PID, filters, limits, holds, stop checks or last-action-mode behavior. No robot connected or new learning/evaluation rollout. Live trainer and queued CPU source hashes remain unchanged; hardware timing/stop risk remain unverified. Related: [E054](#e054).
+
+[Detailed fix and reproduction](../notes/scratch/experiments/2026-11-02_00-09_history-command-feedback.md); [post-change parity/source hashes](assets/juggling/history-deployment-parity-command-feedback-20261102.json). Heading uses America/Chicago; the detailed note filename uses UTC writeup time. No performance figure is generated for this bookkeeping change.
 
 <a id="e054"></a>
 

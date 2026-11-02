@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A055 — Record final environment commands in deployment policy history](#a055)
 - [A054 — Publish matched 1M evidence and audit normal deployment adapter behavior](#a054)
 - [A053 — Preserve long-reference work through a dependency-guarded CPU continuation](#a053)
 - [A052 — Add physical motion and matched-budget control to sweep reporting](#a052)
@@ -60,6 +61,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a055"></a>
+
+## A055 — 2026-11-01 18:11:51 -0600 — Record final environment commands in deployment policy history
+
+Fixed the deployment-only history mismatch after post-policy action substitutions and verified unchanged normal behavior.
+
+Added an optional runner hook after successful environment steps, retaining a copy before env-internal clipping. The RMA/history adapter replaces the newest action without advancing its window again. Added meaningful neural-reference, hold/override, ordering, reset and failure tests; nine tests pass. Rechecked 9,146 retained-policy actions exactly and preserved pre-change parity evidence. Updated pipeline documentation and checked all live/queued manifests. No simulator/sensing/control/DR edits or live learner restarts. Related: [E055](experiment_logbook.md#e055).
+
+[Detailed fix and reproduction](../notes/scratch/experiments/2026-11-02_00-09_history-command-feedback.md); [post-change parity/source hashes](assets/juggling/history-deployment-parity-command-feedback-20261102.json). Heading uses America/Chicago; the detailed note filename uses UTC writeup time. No performance figure is generated for this bookkeeping change.
 
 <a id="a054"></a>
 

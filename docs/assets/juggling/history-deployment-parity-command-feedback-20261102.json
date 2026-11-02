@@ -1,0 +1,310 @@
+{
+  "recorded_utc": "2026-11-02T00:06:26.601950+00:00",
+  "bundle": "runs/td3/noisy_history_20261029_seed0/target_actor_3m6_bundle",
+  "model_sha256": "c8a1df78ade41cfbe6845a84f4b21480f512973be7a89f0baf66daf5d452b31b",
+  "source_results": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/results.json",
+  "source_results_sha256": "13abee1bd84af796bb369b7a696cec8bb3631822518a18f2772df784355eafe0",
+  "episodes": 32,
+  "actions": 9146,
+  "prefix_limit": 300,
+  "deployment_source_sha256": {
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/scripts/analysis/juggle_deployment_parity.py": "0b831c2eb1b67dadce9c1e3fc4e19b7c5edb8571b3632d14c12914ef5127760d",
+    "scripts/td3/helper/real_eval_agents.py": "780c1cfb1949094c03ee8eda5f4a27e302286de617e3a955ad914f9230c26afc",
+    "scripts/real/evaluate_policy.py": "e08a2571842d110b94d301661f0d977cd65006b620c03f2e4c9504d9226fa322",
+    "scripts/rma/evaluate.py": "24cb367940072b483b97d0fee9bb6ddd722b0a27424f5197e2634337b241570f",
+    "scripts/rma/history.py": "d7c3456d01c8e612c28ffb560d3711722a17948e002be313de0c54e9c0576f94",
+    "scripts/rma/networks.py": "e9fa1f464fe0023e80e5237391fa672610df2c9b184931935d74d9cad22d6c01"
+  },
+  "scope": "Normal deployment-adapter calls, history rollovers and episode resets on saved noisy observations; no hardware or physics stepping.",
+  "limitations": "Does not cover overridden/held actions, e-stop recovery, camera timing, real command timing or UR5 stop risk.",
+  "rows": [
+    {
+      "scenario": "training",
+      "seed": 800000,
+      "episode_steps": 4407,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800000.npz",
+      "trajectory_sha256": "87e69c4fa5b093dafa990839544ac9289ec476220925d724e2f93110aee0b53d"
+    },
+    {
+      "scenario": "training",
+      "seed": 800001,
+      "episode_steps": 2578,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800001.npz",
+      "trajectory_sha256": "110bcead222c6b0765881fa4cd3e650269f14cc26815efaba396309f43f82f29"
+    },
+    {
+      "scenario": "training",
+      "seed": 800002,
+      "episode_steps": 20000,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800002.npz",
+      "trajectory_sha256": "05d9305ddc4ab99a182c7cd7a0199ada4bbd81fcec241cec4e9b45c80a306508"
+    },
+    {
+      "scenario": "training",
+      "seed": 800003,
+      "episode_steps": 20000,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800003.npz",
+      "trajectory_sha256": "915d5b873dead561abf34c31db8bf23fffdd2a9899379ccaa0dd7b8611fd0977"
+    },
+    {
+      "scenario": "training",
+      "seed": 800004,
+      "episode_steps": 20000,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800004.npz",
+      "trajectory_sha256": "aba2641302f02637ffd226316904bb2e35e0d7446485b6f0660c0186748106b9"
+    },
+    {
+      "scenario": "training",
+      "seed": 800005,
+      "episode_steps": 20000,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800005.npz",
+      "trajectory_sha256": "52b8b0d056bfee5ea841d8ffb7c75e14ab14664a3fbd32c5d64b62ff6f345a30"
+    },
+    {
+      "scenario": "training",
+      "seed": 800006,
+      "episode_steps": 12519,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800006.npz",
+      "trajectory_sha256": "40e55b2e8be48ec015ceff44fc119075bfc82b2f9308befce0cac13caed1009e"
+    },
+    {
+      "scenario": "training",
+      "seed": 800007,
+      "episode_steps": 20000,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800007.npz",
+      "trajectory_sha256": "77b3ab7c4128ffafa8488eebcb4aa9d35da63c1c9583d5e4014c5e3d74a17172"
+    },
+    {
+      "scenario": "training",
+      "seed": 800008,
+      "episode_steps": 7865,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800008.npz",
+      "trajectory_sha256": "cfdfaff7245e1d3f4245da1a14132195507c8165fe008a7fa140eae7b3db03d4"
+    },
+    {
+      "scenario": "training",
+      "seed": 800009,
+      "episode_steps": 20000,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800009.npz",
+      "trajectory_sha256": "05e6ca0ed7c29ebf9c141ee282125c625f8cde86d3a8cb26175e19a54cf24dd9"
+    },
+    {
+      "scenario": "training",
+      "seed": 800010,
+      "episode_steps": 20000,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800010.npz",
+      "trajectory_sha256": "9946beaf06ff37e83e25ed59c41fd2ce73e07c63d4d5ca3a6b8aaa4ab5102b0a"
+    },
+    {
+      "scenario": "training",
+      "seed": 800011,
+      "episode_steps": 20000,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800011.npz",
+      "trajectory_sha256": "d9008ec42989e48000472139a794c56807e011c24953a6203ec742dab0b9ba08"
+    },
+    {
+      "scenario": "training",
+      "seed": 800012,
+      "episode_steps": 27,
+      "tested_steps": 27,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800012.npz",
+      "trajectory_sha256": "2ab04f662374953da24254afabc24bf33b12a2919b5217cacf4894be840762cb"
+    },
+    {
+      "scenario": "training",
+      "seed": 800013,
+      "episode_steps": 20000,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800013.npz",
+      "trajectory_sha256": "9ad16d694e4c0c782df7c653e99c07aa634c0e6fa7e319b731efd0d6b2dda3c0"
+    },
+    {
+      "scenario": "training",
+      "seed": 800014,
+      "episode_steps": 20000,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800014.npz",
+      "trajectory_sha256": "f0a6601825b89b6a057ed89ff43d46a142d34cb868f3930034439f2386fedbc5"
+    },
+    {
+      "scenario": "training",
+      "seed": 800015,
+      "episode_steps": 8329,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800015.npz",
+      "trajectory_sha256": "6c804047975f09d164874a1729ca64c5353c2ac4312292c5fcf7340c5542d297"
+    },
+    {
+      "scenario": "training",
+      "seed": 800016,
+      "episode_steps": 20000,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800016.npz",
+      "trajectory_sha256": "8cb9e634db568137a7b025bf16bbbce0508118cee7f5766d6e2157659f2bb3ad"
+    },
+    {
+      "scenario": "training",
+      "seed": 800017,
+      "episode_steps": 20000,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800017.npz",
+      "trajectory_sha256": "4d35c1fff0750b358063ed28b288da117e8cbc60fb846051b0d82f91ee3d8a18"
+    },
+    {
+      "scenario": "training",
+      "seed": 800018,
+      "episode_steps": 7291,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800018.npz",
+      "trajectory_sha256": "7da5ee8b5756d61c2dddaae7b16027667d7ec33e3ea413f8ac34b13231a98f76"
+    },
+    {
+      "scenario": "training",
+      "seed": 800019,
+      "episode_steps": 4269,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800019.npz",
+      "trajectory_sha256": "0b8c7088b8db84e8e075c69abfae657ca608f99fc5bc663b1ad5e91bfcebe1be"
+    },
+    {
+      "scenario": "training",
+      "seed": 800020,
+      "episode_steps": 20000,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800020.npz",
+      "trajectory_sha256": "0c4e39be3e812f012340a0c47dd25b353d2c5bee7107b5eaf2a95c62540009b4"
+    },
+    {
+      "scenario": "training",
+      "seed": 800021,
+      "episode_steps": 20000,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800021.npz",
+      "trajectory_sha256": "3db5bb62c953c3f98cd39802f10b4c5df06fb93783ce1ee524a0a8d55a1c0797"
+    },
+    {
+      "scenario": "training",
+      "seed": 800022,
+      "episode_steps": 20000,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800022.npz",
+      "trajectory_sha256": "7d8d33a34a2cc45a8db7198d81688a9ad09079e922d7468a062eb78ac2781eec"
+    },
+    {
+      "scenario": "training",
+      "seed": 800023,
+      "episode_steps": 20000,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800023.npz",
+      "trajectory_sha256": "39b868678835d8a7948cdf576a722f24f2d4707e8c94529e6d03e5444b6ffa74"
+    },
+    {
+      "scenario": "training",
+      "seed": 800024,
+      "episode_steps": 15257,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800024.npz",
+      "trajectory_sha256": "9c03344ddb4f0d3855a352bbc2acc835677b252885bc717bfff9691436c63974"
+    },
+    {
+      "scenario": "training",
+      "seed": 800025,
+      "episode_steps": 20000,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800025.npz",
+      "trajectory_sha256": "3c72be9c01444803b8a47a89191de7a98a3e3ba3b2d1acdebbe5729b4516214f"
+    },
+    {
+      "scenario": "training",
+      "seed": 800026,
+      "episode_steps": 5866,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800026.npz",
+      "trajectory_sha256": "408acae7473c360974633274a757d9ae10f73c6bb06bf92b9ae28733bf11f97c"
+    },
+    {
+      "scenario": "training",
+      "seed": 800027,
+      "episode_steps": 6903,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800027.npz",
+      "trajectory_sha256": "2f5b56752641d45e08edc23017ece81229bb341ae88ae21db4ccfac3b286ea19"
+    },
+    {
+      "scenario": "training",
+      "seed": 800028,
+      "episode_steps": 119,
+      "tested_steps": 119,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800028.npz",
+      "trajectory_sha256": "7c0f1ba69475493ff42a9ff2e48baa76a49763f9d67980c5898f073d6125f730"
+    },
+    {
+      "scenario": "training",
+      "seed": 800029,
+      "episode_steps": 20000,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800029.npz",
+      "trajectory_sha256": "042d4ceccdb56baf9796e14be36d1ec4ae8801a3765ddcba7674d559f0a56c12"
+    },
+    {
+      "scenario": "training",
+      "seed": 800030,
+      "episode_steps": 836,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800030.npz",
+      "trajectory_sha256": "51465538aded5aa37858534b39b8916e44e3302ab492215be9ce044dd688861d"
+    },
+    {
+      "scenario": "training",
+      "seed": 800031,
+      "episode_steps": 4087,
+      "tested_steps": 300,
+      "exact_numeric_actions": true,
+      "trajectory": "runs/td3/noisy_history_20261029_seed0/independent_selected_target_3m6_20k_eval/training_seed800031.npz",
+      "trajectory_sha256": "8e2b31f17e98eb624cf33d01a05733f39250dbd0722b03cec300156db1065416"
+    }
+  ]
+}

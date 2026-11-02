@@ -48,6 +48,9 @@ def main():
                     expected=np.asarray(saved['action'][index],dtype=np.float32)
                     if not np.array_equal(actual,expected):
                         raise ValueError(f'Deployment action mismatch {name} seed={ep["seed"]} step={index}: max error {np.max(np.abs(actual-expected))}')
+                    command_hook = getattr(factory.actor, 'on_env_action', None)
+                    if callable(command_hook):
+                        command_hook(actual)
                     previous=actual.copy()
                 rows.append(dict(scenario=name,seed=ep['seed'],episode_steps=ep['steps'],tested_steps=count,
                     exact_numeric_actions=True,trajectory=str(path),trajectory_sha256=hashlib.sha256(path.read_bytes()).hexdigest()))

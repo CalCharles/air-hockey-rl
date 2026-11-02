@@ -9,7 +9,7 @@ The pipeline has two independent extension points so non-juggle tasks
 and non-TD3 agents drop in without touching the orchestrator:
 
 * **Agent dispatch** — `--agent <kind>` selects how the actor is built
-  and loaded (`td3`, `sgcrl`, …).
+  and loaded (`td3`, `sgcrl`, `rma`, `history`).
 * **Task hooks** — the env config's `task:` string selects (a) the
   **between-episode reset strategy** (puck-sweep FSM for tasks where the
   puck falls back down the table; paddle-reposition for puck-less tasks
@@ -41,6 +41,26 @@ see [Five canonical tasks](#five-canonical-tasks).
 | Reset FSM driver | [`scripts/td3/helper/real_reset_runner.py`](../../../scripts/td3/helper/real_reset_runner.py) |
 
 ---
+
+## Stateful policies and final commands
+
+RMA and long-history actors clear their private history through
+`on_episode_start` when the runner seeds an episode. After a successful
+`env.step`, the runner calls the optional `on_env_action` hook with the final
+normalized command selected after noise, clipping, primitives and holds. The
+adapter replaces the newest history action without advancing the window again.
+This keeps its history aligned when the runner substitutes a hold or another
+command after querying the policy.
+
+The recorded command is copied before environment-internal workspace clipping;
+it is the command sent to the environment, not a measurement of hardware
+execution. Existing PID, action filters, limits, hold behavior and
+`last_action_mode` semantics remain unchanged. Actors without the hook retain
+their existing path. A failed environment step does not commit feedback.
+
+The [offline verification and hold/override tests](../../scratch/experiments/2026-11-02_00-09_history-command-feedback.md)
+cover normal action parity, episode resets and history rollover. Hardware
+timing, dropped commands and protective-stop risk require separate measurements.
 
 ## Commands
 

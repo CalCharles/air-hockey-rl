@@ -231,6 +231,19 @@ class PolicyRunner:
         self._obs = obs
         self._notify_actor_episode_start(obs)
 
+    def _step_env_action(self, env_action: np.ndarray):
+        """Step first, then tell a stateful actor which command was sent.
+
+        Keep a copy before env-internal workspace clipping; the policy history
+        uses normalized commands, just as the training collector does.
+        """
+        history_hook = getattr(self._actor, "on_env_action", None)
+        history_command = env_action.copy() if callable(history_hook) else None
+        outcome = self._env.step(env_action)
+        if history_command is not None:
+            history_hook(history_command)
+        return outcome
+
     def seed_after_reset(self, obs: np.ndarray) -> None:
         """Reset all per-episode state for the next episode."""
         self._obs = obs
@@ -402,7 +415,7 @@ class PolicyRunner:
                 )
 
             prev_action = ctx.last_action_for_policy.clone()
-            next_obs, task_reward, terminations, truncations, step_info = env.step(env_action)
+            next_obs, task_reward, terminations, truncations, step_info = self._step_env_action(env_action)
 
             if args.enable_latency_profiling:
                 collector_step_end_s = time.perf_counter()
