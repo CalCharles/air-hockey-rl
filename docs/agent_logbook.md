@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A091 — Audit improving reward-cost checkpoint with exact controller replay](#a091)
 - [A090 — Analyze emerging reward-cost juggling before3M milestones](#a090)
 - [A089 — Complete full6M actor-smoothness matrix and paired motion](#a089)
 - [A088 — Complete weak longer-discount6M paired long test](#a088)
@@ -96,6 +97,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a091"></a>
+
+## A091 — 2026-11-02 01:16:26 -0600 — Audit improving reward-cost checkpoint with exact controller replay
+
+Gamma .999 cost100 seed1 online2M averages48.875 physical juggles/3385.875steps versus20.125/1435.5 control on8 reused starts, with lower typical actual command and velocity tails in fresh exact replays.
+
+Published9 summaries/72 raw development outcomes and fresh2×1776 exact transition replays. PID-change RMS0.045826 versus0.076028m; median velocity acceleration p99 33.6015 versus39.5206m/s² and jerk772.004 versus1066.969m/s³; inspected maxima and individual-seed counterexamples. Seed0 lags, cohorts remain small/reused; no policy promotion or hardware/infinite claim. Verified24 newly analyzed full NPZ outcomes and replay parity, source/output hashes and links/anchors/TOCs. Four scratch learners continue unchanged toward3M/6M;7 total user GPUs. No new learner or simulator/implementation change.
+
+[Detailed raw tables, plots, source/config/model hashes and commands](../notes/scratch/experiments/2026-11-02_07-16_cost-acquisition-and-early-controller-replay.md). Related record: [E090](experiment_logbook.md#e090); [E089](experiment_logbook.md#e089). Heading records documentation/replay-analysis time; checkpoint evaluations were already saved.
 
 <a id="a090"></a>
 
