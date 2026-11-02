@@ -1,0 +1,2321 @@
+{
+  "method": "Each reset seed uses the first min(baseline steps, candidate steps, requested prefix) positions; no reset-position sample.",
+  "limitations": "Paired reset seeds and equal durations do not ensure equal visited states. Control-rate position differences omit substep spikes, joint torque and hardware stop behavior. Short cases lack higher derivatives; zero baseline denominators are excluded from ratios.",
+  "requested_prefix_steps": 250,
+  "sources": {
+    "baseline": {
+      "path": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/results.json",
+      "sha256": "449cbbcc575b94f2785398c5dc46b3e8a9249bf28554b0f3e7beec2d4c1f2348"
+    },
+    "candidate": {
+      "path": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/results.json",
+      "sha256": "9464a6f115d3f60f91a7835ebfa3cd335f205bb49f394659c606cc676a57a565"
+    }
+  },
+  "analysis_sha256": {
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/scripts/analysis/juggle_paired_motion.py": "0bce341c7ed48eee8d58ec142db8dd1234adc18bc214e7de1fdf100befc3f501",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/scripts/analysis/juggle_motion_metrics.py": "3c36447afa2dc0f99b72c06c134411d853c89d06004fb4fdc5296e5006ef7f67"
+  },
+  "summary": {
+    "training": {
+      "episodes": 32,
+      "metrics": {
+        "speed_m_s": {
+          "paired_episodes": 32,
+          "ratio_episodes": 32,
+          "median_paired_ratio": 0.8310076219387942,
+          "baseline_median_episode_p95": 1.921362794401427,
+          "candidate_median_episode_p95": 1.5934102865070021
+        },
+        "acceleration_m_s2": {
+          "paired_episodes": 32,
+          "ratio_episodes": 32,
+          "median_paired_ratio": 0.9367195685225469,
+          "baseline_median_episode_p95": 18.486838517836013,
+          "candidate_median_episode_p95": 16.71789965567557
+        },
+        "jerk_m_s3": {
+          "paired_episodes": 32,
+          "ratio_episodes": 32,
+          "median_paired_ratio": 0.9133874913527551,
+          "baseline_median_episode_p95": 354.89814674880313,
+          "candidate_median_episode_p95": 309.1965033102407
+        }
+      }
+    }
+  },
+  "episodes": [
+    {
+      "scenario": "training",
+      "seed": 700000,
+      "paired_steps": 250,
+      "baseline": {
+        "episode_steps": 9874,
+        "physical_juggles": 140,
+        "sensed_juggles": 125,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700000.npz",
+        "trajectory_sha256": "2a64044f56106643cab63316f62d3e3d53da76ddb858e45192f168c40d0c385a",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.9195612617219531,
+            "p50": 0.1711130142211914,
+            "p95": 2.018479498327908,
+            "p99": 2.3752336987674907,
+            "maximum": 2.5538274427717265
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 8.772058290470742,
+            "p50": 1.2119777500629423,
+            "p95": 20.002648860386383,
+            "p99": 23.791130272801162,
+            "maximum": 28.451253467879766
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 183.45107692930844,
+            "p50": 31.22729063034057,
+            "p95": 410.29314842865824,
+            "p99": 515.8262417680934,
+            "maximum": 686.0627792327223
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 340,
+        "physical_juggles": 3,
+        "sensed_juggles": 5,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700000.npz",
+        "trajectory_sha256": "2fd2582d260545af07b5694d03fe7823bf8826956c302b94496c6d781391f4da",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.6819478027503885,
+            "p50": 0.0,
+            "p95": 1.5792321139233887,
+            "p99": 2.2128349996496763,
+            "maximum": 2.444676201714906
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 8.149749566420748,
+            "p50": 0.0,
+            "p95": 20.58736758661888,
+            "p99": 26.110010994625636,
+            "maximum": 37.0307445526123
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 163.42586593304125,
+            "p50": 0.0,
+            "p95": 380.01629297769284,
+            "p99": 558.655245146944,
+            "maximum": 808.8599921593367
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700001,
+      "paired_steps": 141,
+      "baseline": {
+        "episode_steps": 3716,
+        "physical_juggles": 57,
+        "sensed_juggles": 65,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700001.npz",
+        "trajectory_sha256": "e72902bde6303ee615a6c56d6135eb4d0abc658bca34469d332d8ad8b755a804",
+        "motion": {
+          "speed_m_s": {
+            "samples": 140,
+            "rms": 0.9288470537294518,
+            "p50": 0.4374320069010406,
+            "p95": 1.9376618989854322,
+            "p99": 2.10411101156098,
+            "maximum": 2.12708210684093
+          },
+          "acceleration_m_s2": {
+            "samples": 139,
+            "rms": 8.095929999708558,
+            "p50": 2.7572154998779292,
+            "p95": 18.569982730474834,
+            "p99": 21.91988782712755,
+            "maximum": 23.621660042912417
+          },
+          "jerk_m_s3": {
+            "samples": 138,
+            "rms": 138.52449522409154,
+            "p50": 39.64726302399391,
+            "p95": 322.1233568373708,
+            "p99": 374.0229745384538,
+            "maximum": 404.57547995069206
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 141,
+        "physical_juggles": 1,
+        "sensed_juggles": 2,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700001.npz",
+        "trajectory_sha256": "4f23190c0d7f9d57471c19efcd87eea56e64ac2cb212372e949d96c79e96c12e",
+        "motion": {
+          "speed_m_s": {
+            "samples": 140,
+            "rms": 0.425747241423204,
+            "p50": 0.0,
+            "p95": 1.1919016724996916,
+            "p99": 1.466677332730167,
+            "maximum": 1.7127370834350586
+          },
+          "acceleration_m_s2": {
+            "samples": 139,
+            "rms": 5.186878186856726,
+            "p50": 0.0,
+            "p95": 14.529957446369657,
+            "p99": 22.417449544806242,
+            "maximum": 27.67591476440429
+          },
+          "jerk_m_s3": {
+            "samples": 138,
+            "rms": 97.85844225012268,
+            "p50": 0.0,
+            "p95": 271.1450697746602,
+            "p99": 410.3353187902119,
+            "maximum": 452.42023468017567
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700002,
+      "paired_steps": 62,
+      "baseline": {
+        "episode_steps": 843,
+        "physical_juggles": 13,
+        "sensed_juggles": 13,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700002.npz",
+        "trajectory_sha256": "27cd55c774f13cb4fb394ddb0160736d788918da7de29c2ec7cc5461e2dd810a",
+        "motion": {
+          "speed_m_s": {
+            "samples": 61,
+            "rms": 0.9100251390255549,
+            "p50": 0.0,
+            "p95": 1.9712292700658578,
+            "p99": 2.2960314682926817,
+            "maximum": 2.3351570603929783
+          },
+          "acceleration_m_s2": {
+            "samples": 60,
+            "rms": 10.627416916510823,
+            "p50": 0.0,
+            "p95": 27.187145058196663,
+            "p99": 31.70086144244539,
+            "maximum": 36.09064701201564
+          },
+          "jerk_m_s3": {
+            "samples": 59,
+            "rms": 192.63345319287583,
+            "p50": 0.0,
+            "p95": 490.57666018052396,
+            "p99": 564.3629043087483,
+            "maximum": 584.9412546779389
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 62,
+        "physical_juggles": 1,
+        "sensed_juggles": 1,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700002.npz",
+        "trajectory_sha256": "93e1c5b8543395ce73880d8c1243a6e3706c6e3c90e73bebed57124c47cd624c",
+        "motion": {
+          "speed_m_s": {
+            "samples": 61,
+            "rms": 0.6670791006067773,
+            "p50": 0.0,
+            "p95": 1.6155684236661645,
+            "p99": 2.2121502715440844,
+            "maximum": 2.2510160443931175
+          },
+          "acceleration_m_s2": {
+            "samples": 60,
+            "rms": 5.824887087239038,
+            "p50": 0.0,
+            "p95": 12.949216391330946,
+            "p99": 18.578662085876662,
+            "maximum": 23.735918282748834
+          },
+          "jerk_m_s3": {
+            "samples": 59,
+            "rms": 116.85860864462757,
+            "p50": 0.0,
+            "p95": 252.56971465669662,
+            "p99": 398.66409043307414,
+            "maximum": 467.331391852695
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700003,
+      "paired_steps": 250,
+      "baseline": {
+        "episode_steps": 20000,
+        "physical_juggles": 298,
+        "sensed_juggles": 268,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700003.npz",
+        "trajectory_sha256": "52535fcbb4cee0e04b4e7670db10197cf6bdfcb4f3586e2aa6b06a3d5c8250d8",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.8617894451065969,
+            "p50": 0.5372250253110203,
+            "p95": 1.790248458080309,
+            "p99": 2.094936870658763,
+            "maximum": 2.1770139700469273
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 7.223364798451331,
+            "p50": 2.2871494293212886,
+            "p95": 15.465263535142725,
+            "p99": 20.403280771468452,
+            "maximum": 22.581085239756355
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 143.48890523106638,
+            "p50": 38.04758688276252,
+            "p95": 354.5157598143945,
+            "p99": 452.19701339121787,
+            "maximum": 501.2812162437887
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 475,
+        "physical_juggles": 8,
+        "sensed_juggles": 8,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700003.npz",
+        "trajectory_sha256": "4f22f987938729c2e5227b03e4fbaa6e7a1a343d9530f1ef35dde5dfcfde0108",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.5758874840007817,
+            "p50": 0.0,
+            "p95": 1.2100198617525464,
+            "p99": 1.7048747852819792,
+            "maximum": 2.0267775387563285
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 6.5736296368429485,
+            "p50": 0.0,
+            "p95": 16.708423944082607,
+            "p99": 22.48791110528212,
+            "maximum": 30.771430534481436
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 131.47719193741804,
+            "p50": 0.0,
+            "p95": 318.1177131615987,
+            "p99": 428.2516729359477,
+            "maximum": 470.75843811035145
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700004,
+      "paired_steps": 250,
+      "baseline": {
+        "episode_steps": 16874,
+        "physical_juggles": 249,
+        "sensed_juggles": 220,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700004.npz",
+        "trajectory_sha256": "14f49faa5556c08f994abf175578ab45b5ad9e4b1e15bfe298fa5867024820a7",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.8441932040977137,
+            "p50": 0.29345259070396423,
+            "p95": 1.8899647116349283,
+            "p99": 2.0838816034889716,
+            "maximum": 2.1452280039829748
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 7.6998024941203065,
+            "p50": 2.1112013608217235,
+            "p95": 16.317324838603714,
+            "p99": 24.615271058397536,
+            "maximum": 34.908575679001935
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 131.9223919728838,
+            "p50": 38.8992154139346,
+            "p95": 298.435795556952,
+            "p99": 391.7810063600302,
+            "maximum": 576.8183951140717
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 1444,
+        "physical_juggles": 22,
+        "sensed_juggles": 22,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700004.npz",
+        "trajectory_sha256": "a735c5888ec19f19e5563e6d23d2e630306a843d030355df296b9c68a132e04f",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.8019759905167431,
+            "p50": 0.0,
+            "p95": 1.8044719282814405,
+            "p99": 2.065497452575729,
+            "maximum": 2.2632693513625526
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 7.09220824592199,
+            "p50": 0.5404856055974959,
+            "p95": 15.787585973739615,
+            "p99": 24.66752912861186,
+            "maximum": 30.488921056437906
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 119.50888309339724,
+            "p50": 0.10596215724945066,
+            "p95": 298.1057667675908,
+            "p99": 405.8044475958557,
+            "maximum": 486.8674278259276
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700005,
+      "paired_steps": 185,
+      "baseline": {
+        "episode_steps": 8735,
+        "physical_juggles": 138,
+        "sensed_juggles": 114,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700005.npz",
+        "trajectory_sha256": "bd8772e1b546bd91b34c25234f439b1be85a689a7984171451e6a5b2ae3eb1a0",
+        "motion": {
+          "speed_m_s": {
+            "samples": 184,
+            "rms": 0.909382399886255,
+            "p50": 0.29590740421893424,
+            "p95": 1.9641441159296125,
+            "p99": 2.168376845870739,
+            "maximum": 2.232264776636641
+          },
+          "acceleration_m_s2": {
+            "samples": 183,
+            "rms": 8.707471638771628,
+            "p50": 2.908323984910508,
+            "p95": 18.6264002926047,
+            "p99": 21.482894503778784,
+            "maximum": 22.270814070228283
+          },
+          "jerk_m_s3": {
+            "samples": 182,
+            "rms": 160.36708847008262,
+            "p50": 55.600511681716235,
+            "p95": 369.2958296917545,
+            "p99": 437.8885212602538,
+            "maximum": 452.5458818497403
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 185,
+        "physical_juggles": 3,
+        "sensed_juggles": 1,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700005.npz",
+        "trajectory_sha256": "ac03d9ebcc13c9db8623d552d1574d4136758c0d51b628fbf7b9ce13afb7fb7d",
+        "motion": {
+          "speed_m_s": {
+            "samples": 184,
+            "rms": 0.6149401861572416,
+            "p50": 0.0,
+            "p95": 1.2742194831371305,
+            "p99": 2.0238621687117386,
+            "maximum": 2.214832523296916
+          },
+          "acceleration_m_s2": {
+            "samples": 183,
+            "rms": 6.101806475775421,
+            "p50": 0.0,
+            "p95": 13.23032421950213,
+            "p99": 23.856985339545293,
+            "maximum": 24.40232446962878
+          },
+          "jerk_m_s3": {
+            "samples": 182,
+            "rms": 115.61086142110142,
+            "p50": 0.0,
+            "p95": 270.2923242040514,
+            "p99": 381.90841856682016,
+            "maximum": 700.313735942664
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700006,
+      "paired_steps": 250,
+      "baseline": {
+        "episode_steps": 20000,
+        "physical_juggles": 284,
+        "sensed_juggles": 251,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700006.npz",
+        "trajectory_sha256": "d06d34e39ffc8aca69411dc3c71119d6019a9d0822d5ac22e36c764b25215ebf",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.8654944859519863,
+            "p50": 0.11820614337921143,
+            "p95": 2.0012779247814407,
+            "p99": 2.3034653563217384,
+            "maximum": 2.404229086091653
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 7.685037150334746,
+            "p50": 0.6959203630685805,
+            "p95": 18.651774891214174,
+            "p99": 22.96560678611258,
+            "maximum": 25.312929346696173
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 145.57600220536696,
+            "p50": 23.436979308880975,
+            "p95": 366.3625636232458,
+            "p99": 466.377690905811,
+            "maximum": 514.7931385384286
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 404,
+        "physical_juggles": 6,
+        "sensed_juggles": 6,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700006.npz",
+        "trajectory_sha256": "5a4ebbabb422e894e17ebc243e8291c3d3b65acab00173d9ab2ecfcdc0dc4419",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.7332949782669517,
+            "p50": 0.0,
+            "p95": 1.7237780875011661,
+            "p99": 2.170765594332175,
+            "maximum": 2.2285829562066484
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 8.338507262803851,
+            "p50": 0.0,
+            "p95": 19.69159060803289,
+            "p99": 31.393829939290125,
+            "maximum": 35.79137847286715
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 150.9979697169867,
+            "p50": 0.0,
+            "p95": 372.7797535153232,
+            "p99": 539.9194141564512,
+            "maximum": 698.2769966125487
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700007,
+      "paired_steps": 250,
+      "baseline": {
+        "episode_steps": 5517,
+        "physical_juggles": 87,
+        "sensed_juggles": 75,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700007.npz",
+        "trajectory_sha256": "679912db56457f37b7316898b308bb5b5d3fab370b15143bd14b0fa1e51e0b46",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.8317011367953173,
+            "p50": 0.2342701627456319,
+            "p95": 1.8641424332533938,
+            "p99": 2.144876475248026,
+            "maximum": 2.1778466386439033
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 7.403943768372095,
+            "p50": 2.1669224048310403,
+            "p95": 16.362332071604282,
+            "p99": 20.343134846314392,
+            "maximum": 21.953303036658276
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 137.9683119912897,
+            "p50": 56.59095006911783,
+            "p95": 302.49109901493983,
+            "p99": 355.1794349355739,
+            "maximum": 427.2926771151853
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 269,
+        "physical_juggles": 3,
+        "sensed_juggles": 4,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700007.npz",
+        "trajectory_sha256": "36d0f491cccca93e6434d19d2e695f4f9248739943f231f0b4b524ed5d6bd124",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.7107564636166442,
+            "p50": 0.0,
+            "p95": 1.544901859527109,
+            "p99": 2.031676331630389,
+            "maximum": 2.132088335075564
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 7.297768345832084,
+            "p50": 0.0,
+            "p95": 16.975490321258448,
+            "p99": 28.486818804377332,
+            "maximum": 33.072049136121585
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 141.79581688447342,
+            "p50": 0.0,
+            "p95": 300.27529345888263,
+            "p99": 627.2709326475671,
+            "maximum": 709.3982324896625
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700008,
+      "paired_steps": 250,
+      "baseline": {
+        "episode_steps": 20000,
+        "physical_juggles": 288,
+        "sensed_juggles": 242,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700008.npz",
+        "trajectory_sha256": "e856a5792358bc21ff5f8ab3edd2eb62c2ca8cccde09f2aaeaf1189e11475c63",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.8514777280942994,
+            "p50": 0.292438268661499,
+            "p95": 1.861168667672524,
+            "p99": 2.22068546598559,
+            "maximum": 2.3924724415009617
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 7.905871511287651,
+            "p50": 2.257529832422733,
+            "p95": 18.403694305197195,
+            "p99": 22.36122793612231,
+            "maximum": 23.935351310221517
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 156.08928978480427,
+            "p50": 48.22025963032767,
+            "p95": 358.63398398866275,
+            "p99": 494.80147000121633,
+            "maximum": 659.7301654508566
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 724,
+        "physical_juggles": 10,
+        "sensed_juggles": 6,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700008.npz",
+        "trajectory_sha256": "7e17bc12bb5dc41f3f46a72593ead9d8b23609241bf580ea69a854504eede57b",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.6708365878466015,
+            "p50": 0.0,
+            "p95": 1.5136814558646172,
+            "p99": 1.9899111374734963,
+            "maximum": 2.2439111904643974
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 7.106159825637893,
+            "p50": 0.0,
+            "p95": 16.727375367268532,
+            "p99": 24.176428495007425,
+            "maximum": 31.398320198059075
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 129.99788465870463,
+            "p50": 0.0,
+            "p95": 343.057567158606,
+            "p99": 487.4357864110544,
+            "maximum": 630.9658491152076
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700009,
+      "paired_steps": 250,
+      "baseline": {
+        "episode_steps": 20000,
+        "physical_juggles": 317,
+        "sensed_juggles": 288,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700009.npz",
+        "trajectory_sha256": "7372fd17476ac28dd99f93c153133c991002d168829dde9be58aa2f723b9e50a",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.8542578869616234,
+            "p50": 0.2922375500202179,
+            "p95": 1.885316340612623,
+            "p99": 2.122641220698957,
+            "maximum": 2.165316777030438
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 7.423612130618012,
+            "p50": 2.415061034222003,
+            "p95": 17.69824308941062,
+            "p99": 20.014582994014606,
+            "maximum": 20.378387546495894
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 130.8044616361814,
+            "p50": 49.480140209197984,
+            "p95": 313.52666644461374,
+            "p99": 351.30468800115386,
+            "maximum": 438.3613691346028
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 671,
+        "physical_juggles": 10,
+        "sensed_juggles": 11,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700009.npz",
+        "trajectory_sha256": "fae41c8f3b7ede146f18dbaadef2dbd23cf7fd5f3e21cf1447f5627f724af4e5",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.6147126018393996,
+            "p50": 0.0,
+            "p95": 1.327904364704272,
+            "p99": 1.9216337331622584,
+            "maximum": 2.064917617839661
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 6.405501355161175,
+            "p50": 0.0,
+            "p95": 16.57496066540594,
+            "p99": 23.39745731698162,
+            "maximum": 29.68584358101466
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 112.32919229494911,
+            "p50": 0.0,
+            "p95": 265.0700504051007,
+            "p99": 411.85588965834114,
+            "maximum": 656.2155921634809
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700010,
+      "paired_steps": 160,
+      "baseline": {
+        "episode_steps": 14397,
+        "physical_juggles": 215,
+        "sensed_juggles": 207,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700010.npz",
+        "trajectory_sha256": "c34671f5210d402b16419de7e9338590337e43bdc33b641452f2f4494a3ddd99",
+        "motion": {
+          "speed_m_s": {
+            "samples": 159,
+            "rms": 0.8313664567268768,
+            "p50": 0.0,
+            "p95": 1.9624365933647492,
+            "p99": 2.053131155013716,
+            "maximum": 2.0921010277031984
+          },
+          "acceleration_m_s2": {
+            "samples": 158,
+            "rms": 6.901399872004744,
+            "p50": 0.025314092636108395,
+            "p95": 15.303067265913581,
+            "p99": 19.00063472379525,
+            "maximum": 19.979147477409683
+          },
+          "jerk_m_s3": {
+            "samples": 157,
+            "rms": 118.94945259763672,
+            "p50": 0.17455220222473142,
+            "p95": 309.4416999545045,
+            "p99": 347.97373457086525,
+            "maximum": 415.3789677611111
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 160,
+        "physical_juggles": 1,
+        "sensed_juggles": 2,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700010.npz",
+        "trajectory_sha256": "e61053a43ed25bb75c9d65dc31f6ebe487b1fb0d22b58b166ec47faf977a29ab",
+        "motion": {
+          "speed_m_s": {
+            "samples": 159,
+            "rms": 0.4865518989508835,
+            "p50": 0.0,
+            "p95": 1.1635926750656413,
+            "p99": 1.3441450975845264,
+            "maximum": 1.423566774833536
+          },
+          "acceleration_m_s2": {
+            "samples": 158,
+            "rms": 5.187255482907195,
+            "p50": 0.0,
+            "p95": 13.147969372551245,
+            "p99": 17.56181127981249,
+            "maximum": 24.884256422090154
+          },
+          "jerk_m_s3": {
+            "samples": 157,
+            "rms": 97.30292027013162,
+            "p50": 0.0,
+            "p95": 224.44826529251426,
+            "p99": 387.085526168057,
+            "maximum": 519.7099980710065
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700011,
+      "paired_steps": 250,
+      "baseline": {
+        "episode_steps": 20000,
+        "physical_juggles": 274,
+        "sensed_juggles": 238,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700011.npz",
+        "trajectory_sha256": "28899e6ac7d66b8b2c8b7c9cd99f14dd941feb73513cb7666dac8795c4d7ebec",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.9008600034088831,
+            "p50": 0.2582448720932007,
+            "p95": 1.7888479615753459,
+            "p99": 2.4422527916589654,
+            "maximum": 2.7198434654748445
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 9.352113455250834,
+            "p50": 1.4033123850822447,
+            "p95": 21.48121402115402,
+            "p99": 27.345265822914392,
+            "maximum": 28.492904526597115
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 200.22212245599857,
+            "p50": 37.601768970489495,
+            "p95": 462.93050233909406,
+            "p99": 657.4763214387453,
+            "maximum": 705.8681451670109
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 452,
+        "physical_juggles": 5,
+        "sensed_juggles": 6,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700011.npz",
+        "trajectory_sha256": "72f08681889d335f40a5da8b15ea671520f29f6e90666fd050e53bcb6da8e0c7",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.8317009495653298,
+            "p50": 0.0,
+            "p95": 1.8388036963925514,
+            "p99": 2.265556507229208,
+            "maximum": 2.5478289297097088
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 9.870108490908102,
+            "p50": 0.0,
+            "p95": 24.29646652064682,
+            "p99": 34.467806184710035,
+            "maximum": 43.173756458726885
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 199.79532461968694,
+            "p50": 0.0,
+            "p95": 492.8079124189602,
+            "p99": 676.914401647955,
+            "maximum": 812.3293223734325
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700012,
+      "paired_steps": 250,
+      "baseline": {
+        "episode_steps": 20000,
+        "physical_juggles": 297,
+        "sensed_juggles": 256,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700012.npz",
+        "trajectory_sha256": "988a948102dbc8e5fae6a3dd8dcc90a2e41dec6939f7565a2d497acc9298e81b",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.8197453022348145,
+            "p50": 0.18545705825090408,
+            "p95": 1.7924660290194945,
+            "p99": 2.113336466741015,
+            "maximum": 2.184744810978589
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 6.864366303060776,
+            "p50": 1.4518383439586684,
+            "p95": 16.196406535524872,
+            "p99": 20.610885990313122,
+            "maximum": 22.783850519956896
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 120.04585451388718,
+            "p50": 28.989015368222887,
+            "p95": 289.7272196489919,
+            "p99": 397.82120955872756,
+            "maximum": 418.0016940569501
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 1027,
+        "physical_juggles": 12,
+        "sensed_juggles": 15,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700012.npz",
+        "trajectory_sha256": "0dff32bef429627d549774c2d00b077e67be0a9b30674fcef7a792f95b5fbf53",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.5813015491097725,
+            "p50": 0.0,
+            "p95": 1.3525710999965666,
+            "p99": 1.7037407258820478,
+            "maximum": 2.141486776702296
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 5.8280854338711,
+            "p50": 0.0,
+            "p95": 14.320902094552348,
+            "p99": 24.25893629763575,
+            "maximum": 31.891422585168357
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 102.33129855837026,
+            "p50": 0.0,
+            "p95": 295.99210685018176,
+            "p99": 397.11457160195084,
+            "maximum": 433.47978591918934
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700013,
+      "paired_steps": 98,
+      "baseline": {
+        "episode_steps": 20000,
+        "physical_juggles": 304,
+        "sensed_juggles": 264,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700013.npz",
+        "trajectory_sha256": "0df74010c37bc7739d5490f12b7fd9255532bd4eea6c8bae9e1805e25b3ce3af",
+        "motion": {
+          "speed_m_s": {
+            "samples": 97,
+            "rms": 0.7857147171112988,
+            "p50": 0.03591001033782959,
+            "p95": 1.6689306863746984,
+            "p99": 2.0225430367956694,
+            "maximum": 2.1096899391109276
+          },
+          "acceleration_m_s2": {
+            "samples": 96,
+            "rms": 6.5397984621103324,
+            "p50": 0.574757158756256,
+            "p95": 14.52269856209999,
+            "p99": 19.796017641368415,
+            "maximum": 20.728663701768742
+          },
+          "jerk_m_s3": {
+            "samples": 95,
+            "rms": 121.69259673937141,
+            "p50": 26.485204696655266,
+            "p95": 288.6901410122791,
+            "p99": 358.79356811389346,
+            "maximum": 377.3911347657683
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 98,
+        "physical_juggles": 1,
+        "sensed_juggles": 1,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700013.npz",
+        "trajectory_sha256": "ec04f07e73a3e7d088a6479b73ceae9ad50dbf9fe4fb577a82c55bcb535cbf59",
+        "motion": {
+          "speed_m_s": {
+            "samples": 97,
+            "rms": 0.7025618859627216,
+            "p50": 0.23487448692321777,
+            "p95": 1.7201473016963584,
+            "p99": 2.0256158342690456,
+            "maximum": 2.14515634814914
+          },
+          "acceleration_m_s2": {
+            "samples": 96,
+            "rms": 7.065608577106053,
+            "p50": 1.989741743049476,
+            "p95": 15.110873323660757,
+            "p99": 27.516494048694042,
+            "maximum": 30.45925978605404
+          },
+          "jerk_m_s3": {
+            "samples": 95,
+            "rms": 119.12809384422668,
+            "p50": 26.33750438690185,
+            "p95": 290.66617998331947,
+            "p99": 403.73536595578224,
+            "maximum": 488.8836370390442
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700014,
+      "paired_steps": 100,
+      "baseline": {
+        "episode_steps": 14313,
+        "physical_juggles": 208,
+        "sensed_juggles": 193,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700014.npz",
+        "trajectory_sha256": "0b6684b12c9074ef49396ddffec2d8a991f43b9ef4772f2a8f3aeace706abf46",
+        "motion": {
+          "speed_m_s": {
+            "samples": 99,
+            "rms": 0.937292487531263,
+            "p50": 0.09692603598563572,
+            "p95": 2.2243917637527444,
+            "p99": 2.368309628018574,
+            "maximum": 2.4711823383808094
+          },
+          "acceleration_m_s2": {
+            "samples": 98,
+            "rms": 11.54499956232434,
+            "p50": 1.740131701084842,
+            "p95": 25.47960015810734,
+            "p99": 39.219074210430065,
+            "maximum": 39.596226294030636
+          },
+          "jerk_m_s3": {
+            "samples": 97,
+            "rms": 239.25536757691103,
+            "p50": 50.4438990407773,
+            "p95": 588.5762017227831,
+            "p99": 680.0044429508966,
+            "maximum": 786.3073909509064
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 100,
+        "physical_juggles": 2,
+        "sensed_juggles": 2,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700014.npz",
+        "trajectory_sha256": "425591e30e674a1e1abbeb1a6a28578a2694a96771acbe60af00f63047c7d86d",
+        "motion": {
+          "speed_m_s": {
+            "samples": 99,
+            "rms": 0.6533978887893379,
+            "p50": 0.0,
+            "p95": 1.5431907965702232,
+            "p99": 2.0849780671785485,
+            "maximum": 2.392619892981368
+          },
+          "acceleration_m_s2": {
+            "samples": 98,
+            "rms": 8.496311760807869,
+            "p50": 0.0,
+            "p95": 18.292023354724112,
+            "p99": 32.47396094490737,
+            "maximum": 34.56451732288699
+          },
+          "jerk_m_s3": {
+            "samples": 97,
+            "rms": 168.5370616964987,
+            "p50": 0.0,
+            "p95": 446.18088806173324,
+            "p99": 531.534657535197,
+            "maximum": 646.0786191819781
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700015,
+      "paired_steps": 250,
+      "baseline": {
+        "episode_steps": 20000,
+        "physical_juggles": 303,
+        "sensed_juggles": 255,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700015.npz",
+        "trajectory_sha256": "22104e61ba5c625ec0def8d427c688bb11f5766000b4ec9e331694b1e11a7e0b",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.7532283298600503,
+            "p50": 0.1987943984568119,
+            "p95": 1.7265258552466023,
+            "p99": 2.0195917074801644,
+            "maximum": 2.069650465272559
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 6.242513276451449,
+            "p50": 1.033234665545231,
+            "p95": 13.561878520469989,
+            "p99": 17.786608469474423,
+            "maximum": 19.821158540388744
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 107.81343189646947,
+            "p50": 32.364915584029504,
+            "p95": 245.33752978698604,
+            "p99": 297.22079620355225,
+            "maximum": 318.5365030820436
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 1882,
+        "physical_juggles": 24,
+        "sensed_juggles": 21,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700015.npz",
+        "trajectory_sha256": "b2108a3b589976995b49737bec4836aa3a3188ea14fc9284d130f3d548ac7910",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.6580014540602852,
+            "p50": 0.0,
+            "p95": 1.3889880706078517,
+            "p99": 1.6844860823267782,
+            "maximum": 1.9785387997134452
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 5.523606877846081,
+            "p50": 0.0,
+            "p95": 11.297600938406882,
+            "p99": 21.383513135881962,
+            "maximum": 24.982230976658578
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 86.77320003977078,
+            "p50": 0.0,
+            "p95": 209.97916325463726,
+            "p99": 303.69947635491803,
+            "maximum": 343.57951131279714
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700016,
+      "paired_steps": 157,
+      "baseline": {
+        "episode_steps": 6737,
+        "physical_juggles": 99,
+        "sensed_juggles": 79,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700016.npz",
+        "trajectory_sha256": "6bdbd3920de2310b75b17153f3c1ce0df1e0a56209c6ee4e5950cead38b60c8c",
+        "motion": {
+          "speed_m_s": {
+            "samples": 156,
+            "rms": 0.9984806713786889,
+            "p50": 0.33442383111602436,
+            "p95": 2.0978700463421838,
+            "p99": 2.370856181363766,
+            "maximum": 2.477594511026679
+          },
+          "acceleration_m_s2": {
+            "samples": 155,
+            "rms": 9.107806033623113,
+            "p50": 3.289126302032416,
+            "p95": 18.88094470808254,
+            "p99": 23.877571556013834,
+            "maximum": 24.57405020996839
+          },
+          "jerk_m_s3": {
+            "samples": 154,
+            "rms": 169.30571344525552,
+            "p50": 81.57039748550704,
+            "p95": 358.37443794958585,
+            "p99": 521.1697614550762,
+            "maximum": 551.9219432377389
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 157,
+        "physical_juggles": 2,
+        "sensed_juggles": 2,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700016.npz",
+        "trajectory_sha256": "faf13831db53d35dd1d7b7a092faec711c25c59966e638670427bd8907801e7e",
+        "motion": {
+          "speed_m_s": {
+            "samples": 156,
+            "rms": 0.6976219347420536,
+            "p50": 0.0,
+            "p95": 1.5127330274299158,
+            "p99": 1.9792536916068029,
+            "maximum": 2.4259991051039758
+          },
+          "acceleration_m_s2": {
+            "samples": 155,
+            "rms": 7.2018566895122165,
+            "p50": 0.0,
+            "p95": 15.793173535511555,
+            "p99": 28.920007052668264,
+            "maximum": 37.12269832769371
+          },
+          "jerk_m_s3": {
+            "samples": 154,
+            "rms": 135.5472565801644,
+            "p50": 0.0,
+            "p95": 356.1050934194322,
+            "p99": 491.3527872104237,
+            "maximum": 628.5072157897666
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700017,
+      "paired_steps": 143,
+      "baseline": {
+        "episode_steps": 6983,
+        "physical_juggles": 105,
+        "sensed_juggles": 92,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700017.npz",
+        "trajectory_sha256": "c38d5eee629cbb29f6f52bee4f1844d3c5a7868549aa8b1d8514112f27be9064",
+        "motion": {
+          "speed_m_s": {
+            "samples": 142,
+            "rms": 1.1301048200518213,
+            "p50": 0.5644551114515366,
+            "p95": 2.2773494138427384,
+            "p99": 2.5996209314142926,
+            "maximum": 2.6148643973271586
+          },
+          "acceleration_m_s2": {
+            "samples": 141,
+            "rms": 11.660601457614504,
+            "p50": 6.185764074325561,
+            "p95": 25.7185804747598,
+            "p99": 28.129412889731423,
+            "maximum": 31.510450584121198
+          },
+          "jerk_m_s3": {
+            "samples": 140,
+            "rms": 232.03017419155523,
+            "p50": 87.21693285953182,
+            "p95": 508.6739596849314,
+            "p99": 696.3187406862781,
+            "maximum": 744.4784170572409
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 143,
+        "physical_juggles": 2,
+        "sensed_juggles": 0,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700017.npz",
+        "trajectory_sha256": "b762ff1d6857a4ac87359d5d0fa4585fee1a99b973b0a6bdbf4d074317f14bdd",
+        "motion": {
+          "speed_m_s": {
+            "samples": 142,
+            "rms": 1.1937571362618695,
+            "p50": 0.9209565632045269,
+            "p95": 2.2086686115829943,
+            "p99": 2.5681850242429007,
+            "maximum": 2.662460022256755
+          },
+          "acceleration_m_s2": {
+            "samples": 141,
+            "rms": 11.544969267966351,
+            "p50": 4.187073782798174,
+            "p95": 24.158644676208493,
+            "p99": 31.997260527014074,
+            "maximum": 35.43202757081327
+          },
+          "jerk_m_s3": {
+            "samples": 140,
+            "rms": 206.3902228863557,
+            "p50": 86.81713694603427,
+            "p95": 460.0748021733639,
+            "p99": 623.4857642248313,
+            "maximum": 654.4776721043382
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700018,
+      "paired_steps": 250,
+      "baseline": {
+        "episode_steps": 20000,
+        "physical_juggles": 291,
+        "sensed_juggles": 268,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700018.npz",
+        "trajectory_sha256": "717c2848a261ca37becc3971f0a17d151d368bc1c1f530936b745a5e1155c2b9",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.882435636262481,
+            "p50": 0.28767706896899753,
+            "p95": 1.9835791275445611,
+            "p99": 2.2791372003646253,
+            "maximum": 2.379568722568139
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 8.005173054007908,
+            "p50": 1.4708891510963438,
+            "p95": 17.11048098148038,
+            "p99": 23.85471110228031,
+            "maximum": 25.71640418841629
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 153.09462922337164,
+            "p50": 42.538225650787346,
+            "p95": 350.3992063574823,
+            "p99": 490.04289769208873,
+            "maximum": 569.3800274839281
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 744,
+        "physical_juggles": 10,
+        "sensed_juggles": 11,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700018.npz",
+        "trajectory_sha256": "197a27ce696839f498c6007c9b451ece82d283775ec1f378fc016e53365fe9bb",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.832845022999794,
+            "p50": 0.0,
+            "p95": 1.9699734670871683,
+            "p99": 2.191449583203496,
+            "maximum": 2.3279974475972263
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 8.593628928132285,
+            "p50": 0.0,
+            "p95": 19.179426246143088,
+            "p99": 25.310229623243835,
+            "maximum": 33.25435864258676
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 156.73298654859178,
+            "p50": 0.0,
+            "p95": 370.6159424425156,
+            "p99": 486.20311575522686,
+            "maximum": 576.9255723053128
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700019,
+      "paired_steps": 50,
+      "baseline": {
+        "episode_steps": 20000,
+        "physical_juggles": 285,
+        "sensed_juggles": 239,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700019.npz",
+        "trajectory_sha256": "de943ed848d33caf702b25531b71d47885834bc8a5787d475363975b693c465c",
+        "motion": {
+          "speed_m_s": {
+            "samples": 49,
+            "rms": 0.9677076546775228,
+            "p50": 0.31053781509399414,
+            "p95": 2.0236752691818434,
+            "p99": 2.2806406808946087,
+            "maximum": 2.3850152561756226
+          },
+          "acceleration_m_s2": {
+            "samples": 48,
+            "rms": 11.598539828291788,
+            "p50": 4.523620769598144,
+            "p95": 21.951553244274287,
+            "p99": 33.951757551191776,
+            "maximum": 37.3060620826074
+          },
+          "jerk_m_s3": {
+            "samples": 47,
+            "rms": 221.89008413358403,
+            "p50": 147.11061344228474,
+            "p95": 454.2231685103617,
+            "p99": 564.5875275204942,
+            "maximum": 629.0327241490919
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 50,
+        "physical_juggles": 0,
+        "sensed_juggles": 0,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700019.npz",
+        "trajectory_sha256": "9de43a20cbce93f904bcef533431850154e7aac12e7ddbd101c20f04e0a677e5",
+        "motion": {
+          "speed_m_s": {
+            "samples": 49,
+            "rms": 0.676680571658819,
+            "p50": 0.0,
+            "p95": 1.750388293694652,
+            "p99": 2.248712426995109,
+            "maximum": 2.3145496421456158
+          },
+          "acceleration_m_s2": {
+            "samples": 48,
+            "rms": 5.409586390926435,
+            "p50": 0.0,
+            "p95": 13.573981000345304,
+            "p99": 18.85381568273914,
+            "maximum": 21.4187039456523
+          },
+          "jerk_m_s3": {
+            "samples": 47,
+            "rms": 95.98058528946298,
+            "p50": 0.0,
+            "p95": 213.66582610289944,
+            "p99": 369.22420954267386,
+            "maximum": 379.09585710623594
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700020,
+      "paired_steps": 250,
+      "baseline": {
+        "episode_steps": 20000,
+        "physical_juggles": 299,
+        "sensed_juggles": 254,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700020.npz",
+        "trajectory_sha256": "735df32a88d5d0e3d977f5372e63ed9d6a15061e380ca2615015889b35915d6c",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.7430927182293579,
+            "p50": 0.03241539001464844,
+            "p95": 1.6319441381933621,
+            "p99": 1.9940502596073229,
+            "maximum": 2.129747262112464
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 6.341481540816015,
+            "p50": 0.6786793470382689,
+            "p95": 14.269980669590106,
+            "p99": 18.943507772555076,
+            "maximum": 19.748914316279542
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 115.48203770083514,
+            "p50": 15.811234712600704,
+            "p95": 281.45851412116343,
+            "p99": 374.5426674201648,
+            "maximum": 394.82201265679885
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 310,
+        "physical_juggles": 4,
+        "sensed_juggles": 4,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700020.npz",
+        "trajectory_sha256": "e15ecd5432ac347d9dffd0893bb2565cb25e7897069d6f1bdbafb8d27f42f263",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.6341122034299247,
+            "p50": 0.0,
+            "p95": 1.3657782324399383,
+            "p99": 1.9699710872926104,
+            "maximum": 2.156791411894431
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 5.920975611350655,
+            "p50": 0.0,
+            "p95": 13.14023393844426,
+            "p99": 22.46399323344287,
+            "maximum": 27.409155622071417
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 100.1698861336484,
+            "p50": 0.0,
+            "p95": 245.4626757053945,
+            "p99": 326.00738234872114,
+            "maximum": 572.2484588623046
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700021,
+      "paired_steps": 214,
+      "baseline": {
+        "episode_steps": 12407,
+        "physical_juggles": 177,
+        "sensed_juggles": 170,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700021.npz",
+        "trajectory_sha256": "5260cb7e4c29dd1dc50e9ef04795c9ccf830cd70fe79f3eaf02675e6632fd959",
+        "motion": {
+          "speed_m_s": {
+            "samples": 213,
+            "rms": 0.8650775847373321,
+            "p50": 0.2292346954345703,
+            "p95": 1.9421230552981479,
+            "p99": 2.229711075956481,
+            "maximum": 2.257016346834677
+          },
+          "acceleration_m_s2": {
+            "samples": 212,
+            "rms": 7.56371605030217,
+            "p50": 2.5724112987518306,
+            "p95": 16.3539891568074,
+            "p99": 22.213639453406724,
+            "maximum": 22.86606413144662
+          },
+          "jerk_m_s3": {
+            "samples": 211,
+            "rms": 139.58826216685102,
+            "p50": 47.39677443370998,
+            "p95": 309.55690022718017,
+            "p99": 459.39571572595855,
+            "maximum": 477.8531869336573
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 214,
+        "physical_juggles": 3,
+        "sensed_juggles": 2,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700021.npz",
+        "trajectory_sha256": "98a9139361d14e3b100840bb693ebbe1c016a7add580a6b1a40b593e2f996032",
+        "motion": {
+          "speed_m_s": {
+            "samples": 213,
+            "rms": 0.5818415301516158,
+            "p50": 0.0,
+            "p95": 1.4275559011463979,
+            "p99": 1.8595869741894093,
+            "maximum": 2.018936600263053
+          },
+          "acceleration_m_s2": {
+            "samples": 212,
+            "rms": 6.496815083159093,
+            "p50": 0.0,
+            "p95": 14.211488291696634,
+            "p99": 29.57653000880884,
+            "maximum": 33.55239894586179
+          },
+          "jerk_m_s3": {
+            "samples": 211,
+            "rms": 120.55491838379757,
+            "p50": 0.0,
+            "p95": 290.28218636343377,
+            "p99": 518.800163354881,
+            "maximum": 591.5775899539204
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700022,
+      "paired_steps": 250,
+      "baseline": {
+        "episode_steps": 1654,
+        "physical_juggles": 27,
+        "sensed_juggles": 23,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700022.npz",
+        "trajectory_sha256": "0b701978772ffbeb08aaca4acdad2e05d3faf713d7ea999350e9f5845b30ff64",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.9281077085138753,
+            "p50": 0.102292001247406,
+            "p95": 2.0784333840128726,
+            "p99": 2.5457313372579122,
+            "maximum": 2.814761165375655
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 10.04967293817868,
+            "p50": 1.1825054883956907,
+            "p95": 24.138143771357143,
+            "p99": 27.57582125395938,
+            "maximum": 29.38765913410352
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 214.19431012649693,
+            "p50": 55.61346785963014,
+            "p95": 507.2958624088085,
+            "p99": 598.8284273576714,
+            "maximum": 685.8305893161331
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 661,
+        "physical_juggles": 9,
+        "sensed_juggles": 10,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700022.npz",
+        "trajectory_sha256": "64862bedae85f56a8e82235ef717d03855b07ed0fa905358fe7d33bb58b7f898",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.8066251763131702,
+            "p50": 0.0,
+            "p95": 1.8786009190711395,
+            "p99": 2.425960980335985,
+            "maximum": 2.606807645347793
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 10.485397840995692,
+            "p50": 0.0,
+            "p95": 25.277842605077687,
+            "p99": 36.742013207862946,
+            "maximum": 45.874929193304375
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 201.95429862577546,
+            "p50": 0.0,
+            "p95": 457.06164731538723,
+            "p99": 731.9272609628833,
+            "maximum": 827.4758383478949
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700023,
+      "paired_steps": 177,
+      "baseline": {
+        "episode_steps": 20000,
+        "physical_juggles": 312,
+        "sensed_juggles": 267,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700023.npz",
+        "trajectory_sha256": "fdfc90651a2bcf7f4b8d0b14b900237f821daf1cf2f6c1a9beb0a6664f64ed38",
+        "motion": {
+          "speed_m_s": {
+            "samples": 176,
+            "rms": 0.951943731968506,
+            "p50": 0.3091663494706154,
+            "p95": 1.904500348242524,
+            "p99": 2.4648870283487385,
+            "maximum": 2.5899771263236135
+          },
+          "acceleration_m_s2": {
+            "samples": 175,
+            "rms": 10.519627247387673,
+            "p50": 2.3383200168609615,
+            "p95": 24.07520906474589,
+            "p99": 26.822466609567318,
+            "maximum": 31.733913470352782
+          },
+          "jerk_m_s3": {
+            "samples": 174,
+            "rms": 225.14958102530596,
+            "p50": 94.93962055231228,
+            "p95": 507.0457339821605,
+            "p99": 666.147972588879,
+            "maximum": 695.346896533973
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 177,
+        "physical_juggles": 2,
+        "sensed_juggles": 1,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700023.npz",
+        "trajectory_sha256": "9914ee553316a751464b343c5157fc9289d2151e773ce95d2a0a4e97bee293fe",
+        "motion": {
+          "speed_m_s": {
+            "samples": 176,
+            "rms": 0.9171277932713239,
+            "p50": 0.0,
+            "p95": 1.8304029699115052,
+            "p99": 2.2590725693265137,
+            "maximum": 2.673632303910404
+          },
+          "acceleration_m_s2": {
+            "samples": 175,
+            "rms": 9.441527289556156,
+            "p50": 0.36020278930664057,
+            "p95": 23.016888035378738,
+            "p99": 31.605128429005543,
+            "maximum": 39.672606153221025
+          },
+          "jerk_m_s3": {
+            "samples": 174,
+            "rms": 179.3074827435167,
+            "p50": 4.584938287734984,
+            "p95": 437.79353939341934,
+            "p99": 593.0700271970393,
+            "maximum": 737.4159443347706
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700024,
+      "paired_steps": 250,
+      "baseline": {
+        "episode_steps": 9839,
+        "physical_juggles": 137,
+        "sensed_juggles": 122,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700024.npz",
+        "trajectory_sha256": "66a3090dad287170cbdf48cc2d23542c647dce427cc3b0a9e6cab3d319b37fa4",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.9107489261159175,
+            "p50": 0.21357811987400055,
+            "p95": 2.0053693591191264,
+            "p99": 2.5195489390290216,
+            "maximum": 2.6532157315303784
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 9.45176277123775,
+            "p50": 2.572365564578723,
+            "p95": 21.87183026099871,
+            "p99": 25.480830380022674,
+            "maximum": 26.77176793196703
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 193.60392266182254,
+            "p50": 56.86271190643309,
+            "p95": 458.33809255289566,
+            "p99": 624.0625110737941,
+            "maximum": 690.40118001696
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 1501,
+        "physical_juggles": 21,
+        "sensed_juggles": 19,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700024.npz",
+        "trajectory_sha256": "5819510d38fc71581a6f6ad7a52e7ffd6d735266223df321be0c4c82f1323f1f",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.7204312458827361,
+            "p50": 0.0,
+            "p95": 1.5392966662012957,
+            "p99": 2.115118783675999,
+            "maximum": 2.469361233245508
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 8.743432009625414,
+            "p50": 0.0,
+            "p95": 19.721945012749252,
+            "p99": 30.096073827902295,
+            "maximum": 40.611084628907136
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 167.18579251682948,
+            "p50": 0.0,
+            "p95": 380.2542583983128,
+            "p99": 640.6219098079226,
+            "maximum": 783.5097888479919
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700025,
+      "paired_steps": 147,
+      "baseline": {
+        "episode_steps": 6964,
+        "physical_juggles": 106,
+        "sensed_juggles": 88,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700025.npz",
+        "trajectory_sha256": "fc6a46cfd7567f19fcc4f675e9a18c4e7e7cf5a0006252ab6c00a08415c97ddc",
+        "motion": {
+          "speed_m_s": {
+            "samples": 146,
+            "rms": 0.7835236959151306,
+            "p50": 0.09057313203811646,
+            "p95": 1.8458512871387625,
+            "p99": 2.11441227588194,
+            "maximum": 2.1320018680550006
+          },
+          "acceleration_m_s2": {
+            "samples": 145,
+            "rms": 6.320300191718741,
+            "p50": 0.7085680961608886,
+            "p95": 15.738022837723282,
+            "p99": 18.406663667758163,
+            "maximum": 20.3659756509638
+          },
+          "jerk_m_s3": {
+            "samples": 144,
+            "rms": 108.83091241018606,
+            "p50": 17.73444947007986,
+            "p95": 279.86415865183426,
+            "p99": 341.80112403578926,
+            "maximum": 385.5928199434144
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 147,
+        "physical_juggles": 2,
+        "sensed_juggles": 2,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700025.npz",
+        "trajectory_sha256": "9b7dbe47e5c09c3b8bc684727fef3ed30213db2f10de70fb0aab751ea3d75c94",
+        "motion": {
+          "speed_m_s": {
+            "samples": 146,
+            "rms": 0.7931012330231493,
+            "p50": 0.2836803855244542,
+            "p95": 1.6075884590906153,
+            "p99": 2.0110233654782284,
+            "maximum": 2.1312770778945924
+          },
+          "acceleration_m_s2": {
+            "samples": 145,
+            "rms": 6.535498250063383,
+            "p50": 0.5587756633758544,
+            "p95": 14.281503502346677,
+            "p99": 20.778122649111616,
+            "maximum": 23.602283221205024
+          },
+          "jerk_m_s3": {
+            "samples": 144,
+            "rms": 111.02116880469467,
+            "p50": 1.268297433853149,
+            "p95": 273.1648448921806,
+            "p99": 373.3910300400508,
+            "maximum": 439.4305195210719
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700026,
+      "paired_steps": 250,
+      "baseline": {
+        "episode_steps": 20000,
+        "physical_juggles": 299,
+        "sensed_juggles": 273,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700026.npz",
+        "trajectory_sha256": "3d006912034f8df68542992a476d8bc4c83b56e383cd42c77dcc46cab2f6fca1",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.8345088286627029,
+            "p50": 0.37750955671072006,
+            "p95": 1.8238108631652579,
+            "p99": 2.1063440617502263,
+            "maximum": 2.1314301349880007
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 6.963721292397612,
+            "p50": 2.8071648659170583,
+            "p95": 15.220865081400143,
+            "p99": 19.810770005173875,
+            "maximum": 20.033624159959228
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 123.45242649462988,
+            "p50": 44.8459366215579,
+            "p95": 311.2257457094392,
+            "p99": 396.1345265460264,
+            "maximum": 408.0313022804145
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 392,
+        "physical_juggles": 5,
+        "sensed_juggles": 4,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700026.npz",
+        "trajectory_sha256": "d786fda0e6e8b396ad5b4b78ef2bd85a1fc39f33528a5b383b04b747e90b5d45",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.7753348777777851,
+            "p50": 0.0,
+            "p95": 1.7240881210519505,
+            "p99": 2.062012052491599,
+            "maximum": 2.085815979212035
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 7.225976729715349,
+            "p50": 0.0,
+            "p95": 18.1432615766692,
+            "p99": 20.04220437766561,
+            "maximum": 29.730074765839234
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 122.71208281484392,
+            "p50": 0.4135817289352416,
+            "p95": 287.0484420095575,
+            "p99": 412.16471322666024,
+            "maximum": 568.7589645385741
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700027,
+      "paired_steps": 250,
+      "baseline": {
+        "episode_steps": 5807,
+        "physical_juggles": 83,
+        "sensed_juggles": 77,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700027.npz",
+        "trajectory_sha256": "a13039960bb6e46975751b83ed981942cb7fb1d51ba7d8ba28b8c7a2eb053389",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.8838991354559915,
+            "p50": 0.0,
+            "p95": 2.0391444644067414,
+            "p99": 2.437489506773457,
+            "maximum": 2.657540888684364
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 9.290394459718566,
+            "p50": 0.28881877660751337,
+            "p95": 21.354166330306906,
+            "p99": 26.45649850507523,
+            "maximum": 31.877659907634488
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 205.27905457344357,
+            "p50": 3.3479034900665274,
+            "p95": 456.1203201436088,
+            "p99": 633.6413181582786,
+            "maximum": 1141.4339786681849
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 1131,
+        "physical_juggles": 15,
+        "sensed_juggles": 16,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700027.npz",
+        "trajectory_sha256": "92abfa746556054de124f43d1db90323392119ddf7d4d22066aa0ffc461a030a",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.7328360367093324,
+            "p50": 0.0,
+            "p95": 1.69915497182415,
+            "p99": 2.2181225701612313,
+            "maximum": 2.4756729985303965
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 8.426445797184533,
+            "p50": 0.0,
+            "p95": 18.964316903250825,
+            "p99": 28.96986540592927,
+            "maximum": 32.74354934692382
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 166.17141076455093,
+            "p50": 0.0,
+            "p95": 385.2963676994082,
+            "p99": 516.7374799246833,
+            "maximum": 621.8552278478722
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700028,
+      "paired_steps": 250,
+      "baseline": {
+        "episode_steps": 20000,
+        "physical_juggles": 296,
+        "sensed_juggles": 271,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700028.npz",
+        "trajectory_sha256": "02f15ce1df2ddb5d8fe31969f1b214f2a4a710447455103e0f617524a9964b14",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.7786495068073789,
+            "p50": 0.0,
+            "p95": 1.8627828654705043,
+            "p99": 2.2392638028690155,
+            "maximum": 2.461567039960581
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 7.693605321834821,
+            "p50": 0.0,
+            "p95": 18.903937483069306,
+            "p99": 22.800242420688278,
+            "maximum": 23.906107209325768
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 145.64565932253646,
+            "p50": 0.0,
+            "p95": 355.2805336832117,
+            "p99": 476.09100562669903,
+            "maximum": 525.9673624370695
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 352,
+        "physical_juggles": 4,
+        "sensed_juggles": 4,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700028.npz",
+        "trajectory_sha256": "79c2b51042e9045ac91c8f73d42490d45b9ea870bd9e67d27bf7d60e3c50f43b",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.6198733059682027,
+            "p50": 0.0,
+            "p95": 1.4003310221817729,
+            "p99": 2.0235586781406742,
+            "maximum": 2.2811901455548926
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 7.7703828424347465,
+            "p50": 0.0,
+            "p95": 18.484921491887857,
+            "p99": 26.797909792036016,
+            "maximum": 38.256639218370395
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 157.86794878722566,
+            "p50": 0.0,
+            "p95": 350.7662210694673,
+            "p99": 548.4109537521034,
+            "maximum": 851.8550304162177
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700029,
+      "paired_steps": 250,
+      "baseline": {
+        "episode_steps": 20000,
+        "physical_juggles": 289,
+        "sensed_juggles": 249,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700029.npz",
+        "trajectory_sha256": "de8b100ad37431e9783b916a2349e023fcd0936ed5b0afeda3e8a5b2912ec378",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.8299218539247405,
+            "p50": 0.0,
+            "p95": 1.840701162757968,
+            "p99": 2.123855670662624,
+            "maximum": 2.176416500564638
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 7.272831381863515,
+            "p50": 0.060972571372985826,
+            "p95": 16.869226673447308,
+            "p99": 23.340055424038706,
+            "maximum": 31.072555998628545
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 128.95030703106124,
+            "p50": 0.4279762506484984,
+            "p95": 322.69518366727453,
+            "p99": 394.7153159112045,
+            "maximum": 476.0247786349652
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 1037,
+        "physical_juggles": 17,
+        "sensed_juggles": 14,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700029.npz",
+        "trajectory_sha256": "ecd9e462c1d96e147cdb9ccb52d201ca603e0a8c1921bcfa53cf9848c6f366ae",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.7576458456914078,
+            "p50": 0.0,
+            "p95": 1.6686191223962872,
+            "p99": 2.0433238650773937,
+            "maximum": 2.0649018205436636
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 6.570472946910099,
+            "p50": 0.0,
+            "p95": 15.804908714439868,
+            "p99": 22.290724201532495,
+            "maximum": 24.075579643249508
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 107.4756372485445,
+            "p50": 0.04205107688903808,
+            "p95": 267.22738128963647,
+            "p99": 329.2688075731877,
+            "maximum": 481.28461837768543
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700030,
+      "paired_steps": 248,
+      "baseline": {
+        "episode_steps": 2674,
+        "physical_juggles": 39,
+        "sensed_juggles": 28,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700030.npz",
+        "trajectory_sha256": "db72e1fcdd2d1b8b77dadc867077aad22844de040f9f3f4a81c63f4226b7378c",
+        "motion": {
+          "speed_m_s": {
+            "samples": 247,
+            "rms": 0.8445789217999422,
+            "p50": 0.22919893264770508,
+            "p95": 1.9065379962418905,
+            "p99": 2.1827587854950687,
+            "maximum": 2.2133076582543607
+          },
+          "acceleration_m_s2": {
+            "samples": 246,
+            "rms": 7.5050660804234,
+            "p50": 2.4297020679541745,
+            "p95": 16.842267813562067,
+            "p99": 20.318978644526368,
+            "maximum": 22.23277363915169
+          },
+          "jerk_m_s3": {
+            "samples": 245,
+            "rms": 135.86887002652685,
+            "p50": 49.89671707153319,
+            "p95": 336.27164584331496,
+            "p99": 436.7564010290869,
+            "maximum": 487.56366855467695
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 248,
+        "physical_juggles": 2,
+        "sensed_juggles": 2,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700030.npz",
+        "trajectory_sha256": "3a9289794afc0d1c43fb7ae83ff385f08065a62d3be4bbb5247c607f62761c28",
+        "motion": {
+          "speed_m_s": {
+            "samples": 247,
+            "rms": 0.7806702962960194,
+            "p50": 0.0,
+            "p95": 1.8397674326301054,
+            "p99": 2.1509970524076176,
+            "maximum": 2.2824326402803865
+          },
+          "acceleration_m_s2": {
+            "samples": 246,
+            "rms": 7.745146259820668,
+            "p50": 0.10955333709716794,
+            "p95": 17.22167969448177,
+            "p99": 31.772401702855262,
+            "maximum": 34.70717929420956
+          },
+          "jerk_m_s3": {
+            "samples": 245,
+            "rms": 148.60321643089,
+            "p50": 0.4249960184097289,
+            "p95": 325.3613501303789,
+            "p99": 530.2523314735301,
+            "maximum": 895.1296689796093
+          }
+        }
+      }
+    },
+    {
+      "scenario": "training",
+      "seed": 700031,
+      "paired_steps": 250,
+      "baseline": {
+        "episode_steps": 11340,
+        "physical_juggles": 168,
+        "sensed_juggles": 148,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/training_seed700031.npz",
+        "trajectory_sha256": "590d53c3a9ee1e693cf8563ed0d776daa11fd8d496eb3b3c5237068a1f058fb7",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.7773862470813947,
+            "p50": 0.0,
+            "p95": 1.9361875925609635,
+            "p99": 2.3482611637411144,
+            "maximum": 2.5639655789453224
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 8.072354192888108,
+            "p50": 0.0,
+            "p95": 19.322405453535094,
+            "p99": 24.0795189659655,
+            "maximum": 26.736519857278637
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 165.64218513579965,
+            "p50": 0.0,
+            "p95": 416.94846712043653,
+            "p99": 538.2028586216107,
+            "maximum": 623.4188670661251
+          }
+        }
+      },
+      "candidate": {
+        "episode_steps": 362,
+        "physical_juggles": 6,
+        "sensed_juggles": 4,
+        "trajectory": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/training_seed700031.npz",
+        "trajectory_sha256": "41c02738106201da33e7e8c4d0f46205d0b0b8ec887a621522ef095e22ed9f98",
+        "motion": {
+          "speed_m_s": {
+            "samples": 249,
+            "rms": 0.7556677585760416,
+            "p50": 0.0,
+            "p95": 1.9558202096501212,
+            "p99": 2.2672903092513406,
+            "maximum": 2.4971947392883966
+          },
+          "acceleration_m_s2": {
+            "samples": 248,
+            "rms": 9.079089068474683,
+            "p50": 0.0,
+            "p95": 20.808410644531246,
+            "p99": 29.519337145737236,
+            "maximum": 41.20182120138365
+          },
+          "jerk_m_s3": {
+            "samples": 247,
+            "rms": 181.3372794215466,
+            "p50": 0.0,
+            "p95": 408.9414378224768,
+            "p99": 696.3446513165792,
+            "maximum": 909.1772562637877
+          }
+        }
+      }
+    }
+  ]
+}

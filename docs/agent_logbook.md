@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A062 — Publish first complete 3M subset with equal-prefix diagnostics](#a062)
 - [A061 — Publish complete long-reference distribution and late performance clip](#a061)
 - [A060 — Publish complete 3M control metrics with frozen provenance](#a060)
 - [A059 — Prepare exact-protocol 3M controls and refresh training evidence](#a059)
@@ -67,6 +68,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a062"></a>
+
+## A062 — 2026-11-01 19:44:41 -0600 — Publish first complete 3M subset with equal-prefix diagnostics
+
+Collected ten matched-budget variants/320 episodes and256 equal-prefix motion pairs, preserving seed/weight separation and frozen provenance.
+
+**Subset evaluations complete; all training ongoing:** coefficients .002/.008, seeds0/1, online/target at3M,32 reused starts/20k. Most capable new target155.09375 physical juggles/10690.3125 steps versus baseline202.625/13708.5625; its paired p95 acceleration/jerk ratios .954291/.885122 show smaller physical changes than the command-RMS reduction. Its other seed remains below7 juggles; .008 variants reach only1.09375–3.125. Other four learners are excluded from this dated subset. All eight continue toward6M;11 total user GPUs. Related: [E060](experiment_logbook.md#e060), [E057](experiment_logbook.md#e057), [E061](experiment_logbook.md#e061).
+
+[Detailed table, paired audit and reproduction](../notes/scratch/experiments/2026-11-02_01-44_first-3m-smoothness-comparison.md); [raw320 episodes](assets/juggling/smooth-first-3m-episodes-20261102.csv); [paired summary/JSON links](assets/juggling/smooth-first-3m-paired-motion-20261102.csv); [frozen source/config/weights](assets/juggling/smooth-first-3m-provenance-20261102.json). Heading records actual collection time in America/Chicago, not experiment start.
+
+![Fixed first3M comparison](assets/juggling/smooth-first-3m-comparison-20261102.png)
+
+Generated2026-11-02 from completed saved results. Each bar keeps a seed/weight separate; whole-episode motion is confounded by durations/states. The note adds same-prefix analysis but neither is a hardware stop model or acceptance gate.
 
 <a id="a061"></a>
 

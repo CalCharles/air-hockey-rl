@@ -1,0 +1,9 @@
+coefficient,seed,weights,episodes,prefix_limit,min_paired_steps,max_paired_steps,speed_ratio,acceleration_ratio,jerk_ratio,source
+0.002,0,online,32,250,93,250,0.7996444067624451,0.9372558686970123,0.890105341378898,docs/assets/juggling/first-3m-paired-motion-002-seed0-online-20261102.json
+0.002,0,target,32,250,50,250,0.8310076219387942,0.9367195685225469,0.9133874913527551,docs/assets/juggling/first-3m-paired-motion-002-seed0-target-20261102.json
+0.002,1,online,32,250,250,250,0.8236977024047059,0.9219923438192743,0.866311143217783,docs/assets/juggling/first-3m-paired-motion-002-seed1-online-20261102.json
+0.002,1,target,32,250,50,250,0.8452041158090557,0.9542914126024178,0.8851221152805735,docs/assets/juggling/first-3m-paired-motion-002-seed1-target-20261102.json
+0.008,0,online,32,250,22,250,0.7064133126966342,0.7036112638434892,0.6106908886623039,docs/assets/juggling/first-3m-paired-motion-008-seed0-online-20261102.json
+0.008,0,target,32,250,34,250,0.7303004008212883,0.7180710591238831,0.6097708831287074,docs/assets/juggling/first-3m-paired-motion-008-seed0-target-20261102.json
+0.008,1,online,32,250,25,191,0.6324799076630555,0.534267077998536,0.4103377699221444,docs/assets/juggling/first-3m-paired-motion-008-seed1-online-20261102.json
+0.008,1,target,32,250,72,187,0.6338629183114065,0.5471523601686434,0.4486155802640195,docs/assets/juggling/first-3m-paired-motion-008-seed1-target-20261102.json
