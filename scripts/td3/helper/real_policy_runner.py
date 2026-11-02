@@ -157,6 +157,13 @@ class PolicyRunner:
         self._safe_nonnegative_ms = safe_nonnegative_ms
         self._build_split_episode_row = build_split_episode_row
         self._readiness_fn = readiness_fn
+        # Gain on the robot command only (see Args.policy_action_scale_x/y);
+        # None leaves the command bit-identical to the policy action.
+        scale = (float(args.policy_action_scale_x), float(args.policy_action_scale_y))
+        self._command_scale = (
+            None if scale == (1.0, 1.0)
+            else torch.tensor(scale, dtype=torch.float32, device=device).reshape(1, 2)
+        )
 
         # Initial seed for obs. Set by orchestrator via
         # `seed_after_initial_reset` before the main loop starts.
@@ -395,7 +402,13 @@ class PolicyRunner:
                 if args.collector_policy_stand_still:
                     action_tensor = torch.zeros_like(action_tensor)
 
-            env_action = action_tensor.squeeze(0).detach().cpu().numpy()
+            # Only the command sent to the robot is scaled; `action_tensor` stays the
+            # policy's own action for its last-action input, history and replay.
+            if self._command_scale is None:
+                command_tensor = action_tensor
+            else:
+                command_tensor = torch.clamp(action_tensor * self._command_scale, action_low, action_high)
+            env_action = command_tensor.squeeze(0).detach().cpu().numpy()
             if args.enable_latency_profiling:
                 model_inference_ms = self._safe_nonnegative_ms(
                     (time.perf_counter() - inference_start_s) * 1000.0
@@ -481,6 +494,10 @@ class PolicyRunner:
                     controller_disconnected=stop_state.controller_disconnected,
                     reward=float(task_reward),
                     done=float(terminations_tensor.item()),
+                    policy_action_raw=(
+                        None if self._command_scale is None
+                        else action_tensor.squeeze(0).detach().cpu().numpy()
+                    ),
                 )
             )
             delta_interval_primitive_env_steps += int(primitive_step_stats["primitive_applied_count"])

@@ -705,6 +705,13 @@ class Args:
     exploration_same_direction_min_magnitude: float = 0.012
     exploration_same_direction_max_magnitude: float = 0.26
     collector_policy_stand_still: bool = False
+    # Per-axis gain on the command sent to the robot: clip(action * scale, -1, 1).
+    # The policy's last-action input, its history window, the replay transition
+    # and the HDF5 `policy_action_raw` keep the unscaled action; `policy_action` /
+    # `desired_pose` record the scaled command. 1.0 = off. Ad hoc fix for policies
+    # whose small actions move the real paddle more slowly than the sim's.
+    policy_action_scale_x: float = 1.0
+    policy_action_scale_y: float = 1.0
     transition_hold_steps_post_reset: int = 8
     transition_hold_steps_post_estop_enter: int = 0
     transition_hold_steps_post_estop_clear: int = 8
@@ -1108,6 +1115,7 @@ def _build_split_episode_row(
     *,
     reward: float | None = None,
     done: float | None = None,
+    policy_action_raw: np.ndarray | None = None,
 ) -> Dict[str, np.ndarray]:
     """Build one HDF5 row for a single env step.
 
@@ -1222,6 +1230,9 @@ def _build_split_episode_row(
         row["policy_action"] = np.asarray(action_xy, dtype=np.float64).reshape(-1)[:2]
         row["reward"] = np.array([float(reward)], dtype=np.float64)
         row["done"] = np.array([float(done) if done is not None else 0.0], dtype=np.float64)
+    if policy_action_raw is not None:
+        # Actor output before `policy_action_scale_{x,y}`; `policy_action` is the scaled command.
+        row["policy_action_raw"] = np.asarray(policy_action_raw, dtype=np.float64).reshape(-1)[:2]
     return row
 
 

@@ -29,7 +29,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +223,7 @@ def write_eval_summary_json(
     run_meta: Mapping[str, Any],
     aggregate: Mapping[str, Any],
     per_episode: Sequence[Mapping[str, Any]],
+    stopped_episodes: Optional[Sequence[Mapping[str, Any]]] = None,
 ) -> None:
     """Write a single self-contained ``eval_summary.json``.
 
@@ -245,6 +246,10 @@ def write_eval_summary_json(
         "aggregate": dict(aggregate),
         "per_episode": [dict(r) for r in per_episode],
     }
+    if stopped_episodes:
+        # Episodes left out of per_episode / aggregate for a safety stop
+        # (--exclude-stopped-episodes), kept for later analysis.
+        payload["stopped_episodes"] = [dict(r) for r in stopped_episodes]
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     with tmp_path.open("w", encoding="utf-8") as f:

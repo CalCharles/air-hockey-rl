@@ -91,10 +91,14 @@ def find_red_hockey_paddle(image):
 
 MIN_DETECT = 25
 MIN_PUCK_RADIUS_PX = 5
-MAX_PUCK_RADIUS_PX = 10
+# 2026-10-19: max radius raised 10 -> 12 to stop dropouts over the centre logo
+# (notes/scratch/experiments/2026-10-19_18-00_puck-detector-logo-dropouts.md),
+# reverted to 10 the same evening, then restored to 12 on 2026-10-20 (the reset
+# trouble was traced to BRUNSWICK-print phantoms, which also occur at 10).
+MAX_PUCK_RADIUS_PX = 12
 MIN_PUCK_CIRCULARITY = 0.4
 SIMPLE_MIN_PUCK_RADIUS_PX = 5
-SIMPLE_MAX_PUCK_RADIUS_PX = 10
+SIMPLE_MAX_PUCK_RADIUS_PX = 12
 SIMPLE_MIN_PUCK_CIRCULARITY = 0.80
 SIMPLE_MIN_PUCK_FILL_RATIO = 0.7
 SIMPLE_LOOSE_MIN_PUCK_FILL_RATIO = 0.55

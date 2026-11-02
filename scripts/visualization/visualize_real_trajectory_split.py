@@ -62,6 +62,7 @@ OPTIONAL_SPLIT_DATASETS = (
     ("policy_action", 2),   # Raw normalized [-1, 1] action executed this step
     ("task_reward", 1),     # Per-step env task reward
     ("done", 1),            # Same no-bootstrap done flag stored in replay buffer
+    ("policy_action_raw", 2),  # Actor output before policy_action_scale_{x,y} (only when a scale is set)
 )
 OPTIONAL_ALLOWED_WIDTHS = {
     "timing": (8, 9),

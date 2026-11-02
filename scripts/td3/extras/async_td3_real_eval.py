@@ -129,6 +129,7 @@ from scripts.td3.helper.real_td3_runtime import (
 from scripts.td3.helper.real_eval_agents import (
     EvalAgent,
     build_eval_agent,
+    load_rma_meta,
     synthesize_eval_train_args,
 )
 from scripts.td3.extras.async_td3_real import (
@@ -229,6 +230,27 @@ class EvalSpecificArgs:
     # --model-path, the run continues in that folder and only runs the episodes
     # still missing. --no-resume always starts a fresh data_* folder.
     resume: bool = True
+
+    # Append to a finished eval (opt-in, default off): with --append the newest
+    # data_* folder is reused even when it already has eval_summary.json, as long
+    # as it ran the same --model-path, policy_action_scale and --config. The run
+    # adds --eval-episodes more kept episodes on top of the ones already there and
+    # rewrites eval_summary.json over all of them, so N runs of --eval-episodes 1
+    # end up like one run of --eval-episodes N. Without --append nothing changes.
+    append: bool = False
+
+    # Side the first puck reset of this process ends at ("left" / "right"), with
+    # _DEBUG_FORCE_END_SIDE = "alternate" in scripts/real/rollout_reset_policy_real.py
+    # (later resets keep alternating). None keeps that module's default ("left").
+    first_reset_side: Optional[str] = None
+
+    # Leave episodes with a safety stop (e-stop, protective stop, controller
+    # disconnect, readiness e-stop) out of the --eval-episodes count for every
+    # task, as task hooks with discard_stopped_episodes already do. The stopped
+    # episode keeps its HDF5 / GIF / video, its episode_summaries.jsonl row and a
+    # full record in eval_stopped_per_episode.jsonl + eval_summary.json
+    # ("stopped_episodes"), and another attempt is run in its place.
+    exclude_stopped_episodes: bool = False
 
 
 def _parse_eval_specific_args() -> EvalSpecificArgs:
@@ -350,8 +372,40 @@ def _parse_eval_specific_args() -> EvalSpecificArgs:
             "eval of the same --model-path under --data-root-dir)."
         ),
     )
+    parser.add_argument(
+        "--append",
+        action="store_true",
+        help=(
+            "Add --eval-episodes more episodes to the newest data_* folder under "
+            "--data-root-dir even if that eval already finished (same --model-path, "
+            "action scale and --config required), and rewrite its eval_summary.json "
+            "over all kept episodes. Default off: a finished folder is never reused."
+        ),
+    )
+    parser.add_argument(
+        "--first-reset-side",
+        choices=("left", "right"),
+        default=None,
+        help=(
+            "Side the first puck reset ends at; later resets alternate (needs "
+            "_DEBUG_FORCE_END_SIDE='alternate' in scripts/real/rollout_reset_policy_real.py). "
+            "Default: that module's start side (left)."
+        ),
+    )
+    parser.add_argument(
+        "--exclude-stopped-episodes",
+        action="store_true",
+        help=(
+            "Do not count episodes with an e-stop / protective stop / controller disconnect "
+            "toward --eval-episodes (run another attempt instead). They are still saved: "
+            "HDF5 / GIF / video, episode_summaries.jsonl, eval_stopped_per_episode.jsonl and "
+            "eval_summary.json['stopped_episodes']."
+        ),
+    )
     parsed, remaining = parser.parse_known_args(sys.argv[1:])
     sys.argv = [sys.argv[0]] + remaining
+    if parsed.append and not parsed.resume:
+        raise SystemExit("--append and --no-resume are mutually exclusive")
     if int(parsed.puck_pass_paddle_frames) < 1:
         raise SystemExit(f"--puck-pass-paddle-frames must be >= 1, got {parsed.puck_pass_paddle_frames}")
     if parsed.manual_drop_reset and parsed.manual_flick_reset:
@@ -387,6 +441,9 @@ def _parse_eval_specific_args() -> EvalSpecificArgs:
         puck_pass_paddle_frames=int(parsed.puck_pass_paddle_frames),
         home_before_reset=bool(parsed.home_before_reset),
         resume=bool(parsed.resume),
+        append=bool(parsed.append),
+        first_reset_side=parsed.first_reset_side,
+        exclude_stopped_episodes=bool(parsed.exclude_stopped_episodes),
     )
 
 
@@ -686,15 +743,20 @@ def run_eval(
     )
 
     per_episode_records: List[Dict[str, Any]] = []
+    stopped_records: List[Dict[str, Any]] = []  # --exclude-stopped-episodes / discard_stopped_episodes
     total_attempts = 0
     eval_start_time = time.time()
     eval_started_iso = datetime.fromtimestamp(eval_start_time, tz=timezone.utc).isoformat()
     prior_elapsed_s = 0.0
     if resume_state is not None:
         per_episode_records = list(resume_state["records"])
+        stopped_records = list(resume_state.get("stopped_records", []))
         total_attempts = int(resume_state["total_attempts"])
         prior_elapsed_s = float(resume_state["elapsed_s"])
         eval_started_iso = str(resume_state["started_iso"] or eval_started_iso)
+        if eval_args.append:
+            # --append: this run adds --eval-episodes on top of what is kept.
+            target_kept = len(per_episode_records) + max(1, int(eval_args.eval_episodes))
         print(
             f"[eval] resuming {run_data_dir_from_args(args)}: kept "
             f"{len(per_episode_records)}/{target_kept} after {total_attempts} attempts; "
@@ -760,7 +822,9 @@ def run_eval(
             or result.terminal.readiness_fail_estop
             or result.metrics.episode_estop_flag > 0
         )
-        if episode_kept and episode_had_stop and getattr(task_hooks, "discard_stopped_episodes", False):
+        if episode_kept and episode_had_stop and (
+            eval_args.exclude_stopped_episodes or getattr(task_hooks, "discard_stopped_episodes", False)
+        ):
             # The HDF5 / GIF / video stay on disk for inspection; the episode
             # is left out of the eval set and another attempt is run.
             episode_kept = False
@@ -784,7 +848,8 @@ def run_eval(
         task_metrics = task_hooks.compute_episode_metrics(
             result=result, rows=result.rows, env=env
         )
-        if episode_kept:
+        stopped_excluded = clean_reason == "stopped_episode"
+        if episode_kept or stopped_excluded:
             # Note: ``counters["successful_online_episodes_kept"]`` is already
             # incremented inside ``_save_episode_artifacts_and_pending_reset``
             # — do NOT increment it again here or the count is doubled.
@@ -810,6 +875,7 @@ def run_eval(
                 "artifact_path": str(artifact_path) if artifact_path is not None else None,
                 **task_metrics,
             }
+        if episode_kept:
             per_episode_records.append(record)
             # Mirror this row into eval_per_episode.jsonl so a partial-run
             # crash still leaves the eval set queryable on disk.
@@ -826,8 +892,17 @@ def run_eval(
             parts.append(f"len={result.metrics.episode_length:.0f}")
             print(" ".join(parts))
         else:
+            extra = ""
+            if stopped_excluded:
+                record["kept_index"] = None
+                record["stopped_index"] = int(len(stopped_records) + 1)
+                stopped_records.append(record)
+                _append_eval_per_episode_row(
+                    args, eval_args, record, filename=_EVAL_STOPPED_PER_EPISODE_FILENAME
+                )
+                extra = f" return={result.metrics.episode_return:.3f} len={result.metrics.episode_length:.0f}"
             print(
-                f"[eval] discarded episode_id={saved_episode_id} reason={clean_reason} "
+                f"[eval] discarded episode_id={saved_episode_id} reason={clean_reason}{extra} "
                 f"(kept {len(per_episode_records)}/{target_kept}, attempts={total_attempts})"
             )
 
@@ -944,6 +1019,7 @@ def run_eval(
         "home_before_reset": bool(eval_args.home_before_reset),
         "min_timesteps": int(task_hooks.min_timesteps),
         "model_path": str(args.model_path) if args.model_path is not None else None,
+        "policy_action_scale": [float(args.policy_action_scale_x), float(args.policy_action_scale_y)],
         "config": str(args.config),
         "args_file": str(args.args_file) if args.args_file is not None else None,
         "train_args_file": str(args.train_args) if args.train_args is not None else None,
@@ -953,6 +1029,8 @@ def run_eval(
         "n_attempts": int(total_attempts),
         "n_kept": int(len(per_episode_records)),
         "n_discarded": int(total_attempts - len(per_episode_records)),
+        "exclude_stopped_episodes": bool(eval_args.exclude_stopped_episodes),
+        "n_stopped_excluded": int(len(stopped_records)),
         "started_iso": eval_started_iso,
         "finished_iso": eval_finished_iso,
         "elapsed_s": float(prior_elapsed_s + (eval_finished_time - eval_start_time)),
@@ -972,6 +1050,7 @@ def run_eval(
         run_meta=run_meta,
         aggregate=aggregate,
         per_episode=per_episode_records,
+        stopped_episodes=stopped_records,
     )
     print(f"[eval] wrote summary: {summary_path}")
     print(format_eval_summary_console(
@@ -996,6 +1075,8 @@ def run_eval(
 
 
 _EVAL_RESUME_STATE_FILENAME = "eval_resume_state.json"
+# Full records of episodes left out of the eval count for a safety stop.
+_EVAL_STOPPED_PER_EPISODE_FILENAME = "eval_stopped_per_episode.jsonl"
 
 
 def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
@@ -1021,7 +1102,9 @@ def _find_resumable_eval_dir(args: Args, eval_args: EvalSpecificArgs) -> Optiona
     """Newest data_* folder under --data-root-dir that is an unfinished eval of this model.
 
     Unfinished = no eval_summary.json yet. Only the newest folder is considered,
-    so a finished eval followed by a rerun starts a new folder.
+    so a finished eval followed by a rerun starts a new folder — unless
+    ``--append`` is set, which also accepts a finished folder (same model, action
+    scale and config).
     """
     import json
 
@@ -1032,7 +1115,7 @@ def _find_resumable_eval_dir(args: Args, eval_args: EvalSpecificArgs) -> Optiona
     if not candidates:
         return None
     newest = candidates[-1]
-    if (newest / eval_args.eval_summary_filename).exists():
+    if (newest / eval_args.eval_summary_filename).exists() and not eval_args.append:
         return None
     run_start = next(
         (r for r in _read_jsonl(newest / "run_events.jsonl") if r.get("event_type") == "run_start"),
@@ -1050,6 +1133,23 @@ def _find_resumable_eval_dir(args: Args, eval_args: EvalSpecificArgs) -> Optiona
             f"this run uses {args.model_path!r}"
         )
         return None
+    # Folders from before the scale knob were run unscaled.
+    prev_scale = [float(v) for v in run_start.get("policy_action_scale", [1.0, 1.0])]
+    scale = [float(args.policy_action_scale_x), float(args.policy_action_scale_y)]
+    if prev_scale != scale:
+        print(f"[eval] not resuming {newest}: it used policy_action_scale={prev_scale}, this run uses {scale}")
+        return None
+    if eval_args.append:
+        # Don't pool episodes run under different env configs (e.g. timestep caps).
+        prev_config = run_start.get("config")
+        if prev_config is None or args.config is None or (
+            Path(str(prev_config)).expanduser().resolve() != Path(str(args.config)).expanduser().resolve()
+        ):
+            print(
+                f"[eval] not appending to {newest}: it used config={prev_config!r}, "
+                f"this run uses {args.config!r}"
+            )
+            return None
     return newest
 
 
@@ -1093,6 +1193,7 @@ def _load_eval_resume_state(args: Args, eval_args: EvalSpecificArgs) -> Optional
     )
     return {
         "records": records,
+        "stopped_records": _read_jsonl(run_dir / _EVAL_STOPPED_PER_EPISODE_FILENAME),
         "total_attempts": total_attempts,
         "counters": counters,
         "elapsed_s": float(state.get("elapsed_s", 0.0)),
@@ -1126,11 +1227,14 @@ def _write_eval_resume_state(
 
 
 def _append_eval_per_episode_row(
-    args: Args, eval_args: EvalSpecificArgs, record: Dict[str, Any]
+    args: Args,
+    eval_args: EvalSpecificArgs,
+    record: Dict[str, Any],
+    filename: Optional[str] = None,
 ) -> None:
     import json
 
-    path = Path(run_data_dir_from_args(args)) / eval_args.eval_per_episode_filename
+    path = Path(run_data_dir_from_args(args)) / (filename or eval_args.eval_per_episode_filename)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as f:
@@ -1208,8 +1312,10 @@ def main(args: Args, train_args: TrainArgs, eval_args: EvalSpecificArgs) -> None
         train_args=str(getattr(args, "train_args", "")) if getattr(args, "train_args", None) else None,
         config=str(getattr(args, "config", "")) if getattr(args, "config", None) else None,
         model_path=str(getattr(args, "model_path", "")) if getattr(args, "model_path", None) else None,
+        policy_action_scale=[float(args.policy_action_scale_x), float(args.policy_action_scale_y)],
         mode="eval",
         resumed=bool(eval_args.resume and (run_data_dir_from_args(args) / "eval_per_episode.jsonl").exists()),
+        append=bool(eval_args.append),
         eval_episodes=int(eval_args.eval_episodes),
         eval_max_attempts=int(eval_args.eval_max_attempts),
     )
@@ -1298,15 +1404,34 @@ if __name__ == "__main__":
                 f"--agent {eval_args.agent} requires --model-path pointing to a "
                 f"checkpoint file."
             )
-        train_args = synthesize_eval_train_args(use_last_action=False)
+        # RMA / long-history bundles record their policy-state contract in
+        # rma_meta.json; SGCRL never feeds the last action.
+        use_last_action = False
+        if eval_args.agent in ("rma", "history"):
+            use_last_action = bool(load_rma_meta(args.model_path)["use_last_action"])
+        train_args = synthesize_eval_train_args(use_last_action=use_last_action)
         print(
             f"[train_args] synthesized for --agent {eval_args.agent} "
-            f"(use_last_action_in_policy_state=False)"
+            f"(use_last_action_in_policy_state={use_last_action})"
         )
 
     # No interactive run-note prompt — eval is meant to run unattended.
     resume_dir = _find_resumable_eval_dir(args, eval_args) if eval_args.resume else None
     if resume_dir is not None:
-        print(f"[eval] continuing the unfinished eval in {resume_dir} (--no-resume starts a new folder)")
+        if eval_args.append:
+            print(f"[eval] --append: adding {eval_args.eval_episodes} episode(s) to {resume_dir}")
+        else:
+            print(f"[eval] continuing the unfinished eval in {resume_dir} (--no-resume starts a new folder)")
+    if eval_args.first_reset_side is not None:
+        import scripts.real.rollout_reset_policy_real as _reset_mod
+
+        if _reset_mod._DEBUG_FORCE_END_SIDE != "alternate":
+            raise SystemExit(
+                f"--first-reset-side needs _DEBUG_FORCE_END_SIDE='alternate' in "
+                f"scripts/real/rollout_reset_policy_real.py (it is "
+                f"{_reset_mod._DEBUG_FORCE_END_SIDE!r})"
+            )
+        _reset_mod._ALTERNATE_NEXT_END_SIDE["side"] = eval_args.first_reset_side
+        print(f"[eval] first puck reset ends {eval_args.first_reset_side}, then alternates")
     _setup_run_data_dir(args, run_note="", existing_run_data_dir=resume_dir)
     main(args, train_args, eval_args)

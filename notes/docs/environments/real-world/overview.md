@@ -27,6 +27,7 @@ The high-level env/task layering is the same as for Box2D; see [`../README.md`](
 | Doc | What it covers |
 |-----|----------------|
 | [`homography.md`](homography.md) | Camera → rectified table view → robot coordinates |
+| [`robot-relocation-and-workspace.md`](robot-relocation-and-workspace.md) | Moving the robot base / changing workspace limits: what to recalibrate and when policies need retraining |
 
 **System identification (real → sim parameter fitting):**
 
@@ -47,6 +48,7 @@ The high-level env/task layering is the same as for Box2D; see [`../README.md`](
 | [`replay-real-in-sim.md`](replay-real-in-sim.md) | Replaying recorded real trajectories in Box2D for debugging |
 | [`protective-stops.md`](protective-stops.md) | UR5 protective-stop causes, the 2026-04-17 incident, diagnostic checklist |
 | [`paddle-clamping-coverage-gap.md`](paddle-clamping-coverage-gap.md) | Sync-only paddle clamping has a >2 s coverage gap during reset/idle phases (UR `forceMode` controller-side timeout); stopgaps and the threaded-worker fix |
+| [`tcp-drift-long-episodes.md`](tcp-drift-long-episodes.md) | Actual TCP drifts up to ~4 cm off the (correctly clipped) command over long episodes and touches the robot-end wall at ~2000 steps; likely cause is forceMode x/y deviation limits of 2 m; fix options |
 
 ## Operating the robot
 
