@@ -20,6 +20,8 @@ def main():
     for row in rows:
         if row['run']=='noisy_history_20261029_seed0':
             label='Baseline s0 '+row['weights'];color='black'
+        elif row['run']=='noisy_history_long_discount_20261029_seed0':
+            label='Baseline γ=.999 s0 '+row['weights'];color='black'
         else:
             slug=row['run'].split('smooth_',1)[1].split('_')[0]
             coefficient={'0005':'0.0005','002':'0.002','008':'0.008'}[slug]

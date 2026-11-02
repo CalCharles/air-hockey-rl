@@ -68,8 +68,10 @@ def main():
         if Path(filename).exists():
             launches.extend(json.loads(Path(filename).read_text())['launches'])
     rows, statuses, curves, episode_rows = [], [], [], []
+    run_discounts = {}
     for run_index, run in enumerate(launches):
         cfg = yaml.safe_load(Path(run['config']).read_text())
+        run_discounts[run['name']] = float(cfg['gamma'])
         label = f"λ={cfg['actor_action_delta_penalty']:g}, γ={cfg['gamma']:g}, seed {cfg['seed']}"
         root = Path(run['root'])
         status_path = root/'status.json'
@@ -89,28 +91,31 @@ def main():
         for path in sorted(root.glob('paired_*/results.json')):
             parts = path.parent.name.split('_')
             rows.append(collect(path, run['name'], '32_reused_starts', int(parts[1]), parts[2], episode_rows))
-    archived = Path('runs/td3/juggle_history_baseline_1m_20261101')
-    for role in ('online','target'):
-        path = archived/f'paired_{role}_20k_eval/results.json'
-        if path.exists():
-            rows.append(collect(path, 'noisy_history_20261029_seed0', '32_reused_starts_historical', 1000000, role, episode_rows))
-    # The historical control uses the same eight starts and recording horizon;
-    # do not extend its curve past the newest available sweep checkpoint.
-    limit = max((r['step'] for r in rows if r['phase'] == 'checkpoint_validation'), default=0)
-    baseline = Path('runs/td3/noisy_history_20261029_seed0/train')
-    points = []
-    paths = sorted(baseline.glob('checkpoint_*/survival_eval/results.json'), key=lambda p:int(p.parents[1].name.split('_')[-1]))
-    if limit >= 6000000 and (baseline/'survival_eval/results.json').exists():
-        paths.append(baseline/'survival_eval/results.json')
-    for path in paths:
-        step = 6000000 if path.parents[1].name == 'train' else int(path.parents[1].name.split('_')[-1])
-        if step > limit:
-            continue
-        row = collect(path, baseline.parent.name, 'historical_checkpoint_validation', step, 'online', episode_rows)
-        if (row['episodes'], row['seed_base'], row['horizon']) != (8, 10000, 5000):
-            raise ValueError('Historical baseline does not match checkpoint protocol')
-        rows.append(row); points.append(row)
-    curves.append(('Historical λ=0, γ=0.995, seed 0', points, dict(color='black', linestyle='--')))
+    controls = [
+        ('noisy_history_20261029_seed0', .995, 'juggle_history_baseline_1m_20261101', 'black', '--'),
+        ('noisy_history_long_discount_20261029_seed0', .999, 'juggle_history_longdiscount_baseline_1m_20261102', 'dimgray', ':'),
+    ]
+    for run_name, discount, archive_name, color, linestyle in controls:
+        archived = Path('runs/td3')/archive_name
+        for role in ('online','target'):
+            path = archived/f'paired_{role}_20k_eval/results.json'
+            if path.exists():
+                rows.append(collect(path, run_name, '32_reused_starts_historical', 1000000, role, episode_rows))
+        # Each control stops at the newest checkpoint of its own discount group.
+        limit = max((r['step'] for r in rows if r['phase']=='checkpoint_validation' and run_discounts[r['run']]==discount), default=0)
+        baseline = Path('runs/td3')/run_name/'train'
+        points = []
+        paths = sorted(baseline.glob('checkpoint_*/survival_eval/results.json'), key=lambda p:int(p.parents[1].name.split('_')[-1]))
+        if limit>=6000000 and (baseline/'survival_eval/results.json').exists():
+            paths.append(baseline/'survival_eval/results.json')
+        for path in paths:
+            step = 6000000 if path.parents[1].name=='train' else int(path.parents[1].name.split('_')[-1])
+            if step>limit:continue
+            row=collect(path,run_name,'historical_checkpoint_validation',step,'online',episode_rows)
+            if (row['episodes'],row['seed_base'],row['horizon'])!=(8,10000,5000):
+                raise ValueError('Historical baseline does not match checkpoint protocol')
+            rows.append(row);points.append(row)
+        curves.append((f'Historical λ=0, γ={discount:g}, seed 0',points,dict(color=color,linestyle=linestyle)))
     panels = [
         (report.with_suffix('.png'), (2, 2), ['physical_juggles','episode_steps','reward','action_delta_rms'],
          ['Mean physical juggles','Mean episode steps','Mean episode reward','Mean action-change RMS'],
@@ -150,8 +155,8 @@ def main():
                   '![Sampled physical speed, acceleration and jerk](juggling-smooth-sweep-motion.png)']
     else:
         lines += ['', 'Checkpoint figures are unavailable until the first saved evaluation.']
-    lines += ['',f'[Raw summary CSV]({table.name}); [per-episode metrics]({episode_table.name}); [original launch provenance](juggling-smooth-sweep-launch.json); [longer-discount pair](juggling-smooth-longdiscount-launch.json).', '',
-        'Curves use saved 8-start 5k online-actor validation only, including the historical unregularized seed-0 control on exactly the same seeds/horizon. That control is shown only through the latest available sweep checkpoint. The CSV separately labels historical checkpoints, 32-start 20k online/target tests, and the newly evaluated archived unregularized 1M comparison; do not mix protocols. The archived 1M comparison uses the same 32 starts and is not plotted as an 8-start curve. No interpolation supplies missing checkpoints. Latest points can be at different training budgets; compare the same x-coordinate, not each curve’s last point. Physical juggles use true simulated trajectories; reward is the environment episode sum. Recording limits truncate counts and durations.', '',
+    lines += ['',f'[Raw summary CSV]({table.name}); [per-episode metrics]({episode_table.name}); [original launch provenance](juggling-smooth-sweep-launch.json); [longer-discount pair](juggling-smooth-longdiscount-launch.json); [matched longer-discount baseline](juggling-longdiscount-baseline-1m-launch.json).', '',
+        'Curves use saved 8-start 5k online-actor validation only, including historical unregularized seed-0 controls at gamma 0.995 and 0.999 on exactly the same seeds/horizon. Each control is shown only through the latest checkpoint in its own discount group. The CSV separately labels historical checkpoints, 32-start 20k online/target tests, and the archived unregularized 1M comparisons at both discounts; do not mix protocols. Archived 1M comparisons use the same 32 starts and are not plotted as 8-start curves. No interpolation supplies missing checkpoints. Latest points can be at different training budgets; compare the same x-coordinate, not each curve’s last point. Physical juggles use true simulated trajectories; reward is the environment episode sum. Recording limits truncate counts and durations.', '',
         'Motion curves show the median across episodes of each episode’s p95 speed, acceleration or jerk, using finite differences of true paddle positions at the control rate. These are whole-episode distributions, with different lengths and visited states. They exclude the reset-position sample and do not capture all substep spikes, joint torques or UR5 controller behavior. Position-difference displacement speed is not cached body velocity; solver/workspace position corrections can contribute, so do not equate these estimates to the simulator velocity cap. They are not robot-safety thresholds. Per-episode diagnostics remain beside the original local results in `motion_metrics.json`. Action-change RMS remains a separate command diagnostic, not measured motor energy.', '',
         'Curves are descriptive repeated-validation results. Independent longer tests and qualitative review follow candidate comparison; no binary acceptance gate is used.', '',
         'Measurement clarification: [actual PID-target replay audit](../notes/scratch/experiments/2026-11-01_22-59_pid-target-replay-audit.md). Legacy `target_delta_rms_m` is a scaled displacement-change proxy, not direct PID-target telemetry.']

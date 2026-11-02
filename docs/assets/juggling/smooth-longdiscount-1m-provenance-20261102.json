@@ -1,0 +1,12 @@
+{
+  "generated_utc": "2026-11-02T00:26:49.536362+00:00",
+  "sources": {
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_g0999_20261101_seed0/paired_1000000_online_20k_eval/results.json": "88f80504c02e1917cce9af81051fc7931fd0afd52fb0ff684e15bf614ca03ea7",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_g0999_20261101_seed0/paired_1000000_target_20k_eval/results.json": "9ed941df45c09c2ca9549a40d9c59a177d46353df96159c808f7cccd8b3b5f37",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_g0999_20261101_seed1/paired_1000000_online_20k_eval/results.json": "f4a1c126f5834acf163fa06947686369b23213ecd73ed9d5f64ec6fc3479abb9",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_g0999_20261101_seed1/paired_1000000_target_20k_eval/results.json": "70d0390315ca070f3321a7cdfb4df3b0f38d3e57e191bfa57c5bb00abb0867f1",
+    "runs/td3/juggle_history_longdiscount_baseline_1m_20261102/paired_online_20k_eval/results.json": "e7a4df88fae73e50d9deed325546878a05dd0a9d477e32264a100f38ca82de31",
+    "runs/td3/juggle_history_longdiscount_baseline_1m_20261102/paired_target_20k_eval/results.json": "74af330669bb63a5ca6c5a4162fefda3cc72fd9ed915b974d758f1943afdb2a8"
+  },
+  "note": "Same 32 reused starts700000\u2013700031 and20k horizon, frozen1M weights. Historical baseline seed0; regularized seeds0 and1. No new training."
+}

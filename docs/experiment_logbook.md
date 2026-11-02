@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E056 — Complete discount-matched first-million-step smoothness comparison](#e056)
 - [E055 — Verify final-command history after holds and overrides](#e055)
 - [E054 — Complete original fixed 1M comparisons and verify normal deployment parity](#e054)
 - [E053 — Queue terminal-state continuation for the fixed long-reference test](#e053)
@@ -61,6 +62,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e056"></a>
+
+## E056 — 2026-11-01 18:27:30 -0600 — Complete discount-matched first-million-step smoothness comparison
+
+Longer-discount weak regularization lowers sampled motion but yields fewer early juggles than its discount-matched baseline.
+
+**Comparison completed; training ongoing:** gamma .999, penalty .0005, seeds0/1, online/target,1M steps,32 reused starts/20k horizon. Physical juggles0.46875–0.84375 and74.78125–94.28125 steps versus baseline2.25–2.46875 juggles and210.0625–221 steps. CPU job115884 completed exit0; all eight fresh learners continue unchanged toward6M. Eleven user GPUs including three preexisting allocations. Independent long-reference job remains live; partial long episodes do not establish infinite reliability or robot safety. Related: [E051](experiment_logbook.md#e051), [E054](experiment_logbook.md#e054).
+
+[Detailed results and reproduction](../notes/scratch/experiments/2026-11-02_00-27_long-discount-1m-comparison.md); [raw episodes](assets/juggling/smooth-longdiscount-1m-episodes-20261102.csv); [provenance](juggling-longdiscount-baseline-1m-launch.json).
+
+![Discount-matched 1M comparison](assets/juggling/smooth-longdiscount-1m-comparison-20261102.png)
+
+Generated2026-11-02 from saved summaries and trajectories; separate seed/weight bars show lower command changes/position-derived jerk alongside weaker early juggling. Motion comparisons involve different episode lengths and are not hardware stop thresholds. Heading records actual documentation time in America/Chicago.
 
 <a id="e055"></a>
 
