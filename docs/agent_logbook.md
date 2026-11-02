@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A059 — Prepare exact-protocol 3M controls and refresh training evidence](#a059)
 - [A058 — Publish matched weak-penalty performance clips with raw context](#a058)
 - [A057 — Make paired physical-motion comparisons reproducible](#a057)
 - [A056 — Publish longer-discount control and preserve full-budget research](#a056)
@@ -64,6 +65,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a059"></a>
+
+## A059 — 2026-11-01 18:47:30 -0600 — Prepare exact-protocol 3M controls and refresh training evidence
+
+Launched two CPU-only historical control evaluations and wired available3M results into the existing report without altering active learners.
+
+**Running, no new control outcome yet:** CPU-only115886/115887, gamma .995/.999 historical seed0, frozen3M online/target,32 reused starts700000–700031/20k limit. Prior3M results used different starts/horizons and cannot serve as this exact comparison. Effective sim configs match; intended training differences and frozen source/bundle hashes recorded. Eight scratch learners continue unchanged toward6M, eleven total user GPUs. Updated report includes only complete available role results and keeps8-start5k curves separate. Related: [E056](experiment_logbook.md#e056), [E058](experiment_logbook.md#e058).
+
+[Detailed launch, configurations and reproduction](../notes/scratch/experiments/2026-11-02_00-46_matched-3m-controls.md); [gamma .995 provenance](juggling-baseline-3m-comparison-launch.json); [gamma .999 provenance](juggling-longdiscount-baseline-3m-launch.json); [current plots and raw data](juggling-smooth-sweep.md). No outcome figure from these pending controls; refreshed saved-validation figures are embedded in the detailed note. Heading records actual documentation time in America/Chicago; submissions were00:46UTC.
 
 <a id="a058"></a>
 

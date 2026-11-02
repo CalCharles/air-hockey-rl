@@ -92,15 +92,18 @@ def main():
             parts = path.parent.name.split('_')
             rows.append(collect(path, run['name'], '32_reused_starts', int(parts[1]), parts[2], episode_rows))
     controls = [
-        ('noisy_history_20261029_seed0', .995, 'juggle_history_baseline_1m_20261101', 'black', '--'),
-        ('noisy_history_long_discount_20261029_seed0', .999, 'juggle_history_longdiscount_baseline_1m_20261102', 'dimgray', ':'),
+        ('noisy_history_20261029_seed0', .995,
+         [(1000000, 'juggle_history_baseline_1m_20261101'), (3000000, 'juggle_history_baseline_3m_20261102')], 'black', '--'),
+        ('noisy_history_long_discount_20261029_seed0', .999,
+         [(1000000, 'juggle_history_longdiscount_baseline_1m_20261102'), (3000000, 'juggle_history_longdiscount_baseline_3m_20261102')], 'dimgray', ':'),
     ]
-    for run_name, discount, archive_name, color, linestyle in controls:
-        archived = Path('runs/td3')/archive_name
-        for role in ('online','target'):
-            path = archived/f'paired_{role}_20k_eval/results.json'
-            if path.exists():
-                rows.append(collect(path, run_name, '32_reused_starts_historical', 1000000, role, episode_rows))
+    for run_name, discount, archives, color, linestyle in controls:
+        for step, archive_name in archives:
+            archived = Path('runs/td3')/archive_name
+            for role in ('online','target'):
+                path = archived/f'paired_{role}_20k_eval/results.json'
+                if path.exists():
+                    rows.append(collect(path, run_name, '32_reused_starts_historical', step, role, episode_rows))
         # Each control stops at the newest checkpoint of its own discount group.
         limit = max((r['step'] for r in rows if r['phase']=='checkpoint_validation' and run_discounts[r['run']]==discount), default=0)
         baseline = Path('runs/td3')/run_name/'train'
@@ -156,7 +159,7 @@ def main():
     else:
         lines += ['', 'Checkpoint figures are unavailable until the first saved evaluation.']
     lines += ['',f'[Raw summary CSV]({table.name}); [per-episode metrics]({episode_table.name}); [original launch provenance](juggling-smooth-sweep-launch.json); [longer-discount pair](juggling-smooth-longdiscount-launch.json); [matched longer-discount baseline](juggling-longdiscount-baseline-1m-launch.json).', '',
-        'Curves use saved 8-start 5k online-actor validation only, including historical unregularized seed-0 controls at gamma 0.995 and 0.999 on exactly the same seeds/horizon. Each control is shown only through the latest checkpoint in its own discount group. The CSV separately labels historical checkpoints, 32-start 20k online/target tests, and the archived unregularized 1M comparisons at both discounts; do not mix protocols. Archived 1M comparisons use the same 32 starts and are not plotted as 8-start curves. No interpolation supplies missing checkpoints. Latest points can be at different training budgets; compare the same x-coordinate, not each curve’s last point. Physical juggles use true simulated trajectories; reward is the environment episode sum. Recording limits truncate counts and durations.', '',
+        'Curves use saved 8-start 5k online-actor validation only, including historical unregularized seed-0 controls at gamma 0.995 and 0.999 on exactly the same seeds/horizon. Each control is shown only through the latest checkpoint in its own discount group. The CSV separately labels historical checkpoints, 32-start 20k online/target tests, and available archived unregularized 1M/3M comparisons at both discounts; do not mix protocols. Archived comparisons use the same 32 starts and are not plotted as 8-start curves. The 3M control launches are documented for [gamma .995](juggling-baseline-3m-comparison-launch.json) and [gamma .999](juggling-longdiscount-baseline-3m-launch.json); pending results are omitted. No interpolation supplies missing checkpoints. Latest points can be at different training budgets; compare the same x-coordinate, not each curve’s last point. Physical juggles use true simulated trajectories; reward is the environment episode sum. Recording limits truncate counts and durations.', '',
         'Motion curves show the median across episodes of each episode’s p95 speed, acceleration or jerk, using finite differences of true paddle positions at the control rate. These are whole-episode distributions, with different lengths and visited states. They exclude the reset-position sample and do not capture all substep spikes, joint torques or UR5 controller behavior. Position-difference displacement speed is not cached body velocity; solver/workspace position corrections can contribute, so do not equate these estimates to the simulator velocity cap. They are not robot-safety thresholds. Per-episode diagnostics remain beside the original local results in `motion_metrics.json`. Action-change RMS remains a separate command diagnostic, not measured motor energy.', '',
         'Curves are descriptive repeated-validation results. Independent longer tests and qualitative review follow candidate comparison; no binary acceptance gate is used.', '',
         'Measurement clarification: [actual PID-target replay audit](../notes/scratch/experiments/2026-11-01_22-59_pid-target-replay-audit.md). Legacy `target_delta_rms_m` is a scaled displacement-change proxy, not direct PID-target telemetry.']

@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E059 — Run discount-matched archived 3M controls for upcoming comparisons](#e059)
 - [E058 — Review matched early weak-penalty and baseline performance GIFs](#e058)
 - [E057 — Compare physical motion over equal per-start prefixes](#e057)
 - [E056 — Complete discount-matched first-million-step smoothness comparison](#e056)
@@ -64,6 +65,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e059"></a>
+
+## E059 — 2026-11-01 18:47:30 -0600 — Run discount-matched archived 3M controls for upcoming comparisons
+
+Frozen unregularized3M online/target actors at both discounts are being evaluated on the same32 starts as the smoothness milestones.
+
+**Running, no new control outcome yet:** CPU-only115886/115887, gamma .995/.999 historical seed0, frozen3M online/target,32 reused starts700000–700031/20k limit. Prior3M results used different starts/horizons and cannot serve as this exact comparison. Effective sim configs match; intended training differences and frozen source/bundle hashes recorded. Eight scratch learners continue unchanged toward6M, eleven total user GPUs. Updated report includes only complete available role results and keeps8-start5k curves separate. Related: [E056](experiment_logbook.md#e056), [E058](experiment_logbook.md#e058).
+
+[Detailed launch, configurations and reproduction](../notes/scratch/experiments/2026-11-02_00-46_matched-3m-controls.md); [gamma .995 provenance](juggling-baseline-3m-comparison-launch.json); [gamma .999 provenance](juggling-longdiscount-baseline-3m-launch.json); [current plots and raw data](juggling-smooth-sweep.md). No outcome figure from these pending controls; refreshed saved-validation figures are embedded in the detailed note. Heading records actual documentation time in America/Chicago; submissions were00:46UTC.
 
 <a id="e058"></a>
 
