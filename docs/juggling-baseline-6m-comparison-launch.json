@@ -1,0 +1,177 @@
+{
+  "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_6m_20261102",
+  "checkpoint": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/train",
+  "budget": 6000000,
+  "source_training_global_step": 6000000,
+  "source_step_verification": "Loaded archived training_state.pth; global_step=6000000 and total_critic_updates=4671875 for both discounts, 2026-11-02 current turn",
+  "weights_sha256": {
+    "online": "01e1548f1bb0163bf672f39d15e132f5a5697e2319b484dbb5fced8a6b982305",
+    "target": "7fb377f4dc7da0c8dd1a7fb6f822ccd81d3e763d5e2bb14c6cddfa4143439b5d"
+  },
+  "bundle_files_sha256": {
+    "online": {
+      "runs/td3/juggle_history_baseline_6m_20261102/frozen_online/model.pth": "01e1548f1bb0163bf672f39d15e132f5a5697e2319b484dbb5fced8a6b982305",
+      "runs/td3/juggle_history_baseline_6m_20261102/frozen_online/args.yaml": "120682ff730d97730d1ef6a590cfa2c48eef51df2bacb1d98231d2179d194cbc",
+      "runs/td3/juggle_history_baseline_6m_20261102/frozen_online/config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+      "runs/td3/juggle_history_baseline_6m_20261102/frozen_online/rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+    },
+    "target": {
+      "runs/td3/juggle_history_baseline_6m_20261102/frozen_target/model.pth": "7fb377f4dc7da0c8dd1a7fb6f822ccd81d3e763d5e2bb14c6cddfa4143439b5d",
+      "runs/td3/juggle_history_baseline_6m_20261102/frozen_target/args.yaml": "120682ff730d97730d1ef6a590cfa2c48eef51df2bacb1d98231d2179d194cbc",
+      "runs/td3/juggle_history_baseline_6m_20261102/frozen_target/config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+      "runs/td3/juggle_history_baseline_6m_20261102/frozen_target/rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+    }
+  },
+  "episodes": 32,
+  "horizon": 20000,
+  "seed_base": 700000,
+  "gpus": 0,
+  "status": "evaluating",
+  "batch_source": "#!/bin/bash\n#SBATCH --job-name=juggle-base-6m\n#SBATCH --partition=allnodes\n#SBATCH --nodes=1\n#SBATCH --ntasks=1\n#SBATCH --cpus-per-task=2\n#SBATCH --gres=none\n#SBATCH --mem=8G\n#SBATCH --time=04:00:00\n#SBATCH --output=/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_6m_20261102/slurm.log\nset -euo pipefail\ncd /scratch/cluster/mrudolph/documents/air-hockey-rl\nexport OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 MPLCONFIGDIR=/tmp/airhockey-mpl\nexport PYTHONPATH=/scratch/cluster/mrudolph/documents/air-hockey-rl\nexport CUDA_VISIBLE_DEVICES=\"\"\nexec /scratch/cluster/mrudolph/documents/air-hockey-rl/.venv/bin/python -u /scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_6m_20261102/run.py\n",
+  "worker_source": "from pathlib import Path\nimport subprocess,hashlib,json\nfrom datetime import datetime,timezone\nROOT=Path('/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_6m_20261102')\nREPO=Path('/scratch/cluster/mrudolph/documents/air-hockey-rl')\nWEIGHTS={'online': '01e1548f1bb0163bf672f39d15e132f5a5697e2319b484dbb5fced8a6b982305', 'target': '7fb377f4dc7da0c8dd1a7fb6f822ccd81d3e763d5e2bb14c6cddfa4143439b5d'}\nREVIEWED={'airhockey/airhockey_base.py': 'a3a8c1c37fdb53015b6cb2568b1b9ccc39e6f6dff39323a4c25f97ae88fcb4d6', 'airhockey/sims/airhockey_box2d.py': '7059de3e1f8a979c706eb2546ba7674c4970226952bc002567a1d2aa20fa7eee', 'configs/new_juggle/sysid_v2_hist2.yaml': '5005076245b4ba9e6d95c1d9efa337b59e57a24017e117db97b45644758f5349', 'configs/new_juggle/sustained/original_sensing.yaml': 'd1bb13a7a4a5494507d085db230bdbe31854f0ddb556ccf88c3ec5aca0360385', 'scripts/rma/history.py': 'd7c3456d01c8e612c28ffb560d3711722a17948e002be313de0c54e9c0576f94', 'scripts/rma/evaluate.py': '24cb367940072b483b97d0fee9bb6ddd722b0a27424f5197e2634337b241570f', 'scripts/td3/juggle_survival.py': 'e533f1f3b0dd34bcdfeef6e5dec10922422edde5a16db8cff706736d832b8a92', 'scripts/analysis/juggle_motion_metrics.py': '3c36447afa2dc0f99b72c06c134411d853c89d06004fb4fdc5296e5006ef7f67', 'scripts/td3/helper/juggle_counter.py': 'c87916662f35ff091cf0a4be47bdef90d0be92a8a9917f66632807e01a7f40cc'}\ndef save(status,**details):\n    (ROOT/'status.json').write_text(json.dumps(dict(status=status,updated_utc=datetime.now(timezone.utc).isoformat(),**details),indent=2)+chr(10))\ntry:\n    for role in ['online','target']:\n        for name, expected in REVIEWED.items():\n            assert hashlib.sha256((REPO/name).read_bytes()).hexdigest()==expected, name\n        bundle=ROOT/('frozen_'+role)\n        assert hashlib.sha256((bundle/'model.pth').read_bytes()).hexdigest()==WEIGHTS[role]\n        save('evaluating',role=role)\n        cmd=[str(REPO/'.venv/bin/python'),'-u','-m','scripts.td3.juggle_survival','--run-dir',str(bundle),'--scenario-set','training','--episodes','32','--horizon','20000','--seed-base','700000','--gif-steps','0','--out-dir',str(ROOT/('paired_'+role+'_20k_eval'))]\n        subprocess.run(cmd,cwd=REPO,check=True)\n        assert hashlib.sha256((bundle/'model.pth').read_bytes()).hexdigest()==WEIGHTS[role]\n        subprocess.run([cmd[0],'-m','scripts.analysis.juggle_motion_metrics','--results',str(ROOT/('paired_'+role+'_20k_eval')/'results.json')],cwd=REPO,check=True)\n    save('complete')\nexcept Exception as exc:\n    save('failed',error=repr(exc))\n    raise\n",
+  "reviewed_sha256": {
+    "airhockey/airhockey_base.py": "a3a8c1c37fdb53015b6cb2568b1b9ccc39e6f6dff39323a4c25f97ae88fcb4d6",
+    "airhockey/sims/airhockey_box2d.py": "7059de3e1f8a979c706eb2546ba7674c4970226952bc002567a1d2aa20fa7eee",
+    "configs/new_juggle/sysid_v2_hist2.yaml": "5005076245b4ba9e6d95c1d9efa337b59e57a24017e117db97b45644758f5349",
+    "configs/new_juggle/sustained/original_sensing.yaml": "d1bb13a7a4a5494507d085db230bdbe31854f0ddb556ccf88c3ec5aca0360385",
+    "scripts/rma/history.py": "d7c3456d01c8e612c28ffb560d3711722a17948e002be313de0c54e9c0576f94",
+    "scripts/rma/evaluate.py": "24cb367940072b483b97d0fee9bb6ddd722b0a27424f5197e2634337b241570f",
+    "scripts/td3/juggle_survival.py": "e533f1f3b0dd34bcdfeef6e5dec10922422edde5a16db8cff706736d832b8a92",
+    "scripts/analysis/juggle_motion_metrics.py": "3c36447afa2dc0f99b72c06c134411d853c89d06004fb4fdc5296e5006ef7f67",
+    "scripts/td3/helper/juggle_counter.py": "c87916662f35ff091cf0a4be47bdef90d0be92a8a9917f66632807e01a7f40cc"
+  },
+  "shared_training_arg_differences": {
+    "noisy_history_smooth_0005_20261101_seed0": {
+      "args_file": [
+        "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/launch_args.yaml",
+        null
+      ],
+      "log_parent_dir": [
+        "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/train",
+        null
+      ],
+      "run_name": [
+        "noisy_history_scratch",
+        "noisy_history_smooth_0005_seed0"
+      ],
+      "actor_action_delta_penalty": [
+        0.0,
+        0.0005
+      ]
+    },
+    "noisy_history_smooth_0005_20261101_seed1": {
+      "args_file": [
+        "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/launch_args.yaml",
+        null
+      ],
+      "log_parent_dir": [
+        "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/train",
+        null
+      ],
+      "run_name": [
+        "noisy_history_scratch",
+        "noisy_history_smooth_0005_seed1"
+      ],
+      "seed": [
+        0,
+        1
+      ],
+      "actor_action_delta_penalty": [
+        0.0,
+        0.0005
+      ]
+    },
+    "noisy_history_smooth_002_20261101_seed0": {
+      "args_file": [
+        "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/launch_args.yaml",
+        null
+      ],
+      "log_parent_dir": [
+        "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/train",
+        null
+      ],
+      "run_name": [
+        "noisy_history_scratch",
+        "noisy_history_smooth_002_seed0"
+      ],
+      "actor_action_delta_penalty": [
+        0.0,
+        0.002
+      ]
+    },
+    "noisy_history_smooth_002_20261101_seed1": {
+      "args_file": [
+        "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/launch_args.yaml",
+        null
+      ],
+      "log_parent_dir": [
+        "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/train",
+        null
+      ],
+      "run_name": [
+        "noisy_history_scratch",
+        "noisy_history_smooth_002_seed1"
+      ],
+      "seed": [
+        0,
+        1
+      ],
+      "actor_action_delta_penalty": [
+        0.0,
+        0.002
+      ]
+    },
+    "noisy_history_smooth_008_20261101_seed0": {
+      "args_file": [
+        "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/launch_args.yaml",
+        null
+      ],
+      "log_parent_dir": [
+        "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/train",
+        null
+      ],
+      "run_name": [
+        "noisy_history_scratch",
+        "noisy_history_smooth_008_seed0"
+      ],
+      "actor_action_delta_penalty": [
+        0.0,
+        0.008
+      ]
+    },
+    "noisy_history_smooth_008_20261101_seed1": {
+      "args_file": [
+        "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/launch_args.yaml",
+        null
+      ],
+      "log_parent_dir": [
+        "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_20261029_seed0/train",
+        null
+      ],
+      "run_name": [
+        "noisy_history_scratch",
+        "noisy_history_smooth_008_seed1"
+      ],
+      "seed": [
+        0,
+        1
+      ],
+      "actor_action_delta_penalty": [
+        0.0,
+        0.008
+      ]
+    }
+  },
+  "purpose": "Exact6M discount-matched archived controls on the reused development cohort; frozen CPU-only inference, no learning or warm start.",
+  "job_id": "115919",
+  "submitted_utc": "2026-11-02T03:59:38.791019+00:00",
+  "observed_utc": "2026-11-02T04:00:19.919471+00:00",
+  "slurm_observation": "RUNNING|N/A|juggle-base-6m",
+  "saved_worker_status": {
+    "status": "evaluating",
+    "updated_utc": "2026-11-02T03:59:39.157652+00:00",
+    "role": "online"
+  },
+  "worker_sha256": "fcc97eff3e56f312f0c28d51d87615a1f983608a91891df868836ff098828a9d",
+  "batch_file_sha256": "b82a21f33d42c58fc37374ef41cdaf89d6dc5e7d9e2ecc58510e9fd10e70345c"
+}

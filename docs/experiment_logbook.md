@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E071 — Launch exact6M control tests and compare available5M validation](#e071)
 - [E070 — Verify reward-only target-cost parity and learner integration](#e070)
 - [E069 — Complete longer-discount target paired long test](#e069)
 - [E068 — Complete all 3M sweep comparisons with paired motion](#e068)
@@ -76,6 +77,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e071"></a>
+
+## E071 — 2026-11-01 22:03:49 -0600 — Launch exact6M control tests and compare available5M validation
+
+Launched CPU-only exact6M archived controls and froze64 available5M checkpoint outcomes showing the remaining juggling/motion tradeoff.
+
+**Running:** CPU115919 gamma .995 and115920 gamma .999, each32 reused starts/20k online then target, zero GPUs. Archived training states verify6M actual steps; private model/config/history copies and code hashes are recorded. Shared training args differ only as explicitly recorded in manifests. Both controls and all eight learner jobs are live;11 total user GPUs. **Completed saved-data analysis:** six new online5M variants plus two controls,8 starts/5k each. Gamma .995/.002 seed1 averages46.875 physical juggles/3296.25steps versus control62/4383, with lower whole-episode sampled jerk296.93 vs383.25m/s³; windows/states confound motion. Slower weak-original runs have no5M result yet. No long-duration inference from this tiny repeated cohort, no restarts or full-budget target-cost launch. Related: [E068](experiment_logbook.md#e068), [E069](experiment_logbook.md#e069), [E070](experiment_logbook.md#e070).
+
+[Setup, complete table, commands and limits](../notes/scratch/experiments/2026-11-02_04-03_six-million-controls-and-curves.md); [6M gamma .995 launch](juggling-baseline-6m-comparison-launch.json); [6M gamma .999 launch](juggling-longdiscount-baseline-6m-launch.json); [immutable64 cases](assets/juggling/smooth-five-million-episodes-20261102.csv); [hashes](assets/juggling/smooth-five-million-provenance-20261102.json). Heading is documentation time; actual submissions are recorded in manifests. Moving plots/CSVs refreshed to487 summary /4856 episode rows.
+
+![Available5M repeated checkpoint validation](assets/juggling/smooth-five-million-comparison-20261102.png)
+
+Generated2026-11-02 from saved8-start/5k online evaluations, same5M budget. Lower motion still accompanies lower endurance; no hardware threshold or binary gate is used. Detailed note embeds refreshed reward/juggle/episode-step training curves. No new performance GIF for this setup task.
 
 <a id="e070"></a>
 
