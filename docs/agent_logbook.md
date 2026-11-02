@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A058 — Publish matched weak-penalty performance clips with raw context](#a058)
 - [A057 — Make paired physical-motion comparisons reproducible](#a057)
 - [A056 — Publish longer-discount control and preserve full-budget research](#a056)
 - [A055 — Record final environment commands in deployment policy history](#a055)
@@ -63,6 +64,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a058"></a>
+
+## A058 — 2026-11-01 18:38:50 -0600 — Publish matched weak-penalty performance clips with raw context
+
+Published three existing first-episode GIFs with source hashes and separate clip/full-episode juggle counts.
+
+**Completed saved-artifact review; training ongoing:** gamma .995 at1.5M, first shared validation reset seed10000. Existing first200step clips show baseline3/4 and weak seed0 2/1 physical/sensed juggles; weak seed1 ends at182steps with1/2. Full episodes last377/512/182steps and end in puck loss. Copied GIFs byte-for-byte, checked all frame counts/delays and reviewed first/middle/last frames. No new rollout, policy/simulator change or hardware operation. Related: [E054](experiment_logbook.md#e054), [E057](experiment_logbook.md#e057).
+
+[All three GIFs, context and reproduction](../notes/scratch/experiments/2026-11-02_00-38_weak-policy-performance-gifs.md); [source/hash/count provenance](assets/juggling/weak-1m5-gif-provenance-20261102.json).
+
+![Weak seed0 first200steps](assets/juggling/weak-1m5-weak-seed0-start-20261102.gif)
+
+Existing checkpoint clip published2026-11-02;2 physical/1 sensed juggles in200steps at20fps. This is one early episode, not an aggregate or a hardware-safety demonstration. Heading is actual publication time in America/Chicago.
 
 <a id="a057"></a>
 

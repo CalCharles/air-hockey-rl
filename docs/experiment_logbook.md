@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E058 — Review matched early weak-penalty and baseline performance GIFs](#e058)
 - [E057 — Compare physical motion over equal per-start prefixes](#e057)
 - [E056 — Complete discount-matched first-million-step smoothness comparison](#e056)
 - [E055 — Verify final-command history after holds and overrides](#e055)
@@ -63,6 +64,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e058"></a>
+
+## E058 — 2026-11-01 18:38:50 -0600 — Review matched early weak-penalty and baseline performance GIFs
+
+The first saved1.5M validation episodes show limited early juggling and eventual puck loss across the baseline and both weak-penalty seeds.
+
+**Completed saved-artifact review; training ongoing:** gamma .995 at1.5M, first shared validation reset seed10000. Existing first200step clips show baseline3/4 and weak seed0 2/1 physical/sensed juggles; weak seed1 ends at182steps with1/2. Full episodes last377/512/182steps and end in puck loss. Copied GIFs byte-for-byte, checked all frame counts/delays and reviewed first/middle/last frames. No new rollout, policy/simulator change or hardware operation. Related: [E054](experiment_logbook.md#e054), [E057](experiment_logbook.md#e057).
+
+[All three GIFs, context and reproduction](../notes/scratch/experiments/2026-11-02_00-38_weak-policy-performance-gifs.md); [source/hash/count provenance](assets/juggling/weak-1m5-gif-provenance-20261102.json).
+
+![Weak seed0 first200steps](assets/juggling/weak-1m5-weak-seed0-start-20261102.gif)
+
+Existing checkpoint clip published2026-11-02;2 physical/1 sensed juggles in200steps at20fps. This is one early episode, not an aggregate or a hardware-safety demonstration. Heading is actual publication time in America/Chicago.
 
 <a id="e057"></a>
 
