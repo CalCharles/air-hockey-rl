@@ -6,6 +6,9 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A074 — Freeze late6M longer-discount target and launch CPU long testing](#a074)
+- [A073 — Add isolated reward-cost runner, launch two seeds and publish initial logs](#a073)
+- [A072 — Publish complete6M controls and strong-penalty seed dependence](#a072)
 - [A071 — Freeze6M archived controls and refresh training figures](#a071)
 - [A070 — Implement isolated PID-target reward cost and verify canonical parity](#a070)
 - [A069 — Publish complete longer-discount long outcomes and failure clip](#a069)
@@ -77,6 +80,44 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a074"></a>
+
+## A074 — 2026-11-01 22:25:20 -0600 — Freeze late6M longer-discount target and launch CPU long testing
+
+Launched a CPU-only paired-development100k-step test of the completed6M gamma .999 unregularized target.
+
+CPU115924 RUNNING,32 reused reference starts9000000–9000031, zero GPUs. Model204f6af6731cafd1dfa60d8466776908e85122f79722e2a92797033f3f05880e frozen with source/config/history fingerprints. Selected from198.625 juggles/14141.53125steps on the completed20k cohort; actual100k outcomes remain pending. Comparator retains546.25/37131.03125 with three finite-horizon censored records. Different budgets/discounts and reused starts limit inference. No new training, warm start, robot action or restart. No candidate long figure/GIF is available yet.
+
+[Detailed setup, raw artifacts, limitations and reproduction](../notes/scratch/experiments/2026-11-02_04-25_six-million-discount-long-test.md). Heading is documentation time; actual submissions/terminal status are recorded in manifests. Related: [E070](experiment_logbook.md#e070), [E071](experiment_logbook.md#e071). No infinite-juggling or hardware-stop conclusion.
+
+<a id="a073"></a>
+
+## A073 — 2026-11-01 22:25:20 -0600 — Add isolated reward-cost runner, launch two seeds and publish initial logs
+
+Launched two from-random6M history learners with a constant reward-only cost100 on cached filtered PID-target changes.
+
+Jobs115921/115922 RUNNING; zero actor-delta penalty and unchanged canonical physics/sensing/DR. Four unit tests pass, including mocked milestone orchestration; real CPU smoke and noisy replay evidence remainE070. Only100 launched;400 planned configs inactive. Initial25k reward blocks are exploratory, with the20k action-source switch explicitly labeled. GPU use peaked12 at submission, later11 as old .008 seed0 ended. New runs omit saved replay-buffer copies for storage, preserving model/checkpoint/evaluation artifacts.
+
+[Detailed setup, raw artifacts, limitations and reproduction](../notes/scratch/experiments/2026-11-02_04-25_target-cost-scratch-launch.md). Heading is documentation time; actual submissions/terminal status are recorded in manifests. Related: [E070](experiment_logbook.md#e070), [E071](experiment_logbook.md#e071). No infinite-juggling or hardware-stop conclusion.
+
+![Recorded experiment evidence](assets/juggling/target-cost-first25k-rewards-20261102.png)
+
+Generated2026-11-02 from saved raw data. The detailed note distinguishes completed policy tests from exploratory training logs and embeds available GIF evidence.
+
+<a id="a072"></a>
+
+## A072 — 2026-11-01 22:25:20 -0600 — Publish complete6M controls and strong-penalty seed dependence
+
+Completed both .0086M seeds and both CPU control jobs, publishing raw endurance and equal-prefix motion without promoting a policy.
+
+Six variants/192 raw cases for the .995 comparison, four historical control variants/128 cases,128 paired windows. .008 target seed0 100.6875 juggles/7270.6875steps, seed1 9.9375/722.875, versus matched control138.40625/9859.8125. Paired target p95 jerk ratios .800834/.788555. Late .999 control target198.625/14141.53125 motivates longer testing. All four jobs COMPLETED/exit0.
+
+[Detailed setup, raw artifacts, limitations and reproduction](../notes/scratch/experiments/2026-11-02_04-25_six-million-strong-and-controls.md). Heading is documentation time; actual submissions/terminal status are recorded in manifests. Related: [E070](experiment_logbook.md#e070), [E071](experiment_logbook.md#e071). No infinite-juggling or hardware-stop conclusion.
+
+![Recorded experiment evidence](assets/juggling/smooth-first-6m-comparison-20261102.png)
+
+Generated2026-11-02 from saved raw data. The detailed note distinguishes completed policy tests from exploratory training logs and embeds available GIF evidence.
 
 <a id="a071"></a>
 

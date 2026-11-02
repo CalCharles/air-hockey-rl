@@ -1,0 +1,62 @@
+{
+  "generated_utc": "2026-11-02T04:19:42.307446+00:00",
+  "step": 6000000,
+  "episodes_per_variant": 32,
+  "seed_base": 700000,
+  "horizon": 20000,
+  "variants": [
+    {
+      "run": "noisy_history_20261029_seed0",
+      "weights": "online",
+      "source": "runs/td3/juggle_history_baseline_6m_20261102/paired_online_20k_eval/results.json",
+      "file_sha256": {
+        "runs/td3/juggle_history_baseline_6m_20261102/paired_online_20k_eval/results.json": "40293a79c72d7e3809a5c52111bca22c43cbc7bfb8d012ad8f0454f70f8a93ed",
+        "runs/td3/juggle_history_baseline_6m_20261102/frozen_online/model.pth": "01e1548f1bb0163bf672f39d15e132f5a5697e2319b484dbb5fced8a6b982305",
+        "runs/td3/juggle_history_baseline_6m_20261102/frozen_online/args.yaml": "120682ff730d97730d1ef6a590cfa2c48eef51df2bacb1d98231d2179d194cbc",
+        "runs/td3/juggle_history_baseline_6m_20261102/frozen_online/config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "runs/td3/juggle_history_baseline_6m_20261102/frozen_online/rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    },
+    {
+      "run": "noisy_history_20261029_seed0",
+      "weights": "target",
+      "source": "runs/td3/juggle_history_baseline_6m_20261102/paired_target_20k_eval/results.json",
+      "file_sha256": {
+        "runs/td3/juggle_history_baseline_6m_20261102/paired_target_20k_eval/results.json": "3481b1fb00477f144eae0a949a38c2025b4f6708f6ef878235fd91d78aaa20f3",
+        "runs/td3/juggle_history_baseline_6m_20261102/frozen_target/model.pth": "7fb377f4dc7da0c8dd1a7fb6f822ccd81d3e763d5e2bb14c6cddfa4143439b5d",
+        "runs/td3/juggle_history_baseline_6m_20261102/frozen_target/args.yaml": "120682ff730d97730d1ef6a590cfa2c48eef51df2bacb1d98231d2179d194cbc",
+        "runs/td3/juggle_history_baseline_6m_20261102/frozen_target/config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "runs/td3/juggle_history_baseline_6m_20261102/frozen_target/rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    },
+    {
+      "run": "noisy_history_long_discount_20261029_seed0",
+      "weights": "online",
+      "source": "runs/td3/juggle_history_longdiscount_baseline_6m_20261102/paired_online_20k_eval/results.json",
+      "file_sha256": {
+        "runs/td3/juggle_history_longdiscount_baseline_6m_20261102/paired_online_20k_eval/results.json": "c9eaf3f341b9a6677608f9f16161f7eefded1eaf6c7e0c8e666f9846154bbba3",
+        "runs/td3/juggle_history_longdiscount_baseline_6m_20261102/frozen_online/model.pth": "61f05e56d5cb7842b048076919143ea8c4870f0a7a7a5b0d7edadcdf7cdb074b",
+        "runs/td3/juggle_history_longdiscount_baseline_6m_20261102/frozen_online/args.yaml": "feaa907c394b623aa191adc9b91877fb975bcdaf1406bddba76b9b0edc20ef86",
+        "runs/td3/juggle_history_longdiscount_baseline_6m_20261102/frozen_online/config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "runs/td3/juggle_history_longdiscount_baseline_6m_20261102/frozen_online/rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    },
+    {
+      "run": "noisy_history_long_discount_20261029_seed0",
+      "weights": "target",
+      "source": "runs/td3/juggle_history_longdiscount_baseline_6m_20261102/paired_target_20k_eval/results.json",
+      "file_sha256": {
+        "runs/td3/juggle_history_longdiscount_baseline_6m_20261102/paired_target_20k_eval/results.json": "7dc5a84300e373d185af985336e432c91bece1a595df5924d73acf0c94da9376",
+        "runs/td3/juggle_history_longdiscount_baseline_6m_20261102/frozen_target/model.pth": "204f6af6731cafd1dfa60d8466776908e85122f79722e2a92797033f3f05880e",
+        "runs/td3/juggle_history_longdiscount_baseline_6m_20261102/frozen_target/args.yaml": "feaa907c394b623aa191adc9b91877fb975bcdaf1406bddba76b9b0edc20ef86",
+        "runs/td3/juggle_history_longdiscount_baseline_6m_20261102/frozen_target/config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "runs/td3/juggle_history_longdiscount_baseline_6m_20261102/frozen_target/rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    }
+  ],
+  "published_sha256": {
+    "docs/assets/juggling/historical-6m-controls-summary-20261102.csv": "614e8895985fa9e8aa146360688193f40cbce731aa0b0d9835ed739007b49f94",
+    "docs/assets/juggling/historical-6m-controls-episodes-20261102.csv": "2fbe54e271f240445607ddca0032be24781be5d63dc6ce74248c214a67ec1274"
+  },
+  "limitations": "Reused development starts and single correlated actor/target variants; different training seeds where labeled. Finite simulated motion, not stop-risk or infinite-juggling evidence."
+}

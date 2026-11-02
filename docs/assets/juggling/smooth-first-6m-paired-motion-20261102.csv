@@ -1,0 +1,5 @@
+seed,weights,episodes,paired_positions_per_policy,speed_ratio,acceleration_ratio,jerk_ratio,initial_observation_exact_matches,source,source_sha256
+0,online,32,6011,0.7575989373887866,0.8337118529413128,0.7930603210590523,32,docs/assets/juggling/first-6m-paired-motion-008-seed0-online-20261102.json,69fe8a787a2e2cfe31043473a3d65881d71674c00b52a68383021e9247d1d4d8
+0,target,32,6238,0.8053777814338943,0.8455552958938494,0.8008342783573159,32,docs/assets/juggling/first-6m-paired-motion-008-seed0-target-20261102.json,7794009838058e32b27e3ccc8ee652a9d3269783220d1d7c9a7579f9c08d2c59
+1,online,32,5394,0.8003504654501066,0.8083780048550242,0.7510830906174066,32,docs/assets/juggling/first-6m-paired-motion-008-seed1-online-20261102.json,f12e81d1f84a828390d9c3efdf082cfe5265b14c89a893e4bde50cedebcee321
+1,target,32,6369,0.74748436350609,0.8069164325344402,0.7885548394874679,32,docs/assets/juggling/first-6m-paired-motion-008-seed1-target-20261102.json,20fb9def2589a2dc462c00c4f82d1f002810ebfa19d860bf0e94ae1a006117c1

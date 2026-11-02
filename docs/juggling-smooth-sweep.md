@@ -1,6 +1,6 @@
 # Smoothness sweep progress
 
-Generated 2026-11-02T04:00:29.425169+00:00 from saved artifacts; no new rollouts.
+Generated 2026-11-02T04:20:37.950849+00:00 from saved artifacts; no new rollouts.
 
 Original sweep: each coefficient (0.0005, 0.002, 0.008) has two fresh training seeds at gamma 0.995. An additional pair uses coefficient 0.0005 and gamma 0.999. Original checkpoints are every 100k steps; the additional pair saves every 500k for storage. All budgets are 6M. Simulator, sensing, control and DR remain unchanged. GPU ceiling: 16 total user allocations, including other jobs. Training seeds remain separate curves; starts within one run are not training-seed replications.
 
@@ -8,10 +8,10 @@ Original sweep: each coefficient (0.0005, 0.002, 0.008) has two fresh training s
 |---|---|---|
 | noisy_history_smooth_0005_20261101_seed0 | 115858 | training |
 | noisy_history_smooth_0005_20261101_seed1 | 115859 | training |
-| noisy_history_smooth_002_20261101_seed0 | 115860 | training |
-| noisy_history_smooth_002_20261101_seed1 | 115861 | training |
-| noisy_history_smooth_008_20261101_seed0 | 115862 | training |
-| noisy_history_smooth_008_20261101_seed1 | 115863 | training |
+| noisy_history_smooth_002_20261101_seed0 | 115860 | complete |
+| noisy_history_smooth_002_20261101_seed1 | 115861 | complete |
+| noisy_history_smooth_008_20261101_seed0 | 115862 | complete |
+| noisy_history_smooth_008_20261101_seed1 | 115863 | complete |
 | noisy_history_smooth_0005_g0999_20261101_seed0 | 115866 | training |
 | noisy_history_smooth_0005_g0999_20261101_seed1 | 115867 | training |
 

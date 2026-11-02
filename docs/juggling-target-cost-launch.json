@@ -1,0 +1,125 @@
+{
+  "max_total_user_gpus": 16,
+  "contract_review": "docs/juggling-target-cost-contract-review-20261102.json",
+  "purpose": "Two fresh6M history learners with constant actual PID-target quartic reward cost100;400 configs planned only. No actor/critic checkpoint or residual base. All original runs continue. Separate original/shaped reward and target cost logs; fixed32-start milestones retain raw environment evaluation reward.",
+  "launches": [
+    {
+      "job_id": "115921",
+      "name": "noisy_history_target_cost_100_20261102_seed0",
+      "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_20261102_seed0",
+      "config": "configs/td3/sustained/noisy_history_target_cost_100_seed0.yaml",
+      "coefficient": 100,
+      "manifest": {
+        "target_cost_coefficient": 100,
+        "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_20261102_seed0",
+        "config": "configs/td3/sustained/noisy_history_target_cost_100_seed0.yaml",
+        "seed": 0,
+        "reviewed_sha256": {
+          "airhockey/airhockey_base.py": "a3a8c1c37fdb53015b6cb2568b1b9ccc39e6f6dff39323a4c25f97ae88fcb4d6",
+          "airhockey/sims/airhockey_box2d.py": "7059de3e1f8a979c706eb2546ba7674c4970226952bc002567a1d2aa20fa7eee",
+          "airhockey/airhockey_simple_tasks.py": "89cbf0ff989e3231e6708db456b7f93182bd8985fe1035fbc29a5c83a8144c8b",
+          "configs/new_juggle/sysid_v2_hist2.yaml": "5005076245b4ba9e6d95c1d9efa337b59e57a24017e117db97b45644758f5349",
+          "configs/new_juggle/sustained/original_sensing.yaml": "d1bb13a7a4a5494507d085db230bdbe31854f0ddb556ccf88c3ec5aca0360385",
+          "configs/new_juggle/tasks_v2/sim_dr3_juggle.yaml": "354104653f0664529847c4ef4b09a62b1556a680eec90d9a4d6079b04eefd5e1",
+          "scripts/rma/train_base_policy.py": "cdf735f9a1aaa29f22a7f4810766a49c96bcfbac137ffce74a07321f047175c2",
+          "scripts/rma/history.py": "d7c3456d01c8e612c28ffb560d3711722a17948e002be313de0c54e9c0576f94",
+          "scripts/rma/networks.py": "e9fa1f464fe0023e80e5237391fa672610df2c9b184931935d74d9cad22d6c01",
+          "scripts/rma/env_wrapper.py": "fff82ed43111d6e3b3b766d7ace7baa1b63666944bfa70816109c2deb03d6ef6",
+          "scripts/rma/checkpoint_eval.py": "433fc6e825196e5ca7840fbff019e896498cc87e47ecd788e90e2cc9642e6e2e",
+          "scripts/rma/evaluate.py": "24cb367940072b483b97d0fee9bb6ddd722b0a27424f5197e2634337b241570f",
+          "scripts/td3/helper/td3_graphed_update.py": "0b5a2a984c21f11e2cdc5344d9ba8038f70ee0cc5ca3c2dd3f2c467598416d48",
+          "scripts/td3/juggle_survival.py": "e533f1f3b0dd34bcdfeef6e5dec10922422edde5a16db8cff706736d832b8a92",
+          "scripts/td3/juggle_noisy_scratch.py": "fc1a9acfa9faf72ed7932f54698426076a17018b1b423770cc9d3ce27df83394",
+          "scripts/td3/juggle_original_sensing.py": "c1cec9222bc85f50d8b0250eedd38bd55fccb63e4886872b20153090a79f34b3",
+          "scripts/td3/helper/juggle_counter.py": "c87916662f35ff091cf0a4be47bdef90d0be92a8a9917f66632807e01a7f40cc",
+          "scripts/analysis/juggle_motion_metrics.py": "3c36447afa2dc0f99b72c06c134411d853c89d06004fb4fdc5296e5006ef7f67",
+          "scripts/td3/juggle_target_cost.py": "adb3c195d25666d2d90294f86dc5cc52451f1d54c2725e4cc5dc35012abb2dfa",
+          "scripts/td3/train_juggle_target_cost.py": "c494e831d943640d39b19228d2edd10b0b97b8b3baa6b5505dd14ae1f9cf47e4",
+          "scripts/td3/extras/run_juggle_target_cost_trial.py": "67fa6aa30da2ac003cdb6f8da9336dc1118a80e63202f9028d972637e8a5ca08",
+          "configs/td3/sustained/noisy_history_target_cost_100_seed0.yaml": "5590b98bb7b3158a678071427d57bd2282f5f7a8dd11f53c333fa957162c115e"
+        }
+      },
+      "batch_source": "#!/bin/bash\n#SBATCH --job-name=jtc100-s0\n#SBATCH --partition=allnodes\n#SBATCH --nodes=1\n#SBATCH --ntasks=1\n#SBATCH --cpus-per-task=6\n#SBATCH --gres=gpu:1\n#SBATCH --mem=32G\n#SBATCH --time=18:00:00\n#SBATCH --output=/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_20261102_seed0_slurm.log\nset -euo pipefail\ncd /scratch/cluster/mrudolph/documents/air-hockey-rl\nexport OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 MPLCONFIGDIR=/tmp/airhockey-mpl\nexport PYTHONPATH=/scratch/cluster/mrudolph/documents/air-hockey-rl\nexec /scratch/cluster/mrudolph/documents/air-hockey-rl/.venv/bin/python -u -m scripts.td3.extras.run_juggle_target_cost_trial --root /scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_20261102_seed0 --args-file /scratch/cluster/mrudolph/documents/air-hockey-rl/configs/td3/sustained/noisy_history_target_cost_100_seed0.yaml --manifest /scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_20261102_seed0_manifest.json\n",
+      "user_gpus_before_submission": 10,
+      "squeue_before_submission": "1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|N/A\n",
+      "submitted_utc": "2026-11-02T04:12:09.542696+00:00",
+      "status": "training",
+      "observed_utc": "2026-11-02T04:17:10.361593+00:00",
+      "slurm_observation": "RUNNING|gres/gpu:1",
+      "saved_runner_status": {
+        "status": "training",
+        "training_command": [
+          "/scratch/cluster/mrudolph/documents/air-hockey-rl/.venv/bin/python",
+          "-u",
+          "-m",
+          "scripts.td3.train_juggle_target_cost",
+          "--args-file",
+          "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_20261102_seed0/launch_args.yaml",
+          "--coefficient",
+          "100.0"
+        ],
+        "target_cost_coefficient": 100.0,
+        "updated_utc": "2026-11-02T04:12:10.390822+00:00"
+      }
+    },
+    {
+      "job_id": "115922",
+      "name": "noisy_history_target_cost_100_20261102_seed1",
+      "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_20261102_seed1",
+      "config": "configs/td3/sustained/noisy_history_target_cost_100_seed1.yaml",
+      "coefficient": 100,
+      "manifest": {
+        "target_cost_coefficient": 100,
+        "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_20261102_seed1",
+        "config": "configs/td3/sustained/noisy_history_target_cost_100_seed1.yaml",
+        "seed": 1,
+        "reviewed_sha256": {
+          "airhockey/airhockey_base.py": "a3a8c1c37fdb53015b6cb2568b1b9ccc39e6f6dff39323a4c25f97ae88fcb4d6",
+          "airhockey/sims/airhockey_box2d.py": "7059de3e1f8a979c706eb2546ba7674c4970226952bc002567a1d2aa20fa7eee",
+          "airhockey/airhockey_simple_tasks.py": "89cbf0ff989e3231e6708db456b7f93182bd8985fe1035fbc29a5c83a8144c8b",
+          "configs/new_juggle/sysid_v2_hist2.yaml": "5005076245b4ba9e6d95c1d9efa337b59e57a24017e117db97b45644758f5349",
+          "configs/new_juggle/sustained/original_sensing.yaml": "d1bb13a7a4a5494507d085db230bdbe31854f0ddb556ccf88c3ec5aca0360385",
+          "configs/new_juggle/tasks_v2/sim_dr3_juggle.yaml": "354104653f0664529847c4ef4b09a62b1556a680eec90d9a4d6079b04eefd5e1",
+          "scripts/rma/train_base_policy.py": "cdf735f9a1aaa29f22a7f4810766a49c96bcfbac137ffce74a07321f047175c2",
+          "scripts/rma/history.py": "d7c3456d01c8e612c28ffb560d3711722a17948e002be313de0c54e9c0576f94",
+          "scripts/rma/networks.py": "e9fa1f464fe0023e80e5237391fa672610df2c9b184931935d74d9cad22d6c01",
+          "scripts/rma/env_wrapper.py": "fff82ed43111d6e3b3b766d7ace7baa1b63666944bfa70816109c2deb03d6ef6",
+          "scripts/rma/checkpoint_eval.py": "433fc6e825196e5ca7840fbff019e896498cc87e47ecd788e90e2cc9642e6e2e",
+          "scripts/rma/evaluate.py": "24cb367940072b483b97d0fee9bb6ddd722b0a27424f5197e2634337b241570f",
+          "scripts/td3/helper/td3_graphed_update.py": "0b5a2a984c21f11e2cdc5344d9ba8038f70ee0cc5ca3c2dd3f2c467598416d48",
+          "scripts/td3/juggle_survival.py": "e533f1f3b0dd34bcdfeef6e5dec10922422edde5a16db8cff706736d832b8a92",
+          "scripts/td3/juggle_noisy_scratch.py": "fc1a9acfa9faf72ed7932f54698426076a17018b1b423770cc9d3ce27df83394",
+          "scripts/td3/juggle_original_sensing.py": "c1cec9222bc85f50d8b0250eedd38bd55fccb63e4886872b20153090a79f34b3",
+          "scripts/td3/helper/juggle_counter.py": "c87916662f35ff091cf0a4be47bdef90d0be92a8a9917f66632807e01a7f40cc",
+          "scripts/analysis/juggle_motion_metrics.py": "3c36447afa2dc0f99b72c06c134411d853c89d06004fb4fdc5296e5006ef7f67",
+          "scripts/td3/juggle_target_cost.py": "adb3c195d25666d2d90294f86dc5cc52451f1d54c2725e4cc5dc35012abb2dfa",
+          "scripts/td3/train_juggle_target_cost.py": "c494e831d943640d39b19228d2edd10b0b97b8b3baa6b5505dd14ae1f9cf47e4",
+          "scripts/td3/extras/run_juggle_target_cost_trial.py": "67fa6aa30da2ac003cdb6f8da9336dc1118a80e63202f9028d972637e8a5ca08",
+          "configs/td3/sustained/noisy_history_target_cost_100_seed1.yaml": "289504a5e3bd1991958185b847e3838a37cc6411f64f585adf71989155f36304"
+        }
+      },
+      "batch_source": "#!/bin/bash\n#SBATCH --job-name=jtc100-s1\n#SBATCH --partition=allnodes\n#SBATCH --nodes=1\n#SBATCH --ntasks=1\n#SBATCH --cpus-per-task=6\n#SBATCH --gres=gpu:1\n#SBATCH --mem=32G\n#SBATCH --time=18:00:00\n#SBATCH --output=/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_20261102_seed1_slurm.log\nset -euo pipefail\ncd /scratch/cluster/mrudolph/documents/air-hockey-rl\nexport OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 MPLCONFIGDIR=/tmp/airhockey-mpl\nexport PYTHONPATH=/scratch/cluster/mrudolph/documents/air-hockey-rl\nexec /scratch/cluster/mrudolph/documents/air-hockey-rl/.venv/bin/python -u -m scripts.td3.extras.run_juggle_target_cost_trial --root /scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_20261102_seed1 --args-file /scratch/cluster/mrudolph/documents/air-hockey-rl/configs/td3/sustained/noisy_history_target_cost_100_seed1.yaml --manifest /scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_20261102_seed1_manifest.json\n",
+      "user_gpus_before_submission": 11,
+      "squeue_before_submission": "1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|gres/gpu:1\n1|N/A\n",
+      "submitted_utc": "2026-11-02T04:12:09.598736+00:00",
+      "status": "training",
+      "observed_utc": "2026-11-02T04:17:10.380257+00:00",
+      "slurm_observation": "RUNNING|gres/gpu:1",
+      "saved_runner_status": {
+        "status": "training",
+        "training_command": [
+          "/scratch/cluster/mrudolph/documents/air-hockey-rl/.venv/bin/python",
+          "-u",
+          "-m",
+          "scripts.td3.train_juggle_target_cost",
+          "--args-file",
+          "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_target_cost_100_20261102_seed1/launch_args.yaml",
+          "--coefficient",
+          "100.0"
+        ],
+        "target_cost_coefficient": 100.0,
+        "updated_utc": "2026-11-02T04:12:10.400305+00:00"
+      }
+    }
+  ]
+}

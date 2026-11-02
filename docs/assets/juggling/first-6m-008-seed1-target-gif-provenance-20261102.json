@@ -1,0 +1,36 @@
+{
+  "source": "runs/td3/noisy_history_smooth_008_20261101_seed1/paired_6000000_target_20k_eval/training.gif",
+  "source_sha256": "af1ca5a352ceac980c62e28e428e1d015dbbf533d26de0d9b8b6b4dad79775a3",
+  "published": "docs/assets/juggling/first-6m-008-seed1-target-first-episode-end-20261102.gif",
+  "published_sha256": "af1ca5a352ceac980c62e28e428e1d015dbbf533d26de0d9b8b6b4dad79775a3",
+  "model_sha256": "6ae0039babb95bb133b7dfc6a86500e8e32f3b1b7575a8a60fb425a34ad0018e",
+  "episode": {
+    "seed": 700000,
+    "steps": 1097,
+    "return": 776.0,
+    "contacts": 24,
+    "failed": true,
+    "unexpected_truncation": false,
+    "reached_horizon": false,
+    "end_reasons": [
+      "puck_passed_paddle"
+    ],
+    "peak_paddle_speed_m_s": 2.000000054542081,
+    "peak_paddle_acceleration_m_s2": 51.00662311241405,
+    "action_delta_rms": 0.155541329350247,
+    "target_delta_rms_m": 0.031698418216413206,
+    "trajectory": "training_seed700000.npz",
+    "contact_events": 16,
+    "juggles": 16,
+    "true_state_contact_events": 14,
+    "true_state_juggles": 14
+  },
+  "frames": 200,
+  "duration_ms": 50,
+  "width": 160,
+  "frame_steps_inclusive": [
+    898,
+    1097
+  ],
+  "selection": "First predeclared evaluation reset700000; existing final200frames copied byte-for-byte, not selected for best performance"
+}
