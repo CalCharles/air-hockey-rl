@@ -6,6 +6,10 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A085 — Freeze weak-penalty longer-discount target and launch CPU long testing](#a085)
+- [A084 — Publish matched500k cost-policy discount comparison](#a084)
+- [A083 — Reconcile reward-cost1M data against immature matched control](#a083)
+- [A082 — Publish completed gamma .999 weak-penalty6M outcomes and rare command spikes](#a082)
 - [A081 — Publish verified late-discount6M long outcomes and failure clip](#a081)
 - [A080 — Launch gamma .999 reward-cost pair under reviewed simulator contract](#a080)
 - [A079 — Publish first500k reward-cost raw metrics and original/shaped reward traces](#a079)
@@ -87,6 +91,58 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a085"></a>
+
+## A085 — 2026-11-01 23:53:47 -0600 — Freeze weak-penalty longer-discount target and launch CPU long testing
+
+Launched one zero-GPU100k-step paired-development test of the completed6M gamma .999/.0005 seed0 target.
+
+CPU115950 confirmed RUNNING;32 reused reference starts9000000–9000031. Model0f4e78c40eafd4b3bbd89f92b5199752a01ac67172cb5a790347e56c2ef7e68c frozen with canonical source/config/history hashes. Typical command/jerk reductions motivated testing, while subsequent full-table inspection found worse acceleration/jerk maxima, explicitly recorded after submission. No promotion; outcomes pending in this launch record. No training, warm start, restart, hardware action or new RL variant.
+
+Experiment record: [E084](experiment_logbook.md#e084). [Detailed protocol, all raw data, limitations and reproduction](../notes/scratch/experiments/2026-11-02_05-53_weak-longdiscount-six-million-long.md). Heading is documentation time; actual run timestamps/status are recorded separately. Related: [E078](experiment_logbook.md#e078), [E079](experiment_logbook.md#e079), [E080](experiment_logbook.md#e080). No infinite-juggling or hardware-stop conclusion.
+
+<a id="a084"></a>
+
+## A084 — 2026-11-01 23:53:47 -0600 — Publish matched500k cost-policy discount comparison
+
+Published the first available gamma .999 cost100 checkpoints alongside gamma .995 policies and both unregularized controls.
+
+Exactly8 reused starts10000/5k, online actor at500k; six variants/48 raw episodes. Gamma .999 new seeds .5/70.125 and.625/76.125 physical juggles/steps, versus .999 control1.25/124.25. Gamma .995 new.875/104.875 and.25/59.625 versus control.375/85. All are short early episodes, not sustained results. Moving report561/5928 rows keeps protocols separate; no extra RL launch or early gate.
+
+Experiment record: [E083](experiment_logbook.md#e083). [Detailed protocol, all raw data, limitations and reproduction](../notes/scratch/experiments/2026-11-02_05-53_target-cost-both-discounts-500k.md). Heading is documentation time; actual run timestamps/status are recorded separately. Related: [E078](experiment_logbook.md#e078), [E079](experiment_logbook.md#e079), [E080](experiment_logbook.md#e080). No infinite-juggling or hardware-stop conclusion.
+
+![Recorded experiment evidence](assets/juggling/target-cost-both-discounts-500k-comparison-20261102.png)
+
+Generated2026-11-02 from saved raw outcomes or fresh exact command replays. Detailed note distinguishes completed analyses from still-running experiments and links available figures/GIFs.
+
+<a id="a083"></a>
+
+## A083 — 2026-11-01 23:53:47 -0600 — Reconcile reward-cost1M data against immature matched control
+
+Published both cost100/.9951M online/target tests against the exact1M control, without diagnosing acquisition failure from a later-budget baseline.
+
+Six variants/192 cases,32 reused starts700000/20k. New online seed0 .90625 juggles/88.0625steps, seed1 1.03125/103.28125; targets1.0/97.3125 and.9375/113.96875. Control itself1.25/147.25 online and1.09375/154.6875 target. Full budgets continue; proposed weaker/ramp variants remain unimplemented and unlaunched. Existing first seed0 target GIF copied159frames/2 physical juggles, labeled immature.
+
+Experiment record: [E082](experiment_logbook.md#e082). [Detailed protocol, all raw data, limitations and reproduction](../notes/scratch/experiments/2026-11-02_05-53_target-cost-first-million-results.md). Heading is documentation time; actual run timestamps/status are recorded separately. Related: [E078](experiment_logbook.md#e078), [E079](experiment_logbook.md#e079), [E080](experiment_logbook.md#e080). No infinite-juggling or hardware-stop conclusion.
+
+![Recorded experiment evidence](assets/juggling/target-cost-first-1m-comparison-20261102.png)
+
+Generated2026-11-02 from saved raw outcomes or fresh exact command replays. Detailed note distinguishes completed analyses from still-running experiments and links available figures/GIFs.
+
+<a id="a082"></a>
+
+## A082 — 2026-11-01 23:53:47 -0600 — Publish completed gamma .999 weak-penalty6M outcomes and rare command spikes
+
+Completed both weak-penalty longer-discount6M analyses and64 exact command-replay windows, finding lower typical motion with worse extreme acceleration/jerk.
+
+Slurm115866/115867 COMPLETED/exit0. Target seed0 131.75 juggles/9347.3125steps, seed1 116.6875/8045.6875, below same-discount control198.625/14141.53125.192 raw cases;128 paired initial observations exact. Seed0 actual replay12958steps exact; median p99 jerk569.786 vs685.940, but maxima acceleration56.894 vs42.189 and jerk1531.071 vs1294.701. No hardware-readiness claim.
+
+Experiment record: [E081](experiment_logbook.md#e081). [Detailed protocol, all raw data, limitations and reproduction](../notes/scratch/experiments/2026-11-02_05-53_weak-longdiscount-full-six-million.md). Heading is documentation time; actual run timestamps/status are recorded separately. Related: [E078](experiment_logbook.md#e078), [E079](experiment_logbook.md#e079), [E080](experiment_logbook.md#e080). No infinite-juggling or hardware-stop conclusion.
+
+![Recorded experiment evidence](assets/juggling/longdiscount-weak-6m-pid-comparison-20261102.png)
+
+Generated2026-11-02 from saved raw outcomes or fresh exact command replays. Detailed note distinguishes completed analyses from still-running experiments and links available figures/GIFs.
 
 <a id="a081"></a>
 

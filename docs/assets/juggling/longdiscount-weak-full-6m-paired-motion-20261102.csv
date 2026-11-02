@@ -1,0 +1,5 @@
+seed,weights,episodes,paired_positions_per_policy,initial_observation_exact_matches,speed_ratio,acceleration_ratio,jerk_ratio,source,source_sha256
+0,online,32,6439,32,0.9202082918570064,0.997060066196012,0.9416440318777057,docs/assets/juggling/longdiscount-weak-6m-paired-seed0-online-20261102.json,6957a5a8a9670e44290483b975e445e4b44197e78c76deb19ab9fd995bb83a1a
+0,target,32,6479,32,0.9391777890984835,1.0428599198402682,0.9560489945793507,docs/assets/juggling/longdiscount-weak-6m-paired-seed0-target-20261102.json,c675172b4b8b8e1a30df0aa48248832e98bd9b1cf5ec2e5c85c7fc2162e7a9d5
+1,online,32,6960,32,0.8595838705848449,0.9895845908038909,0.9104832924430358,docs/assets/juggling/longdiscount-weak-6m-paired-seed1-online-20261102.json,79970316c03584e4bfe549b92a17b269227cc823cde7f59306c729641a74acc7
+1,target,32,6672,32,0.8847634230920298,1.0159586846803386,0.9080411249865428,docs/assets/juggling/longdiscount-weak-6m-paired-seed1-target-20261102.json,cecef282517d8ee251f90570ce8e0e959f67f52421187a47567fa592dd551fe3
