@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E057 — Compare physical motion over equal per-start prefixes](#e057)
 - [E056 — Complete discount-matched first-million-step smoothness comparison](#e056)
 - [E055 — Verify final-command history after holds and overrides](#e055)
 - [E054 — Complete original fixed 1M comparisons and verify normal deployment parity](#e054)
@@ -62,6 +63,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e057"></a>
+
+## E057 — 2026-11-01 18:33:29 -0600 — Compare physical motion over equal per-start prefixes
+
+Equal-prefix diagnostics show lower sampled jerk with weak regularization at1.4M, while juggling still varies substantially across training seeds.
+
+**Completed offline analysis; training ongoing:** coefficient .0005/gamma .995, seeds0/1, frozen saved1.4M eight-start5k validations. Each reset seed uses equal prefixes of at most250positions in both policies. Median paired position-derived p95 jerk ratios versus historical baseline are0.752062/0.825276 for the two seeds; full episodes average10.5/1.875 physical juggles and742/167.375 steps versus baseline6.75/612.875. Different visited states and one baseline seed limit inference. Six analytic/protocol tests pass;97 live/queued hash entries match. No new rollout or simulator/control/DR changes. Eleven user GPUs remain allocated. Related: [E054](experiment_logbook.md#e054), [E056](experiment_logbook.md#e056).
+
+[Detailed method, table and reproduction](../notes/scratch/experiments/2026-11-02_00-33_paired-prefix-motion.md); [seed0 raw pairs](assets/juggling/smooth-paired-prefix-1m4-seed0-20261102.json); [seed1 raw pairs](assets/juggling/smooth-paired-prefix-1m4-seed1-20261102.json). No new figure; the note reports the small comparison directly as a table. Heading is actual documentation time in America/Chicago; source checkpoint validations are historical artifacts. Hardware stop behavior remains unverified.
 
 <a id="e056"></a>
 

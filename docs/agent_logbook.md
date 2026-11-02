@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A057 — Make paired physical-motion comparisons reproducible](#a057)
 - [A056 — Publish longer-discount control and preserve full-budget research](#a056)
 - [A055 — Record final environment commands in deployment policy history](#a055)
 - [A054 — Publish matched 1M evidence and audit normal deployment adapter behavior](#a054)
@@ -62,6 +63,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a057"></a>
+
+## A057 — 2026-11-01 18:33:29 -0600 — Make paired physical-motion comparisons reproducible
+
+Added a read-only paired-prefix diagnostic to reduce duration confounding when comparing policy motion.
+
+**Completed offline analysis; training ongoing:** coefficient .0005/gamma .995, seeds0/1, frozen saved1.4M eight-start5k validations. Each reset seed uses equal prefixes of at most250positions in both policies. Median paired position-derived p95 jerk ratios versus historical baseline are0.752062/0.825276 for the two seeds; full episodes average10.5/1.875 physical juggles and742/167.375 steps versus baseline6.75/612.875. Different visited states and one baseline seed limit inference. Six analytic/protocol tests pass;97 live/queued hash entries match. No new rollout or simulator/control/DR changes. Eleven user GPUs remain allocated. Related: [E054](experiment_logbook.md#e054), [E056](experiment_logbook.md#e056).
+
+[Detailed method, table and reproduction](../notes/scratch/experiments/2026-11-02_00-33_paired-prefix-motion.md); [seed0 raw pairs](assets/juggling/smooth-paired-prefix-1m4-seed0-20261102.json); [seed1 raw pairs](assets/juggling/smooth-paired-prefix-1m4-seed1-20261102.json). No new figure; the note reports the small comparison directly as a table. Heading is actual documentation time in America/Chicago; source checkpoint validations are historical artifacts. Hardware stop behavior remains unverified.
 
 <a id="a056"></a>
 
