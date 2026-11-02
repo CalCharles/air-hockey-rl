@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A088 — Complete weak longer-discount6M paired long test](#a088)
 - [A087 — Publish first-million reward and motion-cost traces for all four learners](#a087)
 - [A086 — Publish complete first-million cost matrix and verify live source guards](#a086)
 - [A085 — Freeze weak-penalty longer-discount target and launch CPU long testing](#a085)
@@ -93,6 +94,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a088"></a>
+
+## A088 — 2026-11-02 00:24:58 -0600 — Complete weak longer-discount6M paired long test
+
+Completed the .0005/gamma .999 seed0 6M target's32-start100k paired-development test:330 physical/289.5 sensed juggles and24234.625 mean steps, with30 puck losses and2 censored episodes.
+
+CPU115950 completed00:22:34 -0600,37m04s,exit0:0. Median13388.5 steps, min16; paired initial-window jerk ratios0.9080 against retained3.6M reference and0.9290 against same-discount6M control. Lower typical motion coexists with substantial early failures and previously measured worse actual-command maxima. No promotion or infinite/robot-safe claim. Verified32 NPZ counts/rewards/durations, source/bundle hashes and initial observations; published raw episodes, distributions, paired metrics and first-episode end GIF. No new training or hardware actions.
+
+[Detailed evidence, source/config/model hashes, figures and reproduction](../notes/scratch/experiments/2026-11-02_06-24_weak-longdiscount-six-million-long-results.md). Related record: [E087](experiment_logbook.md#e087); [E084 launch](experiment_logbook.md#e084). Heading is documentation time; actual evaluation completion is identified above.
 
 <a id="a087"></a>
 

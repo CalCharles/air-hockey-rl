@@ -1,0 +1,22 @@
+{
+  "generated_utc": "2026-11-02T06:23:40.370501+00:00",
+  "source": "runs/td3/juggle_smooth_0005_g0999_seed0_target6m_long_20261102/paired_reference_100k_eval/training.gif",
+  "destination": "docs/assets/juggling/weak-longdiscount-6m-long-first-episode-end-20261102.gif",
+  "source_sha256": "c40f1f472c99d144b0a31e8e90243fb2288e105d8f400e2724a95f5742380a29",
+  "gif_sha256": "c40f1f472c99d144b0a31e8e90243fb2288e105d8f400e2724a95f5742380a29",
+  "seed": 9000000,
+  "steps": 12127,
+  "physical_juggles": 184,
+  "sensed_juggles": 159,
+  "frames": 200,
+  "size": [
+    160,
+    357
+  ],
+  "duration_ms": 50,
+  "frame_steps": [
+    11928,
+    12127
+  ],
+  "limitations": "Last200 recorded frames of the first predeclared reset; not a selected best episode. Control-rate simulation animation, not real-robot evidence."
+}

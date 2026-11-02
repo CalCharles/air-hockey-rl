@@ -8,6 +8,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E087 — Complete weak longer-discount6M paired long test](#e087)
 - [E086 — Publish first-million reward and motion-cost traces for all four learners](#e086)
 - [E085 — Complete first-million cost-policy comparisons across discounts](#e085)
 - [E084 — Launch weak longer-discount6M target paired long test](#e084)
@@ -94,6 +95,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e087"></a>
+
+## E087 — 2026-11-02 00:24:58 -0600 — Complete weak longer-discount6M paired long test
+
+Completed the .0005/gamma .999 seed0 6M target's32-start100k paired-development test:330 physical/289.5 sensed juggles and24234.625 mean steps, with30 puck losses and2 censored episodes.
+
+CPU115950 completed00:22:34 -0600,37m04s,exit0:0. Median13388.5 steps, min16; paired initial-window jerk ratios0.9080 against retained3.6M reference and0.9290 against same-discount6M control. Lower typical motion coexists with substantial early failures and previously measured worse actual-command maxima. No promotion or infinite/robot-safe claim. Verified32 NPZ counts/rewards/durations, source/bundle hashes and initial observations; published raw episodes, distributions, paired metrics and first-episode end GIF. No new training or hardware actions.
+
+[Detailed evidence, source/config/model hashes, figures and reproduction](../notes/scratch/experiments/2026-11-02_06-24_weak-longdiscount-six-million-long-results.md). Related record: [A088](agent_logbook.md#a088); [E084 launch](experiment_logbook.md#e084). Heading is documentation time; actual evaluation completion is identified above.
 
 <a id="e086"></a>
 

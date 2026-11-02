@@ -1,5 +1,5 @@
 {
-  "status": "evaluating",
+  "status": "complete",
   "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_smooth_0005_g0999_seed0_target6m_long_20261102",
   "source_bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_g0999_20261101_seed0/frozen_6000000_target",
   "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_smooth_0005_g0999_seed0_target6m_long_20261102/frozen_target_6m",
@@ -70,5 +70,16 @@
     "status": "evaluating",
     "updated_utc": "2026-11-02T05:45:31.391459+00:00"
   },
-  "post_submission_tail_observation": "Full replay aggregate inspection also finds worse candidate maximum body acceleration56.8938133 vs42.1892737m/s^2 and jerk1531.0713 vs1294.7007m/s^3, despite lower median p99s. These are finite prefixes, not robot-stop predictions; the inference test measures a tradeoff and does not authorize promotion."
+  "post_submission_tail_observation": "Full replay aggregate inspection also finds worse candidate maximum body acceleration56.8938133 vs42.1892737m/s^2 and jerk1531.0713 vs1294.7007m/s^3, despite lower median p99s. These are finite prefixes, not robot-stop predictions; the inference test measures a tradeoff and does not authorize promotion.",
+  "completed_utc": "2026-11-02T06:22:34+00:00",
+  "slurm_accounting": {
+    "job_id": 115950,
+    "state": "COMPLETED",
+    "exit_code": "0:0",
+    "elapsed": "00:37:04",
+    "start_chicago": "2026-11-01 23:45:30 -0600",
+    "end_chicago": "2026-11-02 00:22:34 -0600"
+  },
+  "results": "runs/td3/juggle_smooth_0005_g0999_seed0_target6m_long_20261102/paired_reference_100k_eval/results.json",
+  "results_sha256": "a1f94eb7437f5d80cfa90fe235d904a14a2ee73dc05a206cb6c5d765d9d95e31"
 }
