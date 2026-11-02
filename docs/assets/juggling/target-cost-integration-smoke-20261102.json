@@ -1,0 +1,58 @@
+{
+  "status": "complete",
+  "trainer_exit_code": 0,
+  "run": "runs/td3/juggle_target_cost_smoke_20261102",
+  "purpose": "CPU integration verification only, not a performance experiment",
+  "global_step": 64,
+  "total_critic_updates": 2,
+  "training_blocks": [
+    {
+      "step": "64",
+      "block_steps": "64",
+      "original_reward_sum": "39.0",
+      "shaped_reward_sum": "37.036703203285",
+      "cost_sum": "1.963296796714996",
+      "target_step_p95_m": "0.23228422350929095",
+      "target_step_max_m": "0.25562655922868033"
+    }
+  ],
+  "recipe": {
+    "coefficient": 100.0,
+    "definition": "reward - coefficient * norm(cached filtered PID target change)^4",
+    "reset_edge": "First commanded target after reset has zero cost",
+    "stationary": true,
+    "from_scratch": true,
+    "raw_evaluation_reward": true,
+    "args_file": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_target_cost_smoke_20261102/args.yaml",
+    "args_sha256": "d8992503e0d40377f70200290857de4fb87c2d4846e335f108368cb9d1b5a971",
+    "code_sha256": {
+      "/scratch/cluster/mrudolph/documents/air-hockey-rl/scripts/td3/train_juggle_target_cost.py": "c494e831d943640d39b19228d2edd10b0b97b8b3baa6b5505dd14ae1f9cf47e4",
+      "scripts/td3/juggle_target_cost.py": "adb3c195d25666d2d90294f86dc5cc52451f1d54c2725e4cc5dc35012abb2dfa"
+    }
+  },
+  "raw_evaluation": {
+    "episodes": 1,
+    "horizon": 16,
+    "mean_true_state_juggles": 0.0,
+    "mean_juggles": 0.0,
+    "restricted_mean_steps": 16.0,
+    "mean_return": 16.0
+  },
+  "artifact_sha256": {
+    "runs/td3/juggle_target_cost_smoke_20261102/args.yaml": "d8992503e0d40377f70200290857de4fb87c2d4846e335f108368cb9d1b5a971",
+    "runs/td3/juggle_target_cost_smoke_20261102/smoke.log": "b874fcba86babe71a4317c53b39688327ea0c8ecbd92b1d0cc28888290109873",
+    "runs/td3/juggle_target_cost_smoke_20261102/target_cost_recipe.json": "ab4cf64193f79d24dc9910946cd317807463a1fadfc4984f70d0b08faada4b10",
+    "runs/td3/juggle_target_cost_smoke_20261102/target_cost_training.csv": "c69d361af1cc356f418feb40a3cbfea68b60608b11f614e53219da4cc68d3aa2",
+    "runs/td3/juggle_target_cost_smoke_20261102/train/training_state.pth": "ed824f1b4c5bd005194b00dd87b654163ed578e449c12b65f25f6bfc7952322c",
+    "runs/td3/juggle_target_cost_smoke_20261102/train/model.pth": "efddd67f4b9fcdf05dd214f525e8f973e2acaee8f4aad4a94ba833d89682ec0f",
+    "runs/td3/juggle_target_cost_smoke_20261102/train/survival_eval/results.json": "0ec530683c80ff4d3028260c54a81e1a7d69b9f0d52957380896567b578271bb"
+  },
+  "unit_test_command": ".venv/bin/python -m unittest scripts.td3.tests.test_juggle_target_cost -v",
+  "unit_tests_passed": 2,
+  "limitations": "64 steps/2 critic updates and 1x16-step evaluation verify plumbing only; no smoothness or reliability conclusion.",
+  "published_training_csv": {
+    "path": "docs/assets/juggling/target-cost-smoke-training-20261102.csv",
+    "sha256": "816b36cb4036a97e4e7cf68d6511d600029715c695dcd762ed11353159bec4e5",
+    "normalization": "CRLF converted to LF; values and raw source hash preserved"
+  }
+}

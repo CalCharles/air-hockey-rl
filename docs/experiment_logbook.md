@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E070 — Verify reward-only target-cost parity and learner integration](#e070)
 - [E069 — Complete longer-discount target paired long test](#e069)
 - [E068 — Complete all 3M sweep comparisons with paired motion](#e068)
 - [E067 — Launch paired long test of longer-discount 3M target](#e067)
@@ -75,6 +76,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e070"></a>
+
+## E070 — 2026-11-01 21:55:00 -0600 — Verify reward-only target-cost parity and learner integration
+
+Implemented and verified an experimental reward-only quartic cost on cached filtered PID-target changes, preserving all saved observations, dynamics and controls under fixed actions.
+
+**Completed verification, not a full learning experiment:**64 saved trajectories/15875 steps match original noisy DR rollouts exactly except intentional returned reward. At coefficient100, baseline8000-step cost148.623 on5699 original reward; longer-discount candidate7875-step cost46.648 on5378. Separate policies/windows calibrate cost only. Two unit tests pass; a fresh64-step CPU integration run completes two critic updates, separately logs original/shaped reward, and evaluates with ordinary raw reward. This tiny run is not a deployment candidate. Common simulator/trainer sources unchanged; all eight6M learners still RUNNING and total user usage11 GPUs. No new GPU trial, physics change, warm start, or hardware action. Related: [E065](experiment_logbook.md#e065), [E068](experiment_logbook.md#e068), [E069](experiment_logbook.md#e069).
+
+[Detailed setup, limitations and reproduction](../notes/scratch/experiments/2026-11-02_03-55_target-cost-parity-and-smoke.md); [baseline parity/calibration](assets/juggling/target-cost-baseline-audit-20261102.json); [candidate parity/calibration](assets/juggling/target-cost-longdiscount-candidate-audit-20261102.json); [CPU integration record](assets/juggling/target-cost-integration-smoke-20261102.json). Heading is documentation time in America/Chicago, not run start/end. Full learning with this reward remains planned, not launched; no infinite-juggling or hardware-stop conclusion.
+
+![Earlier actual-command tail audit motivating the reward](assets/juggling/longdiscount-3m-pid-replay-comparison-20261102.png)
+
+Existing2026-11-02 figure from the prior saved-action command audit; it is supporting motivation, not a new reward-trained result. New performance figures/GIFs are unavailable because no new trained policy has been tested.
 
 <a id="e069"></a>
 
