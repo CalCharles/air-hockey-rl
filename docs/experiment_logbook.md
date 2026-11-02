@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E067 — Launch paired long test of longer-discount 3M target](#e067)
 - [E066 — Complete regularized target paired long test](#e066)
 - [E065 — Audit paired actual PID-target changes and velocity tails](#e065)
 - [E064 — Complete longer-discount 3M comparisons with paired motion](#e064)
@@ -72,6 +73,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e067"></a>
+
+## E067 — 2026-11-01 20:55:15 -0600 — Launch paired long test of longer-discount 3M target
+
+The lower-motion gamma .999/coefficient0.0005 seed1 target is being evaluated on the reused reference cohort after the first regularized candidate trails.
+
+**Running, no new long-test outcome yet:** CPU115914, gamma .999/.0005 seed1 target at3M,32 starts9000000–9000031/100k. This globally reused paired development cohort is not an independent unseen test. Fresh candidate output; no prior trajectories reused as outcomes. Selection data:143.34375 physical juggles/9942.09375 steps at20k, paired sampled jerk ratio .749614; cached target RMS improves but largest sampled jump remains .367065m. All eight6M budgets and canonical simulator/sensing/control/DR unchanged;11 total user GPUs. Related: [E064](experiment_logbook.md#e064), [E065](experiment_logbook.md#e065), [E066](experiment_logbook.md#e066).
+
+[Detailed protocol, selection figure and reproduction](../notes/scratch/experiments/2026-11-02_02-52_long-discount-target-long-test.md); [frozen model/config/source hashes and exact command](juggling-longdiscount-3m-long-reference-launch.json). No long-result figure while pending; the note embeds the existing3M selection figure. Heading is actual documentation time in America/Chicago; submission was02:52UTC.
 
 <a id="e066"></a>
 

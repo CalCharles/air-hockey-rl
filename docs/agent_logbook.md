@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A067 — Freeze longer-discount target and launch CPU-only long evaluation](#a067)
 - [A066 — Publish complete regularized long outcomes and first-episode failure](#a066)
 - [A065 — Add paired replay windows and publish command-tail diagnostics](#a065)
 - [A064 — Publish longer-discount milestones and verify paired resets](#a064)
@@ -72,6 +73,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a067"></a>
+
+## A067 — 2026-11-01 20:55:15 -0600 — Freeze longer-discount target and launch CPU-only long evaluation
+
+Copied the verified3M target into a private bundle and launched32 new candidate episodes with explicit paired-development cohort labeling.
+
+**Running, no new long-test outcome yet:** CPU115914, gamma .999/.0005 seed1 target at3M,32 starts9000000–9000031/100k. This globally reused paired development cohort is not an independent unseen test. Fresh candidate output; no prior trajectories reused as outcomes. Selection data:143.34375 physical juggles/9942.09375 steps at20k, paired sampled jerk ratio .749614; cached target RMS improves but largest sampled jump remains .367065m. All eight6M budgets and canonical simulator/sensing/control/DR unchanged;11 total user GPUs. Related: [E064](experiment_logbook.md#e064), [E065](experiment_logbook.md#e065), [E066](experiment_logbook.md#e066).
+
+[Detailed protocol, selection figure and reproduction](../notes/scratch/experiments/2026-11-02_02-52_long-discount-target-long-test.md); [frozen model/config/source hashes and exact command](juggling-longdiscount-3m-long-reference-launch.json). No long-result figure while pending; the note embeds the existing3M selection figure. Heading is actual documentation time in America/Chicago; submission was02:52UTC.
 
 <a id="a066"></a>
 
