@@ -8,6 +8,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E089 — Analyze emerging reward-cost juggling before3M milestones](#e089)
 - [E088 — Complete full6M actor-smoothness matrix and paired motion](#e088)
 - [E087 — Complete weak longer-discount6M paired long test](#e087)
 - [E086 — Publish first-million reward and motion-cost traces for all four learners](#e086)
@@ -96,6 +97,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e089"></a>
+
+## E089 — 2026-11-02 00:46:27 -0600 — Analyze emerging reward-cost juggling before3M milestones
+
+Analyzed existing eight-start validation:cost100 .995 seeds reach6.625/33 physical juggles at2M, while .999 seeds reach1.625/9 at1.5M, all below their matched controls.
+
+Published6 frozen summaries/48 raw episodes and source/model/config hashes; budgets differ between discounts and are only compared within discount. Evidence supports continuing the unchanged fixed6M scratch trials toward32-start3M/6M tests. No new runs, variant, restart, implementation change or hardware action. Checked row counts/cohorts/aggregate means and links/anchors/TOCs; all four jobs confirmed live and advancing,7 total user GPUs including unrelated jobs.
+
+[Raw tables, training/motion figures, provenance and reproduction](../notes/scratch/experiments/2026-11-02_06-46_reward-cost-emerging-juggling-validation.md). Related record: [A090](agent_logbook.md#a090). Heading is saved-data analysis/documentation time, not reconstructed run time. Finite development checks do not establish infinite or robot-safe juggling.
 
 <a id="e088"></a>
 
