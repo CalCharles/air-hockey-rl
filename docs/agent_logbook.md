@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [A063 — Freeze regularized candidate and attach CPU-only paired long testing](#a063)
 - [A062 — Publish first complete 3M subset with equal-prefix diagnostics](#a062)
 - [A061 — Publish complete long-reference distribution and late performance clip](#a061)
 - [A060 — Publish complete 3M control metrics with frozen provenance](#a060)
@@ -68,6 +69,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [A003 — Restore original sensing and matched comparison](#a003)
 - [A002 — Clean diagnostics and evaluation](#a002)
 - [A001 — Continuing-task implementation](#a001)
+
+<a id="a063"></a>
+
+## A063 — 2026-11-01 19:51:26 -0600 — Freeze regularized candidate and attach CPU-only paired long testing
+
+Copied the verified3M target into a private frozen bundle and launched32 fresh candidate episodes against the previously tested reference starts.
+
+**Running, no long-test result yet:** CPU-only115892, coefficient .002/gamma .995 seed1 target at3M;32 starts9000000–9000031/100k horizon. This cohort was already used for the retained3.6M reference and is labeled paired, not globally unseen. New output/private model; no baseline trajectories reused as candidate outcomes. Selected on separate700000-start3M tests (155.09375 physical juggles/10690.3125 steps at20k), not on this long test. Different training budgets/seeds limit causal comparison. Simulator/sensing/control/DR and eight6M training budgets unchanged;11 total user GPUs. Related: [E062](experiment_logbook.md#e062), [E061](experiment_logbook.md#e061).
+
+[Detailed protocol, selection figure and reproduction](../notes/scratch/experiments/2026-11-02_01-48_regularized-target-long-test.md); [frozen actor/config/source hashes and exact submitted commands](juggling-smooth-3m-long-reference-launch.json). No new performance figure while the test is pending; existing3M selection context is embedded in the detailed note. Heading records documentation time in America/Chicago; submission was01:48UTC.
 
 <a id="a062"></a>
 

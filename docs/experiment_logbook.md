@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E063 — Launch paired 100k-step test of regularized 3M target](#e063)
 - [E062 — Compare first stronger-penalty 3M milestones and paired physical motion](#e062)
 - [E061 — Complete independent 100k-step retained-target reference](#e061)
 - [E060 — Complete all discount-matched historical 3M controls](#e060)
@@ -68,6 +69,16 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e063"></a>
+
+## E063 — 2026-11-01 19:51:26 -0600 — Launch paired 100k-step test of regularized 3M target
+
+The strongest completed regularized3M target is being evaluated on the retained reference cohort to measure longer-duration behavior and motion.
+
+**Running, no long-test result yet:** CPU-only115892, coefficient .002/gamma .995 seed1 target at3M;32 starts9000000–9000031/100k horizon. This cohort was already used for the retained3.6M reference and is labeled paired, not globally unseen. New output/private model; no baseline trajectories reused as candidate outcomes. Selected on separate700000-start3M tests (155.09375 physical juggles/10690.3125 steps at20k), not on this long test. Different training budgets/seeds limit causal comparison. Simulator/sensing/control/DR and eight6M training budgets unchanged;11 total user GPUs. Related: [E062](experiment_logbook.md#e062), [E061](experiment_logbook.md#e061).
+
+[Detailed protocol, selection figure and reproduction](../notes/scratch/experiments/2026-11-02_01-48_regularized-target-long-test.md); [frozen actor/config/source hashes and exact submitted commands](juggling-smooth-3m-long-reference-launch.json). No new performance figure while the test is pending; existing3M selection context is embedded in the detailed note. Heading records documentation time in America/Chicago; submission was01:48UTC.
 
 <a id="e062"></a>
 
