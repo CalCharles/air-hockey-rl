@@ -1,0 +1,291 @@
+{
+  "generated_utc": "2026-11-02T03:07:52.497996+00:00",
+  "scope": "All8 scratch trials at3M, both roles, plus both roles from historical seed0 controls at gamma .995/.999:20 variants,640 episodes. Full6M training remains active.",
+  "protocol": {
+    "training_steps": 3000000,
+    "episodes": 32,
+    "seed_base": 700000,
+    "horizon": 20000
+  },
+  "initial_observation_check": "All512 paired reset observations match exactly across16 same-discount/same-role comparisons.",
+  "sources": {
+    "runs/td3/juggle_history_baseline_3m_20261102/paired_online_20k_eval/results.json": "e63bad41361e036fc218e89f12edb744990d2119c39f503a7929ef359f2bbc84",
+    "runs/td3/juggle_history_baseline_3m_20261102/paired_target_20k_eval/results.json": "449cbbcc575b94f2785398c5dc46b3e8a9249bf28554b0f3e7beec2d4c1f2348",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed0/paired_3000000_online_20k_eval/results.json": "13e7572f6071f317cb05753857160c26b308007ef98af17a94fdac759102b5f7",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed0/paired_3000000_target_20k_eval/results.json": "39352981e759db39df3726ae0e97b6a1517a5880f647a526fb821e5a3540e608",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed1/paired_3000000_online_20k_eval/results.json": "6aa83cef093596e265d8b99cc23632d96c3e2e5072dc2d4b16cfe519817fe089",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed1/paired_3000000_target_20k_eval/results.json": "cc57bda908131e33bdbdaf981ff74060e6ba91ef5f97aa7701f3db5cebbcf630",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_online_20k_eval/results.json": "aa76e6c09e939887a20964727a283295f985b1754246e136c68466173c386a9c",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/paired_3000000_target_20k_eval/results.json": "9464a6f115d3f60f91a7835ebfa3cd335f205bb49f394659c606cc676a57a565",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed1/paired_3000000_online_20k_eval/results.json": "065663a8817a62a0a72f87688a79d2ed1423a4569026bf0571b314a7651773a3",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed1/paired_3000000_target_20k_eval/results.json": "b4bc445e40ca42c55a575152c0ef2de841278a2b51942f87aba83c8ab9f2c088",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed0/paired_3000000_online_20k_eval/results.json": "03b05d6ffb3e057936e02c9f57e57678357bba0663bb3410490ca74f7a472c54",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed0/paired_3000000_target_20k_eval/results.json": "b0a0f82f514dee5c35a27a833aeb45b448702b8d0d10bc694e6913e116d1f8e9",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed1/paired_3000000_online_20k_eval/results.json": "f96ee645f504094bfd275cc5e1d6be3c52ea95dfed8a22762f6395fc68ca942d",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed1/paired_3000000_target_20k_eval/results.json": "06ee11366fba167672c863cc143dc0c04c5f3722db24f4e0fc3a7bc06c1af0bb",
+    "runs/td3/juggle_history_longdiscount_baseline_3m_20261102/paired_online_20k_eval/results.json": "dd4ec6d36b85b2329b051be37f143baf6c1397f6055021cfe331696076c6ad40",
+    "runs/td3/juggle_history_longdiscount_baseline_3m_20261102/paired_target_20k_eval/results.json": "2358a1f0aa79a047898331f4df172dfc0494af805674345fad866917aa2c65c0",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_g0999_20261101_seed0/paired_3000000_online_20k_eval/results.json": "42fdd39e0cd2a0735b6125b286a07bccda89247feb4fce1428955a6e6a1421d9",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_g0999_20261101_seed0/paired_3000000_target_20k_eval/results.json": "d15a0b0869d416c54a8468a2f05e2a5f8f92b1d4a65f208faefe5c4c7f800055",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_g0999_20261101_seed1/paired_3000000_online_20k_eval/results.json": "495de8f093312d175482eeaba4a99447aff391b30bb47a622f42121038e9022a",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_g0999_20261101_seed1/paired_3000000_target_20k_eval/results.json": "a3311c8b4af4a0ae3c8e9b17242ace8dcdc2dc9eba847f83de1be305fbe8e2e0"
+  },
+  "frozen_weights": [
+    {
+      "run": "noisy_history_smooth_0005_20261101_seed0",
+      "weights": "online",
+      "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed0/frozen_3000000_online",
+      "files_sha256": {
+        "model.pth": "bd774598718a9347ec6569dabf43c859b304a9056e503f055341da1d4bedb840",
+        "args.yaml": "94f7d943f33c8e69ae27ee707a8bb17cfad225d9c2154c5a1e6bda489de53720",
+        "config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    },
+    {
+      "run": "noisy_history_smooth_0005_20261101_seed0",
+      "weights": "target",
+      "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed0/frozen_3000000_target",
+      "files_sha256": {
+        "model.pth": "fea3aef89bcf147a064461d1e439b599c1490daa84b7311cf96758c975de5e0f",
+        "args.yaml": "94f7d943f33c8e69ae27ee707a8bb17cfad225d9c2154c5a1e6bda489de53720",
+        "config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    },
+    {
+      "run": "noisy_history_smooth_0005_20261101_seed1",
+      "weights": "online",
+      "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed1/frozen_3000000_online",
+      "files_sha256": {
+        "model.pth": "dd3f5e47b85b06bab815f13e71ec73765263fcb7e0d6eb4b1cf79656763f4199",
+        "args.yaml": "88f0710cba2ded75f9183e5a9220bb640c10c6791a3b2be96fc1da66c2d4b22f",
+        "config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    },
+    {
+      "run": "noisy_history_smooth_0005_20261101_seed1",
+      "weights": "target",
+      "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_20261101_seed1/frozen_3000000_target",
+      "files_sha256": {
+        "model.pth": "dec7c93f95e16d5128df89fbf70663825a9e581ec61aa15c31de85f38ceeef5d",
+        "args.yaml": "88f0710cba2ded75f9183e5a9220bb640c10c6791a3b2be96fc1da66c2d4b22f",
+        "config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    },
+    {
+      "run": "noisy_history_smooth_002_20261101_seed0",
+      "weights": "online",
+      "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/frozen_3000000_online",
+      "files_sha256": {
+        "model.pth": "aec7f868f2b1cbb8a779e2295b4d0a6ccd2e97520dff528c73981e44ab9ae1ed",
+        "args.yaml": "b25f23de634de5aec5b8f363476f23ab4be6f1a23f2b5ef637c73d2249dd3333",
+        "config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    },
+    {
+      "run": "noisy_history_smooth_002_20261101_seed0",
+      "weights": "target",
+      "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed0/frozen_3000000_target",
+      "files_sha256": {
+        "model.pth": "933532180ffce198a9bcf1e2efec0d4d7cc818e1b75ac16e4f69e6778cea787c",
+        "args.yaml": "b25f23de634de5aec5b8f363476f23ab4be6f1a23f2b5ef637c73d2249dd3333",
+        "config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    },
+    {
+      "run": "noisy_history_smooth_002_20261101_seed1",
+      "weights": "online",
+      "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed1/frozen_3000000_online",
+      "files_sha256": {
+        "model.pth": "32ccc327c21beaa9c75c11d7acb52ca59942a509701ba7147744a775e64b426d",
+        "args.yaml": "96439e0c5fe40027554052df59cd0f4cc7b9985adc64e74b46424ba5dd3724a4",
+        "config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    },
+    {
+      "run": "noisy_history_smooth_002_20261101_seed1",
+      "weights": "target",
+      "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_002_20261101_seed1/frozen_3000000_target",
+      "files_sha256": {
+        "model.pth": "0a8cb0d061acc1839c8905bc7fb36f61cd879388237db4b1c42691a1d0774601",
+        "args.yaml": "96439e0c5fe40027554052df59cd0f4cc7b9985adc64e74b46424ba5dd3724a4",
+        "config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    },
+    {
+      "run": "noisy_history_smooth_008_20261101_seed0",
+      "weights": "online",
+      "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed0/frozen_3000000_online",
+      "files_sha256": {
+        "model.pth": "47d9fb6c52ca0206af422e49ab8f733f90c33000b3712ff4713a59151b5c2d5c",
+        "args.yaml": "b657b3852e770c762a86a2b90f46bce3b44dd7566e066da149cf33ed4f758d7f",
+        "config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    },
+    {
+      "run": "noisy_history_smooth_008_20261101_seed0",
+      "weights": "target",
+      "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed0/frozen_3000000_target",
+      "files_sha256": {
+        "model.pth": "f37cfa9a3df9d5e085bd67a50d3dbb13ce1c946e816feaadb113eb63cb807a50",
+        "args.yaml": "b657b3852e770c762a86a2b90f46bce3b44dd7566e066da149cf33ed4f758d7f",
+        "config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    },
+    {
+      "run": "noisy_history_smooth_008_20261101_seed1",
+      "weights": "online",
+      "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed1/frozen_3000000_online",
+      "files_sha256": {
+        "model.pth": "dbde2e557f15eee94ad833d84eb35ad0e607dc989c8cf8cee61b0373e9571d0b",
+        "args.yaml": "27c90c8dcc1b542edaf28c7f3583b6e5e403e72b30d2fb888c285f404cbf6d49",
+        "config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    },
+    {
+      "run": "noisy_history_smooth_008_20261101_seed1",
+      "weights": "target",
+      "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_008_20261101_seed1/frozen_3000000_target",
+      "files_sha256": {
+        "model.pth": "3bde00bf8b328859d2c9fe6f36b43efdd4d6764cca96c829be4f3b4712e793fd",
+        "args.yaml": "27c90c8dcc1b542edaf28c7f3583b6e5e403e72b30d2fb888c285f404cbf6d49",
+        "config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    },
+    {
+      "run": "noisy_history_smooth_0005_g0999_20261101_seed0",
+      "weights": "online",
+      "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_g0999_20261101_seed0/frozen_3000000_online",
+      "files_sha256": {
+        "model.pth": "799a9262185d56ebaadd4af8ef1639e6156d64f0f348de484e04d4885e86fa89",
+        "args.yaml": "3769e462470332da63549ae36948cc367fde9cac06c747b022cc47b7cae59648",
+        "config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    },
+    {
+      "run": "noisy_history_smooth_0005_g0999_20261101_seed0",
+      "weights": "target",
+      "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_g0999_20261101_seed0/frozen_3000000_target",
+      "files_sha256": {
+        "model.pth": "b520c765d37bcbaeddfae74bfafa902c41b14dd563f360d8ea081982d50e27ac",
+        "args.yaml": "3769e462470332da63549ae36948cc367fde9cac06c747b022cc47b7cae59648",
+        "config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    },
+    {
+      "run": "noisy_history_smooth_0005_g0999_20261101_seed1",
+      "weights": "online",
+      "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_g0999_20261101_seed1/frozen_3000000_online",
+      "files_sha256": {
+        "model.pth": "51db20e89cf5b92cc1d83eb8f70307ee74fa73fe31de0448df18eb6daa3fb946",
+        "args.yaml": "728a618ba4735f4be3ec4cf9d312d0f631ff35834c6fbee85abf3acfa95b03ac",
+        "config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    },
+    {
+      "run": "noisy_history_smooth_0005_g0999_20261101_seed1",
+      "weights": "target",
+      "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_g0999_20261101_seed1/frozen_3000000_target",
+      "files_sha256": {
+        "model.pth": "727a455df07e9129250d82b4872d85170ea3f24b7c262d5a7ac5a32aff2f0646",
+        "args.yaml": "728a618ba4735f4be3ec4cf9d312d0f631ff35834c6fbee85abf3acfa95b03ac",
+        "config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    },
+    {
+      "run": "noisy_history_20261029_seed0",
+      "weights": "online",
+      "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/frozen_online",
+      "files_sha256": {
+        "model.pth": "1e0dda69f8148b8178d0c575a0dca54e36357bbcf2809b1b98857e9f26357d20",
+        "args.yaml": "120682ff730d97730d1ef6a590cfa2c48eef51df2bacb1d98231d2179d194cbc",
+        "config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    },
+    {
+      "run": "noisy_history_20261029_seed0",
+      "weights": "target",
+      "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_baseline_3m_20261102/frozen_target",
+      "files_sha256": {
+        "model.pth": "f938e3a9df175d78c18ac0553210aa9bde411f0041d62bfe9291bf2d56ed6fb4",
+        "args.yaml": "120682ff730d97730d1ef6a590cfa2c48eef51df2bacb1d98231d2179d194cbc",
+        "config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    },
+    {
+      "run": "noisy_history_long_discount_20261029_seed0",
+      "weights": "online",
+      "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_longdiscount_baseline_3m_20261102/frozen_online",
+      "files_sha256": {
+        "model.pth": "250ddaaa4b7c694296f0f9d70df1d402628b33b061bd6f46d6f4c0f933443d29",
+        "args.yaml": "feaa907c394b623aa191adc9b91877fb975bcdaf1406bddba76b9b0edc20ef86",
+        "config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    },
+    {
+      "run": "noisy_history_long_discount_20261029_seed0",
+      "weights": "target",
+      "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_history_longdiscount_baseline_3m_20261102/frozen_target",
+      "files_sha256": {
+        "model.pth": "dc4cf04d09400561d058f1cda186bd6676c0d160e0d79a6d88d3a933bea1bc84",
+        "args.yaml": "feaa907c394b623aa191adc9b91877fb975bcdaf1406bddba76b9b0edc20ef86",
+        "config.yaml": "8f6f571e43e6113e425e399fc8712c1b5bf3d1a22f48a8afbb178f82604b30fa",
+        "rma_meta.json": "2fde0c77919e91e15cfd80d4713f408c224ab748829de930521600636f53e0ec"
+      }
+    }
+  ],
+  "paired_analysis": {
+    "docs/assets/juggling/weak-original-3m-paired-motion-seed0-online-20261102.json": "a04e21ba00382d8ba88bd6e79a8c906992dc41e1b9123f5e858bbf095a8b05dd",
+    "docs/assets/juggling/weak-original-3m-paired-motion-seed0-target-20261102.json": "8d8d1b32b4880135c12590b56ce1cc14d53beca49c1c8fd4dd2545cebc881aa6",
+    "docs/assets/juggling/weak-original-3m-paired-motion-seed1-online-20261102.json": "13ad4c3a00bc61f218df9d765ec96e4b4bf3f33c290b7cbe9d66641f120831ad",
+    "docs/assets/juggling/weak-original-3m-paired-motion-seed1-target-20261102.json": "869518fc463de5747544598440c9ad82377f16e5083e8518078fe0d025a42a00",
+    "docs/assets/juggling/first-3m-paired-motion-002-seed0-online-20261102.json": "e24d8308fa29d3c7b068cd8007e392f3dafc1dd13052f59995adfba31115e911",
+    "docs/assets/juggling/first-3m-paired-motion-002-seed0-target-20261102.json": "8573cf1a15c1de628be261a7f7249193f37354a03c0965a45a6b6ac6dc3e13d1",
+    "docs/assets/juggling/first-3m-paired-motion-002-seed1-online-20261102.json": "a15c88056f1dd09ab42c2b988a9e21c90bedd523fc18c778ea295166bf89baa5",
+    "docs/assets/juggling/first-3m-paired-motion-002-seed1-target-20261102.json": "3eb7e81261c25703c5c33abda4292e6881c3b753f3cfc74f0fb3dad3545f2ff2",
+    "docs/assets/juggling/first-3m-paired-motion-008-seed0-online-20261102.json": "028c03498cb4c39afc9266229cf29ac1fb4fbe19736ada6778bab4c798a73dd3",
+    "docs/assets/juggling/first-3m-paired-motion-008-seed0-target-20261102.json": "6476b84455e7e85895e696ac4ce0434871fcaa126105e32b5ca6f6f6a6c271bb",
+    "docs/assets/juggling/first-3m-paired-motion-008-seed1-online-20261102.json": "2fec974ab2427b9d687bd1ed64f47a0384878e487d5fb71f7779ae31b11d62d3",
+    "docs/assets/juggling/first-3m-paired-motion-008-seed1-target-20261102.json": "b914a1aa0779cdcddc08c5950fd8cdd2bdd24a5819bf0de40dd0d3d864833e49",
+    "docs/assets/juggling/longdiscount-3m-paired-motion-seed0-online-20261102.json": "11b05a16c7f478d8a91c733e1ba105cc01542bdc5e25b06be2594cc6c69b3ce7",
+    "docs/assets/juggling/longdiscount-3m-paired-motion-seed0-target-20261102.json": "c7ee46eac1dcb574235bbc93f7491487309d2477f2b0cd61852d38f4864cfad6",
+    "docs/assets/juggling/longdiscount-3m-paired-motion-seed1-online-20261102.json": "ade419a28d762ae9723d6a01cf10b3c9fe7cd7d66d4203c57674669f0868d858",
+    "docs/assets/juggling/longdiscount-3m-paired-motion-seed1-target-20261102.json": "9fadc6f960e13b9175b5b32ece8755d8ad43e19fe27c44e3ad4b9535797cc623"
+  },
+  "launch_manifests": [
+    "docs/juggling-smooth-sweep-launch.json",
+    "docs/juggling-smooth-longdiscount-launch.json",
+    "docs/juggling-baseline-3m-comparison-launch.json",
+    "docs/juggling-longdiscount-baseline-3m-launch.json"
+  ],
+  "published_sha256": {
+    "docs/assets/juggling/smooth-full-3m-summary-20261102.csv": "d3e2aba62f3d6b3a6d3d51f1c6d8fea67f09e9abcf57a8f94f9a8558e7a564a3",
+    "docs/assets/juggling/smooth-full-3m-episodes-20261102.csv": "767292471dd7b64be2c64603cb9c704fe853e95d74942a5e83757b2065e8fc7e",
+    "docs/assets/juggling/smooth-full-3m-paired-motion-20261102.csv": "87f05128a044704d377322d01e1473b5a16a37b593b37ef7d23cc3a9c41dad3b",
+    "docs/assets/juggling/smooth-full-3m-comparison-20261102.png": "cbbc3d6760cbaa8ce190e7bedd0f423f2a4a27e719995271e2345fc00b0dd994"
+  },
+  "generator_source_sha256": {
+    "scripts/analysis/juggle_smooth_sweep.py": "199c46b9e47c2d26156adf0a7ca7100087b453e366601b294603c0866ec4d4b0",
+    "scripts/analysis/plot_juggle_fixed_comparison.py": "bc89b27de48225c35179389bee83b4b74b3f04d12c077e229ac0d7ad3486ffd6",
+    "scripts/analysis/juggle_paired_motion.py": "0bce341c7ed48eee8d58ec142db8dd1234adc18bc214e7de1fdf100befc3f501",
+    "scripts/analysis/juggle_motion_metrics.py": "3c36447afa2dc0f99b72c06c134411d853c89d06004fb4fdc5296e5006ef7f67"
+  }
+}

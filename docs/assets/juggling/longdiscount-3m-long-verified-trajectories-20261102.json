@@ -1,0 +1,1390 @@
+{
+  "generated_utc": "2026-11-02T03:25:13.207649+00:00",
+  "job_id": "115914",
+  "job_state": "COMPLETED",
+  "exit_code": "0:0",
+  "model_sha256": "727a455df07e9129250d82b4872d85170ea3f24b7c262d5a7ac5a32aff2f0646",
+  "seed_base": 9000000,
+  "primary_source": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json",
+  "primary_sha256": "fb4b2d9a97c24c97f54605897a2e25bef5ee3838bddfbe6da8075f76ee5c4981",
+  "verification_source_sha256": "b0fdd04aacd40da0a501032adf55e9d0eca8e98fa1dc051adb5f12d0f0c15783",
+  "episodes": [
+    {
+      "seed": 9000000,
+      "steps": 2520,
+      "physical_juggles": 40,
+      "sensed_juggles": 33,
+      "reward": 1725.0,
+      "action_delta_rms": 0.18999691189532644,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000000.npz",
+      "trajectory_sha256": "b4f19b5df5c73aeaceab7373068417e0cdd689eaea7e91386698dd5b7733d797",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 2519,
+          "rms": 0.727736724641882,
+          "p50": 0.0,
+          "p95": 1.7398826440789257,
+          "p99": 2.192662170757055,
+          "maximum": 2.509575429430166
+        },
+        "acceleration_m_s2": {
+          "samples": 2518,
+          "rms": 7.108907360290387,
+          "p50": 0.0,
+          "p95": 17.388466748317597,
+          "p99": 24.757585959106798,
+          "maximum": 37.639664068559114
+        },
+        "jerk_m_s3": {
+          "samples": 2517,
+          "rms": 119.52048299543391,
+          "p50": 0.0,
+          "p95": 293.595650158663,
+          "p99": 434.49292736792677,
+          "maximum": 742.7395064514803
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000001,
+      "steps": 2347,
+      "physical_juggles": 31,
+      "sensed_juggles": 29,
+      "reward": 1766.0,
+      "action_delta_rms": 0.15590957379681253,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000001.npz",
+      "trajectory_sha256": "38b8521c955f6f22173c988dd094a33872a9ee35f0f3c62c069f310324960c97",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 2346,
+          "rms": 0.5933596799714914,
+          "p50": 0.0,
+          "p95": 1.3662552871404625,
+          "p99": 1.7837237941623572,
+          "maximum": 2.0967502470804122
+        },
+        "acceleration_m_s2": {
+          "samples": 2345,
+          "rms": 4.743656376063889,
+          "p50": 0.0,
+          "p95": 11.537707623574207,
+          "p99": 17.47232116376867,
+          "maximum": 28.632016839461713
+        },
+        "jerk_m_s3": {
+          "samples": 2344,
+          "rms": 71.61590227271633,
+          "p50": 0.0,
+          "p95": 177.45443207159093,
+          "p99": 276.2101224438553,
+          "maximum": 421.466827392578
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000002,
+      "steps": 3085,
+      "physical_juggles": 44,
+      "sensed_juggles": 40,
+      "reward": 2295.0,
+      "action_delta_rms": 0.20359183769203895,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000002.npz",
+      "trajectory_sha256": "94de6d0205430e74a4ad38141e336db7ae1023db5ea64b3d63c2d417e7656d35",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 3084,
+          "rms": 0.610253617460799,
+          "p50": 0.0,
+          "p95": 1.4150628436214066,
+          "p99": 1.8606211767263108,
+          "maximum": 2.0923434754485144
+        },
+        "acceleration_m_s2": {
+          "samples": 3083,
+          "rms": 5.343401757589669,
+          "p50": 0.0,
+          "p95": 12.857308163287446,
+          "p99": 19.414271457272957,
+          "maximum": 30.46605563310541
+        },
+        "jerk_m_s3": {
+          "samples": 3082,
+          "rms": 88.53440582326112,
+          "p50": 0.0,
+          "p95": 217.13103280510757,
+          "p99": 335.09324529407445,
+          "maximum": 623.733485929949
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000003,
+      "steps": 1663,
+      "physical_juggles": 23,
+      "sensed_juggles": 20,
+      "reward": 1202.0,
+      "action_delta_rms": 0.1717197831038043,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000003.npz",
+      "trajectory_sha256": "a463a8af7ca162119886665d6a78d8d418bc53dc957eb0762605588efc6ccaa1",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 1662,
+          "rms": 0.6853003351916522,
+          "p50": 0.0,
+          "p95": 1.6225835325294122,
+          "p99": 2.1644003970404286,
+          "maximum": 2.3946158458255122
+        },
+        "acceleration_m_s2": {
+          "samples": 1661,
+          "rms": 6.783174637509746,
+          "p50": 0.0,
+          "p95": 17.209382892626767,
+          "p99": 23.40087068682726,
+          "maximum": 36.0141684079559
+        },
+        "jerk_m_s3": {
+          "samples": 1660,
+          "rms": 113.59115288052573,
+          "p50": 0.0,
+          "p95": 274.67448698475835,
+          "p99": 418.00646948586075,
+          "maximum": 618.8744375159853
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000004,
+      "steps": 7020,
+      "physical_juggles": 104,
+      "sensed_juggles": 92,
+      "reward": 5327.0,
+      "action_delta_rms": 0.1826200412778123,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000004.npz",
+      "trajectory_sha256": "ee2ea167289057feb9cfe9e3f4afdc55d92ac393cc992550ced867c2a2c400a8",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 7019,
+          "rms": 0.6153356618119383,
+          "p50": 0.0,
+          "p95": 1.4491903903931533,
+          "p99": 1.9116309866860843,
+          "maximum": 2.2065190550528
+        },
+        "acceleration_m_s2": {
+          "samples": 7018,
+          "rms": 5.789358985448974,
+          "p50": 0.0,
+          "p95": 14.107271003674189,
+          "p99": 22.341905760059774,
+          "maximum": 34.00104291124202
+        },
+        "jerk_m_s3": {
+          "samples": 7017,
+          "rms": 97.49080445635235,
+          "p50": 0.0,
+          "p95": 243.9142096617663,
+          "p99": 383.54271126867474,
+          "maximum": 663.598666967174
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000005,
+      "steps": 695,
+      "physical_juggles": 12,
+      "sensed_juggles": 8,
+      "reward": 446.0,
+      "action_delta_rms": 0.22913314879605107,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000005.npz",
+      "trajectory_sha256": "2083f529ad88a394703498ef3db3473aef292fbc4df9133ed2eca4645c8e2f35",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 694,
+          "rms": 0.7736249394236966,
+          "p50": 0.0,
+          "p95": 1.8402347574241644,
+          "p99": 2.24537316927715,
+          "maximum": 2.4155829175399983
+        },
+        "acceleration_m_s2": {
+          "samples": 693,
+          "rms": 7.673706742901133,
+          "p50": 0.0,
+          "p95": 17.822793149911508,
+          "p99": 29.414516794397205,
+          "maximum": 37.728950777306935
+        },
+        "jerk_m_s3": {
+          "samples": 692,
+          "rms": 133.80959090127172,
+          "p50": 0.0,
+          "p95": 311.48662641723837,
+          "p99": 482.50323037717686,
+          "maximum": 673.2499712857223
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000006,
+      "steps": 1945,
+      "physical_juggles": 27,
+      "sensed_juggles": 23,
+      "reward": 1349.0,
+      "action_delta_rms": 0.18090892533402284,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000006.npz",
+      "trajectory_sha256": "367b097d7bb60cbc251088b2e2332e4f6798d5a106815b4bb95297cab6fc2974",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 1944,
+          "rms": 0.7680032841118469,
+          "p50": 0.0,
+          "p95": 1.7977679141903868,
+          "p99": 2.2854199420964156,
+          "maximum": 2.571852517070156
+        },
+        "acceleration_m_s2": {
+          "samples": 1943,
+          "rms": 7.80038730277614,
+          "p50": 0.0,
+          "p95": 19.758326229184934,
+          "p99": 26.438452799110795,
+          "maximum": 42.458843409772065
+        },
+        "jerk_m_s3": {
+          "samples": 1942,
+          "rms": 142.4136381568645,
+          "p50": 0.0,
+          "p95": 343.8782627189687,
+          "p99": 504.41914569122105,
+          "maximum": 816.3242941433763
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000007,
+      "steps": 3574,
+      "physical_juggles": 56,
+      "sensed_juggles": 44,
+      "reward": 2713.0,
+      "action_delta_rms": 0.1904910735810466,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000007.npz",
+      "trajectory_sha256": "1c96e774ea064a01e665ac330ee4a46a928c7d76cc830e9df7dd9775a8a87174",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 3573,
+          "rms": 0.680810975133297,
+          "p50": 0.0,
+          "p95": 1.5601220018875974,
+          "p99": 1.951384060007917,
+          "maximum": 2.288109337612747
+        },
+        "acceleration_m_s2": {
+          "samples": 3572,
+          "rms": 6.36969134334244,
+          "p50": 0.0,
+          "p95": 15.455602235838512,
+          "p99": 24.385471378729672,
+          "maximum": 32.710463490659
+        },
+        "jerk_m_s3": {
+          "samples": 3571,
+          "rms": 108.75417281289737,
+          "p50": 0.0,
+          "p95": 268.63811412821076,
+          "p99": 418.9121742344431,
+          "maximum": 743.0491764840557
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_hit_bottom"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000008,
+      "steps": 51,
+      "physical_juggles": 0,
+      "sensed_juggles": 0,
+      "reward": 20.0,
+      "action_delta_rms": 0.29998199874044357,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000008.npz",
+      "trajectory_sha256": "013bdedc3b88f75b046f1f32b43711836acd3297db02b8363c5ea985ef111d97",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 50,
+          "rms": 0.8098431408298626,
+          "p50": 0.22312578556295087,
+          "p95": 1.8134925618580562,
+          "p99": 1.9750386584796469,
+          "maximum": 2.0590393339517514
+        },
+        "acceleration_m_s2": {
+          "samples": 49,
+          "rms": 6.388540893816612,
+          "p50": 2.1178782215968446,
+          "p95": 11.786683824095855,
+          "p99": 17.162518925204694,
+          "maximum": 20.494317777522575
+        },
+        "jerk_m_s3": {
+          "samples": 48,
+          "rms": 99.06235993548655,
+          "p50": 52.006602287292466,
+          "p95": 221.28744815553316,
+          "p99": 283.89650702271325,
+          "maximum": 313.1961213141554
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000009,
+      "steps": 5593,
+      "physical_juggles": 82,
+      "sensed_juggles": 65,
+      "reward": 4095.0,
+      "action_delta_rms": 0.19336472391202697,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000009.npz",
+      "trajectory_sha256": "df2a066efe94e2a2bcf6d594fcc96a42c3723b9c4757c45ba6191a599fa5cde8",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 5592,
+          "rms": 0.6942801048786273,
+          "p50": 0.0,
+          "p95": 1.6211863878791917,
+          "p99": 2.1058650370435767,
+          "maximum": 2.4012419023493545
+        },
+        "acceleration_m_s2": {
+          "samples": 5591,
+          "rms": 6.687231853968115,
+          "p50": 0.0,
+          "p95": 16.091137117492416,
+          "p99": 24.021972328854677,
+          "maximum": 37.80216863490954
+        },
+        "jerk_m_s3": {
+          "samples": 5590,
+          "rms": 113.37018411458091,
+          "p50": 0.0,
+          "p95": 275.5571973053532,
+          "p99": 420.3889412044476,
+          "maximum": 711.8546017933379
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000010,
+      "steps": 5355,
+      "physical_juggles": 80,
+      "sensed_juggles": 77,
+      "reward": 3520.0,
+      "action_delta_rms": 0.20876653888424485,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000010.npz",
+      "trajectory_sha256": "df9a3e1b5809831c2a7e4ee667000a283c2968efbcfea34d22ccb94078327078",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 5354,
+          "rms": 0.8304548472745176,
+          "p50": 0.0,
+          "p95": 1.9334101950280242,
+          "p99": 2.3775862826176946,
+          "maximum": 2.6911838913540707
+        },
+        "acceleration_m_s2": {
+          "samples": 5353,
+          "rms": 8.5602925681621,
+          "p50": 0.0,
+          "p95": 20.754111662082497,
+          "p99": 29.565880318333726,
+          "maximum": 43.64011738290158
+        },
+        "jerk_m_s3": {
+          "samples": 5352,
+          "rms": 155.94758280381416,
+          "p50": 0.0,
+          "p95": 364.97596341500065,
+          "p99": 555.6304709651689,
+          "maximum": 1194.3638366370758
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000011,
+      "steps": 1897,
+      "physical_juggles": 31,
+      "sensed_juggles": 26,
+      "reward": 1441.0,
+      "action_delta_rms": 0.21943773547479223,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000011.npz",
+      "trajectory_sha256": "a80ec8e82f6c4e2256db33e8e5a2c15fc3489117042d7648595c316955681127",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 1896,
+          "rms": 0.5484658421352795,
+          "p50": 0.0,
+          "p95": 1.2540085693341156,
+          "p99": 1.6870783982961088,
+          "maximum": 2.1362053406540373
+        },
+        "acceleration_m_s2": {
+          "samples": 1895,
+          "rms": 5.61121194493294,
+          "p50": 0.0,
+          "p95": 13.837188481533664,
+          "p99": 22.978516293843047,
+          "maximum": 30.753162737718124
+        },
+        "jerk_m_s3": {
+          "samples": 1894,
+          "rms": 105.37065765719078,
+          "p50": 0.0,
+          "p95": 269.45282733857135,
+          "p99": 410.2464989994882,
+          "maximum": 746.9832587849588
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000012,
+      "steps": 19580,
+      "physical_juggles": 266,
+      "sensed_juggles": 219,
+      "reward": 14812.0,
+      "action_delta_rms": 0.17208416019669776,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000012.npz",
+      "trajectory_sha256": "854150ee641b908ae54bb39d8524029c7ae97239a0fe1df631caa5637cfc8baa",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 19579,
+          "rms": 0.5987811622420209,
+          "p50": 0.0,
+          "p95": 1.4125094707067827,
+          "p99": 1.9223961501119835,
+          "maximum": 2.245390498214495
+        },
+        "acceleration_m_s2": {
+          "samples": 19578,
+          "rms": 5.49540076638336,
+          "p50": 0.0,
+          "p95": 13.396864687350261,
+          "p99": 20.947839483853464,
+          "maximum": 33.456093771885975
+        },
+        "jerk_m_s3": {
+          "samples": 19577,
+          "rms": 90.96650778307904,
+          "p50": 0.0,
+          "p95": 226.41582845609386,
+          "p99": 356.9300955975679,
+          "maximum": 739.1934340421833
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000013,
+      "steps": 14248,
+      "physical_juggles": 197,
+      "sensed_juggles": 177,
+      "reward": 10841.0,
+      "action_delta_rms": 0.1839438098629948,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000013.npz",
+      "trajectory_sha256": "ca5f135bf367e898a9d1a20eccf52b2c866c8b9e9314f5d51d23ff3542204a38",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 14247,
+          "rms": 0.5855273964934652,
+          "p50": 0.0,
+          "p95": 1.3734226351960133,
+          "p99": 1.8049970935296529,
+          "maximum": 2.164282676963198
+        },
+        "acceleration_m_s2": {
+          "samples": 14246,
+          "rms": 5.466337016061695,
+          "p50": 0.0,
+          "p95": 13.588259685481951,
+          "p99": 21.10616122413646,
+          "maximum": 30.246852505946872
+        },
+        "jerk_m_s3": {
+          "samples": 14245,
+          "rms": 92.02635074234048,
+          "p50": 0.0,
+          "p95": 235.00723421424811,
+          "p99": 361.9367398700348,
+          "maximum": 610.5308350144612
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000014,
+      "steps": 915,
+      "physical_juggles": 13,
+      "sensed_juggles": 13,
+      "reward": 613.0,
+      "action_delta_rms": 0.2027417567640587,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000014.npz",
+      "trajectory_sha256": "2bf96433c89e21e749a6f3d517520b28f88d4d2e4070067aad06aa9e17127800",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 914,
+          "rms": 0.8058654271197786,
+          "p50": 0.0,
+          "p95": 1.8616279077808966,
+          "p99": 2.4029876776596497,
+          "maximum": 2.709065355672842
+        },
+        "acceleration_m_s2": {
+          "samples": 913,
+          "rms": 8.288749965802138,
+          "p50": 0.0,
+          "p95": 20.09872783230722,
+          "p99": 27.616065027318204,
+          "maximum": 38.616825171650966
+        },
+        "jerk_m_s3": {
+          "samples": 912,
+          "rms": 152.3147023858194,
+          "p50": 0.0,
+          "p95": 352.01159600226333,
+          "p99": 516.6326962893512,
+          "maximum": 979.4250089463247
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000015,
+      "steps": 76155,
+      "physical_juggles": 1040,
+      "sensed_juggles": 882,
+      "reward": 56752.0,
+      "action_delta_rms": 0.15955799169039014,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000015.npz",
+      "trajectory_sha256": "97c5a1f6b96950f9bd5ff41e77a3142774374c48d9e0aea124cb1fb220631fee",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 76154,
+          "rms": 0.5856567928023982,
+          "p50": 0.0,
+          "p95": 1.3536942775217828,
+          "p99": 1.8172307008674784,
+          "maximum": 2.2219884853346197
+        },
+        "acceleration_m_s2": {
+          "samples": 76153,
+          "rms": 4.989124080245814,
+          "p50": 0.0,
+          "p95": 12.160146091174813,
+          "p99": 18.641785804239277,
+          "maximum": 32.180452543905034
+        },
+        "jerk_m_s3": {
+          "samples": 76152,
+          "rms": 79.12332576982475,
+          "p50": 0.0,
+          "p95": 192.87459806580506,
+          "p99": 311.23719014901474,
+          "maximum": 683.0905478566584
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000016,
+      "steps": 425,
+      "physical_juggles": 4,
+      "sensed_juggles": 2,
+      "reward": 250.0,
+      "action_delta_rms": 0.2667014654051768,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000016.npz",
+      "trajectory_sha256": "49f70ec27c6aee3c82cc9d3281d92bfb199e9c8fa10817424e11101213c2af4d",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 424,
+          "rms": 0.9239942153952426,
+          "p50": 0.0,
+          "p95": 2.085815044207468,
+          "p99": 2.5039128630947243,
+          "maximum": 2.7128511622436875
+        },
+        "acceleration_m_s2": {
+          "samples": 423,
+          "rms": 9.896367387472512,
+          "p50": 0.0,
+          "p95": 23.809301130439678,
+          "p99": 30.19442479410373,
+          "maximum": 44.72567663819643
+        },
+        "jerk_m_s3": {
+          "samples": 422,
+          "rms": 194.20554317201191,
+          "p50": 0.0,
+          "p95": 454.8751125704812,
+          "p99": 693.2370668364156,
+          "maximum": 865.229579912826
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000017,
+      "steps": 17976,
+      "physical_juggles": 254,
+      "sensed_juggles": 219,
+      "reward": 13581.0,
+      "action_delta_rms": 0.17355118798373143,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000017.npz",
+      "trajectory_sha256": "0d2964fd31a07267a8974b57d97daa7019baa451a3029d025b8e4ba2b9dba601",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 17975,
+          "rms": 0.6147007720469944,
+          "p50": 0.0,
+          "p95": 1.4383016455352564,
+          "p99": 1.8867850087743196,
+          "maximum": 2.240748657041178
+        },
+        "acceleration_m_s2": {
+          "samples": 17974,
+          "rms": 5.675132114871806,
+          "p50": 0.0,
+          "p95": 13.971160413260368,
+          "p99": 21.517607446069217,
+          "maximum": 34.267389541677005
+        },
+        "jerk_m_s3": {
+          "samples": 17973,
+          "rms": 92.32008646139302,
+          "p50": 0.0,
+          "p95": 232.02251764915465,
+          "p99": 359.3819133461478,
+          "maximum": 749.0271981014865
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000018,
+      "steps": 1377,
+      "physical_juggles": 20,
+      "sensed_juggles": 18,
+      "reward": 934.0,
+      "action_delta_rms": 0.19128291483082,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000018.npz",
+      "trajectory_sha256": "8248bf4915b00bb2b93baa4cafa0a0a47a65db16782f34e52f1aae1be88e15bb",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 1376,
+          "rms": 0.8488224775611389,
+          "p50": 0.0,
+          "p95": 1.907665252422501,
+          "p99": 2.3712353293525967,
+          "maximum": 2.7976108154623103
+        },
+        "acceleration_m_s2": {
+          "samples": 1375,
+          "rms": 8.140797631406372,
+          "p50": 0.0,
+          "p95": 20.281434538428655,
+          "p99": 26.960181177383816,
+          "maximum": 38.64651308383226
+        },
+        "jerk_m_s3": {
+          "samples": 1374,
+          "rms": 145.61921469946535,
+          "p50": 0.0,
+          "p95": 334.4588178192553,
+          "p99": 508.6114721527026,
+          "maximum": 665.2030944824218
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000019,
+      "steps": 44964,
+      "physical_juggles": 608,
+      "sensed_juggles": 522,
+      "reward": 33911.0,
+      "action_delta_rms": 0.16148486522758862,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000019.npz",
+      "trajectory_sha256": "df74b3a9ca07984ca93feda8d368fa941abd7116edf7c74ad564410486257c3f",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 44963,
+          "rms": 0.5721957303286557,
+          "p50": 0.0,
+          "p95": 1.323257094019687,
+          "p99": 1.76143646127021,
+          "maximum": 2.1789204177956987
+        },
+        "acceleration_m_s2": {
+          "samples": 44962,
+          "rms": 4.922148816838127,
+          "p50": 0.0,
+          "p95": 11.963828830392442,
+          "p99": 18.624143518190344,
+          "maximum": 31.9912293680899
+        },
+        "jerk_m_s3": {
+          "samples": 44961,
+          "rms": 78.89991946696374,
+          "p50": 0.0,
+          "p95": 193.62115859985346,
+          "p99": 310.7797151808232,
+          "maximum": 697.24959136056
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000020,
+      "steps": 12590,
+      "physical_juggles": 177,
+      "sensed_juggles": 159,
+      "reward": 9146.0,
+      "action_delta_rms": 0.17470180189101286,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000020.npz",
+      "trajectory_sha256": "d0d3186d4e2cdec8d35ccdd8c6b2dd2a65c08d41c49ddbd04ead5afb0561db7f",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 12589,
+          "rms": 0.6740927618294383,
+          "p50": 0.0,
+          "p95": 1.6013077536112192,
+          "p99": 2.10523427063448,
+          "maximum": 2.436020515263243
+        },
+        "acceleration_m_s2": {
+          "samples": 12588,
+          "rms": 6.536602371677724,
+          "p50": 0.0,
+          "p95": 16.060916225715065,
+          "p99": 23.91244100189919,
+          "maximum": 39.22477224702306
+        },
+        "jerk_m_s3": {
+          "samples": 12587,
+          "rms": 111.66069710370023,
+          "p50": 0.0,
+          "p95": 265.38588891737027,
+          "p99": 423.44628270291713,
+          "maximum": 806.5734713286661
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000021,
+      "steps": 12841,
+      "physical_juggles": 194,
+      "sensed_juggles": 172,
+      "reward": 8746.0,
+      "action_delta_rms": 0.1870435694945747,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000021.npz",
+      "trajectory_sha256": "64bd3d1113a204a985e95b7876e68428468b394c6067d99790b28d4b2f84598d",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 12840,
+          "rms": 0.7901880842866646,
+          "p50": 0.0,
+          "p95": 1.8554076688694188,
+          "p99": 2.367053053672408,
+          "maximum": 2.8345726273581784
+        },
+        "acceleration_m_s2": {
+          "samples": 12839,
+          "rms": 8.167575004846077,
+          "p50": 0.0,
+          "p95": 20.6481537907718,
+          "p99": 28.145761195044265,
+          "maximum": 46.27051458676131
+        },
+        "jerk_m_s3": {
+          "samples": 12838,
+          "rms": 151.66912115560575,
+          "p50": 0.0,
+          "p95": 361.7114291563019,
+          "p99": 542.602213256721,
+          "maximum": 1028.283317107733
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000022,
+      "steps": 17810,
+      "physical_juggles": 268,
+      "sensed_juggles": 238,
+      "reward": 13345.0,
+      "action_delta_rms": 0.1829692603978347,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000022.npz",
+      "trajectory_sha256": "ed4b493cd1965d2e03505332f10a0ebbc04fc5f60b0a785ac10f206d7cbd9d86",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 17809,
+          "rms": 0.654624763521021,
+          "p50": 0.0,
+          "p95": 1.5184915759052016,
+          "p99": 1.9824524717630267,
+          "maximum": 2.3036880792449903
+        },
+        "acceleration_m_s2": {
+          "samples": 17808,
+          "rms": 6.138699514269627,
+          "p50": 0.0,
+          "p95": 15.041268522875345,
+          "p99": 23.00151690448551,
+          "maximum": 35.51724756672212
+        },
+        "jerk_m_s3": {
+          "samples": 17807,
+          "rms": 102.27281842568961,
+          "p50": 0.0,
+          "p95": 251.4902009432429,
+          "p99": 395.5950445548361,
+          "maximum": 738.4813298289371
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000023,
+      "steps": 11717,
+      "physical_juggles": 168,
+      "sensed_juggles": 149,
+      "reward": 8911.0,
+      "action_delta_rms": 0.17612806868225764,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000023.npz",
+      "trajectory_sha256": "c50f9220e65e9143886dea57a837f19bf1d28e259d22f748eba693c34b683a48",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 11716,
+          "rms": 0.631912330301572,
+          "p50": 0.0,
+          "p95": 1.4769282504096448,
+          "p99": 1.9401289392358336,
+          "maximum": 2.2162400650278387
+        },
+        "acceleration_m_s2": {
+          "samples": 11715,
+          "rms": 5.767159806015662,
+          "p50": 0.0,
+          "p95": 14.10174356152564,
+          "p99": 21.49979348423122,
+          "maximum": 33.74736410788969
+        },
+        "jerk_m_s3": {
+          "samples": 11714,
+          "rms": 94.39092585108067,
+          "p50": 0.0,
+          "p95": 235.56472768029562,
+          "p99": 368.3391157198635,
+          "maximum": 690.1814520012227
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000024,
+      "steps": 8360,
+      "physical_juggles": 137,
+      "sensed_juggles": 115,
+      "reward": 5868.0,
+      "action_delta_rms": 0.19705545913709555,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000024.npz",
+      "trajectory_sha256": "8d2f51bbfdc508cb9d8875908e755ac88c3c0b648104a76b40497867627fb7ed",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 8359,
+          "rms": 0.7622185781615668,
+          "p50": 0.0,
+          "p95": 1.7798033716910262,
+          "p99": 2.2395370613698,
+          "maximum": 2.5337618726703064
+        },
+        "acceleration_m_s2": {
+          "samples": 8358,
+          "rms": 7.743870259101578,
+          "p50": 0.0,
+          "p95": 18.93558673965497,
+          "p99": 26.549443739796537,
+          "maximum": 41.17345280034523
+        },
+        "jerk_m_s3": {
+          "samples": 8357,
+          "rms": 134.49998485488493,
+          "p50": 0.0,
+          "p95": 313.6617323770067,
+          "p99": 496.5667611258219,
+          "maximum": 895.9723293604634
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000025,
+      "steps": 653,
+      "physical_juggles": 11,
+      "sensed_juggles": 12,
+      "reward": 396.0,
+      "action_delta_rms": 0.21685151262131383,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000025.npz",
+      "trajectory_sha256": "5d9c2c4f7e480df66c1c3de69518de72eabaaf0789c61f1185d90b66cc19acd0",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 652,
+          "rms": 0.9461965803131777,
+          "p50": 0.0,
+          "p95": 2.11265849599915,
+          "p99": 2.511238016082603,
+          "maximum": 2.8085133469360866
+        },
+        "acceleration_m_s2": {
+          "samples": 651,
+          "rms": 9.264527638537206,
+          "p50": 0.0,
+          "p95": 22.710084335681326,
+          "p99": 29.638886626568194,
+          "maximum": 45.16413478127048
+        },
+        "jerk_m_s3": {
+          "samples": 650,
+          "rms": 172.4361851637906,
+          "p50": 0.0,
+          "p95": 394.80017117999597,
+          "p99": 628.1476005032667,
+          "maximum": 837.2731552858913
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000026,
+      "steps": 15291,
+      "physical_juggles": 231,
+      "sensed_juggles": 200,
+      "reward": 11230.0,
+      "action_delta_rms": 0.1986487092985053,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000026.npz",
+      "trajectory_sha256": "1792e034843034fe6658c44e2e6e0609feb22baa1bcad29cc1165478d6ccca3c",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 15290,
+          "rms": 0.6952337264312773,
+          "p50": 0.0,
+          "p95": 1.655442050360537,
+          "p99": 2.1458109761807758,
+          "maximum": 2.4162800985047976
+        },
+        "acceleration_m_s2": {
+          "samples": 15289,
+          "rms": 7.007066725156836,
+          "p50": 0.0,
+          "p95": 17.308018031137358,
+          "p99": 26.641735591459817,
+          "maximum": 37.76008520319634
+        },
+        "jerk_m_s3": {
+          "samples": 15288,
+          "rms": 121.81700116442734,
+          "p50": 0.0,
+          "p95": 297.9306393856803,
+          "p99": 466.60781022931985,
+          "maximum": 806.9391045520445
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000027,
+      "steps": 4354,
+      "physical_juggles": 57,
+      "sensed_juggles": 50,
+      "reward": 3302.0,
+      "action_delta_rms": 0.18743800756509127,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000027.npz",
+      "trajectory_sha256": "c851e7abad3bb330d884d50dc16063b342480b0c161665dfcb81867acd7a0c9b",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 4353,
+          "rms": 0.6417031717339988,
+          "p50": 0.0,
+          "p95": 1.5248597374398867,
+          "p99": 1.9833531731306704,
+          "maximum": 2.2060094695226673
+        },
+        "acceleration_m_s2": {
+          "samples": 4352,
+          "rms": 6.148010944332951,
+          "p50": 0.0,
+          "p95": 15.00672262916183,
+          "p99": 23.695558829255475,
+          "maximum": 33.52189921948458
+        },
+        "jerk_m_s3": {
+          "samples": 4351,
+          "rms": 103.36594703174207,
+          "p50": 0.0,
+          "p95": 262.9865030003733,
+          "p99": 411.6084575653075,
+          "maximum": 727.1063586573239
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000028,
+      "steps": 2212,
+      "physical_juggles": 33,
+      "sensed_juggles": 30,
+      "reward": 1515.0,
+      "action_delta_rms": 0.21982302287740915,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000028.npz",
+      "trajectory_sha256": "b27ed6d09becd688c47780d4a728d80f3460afab8a730d48760e2b940e1e0e7a",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 2211,
+          "rms": 0.746476316687953,
+          "p50": 0.0,
+          "p95": 1.7667402619062331,
+          "p99": 2.2265355523798793,
+          "maximum": 2.5295711779827386
+        },
+        "acceleration_m_s2": {
+          "samples": 2210,
+          "rms": 8.17685724415022,
+          "p50": 0.0,
+          "p95": 20.34084607779769,
+          "p99": 30.574918755231813,
+          "maximum": 41.33620191411201
+        },
+        "jerk_m_s3": {
+          "samples": 2209,
+          "rms": 149.2908354727459,
+          "p50": 0.0,
+          "p95": 358.7959301193087,
+          "p99": 568.4312955298334,
+          "maximum": 1146.0976949176793
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_hit_bottom",
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000029,
+      "steps": 17155,
+      "physical_juggles": 246,
+      "sensed_juggles": 215,
+      "reward": 12957.0,
+      "action_delta_rms": 0.1746802275774484,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000029.npz",
+      "trajectory_sha256": "7460604c24ee4843e6fa354a154d00821d2fbe25d047c3bc7e08650e6df44867",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 17154,
+          "rms": 0.6118705968952751,
+          "p50": 0.0,
+          "p95": 1.4061288205146838,
+          "p99": 1.8551740683632207,
+          "maximum": 2.1958158412664317
+        },
+        "acceleration_m_s2": {
+          "samples": 17153,
+          "rms": 5.438476748490735,
+          "p50": 0.0,
+          "p95": 13.381554649443252,
+          "p99": 20.370627059265583,
+          "maximum": 32.18392775557579
+        },
+        "jerk_m_s3": {
+          "samples": 17152,
+          "rms": 88.34997727841179,
+          "p50": 0.0,
+          "p95": 216.79563729441873,
+          "p99": 343.9540529270808,
+          "maximum": 640.5095375585868
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_hit_bottom"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000030,
+      "steps": 3153,
+      "physical_juggles": 49,
+      "sensed_juggles": 38,
+      "reward": 2310.0,
+      "action_delta_rms": 0.1971351254055346,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000030.npz",
+      "trajectory_sha256": "b59f4b30083158d9129b9440ba58a2550eeaac1d25847da464445daa818b17a8",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 3152,
+          "rms": 0.752576845321216,
+          "p50": 0.0,
+          "p95": 1.7371031258374023,
+          "p99": 2.152163376301121,
+          "maximum": 2.3577466346803764
+        },
+        "acceleration_m_s2": {
+          "samples": 3151,
+          "rms": 7.3060471348001395,
+          "p50": 0.0,
+          "p95": 17.65027901710452,
+          "p99": 27.293512812653134,
+          "maximum": 37.52596870179658
+        },
+        "jerk_m_s3": {
+          "samples": 3150,
+          "rms": 125.50295696331987,
+          "p50": 0.0,
+          "p95": 297.1327844552257,
+          "p99": 467.94641625213075,
+          "maximum": 921.7420637603785
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    },
+    {
+      "seed": 9000031,
+      "steps": 7208,
+      "physical_juggles": 110,
+      "sensed_juggles": 94,
+      "reward": 5187.0,
+      "action_delta_rms": 0.186610650083299,
+      "terminated": true,
+      "truncated": false,
+      "end_reason": "not recorded in NPZ; do not infer cause",
+      "trajectory": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/training_seed9000031.npz",
+      "trajectory_sha256": "90c5b2fbd7365221be2c5f690c0a59c52044548cf4a905ae1c19c18672a0fbb6",
+      "position_motion": {
+        "speed_m_s": {
+          "samples": 7207,
+          "rms": 0.6902159101683127,
+          "p50": 0.0,
+          "p95": 1.6449966984314217,
+          "p99": 2.1222266928554703,
+          "maximum": 2.451836274834623
+        },
+        "acceleration_m_s2": {
+          "samples": 7206,
+          "rms": 7.008833531166657,
+          "p50": 0.0,
+          "p95": 17.17911165432328,
+          "p99": 26.29307458732451,
+          "maximum": 39.91652595614899
+        },
+        "jerk_m_s3": {
+          "samples": 7205,
+          "rms": 120.35846213400093,
+          "p50": 0.0,
+          "p95": 282.35065921217466,
+          "p99": 466.92745963543047,
+          "maximum": 931.8810946803692
+        }
+      },
+      "recorded_end_reasons": [
+        "puck_passed_paddle"
+      ],
+      "source_results_json": "runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json"
+    }
+  ]
+}

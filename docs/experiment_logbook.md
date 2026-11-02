@@ -6,6 +6,8 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E069 — Complete longer-discount target paired long test](#e069)
+- [E068 — Complete all 3M sweep comparisons with paired motion](#e068)
 - [E067 — Launch paired long test of longer-discount 3M target](#e067)
 - [E066 — Complete regularized target paired long test](#e066)
 - [E065 — Audit paired actual PID-target changes and velocity tails](#e065)
@@ -73,6 +75,34 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e069"></a>
+
+## E069 — 2026-11-01 21:36:58 -0600 — Complete longer-discount target paired long test
+
+The longer-discount3M target averages144.15625 physical juggles/10147.78125 steps on the reference cohort, with lower sampled jerk but much worse long reliability.
+
+**Completed:** CPU115914 COMPLETED/exit0 in9m46s. Frozen gamma .999/.0005 seed1 target at3M,32 reused reference starts/100k. Mean144.15625 physical/124.40625 sensed juggles and10147.78125steps; median68.5 juggles/4854.5steps, range0–1040juggles/51–76155steps. Every candidate episode ends in puck loss. Retained reference mean546.25/37131.03125 includes three100k-censored records. Equal-prefix p95 jerk ratio .873648 is lower, but reliability trails. Different training seeds/budgets/discounts limit causal inference; no policy promotion or hardware-stop claim. Eight6M budgets continue,11 user GPUs. Related: [E067](experiment_logbook.md#e067), [E061](experiment_logbook.md#e061), [E065](experiment_logbook.md#e065), [E068](experiment_logbook.md#e068).
+
+[Detailed distribution, paired audit, failure GIF and reproduction](../notes/scratch/experiments/2026-11-02_03-36_long-discount-target-long-results.md); [raw32 outcomes](assets/juggling/longdiscount-3m-long-candidate-20261102.csv); [paired differences](assets/juggling/longdiscount-3m-long-reference-pairs-20261102.csv); [source/model hashes](assets/juggling/longdiscount-3m-long-candidate-20261102.json). Heading is documentation time in America/Chicago; worker completion was03:01UTC.
+
+![Completed longer-discount long test](assets/juggling/longdiscount-3m-long-candidate-20261102.png)
+
+Generated2026-11-02 from completed saved outcomes/verified trajectories. Panels show every reset’s duration/juggles and whole-episode position-derived motion. The detailed note adds shared-prefix analysis and the first predeclared episode’s existing final200frames.
+
+<a id="e068"></a>
+
+## E068 — 2026-11-01 21:21:44 -0600 — Complete all 3M sweep comparisons with paired motion
+
+All eight3M policy comparisons are complete, showing individual tradeoffs and seed variation rather than a consistent high-performance smoothness improvement.
+
+**All3M milestone tests completed;6M training ongoing:**16 regularized plus4 historical control variants,32 reused starts/20k each. Last weak-original targets: seed0 182.53125 physical juggles/12705.65625 steps, seed1 133.15625/9470.25, versus control202.625/13708.5625. Seed0 paired jerk ratio .929363 contrasts with its slightly higher whole-episode jerk, illustrating window/state confounding. Full matrix preserves roles/discounts/seeds; all512 paired initial noisy observations match exactly. All eight budgets continue,11 user GPUs. Related: [E062](experiment_logbook.md#e062), [E064](experiment_logbook.md#e064), [E066](experiment_logbook.md#e066), [E067](experiment_logbook.md#e067).
+
+[Detailed target table, full figure and reproduction](../notes/scratch/experiments/2026-11-02_03-21_complete-3m-smoothness-sweep.md); [raw640 cases](assets/juggling/smooth-full-3m-episodes-20261102.csv); [all paired summaries/JSON links](assets/juggling/smooth-full-3m-paired-motion-20261102.csv); [frozen provenance](assets/juggling/smooth-full-3m-provenance-20261102.json). Heading is documentation time in America/Chicago, not job start/end.
+
+![Full20-variant3M comparison](assets/juggling/smooth-full-3m-comparison-20261102.png)
+
+Generated2026-11-02 from completed saved tests. Each bar is one correlated seed/weight variant; whole-episode motion is descriptive, not a hardware stop threshold. No binary acceptance gate or infinite-juggling conclusion.
 
 <a id="e067"></a>
 

@@ -1,7 +1,7 @@
 {
   "submitted_utc": "2026-11-02T02:52:03.022945+00:00",
   "job_id": "115914",
-  "status": "evaluating",
+  "status": "complete",
   "root": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102",
   "source_bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/noisy_history_smooth_0005_g0999_20261101_seed1/frozen_3000000_target",
   "bundle": "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/frozen_target_3m",
@@ -67,11 +67,14 @@
     "docs/assets/juggling/longdiscount-3m-candidate-paired-pid-replay-20261102.json"
   ],
   "limitations": "Fixed selected early checkpoint comparison; training seed/budget/discount differ from retained reference. Candidate targets still have large sampled jumps. No learning, old-reference trajectory reuse, global unseen-cohort, infinite-juggling or robot-safety claim.",
-  "observed_utc": "2026-11-02T02:53:08.105071+00:00",
-  "slurm_state": "RUNNING",
+  "observed_utc": "2026-11-02T03:25:13.749474+00:00",
+  "slurm_state": "COMPLETED",
   "observed_worker_status": {
-    "status": "evaluating",
-    "updated_utc": "2026-11-02T02:52:04.074466+00:00"
+    "status": "complete",
+    "updated_utc": "2026-11-02T03:01:49.906200+00:00"
   },
-  "user_gpu_requests_at_inspection": 11
+  "user_gpu_requests_at_inspection": 11,
+  "exit_code": "0:0",
+  "elapsed": "00:09:46",
+  "published_summary": "docs/assets/juggling/longdiscount-3m-long-candidate-20261102.json"
 }

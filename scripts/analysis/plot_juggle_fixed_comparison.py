@@ -12,6 +12,7 @@ def main():
     p.add_argument('--summary',type=Path,required=True)
     p.add_argument('--out',type=Path,required=True)
     p.add_argument('--title',default='Fixed-budget comparison')
+    p.add_argument('--height',type=float,default=8,help='Figure height in inches for larger comparisons')
     args=p.parse_args();rows=list(csv.DictReader(args.summary.open()))
     if not rows:raise ValueError('No summary rows')
     protocol={(r['step'],r['episodes'],r['seed_base'],r['horizon']) for r in rows}
@@ -19,17 +20,17 @@ def main():
     labels,colors=[],[]
     for row in rows:
         if row['run']=='noisy_history_20261029_seed0':
-            label='Baseline s0 '+row['weights'];color='black'
+            label=('Baseline γ=.995 s0 ' if row.get('gamma') else 'Baseline s0 ')+row['weights'];color='black'
         elif row['run']=='noisy_history_long_discount_20261029_seed0':
             label='Baseline γ=.999 s0 '+row['weights'];color='black'
         else:
             slug=row['run'].split('smooth_',1)[1].split('_')[0]
             coefficient={'0005':'0.0005','002':'0.002','008':'0.008'}[slug]
-            gamma=' γ=.999' if '_g0999_' in row['run'] else ''
+            gamma=f" γ={float(row['gamma']):g}" if row.get('gamma') else (' γ=.999' if '_g0999_' in row['run'] else '')
             label=f"λ={coefficient}{gamma} s{row['run'].split('seed')[-1]} {row['weights']}"
             color={'0005':'#54a24b','002':'#4c78a8','008':'#f58518'}[slug]
         labels.append(label);colors.append(color)
-    fig,axes=plt.subplots(2,2,figsize=(13,8),constrained_layout=True)
+    fig,axes=plt.subplots(2,2,figsize=(13,args.height),constrained_layout=True)
     for ax,key,label in zip(axes.flat,['physical_juggles','episode_steps','action_delta_rms','median_episode_p95_jerk_m_s3'],
             ['Mean physical juggles','Mean episode steps','Mean action-change RMS','Median episode p95 position-derived jerk (m/s³)']):
         ax.barh(labels,[float(r[key]) for r in rows],color=colors);ax.invert_yaxis();ax.set_xlabel(label)

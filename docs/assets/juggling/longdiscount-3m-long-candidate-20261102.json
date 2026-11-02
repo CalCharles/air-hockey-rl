@@ -1,0 +1,78 @@
+{
+  "generated_utc": "2026-11-02T03:25:14.293872+00:00",
+  "policy_label": "Gamma .999 coefficient .0005 seed1 target at 3M",
+  "cohort_label": "paired reference starts",
+  "episodes": 32,
+  "seed_base": 9000000,
+  "recording_limit_steps": 100000,
+  "model_sha256": "727a455df07e9129250d82b4872d85170ea3f24b7c262d5a7ac5a32aff2f0646",
+  "sources": {
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/paired_reference_100k_eval/results.json": "fb4b2d9a97c24c97f54605897a2e25bef5ee3838bddfbe6da8075f76ee5c4981",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/docs/assets/juggling/longdiscount-3m-long-verified-trajectories-20261102.json": "ad842f6b57314d4d508ef8d7e847b0052343242a5cd37a50d3a4845e7fe55682",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/runs/td3/juggle_smooth_0005_g0999_seed1_target3m_long_20261102/frozen_target_3m/model.pth": "727a455df07e9129250d82b4872d85170ea3f24b7c262d5a7ac5a32aff2f0646",
+    "/scratch/cluster/mrudolph/documents/air-hockey-rl/scripts/analysis/plot_juggle_long_reference.py": "482e22b89e6c06918b8ba66b7b59e3703ff6a03592c1cb93badda3faba8922be"
+  },
+  "published_csv_sha256": "4256318624b8319c347ca0651b9b359feb5be1053149dcf50622daa40a4fc27d",
+  "summary": {
+    "steps": {
+      "mean": 10147.78125,
+      "quantiles": {
+        "min": 51.0,
+        "p25": 1933.0,
+        "median": 4854.5,
+        "p75": 13192.75,
+        "max": 76155.0
+      }
+    },
+    "physical_juggles": {
+      "mean": 144.15625,
+      "quantiles": {
+        "min": 0.0,
+        "p25": 30.0,
+        "median": 68.5,
+        "p75": 194.75,
+        "max": 1040.0
+      }
+    },
+    "sensed_juggles": {
+      "mean": 124.40625,
+      "quantiles": {
+        "min": 0.0,
+        "p25": 25.25,
+        "median": 57.5,
+        "p75": 173.25,
+        "max": 882.0
+      }
+    },
+    "reward": {
+      "mean": 7515.8125,
+      "quantiles": {
+        "min": 20.0,
+        "p25": 1418.0,
+        "median": 3411.0,
+        "p75": 9569.75,
+        "max": 56752.0
+      }
+    },
+    "action_delta_rms": {
+      "mean": 0.19488612060878932,
+      "quantiles": {
+        "min": 0.15590957379681253,
+        "p25": 0.17577150198444644,
+        "median": 0.18871745973020887,
+        "p75": 0.20295427699605376,
+        "max": 0.29998199874044357
+      }
+    },
+    "position_p95_speed_m_s": {
+      "median": 1.621884960204302
+    },
+    "position_p95_acceleration_m_s2": {
+      "median": 16.076026671603742
+    },
+    "position_p95_jerk_m_s3": {
+      "median": 272.0636571616649
+    }
+  },
+  "limitations": "One fixed training seed and policy; new reset starts. Recording limits censor counts and durations. Whole-episode motion uses20Hz position differences, excludes the reset sample, and involves unequal durations/visited states. No joint loads, substep spikes, infinite reliability or hardware-stop prediction."
+}
