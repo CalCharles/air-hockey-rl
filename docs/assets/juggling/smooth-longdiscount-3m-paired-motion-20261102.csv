@@ -1,0 +1,5 @@
+coefficient,gamma,seed,weights,episodes,prefix_limit,min_paired_steps,max_paired_steps,speed_ratio,acceleration_ratio,jerk_ratio,source
+0.0005,0.999,0,online,32,250,39,250,0.8898513977199879,0.8452524609176472,0.7003111637840558,docs/assets/juggling/longdiscount-3m-paired-motion-seed0-online-20261102.json
+0.0005,0.999,0,target,32,250,81,250,0.8739504157679069,0.8503206974250872,0.7571730809240005,docs/assets/juggling/longdiscount-3m-paired-motion-seed0-target-20261102.json
+0.0005,0.999,1,online,32,250,24,250,0.9104962171682591,0.9071598920414012,0.7583531612360458,docs/assets/juggling/longdiscount-3m-paired-motion-seed1-online-20261102.json
+0.0005,0.999,1,target,32,250,125,250,0.8759488436584135,0.8598201731605959,0.7496136422420441,docs/assets/juggling/longdiscount-3m-paired-motion-seed1-target-20261102.json

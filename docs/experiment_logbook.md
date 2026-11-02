@@ -6,6 +6,7 @@ Entries and contents are ordered newest first; IDs remain permanent.
 
 ## Table of contents
 
+- [E064 — Complete longer-discount 3M comparisons with paired motion](#e064)
 - [E063 — Launch paired 100k-step test of regularized 3M target](#e063)
 - [E062 — Compare first stronger-penalty 3M milestones and paired physical motion](#e062)
 - [E061 — Complete independent 100k-step retained-target reference](#e061)
@@ -69,6 +70,20 @@ Entries and contents are ordered newest first; IDs remain permanent.
 - [E003 — Original-sensing fine-tuning regression](#e003)
 - [E002 — Clean-simulation iterations and failed transfer](#e002)
 - [E001 — Initial sustained-juggling studies](#e001)
+
+<a id="e064"></a>
+
+## E064 — 2026-11-01 20:06:14 -0600 — Complete longer-discount 3M comparisons with paired motion
+
+Longer-discount seed1 target approximately matches baseline juggling with lower paired sampled jerk, while seed0 target still trails.
+
+**Subset evaluations complete; all training ongoing:** coefficient .0005/gamma .999, seeds0/1,3M online/target,32 reused starts/20k. Seed1 target143.34375 physical juggles/9942.09375 steps versus historical target142.375/9376.625; paired p95 jerk ratio .749614. Seed0 target103.78125/7084.28125 remains lower performance. Both online actors exceed the one historical online control. One baseline seed, repeated starts and variable windows limit inference; no consistent replication, infinite-juggling or hardware-safety claim. All eight6M budgets continue, eleven total user GPUs. CPU115892 long candidate test remains live. Related: [E056](experiment_logbook.md#e056), [E060](experiment_logbook.md#e060), [E062](experiment_logbook.md#e062), [E063](experiment_logbook.md#e063).
+
+[Detailed table, paired audit and reproduction](../notes/scratch/experiments/2026-11-02_02-06_long-discount-3m-comparison.md); [raw192 episodes](assets/juggling/smooth-longdiscount-3m-episodes-20261102.csv); [paired summary/JSON links](assets/juggling/smooth-longdiscount-3m-paired-motion-20261102.csv); [source/model/config provenance](assets/juggling/smooth-longdiscount-3m-provenance-20261102.json). Heading is actual documentation time in America/Chicago, not run start/end.
+
+![Longer-discount3M fixed comparison](assets/juggling/smooth-longdiscount-3m-comparison-20261102.png)
+
+Generated2026-11-02 from complete saved results. Each bar preserves seed/weight identity. Whole-episode jerk differs from equal-prefix ratios in the note; neither predicts UR5 protective stops.
 
 <a id="e063"></a>
 
