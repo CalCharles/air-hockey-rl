@@ -127,7 +127,12 @@ def evaluate_checkpoint(run_dir, *, horizon=10000, episodes=32, seed_base=10000,
     if cfg.get("simulator") != "box2d":
         raise ValueError("This survival evaluator supports Box2D simulation only")
     history_agent = None
+    true_state = bool(args.get("teacher_true_state", False))
+    if true_state:
+        from scripts.rma.env_wrapper import install_true_state_observation
     probe = AirHockeyEnv(copy.deepcopy(cfg))
+    if true_state:
+        install_true_state_observation(probe)
     try:
         view = build_policy_env_view(SimpleNamespace(
             single_observation_space=probe.observation_space,
@@ -170,6 +175,8 @@ def evaluate_checkpoint(run_dir, *, horizon=10000, episodes=32, seed_base=10000,
             params.update(seed=seed, max_timesteps=horizon + 1)
             params["simulator_params"]["seed"] = seed
             env = AirHockeyEnv(params)
+            if true_state:
+                install_true_state_observation(env)
             try:
                 obs, _ = env.reset(seed=seed)
                 if history_agent is not None:

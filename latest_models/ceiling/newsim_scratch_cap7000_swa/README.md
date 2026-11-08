@@ -35,3 +35,24 @@ Final test: `scripts.analysis.new_sim_eval`, 100 episodes, 10k cap, seeds 100000
 | Mean (± std err over seeds) | | | 95.0 ± 0.8 % | 94.0 ± 1.5 % |
 
 All five policies have 0 % edge hits.
+
+## Reproduce
+
+Run everything from the repo root with the repo venv. The run outputs go to the gitignored `runs/`.
+
+1. **Train until convergence, SWA, eval.** Run `python scripts/ceiling/scratch_newsim_orchestrator.py`. It trains
+   every job in `configs/ceiling/scratch_newsim.yaml`: cap 2000 on GPU 0 and cap 7000 on GPU 1, 5 per GPU, using
+   `configs/ceiling/generated/scratch_newsim/`. It checks convergence at 5M, 7M, … (≤ 15M). A run has converged when
+   `q_loss`, `actor_loss` and the return each change < 10 % between the halves of the last 1M steps, and the return is
+   above 50. It then stops the run and averages the actor over checkpoints in [0.6·M, M] (`scripts/ceiling/swa.py`).
+   Last, it evaluates the result with `scripts.analysis.new_sim_eval` (100 episodes, 10k cap, seeds 1000000+). The
+   output is `runs/ceiling/scratch_newsim/summary.md`.
+   - SWA alone: `python scripts/ceiling/swa.py runs/analysis/swa <run_dir> <lo_step> <hi_step>`. Seed 0 with
+     3000000 5000000 reproduces `seed0/model.pth` bit-for-bit.
+2. **Critic fit (optional; only needed for the critics in this folder).** Run in order:
+   - `python scripts/ceiling/swa_critic_fit/build_inits.py`: puts the SWA actor in both actor slots and writes the
+     per-seed args (actor frozen, `stop_file`).
+   - `python scripts/ceiling/swa_critic_fit/orchestrator.py`: trains and stops on `q_loss` convergence.
+   - It then runs `post.py` (actor identity and Q-vs-return checks, copies into this folder).
+
+   The raw-checkpoint steps in `build_inits.py` (`RAW`) are the stop steps in the table above.

@@ -260,6 +260,36 @@ def true_state_features(env) -> np.ndarray:
 TRUE_STATE_DIM = 8
 
 
+def install_true_state_observation(env):
+    """Append ``true_state_features`` to every observation of ``env``, in place.
+
+    For privileged teachers only: such a policy is not deployable. The appended
+    block follows the standard observation, so its slices (paddle ``[12:14]``,
+    puck ``[27:29]``) keep their meaning. Returns ``env``.
+    """
+    base = env.observation_space
+    env.observation_space = gym.spaces.Box(
+        low=np.concatenate([np.asarray(base.low, dtype=np.float64).reshape(-1), -np.ones(TRUE_STATE_DIM) * np.inf]),
+        high=np.concatenate([np.asarray(base.high, dtype=np.float64).reshape(-1), np.ones(TRUE_STATE_DIM) * np.inf]),
+        dtype=np.float64,
+    )
+    env_reset, env_step = env.reset, env.step
+
+    def augment(obs):
+        return np.concatenate([np.asarray(obs, dtype=np.float64).reshape(-1), true_state_features(env)])
+
+    def reset(*args, **kwargs):
+        obs, info = env_reset(*args, **kwargs)
+        return augment(obs), info
+
+    def step(action):
+        obs, reward, terminated, truncated, info = env_step(action)
+        return augment(obs), reward, terminated, truncated, info
+
+    env.reset, env.step = reset, step
+    return env
+
+
 class PrivilegedHistoryEnvVector(HistoryEnvVector):
     """``HistoryEnvVector`` plus the true simulator state, for an asymmetric critic.
 

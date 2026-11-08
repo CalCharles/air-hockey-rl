@@ -322,6 +322,11 @@ class Args:
     survival_eval_episodes: int = 8
     survival_eval_scenarios: Literal["transfer", "clean", "nominal", "training"] = "transfer"
 
+    # --- Privileged teacher (not deployable) ---
+    # Append the true simulator state (puck / paddle position + velocity) to the
+    # observation, for actor and critic. Simulator dynamics are unchanged.
+    teacher_true_state: bool = False
+
 
 def make_env(env_id):
     def _thunk():
@@ -493,7 +498,12 @@ def _entrypoint():
     # A single Box2D env is far cheaper to step in-process than through the
     # AsyncVectorEnv pipe (1440 vs 680 steps/s measured). Only fan out to
     # subprocesses when there is more than one env to run.
-    if args.num_envs == 1:
+    if args.teacher_true_state:
+        if args.num_envs != 1:
+            raise ValueError("teacher_true_state supports num_envs=1 only")
+        from scripts.rma.env_wrapper import install_true_state_observation
+        envs = SingleEnvVector(lambda: install_true_state_observation(make_env(0)()))
+    elif args.num_envs == 1:
         envs = SingleEnvVector(make_env(0))
     else:
         envs = gym.vector.AsyncVectorEnv([make_env(i) for i in range(args.num_envs)])
