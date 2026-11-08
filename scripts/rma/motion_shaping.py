@@ -14,10 +14,14 @@ the puck 9-12 cm below the edge at ~0.9 m/s. These terms, read from the true sim
     term   contact steps:   end the episode (terminated) if d < edge_term_margin
     cock   contact steps:   +cock_coef * clip(cock / cock_ref, 0, 1)
     fast   contact steps:   -fast_coef * clip((|v_puck| - fast_min) / fast_ref, 0, 1)
+    side   every step:      -side_coef * clip((y - side_min) / side_ref, 0, 1), y = paddle or puck (side_target)
 
 d is the paddle's distance to the top edge of its workspace (``x_min_lim``, robot frame) and
 v_fwd its forward speed (toward that edge) over the control step, from the true paddle position.
-|v_puck| is the true puck speed at the end of the contact step. cock is the backswing before the hit, as in
+|v_puck| is the true puck speed at the end of the contact step. y is the paddle's or the puck's lateral Box2D position
+(table centre 0). The term is one-sided because in the new sim most lost pucks are weak glancing hits with the paddle at
+y > 0.25, while hits as close to the -y wall lose few. On the paddle it teaches the policy not to follow the puck there
+(night3b); on the puck it can only be lowered by aiming hits away from the +y wall. cock is the backswing before the hit, as in
 ``scripts/ceiling/hit_motion.py``: the largest backward travel in the last ``cock_window`` steps (max x - first x). A contact step is one with
 ``info["paddle_puck_collision_count"] > 0``. Evaluation always uses the unshaped task reward.
 """
@@ -49,12 +53,16 @@ class MotionShaping:
     fast_coef: float = 0.0
     fast_min: float = 3.5
     fast_ref: float = 1.5
+    side_coef: float = 0.0
+    side_min: float = 0.27
+    side_ref: float = 0.06
+    side_target: str = "paddle"
 
     @property
     def enabled(self) -> bool:
         return any(c > 0 for c in (self.edge_coef, self.hit_coef, self.weak_coef, self.edge_hit_coef, self.pout_coef,
                                        self.edge_term_margin, self.cock_coef,
-                                       self.fast_coef))
+                                       self.fast_coef, self.side_coef))
 
     @classmethod
     def from_args(cls, args) -> "MotionShaping":
@@ -64,7 +72,8 @@ class MotionShaping:
                    pout_coef=args.shape_pout_coef, pout_min=args.shape_pout_min, pout_ref=args.shape_pout_ref,
                    edge_term_margin=args.shape_edge_term_margin, cock_coef=args.shape_cock_coef,
                    cock_ref=args.shape_cock_ref, fast_coef=args.shape_fast_coef, fast_min=args.shape_fast_min,
-                   fast_ref=args.shape_fast_ref)
+                   fast_ref=args.shape_fast_ref, side_coef=args.shape_side_coef, side_min=args.shape_side_min,
+                   side_ref=args.shape_side_ref, side_target=args.shape_side_target)
 
 
 def _paddle_x(sim) -> float:
@@ -93,6 +102,9 @@ def install_motion_shaping(env, shaping: MotionShaping):
         d = x - float(sim.x_min_lim)
         v_fwd = -(x - prev) / float(sim.time_per_step)
         bonus = -shaping.edge_coef * float(np.clip((shaping.edge_margin - d) / shaping.edge_margin, 0.0, 1.0))
+        if shaping.side_coef > 0:
+            body = sim.paddles["paddle_ego"] if shaping.side_target == "paddle" else next(iter(sim.pucks.values()))
+            bonus -= shaping.side_coef * float(np.clip((float(body.position[0]) - shaping.side_min) / shaping.side_ref, 0.0, 1.0))
         if int(info.get("paddle_puck_collision_count", 0)) > 0:
             bonus += shaping.hit_coef * float(np.clip(v_fwd / shaping.hit_vref, 0.0, 1.0))
             if v_fwd < shaping.weak_vmin:

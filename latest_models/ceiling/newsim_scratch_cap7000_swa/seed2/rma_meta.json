@@ -1,0 +1,35 @@
+{
+  "mode": "history",
+  "obs_dim": 30,
+  "act_dim": 2,
+  "latent_dim": 8,
+  "use_last_action": true,
+  "hidden_layer_size": 64,
+  "num_hidden_layers": 2,
+  "normalizer": {
+    "random_variables": [
+      "paddle_density",
+      "puck_damping",
+      "gravity"
+    ],
+    "random_variable_ranges": {
+      "paddle_density": [
+        2250.0,
+        3750.0
+      ],
+      "puck_damping": [
+        0.08250000327825546,
+        0.13750000298023224
+      ],
+      "gravity": [
+        -0.9125000238418579,
+        -0.5475000143051147
+      ]
+    }
+  },
+  "history_len": 50,
+  "feature_dim": 8,
+  "step_features": "latest_frame",
+  "embed_dim": 32,
+  "conv_channels": 32
+}

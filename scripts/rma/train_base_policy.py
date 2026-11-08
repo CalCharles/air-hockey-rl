@@ -136,10 +136,17 @@ class RMAArgs(Args):
     shape_fast_coef: float = 0.0
     shape_fast_min: float = 3.5
     shape_fast_ref: float = 1.5
+    shape_side_coef: float = 0.0
+    shape_side_min: float = 0.27
+    shape_side_ref: float = 0.06
+    shape_side_target: str = "paddle"
     # remove the paddle's outward velocity when the workspace clip pins it (scripts/rma/edge_velocity_fix.py)
     edge_velocity_fix: bool = False
     # apply every action this many control steps late (scripts/rma/action_latency.py; real-plant proxy)
     action_latency_steps: int = 0
+    # opt-in early stop: if this file exists (checked every stats_log_interval steps), end training and save the
+    # final checkpoint as if total_timesteps were reached. None (default) = off.
+    stop_file: str | None = None
     # --- goal-conditioned tasks: hindsight experience replay (same knobs as td3_training_her) ---
     # Active when the sim config has ``return_goal_obs: true``; her_k = 0 -> plain goal-conditioned TD3.
     her_k: int = 4
@@ -655,6 +662,9 @@ def _entrypoint() -> None:
     last_actor_out: Dict[str, torch.Tensor] | None = None
 
     while global_step < args.total_timesteps:
+        if args.stop_file is not None and global_step % args.stats_log_interval == 0 and os.path.exists(args.stop_file):
+            print(f"Stop file {args.stop_file} found at step {global_step}: ending training.", flush=True)
+            break
         if iteration % 100 == 0:
             annealing_active = global_step < args.exploration_primitive_chance_anneal_steps
             primitive_selector.chance = primitive_exploration_chance_for_step(args, global_step)

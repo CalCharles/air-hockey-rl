@@ -1,0 +1,71 @@
+# From-scratch training on the new sim (real-plant proxy + 2-step action latency) with the best policy's recipe,
+# i.e. realplant_screen2/term03_nopretanh (= the night1 ft_term03_nopretanh fine-tune args minus the warm start):
+# TD3, 50-step history actor, true-state critic, term03 shaping + edge termination, actor_pre_tanh_penalty 0.
+# No architecture or sim changes. total_timesteps is an upper bound only (no schedule depends on it); the
+# orchestrator (scratchpad scratch_orchestrator.py) checks loss convergence at 5M, 7M, 9M, ... and stops each run
+# once it has converged. Training episode cap per variant: 2000 (as before) and 7000 (+5k, run in parallel to fit
+# in one night).
+name: scratch_newsim
+base_args: configs/ceiling/base_td3_hist4.yaml
+target_config: configs/new_juggle/sysid_v2_hist4_realplant.yaml
+seeds:
+- 0
+- 1
+- 2
+- 3
+- 4
+variants:
+- name: cap2000
+  trainer: scripts.rma.train_base_policy
+  args: &id001
+    train_every_steps: 32
+    q_updates: 8
+    actor_updates_per_iteration: 2
+    gamma: 0.995
+    actor_pre_tanh_penalty: 0.0
+    total_timesteps: 15000000
+    rma_mode: history_privileged
+    rma_latent_dim: 8
+    history_len: 50
+    step_features: latest_frame
+    history_embed_dim: 32
+    history_conv_channels: 32
+    eval_param_seed: 12345
+    action_latency_steps: 2
+    shape_edge_coef: 0.5
+    shape_edge_term_margin: 0.03
+    shape_weak_coef: 3.0
+    shape_pout_coef: 2.0
+  sim:
+    max_timesteps: 2000
+    random_variables:
+    - paddle_density
+    - puck_damping
+    - gravity
+    random_variable_ranges: &id002
+      paddle_density:
+      - 2250.0
+      - 3750.0
+      puck_damping:
+      - 0.0825
+      - 0.1375
+      gravity:
+      - -0.9125
+      - -0.5475
+  seeds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  - 11
+- name: cap7000
+  trainer: scripts.rma.train_base_policy
+  args: *id001
+  sim:
+    max_timesteps: 7000
+    random_variables:
+    - paddle_density
+    - puck_damping
+    - gravity
+    random_variable_ranges: *id002
