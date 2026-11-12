@@ -50,6 +50,24 @@ Reinforcement Learning on Real Robots" (arXiv:2602.20220):
    (``--recycle-anneal-episodes`` to change). Each trial writes its buffer to
    ``trial<t>/online_buffer.pt``; α / |D0| go to ``online_tb/online_finetune_recycle/``.
 
+8. **RMA history_privileged policies** (``data/newsim_scratch_cap7000_swa/seed<S>/``,
+   args file ``configs/td3/td3_online_real_finetune/newsim_cap7000.yaml``). Detected from
+   the checkpoint's ``rma_mode``; the actor is a ``PrivilegedHistoryActor`` (50-step window)
+   and the critics see [x_t | window | 8-d state] (438-d replay observation). On the robot the
+   state is the observed puck / paddle position with finite-difference velocities, and the
+   reward is the sim training reward (task reward + strike shaping; a contact within 3 cm of
+   the top edge ends the episode, end reason ``edge_termination``), both built per step by
+   ``helper/history_privileged_obs.py`` around the env the policy runner steps. γ must equal
+   the policy's training γ (0.995). Fine-tuned ``checkpoint_ep<i>/`` folders carry
+   ``rma_meta.json``, so they evaluate with ``async_td3_real_eval.py --agent history``.
+   Sim dry run of the same pipeline: ``scripts/td3/sim_dryrun_history_online_finetune.py``.
+
+       python -m scripts.td3.td3_online_real_finetune \\
+           --checkpoint data/newsim_scratch_cap7000_swa/seed0/training_state.pth \\
+           --args-file configs/td3/td3_online_real_finetune/newsim_cap7000.yaml \\
+           --no-warmup-no-sim-data --num-trials 4 --num-online-episodes 5 \\
+           --experiment-name newsim_cap7000_recycle
+
 Everything else (policy / reset runners, safety stops, transition holds,
 HDF5 / GIF / video artifacts, JSONL run logs, periodic checkpoints) is the
 existing real-world stack: this file reuses the
@@ -159,6 +177,19 @@ from scripts.td3.helper.real_td3_runtime import (
     h_transform,
     install_quiet_print_filter,
 )
+from scripts.td3.helper.history_privileged_obs import (
+    HistoryPrivilegedObs,
+    HistoryPrivilegedPolicyEnv,
+    HistoryPrivilegedSpec,
+    history_privileged_spec,
+)
+from scripts.td3.helper.residual_finetune import (
+    RESIDUAL_META_KEY,
+    base_state_from_residual,
+    build_residual_actor_pair,
+    build_residual_actor_structure,
+    is_residual_state_dict,
+)
 from scripts.td3.helper.run_event_log import append_run_event
 from scripts.td3.helper.shared_replay import SharedTD3Replay
 from scripts.td3.helper.td3_episode_collection import EpisodeTrajectory
@@ -176,13 +207,10 @@ _UNUSED_BASE_FIELDS = frozenset(
     {
         "model_path",
         "full_checkpoint_load",
-        "residual_scale",
-        "residual_weight_decay",
+        # residual_scale / residual_weight_decay / q_updates / actor_updates_per_iteration /
+        # cql_n_random are used here by residual_finetune / update_schedule: "sim".
         "residual_ema_decay",
         "residual_action_l2",
-        "q_updates",
-        "actor_updates_per_iteration",
-        "cql_n_random",
         "success_buffer_size",
         "failure_buffer_size",
         "success_top_fraction",
@@ -305,6 +333,40 @@ class OnlineFinetuneArgs(Args):
     # Training rounds over which α rises to 1. 0 = the trial's training rounds
     # (num_online_episodes - warm_start_episodes), so α reaches 1 on the last one.
     recycle_anneal_episodes: int = 0
+
+    # --- Residual fine-tuning (helper/residual_finetune.py) ---------------------
+    # True: freeze the sim actor (base) and train a residual of the same class /
+    # architecture on top of it: a = clamp(base(s) + residual(s), -1, 1). The residual
+    # is randomly initialised with a zeroed output layer (so the policy starts equal to
+    # the base) and its tanh output is scaled by residual_scale. Only the residual is
+    # optimised (Adam, policy_lr, residual_weight_decay). The critics are NEW
+    # (residual_num_critics fresh TD3QNetworks, same architecture as the sim critics);
+    # the sim critics / optimizer states in the checkpoint are not used.
+    residual_finetune: bool = False
+    residual_num_critics: int = 2
+    # Learner schedule after each kept episode of T transitions.
+    #   "utd": K = round(utd_ratio · T) critic updates, one actor update per actor_update_every.
+    #   "sim": the sim trainer's schedule (scripts/rma/train_base_policy.py): one training
+    #          iteration per train_every_steps transitions (remainder carried to the next
+    #          episode), each = q_updates critic updates then actor_updates_per_iteration
+    #          actor updates; Polyak every target_network_frequency critic updates.
+    update_schedule: Literal["utd", "sim"] = "utd"
+    train_every_steps: int = 32
+    # "sim" schedule: no updates until the online buffer holds this many transitions
+    # (transitions collected before that do not bank iterations, as in sim). The first
+    # update also always waits for batch_size transitions.
+    learning_starts: int = 0
+    # Critic-only warm-up: no actor updates until this many real transitions have been
+    # collected on this curve (kept episodes, warm-start episodes included; counted across
+    # --resume-online). Only the critics train before that. With update_schedule "sim" the
+    # check is per iteration, as in the sim trainer (iteration i of a round covers the
+    # transitions up to collected_before - carry + train_every_steps * (i + 1)), so the
+    # actor starts mid-round once the count is reached. 0 = actor updates from the start.
+    actor_learning_starts: int = 0
+    # Actor loss = -(1 - gamma) * mean Q1(s, pi(s)) (the sim trainer's normalised form,
+    # helper/td3_graphed_update.py) instead of -mean Q1. Same update under Adam up to its
+    # epsilon; the logged actor loss is then on the sim TensorBoard's scale.
+    actor_loss_normalized: bool = False
 
 
 # On Python 3.9, typing.get_type_hints can't evaluate the inherited ``X | None``
@@ -438,6 +500,12 @@ def _check_hist_len_matches(args: OnlineFinetuneArgs, checkpoint: Dict[str, obje
     ckpt_args = checkpoint.get("args") if isinstance(checkpoint.get("args"), dict) else {}
     sim_config = ckpt_args.get("config")
     sim_hist = _hist_len_of(sim_config)
+    if sim_hist is None:
+        # Trained on another machine: the training config is copied next to the checkpoint.
+        sibling = Path(str(args.checkpoint)).parent / "config.yaml"
+        if sibling.exists():
+            sim_config = str(sibling)
+            sim_hist = _hist_len_of(sim_config)
     real_hist = _hist_len_of(args.config)
     if sim_hist is None or real_hist is None:
         print(
@@ -484,10 +552,30 @@ def _validate_args(args: OnlineFinetuneArgs) -> None:
         raise ValueError("online_buffer_size must be > 0.")
     if args.target_network_frequency <= 0:
         raise ValueError("target_network_frequency must be > 0.")
-    if float(args.cql_alpha) != 0.0:
-        raise ValueError("The sim-to-online recipe has no CQL term: cql_alpha must be 0.")
+    if float(args.cql_alpha) < 0.0:
+        raise ValueError(f"cql_alpha must be >= 0, got {args.cql_alpha}.")
+    if float(args.cql_alpha) > 0.0 and not args.residual_finetune:
+        raise ValueError("cql_alpha > 0 is only supported with residual_finetune: true (fresh critics).")
+    if float(args.cql_alpha) > 0.0 and int(args.cql_n_random) < 1:
+        raise ValueError("cql_n_random must be >= 1 when cql_alpha > 0.")
     if args.full_checkpoint_load in ("residual", "residual_resume"):
-        raise ValueError("No residual head in this recipe: full_checkpoint_load must not be residual.")
+        raise ValueError(
+            "full_checkpoint_load is not used here: set residual_finetune: true for residual fine-tuning."
+        )
+    if args.residual_finetune:
+        if not 0.0 < float(args.residual_scale) <= 2.0:
+            raise ValueError(f"residual_scale must be in (0, 2], got {args.residual_scale}.")
+        if int(args.residual_num_critics) < 2:
+            raise ValueError(f"residual_num_critics must be >= 2, got {args.residual_num_critics}.")
+    if args.update_schedule == "sim":
+        if int(args.train_every_steps) <= 0:
+            raise ValueError("train_every_steps must be > 0 for update_schedule: sim.")
+        if int(args.q_updates) < 1 or int(args.actor_updates_per_iteration) < 0:
+            raise ValueError("update_schedule: sim needs q_updates >= 1 and actor_updates_per_iteration >= 0.")
+        if int(args.learning_starts) < 0:
+            raise ValueError("learning_starts must be >= 0.")
+    if int(args.actor_learning_starts) < 0:
+        raise ValueError(f"actor_learning_starts must be >= 0, got {args.actor_learning_starts}.")
     if not 0.0 < float(args.manual_drop_line) < 1.0:
         raise ValueError(f"manual_drop_line must be between 0 and 1 (exclusive), got {args.manual_drop_line}.")
     if int(args.manual_drop_detect_steps) < 1:
@@ -506,6 +594,20 @@ def _validate_args(args: OnlineFinetuneArgs) -> None:
             "[online_finetune] WARNING: include_non_vital_training_state_fields=False — checkpoints "
             "will not contain optimizer state, so they cannot be passed back as --checkpoint."
         )
+
+
+def _check_history_privileged_args(args: OnlineFinetuneArgs, spec: HistoryPrivilegedSpec) -> None:
+    """The loaded critic only matches its targets with the policy's own discount, and the
+    history window records the policy action, so the robot command must not be rescaled."""
+    if abs(float(args.gamma) - float(spec.gamma)) > 1e-9:
+        raise ValueError(
+            f"gamma={args.gamma:g} but the policy's critic was trained with gamma={spec.gamma:g}; "
+            "set gamma in the args file to the training value."
+        )
+    if (float(args.policy_action_scale_x), float(args.policy_action_scale_y)) != (1.0, 1.0):
+        raise ValueError("policy_action_scale_x/y must be 1 for history_privileged policies.")
+    if float(args.exploration_primitive_chance) > 0 or float(args.exploration_primitive_chance_start) > 0:
+        raise ValueError("Exploration primitives are not part of this recipe (set their chance to 0).")
 
 
 # ---------------------------------------------------------------------------
@@ -631,6 +733,14 @@ class _OnlineProgress:
         # Usable episodes from earlier launches of this curve (resume).
         self.prior_kept_episodes = int(prior_kept_episodes)
         self.warm_start_episodes_done = 0
+        # update_schedule "sim": transitions not yet turned into a training iteration
+        # (< train_every_steps; carried over on --resume-online).
+        self.schedule_carry_steps = 0
+        # Real transitions of the kept episodes of this curve (actor_learning_starts counter;
+        # restored on --resume-online).
+        self.transitions_collected = 0
+        # First actor update (set once actor_learning_starts is reached).
+        self.actor_enabled_at: Dict[str, object] | None = None
         self.writer = SummaryWriter(str(seed_dir / _PROGRESS_TB_DIR))
 
     @property
@@ -649,6 +759,9 @@ class _OnlineProgress:
             "hist_len": self.hist_len,
             "sim_seed": self.sim_seed,
             "sim_checkpoint": sim_checkpoint,
+            "schedule_carry_steps": int(self.schedule_carry_steps),
+            "transitions_collected": int(self.transitions_collected),
+            "actor_enabled_at": self.actor_enabled_at,
         }
 
     def append_critic_errors(self, x: int, errors: np.ndarray) -> list[tuple[int, np.ndarray]]:
@@ -713,7 +826,11 @@ def _build_learner_from_checkpoint(
     action_high_np: np.ndarray,
     tb_log_dir: str,
     source_label: str = "sim checkpoint",
+    spec: HistoryPrivilegedSpec | None = None,
 ) -> LearnerRuntimeState:
+    """``obs_dim`` is the replay / critic observation size; with ``spec`` (an RMA
+    history_privileged checkpoint) that is [x_t | window | s_t] and the actor is a
+    ``PrivilegedHistoryActor`` (helper/history_privileged_obs.py)."""
     from torch.utils.tensorboard import SummaryWriter
 
     torch.manual_seed(args.seed)
@@ -723,7 +840,11 @@ def _build_learner_from_checkpoint(
     policy_obs_dim = obs_dim + act_dim if train_args.use_last_action_in_policy_state else obs_dim
     policy_env_view = build_policy_env_view(policy_obs_dim, act_dim)
 
-    def _new_actor() -> DeterministicAgent:
+    def _new_actor():
+        if spec is not None:
+            if spec.obs_dim != int(obs_dim):
+                raise ValueError(f"history_privileged spec obs_dim {spec.obs_dim} != replay obs_dim {obs_dim}")
+            return spec.build_actor(device)
         return DeterministicAgent(
             policy_env_view,
             action_scale=1.0,
@@ -732,10 +853,29 @@ def _build_learner_from_checkpoint(
             num_hidden_layers=train_args.agent_num_hidden_layers,
         ).to(device)
 
+    if args.residual_finetune:
+        return _build_residual_learner(
+            args=args,
+            train_args=train_args,
+            checkpoint=checkpoint,
+            new_actor=_new_actor,
+            obs_dim=obs_dim,
+            act_dim=act_dim,
+            action_low_np=action_low_np,
+            action_high_np=action_high_np,
+            tb_log_dir=tb_log_dir,
+            source_label=source_label,
+            device=device,
+        )
+
     actor = _new_actor()
     actor_target = _new_actor()
     # strict=True: a residual / differently-shaped checkpoint must fail loudly
     # rather than silently half-load.
+    if is_residual_state_dict(checkpoint["actor"]):
+        raise ValueError(
+            "This checkpoint holds a residual actor (base + residual); continue it with residual_finetune: true."
+        )
     actor.load_state_dict(checkpoint["actor"], strict=True)
     actor_target.load_state_dict(checkpoint["actor_target"], strict=True)
 
@@ -768,6 +908,11 @@ def _build_learner_from_checkpoint(
     loaded_actor_lr = float(actor_optimizer.param_groups[0]["lr"])
     _override_adam_hyperparams(q_optimizer, lr=args.q_lr, weight_decay=args.q_weight_decay)
     _override_adam_hyperparams(actor_optimizer, lr=args.policy_lr, weight_decay=0.0)
+    if not checkpoint["actor_optimizer"].get("state"):
+        print(
+            "[online_finetune] note: the checkpoint's actor Adam state is empty (actor frozen in the run that "
+            "saved it); the actor starts with fresh Adam moments."
+        )
     print(
         f"[online_finetune] loaded in place from the {source_label}: actor + actor_target + "
         f"{num_critics} critics + {num_critics} critic targets + q/actor Adam state. "
@@ -782,6 +927,162 @@ def _build_learner_from_checkpoint(
         qfs=qfs,
         qfs_target=qfs_target,
         target_critic_subset_size=None if target_subset is None else int(target_subset),
+        q_optimizer=q_optimizer,
+        actor_optimizer=actor_optimizer,
+        action_low=torch.as_tensor(action_low_np, dtype=torch.float32, device=device).unsqueeze(0),
+        action_high=torch.as_tensor(action_high_np, dtype=torch.float32, device=device).unsqueeze(0),
+        writer=SummaryWriter(tb_log_dir),
+        checkpoint_root=_checkpoint_root_from_tb(tb_log_dir, args.checkpoint_root_dir),
+        last_log_time=time.time(),
+        learner_start_time=time.time(),
+        total_updates=0,
+        total_actor_updates=0,
+        last_handled_checkpoint_request_id=0,
+    )
+
+
+def _residual_action_bounds(action_low_np: np.ndarray, action_high_np: np.ndarray) -> tuple[torch.Tensor, torch.Tensor]:
+    """The ResidualActor clamp bounds, shape (act_dim,) — the same in the learner, the
+    collector copy and the eval wrapper, so the strict state-dict syncs line up."""
+    low = torch.as_tensor(np.asarray(action_low_np, dtype=np.float32).reshape(-1))
+    high = torch.as_tensor(np.asarray(action_high_np, dtype=np.float32).reshape(-1))
+    return low, high
+
+
+def make_actor_factory(
+    *,
+    args: OnlineFinetuneArgs,
+    train_args: TrainArgs,
+    spec: HistoryPrivilegedSpec | None,
+    obs_dim: int,
+    act_dim: int,
+    action_low_np: np.ndarray,
+    action_high_np: np.ndarray,
+):
+    """``factory(device) -> actor`` with the learner actor's structure, for the collector's
+    copy (filled by a strict state-dict sync). None = the orchestrator's default plain actor."""
+    if not args.residual_finetune:
+        return None if spec is None else spec.build_actor
+
+    def _plain_actor(device):
+        policy_obs_dim = obs_dim + act_dim if train_args.use_last_action_in_policy_state else obs_dim
+        return DeterministicAgent(
+            build_policy_env_view(policy_obs_dim, act_dim),
+            action_scale=1.0,
+            action_bias=0.0,
+            hidden_layer_size=train_args.agent_hidden_layer_size,
+            num_hidden_layers=train_args.agent_num_hidden_layers,
+        ).to(device)
+
+    low, high = _residual_action_bounds(action_low_np, action_high_np)
+
+    def _factory(device):
+        make = (lambda: spec.build_actor(device)) if spec is not None else (lambda: _plain_actor(device))
+        return build_residual_actor_structure(
+            make, residual_scale=float(args.residual_scale), action_low=low, action_high=high, device=device
+        )
+
+    return _factory
+
+
+def residual_bundle_meta(args: OnlineFinetuneArgs) -> Dict[str, object] | None:
+    """Extra ``rma_meta.json`` entries for an online checkpoint (residual marker)."""
+    if not args.residual_finetune:
+        return None
+    return {RESIDUAL_META_KEY: {"scale": float(args.residual_scale), "source_checkpoint": str(args.checkpoint)}}
+
+
+def _build_residual_learner(
+    *,
+    args: OnlineFinetuneArgs,
+    train_args: TrainArgs,
+    checkpoint: Dict[str, object],
+    new_actor: Callable[[], torch.nn.Module],
+    obs_dim: int,
+    act_dim: int,
+    action_low_np: np.ndarray,
+    action_high_np: np.ndarray,
+    tb_log_dir: str,
+    source_label: str,
+    device: torch.device,
+) -> LearnerRuntimeState:
+    """Residual learner: frozen sim actor + fresh zero-output residual + NEW critics.
+
+    From a sim checkpoint: the base gets the sim actor's weights (strict); the residual,
+    the critics and both Adam states are new. From an online residual checkpoint
+    (--resume-online): everything (base, residual, residual target, critics, critic
+    targets, both Adam states) is restored from it."""
+    from torch.utils.tensorboard import SummaryWriter
+
+    resuming = is_residual_state_dict(checkpoint["actor"])
+    base_state = base_state_from_residual(checkpoint["actor"]) if resuming else checkpoint["actor"]
+    low, high = _residual_action_bounds(action_low_np, action_high_np)
+    actor, actor_target = build_residual_actor_pair(
+        new_actor,
+        base_state=base_state,
+        residual_scale=float(args.residual_scale),
+        action_low=low,
+        action_high=high,
+        device=device,
+    )
+    if resuming:
+        actor.load_state_dict(checkpoint["actor"], strict=True)
+        actor_target.load_state_dict(checkpoint["actor_target"], strict=True)
+        num_critics = sum(
+            1 for key in checkpoint if key.startswith("qf") and not key.endswith("_target") and key[2:].isdigit()
+        )
+        if num_critics != int(args.residual_num_critics):
+            raise ValueError(
+                f"Resume mismatch: the residual checkpoint has {num_critics} critics but "
+                f"residual_num_critics={args.residual_num_critics}."
+            )
+    else:
+        num_critics = int(args.residual_num_critics)
+    qfs = [
+        _make_qf(obs_dim, act_dim, train_args.q_hidden_layer_size, train_args.q_num_hidden_layers, device)
+        for _ in range(num_critics)
+    ]
+    qfs_target = [
+        _make_qf(obs_dim, act_dim, train_args.q_hidden_layer_size, train_args.q_num_hidden_layers, device)
+        for _ in range(num_critics)
+    ]
+    for i, (q, qt) in enumerate(zip(qfs, qfs_target), start=1):
+        if resuming:
+            q.load_state_dict(checkpoint[f"qf{i}"], strict=True)
+            qt.load_state_dict(checkpoint[f"qf{i}_target"], strict=True)
+        else:
+            qt.load_state_dict(q.state_dict())
+    q_optimizer = optim.Adam([p for q in qfs for p in q.parameters()], lr=args.q_lr, weight_decay=args.q_weight_decay)
+    actor_optimizer = optim.Adam(
+        actor.residual.parameters(), lr=args.policy_lr, weight_decay=float(args.residual_weight_decay)
+    )
+    if resuming:
+        q_optimizer.load_state_dict(checkpoint["q_optimizer"])
+        actor_optimizer.load_state_dict(checkpoint["actor_optimizer"])
+        _override_adam_hyperparams(q_optimizer, lr=args.q_lr, weight_decay=args.q_weight_decay)
+        _override_adam_hyperparams(
+            actor_optimizer, lr=args.policy_lr, weight_decay=float(args.residual_weight_decay)
+        )
+
+    n_base = sum(p.numel() for p in actor.base.parameters())
+    n_res = sum(p.numel() for p in actor.residual.parameters())
+    n_q = sum(p.numel() for p in qfs[0].parameters())
+    print(
+        f"[online_finetune] RESIDUAL fine-tuning ({'resumed from ' + source_label if resuming else 'from the ' + source_label}): "
+        f"base {type(actor.base).__name__} ({n_base:,} params, frozen) + residual {type(actor.residual).__name__} "
+        f"({n_res:,} params, {'restored' if resuming else 'random init, output layer zeroed'}, output scale "
+        f"{float(actor.residual.action_scale):g}); a = clamp(base + residual, [{low.tolist()}, {high.tolist()}]). "
+        f"Critics: {num_critics} x {type(qfs[0]).__name__} ({n_q:,} params each, obs {obs_dim} + act {act_dim}, "
+        f"{'restored' if resuming else 'NEW, random init — the sim critics are not used'}). "
+        f"Adam: residual lr {args.policy_lr:g} wd {args.residual_weight_decay:g}; critics lr {args.q_lr:g} "
+        f"wd {args.q_weight_decay:g}; CQL alpha {args.cql_alpha:g} (n_random {args.cql_n_random})."
+    )
+    return LearnerRuntimeState(
+        actor=actor,
+        actor_target=actor_target,
+        qfs=qfs,
+        qfs_target=qfs_target,
+        target_critic_subset_size=None,
         q_optimizer=q_optimizer,
         actor_optimizer=actor_optimizer,
         action_low=torch.as_tensor(action_low_np, dtype=torch.float32, device=device).unsqueeze(0),
@@ -1083,7 +1384,10 @@ def _critic_update(
     state: LearnerRuntimeState,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """One TD3 critic step on the online buffer with the transformed Bellman
-    target (same math as td3_training.py / async_td3_real, minus CQL)."""
+    target (same math as td3_training.py / async_td3_real). With cql_alpha > 0
+    each critic's loss also gets the CQL term of helper/td3_graphed_update.py:
+    cql_alpha · mean(logsumexp_j Q_h(s, a_j) − log n − Q_h(s, π(s))), a_j ~ U[-1, 1]^d,
+    n = cql_n_random (in the h-transformed Q space, as in the sim trainer)."""
     batch = buffer.sample(int(args.batch_size))
     observations = batch["observations"]
     actions = batch["actions"]
@@ -1118,6 +1422,27 @@ def _critic_update(
         )
     q_h_list = [q(observations, actions) for q in state.qfs]
     q_loss = sum(torch.nn.functional.mse_loss(q_h.view(-1), target_h) for q_h in q_h_list)
+    td_loss = q_loss.detach()
+    cql_alpha = float(getattr(args, "cql_alpha", 0.0))
+    if cql_alpha > 0.0:
+        n_random = int(args.cql_n_random)
+        bsz = observations.shape[0]
+        with torch.no_grad():
+            cql_policy_action = deterministic_actor_action(
+                state.actor,
+                augment_policy_observation(
+                    observations, batch["prev_actions"], train_args.use_last_action_in_policy_state
+                ),
+            )
+            random_actions = torch.empty(n_random * bsz, actions.shape[-1], device=actions.device).uniform_(-1.0, 1.0)
+            obs_repeat = observations.unsqueeze(0).expand(n_random, -1, -1).reshape(n_random * bsz, -1)
+        for q in state.qfs:
+            q_rand_h = q(obs_repeat, random_actions).view(n_random, bsz)
+            q_pi_h = q(observations, cql_policy_action).view(-1)
+            logsumexp = torch.logsumexp(q_rand_h, dim=0) - math.log(float(n_random))
+            q_loss = q_loss + cql_alpha * (logsumexp - q_pi_h).mean()
+    # Per-critic TD (h-space MSE) and alpha-weighted CQL parts of this update's loss, for logging.
+    state.last_critic_loss_parts = (td_loss / float(n_critics), (q_loss.detach() - td_loss) / float(n_critics))
     state.q_optimizer.zero_grad(set_to_none=True)
     q_loss.backward()
     state.q_optimizer.step()
@@ -1145,7 +1470,11 @@ def _actor_update(
     )
     policy_actions = deterministic_actor_action(state.actor, policy_observations)
     q1 = h_inverse(state.qf1(batch["observations"], policy_actions), eps=float(args.h_transform_eps)).view(-1)
-    actor_loss = -q1.mean()
+    if getattr(args, "actor_loss_normalized", False):
+        # The sim trainer's form (helper/td3_graphed_update.py _actor_core).
+        actor_loss = -((1.0 - float(args.gamma)) * q1).mean()
+    else:
+        actor_loss = -q1.mean()
     state.actor_optimizer.zero_grad(set_to_none=True)
     actor_loss.backward()
     state.actor_optimizer.step()
@@ -1160,9 +1489,11 @@ def _save_online_checkpoint(
     stats: Dict[str, object],
     state: LearnerRuntimeState,
     progress: _OnlineProgress,
+    spec: HistoryPrivilegedSpec | None = None,
 ) -> str | None:
     """Full checkpoint (networks, optimizers, online buffer) + ``online_state.json``
-    after a training round, so --resume-online and per-episode evals can use it."""
+    after a training round, so --resume-online and per-episode evals can use it.
+    With ``spec`` the folder also gets ``rma_meta.json`` (eval with ``--agent history``)."""
     try:
         checkpoint_dir = _save_checkpoint_from_learner_state(
             state=state,
@@ -1173,6 +1504,8 @@ def _save_online_checkpoint(
             train_args=train_args,
         )
         _write_online_state(checkpoint_dir, progress, args)
+        if spec is not None:
+            spec.write_bundle_meta(checkpoint_dir, residual_bundle_meta(args))
     except Exception:
         print(f"[learner_checkpoint] online-episode save FAILED:\n{traceback.format_exc()}")
         return None
@@ -1191,6 +1524,7 @@ def _make_online_learner_step(
     progress: _OnlineProgress,
     pending_episode: Dict[str, object],
     make_buffer: Optional[Callable[[SharedTD3Replay, str | torch.device], object]] = None,
+    spec: HistoryPrivilegedSpec | None = None,
 ):
     """Post-episode learner (``_run_sync_learner_iteration`` signature).
 
@@ -1248,6 +1582,9 @@ def _make_online_learner_step(
             stats["online_episode_report"] = {"kind": "excluded", "reason": excluded_reason}
             return False
         progress.launch_kept_episodes += 1
+        transitions_before = int(progress.transitions_collected)
+        carry_before = int(progress.schedule_carry_steps)
+        progress.transitions_collected = transitions_before + max(0, int(episode_steps))
         row["launch_kept_episode"] = progress.launch_kept_episodes
         row["kept_episode"] = progress.total_kept_episodes
 
@@ -1265,6 +1602,20 @@ def _make_online_learner_step(
             return False
 
         writer.add_scalar("online_finetune/return", episode_return, policy_episodes_trained)
+        # Same episode against the total real timesteps collected (kept episodes, incl. this one).
+        steps_x = int(progress.transitions_collected)
+        writer.add_scalar("online_finetune_vs_timesteps/return", episode_return, steps_x)
+        writer.add_scalar("online_finetune_episode/total_timesteps", float(steps_x), policy_episodes_trained)
+        # history_privileged policies: return = task reward + strike shaping; the parts too.
+        for stat_key, tag in (
+            ("last_episode_task_return", "online_finetune_episode/task_return"),
+            ("last_episode_shaping_return", "online_finetune_episode/shaping_return"),
+            ("last_episode_edge_termination", "online_finetune_episode/edge_termination"),
+        ):
+            if stat_key in stats:
+                value = float(stats.pop(stat_key))
+                row[stat_key.removeprefix("last_")] = value
+                writer.add_scalar(tag, value, policy_episodes_trained)
         writer.add_scalar("online_finetune_episode/juggles", row["episode_juggles"], policy_episodes_trained)
         writer.add_scalar("online_finetune_episode/length", float(episode_steps), policy_episodes_trained)
         writer.add_scalar("online_finetune_episode/estop", row["episode_estop_flag"], policy_episodes_trained)
@@ -1277,21 +1628,86 @@ def _make_online_learner_step(
         # Critic error of Q^{π_n} on π_n's own episode, before training on it.
         critic_error = _log_episode_critic_error(args, state, progress, new_episode, policy_episodes_trained)
 
-        critic_budget = max(1, int(round(float(args.utd_ratio) * episode_steps)))
-        every = int(args.actor_update_every)
+        q_losses, q1_means, actor_losses, actor_norm_qs = [], [], [], []
+        sim_iterations = 0
+        if args.update_schedule == "sim":
+            # The sim trainer's schedule: one iteration per train_every_steps transitions,
+            # each = q_updates critic updates then actor_updates_per_iteration actor updates.
+            # Transitions collected before the buffer reaches the learning threshold do not
+            # bank iterations (sim: no updates before learning_starts).
+            threshold = max(int(args.learning_starts), int(args.batch_size))
+            if buffer_size < threshold:
+                progress.schedule_carry_steps = 0
+                writer.flush()
+                progress.append({**row, "warm_start": False, "trained": False, "learning_threshold": threshold})
+                stats["online_episode_report"] = {"kind": "stored", "buffer": buffer_size}
+                return False
+            pending_steps = int(progress.schedule_carry_steps) + int(episode_steps)
+            sim_iterations = pending_steps // int(args.train_every_steps)
+            progress.schedule_carry_steps = pending_steps - sim_iterations * int(args.train_every_steps)
+            critic_budget = sim_iterations * int(args.q_updates)
+            if sim_iterations == 0:
+                writer.flush()
+                progress.append({**row, "warm_start": False, "trained": False,
+                                 "schedule_carry_steps": progress.schedule_carry_steps})
+                stats["online_episode_report"] = {"kind": "stored", "buffer": buffer_size}
+                return False
+        else:
+            critic_budget = max(1, int(round(float(args.utd_ratio) * episode_steps)))
         start = time.time()
         buffer = make_buffer(replay, args.learner_device)
-        q_losses, q1_means, actor_losses, actor_norm_qs = [], [], [], []
-        for k in range(1, critic_budget + 1):
-            q_loss, q1_mean = _critic_update(args, train_args, buffer, state)
-            q_losses.append(q_loss)
-            q1_means.append(q1_mean)
-            # Paper Eq. 6: blocks of M critic updates each followed by one actor
-            # update; the K mod M leftover critic updates get no actor update.
-            if k % every == 0:
+        actor_starts = int(args.actor_learning_starts)
+        td_parts, cql_parts = [], []
+
+        def _actor_allowed(transitions_seen: int) -> bool:
+            if transitions_seen < actor_starts:
+                return False
+            if progress.actor_enabled_at is None:
+                progress.actor_enabled_at = {
+                    "transitions_collected": int(transitions_seen),
+                    "critic_updates_before": int(state.total_updates),
+                    "training_round": int(progress.episodes_trained) + 1,
+                }
+                print(
+                    f"[online_finetune] actor updates ON at {transitions_seen} collected transitions "
+                    f"(actor_learning_starts {actor_starts}) after {state.total_updates} critic-only updates."
+                )
+            return True
+
+        def _critic_block(n_updates: int) -> None:
+            for _ in range(n_updates):
+                q_loss, q1_mean = _critic_update(args, train_args, buffer, state)
+                q_losses.append(q_loss)
+                q1_means.append(q1_mean)
+                td_part, cql_part = state.last_critic_loss_parts
+                td_parts.append(td_part)
+                cql_parts.append(cql_part)
+
+        def _actor_block(n_updates: int, transitions_seen: int) -> None:
+            if not _actor_allowed(transitions_seen):
+                return
+            for _ in range(n_updates):
                 actor_loss, actor_norm_q = _actor_update(args, train_args, buffer, state)
                 actor_losses.append(actor_loss)
                 actor_norm_qs.append(actor_norm_q)
+
+        if args.update_schedule == "sim":
+            first_iteration_end = transitions_before - carry_before
+            for i in range(sim_iterations):
+                _critic_block(int(args.q_updates))
+                _actor_block(
+                    int(args.actor_updates_per_iteration),
+                    first_iteration_end + int(args.train_every_steps) * (i + 1),
+                )
+        else:
+            every = int(args.actor_update_every)
+            # Paper Eq. 6: blocks of M critic updates each followed by one actor
+            # update; the K mod M leftover critic updates get no actor update.
+            for _ in range(critic_budget // every):
+                _critic_block(every)
+                _actor_block(1, int(progress.transitions_collected))
+            if critic_budget % every:
+                _critic_block(critic_budget % every)
         learner_s = time.time() - start
         progress.episodes_trained += 1
         episodes_trained = progress.episodes_trained
@@ -1300,9 +1716,14 @@ def _make_online_learner_step(
         q_loss_tensor = torch.stack(q_losses)
         metrics: Dict[str, float] = {
             "losses/q_loss": float(q_loss_tensor.mean().item()),
+            "losses/q_td_loss": float(torch.stack(td_parts).mean().item()),
+            "losses/q_cql_penalty": float(torch.stack(cql_parts).mean().item()),
+            "online/actor_updates_enabled": float(progress.actor_enabled_at is not None),
+            "online/transitions_collected": float(progress.transitions_collected),
             "losses/q1_mean": float(torch.stack(q1_means).mean().item()),
             "online/episode_transitions_T": float(episode_steps),
             "online/critic_updates_K": float(critic_budget),
+            "online/sim_iterations": float(sim_iterations),
             "online/actor_updates": float(actor_updates),
             "online/replay_size": float(buffer_size),
             "online/learner_wall_s": float(learner_s),
@@ -1328,8 +1749,13 @@ def _make_online_learner_step(
         writer.add_scalar("online_finetune/critic_loss", metrics["losses/q_loss"], episodes_trained)
         writer.add_scalar("online_finetune_loss/critic_loss_last", critic_loss_last, episodes_trained)
         writer.add_scalar("online_finetune_loss/q1_mean", metrics["losses/q1_mean"], episodes_trained)
+        writer.add_scalar("online_finetune_loss/critic_td_loss", metrics["losses/q_td_loss"], episodes_trained)
+        writer.add_scalar("online_finetune_loss/critic_cql_penalty", metrics["losses/q_cql_penalty"], episodes_trained)
+        writer.add_scalar("online_finetune_updates/actor_updates_enabled", float(progress.actor_enabled_at is not None), episodes_trained)
         if actor_updates:
             writer.add_scalar("online_finetune/actor_loss", metrics["losses/actor_loss"], episodes_trained)
+            writer.add_scalar("online_finetune_vs_timesteps/actor_loss", metrics["losses/actor_loss"], steps_x)
+        writer.add_scalar("online_finetune_vs_timesteps/critic_loss", metrics["losses/q_loss"], steps_x)
         writer.add_scalar("online_finetune_updates/critic_updates_K", float(critic_budget), episodes_trained)
         writer.add_scalar("online_finetune_updates/actor_updates", float(actor_updates), episodes_trained)
         writer.add_scalar("online_finetune_updates/replay_size", float(buffer_size), episodes_trained)
@@ -1338,7 +1764,7 @@ def _make_online_learner_step(
         checkpoint_dir = None
         every_ckpt = int(args.checkpoint_every_online_episodes)
         if every_ckpt > 0 and episodes_trained % every_ckpt == 0:
-            checkpoint_dir = _save_online_checkpoint(args, train_args, replay, stats, state, progress)
+            checkpoint_dir = _save_online_checkpoint(args, train_args, replay, stats, state, progress, spec=spec)
         progress.append(
             {
                 **row,
@@ -1346,8 +1772,14 @@ def _make_online_learner_step(
                 "trained": True,
                 "episodes_trained_after": episodes_trained,
                 "critic_updates_K": critic_budget,
+                "sim_iterations": sim_iterations,
+                "schedule_carry_steps": int(progress.schedule_carry_steps),
                 "actor_updates": actor_updates,
                 "critic_loss_mean": metrics["losses/q_loss"],
+                "critic_td_loss_mean": metrics["losses/q_td_loss"],
+                "critic_cql_penalty_mean": metrics["losses/q_cql_penalty"],
+                "actor_updates_enabled": progress.actor_enabled_at is not None,
+                "transitions_collected": int(progress.transitions_collected),
                 "critic_loss_last": critic_loss_last,
                 "actor_loss_mean": metrics.get("losses/actor_loss"),
                 "q1_mean": metrics["losses/q1_mean"],
@@ -1368,6 +1800,7 @@ def _make_online_learner_step(
             "buffer": buffer_size,
             "learner_s": learner_s,
         }
+        stats["online_episode_report"]["actor_on"] = progress.actor_enabled_at is not None
         return actor_updates > 0
 
     return _step
@@ -1595,7 +2028,18 @@ def main(
     _validate_args(args)
     _check_hist_len_matches(args, sim_checkpoint)
 
-    obs_dim, act_dim, action_low_np, action_high_np = _probe_env_spaces(args)
+    raw_obs_dim, act_dim, action_low_np, action_high_np = _probe_env_spaces(args)
+    spec = history_privileged_spec(sim_checkpoint, str(args.checkpoint), raw_obs_dim, act_dim)
+    obs_dim = raw_obs_dim
+    if spec is not None:
+        _check_history_privileged_args(args, spec)
+        obs_dim = spec.obs_dim
+        print(
+            f"[online_finetune] history_privileged policy: actor window {spec.history_len}x{spec.feature_dim} "
+            f"({spec.step_features}); replay / critic obs = x_t {raw_obs_dim} + window {spec.window_dim} + "
+            f"state 8 = {obs_dim}; state = observed positions + finite-difference velocities; "
+            f"reward = task reward + strike shaping {spec.shaping}"
+        )
     replay = SharedTD3Replay(
         success_capacity=int(args.online_buffer_size),
         failure_capacity=1,
@@ -1640,6 +2084,7 @@ def main(
         action_high_np=action_high_np,
         tb_log_dir=learner_tb_dir,
         source_label="sim checkpoint" if resume is None else f"online checkpoint {resume[0]}",
+        spec=spec,
     )
     if resume is not None:
         learner_state.total_updates = int(resume[2].get("learner_q_updates", 0))
@@ -1652,10 +2097,37 @@ def main(
         episodes_trained=episodes_trained,
         prior_kept_episodes=prior_kept_episodes,
     )
+    if resume is not None:
+        progress.schedule_carry_steps = int(resume[1].get("schedule_carry_steps", 0))
+        # Older online states have no counter: fall back to the restored buffer size.
+        progress.transitions_collected = int(
+            resume[1].get("transitions_collected", replay.len(_ONLINE_PARTITION))
+        )
+        progress.actor_enabled_at = resume[1].get("actor_enabled_at")
+    if int(args.actor_learning_starts) > 0:
+        print(
+            f"[online_finetune] critic-only warm-up: no actor updates until {args.actor_learning_starts} real "
+            f"transitions are collected ({progress.transitions_collected} so far"
+            f"{', actor already ON' if progress.actor_enabled_at is not None else ''})."
+        )
+    if args.update_schedule == "sim":
+        print(
+            "[online_finetune] update schedule: sim — after each kept episode of T transitions, "
+            f"floor((carry + T) / {args.train_every_steps}) iterations of {args.q_updates} critic + "
+            f"{args.actor_updates_per_iteration} actor updates (batch {args.batch_size}); Polyak every "
+            f"{args.target_network_frequency} critic updates; learning starts at "
+            f"{max(int(args.learning_starts), int(args.batch_size))} buffered transitions."
+        )
+    schedule_desc = (
+        f"update_schedule=sim train_every_steps={args.train_every_steps} q_updates={args.q_updates} "
+        f"actor_updates_per_iteration={args.actor_updates_per_iteration} learning_starts={args.learning_starts} "
+        if args.update_schedule == "sim"
+        else f"utd_ratio(η)={args.utd_ratio:g} actor_update_every(M)={args.actor_update_every} "
+    )
     print(
         "[online_finetune] recipe: "
-        f"warm_start_episodes={args.warm_start_episodes} utd_ratio(η)={args.utd_ratio:g} "
-        f"actor_update_every(M)={args.actor_update_every} tau={args.tau:g} "
+        f"warm_start_episodes={args.warm_start_episodes} {schedule_desc}"
+        f"residual_finetune={args.residual_finetune} tau={args.tau:g} "
         f"target_network_frequency={args.target_network_frequency} batch_size={args.batch_size} "
         f"gamma={args.gamma:g} exploration_noise={args.exploration_noise:g} "
         f"online_buffer_size={args.online_buffer_size} num_online_episodes={args.num_online_episodes} "
@@ -1703,6 +2175,38 @@ def main(
     # Newest stored episode, handed from the replay push to the learner step
     # (same process) for the critic-error metric.
     pending_episode: Dict[str, object] = {}
+    replay_push = _make_online_replay_push(stats, args, pending_episode)
+    policy_env_wrapper = None
+    collector_actor_factory = make_actor_factory(
+        args=args, train_args=train_args, spec=spec, obs_dim=obs_dim, act_dim=act_dim,
+        action_low_np=action_low_np, action_high_np=action_high_np,
+    )
+    if spec is not None:
+        builders: list[HistoryPrivilegedObs] = []
+
+        def policy_env_wrapper(env):
+            builder = HistoryPrivilegedObs.for_env(spec, env)
+            builders.append(builder)
+            print(
+                f"[online_finetune] policy env: dt={builder.dt:g}s center_offset={builder.center_offset_constant:g} "
+                f"x_min_lim={builder.x_min_lim:g} (top edge at obs x = {builder.center_offset_constant + builder.x_min_lim:.4f}); "
+                f"edge termination below {spec.shaping.edge_term_margin:g} m"
+            )
+            return HistoryPrivilegedPolicyEnv(env, builder)
+
+        plain_push = replay_push
+
+        # Same signature as _add_episode_to_shared_replay: the orchestrator passes keywords.
+        def replay_push(replay, episode_trajectory, recent_episode_returns, success_top_fraction):
+            if builders:
+                stats.update(builders[-1].episode_stats())
+            return plain_push(
+                replay=replay,
+                episode_trajectory=episode_trajectory,
+                recent_episode_returns=recent_episode_returns,
+                success_top_fraction=success_top_fraction,
+            )
+
     run_end_reason = "completed"
     try:
         collector_process_modular(
@@ -1716,8 +2220,8 @@ def main(
             action_low_np,
             action_high_np,
             collector_tb_dir,
-            add_episode_to_replay_fn=_make_online_replay_push(stats, args, pending_episode),
-            learner_step_fn=_make_online_learner_step(progress, pending_episode, make_buffer=make_buffer),
+            add_episode_to_replay_fn=replay_push,
+            learner_step_fn=_make_online_learner_step(progress, pending_episode, make_buffer=make_buffer, spec=spec),
             should_stop_fn=_should_stop,
             episode_report_fn=_make_online_episode_report(progress, args, stats),
             episode_min_timesteps_fn=_make_episode_min_timesteps(args),
@@ -1730,6 +2234,8 @@ def main(
                 "terminate_on_puck_pass_paddle": bool(args.terminate_on_puck_pass_paddle),
                 "puck_pass_paddle_score_threshold": int(args.puck_pass_paddle_frames),
             },
+            policy_env_wrapper=policy_env_wrapper,
+            collector_actor_factory=collector_actor_factory,
         )
     except KeyboardInterrupt:
         print("[main] interrupted by user; shutting down.")
@@ -1750,6 +2256,8 @@ def main(
         if final_checkpoint_dir and final_checkpoint_dir != previous_checkpoint_dir:
             # Lets --resume-online pick up the shutdown checkpoint too.
             _write_online_state(final_checkpoint_dir, progress, args)
+            if spec is not None:
+                spec.write_bundle_meta(final_checkpoint_dir, residual_bundle_meta(args))
         if recycle is not None:
             # This trial's D_online becomes part of D0 for the later trials (an
             # interrupted trial rewrites it when it is continued).
@@ -1781,7 +2289,13 @@ def main(
             learner_actor_updates=int(learner_state.total_actor_updates),
             last_checkpoint_dir=str(stats.get("last_checkpoint_dir", "")) or None,
         )
-        print("Final stats:", {k: v for k, v in stats.items() if not isinstance(v, list)})
+        final_stats = {k: v for k, v in stats.items() if not isinstance(v, list)}
+        print("Final stats:", final_stats)
+        try:
+            with open(Path(base_log_dir) / "final_stats.json", "w") as f:
+                json.dump({"run_end_reason": run_end_reason, **final_stats}, f, indent=2, default=str)
+        except Exception:
+            print(f"[online_finetune] final_stats.json save FAILED:\n{traceback.format_exc()}")
     return run_end_reason
 
 

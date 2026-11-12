@@ -233,13 +233,22 @@ class PolicyRunner:
         if callable(hook):
             hook(np.asarray(obs, dtype=np.float32))
 
+    def _begin_episode_obs(self, obs: np.ndarray) -> np.ndarray:
+        """An env wrapper that augments the observation (e.g. the history window +
+        state of ``helper/history_privileged_obs.HistoryPrivilegedPolicyEnv``) starts
+        its per-episode state here; a plain env returns ``obs`` unchanged."""
+        hook = getattr(self._env, "begin_episode", None)
+        return hook(obs) if callable(hook) else obs
+
     def seed_initial(self, obs: np.ndarray) -> None:
         """Initial seeding from startup reset (before main loop)."""
+        obs = self._begin_episode_obs(obs)
         self._obs = obs
         self._notify_actor_episode_start(obs)
 
     def seed_after_reset(self, obs: np.ndarray) -> None:
         """Reset all per-episode state for the next episode."""
+        obs = self._begin_episode_obs(obs)
         self._obs = obs
         self._notify_actor_episode_start(obs)
         self._episode_rows = []

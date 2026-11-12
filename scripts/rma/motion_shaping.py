@@ -72,6 +72,43 @@ def _paddle_x(sim) -> float:
     return float(-sim.paddles["paddle_ego"].position[1] - sim.center_offset_constant)
 
 
+def shaping_step(
+    shaping: MotionShaping,
+    *,
+    x: float,
+    prev_x: float,
+    xs: list,
+    x_min_lim: float,
+    dt: float,
+    contact: bool,
+    puck_speed_fn,
+) -> tuple[float, bool]:
+    """One step of the shaping terms: ``(bonus, edge_terminate)``.
+
+    ``x`` / ``prev_x`` are the paddle x (robot frame) after / before the step, ``xs``
+    the last ``cock_window + 1`` of them (``x`` included), ``puck_speed_fn()`` the
+    puck speed at the end of the step (read only on contact steps). Shared by the
+    sim trainer (true Box2D state, ``install_motion_shaping``) and the real-robot
+    online fine-tuning (observed positions, ``scripts/td3/helper/history_privileged_obs.py``).
+    """
+    d = x - float(x_min_lim)
+    v_fwd = -(x - prev_x) / float(dt)
+    bonus = -shaping.edge_coef * float(np.clip((shaping.edge_margin - d) / shaping.edge_margin, 0.0, 1.0))
+    terminate = False
+    if contact:
+        bonus += shaping.hit_coef * float(np.clip(v_fwd / shaping.hit_vref, 0.0, 1.0))
+        if v_fwd < shaping.weak_vmin:
+            bonus -= shaping.weak_coef
+        bonus -= shaping.edge_hit_coef * float(np.clip((shaping.edge_hit_margin - d) / shaping.edge_hit_margin, 0.0, 1.0))
+        puck_speed = float(puck_speed_fn())
+        bonus += shaping.pout_coef * float(np.clip((puck_speed - shaping.pout_min) / (shaping.pout_ref - shaping.pout_min), 0.0, 1.0))
+        bonus -= shaping.fast_coef * float(np.clip((puck_speed - shaping.fast_min) / shaping.fast_ref, 0.0, 1.0))
+        bonus += shaping.cock_coef * float(np.clip((max(xs) - xs[0]) / shaping.cock_ref, 0.0, 1.0))
+        if d < shaping.edge_term_margin:
+            terminate = True
+    return bonus, terminate
+
+
 def install_motion_shaping(env, shaping: MotionShaping):
     """Add the shaping terms to the reward of ``env.step``, in place. Returns ``env``."""
     env_reset, env_step = env.reset, env.step
@@ -90,21 +127,18 @@ def install_motion_shaping(env, shaping: MotionShaping):
         prev = x if state["x"] is None else state["x"]
         state["x"] = x
         state["xs"] = (state["xs"] + [x])[-(shaping.cock_window + 1):]
-        d = x - float(sim.x_min_lim)
-        v_fwd = -(x - prev) / float(sim.time_per_step)
-        bonus = -shaping.edge_coef * float(np.clip((shaping.edge_margin - d) / shaping.edge_margin, 0.0, 1.0))
-        if int(info.get("paddle_puck_collision_count", 0)) > 0:
-            bonus += shaping.hit_coef * float(np.clip(v_fwd / shaping.hit_vref, 0.0, 1.0))
-            if v_fwd < shaping.weak_vmin:
-                bonus -= shaping.weak_coef
-            bonus -= shaping.edge_hit_coef * float(np.clip((shaping.edge_hit_margin - d) / shaping.edge_hit_margin, 0.0, 1.0))
-            puck_speed = float(np.linalg.norm(next(iter(sim.pucks.values())).linearVelocity))
-            bonus += shaping.pout_coef * float(np.clip((puck_speed - shaping.pout_min) / (shaping.pout_ref - shaping.pout_min), 0.0, 1.0))
-            bonus -= shaping.fast_coef * float(np.clip((puck_speed - shaping.fast_min) / shaping.fast_ref, 0.0, 1.0))
-            win = state["xs"]
-            bonus += shaping.cock_coef * float(np.clip((max(win) - win[0]) / shaping.cock_ref, 0.0, 1.0))
-            if d < shaping.edge_term_margin:
-                terminated = True
+        bonus, edge_terminate = shaping_step(
+            shaping,
+            x=x,
+            prev_x=prev,
+            xs=state["xs"],
+            x_min_lim=float(sim.x_min_lim),
+            dt=float(sim.time_per_step),
+            contact=int(info.get("paddle_puck_collision_count", 0)) > 0,
+            puck_speed_fn=lambda: np.linalg.norm(next(iter(sim.pucks.values())).linearVelocity),
+        )
+        if edge_terminate:
+            terminated = True
         info["motion_shaping"] = bonus
         return obs, reward + bonus, terminated, truncated, info
 

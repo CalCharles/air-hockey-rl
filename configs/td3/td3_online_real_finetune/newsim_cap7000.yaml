@@ -1,0 +1,64 @@
+# Online real-robot fine-tuning of the new-sim cap-7000 SWA juggle policies
+# (data/newsim_scratch_cap7000_swa/seed<S>/training_state.pth: RMA history_privileged
+# actor + critics fitted to that exact actor).
+# Entrypoint: scripts/td3/td3_online_real_finetune.py (read its header first).
+# Recipe: As et al., "What Matters for Simulation-to-Online RL on Real Robots"
+# (arXiv:2602.20220) — in-place load of the sim actor / critics / targets / critic Adam
+# state (the actor's Adam state is empty in these checkpoints), one real replay buffer,
+# no warm start, K = η·T critic updates after each episode, one actor update per M,
+# data recycling over 4 trials (each trial resets actor + critics to the checkpoint).
+#
+#   python -m scripts.td3.td3_online_real_finetune \
+#     --checkpoint data/newsim_scratch_cap7000_swa/seed0/training_state.pth \
+#     --args-file  configs/td3/td3_online_real_finetune/newsim_cap7000.yaml \
+#     --no-warmup-no-sim-data --num-trials 4 --num-online-episodes 5 \
+#     --experiment-name newsim_cap7000_recycle
+#
+# The critic sees [x_t | 50-step window | 8-d state] and the reward is the sim training
+# reward (task + strike shaping, edge termination ends the robot episode); both are built
+# from the observed positions by scripts/td3/helper/history_privileged_obs.py.
+# Architecture, shaping coefficients and history settings come from the checkpoint args.
+
+# Real rollout config: hist4, 10,000-step episode cap.
+config: configs/real_configs/rollout_td3_config_hist4_T10000.yaml
+
+# --- Sim-to-online recipe ----------------------------------------------------
+warm_start_episodes: 0      # no warm start (--no-warmup-no-sim-data also sets this)
+no_warmup_no_sim_data: true
+utd_ratio: 5.0              # η: K = round(η · T) critic updates after each episode
+actor_update_every: 20      # M: one actor update after every 20th critic update
+policy_lr: 1.0e-5           # actor LR (fresh Adam: the checkpoint's actor Adam state is empty)
+q_lr: 1.0e-3                # critic LR, unchanged from sim
+q_weight_decay: 0.0
+online_buffer_size: 200000  # single real-transition buffer; 5 episodes x up to 10,000 steps fits
+train_on_stop_episodes: true
+min_episode_steps: 20
+checkpoint_every_online_episodes: 1
+cql_alpha: 0.0
+recycle_alpha_start: 0.5    # α (online share of each batch) at the first round of trials >= 1
+recycle_anneal_episodes: 0  # 0 = the trial length (5 rounds): α 0.5 -> 1 over the trial
+
+# --- TD3 (matches the sim training of these policies) ------------------------
+gamma: 0.995                # the critics' training discount (checked against the checkpoint)
+tau: 0.005
+target_network_frequency: 1 # Polyak every critic update (paper Eq. 4)
+batch_size: 512
+policy_noise: 0.2
+noise_clip: 0.5
+h_transform_eps: 0.001
+
+# --- Collector --------------------------------------------------------------
+exploration_noise: 0.1      # Gaussian action noise on the robot (sim training value)
+exploration_primitive_chance: 0.0
+exploration_primitive_chance_start: 0.0
+collector_device: cpu
+learner_device: cuda:0
+seed: 0
+
+# --- Run length / artifacts / checkpoints ------------------------------------
+total_timesteps: 0          # no step cap; each trial ends after num_online_episodes usable episodes
+data_root_dir: real_runs/td3_online_real_finetune
+run_name: td3_online_real_finetune_newsim_cap7000
+enable_periodic_checkpointing: true
+checkpoint_every_collector_steps: 20000
+include_non_vital_training_state_fields: true

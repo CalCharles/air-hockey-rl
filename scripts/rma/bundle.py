@@ -115,6 +115,12 @@ def load_phase1(path: str, map_location: str = "cpu") -> Dict[str, Any]:
     state = torch.load(model_path, map_location=map_location, weights_only=False)
     if isinstance(state, dict) and "actor" in state and isinstance(state["actor"], dict):
         state = state["actor"]
+    if meta.get("residual"):
+        # Online residual fine-tune (scripts/td3/helper/residual_finetune.py): frozen base +
+        # residual of the same architecture; the residual's output scale is in its state dict.
+        from scripts.td3.helper.residual_finetune import ResidualHistoryActor
+
+        actor = ResidualHistoryActor(actor, actor_from_meta(meta))
     actor.load_state_dict(state)
     actor.eval()
 

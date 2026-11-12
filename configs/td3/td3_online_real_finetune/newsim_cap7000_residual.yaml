@@ -1,0 +1,83 @@
+# Online real-robot RESIDUAL fine-tuning of the new-sim cap-7000 SWA juggle policies
+# (data/newsim_scratch_cap7000_swa/seed<S>/training_state.pth: RMA history_privileged actor).
+# Entrypoint: scripts/td3/td3_online_real_finetune.py (header + residual_finetune / update_schedule args);
+# networks: scripts/td3/helper/residual_finetune.py.
+#
+#   python -m scripts.td3.td3_online_real_finetune \
+#     --checkpoint data/newsim_scratch_cap7000_swa/seed0/training_state.pth \
+#     --args-file  configs/td3/td3_online_real_finetune/newsim_cap7000_residual.yaml \
+#     --no-warmup-no-sim-data --num-online-episodes 20 --experiment-name newsim_cap7000_residual
+#
+# Sim rehearsal of the same learner (no robot):
+#   python -m scripts.td3.sim_dryrun_history_online_finetune \
+#     --checkpoint data/newsim_scratch_cap7000_swa/seed0/training_state.pth \
+#     --args-file configs/td3/td3_online_real_finetune/newsim_cap7000_residual.yaml \
+#     --num-trials 1 --num-online-episodes 5 --experiment-name newsim_cap7000_residual
+#
+# Actor: a = clamp(base(s) + residual(s), -1, 1). base = the sim PrivilegedHistoryActor, frozen.
+# residual = a second PrivilegedHistoryActor (same architecture, own 50-step encoder), random init,
+# output layer zeroed (policy starts equal to the base), tanh output x residual_scale.
+# Critics: NEW (residual_num_critics fresh TD3QNetworks on [x_t | window | observed 8-d state]);
+# the sim critics in the checkpoint are not used. Critic state = observed positions +
+# finite-difference velocities (helper/history_privileged_obs.py).
+# Update schedule: the sim trainer's (scripts/rma/train_base_policy.py, seed0's args.yaml):
+# per 32 transitions, 8 critic updates then 2 actor updates, batch 512, Polyak every 10 critic updates.
+# On the robot the iterations run after each episode (the robot is idle meanwhile), not every
+# 32 steps inside it; the count per transition is the same.
+# Critic loss = h-space TD MSE (no CQL). Critic-only warm-up: the residual actor is not updated until
+# 2000 real transitions have been collected; the critics train from the first update.
+
+# Real rollout config: hist4, 10,000-step episode cap.
+config: configs/real_configs/rollout_td3_config_hist4_T10000.yaml
+
+# --- Residual policy -----------------------------------------------------------
+residual_finetune: true
+residual_scale: 0.15         # max correction per action dim (round-1 / round-2 recipe value)
+residual_weight_decay: 0.0
+residual_num_critics: 2      # fresh critics; seed0's sim training used 2 (the old residual recipe used 5)
+cql_alpha: 0.0               # CQL off (implemented; the old residual recipe used 20)
+cql_n_random: 10
+
+# --- Update schedule: same as the sim training of seed0 ----------------------------
+update_schedule: sim
+train_every_steps: 32        # one training iteration per 32 transitions (remainder carried over)
+q_updates: 8                 # critic updates per iteration
+actor_updates_per_iteration: 2
+batch_size: 512
+target_network_frequency: 10 # Polyak every 10 critic updates
+tau: 0.005
+learning_starts: 0           # first update once the buffer holds >= batch_size (512) transitions
+policy_lr: 3.0e-4            # residual actor Adam LR (seed0 sim actor LR)
+actor_loss_normalized: true  # actor loss = -(1 - gamma) * mean Q1, the sim trainer's form
+actor_learning_starts: 2000  # critic-only warm-up: no residual-actor updates until 2000 real transitions
+                             # are collected; the critics train from the first update
+q_lr: 1.0e-3                 # critic Adam LR (seed0 sim)
+q_weight_decay: 0.0
+gamma: 0.995                 # seed0's training discount
+policy_noise: 0.2
+noise_clip: 0.5
+h_transform_eps: 0.001
+
+# --- Online data ---------------------------------------------------------------
+warm_start_episodes: 0
+no_warmup_no_sim_data: true
+online_buffer_size: 200000
+train_on_stop_episodes: true
+min_episode_steps: 20
+checkpoint_every_online_episodes: 1
+
+# --- Collector -------------------------------------------------------------------
+exploration_noise: 0.1       # Gaussian action noise on the robot (sim training value)
+exploration_primitive_chance: 0.0
+exploration_primitive_chance_start: 0.0
+collector_device: cpu
+learner_device: cuda:0
+seed: 0
+
+# --- Run length / artifacts / checkpoints ------------------------------------------
+total_timesteps: 0
+data_root_dir: real_runs/td3_online_real_finetune
+run_name: td3_online_real_finetune_newsim_cap7000_residual
+enable_periodic_checkpointing: true
+checkpoint_every_collector_steps: 20000
+include_non_vital_training_state_fields: true

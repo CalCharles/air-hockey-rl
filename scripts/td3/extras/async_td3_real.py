@@ -768,6 +768,8 @@ def collector_process_modular(
     force_fsm_after_hard_reset: bool = False,
     env_config_overrides: dict | None = None,
     periodic_hard_reset_every: int = 3,
+    policy_env_wrapper=None,
+    collector_actor_factory=None,
 ) -> None:
     """Orchestrator. Drives PolicyRunner + ResetRunner around the learner,
     replay push, and artifact saves. Replaces the original monolithic
@@ -800,7 +802,13 @@ def collector_process_modular(
     (``env.reset()``: the arm drives back to its home reset pose) between
     episodes; 1 does it after every episode, 0 only after stops.
     td3_online_real_finetune.py passes 1 for ``--home-before-reset`` (with
-    ``force_fsm_after_hard_reset=True`` so the reset policy always follows)."""
+    ``force_fsm_after_hard_reset=True`` so the reset policy always follows).
+    ``policy_env_wrapper(env) -> env`` wraps the env the PolicyRunner steps (the
+    ResetRunner keeps the raw env); td3_online_real_finetune.py uses it for the
+    history_privileged policies (critic observation + shaped reward,
+    helper/history_privileged_obs.py). ``collector_actor_factory(device) -> actor``
+    replaces the plain TD3 collector actor; its weights are then synced from the
+    learner with ``strict=True``."""
     if add_episode_to_replay_fn is None:
         add_episode_to_replay_fn = _add_episode_to_shared_replay
     if learner_step_fn is None:
@@ -864,15 +872,20 @@ def collector_process_modular(
     )
 
     # ----------------------------- Actor / primitive selector -------------
-    actor = _build_collector_actor(
-        args=args,
-        train_args=train_args,
-        obs_dim=obs_dim,
-        act_dim=act_dim,
-        action_low_np=action_low_np,
-        action_high_np=action_high_np,
-        device=device,
-    )
+    if collector_actor_factory is not None:
+        actor = collector_actor_factory(device)
+        actor.eval()
+    else:
+        actor = _build_collector_actor(
+            args=args,
+            train_args=train_args,
+            obs_dim=obs_dim,
+            act_dim=act_dim,
+            action_low_np=action_low_np,
+            action_high_np=action_high_np,
+            device=device,
+        )
+    strict_actor_sync = collector_actor_factory is not None
     action_low = torch.as_tensor(action_low_np, dtype=torch.float32, device=device).unsqueeze(0)
     action_high = torch.as_tensor(action_high_np, dtype=torch.float32, device=device).unsqueeze(0)
     primitive_selector = build_primitive_exploration_selector_for_real_collector(
@@ -884,7 +897,7 @@ def collector_process_modular(
     )
     actor.load_state_dict(
         {key: value.detach().cpu() for key, value in learner_state.actor.state_dict().items()},
-        strict=False,
+        strict=strict_actor_sync,
     )
 
     # ----------------------------- Shared dataclasses ---------------------
@@ -977,8 +990,9 @@ def collector_process_modular(
     }
 
     # ----------------------------- Policy runner --------------------------
+    policy_env = policy_env_wrapper(env) if policy_env_wrapper is not None else env
     policy_runner = PolicyRunner(
-        env,
+        policy_env,
         actor,
         device=device,
         args=args,
@@ -1333,7 +1347,7 @@ def collector_process_modular(
             if actor_updated:
                 actor.load_state_dict(
                     {k: v.detach().cpu() for k, v in learner_state.actor.state_dict().items()},
-                    strict=False,
+                    strict=strict_actor_sync,
                 )
                 transition_hold.begin(
                     reason="actor_sync_update",

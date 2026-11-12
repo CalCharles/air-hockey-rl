@@ -55,6 +55,7 @@ from scripts.td3.helper.real_td3_runtime import _latest_camera_frame, _prepare_a
 _SIM_OVERRIDES = (
     "reset_x_max_extension_m",
     "reset_y_max_extension_m",
+    "reset_y_min_extension_m",
     "reset_side_wall_clearance_m",
     "reset_right_corner_x_extension_m",
     "reset_left_corner_x_extension_m",

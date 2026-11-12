@@ -69,7 +69,10 @@ _PARKED_HEIGHT_EPS_M = 0.002
 
 # Paddle workspace in ROBOT frame: (x_min, x_max, y_min, y_max).
 # See AirHockeyReal.__init__ for the y_max history.
-REAL_WORKSPACE_LIMS = (-0.83, -0.45, -0.33, 0.39)
+# 2026-11-02: y shifted +0.031 m (was y[-0.33, 0.39]) so the real box lines up with
+# the sim box on the camera image (measured against the face-off dots). Puts y_max
+# ~0.5 cm short of the +y wall touch point (table_calibration.py: TCP y +0.42623).
+REAL_WORKSPACE_LIMS = (-0.83, -0.45, -0.299, 0.421)
 
 
 def _async_render_worker(
@@ -292,6 +295,11 @@ class AirHockeyReal:
             # (-0.367), so the sweep missed pucks resting against the right wall. Capped
             # so the paddle edge stays reset_side_wall_clearance_m off the side wall. 0 disables.
             "reset_y_max_extension_m": 0.024,  # 2026-10-09: +1 cm (was 0.014) so the sweep reaches pucks on the right wall; 0.015 once touched the wall on hard pushes
+            # Same for the -y ("left") side wall: y_min moves out by this much (and the -y
+            # corner cut with it) only while the reset FSM runs; the policy keeps y_min.
+            # 2026-11-02: added after the +3.1 cm y shift of REAL_WORKSPACE_LIMS moved y_min
+            # away from the left wall. Capped by reset_side_wall_clearance_m like +y. 0 disables.
+            "reset_y_min_extension_m": 0.01,
             # Gap kept between the paddle edge and the +y side wall by that cap. Smaller than
             # RESET_WALL_CLEARANCE_M (end wall) so the extension above is not cut short:
             # 0.004 leaves the paddle edge ~4.6 mm off the wall at y_max + 0.024.
@@ -684,6 +692,7 @@ class AirHockeyReal:
         self.move_lims = (self.rmax_x, self.rmax_y)
         self.reset_x_max_extension_m = float(getattr(config, "reset_x_max_extension_m", 0.0) or 0.0)
         self.reset_y_max_extension_m = float(getattr(config, "reset_y_max_extension_m", 0.0) or 0.0)
+        self.reset_y_min_extension_m = float(getattr(config, "reset_y_min_extension_m", 0.0) or 0.0)
         self.reset_side_wall_clearance_m = float(
             getattr(config, "reset_side_wall_clearance_m", self.RESET_WALL_CLEARANCE_M)
         )
@@ -903,10 +912,12 @@ class AirHockeyReal:
         +y ("right") limit: y_max moves out by ``reset_y_max_extension_m`` and the +y
         corner cut moves with the corner (bias_p += top_abs * ext, the same chamfer
         ``corner_cut_biases`` derives for the wider y_max), plus
-        ``reset_right_corner_x_extension_m`` to reach deeper into that corner. Each is
+        ``reset_right_corner_x_extension_m`` to reach deeper into that corner.
+        -y ("left") limit: y_min moves out by ``reset_y_min_extension_m`` and the -y
+        corner cut moves with the corner (bias_m += top_abs * ext). Each is
         capped so the paddle stays short of its wall (``RESET_WALL_CLEARANCE_M`` for the
-        end wall, ``reset_side_wall_clearance_m`` for the +y wall; the corner cut can
-        never pass the bottom limit); x_min / y_min are untouched.
+        end wall, ``reset_side_wall_clearance_m`` for the side walls; the corner cut can
+        never pass the bottom limit); x_min is untouched.
         ``active=False`` restores the normal limits exactly.
 
         Also switches the command-filter window to ``reset_hist_len`` while active and
@@ -928,13 +939,21 @@ class AirHockeyReal:
         # +y side wall in robot frame: table y = robot y + center_offset_constant_y.
         y_cap = self.width / 2 - self.paddle_radius - self.reset_side_wall_clearance_m - self.center_offset_constant_y
         ext_y = max(0.0, min(self.reset_y_max_extension_m, y_cap - y_max))
+        # -y side wall, same clearance as +y.
+        y_floor = -self.width / 2 + self.paddle_radius + self.reset_side_wall_clearance_m - self.center_offset_constant_y
+        ext_y_min = max(0.0, min(self.reset_y_min_extension_m, y_min - y_floor))
         ext_corner = max(0.0, self.reset_right_corner_x_extension_m)
-        if ext_x <= 0.0 and ext_y <= 0.0 and ext_corner <= 0.0:
+        if ext_x <= 0.0 and ext_y <= 0.0 and ext_y_min <= 0.0 and ext_corner <= 0.0:
             return
         self._normal_workspace = (self.lims, self.edge_lims)
         top_abs, bot_abs, bias_p, bias_m = self.edge_lims
-        self.lims = (x_min, x_max + ext_x, y_min, y_max + ext_y)
-        self.edge_lims = [top_abs, bot_abs, bias_p + ext_x + top_abs * ext_y + ext_corner, bias_m + ext_x]
+        self.lims = (x_min, x_max + ext_x, y_min - ext_y_min, y_max + ext_y)
+        self.edge_lims = [
+            top_abs,
+            bot_abs,
+            bias_p + ext_x + top_abs * ext_y + ext_corner,
+            bias_m + ext_x + top_abs * ext_y_min,
+        ]
         self._reset_edge_lims_base = list(self.edge_lims)
 
     def set_reset_end_side(self, end_side):
