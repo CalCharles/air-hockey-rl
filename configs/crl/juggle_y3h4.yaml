@@ -1,0 +1,33 @@
+# Y3H4 (z-conditioned contrastive RL, 4-head ensemble; port of scripts/goal_conditioned_rl/y3h4.py) on the new sim.
+# Trainer: scripts/goal_conditioned_rl/train_y3h4.py. Same env, goals, replay relabelling and eval as the CRL runs
+# (configs/crl/juggle_crl_*_still.yaml); commanded goals are always (x, y, 0, 0) = "stop the puck at (x, y)".
+name: y3h4
+sim_config: configs/new_juggle/sysid_v2_hist4_realplant.yaml   # unchanged (noise, occlusion, 25 ms puck lag on); no DR
+max_timesteps: 7000
+action_latency: 2
+num_envs: 8                     # collection lanes: 2 follow the vote (commit_fraction 0.25), 6 pinned to heads 0..3
+total_steps: 5000000
+gamma: 0.99                     # y3h4 `future`: hindsight offset ~ Geometric, truncated at the episode end
+rest_coordinates: [2, 3]        # commanded goals have zero velocity
+replay_size: 1000000
+min_replay_size: 10000          # uniform random actions before this; those rows get the rest view of their episode end
+updates_per_env_step: 1.0       # as the CRL runs (y3h4's four-rooms schedule is 16k updates / 500k steps = 0.032)
+train_every: 16
+eval_goals: runs/crl/eval_goals.npz
+train_eval_goals: 10
+train_eval_horizon: 2000
+log_interval: 10000
+checkpoint_interval: 250000
+eval_interval: 500000
+agent:                          # y3h4.py C values
+  heads: 4
+  width: 256
+  depth: 8
+  repr_dim: 64
+  lr: 0.0003
+  batch_size: 256
+  logsumexp_penalty: 0.1
+  goal_jitter: 0.02             # m and m/s here
+  entropy_param: 0.5            # target entropy -0.5 x action_dim
+  commit_fraction: 0.25
+  diagnostic_interval: 16

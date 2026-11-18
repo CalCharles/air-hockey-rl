@@ -1,0 +1,33 @@
+# Stationary-goal variant of juggle_crl_c0.yaml.
+# c0 switches (scripts/goal_conditioned_rl/c0.py) on the same loop as juggle_crl_paper.yaml.
+# Only the agent block differs.
+name: crl_c0_still
+sim_config: configs/new_juggle/sysid_v2_hist4_realplant.yaml   # unchanged (noise, occlusion, 25 ms puck lag on); no DR
+max_timesteps: 7000
+action_latency: 2
+num_envs: 4
+total_steps: 10000000          # hard cap; stops earlier on convergence (below)
+gamma: 0.99
+replay_size: 1000000
+min_replay_size: 10000          # uniform random actions before this (InitiallyRandomActor)
+updates_per_env_step: 1.0       # samples_per_insert 256 at batch 256
+train_every: 16
+eval_goals: runs/crl/eval_goals.npz
+train_eval_goals: 10
+train_eval_horizon: 2000
+log_interval: 10000
+checkpoint_interval: 250000
+eval_interval: 500000
+agent:
+  preset: c0                    # InfoNCE + 0.1 logsumexp^2, residual LN-swish w256 d8, c0 actor head, auto entropy (-1)
+  random_goals: 0.5             # official online default
+  actor_goal_zero_velocity: true
+# Stationary-puck goals (2026-11-15): every commanded goal is (x, y, 0, 0) = "stop the puck at (x, y)".
+# Collection goals = a random replay state's position with the velocity zeroed; the actor-loss goals likewise
+# (agent.actor_goal_zero_velocity). The critic still trains on true hindsight future states (pure CRL).
+command_zero_velocity: true
+convergence:                    # stop once critic loss, actor loss and episode length each moved < rel_tol
+  min_steps: 2000000            # between the last two windows (checked every check_every after min_steps)
+  window: 500000
+  check_every: 250000
+  rel_tol: 0.10

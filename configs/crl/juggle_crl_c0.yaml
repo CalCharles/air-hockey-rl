@@ -1,0 +1,22 @@
+# c0 switches (scripts/goal_conditioned_rl/c0.py) on the same loop as juggle_crl_paper.yaml.
+# Only the agent block differs.
+name: crl_c0
+sim_config: configs/new_juggle/sysid_v2_hist4_realplant.yaml   # unchanged (noise, occlusion, 25 ms puck lag on); no DR
+max_timesteps: 7000
+action_latency: 2
+num_envs: 4
+total_steps: 2000000
+gamma: 0.99
+replay_size: 1000000
+min_replay_size: 10000          # uniform random actions before this (InitiallyRandomActor)
+updates_per_env_step: 1.0       # samples_per_insert 256 at batch 256
+train_every: 16
+eval_goals: runs/crl/eval_goals.npz
+train_eval_goals: 10
+train_eval_horizon: 2000
+log_interval: 10000
+checkpoint_interval: 250000
+eval_interval: 500000
+agent:
+  preset: c0                    # InfoNCE + 0.1 logsumexp^2, residual LN-swish w256 d8, c0 actor head, auto entropy (-1)
+  random_goals: 0.5             # official online default

@@ -1,0 +1,22 @@
+# Original contrastive RL (Eysenbach et al. 2022, official google-research/contrastive_rl defaults for
+# state-based envs) on the new sim. Trainer: scripts/goal_conditioned_rl/train_crl.py
+name: crl_paper
+sim_config: configs/new_juggle/sysid_v2_hist4_realplant.yaml   # unchanged (noise, occlusion, 25 ms puck lag on); no DR
+max_timesteps: 7000
+action_latency: 2
+num_envs: 4
+total_steps: 2000000
+gamma: 0.99
+replay_size: 1000000
+min_replay_size: 10000          # uniform random actions before this (InitiallyRandomActor)
+updates_per_env_step: 1.0       # samples_per_insert 256 at batch 256
+train_every: 16
+eval_goals: runs/crl/eval_goals.npz
+train_eval_goals: 10
+train_eval_horizon: 2000
+log_interval: 10000
+checkpoint_interval: 250000
+eval_interval: 500000
+agent:
+  preset: paper                 # NCE loss, 2x256 ReLU, Acme tanh-Gaussian (min std 1e-6), no entropy, Adam eps 1e-7
+  random_goals: 0.5             # official online default
