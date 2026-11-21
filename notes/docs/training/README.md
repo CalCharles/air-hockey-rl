@@ -9,6 +9,7 @@ TD3 is the active training algorithm. PPO/SAC paths exist as legacy (see `archit
 | Doc | What it covers |
 |-----|----------------|
 | [`architecture.md`](architecture.md) | Active code paths, legacy folders, where each topic lives |
+| [`fb-online.md`](fb-online.md) | Online Metamotivo FB from scratch; juggling, contact and paddle-position latent inference |
 | [`td3-algorithm.md`](td3-algorithm.md) | h-transform, single-head critic, actor objective |
 | [`network-architecture.md`](network-architecture.md) | `ResidualMLPTrunk`, `TD3QNetwork`, `DeterministicAgent` shapes |
 
