@@ -1,0 +1,24 @@
+# jg0 (scripts/goal_conditioned_rl/jg0.py, the colleague's JAX learner, unchanged) with its `best` preset
+# (width 512, depth 8, repr 64, 4 heads, L2 energy + projection head, critic goal jitter 0.02, auto entropy),
+# trained with his y3h4.py harness schedule on our Box2D sim. Trainer: scripts/goal_conditioned_rl/train_jg0.py
+# (run with .venv-jax). Goals (x, y, 0, 0), (x, y) uniform over the upper half of the table.
+name: jg0_best
+total_steps: 450000000          # 900 rounds; the colleague's best policy came at 423M
+lanes: 500                      # parallel collection lanes (y3h4.py C['lanes'])
+round_steps: 1000               # steps per lane per round (y3h4.py C['episode_length']) -> 500k transitions/round
+updates_per_round: 16000        # y3h4.py C['updates_per_round'] -> 0.032 updates per env step
+update_chunk: 128               # updates per compiled scan call (y3h4.py C['update_chunk'])
+batch_size: 256
+gamma: 0.99                     # hindsight offset ~ Geometric, truncated at the episode end
+replay_size: 1000000            # "1M replay" in the colleague's video title
+jg0_overrides: {}               # on top of jg0.get_config('best'); ensemble_collection_lanes is set to `lanes`
+env_workers: 48                 # CPU processes running the 500 Box2D lanes
+action_latency: 2               # new-sim recipe (scripts/rma/action_latency.py)
+max_timesteps: 7000             # env cap (never reached within a 1000-step round)
+sim_overrides: {}               # e.g. {puck_noise_std: 0.0}; empty = configs/new_juggle/sysid_v2_hist4_realplant.yaml
+eval_every_rounds: 4            # lattice eval every 2M steps
+eval_launches: 5                # launch seeds; each launch is run toward all 35 lattice goals
+eval_horizon: 600               # 30 s at 20 Hz
+lattice_rows: 5
+lattice_cols: 7
+checkpoint_every_rounds: 20     # policy snapshot every 10M steps (+ best_policy, latest_*)

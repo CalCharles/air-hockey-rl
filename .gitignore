@@ -9,6 +9,7 @@ build/
 dist/
 .eggs/
 .venv/
+.venv-jax/
 venv/
 env/
 ENV/
