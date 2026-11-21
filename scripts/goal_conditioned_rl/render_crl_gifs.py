@@ -20,7 +20,7 @@ import cv2
 import numpy as np
 
 from scripts.goal_conditioned_rl.crl_env import load_sim_config, make_env, puck_goal
-from scripts.goal_conditioned_rl.eval_crl import EVAL_SEED_BASE, RADIUS, STILL_SPEED, _make_policy
+from scripts.goal_conditioned_rl.eval_crl import EVAL_SEED_BASE, RADIUS, STILL_SPEED, _make_policy, _reset_policy
 
 CMD, GREY = (230, 0, 230), (120, 120, 120)  # magenta: the puck sprite is green
 
@@ -79,7 +79,7 @@ def render_pair(spec, cfg, goal_a, goal_b, seed, max_steps, out_path, label, sho
         renderer = AirHockeyRenderer(env, orientation="vertical", show_target_position=False,
                                      show_acceleration_arrow=False)
         obs, _ = env.reset(seed=seed)
-        reset(obs)
+        _reset_policy(reset, obs, env)
         last = np.zeros(2, dtype=np.float32)
         frames, dmin, stop = [], np.inf, None
         for t in range(1, max_steps + 1):
@@ -119,6 +119,8 @@ def main():
     p.add_argument("--out", default="runs/crl/gifs")
     p.add_argument("--zero-velocity", action="store_true",
                    help="command (x, y, 0, 0) goals and show puck speed + a STOPPED marker (within 10 cm, < 0.1 m/s)")
+    p.add_argument("--puck-noise-std", type=float, default=None,
+                   help="override simulator_params.puck_noise_std (default: the sim config's 0.01; 0 = no position noise)")
     p.add_argument("--goal-indices", default="", help="comma list of goal indices to render instead of best/median/worst")
     a = p.parse_args()
     os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
@@ -134,6 +136,8 @@ def main():
         order = sorted(eps, key=lambda e: -e["paired_gap"])
         picks = {"best": order[0], "median": order[len(order) // 2], "worst": order[-1]}
     cfg = load_sim_config()
+    if a.puck_noise_std is not None:
+        cfg["simulator_params"]["puck_noise_std"] = float(a.puck_noise_std)
     for tag, e in picks.items():
         i = e["goal_index"]
         out = Path(a.out) / f"{a.label}_{tag}_goal{i}.gif"

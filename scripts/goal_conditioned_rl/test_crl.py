@@ -82,3 +82,74 @@ def test_tanh_log_prob_matches_torch_distributions():
     ours = TanhGaussianActor.tanh_log_prob(u, loc, std)
     mask = torch.tanh(u).abs() < 0.999
     assert torch.allclose(ours[mask.all(-1)], ref[mask.all(-1)], atol=1e-3)
+
+
+# ----------------------------------------------------------------------------- TD3 inputs (history / privileged)
+def _td3_input_agent(preset="paper", **kw):
+    from scripts.goal_conditioned_rl.crl_env import state_dim
+
+    base = dict(history_len=50, critic_history="flat", critic_privileged=True)
+    base.update(kw)
+    small = dict(hidden_sizes=(32, 32), repr_dim=8) if preset == "paper" else dict(width=32, depth=4, repr_dim=8)
+    cfg = getattr(CRLConfig, preset)(batch_size=16, **small, **base)
+    torch.manual_seed(0)
+    return CRLAgent(cfg, state_dim(cfg.history_len, cfg.uses_privileged), 2, 4)
+
+
+def _perturb(s, sl):
+    s2 = s.clone()
+    s2[:, sl] += torch.randn_like(s2[:, sl])
+    return s2
+
+
+def test_td3_inputs_layout_and_routing():
+    """E1 recipe: actor = [obs, a_{t-1}, conv latent(window)]; phi = [obs, flat window, privileged] + a_t."""
+    for preset in ("paper", "c0"):
+        ag = _td3_input_agent(preset)
+        assert ag.state_dim == 32 + 8 + 400
+        s, a, g = torch.randn(16, 440), torch.rand(16, 2) * 2 - 1, torch.randn(16, 4)
+        obs, last, priv, win = slice(0, 30), slice(30, 32), slice(32, 40), slice(40, 440)
+        ci = ag.critic_input(s)
+        assert ci.shape[-1] == 438 and torch.equal(ci, torch.cat([s[:, obs], s[:, win], s[:, priv]], -1))
+        with torch.no_grad():
+            act = ag.act(s, g, True)
+            phi = ag.phi(s, a)
+            assert torch.equal(ag.act(_perturb(s, priv), g, True), act), "actor must not read the privileged state"
+            assert not torch.allclose(ag.act(_perturb(s, win), g, True), act), "actor must read the window"
+            assert not torch.allclose(ag.act(_perturb(s, last), g, True), act), "actor reads a_{t-1}"
+            assert torch.equal(ag.phi(_perturb(s, last), a), phi), "TD3 critic gets a_{t-1} only via the window"
+            assert not torch.allclose(ag.phi(_perturb(s, priv), a), phi), "critic must read the privileged state"
+            assert not torch.allclose(ag.phi(_perturb(s, win), a), phi), "critic must read the window"
+
+
+def test_td3_inputs_encoder_trains_through_actor_loss_only():
+    ag = _td3_input_agent("c0")
+    enc = list(ag.actor_window_encoder.parameters())
+    assert all(any(p is q for q in ag.actor_opt.param_groups[0]["params"]) for p in enc)
+    assert not any(any(p is q for q in ag.critic_opt.param_groups[0]["params"]) for p in enc)
+    s, a, g = torch.randn(16, 440), torch.rand(16, 2) * 2 - 1, torch.randn(16, 4)
+    loss, _, _ = ag.actor_loss(s, g)
+    grads = torch.autograd.grad(loss, enc)
+    assert all(torch.isfinite(gr).all() for gr in grads) and any(gr.abs().sum() > 0 for gr in grads)
+    w0 = [p.detach().clone() for p in enc]
+    info = ag.update(s, a, g)
+    assert float(info.get("skipped", 0.0)) == 0.0
+    assert any(not torch.equal(p, q) for p, q in zip(enc, w0)), "actor's window encoder should move"
+
+
+def test_td3_input_variants_build_and_checkpoint_roundtrip():
+    variants = [dict(), dict(critic_privileged=False), dict(history_len=0), dict(actor_privileged=True),
+                dict(critic_history="conv"), dict(critic_history="none")]
+    for kw in variants:
+        ag = _td3_input_agent("paper", **kw)
+        s, a, g = torch.randn(16, ag.state_dim), torch.rand(16, 2) * 2 - 1, torch.randn(16, 4)
+        ag.update(s, a, g)
+        ag2 = CRLAgent.from_checkpoint(ag.checkpoint())
+        with torch.no_grad():
+            assert torch.equal(ag2.act(s, g, True), ag.act(s, g, True)), kw
+            assert torch.equal(ag2.phi(s, a), ag.phi(s, a)), kw
+    # history_len 0 + critic_privileged: phi = [obs, a_{t-1}, privileged] (E3); actor = [obs, a_{t-1}]
+    ag = _td3_input_agent("paper", history_len=0)
+    s = torch.randn(4, 40)
+    assert torch.equal(ag.critic_input(s), torch.cat([s[:, :32], s[:, 32:40]], -1))
+    assert torch.equal(ag.actor_input(s), s[:, :32])

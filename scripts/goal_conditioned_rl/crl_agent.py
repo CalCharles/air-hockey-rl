@@ -22,6 +22,11 @@ maximises phi(s, pi(s, g)) . psi(g) through the reparameterised sample with the 
 held at its pre-update parameters; ``random_goals`` picks the actor-loss goals exactly as
 the official code (0 = each row's own future goal, 0.5 = batch doubled: own goals + goals
 rolled by one row, 1 = rolled only). Adam 3e-4, batch 256.
+
+Optional inputs of the best new-sim TD3 policy, off by default (``history_len``, ``critic_history``,
+``critic_privileged``, ``actor_privileged``; configs/crl/juggle_crl_*_still_e1.yaml): the actor gets
+[obs, a_{t-1}, TD3 conv encoder(50-step window)], phi gets [obs, flat window, simulator state] + a_t, as the
+TD3 actor / critic do. Losses, psi and the networks are unchanged; with the switches off nothing changes.
 """
 
 from __future__ import annotations
@@ -57,6 +62,18 @@ class CRLConfig:
     # Not in CRL / c0: set goal dims [2:] (puck vx, vy) of the actor-loss goals to 0, i.e. train the actor to
     # reach a stationary puck at the goal position. The critic still trains on true hindsight future states.
     actor_goal_zero_velocity: bool = False
+    # ---- Not in CRL / c0, all off by default: the inputs of the best new-sim TD3 policy (history_privileged).
+    # The state vector then is [obs 30 | a_{t-1} 2 | privileged 8 (if used) | window history_len x 8 (if used)]
+    # (crl_env.StateBuilder). With every switch off, inputs, parameters and results are exactly the above.
+    history_len: int = 0  # > 0: H-step (latest paddle, latest puck, action) window; the actor encodes it with
+    #                       the TD3 conv encoder (scripts.rma.networks.AdaptationModule) into a latent
+    history_latent_dim: int = 8  # TD3 rma_latent_dim
+    history_embed_dim: int = 32  # TD3 history_embed_dim
+    history_conv_channels: int = 32  # TD3 history_conv_channels
+    critic_history: str = "flat"  # how phi(s, a) sees the window: "flat" = raw (TD3 critic), "conv" = own
+    #                               encoder, "none" = not at all. phi gets a_{t-1} separately only without it.
+    critic_privileged: bool = False  # phi(s, a) also gets the 8-dim simulator state (TD3 asymmetric critic)
+    actor_privileged: bool = False  # the actor also gets it (not deployable; upper-bound diagnostic)
 
     @staticmethod
     def paper(**kw) -> "CRLConfig":
@@ -84,6 +101,11 @@ class CRLConfig:
         assert self.entropy in ("off", "auto"), self.entropy
         assert self.random_goals in (0.0, 0.5, 1.0), self.random_goals
         assert self.network != "residual" or (self.depth >= 4 and self.depth % 4 == 0)
+        assert self.history_len >= 0 and self.critic_history in ("flat", "conv", "none"), self.critic_history
+
+    @property
+    def uses_privileged(self) -> bool:
+        return bool(self.critic_privileged or self.actor_privileged)
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -219,9 +241,26 @@ class CRLAgent(nn.Module):
         cfg.validate()
         self.cfg = cfg
         self.state_dim, self.action_dim, self.goal_dim = state_dim, action_dim, goal_dim
-        self.sa_encoder = _encoder(cfg, state_dim + action_dim)
+        # State layout (crl_env.StateBuilder): [obs | a_{t-1} | privileged? | window?]; default = [obs | a_{t-1}].
+        self._win_feat = 6 + action_dim
+        self._win_dim = cfg.history_len * self._win_feat
+        self._priv_dim = 8 if cfg.uses_privileged else 0
+        self._base_dim = state_dim - self._priv_dim - self._win_dim  # obs + a_{t-1}
+        if (self._priv_dim or self._win_dim) and self._base_dim <= action_dim:
+            raise ValueError(f"state_dim {state_dim} too small for history_len {cfg.history_len} / privileged")
+        has_win = cfg.history_len > 0
+        self._critic_win = cfg.critic_history if has_win else "none"
+        critic_in = (self._base_dim if self._critic_win == "none" else self._base_dim - action_dim)  # TD3 critic: a_{t-1}
+        critic_in += {"none": 0, "flat": self._win_dim, "conv": cfg.history_latent_dim}[self._critic_win]  # is in window
+        critic_in += self._priv_dim if cfg.critic_privileged else 0
+        actor_in = self._base_dim + (self._priv_dim if cfg.actor_privileged else 0)
+        actor_in += cfg.history_latent_dim if has_win else 0
+        self.sa_encoder = _encoder(cfg, critic_in + action_dim)
         self.g_encoder = _encoder(cfg, goal_dim)
-        self.actor = TanhGaussianActor(cfg, state_dim + goal_dim, action_dim)
+        self.actor = TanhGaussianActor(cfg, actor_in + goal_dim, action_dim)
+        # TD3's conv window encoder (created only when used, after the base modules, so the default init is unchanged).
+        self.actor_window_encoder = self._window_encoder(cfg) if has_win else None
+        self.critic_window_encoder = self._window_encoder(cfg) if self._critic_win == "conv" else None
         self.log_alpha = nn.Parameter(torch.zeros(()))  # alpha = exp(log_alpha) = 1 at init (c0); unused if "off"
         self.target_entropy = -cfg.entropy_param * action_dim
         self.to(device)
@@ -230,15 +269,63 @@ class CRLAgent(nn.Module):
         self._lr = torch.tensor(cfg.lr, device=device) if capturable else cfg.lr
         opt = dict(lr=self._lr, eps=cfg.adam_eps, capturable=capturable)
         critic_params = list(self.sa_encoder.parameters()) + list(self.g_encoder.parameters())
+        if self.critic_window_encoder is not None:
+            critic_params += list(self.critic_window_encoder.parameters())
+        actor_params = list(self.actor.parameters())
+        if self.actor_window_encoder is not None:
+            actor_params += list(self.actor_window_encoder.parameters())
         self.critic_opt = torch.optim.Adam(critic_params, **opt)
-        self.actor_opt = torch.optim.Adam(self.actor.parameters(), **opt)
+        self.actor_opt = torch.optim.Adam(actor_params, **opt)
         self.alpha_opt = torch.optim.Adam([self.log_alpha], **opt)
         self.skipped_updates = 0
         self._graph = None
 
+    # --------------------------------------------------------------------- inputs
+    def _window_encoder(self, cfg: CRLConfig) -> nn.Module:
+        from scripts.rma.networks import AdaptationModule  # the TD3 history_privileged actor's encoder
+
+        return AdaptationModule(feature_dim=self._win_feat, history_len=cfg.history_len,
+                                latent_dim=cfg.history_latent_dim, embed_dim=cfg.history_embed_dim,
+                                conv_channels=cfg.history_conv_channels)  # moved to the device in __init__
+
+    def _split(self, s):
+        base = s[..., : self._base_dim]
+        priv = s[..., self._base_dim : self._base_dim + self._priv_dim]
+        win = s[..., self._base_dim + self._priv_dim :]
+        return base, priv, win
+
+    def _window(self, win):
+        return win.reshape(*win.shape[:-1], self.cfg.history_len, self._win_feat)
+
+    def critic_input(self, s):
+        """phi's state part. Default: s itself. TD3 recipe: [obs, flat window, privileged] (a_{t-1} via window)."""
+        if self._critic_win == "none" and not self.cfg.critic_privileged:
+            return s if self._priv_dim == 0 and self._win_dim == 0 else s[..., : self._base_dim]
+        base, priv, win = self._split(s)
+        parts = [base if self._critic_win == "none" else base[..., : self._base_dim - self.action_dim]]
+        if self._critic_win == "flat":
+            parts.append(win)
+        elif self._critic_win == "conv":
+            parts.append(self.critic_window_encoder(self._window(win)))
+        if self.cfg.critic_privileged:
+            parts.append(priv)
+        return torch.cat(parts, -1)
+
+    def actor_input(self, s):
+        """The actor's state part. Default: s itself. TD3 recipe: [obs, a_{t-1}, window latent]."""
+        if self._priv_dim == 0 and self._win_dim == 0:
+            return s
+        base, priv, win = self._split(s)
+        parts = [base]
+        if self.cfg.actor_privileged:
+            parts.append(priv)
+        if self.actor_window_encoder is not None:
+            parts.append(self.actor_window_encoder(self._window(win)))
+        return torch.cat(parts, -1)
+
     # --------------------------------------------------------------------- critic
     def phi(self, s, a):
-        return self.sa_encoder(torch.cat([s, a], -1))
+        return self.sa_encoder(torch.cat([self.critic_input(s), a], -1))
 
     def psi(self, g):
         return self.g_encoder(g)
@@ -281,7 +368,7 @@ class CRLAgent(nn.Module):
     def actor_loss(self, s, g, noise=None):
         """Critic gradients are not taken here (the caller restricts autograd to the actor / alpha)."""
         s2, g2 = self.actor_goals(s, g)
-        a2, logp = self.actor.sample(torch.cat([s2, g2], -1), noise)
+        a2, logp = self.actor.sample(torch.cat([self.actor_input(s2), g2], -1), noise)
         score = (self.phi(s2, a2) * self.psi(g2)).sum(-1)
         if self.cfg.entropy == "off":
             objective = -score
@@ -391,7 +478,7 @@ class CRLAgent(nn.Module):
     # --------------------------------------------------------------------- acting
     @torch.no_grad()
     def act(self, s, g, deterministic: bool):
-        x = torch.cat([s, g], -1)
+        x = torch.cat([self.actor_input(s), g], -1)
         if deterministic:
             return self.actor.mode(x)
         return self.actor.sample(x)[0]

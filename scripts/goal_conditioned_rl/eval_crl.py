@@ -52,21 +52,45 @@ def _make_policy(spec: str, env, device="cpu"):
 
         agent = CRLAgent.from_checkpoint(torch.load(path, map_location=device, weights_only=False), device)
         agent.eval()
-
-        def act(obs, last, goal):
-            s = torch.as_tensor(policy_state(obs, last), device=device).unsqueeze(0)
-            g = torch.as_tensor(goal, dtype=torch.float32, device=device).unsqueeze(0)
-            return agent.act(s, g, deterministic=True).cpu().numpy().reshape(2)
-
-        return (lambda obs: None), act
+        return crl_policy(agent, device)
     raise ValueError(f"unknown policy spec {spec!r}")
+
+
+def crl_policy(agent, device="cpu"):
+    """(reset(obs, env), act(obs, last, goal)) for a CRLAgent, deterministic. The state is built by
+    crl_env.StateBuilder, so the optional TD3 inputs (window / privileged state) are filled exactly as in
+    training; reset needs the episode's env (``reset.takes_env``) for the privileged state."""
+    import torch
+
+    from scripts.goal_conditioned_rl.crl_env import StateBuilder
+
+    builder = StateBuilder.for_agent_config(agent.cfg)
+    cur = {}
+
+    def reset(obs, env=None):
+        cur["env"] = env
+        builder.reset(env, obs)
+
+    def act(obs, last, goal):
+        s = torch.as_tensor(builder.state(cur.get("env"), obs, last), device=device).unsqueeze(0)
+        g = torch.as_tensor(goal, dtype=torch.float32, device=device).unsqueeze(0)
+        a = agent.act(s, g, deterministic=True).cpu().numpy().reshape(2)
+        builder.push(obs, a)
+        return a
+
+    reset.takes_env = True
+    return reset, act
+
+
+def _reset_policy(reset, obs, env):
+    return reset(obs, env) if getattr(reset, "takes_env", False) else reset(obs)
 
 
 # ----------------------------------------------------------------------------- episodes
 def run_goal_episode(reset, act, cfg, goal, control_goal, seed, horizon, latency=2):
     env = make_env(dict(cfg, max_timesteps=horizon + 1), seed, latency)
     obs, _ = env.reset(seed=seed)
-    reset(obs)
+    _reset_policy(reset, obs, env)
     last = np.zeros(2, dtype=np.float32)
     g_xy, c_xy = np.asarray(goal[:2]), np.asarray(control_goal[:2])
     min_d, min_c, within, within_c, first, steps = np.inf, np.inf, 0, 0, None, 0
@@ -223,6 +247,8 @@ def main():
     e.add_argument("--workers", type=int, default=40)
     e.add_argument("--out", required=True)
     e.add_argument("--zero-velocity", action="store_true", help="command (x, y, 0, 0): goal velocity set to 0")
+    e.add_argument("--puck-noise-std", type=float, default=None,
+                   help="override simulator_params.puck_noise_std (default: the sim config's 0.01; 0 = no position noise)")
     a = p.parse_args()
     if a.cmd == "goals":
         goals = make_goals(a.n, a.horizon, a.min_step, a.workers, a.max_speed)
@@ -234,7 +260,10 @@ def main():
     if a.zero_velocity:
         goals[:, 2:] = 0.0
     labels = a.label or a.policy
-    results = evaluate(a.policy, goals, a.horizon, a.workers)
+    cfg = load_sim_config()
+    if a.puck_noise_std is not None:
+        cfg["simulator_params"]["puck_noise_std"] = float(a.puck_noise_std)
+    results = evaluate(a.policy, goals, a.horizon, a.workers, cfg)
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     summary = {}

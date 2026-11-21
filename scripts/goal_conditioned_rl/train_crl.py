@@ -29,20 +29,16 @@ import yaml
 from torch.utils.tensorboard import SummaryWriter
 
 from scripts.goal_conditioned_rl.crl_agent import CRLAgent, CRLConfig
-from scripts.goal_conditioned_rl.crl_env import (ACTION_DIM, GOAL_DIM, STATE_DIM, load_sim_config, make_env,
-                                                 policy_state, puck_goal)
+from scripts.goal_conditioned_rl.crl_env import (ACTION_DIM, GOAL_DIM, StateBuilder, load_sim_config, make_env,
+                                                 puck_goal, state_dim)
 from scripts.goal_conditioned_rl.crl_replay import EpisodeReplay
-from scripts.goal_conditioned_rl.eval_crl import EVAL_SEED_BASE, RADIUS, run_goal_episode
+from scripts.goal_conditioned_rl.eval_crl import EVAL_SEED_BASE, RADIUS, crl_policy, run_goal_episode
 
 
 def in_training_eval(agent, sim_cfg, goals, horizon, device, latency):
-    def act(obs, last, goal):
-        s = torch.as_tensor(policy_state(obs, last), device=device).unsqueeze(0)
-        g = torch.as_tensor(goal, dtype=torch.float32, device=device).unsqueeze(0)
-        return agent.act(s, g, deterministic=True).cpu().numpy().reshape(2)
-
+    reset, act = crl_policy(agent, device)
     n = len(goals)
-    eps = [run_goal_episode(lambda o: None, act, sim_cfg, goals[i], goals[(i + n // 2) % n],
+    eps = [run_goal_episode(reset, act, sim_cfg, goals[i], goals[(i + n // 2) % n],
                             EVAL_SEED_BASE + 10_000 + i, horizon, latency) for i in range(n)]
     return {k: float(np.mean([e[k] for e in eps])) for k in ("min_dist", "min_dist_control", "hit", "hit_still",
                                                              "speed_at_min", "steps")}
@@ -109,9 +105,11 @@ def main():
                             sim_config_resolved=sim_cfg), f)
 
     use_graph = device.type == "cuda" and bool(cfg.get("cuda_graph", True))
-    agent = CRLAgent(agent_cfg, STATE_DIM, ACTION_DIM, GOAL_DIM, device=device, capturable=use_graph)
+    # Policy-state size: obs + a_{t-1}, plus the optional TD3 inputs (agent.history_len / *_privileged; off = 32).
+    s_dim = state_dim(agent_cfg.history_len, agent_cfg.uses_privileged)
+    agent = CRLAgent(agent_cfg, s_dim, ACTION_DIM, GOAL_DIM, device=device, capturable=use_graph)
     update_fn = None  # built (CUDA graph, 3 real warm-up batches) once learning starts
-    replay = EpisodeReplay(int(cfg.get("replay_size", 1_000_000)), STATE_DIM, ACTION_DIM, GOAL_DIM, device)
+    replay = EpisodeReplay(int(cfg.get("replay_size", 1_000_000)), s_dim, ACTION_DIM, GOAL_DIM, device)
     eval_goals = np.load(cfg["eval_goals"])["goals"][: int(cfg.get("train_eval_goals", 10))].astype(np.float32)
 
     def command(g):
@@ -126,6 +124,9 @@ def main():
     envs = [make_env(sim_cfg, seed * 1000 + i, latency) for i in range(n_envs)]
     rng = np.random.default_rng(seed)
     obs = [env.reset(seed=seed * 1000 + i)[0] for i, env in enumerate(envs)]
+    builders = [StateBuilder.for_agent_config(agent_cfg) for _ in range(n_envs)]
+    for bld, env, o in zip(builders, envs, obs):
+        bld.reset(env, o)
     last = np.zeros((n_envs, ACTION_DIM), dtype=np.float32)
     goals = np.zeros((n_envs, GOAL_DIM), dtype=np.float32)
     buf = [dict(s=[], a=[], g=[], ret=0.0) for _ in range(n_envs)]
@@ -161,16 +162,18 @@ def main():
         if learning and not started:  # episodes begun under the random actor get a real goal from now on
             started = True
             goals[:] = command(replay.random_goals(n_envs))
+        states = [bld.state(env, o, l) for bld, env, o, l in zip(builders, envs, obs, last)]
         if learning or resumed:
-            s_t = torch.as_tensor(np.stack([policy_state(o, l) for o, l in zip(obs, last)]), device=device)
+            s_t = torch.as_tensor(np.stack(states), device=device)
             g_t = torch.as_tensor(goals, device=device)
             actions = agent.act(s_t, g_t, deterministic=False).cpu().numpy()
         else:
             actions = rng.uniform(-1.0, 1.0, (n_envs, ACTION_DIM)).astype(np.float32)
         for i, env in enumerate(envs):
             b = buf[i]
-            b["s"].append(policy_state(obs[i], last[i]))
+            b["s"].append(states[i])
             b["a"].append(actions[i])
+            builders[i].push(obs[i], actions[i])
             o, r, term, trunc, _ = env.step(actions[i])
             b["g"].append(puck_goal(env))
             b["ret"] += float(np.asarray(r).reshape(-1)[0])
@@ -182,6 +185,7 @@ def main():
                 ep_rets.append(b["ret"])
                 buf[i] = dict(s=[], a=[], g=[], ret=0.0)
                 obs[i] = env.reset()[0]
+                builders[i].reset(env, obs[i])
                 last[i] = 0.0
                 if replay.size > 0:
                     goals[i] = command(replay.random_goals(1))[0]

@@ -1,0 +1,41 @@
+# E1 of the TD3-inputs ablation: juggle_crl_paper_still.yaml (stop goals) with the inputs of the best new-sim TD3
+# policy (configs/ceiling/scratch_newsim.yaml, rma_mode history_privileged) and a fixed 5M steps (no convergence stop):
+#   actor  = [30-dim obs, a_{t-1}, TD3 conv encoder(50-step window) -> 8-dim latent] + goal
+#   phi    = [30-dim obs, 50-step window (flat, 400), 8-dim privileged state] + a_t   (TD3 critic's 438 + a_t)
+# Everything else (losses, psi, networks, replay, hyperparameters) is the original preset.
+# Derived from: juggle_crl_paper_still.yaml.
+# Original contrastive RL (Eysenbach et al. 2022, official google-research/contrastive_rl defaults for
+# state-based envs) on the new sim. Trainer: scripts/goal_conditioned_rl/train_crl.py
+name: crl_paper_still_e1
+sim_config: configs/new_juggle/sysid_v2_hist4_realplant.yaml   # unchanged (noise, occlusion, 25 ms puck lag on); no DR
+max_timesteps: 7000
+action_latency: 2
+num_envs: 4
+total_steps: 5000000
+gamma: 0.99
+replay_size: 1000000
+min_replay_size: 10000          # uniform random actions before this (InitiallyRandomActor)
+updates_per_env_step: 1.0       # samples_per_insert 256 at batch 256
+train_every: 16
+eval_goals: runs/crl/eval_goals.npz
+train_eval_goals: 10
+train_eval_horizon: 2000
+log_interval: 10000
+checkpoint_interval: 250000
+eval_interval: 500000
+agent:
+  preset: paper                 # NCE loss, 2x256 ReLU, Acme tanh-Gaussian (min std 1e-6), no entropy, Adam eps 1e-7
+  random_goals: 0.5             # official online default
+  actor_goal_zero_velocity: true
+  # --- TD3 inputs (delete these lines, or set history_len 0 / critic_privileged false, to go back) ---
+  history_len: 50               # TD3 history_len; step features = latest paddle + latest puck + action
+  history_latent_dim: 8         # TD3 rma_latent_dim
+  history_embed_dim: 32         # TD3 history_embed_dim
+  history_conv_channels: 32     # TD3 history_conv_channels
+  critic_history: flat          # the TD3 critic sees the raw window (no encoder)
+  critic_privileged: true       # TD3 asymmetric critic: + env.current_state (puck pos/vel, paddle pos/vel)
+  actor_privileged: false
+# Stationary-puck goals (2026-11-15): every commanded goal is (x, y, 0, 0) = "stop the puck at (x, y)".
+# Collection goals = a random replay state's position with the velocity zeroed; the actor-loss goals likewise
+# (agent.actor_goal_zero_velocity). The critic still trains on true hindsight future states (pure CRL).
+command_zero_velocity: true
