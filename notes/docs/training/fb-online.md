@@ -151,3 +151,32 @@ available evaluation episodes. Checkpoints are saved every 25,000 steps. For
 checkpoint evaluation, `--gif-episodes 2` writes a separate `evaluation_gifs/`
 gallery inside that checkpoint. GIF capture uses the evaluation trajectories
 and does not alter training RNG state.
+
+## Current-observation backward model
+
+`configs/fb/fb_online_realplant_current_backward.yaml` changes only the backward
+model's observation inputs. `--backward-input current` feeds B the newest paddle
+and puck `(x, y, occlusion flag)`: six features at full-observation indices
+`[12, 13, 14, 27, 28, 29]`. The flags are 1 for occluded/missing observations,
+not 1 for validity. Positions retain the configured observation noise/delay;
+B does not receive simulator ground truth. Older history and the last issued
+action are excluded. The forward model and actor retain the same 32-feature
+inputs and architectures, and the latent remains 50-dimensional.
+
+The input selector is inside both online and target B, covering the FB loss,
+goal-derived training latents, and reward/goal inference. Featurewise observation
+normalization is shared with F; because each feature is normalized independently,
+history cannot affect the selected current features. The implementation imports
+Metamotivo and subclasses its construction in `scripts/fb/models.py`; upstream
+files and losses are unchanged. Checkpoints serialize `backward_input`.
+
+```bash
+.venv/bin/python -m scripts.fb.fb_training \
+  --args-file configs/fb/fb_online_realplant_current_backward.yaml
+```
+
+For standalone loading, use `scripts.fb.models.load_policy(path, device)`;
+for a current-observation agent checkpoint, use `AirHockeyFBAgent.load` from that
+module. The training CLI automatically selects the correct model on evaluation.
+Original full-observation checkpoints remain loadable. This is a fresh training
+run, not a weight transfer from the full-observation baseline.

@@ -1,0 +1,40 @@
+# Reward-free online FB; task rewards are used only for latent inference/eval.
+config: configs/new_juggle/sysid_v2_hist4_realplant.yaml
+output_dir: runs/fb/realplant_current_backward_seed0
+seed: 0
+device: cuda
+total_timesteps: 1000000
+learning_starts: 5000
+buffer_size: 1000000
+batch_size: 256
+updates_per_step: 1
+z_dim: 50
+hidden_dim: 256
+backward_hidden_dim: 256
+learning_rate: 0.0001
+discount: 0.975
+actor_std: 0.2
+norm_obs: true
+train_goal_ratio: 0.5
+update_z_every_steps: 150
+# External wrapper from the documented real-plant recipe; 0 = YAML alone.
+action_latency_steps: 2
+use_last_action: true
+eval_every_steps: 10000
+eval_episodes: 10
+inference_samples: 10000
+checkpoint_every_steps: 25000
+log_every_steps: 1000
+torch_threads: 1
+tensorboard: true
+# Go-to-position task used for reward inference (table-frame metres).
+paddle_goal_x: 0.70
+paddle_goal_y: 0.0
+paddle_goal_radius: 0.05
+
+wandb: true
+wandb_project: air-hockey-fb
+gif_episodes: 2
+
+# Only B sees current paddle/puck (x, y, occlusion); F and actor keep full history.
+backward_input: current

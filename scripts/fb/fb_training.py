@@ -13,13 +13,14 @@ import json
 from pathlib import Path
 import random
 import time
+from typing import Literal
 
 import numpy as np
 import torch
 import tyro
 import yaml
 from metamotivo.buffers.buffers import DictBuffer
-from metamotivo.fb import FBAgent, FBAgentConfig, FBModel
+from metamotivo.fb import FBAgent, FBAgentConfig
 from metamotivo.nn_models import eval_mode
 
 from airhockey import AirHockeyEnv
@@ -39,6 +40,7 @@ class Args:
     buffer_size: int = 1_000_000
     batch_size: int = 256
     updates_per_step: int = 1
+    backward_input: Literal["full", "current"] = "full"
     z_dim: int = 50
     hidden_dim: int = 256
     backward_hidden_dim: int = 256
@@ -68,6 +70,8 @@ class Args:
     gif_episodes: int = 0
 
     def validate(self):
+        if self.backward_input not in ("full", "current"):
+            raise ValueError("backward_input must be full or current")
         for key in ("total_timesteps", "buffer_size", "updates_per_step", "z_dim", "hidden_dim",
                     "backward_hidden_dim", "update_z_every_steps", "eval_episodes",
                     "inference_samples", "log_every_steps", "torch_threads"):
@@ -128,7 +132,10 @@ def transition(obs, action, next_obs, reward, terminated, truncated, info, paddl
 
 
 def create_agent(args, obs_dim, action_dim):
-    cfg = FBAgentConfig()
+    from scripts.fb.models import AgentConfig, AirHockeyFBAgent
+    cfg = AgentConfig() if args.backward_input == "current" else FBAgentConfig()
+    if args.backward_input == "current":
+        cfg.model.backward_input = "current"
     cfg.model.obs_dim, cfg.model.action_dim = obs_dim, action_dim
     cfg.model.device = args.device
     cfg.model.norm_obs = args.norm_obs
@@ -141,7 +148,8 @@ def create_agent(args, obs_dim, action_dim):
     cfg.train.discount = args.discount
     cfg.train.train_goal_ratio = args.train_goal_ratio
     cfg.train.lr_f = cfg.train.lr_b = cfg.train.lr_actor = args.learning_rate
-    return FBAgent(**asdict(cfg))
+    cls = AirHockeyFBAgent if args.backward_input == "current" else FBAgent
+    return cls(**asdict(cfg))
 
 
 @contextmanager
@@ -253,7 +261,7 @@ def save_checkpoint(agent, replay, args, sim_config, folder, step, updates):
     # Agent checkpoints include target networks; FBModel.load expects an
     # inference-only state dict, so export a separate policy as well.
     with isolated_rng(args.seed):
-        model = FBModel(**asdict(agent._model.cfg))
+        model = type(agent._model)(**asdict(agent._model.cfg))
     model.load_state_dict({k: v for k, v in agent._model.state_dict().items()
                            if not k.startswith("_target_")})
     model.save(str(folder / "policy"))
@@ -276,6 +284,8 @@ def train(args):
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     sim_config = load_sim_config(args.config)
+    if args.backward_input == "current" and sim_config["air_hockey"].get("obs_type") != "history":
+        raise ValueError("Current backward inputs require obs_type: history")
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)
     if (output / "args.yaml").exists():
@@ -383,7 +393,8 @@ def main():
         torch.set_num_threads(args.torch_threads)
         if args.device.startswith("cuda"):
             torch.cuda.set_device(torch.device(args.device) if ":" in args.device else 0)
-        model = FBModel.load(str(folder / "policy"), device=args.device)
+        from scripts.fb.models import load_policy
+        model = load_policy(folder / "policy", device=args.device)
         batch = torch.load(folder / "inference_samples.pt", map_location=args.device, weights_only=True)
         # Evaluation exports go next to the checkpoint, leaving training GIFs intact.
         gif_dir = folder / "evaluation_gifs" / f"step_{run['step']:09d}" if args.gif_episodes else None

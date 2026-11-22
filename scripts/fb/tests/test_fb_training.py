@@ -64,8 +64,9 @@ def test_rng_isolation():
 
 @pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=pytest.mark.skipif(
     not torch.cuda.is_available(), reason="No CUDA"))])
-def test_online_training_and_checkpoint(tmp_path, device):
-    args = Args(device=device, output_dir=str(tmp_path / device), total_timesteps=40,
+@pytest.mark.parametrize("backward_input", ["full", "current"])
+def test_online_training_and_checkpoint(tmp_path, device, backward_input):
+    args = Args(device=device, backward_input=backward_input, output_dir=str(tmp_path / device), total_timesteps=40,
                 learning_starts=8, batch_size=8, buffer_size=24, hidden_dim=32,
                 backward_hidden_dim=32, z_dim=8, eval_every_steps=20,
                 checkpoint_every_steps=20, eval_episodes=1, inference_samples=16,
@@ -83,8 +84,10 @@ def test_online_training_and_checkpoint(tmp_path, device):
             assert clip.info["duration"] == 50
     assert (checkpoint.parent / "gifs" / "index.html").is_file()
     assert metadata["sim_config"]["air_hockey"]["simulator_params"]["hist_len"] == 4
-    agent = FBAgent.load(str(checkpoint), device=device)
-    model = FBModel.load(str(checkpoint / "policy"), device=device)
+    from scripts.fb.models import AirHockeyFBAgent, load_policy
+    cls = AirHockeyFBAgent if backward_input == "current" else FBAgent
+    agent = cls.load(str(checkpoint), device=device)
+    model = load_policy(checkpoint / "policy", device=device)
     z = torch.load(checkpoint / "reward_z.pt", map_location=device, weights_only=True)
     obs = torch.zeros((1, 32), device=device)
     torch.testing.assert_close(agent.act(obs, z), model.act(obs, z))
@@ -116,3 +119,36 @@ def test_task_reward_relabeling():
     assert reach[0].item() == 1.
     assert reach[1].item() < .001
     assert task_rewards(batch, "reach", replace(args, paddle_goal_x=.9))[1].item() == 1.
+
+
+def test_backward_uses_only_current_observation():
+    from scripts.fb.models import CURRENT_INDICES
+    torch.set_num_threads(1)
+    args = Args(device="cpu", backward_input="current", hidden_dim=32,
+                backward_hidden_dim=32, z_dim=8, batch_size=8)
+    agent = create_agent(args, 32, 2)
+    full = create_agent(replace(args, backward_input="full"), 32, 2)
+    model = agent._model
+    for name in ("_forward_map", "_actor"):
+        assert {k: v.shape for k, v in getattr(model, name).state_dict().items()} == {
+            k: v.shape for k, v in getattr(full._model, name).state_dict().items()}
+    x = torch.randn(8, 32)
+    other = torch.randn_like(x) * 100
+    other[:, list(CURRENT_INDICES)] = x[:, list(CURRENT_INDICES)]
+    torch.testing.assert_close(model.backward_map(x), model.backward_map(other), rtol=0, atol=0)
+    reward = torch.rand(8, 1)
+    torch.testing.assert_close(model.reward_inference(x, reward),
+                               model.reward_inference(other, reward), rtol=0, atol=0)
+    for backward in (model._backward_map, model._target_backward_map):
+        x_grad = x.clone().requires_grad_()
+        y = backward(x_grad)
+        (y * torch.randn_like(y)).sum().backward()
+        excluded = [i for i in range(32) if i not in CURRENT_INDICES]
+        assert torch.count_nonzero(x_grad.grad[:, excluded]) == 0
+        assert torch.count_nonzero(x_grad.grad[:, list(CURRENT_INDICES)]) > 0
+    # Goal-derived training latents must also ignore all older history and action.
+    torch.manual_seed(44)
+    first = agent.sample_mixed_z(x)
+    torch.manual_seed(44)
+    second = agent.sample_mixed_z(other)
+    torch.testing.assert_close(first, second, rtol=0, atol=0)
