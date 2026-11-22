@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from typing import Literal
 
+import torch
 from torch import nn
 from metamotivo import config_from_dict
 from metamotivo.fb import FBAgent, FBAgentConfig, FBModel, FBModelConfig
@@ -24,7 +25,7 @@ class CurrentObservationBackward(nn.Module):
         self.network = build_backward(6, cfg.archi.z_dim, cfg.archi.b)
 
     def forward(self, obs):
-        return self.network(obs[..., list(CURRENT_INDICES)])
+        return self.network(torch.cat((obs[..., 12:15], obs[..., 27:30]), dim=-1))
 
 
 @dataclass
