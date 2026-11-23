@@ -1,0 +1,82 @@
+{
+  "full": {
+    "checkpoint": "/work/09312/rudolph/documents/air-hockey-rl/runs/fb/realplant_full_50M/checkpoints/step_029621664",
+    "step": 29621664,
+    "inference_samples": 300000,
+    "seed": 200000,
+    "sampling": "uniform with replacement from frozen replay",
+    "latent_norms": {
+      "juggle": 7.0710673332214355,
+      "touch": 7.071068286895752,
+      "reach": 7.071067810058594
+    },
+    "positive_samples": {
+      "juggle": 125891,
+      "touch": 8462,
+      "reach": 300000
+    },
+    "evaluation": {
+      "eval/return_mean": 65.3,
+      "eval/return_std": 40.68181411884185,
+      "eval/length_mean": 128.9,
+      "eval/z_norm": 7.0710673332214355,
+      "eval/success_rate": 0.7,
+      "eval/final_goal_distance": 0.2338897163076711,
+      "eval/reward_support": 0.41963666677474976,
+      "eval_touch/return_mean": 4.2,
+      "eval_touch/return_std": 2.481934729198171,
+      "eval_touch/length_mean": 130.5,
+      "eval_touch/z_norm": 7.071068286895752,
+      "eval_touch/success_rate": 1.0,
+      "eval_touch/final_goal_distance": 0.21684011176512513,
+      "eval_touch/reward_support": 0.02820666693150997,
+      "eval_reach/return_mean": 12.096269567458059,
+      "eval_reach/return_std": 9.020139602510659,
+      "eval_reach/length_mean": 134.5,
+      "eval_reach/z_norm": 7.071067810058594,
+      "eval_reach/success_rate": 0.6,
+      "eval_reach/final_goal_distance": 0.17140187207259855,
+      "eval_reach/reward_support": 1.0
+    }
+  },
+  "current": {
+    "checkpoint": "/work/09312/rudolph/documents/air-hockey-rl/runs/fb/realplant_current_50M/checkpoints/step_029966976",
+    "step": 29966976,
+    "inference_samples": 300000,
+    "seed": 200000,
+    "sampling": "uniform with replacement from frozen replay",
+    "latent_norms": {
+      "juggle": 7.071068286895752,
+      "touch": 7.071066856384277,
+      "reach": 7.071067810058594
+    },
+    "positive_samples": {
+      "juggle": 120313,
+      "touch": 6035,
+      "reach": 300000
+    },
+    "evaluation": {
+      "eval/return_mean": 22.2,
+      "eval/return_std": 13.362634470792052,
+      "eval/length_mean": 53.5,
+      "eval/z_norm": 7.071068286895752,
+      "eval/success_rate": 0.1,
+      "eval/final_goal_distance": 0.34929511694409887,
+      "eval/reward_support": 0.4010433256626129,
+      "eval_touch/return_mean": 0.2,
+      "eval_touch/return_std": 0.6000000000000001,
+      "eval_touch/length_mean": 39.9,
+      "eval_touch/z_norm": 7.071066856384277,
+      "eval_touch/success_rate": 0.1,
+      "eval_touch/final_goal_distance": 0.33212629117256026,
+      "eval_touch/reward_support": 0.020116666331887245,
+      "eval_reach/return_mean": 1.1920087287111296,
+      "eval_reach/return_std": 1.7165121515883899,
+      "eval_reach/length_mean": 39.6,
+      "eval_reach/z_norm": 7.071067810058594,
+      "eval_reach/success_rate": 0.2,
+      "eval_reach/final_goal_distance": 0.3498722179036943,
+      "eval_reach/reward_support": 1.0
+    }
+  }
+}

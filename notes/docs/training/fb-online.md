@@ -51,6 +51,13 @@ the noisy FB actor with a random spherical latent held for up to 150 steps and
 resampled at episode boundaries. Training samples a uniform online ring buffer;
 50% of training latents use achieved-state backward embeddings, as in upstream
 FB. Neither task rewards nor task-inferred latents guide collection or gradients.
+Specifically, collection draws `g ~ N(0, I_50)` and sets
+`z = sqrt(50) * g / ||g||`. The actor adds Gaussian noise with std 0.2 to its
+mean action and clips to [-1, 1]. Evaluation holds a reward-inferred z fixed
+and uses mean actions, with no exploration noise. The 300k inference sample
+setting affects task inference and saved inference datasets, not collection's
+z distribution or the 256-transition learner minibatch.
+
 The default is one FB+actor update per interaction after warmup, batch size 256,
 z dimension 50, and width 256. These are starting hyperparameters, not a tuned
 replacement for the TD3 recipe. FB's pairwise loss costs quadratic batch memory.
@@ -93,7 +100,7 @@ logs are in the output directory. Periodic and final checkpoints contain:
 - Upstream agent model/targets and optimizer state.
 - `policy/`: standalone `FBModel.load` compatible inference export.
 - `reward_z.pt`: juggling latent.
-- `inference_samples.pt`: observations and reward features for re-inferring tasks.
+- `inference_samples.pt`: observations and reward features for re-inferring tasks. New runs use up to 300,000 replay samples (capped by available replay size); see [sample-size evidence and decision](fb-50m.md#reward-inference-sample-size).
 - `run.json`: step/update counts, arguments and simulator configuration.
 
 Checkpoints do **not** contain the full replay or environment/RNG state; exact

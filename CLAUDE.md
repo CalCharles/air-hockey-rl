@@ -130,6 +130,10 @@ Key docs:
 
 ## Project conventions
 
+- **FB reward-z inference:** use `inference_samples: 300000` for future runs and resumes; cap by available replay size. See [evidence and rollout scope](notes/docs/training/fb-50m.md#reward-inference-sample-size). Existing saved datasets and already-running processes retain their original settings.
+
+- **Agent logbook** → [`notes/docs/agent-logbook.md`](notes/docs/agent-logbook.md). Append a dated UTC entry after substantive agent work, recording actions, validation, and outstanding handoffs. Link experiment writeups instead of duplicating their results.
+
 - **New docs** → `notes/docs/*.md`. **Scratch/plans** → `notes/scratch/`.
 - **Experiment writeups** → `notes/scratch/experiments/YYYY-MM-DD_HH-MM_<topic-slug>.md` — one new file per experiment, never edit prior ones. **Read [`notes/scratch/experiments/README.md`](notes/scratch/experiments/README.md) before writing experiment notes.** This convention exists to avoid git merge conflicts when multiple agents append to the same long-lived log file. The long-form logs (`notes/scratch/residual_rl_paddle50_log.md`, `notes/scratch/residual_rl_drift_fix_log.md`, etc.) are now **read-only history** — historical context only, do not append. New experiments go in dated files; cross-link instead of merging; update [`notes/scratch/experiments/INDEX.md`](notes/scratch/experiments/INDEX.md) (additive only) when each experiment lands. Stable conclusions from a finished experiment can still be reflected in the canonical docs (`notes/docs/training/residual-rl-recipe.md`, this file) — but reference the experiment file as the source of truth, don't restate the data.
 - **GIFs for qualitative changes** to Box2D env: use `AirHockeyRenderer`, BGR→RGB, resize width to 160, fps 20. See `.cursor/rules/box2d-environment.mdc`.

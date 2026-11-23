@@ -8,6 +8,8 @@ Project context for agents and humans: [`CLAUDE.md`](CLAUDE.md). Formal document
 
 ## Repo layout
 
+Documentation and logbooks: [working reference](docs/README.md), [experiment logbook](notes/scratch/experiments/INDEX.md), and [agent logbook](notes/docs/agent-logbook.md).
+
 ```
 airhockey/             — Box2D + real-UR5 env package; tasks registered in __init__.py
 scripts/

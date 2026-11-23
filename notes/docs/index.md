@@ -22,5 +22,8 @@ Formal docs for the air-hockey TD3 stack — sim and real robot. Active code pat
 
 ## Logbooks (intentionally short-lived)
 
+- [Experiment logbook](../scratch/experiments/INDEX.md) — dated experiment writeups and outcomes.
+- [Agent logbook](agent-logbook.md) — agent actions, verification, and handoffs.
+
 - [`recent-commands.md`](recent-commands.md) — append-only training-command log; newest at top.
 - [`known-issues.md`](known-issues.md) — open bugs and applied workarounds.

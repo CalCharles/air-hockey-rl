@@ -73,6 +73,7 @@ nohup.out
 *.pt
 *.gif
 !/docs/assets/juggling/*.gif
+!/docs/assets/fb-300k/*.gif
 *.zip
 *.npy
 

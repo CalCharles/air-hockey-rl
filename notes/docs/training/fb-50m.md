@@ -101,3 +101,58 @@ and allocation-stop saves. Both original checkpoint types were also exercised
 through CUDA continuation; current-only CPU evaluation/GIF generation succeeded.
 The original trainer tests still pass. The long-run configurations preserve a
 separate baseline entrypoint for comparisons.
+
+## Reward-inference sample size
+
+A [fixed-checkpoint convergence study](../../scratch/experiments/2026-11-22_23-41_fb-z-convergence.md)
+at 8.75M steps compared 100–1M replay draws against each full-buffer latent.
+Across juggle/touch/reach in both models, 100k draws gave <5° and 300k gave <2°
+95th-percentile angular error (30 repeats). The former 10k setting was notably
+noisier on touch. These measure sampling stability, not task performance.
+Reproduction: `scripts.fb.analyze_z_convergence`.
+
+**Decision (2026-11-22): use `inference_samples: 300000` for future reward-z
+inference.** The shared Args default, all four canonical FB YAMLs, and the
+prepared `runs/fb/slurm/50m_continuation/{full,current}.yaml` configs now use
+300k. New handoffs inherit the canonical values. Evaluation and saved inference
+samples use `min(replay_size, 300000)`, sampled uniformly with replacement.
+Existing saved inference datasets are not enlarged retroactively.
+
+The initial processes on allocation 1159444 retained 10k until the explicit
+stop/inference/restart on 2026-11-23. Both replacement processes (503624 and
+503625) now have 300k in their resolved args.yaml; new training metrics confirmed
+progress beyond the stop checkpoints.
+Other older prepared bundles may retain explicit 10k overrides; update or
+regenerate those before using them for future runs.
+
+## Prepared batch continuation after allocation 1159444
+
+Prepared 2026-11-23 UTC in `runs/fb/slurm/50m_after_1159444/`, using the new
+300k inference setting and a dependency on `1159444`. Both canonical run
+folders resume to 50M cumulative steps. One GH node, 72 CPUs, ASC26008, 48h.
+As verified 2026-11-23 16:20 UTC, this bundle **has been submitted as job
+1162255**, pending dependency `afterany:1159444`. The original session could
+not authenticate to login1; submission subsequently occurred at 2026-11-22
+18:06 CST. The submission command below is retained for reference; do not
+submit a duplicate while 1162255 is queued:
+
+```bash
+bash /work/09312/rudolph/documents/air-hockey-rl/runs/fb/slurm/50m_after_1159444/submit.sh
+```
+
+Shell syntax, YAML values, dependency, and latest checkpoint completeness were
+verified. Logs go under the bundle's `logs/`; status/checkpoints remain in the
+original run folders. Keep the shared trainer checkout stable. To regenerate
+in a new directory, use `python -m scripts.fb.prepare_50m_continuation --folder
+<new-folder> --after-job 1159444`. A 48h budget is requested; completion still
+depends on throughput. If already at 50M, the trainer exits without more updates.
+
+## 300k performance GIFs and resumed training
+
+[GIF gallery](../../../docs/assets/fb-300k/README.md): two fixed-seed episodes
+per task (juggle, touch, reach) for both models, using saved 300k reward-inferred
+latents and deterministic actions. All 12 GIFs are versioned with the docs.
+Full/current checkpoints were 29,621,664/29,966,976 steps. After rendering,
+both trainers resumed on allocation 1159444 with 300k loaded. See the
+[resume record](../../scratch/experiments/2026-11-23_16-31_fb-300k-gifs-resume.md)
+and [controlled reward comparison](../../scratch/experiments/2026-11-23_16-28_fb-10k-vs-300k-rewards.md).

@@ -72,3 +72,13 @@ Format: `- YYYY-MM-DD HH:MM | topic | one-sentence outcome | [file](path)`
 - 2026-11-22 02:33 | Current-observation backward FB | Launched million-step seed-0 comparison with six-input B and unchanged F/actor; nine tests and CUDA/CPU checkpoint smoke passed | [2026-11-22_02-33_fb-current-backward-training.md](2026-11-22_02-33_fb-current-backward-training.md)
 - 2026-11-22 02:49 | FB puck-goal grid evaluation | 5×5 goals × 20 paired episodes: full B at 1M achieves 13.4% (juggling control 22.8%); both B variants near zero at 50k; raw-physics post-contact scoring, heatmaps and GIFs saved | [2026-11-22_02-49_fb-puck-goal-grid.md](2026-11-22_02-49_fb-puck-goal-grid.md)
 - 2026-11-22 07:21 | FB 50M continuations | Both 1M models resumed toward 50M; full-update CUDA graphs/fused Adam and block CPU collection yield ~360 steps/s each concurrently; replay-aware handoff prepared but not submitted | [2026-11-22_07-21_fb-50m-continuation.md](2026-11-22_07-21_fb-50m-continuation.md)
+
+- 2026-11-22 22:57 | FB 50M resume on 1159444 | Both checkpoints restored with full replay; verified advancing to 7.96M/8.02M, target still in flight | [writeup](2026-11-22_22-57_fb-50m-resume-1159444.md)
+
+- 2026-11-22 23:41 | FB latent dataset-size convergence | At matched 8.75M checkpoints, 100k/300k draws give <5°/<2° p95 reference-angle error across juggle/touch/reach in both models; no rollout claim | [writeup](2026-11-22_23-41_fb-z-convergence.md)
+
+- 2026-11-23 16:22 | Stop trainers and perform 300k reward-z inference | Both safely stopped near 30M; 300k inference and 10-episode evaluation complete, full/current juggle returns 65.3/22.2 | [writeup](2026-11-23_16-22_fb-300k-inference.md)
+
+- 2026-11-23 16-28 | Paired 10k vs 300k reward inference | Full returns improve across tasks; current juggle improves, touch worsens, reach unchanged; 10 episodes, one inference draw | [writeup](2026-11-23_16-28_fb-10k-vs-300k-rewards.md)
+
+- 2026-11-23 16-31 | 300k GIFs and training resume | Rendered 12 fixed-seed GIFs from saved 300k latents; both trainers resumed with 300k loaded | [writeup](2026-11-23_16-31_fb-300k-gifs-resume.md)

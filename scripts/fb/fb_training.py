@@ -54,7 +54,7 @@ class Args:
     use_last_action: bool = True
     eval_every_steps: int = 25_000
     eval_episodes: int = 10
-    inference_samples: int = 10_000
+    inference_samples: int = 300_000
     # Table-frame metres; a position target (the action space has no orientation).
     paddle_goal_x: float = 0.70
     paddle_goal_y: float = 0.0
